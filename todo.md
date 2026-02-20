@@ -1,24 +1,38 @@
-# MV Studio Pro - Project TODO (MVP)
+# MV Studio Pro - Project TODO
 
-## Phase 1: 後端遷移
-- [x] 數據庫 Schema 遷移（全部表）
-- [x] 數據庫遷移 SQL 已執行
-- [x] 修復 routers.ts TS 錯誤
-- [x] 修復 db.ts 欄位名對齊
+## Phase 1: 后端迁移
+- [x] 数据库 Schema 迁移（全部表）
+- [x] 数据库迁移 SQL 已执行
+- [x] 修复 routers.ts TS 错误
+- [x] 修复 db.ts 栏位名对齐
 
 ## Phase 2: 前端 MVP
-- [x] 深色主題（#101012 背景、#E8825E 主色）
-- [x] 頂部導航欄（響應式）
-- [x] 首頁（Hero + 功能卡片 + 精選MV + 聯繫表單）
-- [x] MV 展廳頁面（7支MV在線播放、評論）
-- [x] 登入/登出流程
+- [x] 深色主题（#101012 背景、#E8825E 主色）
+- [x] 顶部导航栏（响应式）
+- [x] 首页（Hero + 功能卡片 + 精选MV + 联系表单）
+- [x] MV 展厅页面（7支MV在线播放、评论）
+- [x] 登录/登出流程
 
-## Phase 3: 測試發布
-- [x] 修復所有 TS 錯誤
-- [x] Vitest 測試通過（5 tests）
-- [ ] 保存 Checkpoint
+## Phase 3: 测试发布
+- [x] 修复所有 TS 错误
+- [x] Vitest 测试通过（5 tests）
+- [x] 保存 Checkpoint (425e741e)
+
+## Phase 4: 全部功能页面
+- [x] MV 智能分析页面
+- [x] 虚拟偶像工坊页面
+- [x] 歌词生成分镜页面
+- [x] 视觉特效引擎页面
+- [x] 套餐定价页面
+- [x] 团队管理页面
+- [x] 管理后台页面
+- [x] Credits 仪表板 / 用户 Dashboard
+- [x] 路由整合与导航更新
+- [x] 文件上传 API
+- [x] 测试通过（5/5）
+- [ ] 保存最终 Checkpoint
 - [ ] 域名配置 www.mvstudiopro.com
 
-## 語言
-- [x] 簡體中文優先呈現
-- [ ] 英文雙語支持（後續）
+## 语言
+- [x] 简体中文优先呈现
+- [ ] 英文双语支持（后续）
