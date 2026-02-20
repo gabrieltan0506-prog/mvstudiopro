@@ -273,9 +273,31 @@ export const appRouter = router({
           await incrementUsageCount(ctx.user.id, "storyboard");
         }
       }
+
+      const systemPrompt = `你是一位世界级的 MV 导演、电影摄影指导和分镜师，拥有丰富的影视制作经验。
+根据用户提供的歌词或文本，生成 ${input.sceneCount} 个专业级分镜场景。
+
+【每个分镜必须包含以下维度】
+1. 场景编号与时间段
+2. 画面描述（场景环境、空间布局、视觉元素）
+3. 灯光设计（主光源方向、色温冷暖、光影对比、补光方式、特殊光效如逆光/侧光/顶光/轮廓光）
+4. 人物表情（面部微表情、眼神方向、情绪传达）
+5. 人物动作（肢体动作、手势、身体姿态、运动轨迹）
+6. 人物神态（内心状态、气质表现、情绪张力）
+7. 人物互动（角色之间的空间关系、眼神交流、肢体接触、情感互动）
+8. 摄影机位（远景/全景/中景/近景/特写/大特写）
+9. 镜头运动（推/拉/摇/移/跟/升降/手持/稳定器/航拍/旋转）
+10. 色调与调色（整体色调、色彩倾向、对比度、饱和度）
+11. 配乐节奏（建议BPM范围、节奏强弱、音乐情绪）
+12. 情绪氛围（整体情绪基调、氛围营造手法）
+13. 对应歌词段落
+14. 分镜图提示词（用于AI图片生成的英文prompt，包含场景、灯光、人物、构图等关键视觉信息）
+
+请确保每个分镜之间有视觉节奏变化，镜头语言丰富多样，避免重复单调。`;
+
       const response = await invokeLLM({
         messages: [
-          { role: "system", content: `你是一位專業的 MV 導演和分鏡師。根據用戶提供的歌詞，生成 ${input.sceneCount} 個分鏡場景。每個場景包含：場景編號、時間段、畫面描述、鏡頭運動、情緒氛圍、色調建議。請用 JSON 格式回覆。` },
+          { role: "system", content: systemPrompt },
           { role: "user", content: input.lyrics },
         ],
         response_format: {
@@ -286,34 +308,62 @@ export const appRouter = router({
             schema: {
               type: "object",
               properties: {
-                title: { type: "string" },
+                title: { type: "string", description: "分镜脚本标题" },
+                overallMood: { type: "string", description: "整体情绪基调" },
+                suggestedBPM: { type: "string", description: "建议配乐BPM范围，如 90-110" },
+                colorPalette: { type: "string", description: "整体色彩方案" },
                 scenes: {
                   type: "array",
                   items: {
                     type: "object",
                     properties: {
                       sceneNumber: { type: "integer" },
-                      timeRange: { type: "string" },
-                      description: { type: "string" },
-                      cameraMovement: { type: "string" },
-                      mood: { type: "string" },
-                      colorTone: { type: "string" },
-                      lyrics: { type: "string" },
+                      timeRange: { type: "string", description: "时间段如 0:00-0:15" },
+                      description: { type: "string", description: "画面描述：场景环境、空间布局、视觉元素" },
+                      lighting: { type: "string", description: "灯光设计：主光源方向、色温、光影效果、特殊光效" },
+                      characterExpression: { type: "string", description: "人物表情：面部微表情、眼神方向、情绪传达" },
+                      characterAction: { type: "string", description: "人物动作：肢体动作、手势、身体姿态、运动轨迹" },
+                      characterDemeanor: { type: "string", description: "人物神态：内心状态、气质表现、情绪张力" },
+                      characterInteraction: { type: "string", description: "人物互动：角色间空间关系、眼神交流、肢体接触" },
+                      shotType: { type: "string", description: "机位景别：远景/全景/中景/近景/特写/大特写" },
+                      cameraMovement: { type: "string", description: "镜头运动：推/拉/摇/移/跟/升降/手持/航拍" },
+                      colorTone: { type: "string", description: "色调与调色：色彩倾向、对比度、饱和度" },
+                      bpm: { type: "string", description: "配乐节奏：BPM范围、节奏强弱" },
+                      mood: { type: "string", description: "情绪氛围" },
+                      lyrics: { type: "string", description: "对应歌词段落" },
+                      imagePrompt: { type: "string", description: "分镜图AI生成提示词（英文），包含场景、灯光、人物、构图等视觉信息，用于生成分镜概念图" },
                     },
-                    required: ["sceneNumber", "timeRange", "description", "cameraMovement", "mood", "colorTone", "lyrics"],
+                    required: ["sceneNumber", "timeRange", "description", "lighting", "characterExpression", "characterAction", "characterDemeanor", "characterInteraction", "shotType", "cameraMovement", "colorTone", "bpm", "mood", "lyrics", "imagePrompt"],
                     additionalProperties: false,
                   },
                 },
               },
-              required: ["title", "scenes"],
+              required: ["title", "overallMood", "suggestedBPM", "colorPalette", "scenes"],
               additionalProperties: false,
             },
           },
         },
       });
       const storyboardData = String(response.choices[0].message.content ?? "{}");
+      const parsed = JSON.parse(storyboardData);
       const id = await createStoryboard({ userId: ctx.user.id, lyrics: input.lyrics, sceneCount: input.sceneCount, storyboard: storyboardData });
-      return { success: true, id, storyboard: JSON.parse(storyboardData) };
+
+      // Auto-generate storyboard images for each scene using Forge (free)
+      const scenesWithImages = await Promise.all(
+        (parsed.scenes || []).map(async (scene: any) => {
+          try {
+            const { url } = await generateImage({
+              prompt: `Cinematic MV storyboard frame: ${scene.imagePrompt}. Professional film quality, 16:9 aspect ratio, detailed lighting.`,
+            });
+            return { ...scene, generatedImageUrl: url };
+          } catch {
+            return { ...scene, generatedImageUrl: null };
+          }
+        })
+      );
+      parsed.scenes = scenesWithImages;
+
+      return { success: true, id, storyboard: parsed };
     }),
     myList: protectedProcedure.query(async ({ ctx }) => {
       const items = await getStoryboardsByUserId(ctx.user.id);
@@ -333,7 +383,7 @@ export const appRouter = router({
         if (!deduction.success) return { success: false, error: "Credits 不足，请充值后再试" };
       }
 
-      const systemPrompt = `你是一位顶级的视频剧本作家和歌词创作者。用户会给你几句简短的描述或关键词，你需要根据这些灵感生成一份完整的视频文案或歌词。
+      const freePrompt = `你是一位顶级的视频剧本作家和歌词创作者。用户会给你几句简短的描述或关键词，你需要根据这些灵感生成一份完整的视频文案或歌词。
 
 要求：
 - 文案内容不超过 ${maxChars} 字
@@ -341,16 +391,24 @@ export const appRouter = router({
 - 适合拍摄视频或 MV
 - 如果是歌词，要有押韵和旋律感
 - 可以拆分成段落（主歌/副歌/桥段）
-- 最后建议可以生成 ${maxScenes} 个分镜场景
+- 建议配乐BPM范围
+- 建议可以生成 ${maxScenes} 个分镜场景`;
 
-请用 JSON 格式返回：
-{
-  "title": "文案标题",
-  "content": "完整的文案/歌词内容",
-  "suggestedScenes": ${maxScenes},
-  "mood": "整体情绪基调",
-  "style": "建议的视觉风格"
-}`;
+      const geminiPrompt = `你是一位世界级的影视编剧、作词人和视觉叙事大师。用户会给你几句简短的描述或关键词，你需要根据这些灵感生成一份极其精致的视频文案或歌词。
+
+【Gemini 增强版要求】
+- 文案内容不超过 ${maxChars} 字
+- 歌词要有精妙的押韵、内韵、双关和意象叠加
+- 每段歌词要配合具体的视觉画面描述
+- 包含详细的情绪起伏曲线（从开场到高潮到尾声）
+- 建议具体的色彩心理学运用（如冷色调表达孤独、暖色调表达温暖）
+- 建议配乐风格、BPM范围、乐器编排
+- 建议灯光氛围（自然光/人造光/混合光）
+- 建议拍摄手法（长镜头/蒙太奇/平行剪辑）
+- 建议可以生成 ${maxScenes} 个分镜场景
+- 整体叙事要有电影感，有起承转合`;
+
+      const systemPrompt = input.mode === "gemini" ? geminiPrompt : freePrompt;
 
       try {
         const response = await invokeLLM({
@@ -367,12 +425,14 @@ export const appRouter = router({
                 type: "object",
                 properties: {
                   title: { type: "string" },
-                  content: { type: "string" },
+                  content: { type: "string", description: "完整的文案/歌词内容" },
                   suggestedScenes: { type: "integer" },
                   mood: { type: "string" },
-                  style: { type: "string" },
+                  style: { type: "string", description: "建议的视觉风格" },
+                  suggestedBPM: { type: "string", description: "建议配乐BPM范围" },
+                  colorScheme: { type: "string", description: "建议色彩方案" },
                 },
-                required: ["title", "content", "suggestedScenes", "mood", "style"],
+                required: ["title", "content", "suggestedScenes", "mood", "style", "suggestedBPM", "colorScheme"],
                 additionalProperties: false,
               },
             },
@@ -381,20 +441,61 @@ export const appRouter = router({
         const data = JSON.parse(String(response.choices[0].message.content ?? "{}"));
         return { success: true, ...data, mode: input.mode, maxChars, maxScenes };
       } catch (err: any) {
-        // Refund on failure for gemini mode
         if (input.mode === "gemini" && !isAdmin(ctx.user)) {
           await addCredits(ctx.user.id, CREDIT_COSTS.inspiration, "refund", "灵感文案生成失败退款");
         }
         return { success: false, error: err.message || "文案生成失败" };
       }
     }),
-    generateImage: protectedProcedure.input(z.object({ sceneDescription: z.string(), colorTone: z.string().optional() })).mutation(async ({ ctx, input }) => {
-      if (!isAdmin(ctx.user)) {
+    /** 生成分镜图：免费版 Forge 基础图 / 2K 收费 / 4K 收费 */
+    generateImage: protectedProcedure.input(z.object({
+      sceneDescription: z.string(),
+      imagePrompt: z.string().optional(),
+      colorTone: z.string().optional(),
+      quality: z.enum(["free", "2k", "4k"]).default("free"),
+    })).mutation(async ({ ctx, input }) => {
+      // 2K and 4K cost credits
+      if (input.quality === "2k" && !isAdmin(ctx.user)) {
         const deduction = await deductCredits(ctx.user.id, "storyboardImage2K");
         if (!deduction.success) return { success: false, error: "Credits 不足" };
+      } else if (input.quality === "4k" && !isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, "storyboardImage4K");
+        if (!deduction.success) return { success: false, error: "Credits 不足" };
       }
-      const { url } = await generateImage({ prompt: `MV storyboard scene: ${input.sceneDescription}. Color tone: ${input.colorTone || "cinematic"}. Professional cinematography, wide angle, film quality.` });
-      return { success: true, imageUrl: url };
+      // Free uses Forge, 2K/4K use Gemini image generation
+      const prompt = input.imagePrompt || input.sceneDescription;
+      if (input.quality === "free") {
+        const { url } = await generateImage({
+          prompt: `Cinematic MV storyboard frame: ${prompt}. Color tone: ${input.colorTone || "cinematic"}. Professional film quality, 16:9 aspect ratio.`,
+        });
+        return { success: true, imageUrl: url, quality: "free" };
+      } else {
+        // 2K/4K use Gemini for higher quality
+        const qualityHint = input.quality === "4k" ? "ultra high resolution 4K, extremely detailed" : "high resolution 2K, detailed";
+        try {
+          const geminiAvailable = isGeminiImageAvailable();
+          if (geminiAvailable) {
+            const result = await generateGeminiImage({
+              prompt: `${qualityHint} cinematic MV storyboard: ${prompt}. Color tone: ${input.colorTone || "cinematic"}. Professional cinematography, film grain, detailed lighting.`,
+              quality: input.quality as "2k" | "4k",
+            });
+            return { success: true, imageUrl: result.imageUrl, quality: input.quality };
+          } else {
+            // Fallback to Forge if Gemini unavailable
+            const { url } = await generateImage({
+              prompt: `${qualityHint} cinematic MV storyboard: ${prompt}. Color tone: ${input.colorTone || "cinematic"}. Professional film quality.`,
+            });
+            return { success: true, imageUrl: url, quality: input.quality };
+          }
+        } catch {
+          // Refund on failure
+          if (!isAdmin(ctx.user)) {
+            const refundKey = input.quality === "4k" ? "storyboardImage4K" : "storyboardImage2K";
+            await addCredits(ctx.user.id, CREDIT_COSTS[refundKey as keyof typeof CREDIT_COSTS], "refund", `${input.quality}分镜图生成失败退款`);
+          }
+          return { success: false, error: "图片生成失败" };
+        }
+      }
     }),
   }),
 

@@ -133,3 +133,13 @@
 - [x] 二次创作页面：上传外来视频 + 编辑 + 自动注册 remix Hash
 - [x] 二次创作页面路由注册和导航入口
 - [x] YouTube 视频下载转存 S3，更新展厅前端来源
+
+## Phase 15: 智能分镜脚本全面升级
+- [x] 后端 storyboard.generate prompt 重写：增加灯光设计、人物表情/动作/神态/互动、摄影机位/镜景/镜头运动、配乐BPM
+- [x] 后端 JSON schema 更新：新增 lighting/characterExpression/characterAction/characterInteraction/cameraAngle/cameraMovement/shotType/bpm 等字段
+- [x] 免费版（Forge）即包含所有专业维度
+- [x] Gemini 增强版 prompt 更细腻：微表情、肢体语言细节、色彩心理学、专业电影术语
+- [x] 每个分镜自动生成分镜图（免费版 Forge 图片，Gemini 版更高质量）
+- [x] 前端 Storyboard.tsx 重写：展示所有新维度（灯光、表情、动作、机位、BPM 等）
+- [x] 前端分镜卡片自动触发图片生成并展示
+- [x] 测试通过并保存 checkpoint
