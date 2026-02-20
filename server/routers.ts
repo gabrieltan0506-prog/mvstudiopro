@@ -26,6 +26,7 @@ import {
 } from "./db";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
+import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { CREDIT_COSTS } from "../shared/plans";
 
 export const appRouter = router({
@@ -127,18 +128,22 @@ export const appRouter = router({
 
   // ─── Virtual Idol ─────────────────────
   virtualIdol: router({
+    /** Check available generation tiers */
+    status: publicProcedure.query(() => ({
+      geminiAvailable: isGeminiImageAvailable(),
+      tiers: [
+        { id: "free", label: "免费版", desc: "标准画质", credits: 0, price: "免费" },
+        { id: "2k", label: "2K 高清", desc: "2048×2048 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage2K, price: "$0.134/张" },
+        { id: "4k", label: "4K 超清", desc: "4096×4096 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage4K, price: "$0.24/张" },
+      ],
+    })),
+
     generate: protectedProcedure.input(z.object({
       style: z.enum(["anime", "realistic", "cyberpunk", "fantasy", "chibi"]),
       description: z.string().min(1).max(500),
       referenceImageUrl: z.string().url().optional(),
+      quality: z.enum(["free", "2k", "4k"]).default("free"),
     })).mutation(async ({ ctx, input }) => {
-      const usage = await checkUsageLimit(ctx.user.id, "avatar");
-      if (!usage.allowed) {
-        const deduction = await deductCredits(ctx.user.id, "idolGeneration");
-        if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
-      } else {
-        await incrementUsageCount(ctx.user.id, "avatar");
-      }
       const stylePrompts: Record<string, string> = {
         anime: "anime style, vibrant colors, detailed cel-shading",
         realistic: "photorealistic, ultra-detailed, studio lighting, 8K",
@@ -147,12 +152,41 @@ export const appRouter = router({
         chibi: "chibi style, cute, big eyes, small body, kawaii",
       };
       const prompt = `Virtual idol character portrait: ${input.description}. Style: ${stylePrompts[input.style]}. Full body, high quality, professional illustration.`;
-      const opts: any = { prompt };
-      if (input.referenceImageUrl) {
-        opts.originalImages = [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }];
+
+      if (input.quality === "free") {
+        // Free tier: use built-in generateImage, check free usage limit
+        const usage = await checkUsageLimit(ctx.user.id, "avatar");
+        if (!usage.allowed) {
+          const deduction = await deductCredits(ctx.user.id, "idolGeneration");
+          if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        } else {
+          await incrementUsageCount(ctx.user.id, "avatar");
+        }
+        const opts: any = { prompt };
+        if (input.referenceImageUrl) {
+          opts.originalImages = [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }];
+        }
+        const { url } = await generateImage(opts);
+        return { success: true, imageUrl: url, quality: "free" };
+      } else {
+        // 2K / 4K: use Gemini API (Nano Banana Pro), always deduct credits
+        const creditKey = input.quality === "2k" ? "storyboardImage2K" : "storyboardImage4K";
+        const deduction = await deductCredits(ctx.user.id, creditKey);
+        if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        try {
+          const result = await generateGeminiImage({
+            prompt,
+            quality: input.quality,
+            referenceImageUrl: input.referenceImageUrl,
+          });
+          return { success: true, imageUrl: result.imageUrl, quality: input.quality };
+        } catch (err: any) {
+          // Refund credits on failure
+          await addCredits(ctx.user.id, CREDIT_COSTS[creditKey], `偶像生成失败退款 (${input.quality.toUpperCase()})`);
+          console.error("[VirtualIdol] Gemini image generation failed:", err);
+          return { success: false, error: "图片生成失败，Credits 已退回" };
+        }
       }
-      const { url } = await generateImage(opts);
-      return { success: true, imageUrl: url };
     }),
   }),
 

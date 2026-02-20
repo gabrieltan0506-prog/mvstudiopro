@@ -90,3 +90,9 @@
 - [x] 数据库表 idol_3d_generations
 - [x] 前端虚拟偶像工坊页面添加 2D转3D Tab
 - [x] 测试并保存 checkpoint
+
+## Phase 9: 虚拟偶像工坊完善
+- [x] AI 偶像生成三档：免费版 / 2K (Nano Banana Pro) / 4K (Nano Banana Pro)
+- [x] 后端 Gemini API 图片生成服务（2K/4K）
+- [x] 前端三档选择 UI，标注价格和 Credits
+- [x] 2D 转 3D 功能确认完善（Hunyuan3D Rapid/Pro）
