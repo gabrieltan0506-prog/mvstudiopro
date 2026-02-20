@@ -7,6 +7,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { useState } from "react";
 import { Play, Star, MessageCircle, X, Send, Film } from "lucide-react";
+import { VideoInteraction } from "@/components/VideoInteraction";
 import {
   Dialog,
   DialogContent,
@@ -161,6 +162,12 @@ export default function MVGallery() {
                   <span className="text-xs text-muted-foreground">{selectedMV.duration}</span>
                 </div>
                 <p className="text-sm text-muted-foreground mb-4">{selectedMV.description}</p>
+                
+                {/* 评论与分享互动 */}
+                <div className="border-t border-border/30 pt-4 mt-4">
+                  <VideoInteraction videoUrl={selectedMV.videoUrl} title={selectedMV.title} />
+                </div>
+                
                 <ReviewSection mvId={selectedMV.id} />
               </div>
             </>

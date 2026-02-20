@@ -388,3 +388,43 @@ export const videoSignatures = mysqlTable("video_signatures", {
 });
 export type VideoSignature = typeof videoSignatures.$inferSelect;
 export type InsertVideoSignature = typeof videoSignatures.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Video Comments (视频评论)
+// ═══════════════════════════════════════════
+export const videoComments = mysqlTable("video_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  videoUrl: text("videoUrl").notNull(),
+  userId: int("userId").notNull(),
+  parentId: int("parentId"),
+  content: text("content").notNull(),
+  likesCount: int("likesCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type VideoComment = typeof videoComments.$inferSelect;
+export type InsertVideoComment = typeof videoComments.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Video Likes (视频点赞)
+// ═══════════════════════════════════════════
+export const videoLikes = mysqlTable("video_likes", {
+  id: int("id").autoincrement().primaryKey(),
+  videoUrl: text("videoUrl").notNull(),
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type VideoLike = typeof videoLikes.$inferSelect;
+export type InsertVideoLike = typeof videoLikes.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Comment Likes (评论点赞)
+// ═══════════════════════════════════════════
+export const commentLikes = mysqlTable("comment_likes", {
+  id: int("id").autoincrement().primaryKey(),
+  commentId: int("commentId").notNull(),
+  userId: int("userId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CommentLike = typeof commentLikes.$inferSelect;
+export type InsertCommentLike = typeof commentLikes.$inferInsert;

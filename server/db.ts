@@ -1,4 +1,4 @@
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -16,6 +16,9 @@ import {
   studentVerifications, InsertStudentVerification,
   videoGenerations, InsertVideoGeneration,
   idol3dGenerations, InsertIdol3dGeneration,
+  videoComments, InsertVideoComment,
+  videoLikes, InsertVideoLike,
+  commentLikes, InsertCommentLike,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { CREDIT_COSTS } from "../shared/plans";
@@ -326,4 +329,86 @@ export async function getIdol3dGenerationById(id: number) {
   const db = await getDb(); if (!db) return null;
   const [row] = await db.select().from(idol3dGenerations).where(eq(idol3dGenerations.id, id)).limit(1);
   return row ?? null;
+}
+
+// ═══════════════════════════════════════════
+// Video Comments
+// ═══════════════════════════════════════════
+export async function addVideoComment(data: { videoUrl: string; userId: number; parentId?: number; content: string }) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  const result = await db.insert(videoComments).values({
+    videoUrl: data.videoUrl,
+    userId: data.userId,
+    parentId: data.parentId || null,
+    content: data.content,
+  });
+  return result[0].insertId;
+}
+
+export async function getVideoComments(videoUrl: string) {
+  const db = await getDb(); if (!db) return [];
+  return db.select({
+    id: videoComments.id,
+    videoUrl: videoComments.videoUrl,
+    userId: videoComments.userId,
+    userName: users.name,
+    parentId: videoComments.parentId,
+    content: videoComments.content,
+    likesCount: videoComments.likesCount,
+    createdAt: videoComments.createdAt,
+  })
+    .from(videoComments)
+    .leftJoin(users, eq(videoComments.userId, users.id))
+    .where(eq(videoComments.videoUrl, videoUrl))
+    .orderBy(desc(videoComments.createdAt));
+}
+
+export async function deleteVideoComment(commentId: number, userId: number) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  await db.delete(videoComments).where(and(eq(videoComments.id, commentId), eq(videoComments.userId, userId)));
+}
+
+// ═══════════════════════════════════════════
+// Video Likes
+// ═══════════════════════════════════════════
+export async function toggleVideoLike(videoUrl: string, userId: number): Promise<{ liked: boolean; totalLikes: number }> {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  const existing = await db.select().from(videoLikes).where(and(eq(videoLikes.videoUrl, videoUrl), eq(videoLikes.userId, userId)));
+  if (existing.length > 0) {
+    await db.delete(videoLikes).where(and(eq(videoLikes.videoUrl, videoUrl), eq(videoLikes.userId, userId)));
+  } else {
+    await db.insert(videoLikes).values({ videoUrl, userId });
+  }
+  const countResult = await db.select({ count: sql<number>`count(*)` }).from(videoLikes).where(eq(videoLikes.videoUrl, videoUrl));
+  return { liked: existing.length === 0, totalLikes: countResult[0]?.count ?? 0 };
+}
+
+export async function getVideoLikeStatus(videoUrl: string, userId: number): Promise<{ liked: boolean; totalLikes: number }> {
+  const db = await getDb(); if (!db) return { liked: false, totalLikes: 0 };
+  const existing = await db.select().from(videoLikes).where(and(eq(videoLikes.videoUrl, videoUrl), eq(videoLikes.userId, userId)));
+  const countResult = await db.select({ count: sql<number>`count(*)` }).from(videoLikes).where(eq(videoLikes.videoUrl, videoUrl));
+  return { liked: existing.length > 0, totalLikes: countResult[0]?.count ?? 0 };
+}
+
+// ═══════════════════════════════════════════
+// Comment Likes
+// ═══════════════════════════════════════════
+export async function toggleCommentLike(commentId: number, userId: number): Promise<{ liked: boolean }> {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  const existing = await db.select().from(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, userId)));
+  if (existing.length > 0) {
+    await db.delete(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, userId)));
+    await db.update(videoComments).set({ likesCount: sql`GREATEST(${videoComments.likesCount} - 1, 0)` }).where(eq(videoComments.id, commentId));
+  } else {
+    await db.insert(commentLikes).values({ commentId, userId });
+    await db.update(videoComments).set({ likesCount: sql`${videoComments.likesCount} + 1` }).where(eq(videoComments.id, commentId));
+  }
+  return { liked: existing.length === 0 };
+}
+
+export async function getUserCommentLikes(commentIds: number[], userId: number): Promise<number[]> {
+  const db = await getDb(); if (!db) return [];
+  if (commentIds.length === 0) return [];
+  const results = await db.select({ commentId: commentLikes.commentId }).from(commentLikes).where(and(inArray(commentLikes.commentId, commentIds), eq(commentLikes.userId, userId)));
+  return results.map(r => r.commentId);
 }

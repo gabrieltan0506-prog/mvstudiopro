@@ -15,6 +15,7 @@ import {
   ArrowRight, Image as ImageIcon, Video, Settings2, Zap,
   Download, RotateCcw, Clock, CheckCircle2, XCircle, History
 } from "lucide-react";
+import { VideoInteraction } from "@/components/VideoInteraction";
 
 /* ── Emotion Filters ── */
 const EMOTION_FILTERS = [
@@ -252,14 +253,17 @@ export default function VFXEngine() {
                         </div>
                         <p className="text-xs text-muted-foreground line-clamp-2">{gen.prompt}</p>
                         {gen.status === "completed" && gen.videoUrl && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="bg-transparent mt-3 gap-1 text-xs"
-                            onClick={() => window.open(gen.videoUrl, "_blank")}
-                          >
-                            <Download className="h-3 w-3" /> 下载视频
-                          </Button>
+                          <div className="space-y-3 mt-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="bg-transparent gap-1 text-xs"
+                              onClick={() => window.open(gen.videoUrl, "_blank")}
+                            >
+                              <Download className="h-3 w-3" /> 下载视频
+                            </Button>
+                            <VideoInteraction videoUrl={gen.videoUrl} title={gen.prompt?.slice(0, 30)} compact />
+                          </div>
                         )}
                         {gen.status === "failed" && gen.errorMessage && (
                           <p className="text-xs text-red-400 mt-2">{gen.errorMessage}</p>

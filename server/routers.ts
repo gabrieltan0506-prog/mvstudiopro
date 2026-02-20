@@ -23,6 +23,9 @@ import {
   getAdminStats,
   createVideoGeneration, updateVideoGeneration, getVideoGenerationsByUserId, getVideoGenerationById,
   createIdol3dGeneration, updateIdol3dGeneration, getIdol3dGenerationsByUserId, getIdol3dGenerationById,
+  addVideoComment, getVideoComments, deleteVideoComment,
+  toggleVideoLike, getVideoLikeStatus,
+  toggleCommentLike, getUserCommentLikes,
 } from "./db";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
@@ -741,6 +744,64 @@ export const appRouter = router({
       const gen = await getIdol3dGenerationById(input.id);
       if (!gen || gen.userId !== ctx.user.id) return null;
       return gen;
+    }),
+  }),
+
+  // ═══════════════════════════════════════════
+  // Community: 评论与分享
+  // ═══════════════════════════════════════════
+  community: router({
+    /** 获取视频评论列表 */
+    getComments: publicProcedure.input(z.object({ videoUrl: z.string() })).query(async ({ input }) => {
+      return getVideoComments(input.videoUrl);
+    }),
+    /** 发表评论 */
+    addComment: protectedProcedure.input(z.object({
+      videoUrl: z.string(),
+      content: z.string().min(1).max(500),
+      parentId: z.number().optional(),
+    })).mutation(async ({ ctx, input }) => {
+      const commentId = await addVideoComment({
+        videoUrl: input.videoUrl,
+        userId: ctx.user.id,
+        parentId: input.parentId,
+        content: input.content,
+      });
+      return { success: true, commentId };
+    }),
+    /** 删除评论（仅自己的） */
+    deleteComment: protectedProcedure.input(z.object({ commentId: z.number() })).mutation(async ({ ctx, input }) => {
+      await deleteVideoComment(input.commentId, ctx.user.id);
+      return { success: true };
+    }),
+    /** 点赞/取消点赞视频 */
+    toggleVideoLike: protectedProcedure.input(z.object({ videoUrl: z.string() })).mutation(async ({ ctx, input }) => {
+      return toggleVideoLike(input.videoUrl, ctx.user.id);
+    }),
+    /** 获取视频点赞状态 */
+    getVideoLikeStatus: protectedProcedure.input(z.object({ videoUrl: z.string() })).query(async ({ ctx, input }) => {
+      return getVideoLikeStatus(input.videoUrl, ctx.user.id);
+    }),
+    /** 点赞/取消点赞评论 */
+    toggleCommentLike: protectedProcedure.input(z.object({ commentId: z.number() })).mutation(async ({ ctx, input }) => {
+      return toggleCommentLike(input.commentId, ctx.user.id);
+    }),
+    /** 获取用户对评论的点赞状态 */
+    getUserCommentLikes: protectedProcedure.input(z.object({ commentIds: z.array(z.number()) })).query(async ({ ctx, input }) => {
+      return getUserCommentLikes(input.commentIds, ctx.user.id);
+    }),
+    /** 生成分享链接 */
+    generateShareLink: publicProcedure.input(z.object({
+      videoUrl: z.string(),
+      title: z.string().optional(),
+    })).query(async ({ input }) => {
+      const shareId = Buffer.from(input.videoUrl).toString('base64url').slice(0, 32);
+      return {
+        shareId,
+        shareUrl: `/share/${shareId}`,
+        videoUrl: input.videoUrl,
+        title: input.title || 'MV Studio Pro 作品',
+      };
     }),
   }),
 });
