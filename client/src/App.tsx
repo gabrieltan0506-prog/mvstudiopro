@@ -21,6 +21,7 @@ const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 const RemixStudio = lazy(() => import("./pages/RemixStudio"));
 const AudioLab = lazy(() => import("./pages/AudioLab"));
+const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
 function PageLoader() {
   return (
@@ -47,6 +48,7 @@ function Router() {
         <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/remix"} component={RemixStudio} />
         <Route path={"/audio-lab"} component={AudioLab} />
+        <Route path={"/3d-studio"} component={ThreeDStudio} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />
       </Switch>

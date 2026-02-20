@@ -31,7 +31,7 @@ import { generateVideo, isVeoAvailable } from "./veo";
 
 /** 管理员跳过 Credits 扣费 */
 function isAdmin(user: { role: string }) { return user.role === "admin"; }
-import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
+import { generate3DModel, isHunyuan3DAvailable, estimate3DCost, type ModelTier } from "./hunyuan3d";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { analyzeAudioWithGemini, isGeminiAudioAvailable } from "./gemini-audio";
 import { CREDIT_COSTS } from "../shared/plans";
@@ -866,20 +866,35 @@ export const appRouter = router({
     /** Check if Hunyuan3D API is available */
     status: publicProcedure.query(() => ({ available: isHunyuan3DAvailable() })),
 
+    /** Estimate generation cost */
+    estimateCost: publicProcedure.input(z.object({
+      tier: z.enum(["rapid", "pro"]).default("rapid"),
+      enablePbr: z.boolean().default(false),
+      enableMultiview: z.boolean().default(false),
+      enableCustomFaces: z.boolean().default(false),
+    })).query(({ input }) => {
+      return estimate3DCost(input.tier, input.enablePbr, input.enableMultiview, input.enableCustomFaces);
+    }),
+
     /** Generate 3D model from 2D image */
     generate: protectedProcedure.input(z.object({
-      inputImageUrl: z.string().url(),
-      mode: z.enum(["rapid", "pro"]).default("rapid"),
+      imageUrl: z.string().url(),
+      tier: z.enum(["rapid", "pro"]).default("rapid"),
       enablePbr: z.boolean().default(false),
-      enableGeometry: z.boolean().default(false),
+      enableMultiview: z.boolean().default(false),
+      multiviewUrls: z.array(z.string().url()).optional(),
+      enableCustomFaces: z.boolean().default(false),
+      targetFaceCount: z.number().optional(),
+      textureResolution: z.enum(["512", "1024", "2048"]).optional(),
+      outputFormat: z.enum(["glb", "obj"]).optional(),
     })).mutation(async ({ ctx, input }) => {
-      // Determine credit cost based on mode
-      const costKey = input.mode === "pro" ? "idol3DPro" : "idol3DRapid";
+      // Estimate cost and deduct credits
+      const costEst = estimate3DCost(input.tier, input.enablePbr, input.enableMultiview, input.enableCustomFaces);
       let creditsUsed3d = 0;
       if (!isAdmin(ctx.user)) {
-        const deduction = await deductCredits(ctx.user.id, costKey);
+        const deduction = await deductCredits(ctx.user.id, input.tier === "pro" ? "idol3DPro" : "idol3DRapid");
         if (!deduction.success) {
-          return { success: false as const, error: "Credits 不足，请充值后再试" };
+          return { success: false as const, error: `Credits 不足（需要 ${costEst.credits} Credits），请充值后再试` };
         }
         creditsUsed3d = deduction.cost;
       }
@@ -887,34 +902,58 @@ export const appRouter = router({
       // Create DB record
       const genId = await createIdol3dGeneration({
         userId: ctx.user.id,
-        inputImageUrl: input.inputImageUrl,
-        mode: input.mode,
+        inputImageUrl: input.imageUrl,
+        mode: input.tier,
         enablePbr: input.enablePbr,
-        enableGeometry: input.enableGeometry,
+        enableGeometry: input.enableMultiview,
         status: "generating",
         creditsUsed: creditsUsed3d,
       });
 
       try {
         const result = await generate3DModel({
-          inputImageUrl: input.inputImageUrl,
-          mode: input.mode,
-          enablePbr: input.enablePbr,
-          enableGeometry: input.enableGeometry,
+          image_url: input.imageUrl,
+          tier: input.tier,
+          enable_pbr: input.enablePbr,
+          multiview_urls: input.multiviewUrls,
+          target_face_count: input.targetFaceCount,
+          texture_resolution: input.textureResolution ? parseInt(input.textureResolution) as 512 | 1024 | 2048 : undefined,
+          output_format: input.outputFormat,
         });
 
+        if (result.status === "failed") {
+          // Refund credits on failure
+          if (creditsUsed3d > 0) await addCredits(ctx.user.id, creditsUsed3d, "refund", "3D模型生成失败退款");
+          await updateIdol3dGeneration(genId, {
+            status: "failed",
+            errorMessage: result.error || "生成失败",
+          });
+          return { success: false as const, error: result.error || "3D模型生成失败，请稍后重试" };
+        }
+
         await updateIdol3dGeneration(genId, {
-          thumbnailUrl: result.thumbnailUrl,
-          modelGlbUrl: result.modelGlbUrl,
-          modelObjUrl: result.modelObjUrl,
-          modelFbxUrl: result.modelFbxUrl,
-          modelUsdzUrl: result.modelUsdzUrl,
-          textureUrl: result.textureUrl,
+          thumbnailUrl: result.output?.preview_url ?? null,
+          modelGlbUrl: result.output?.model_url ?? null,
+          modelObjUrl: result.output?.obj_url ?? null,
+          modelFbxUrl: null,
+          modelUsdzUrl: null,
+          textureUrl: result.output?.texture_url ?? null,
           status: "completed",
           completedAt: new Date(),
         });
 
-        return { success: true as const, id: genId, ...result };
+        return {
+          success: true as const,
+          id: genId,
+          requestId: result.request_id,
+          modelUrl: result.output?.model_url ?? null,
+          objUrl: result.output?.obj_url ?? null,
+          textureUrl: result.output?.texture_url ?? null,
+          previewUrl: result.output?.preview_url ?? null,
+          availableFormats: result.output?.available_formats ?? [],
+          timeTaken: result.time_taken,
+          creditsUsed: creditsUsed3d,
+        };
       } catch (err: any) {
         // Refund credits on failure
         if (creditsUsed3d > 0) await addCredits(ctx.user.id, creditsUsed3d, "refund", "3D模型生成失败退款");

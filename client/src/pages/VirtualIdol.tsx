@@ -165,10 +165,9 @@ export default function VirtualIdol() {
     if (!uploadedImageUrl) { toast.error("请先上传或选择一张图片"); return; }
     setGenerating3d(true);
     generate3dMutation.mutate({
-      inputImageUrl: uploadedImageUrl,
-      mode: mode3d,
+      imageUrl: uploadedImageUrl,
+      tier: mode3d,
       enablePbr,
-      enableGeometry,
     });
   };
 
