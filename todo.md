@@ -183,3 +183,8 @@
 - [x] 虚拟偶像页面改为上下并排布局（上：2D生成，下：3D转换）
 - [x] 移除上传图片功能，生成的图像直接用于 3D 转换
 - [x] 测试通过并保存 checkpoint
+
+## Phase 20: 修复虚拟偶像风格不匹配问题
+- [x] 检查后端 virtualIdol.generate 的 prompt 风格参数传递
+- [x] 修复写实风 prompt：强调 photorealistic photograph、real person、DSLR，明确排除 anime/cartoon/illustration
+- [x] 测试通过并保存 checkpoint

@@ -210,13 +210,20 @@ export const appRouter = router({
       quality: z.enum(["free", "2k", "4k"]).default("free"),
     })).mutation(async ({ ctx, input }) => {
       const stylePrompts: Record<string, string> = {
-        anime: "anime style, vibrant colors, detailed cel-shading",
-        realistic: "photorealistic, ultra-detailed, studio lighting, 8K",
-        cyberpunk: "cyberpunk style, neon lights, futuristic, dark atmosphere",
-        fantasy: "fantasy art style, ethereal, magical, dreamy atmosphere",
-        chibi: "chibi style, cute, big eyes, small body, kawaii",
+        anime: "Japanese anime art style, vibrant colors, detailed cel-shading, anime character design, manga illustration",
+        realistic: "photorealistic photograph of a real person, ultra-detailed skin texture, natural studio lighting, DSLR camera shot, 8K resolution, real human face, NOT anime NOT cartoon NOT illustration NOT drawing",
+        cyberpunk: "cyberpunk style portrait, neon lights, futuristic cityscape, dark atmosphere, glowing accents, cinematic",
+        fantasy: "fantasy art style, ethereal glow, magical particles, dreamy atmosphere, enchanted, painterly",
+        chibi: "chibi style character, cute, big round eyes, small body proportions, kawaii, pastel colors, adorable",
       };
-      const prompt = `Virtual idol character portrait: ${input.description}. Style: ${stylePrompts[input.style]}. Full body, high quality, professional illustration.`;
+      const styleContext: Record<string, string> = {
+        anime: "anime character illustration, full body",
+        realistic: "professional photography portrait of a real person, full body shot, natural pose",
+        cyberpunk: "cyberpunk character portrait, full body, cinematic composition",
+        fantasy: "fantasy character art, full body, magical setting",
+        chibi: "chibi character design, full body, cute pose",
+      };
+      const prompt = `${styleContext[input.style]}: ${input.description}. ${stylePrompts[input.style]}. High quality, masterpiece.`;
 
       if (input.quality === "free") {
         // Free tier: use built-in generateImage, check free usage limit
