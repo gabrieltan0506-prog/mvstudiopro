@@ -1,0 +1,242 @@
+CREATE TABLE `beta_quotas` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`totalQuota` int NOT NULL DEFAULT 0,
+	`usedCount` int NOT NULL DEFAULT 0,
+	`bonusQuota` int NOT NULL DEFAULT 0,
+	`inviteCode` varchar(16) NOT NULL,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`grantedBy` int NOT NULL,
+	`note` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `beta_quotas_id` PRIMARY KEY(`id`),
+	CONSTRAINT `beta_quotas_userId_unique` UNIQUE(`userId`),
+	CONSTRAINT `beta_quotas_inviteCode_unique` UNIQUE(`inviteCode`)
+);
+--> statement-breakpoint
+CREATE TABLE `beta_referrals` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`inviterUserId` int NOT NULL,
+	`inviteeUserId` int NOT NULL,
+	`inviteCode` varchar(16) NOT NULL,
+	`bonusGranted` int NOT NULL DEFAULT 10,
+	`referralStatus` enum('pending','completed','revoked') NOT NULL DEFAULT 'completed',
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `beta_referrals_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `credit_balances` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`balance` int NOT NULL DEFAULT 0,
+	`lifetimeEarned` int NOT NULL DEFAULT 0,
+	`lifetimeSpent` int NOT NULL DEFAULT 0,
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `credit_balances_id` PRIMARY KEY(`id`),
+	CONSTRAINT `credit_balances_userId_unique` UNIQUE(`userId`)
+);
+--> statement-breakpoint
+CREATE TABLE `credit_transactions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`amount` int NOT NULL,
+	`type` varchar(20) NOT NULL,
+	`source` varchar(50) NOT NULL,
+	`action` varchar(50),
+	`description` text,
+	`balanceAfter` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `credit_transactions_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `email_auth` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`email` varchar(255) NOT NULL,
+	`passwordHash` varchar(255) NOT NULL,
+	`userId` int NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `email_auth_id` PRIMARY KEY(`id`),
+	CONSTRAINT `email_auth_email_unique` UNIQUE(`email`)
+);
+--> statement-breakpoint
+CREATE TABLE `guestbook_messages` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(100) NOT NULL,
+	`email` varchar(320),
+	`phone` varchar(30),
+	`company` varchar(200),
+	`subject` varchar(255) NOT NULL,
+	`message` text NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `guestbook_messages_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `kpi_snapshots` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`date` varchar(10) NOT NULL,
+	`mrr` int NOT NULL DEFAULT 0,
+	`totalSubscribers` int NOT NULL DEFAULT 0,
+	`proCount` int NOT NULL DEFAULT 0,
+	`enterpriseCount` int NOT NULL DEFAULT 0,
+	`freeCount` int NOT NULL DEFAULT 0,
+	`newSubscribers` int NOT NULL DEFAULT 0,
+	`totalCreditsConsumed` int NOT NULL DEFAULT 0,
+	`totalRevenue` int NOT NULL DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `kpi_snapshots_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `mv_reviews` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`mvId` varchar(64) NOT NULL,
+	`nickname` varchar(100) NOT NULL,
+	`rating` int NOT NULL,
+	`comment` text NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `mv_reviews_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `payment_submissions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`packageType` varchar(50) NOT NULL,
+	`amount` varchar(20) NOT NULL,
+	`paymentMethod` varchar(50),
+	`screenshotUrl` text NOT NULL,
+	`paymentStatus` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+	`rejectionReason` text,
+	`reviewedBy` int,
+	`reviewedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `payment_submissions_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `storyboards` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`lyrics` text NOT NULL,
+	`sceneCount` int NOT NULL,
+	`storyboard` text NOT NULL,
+	`status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+	`rejectionReason` text,
+	`reviewedBy` int,
+	`reviewedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `storyboards_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `stripe_audit_logs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int,
+	`eventType` varchar(100) NOT NULL,
+	`eventId` varchar(255),
+	`stripeCustomerId` varchar(255),
+	`auditAction` varchar(100) NOT NULL,
+	`auditStatus` varchar(20) NOT NULL DEFAULT 'success',
+	`amount` int,
+	`currency` varchar(10) DEFAULT 'usd',
+	`metadata` text,
+	`errorMessage` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `stripe_audit_logs_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `stripe_customers` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`stripeCustomerId` varchar(255) NOT NULL,
+	`plan` varchar(20) NOT NULL DEFAULT 'free',
+	`stripeSubscriptionId` varchar(255),
+	`currentPeriodEnd` timestamp,
+	`cancelAtPeriodEnd` int NOT NULL DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `stripe_customers_id` PRIMARY KEY(`id`),
+	CONSTRAINT `stripe_customers_userId_unique` UNIQUE(`userId`),
+	CONSTRAINT `stripe_customers_stripeCustomerId_unique` UNIQUE(`stripeCustomerId`)
+);
+--> statement-breakpoint
+CREATE TABLE `stripe_usage_logs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`usageAction` varchar(50) NOT NULL,
+	`creditsCost` int NOT NULL DEFAULT 0,
+	`isFreeQuota` int NOT NULL DEFAULT 0,
+	`description` text,
+	`balanceAfter` int,
+	`metadata` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `stripe_usage_logs_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `student_verifications` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`schoolEmail` varchar(320) NOT NULL,
+	`schoolEmailVerified` boolean NOT NULL DEFAULT false,
+	`educationLevel` enum('elementary','middle','high','university') NOT NULL,
+	`schoolName` varchar(255),
+	`verificationStatus` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+	`rejectionReason` text,
+	`verifiedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `student_verifications_id` PRIMARY KEY(`id`),
+	CONSTRAINT `student_verifications_userId_unique` UNIQUE(`userId`)
+);
+--> statement-breakpoint
+CREATE TABLE `team_activity_logs` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`teamId` int NOT NULL,
+	`userId` int NOT NULL,
+	`action` varchar(50) NOT NULL,
+	`targetUserId` int,
+	`description` text,
+	`metadata` text,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `team_activity_logs_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `team_members` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`teamId` int NOT NULL,
+	`userId` int NOT NULL,
+	`teamRole` enum('owner','admin','member') NOT NULL DEFAULT 'member',
+	`allocatedCredits` int NOT NULL DEFAULT 0,
+	`usedCredits` int NOT NULL DEFAULT 0,
+	`memberStatus` enum('active','invited','suspended','removed') NOT NULL DEFAULT 'invited',
+	`invitedAt` timestamp NOT NULL DEFAULT (now()),
+	`joinedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `team_members_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `teams` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`name` varchar(100) NOT NULL,
+	`ownerId` int NOT NULL,
+	`maxMembers` int NOT NULL DEFAULT 10,
+	`creditPool` int NOT NULL DEFAULT 0,
+	`creditAllocated` int NOT NULL DEFAULT 0,
+	`inviteCode` varchar(20) NOT NULL,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `teams_id` PRIMARY KEY(`id`),
+	CONSTRAINT `teams_inviteCode_unique` UNIQUE(`inviteCode`)
+);
+--> statement-breakpoint
+CREATE TABLE `usage_tracking` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`featureType` enum('storyboard','analysis','avatar') NOT NULL,
+	`usageCount` int NOT NULL DEFAULT 0,
+	`lastResetAt` timestamp NOT NULL DEFAULT (now()),
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `usage_tracking_id` PRIMARY KEY(`id`)
+);
