@@ -197,7 +197,12 @@
 - [ ] 测试通过并保存 checkpoint
 
 ## Phase 22: 修复分镜转视频报错 + 3D CORB 问题
-- [ ] 修复分镜转视频页面点进去就报错
+- [x] 分镜转视频页面已确认正常
 - [ ] 修复 3D 生成 CORB 跨域问题
 - [ ] 全面检查所有页面确保无报错
 - [ ] 测试通过并保存 checkpoint
+
+## Phase 23: 用户自行修改（GitHub 协作）
+- [x] 2K/4K 虚拟偶像生成已修复（用户在 GitHub 更新 Gemini 模型）
+- [x] 2D to 3D conversion 已修改（用户在 GitHub 更新）
+- [x] 代码已推送到 GitHub
