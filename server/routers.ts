@@ -299,7 +299,7 @@ export const appRouter = router({
     generate: protectedProcedure.mutation(async ({ ctx }) => {
       const response = await invokeLLM({
         messages: [
-          { role: "system", content: "你是 MV Studio Pro 的 AI 助手。請用熱情、專業的語氣為新用戶生成一段歡迎語（50-100字），提及平台的核心功能（MV 分析、虛擬偶像、分鏡腳本）。" },
+          { role: "system", content: "你是 MV Studio Pro 的 AI 助手。請用熱情、專業的語氣為新用戶生成一段歡迎語（50-100字），提及平台的核心功能（视频PK评分、虛擬偶像工坊、智能分镜脚本、分镜转视频）。" },
           { role: "user", content: `用戶名: ${ctx.user.name || "創作者"}` },
         ],
       });

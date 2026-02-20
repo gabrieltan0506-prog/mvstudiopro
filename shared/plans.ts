@@ -32,7 +32,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
       "Basic Community Features",
     ],
     featuresCn: [
-      "MV 智能分析（前 2 次免費）",
+      "视频PK评分（前 2 次免费）",
       "虛擬偶像生成（前 3 個免費）",
       "分鏡腳本生成（第 1 次免費）",
       "MV 展廳瀏覽",
@@ -59,7 +59,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
     ],
     featuresCn: [
       "所有免費版功能",
-      "無限 MV 智能分析",
+      "无限视频PK评分",
       "無限虛擬偶像生成",
       "無限分鏡腳本生成",
       "MV 生成",

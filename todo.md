@@ -50,3 +50,18 @@
 - [x] 构建前端支付页面与订阅流程
 - [x] Webhook 处理支付回调
 - [x] 测试并保存 checkpoint
+
+## Phase 5: 模块名称更新 & tapnow.ai 风格
+- [x] 首页 Hero 区域添加 tapnow.ai 风格动画（粒子背景、渐变光晕、文字渐入）
+- [x] 首页 Slogan 更新："让你视频的每一帧，都成为爆款的起点"
+- [x] 首页 9 宫格彩色卡片与截图一致
+- [x] "MV 分析" → "视频PK评分"（首页、导航栏、MVAnalysis 页面、Dashboard）
+- [x] "视觉特效引擎" → "分镜转视频"（首页、导航栏、VFXEngine 页面、Dashboard）
+- [x] "歌词生成分镜" → "智能脚本与分镜生成"（Storyboard 页面标题）
+- [x] 更新 shared/plans.ts 中的旧名称
+- [x] 更新 routers.ts 中的欢迎语提示词
+- [ ] 下载 YouTube 视频替换展厅（中国用户无法访问 YouTube）
+- [ ] 隐藏 Stripe 支付入口（密钥未配置）
+- [ ] 英文双语支持
+- [ ] PDF 导出分镜脚本
+- [ ] 更多示例视频

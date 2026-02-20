@@ -57,8 +57,8 @@ export default function Storyboard() {
         <Navbar />
         <div className="pt-32 text-center container">
           <Clapperboard className="h-16 w-16 text-primary mx-auto mb-6" />
-          <h1 className="text-3xl font-bold mb-4">歌词生成分镜</h1>
-          <p className="text-muted-foreground mb-8 max-w-lg mx-auto">输入歌词或文本，AI 自动生成专业 MV 分镜脚本</p>
+          <h1 className="text-3xl font-bold mb-4">智能脚本与分镜生成</h1>
+          <p className="text-muted-foreground mb-8 max-w-lg mx-auto">输入歌词或文本，AI 自动生成专业视频分镜脚本</p>
           <Button size="lg" className="bg-primary text-primary-foreground" onClick={() => { window.location.href = getLoginUrl(); }}>登录后使用</Button>
         </div>
       </div>
@@ -70,8 +70,14 @@ export default function Storyboard() {
       <Navbar />
       <div className="pt-24 pb-16 container max-w-5xl">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">歌词生成分镜</h1>
-          <p className="text-muted-foreground">输入歌词或文本，AI 自动生成专业 MV 分镜脚本，支持导出 PDF</p>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-lg bg-yellow-500/20 flex items-center justify-center">
+              <Clapperboard className="h-5 w-5 text-yellow-400" />
+            </div>
+            <h1 className="text-3xl font-bold">智能脚本与分镜生成</h1>
+          </div>
+          <p className="text-muted-foreground">输入歌词或文本，AI 自动生成专业视频分镜脚本，免费 10 个分镜或 600 字以内</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">消耗 10 Credits / 次</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

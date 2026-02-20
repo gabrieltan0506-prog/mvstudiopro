@@ -8,19 +8,141 @@ import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Film, Sparkles, Clapperboard, Wand2, Users, BarChart3,
-  ArrowRight, Play, Star, Send, ChevronRight
+  ArrowRight, Play, Star, Send, ChevronRight, Video, Trophy,
+  FolderOpen, Flame, Zap
 } from "lucide-react";
 
-const FEATURES = [
-  { icon: BarChart3, title: "MV 智能分析", desc: "AI 自动分析画面构图、色彩风格、节奏感与爆款潜力评分", color: "from-orange-500/20 to-red-500/20" },
-  { icon: Sparkles, title: "虚拟偶像工坊", desc: "输入描述生成动漫风、写实风、赛博朋克等多风格虚拟偶像", color: "from-purple-500/20 to-pink-500/20" },
-  { icon: Clapperboard, title: "歌词生成分镜", desc: "输入歌词，AI 自动生成专业 MV 分镜脚本，支持导出 PDF", color: "from-blue-500/20 to-cyan-500/20" },
-  { icon: Wand2, title: "视觉特效引擎", desc: "为 MV 素材添加情感滤镜、光量动态特效和转场效果", color: "from-emerald-500/20 to-teal-500/20" },
-  { icon: Film, title: "MV 展厅", desc: "精选 MV 作品展示，支持在线播放、评论互动和留言板", color: "from-amber-500/20 to-yellow-500/20" },
-  { icon: Users, title: "团队协作", desc: "团队创建、成员邀请、角色分配、使用量统计一站管理", color: "from-indigo-500/20 to-violet-500/20" },
+/* ── Particle Canvas Background (tapnow.ai style) ── */
+function ParticleBackground() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animId: number;
+    let particles: { x: number; y: number; vx: number; vy: number; r: number; o: number; color: string }[] = [];
+
+    const colors = [
+      "rgba(232,130,94,", // primary orange
+      "rgba(168,85,247,", // purple
+      "rgba(59,130,246,", // blue
+      "rgba(236,72,153,", // pink
+    ];
+
+    function resize() {
+      canvas!.width = window.innerWidth;
+      canvas!.height = window.innerHeight;
+    }
+
+    function initParticles() {
+      particles = [];
+      const count = Math.floor((canvas!.width * canvas!.height) / 12000);
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x: Math.random() * canvas!.width,
+          y: Math.random() * canvas!.height,
+          vx: (Math.random() - 0.5) * 0.3,
+          vy: (Math.random() - 0.5) * 0.3,
+          r: Math.random() * 1.5 + 0.5,
+          o: Math.random() * 0.5 + 0.1,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+    }
+
+    function draw() {
+      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0) p.x = canvas!.width;
+        if (p.x > canvas!.width) p.x = 0;
+        if (p.y < 0) p.y = canvas!.height;
+        if (p.y > canvas!.height) p.y = 0;
+        ctx!.beginPath();
+        ctx!.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx!.fillStyle = p.color + p.o + ")";
+        ctx!.fill();
+      }
+      animId = requestAnimationFrame(draw);
+    }
+
+    resize();
+    initParticles();
+    draw();
+    window.addEventListener("resize", () => { resize(); initParticles(); });
+
+    return () => {
+      cancelAnimationFrame(animId);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none" />;
+}
+
+/* ── Creative Tools Cards (旧版 9 宫格彩色卡片) ── */
+const CREATIVE_TOOLS = [
+  {
+    icon: Film, title: "视频展厅", titleEn: "Video Gallery",
+    desc: "浏览精选视频作品，支持在线播放、评论交互和留言板功能",
+    borderColor: "border-t-red-500", iconBg: "bg-red-500/20", iconColor: "text-red-400",
+    href: "/gallery", ready: true,
+  },
+  {
+    icon: BarChart3, title: "视频 PK 评分", titleEn: "Video PK Score",
+    desc: "上传视频，AI 自动分析画面构图、色彩风格、节奏感与爆款潜力评分",
+    borderColor: "border-t-blue-500", iconBg: "bg-blue-500/20", iconColor: "text-blue-400",
+    href: "/analysis", ready: true,
+  },
+  {
+    icon: Sparkles, title: "虚拟偶像工坊", titleEn: "Virtual Idol Studio",
+    desc: "输入描述即可生成动漫风、写实风、赛博朋克等多风格虚拟偶像形象",
+    borderColor: "border-t-green-500", iconBg: "bg-green-500/20", iconColor: "text-green-400",
+    href: "/idol", ready: true,
+  },
+  {
+    icon: Clapperboard, title: "智能脚本与分镜生成", titleEn: "Script & Storyboard",
+    desc: "输入歌词或文本，AI 自动生成专业视频分镜脚本，免费 10 个分镜或 600 字以内",
+    borderColor: "border-t-yellow-500", iconBg: "bg-yellow-500/20", iconColor: "text-yellow-400",
+    href: "/storyboard", ready: true,
+  },
+  {
+    icon: Wand2, title: "分镜转视频", titleEn: "Storyboard to Video",
+    desc: "将分镜脚本转化为高质量视频片段，支持情感滤镜、动态特效和转场效果",
+    borderColor: "border-t-emerald-500", iconBg: "bg-emerald-500/20", iconColor: "text-emerald-400",
+    href: "/vfx", ready: true,
+  },
+  {
+    icon: Trophy, title: "爆款视频奖励", titleEn: "Viral Video Rewards",
+    desc: "上传已发布的爆款视频，AI 自动评分，80 分以上可获得 30-80 Credits 奖励",
+    borderColor: "border-t-amber-500", iconBg: "bg-amber-500/20", iconColor: "text-amber-400",
+    href: "/analysis", ready: false,
+  },
+  {
+    icon: FolderOpen, title: "我的视频", titleEn: "My Videos",
+    desc: "查看已上传视频的评分历史、Credits 奖励记录和分析详情",
+    borderColor: "border-t-sky-500", iconBg: "bg-sky-500/20", iconColor: "text-sky-400",
+    href: "/dashboard", ready: true,
+  },
+  {
+    icon: Flame, title: "平台展厅", titleEn: "Platform Gallery",
+    desc: "浏览 90 分以上的获奖爆款视频，发现优秀创作者和爆款灵感",
+    borderColor: "border-t-orange-500", iconBg: "bg-orange-500/20", iconColor: "text-orange-400",
+    href: "/gallery", ready: true,
+  },
+  {
+    icon: Zap, title: "Kling AI 工作室", titleEn: "Kling AI Studio",
+    desc: "3.0 Omni 视频生成、Motion Control 动作迁移、Lip-Sync 对口型，一站式 AI 视频制作",
+    borderColor: "border-t-purple-500", iconBg: "bg-purple-500/20", iconColor: "text-purple-400",
+    href: "/vfx", ready: false,
+  },
 ];
 
 const SHOWCASE_MVS = [
@@ -34,10 +156,11 @@ export default function Home() {
   const [contactForm, setContactForm] = useState({ name: "", email: "", subject: "", message: "" });
 
   useEffect(() => {
-    document.title = "MV Studio Pro - AI驱动的一站式MV创作与管理平台";
+    document.title = "MV Studio Pro - AI 驱动的一站式视频创作平台";
     const metaDesc = document.querySelector('meta[name="description"]');
-    if (metaDesc) metaDesc.setAttribute('content', 'MV Studio Pro 是专业的AI视频创作平台，提供MV智能分析、虚拟偶像生成、歌词分镜脚本、视觉特效引擎等一站式MV制作工具，助力创作者高效产出爆款音乐视频。');
+    if (metaDesc) metaDesc.setAttribute("content", "MV Studio Pro 是专业的AI视频创作平台，提供视频PK评分、虚拟偶像生成、智能分镜脚本、分镜转视频等一站式创作工具。");
   }, []);
+
   const submitGuestbook = trpc.guestbook.submit.useMutation({
     onSuccess: () => { toast.success("消息已发送！我们会尽快回复您。"); setContactForm({ name: "", email: "", subject: "", message: "" }); },
     onError: () => toast.error("发送失败，请稍后重试"),
@@ -47,82 +170,150 @@ export default function Home() {
     <div className="min-h-screen bg-background text-foreground">
       <Navbar />
 
-      {/* Hero */}
-      <section className="relative pt-32 pb-20 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-purple-500/5" />
-        <div className="absolute top-20 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-10 right-1/4 w-72 h-72 bg-purple-500/10 rounded-full blur-3xl" />
-        <div className="container relative">
-          <div className="max-w-3xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 mb-6 rounded-full border border-primary/30 bg-primary/10 text-primary text-sm font-medium">
-              <Sparkles className="h-4 w-4" /> AI 驱动的一站式 MV 创作平台
+      {/* ═══ Hero Section (tapnow.ai style) ═══ */}
+      <section className="relative pt-28 pb-24 overflow-hidden min-h-[85vh] flex items-center">
+        {/* Particle background */}
+        <ParticleBackground />
+
+        {/* Animated gradient orbs */}
+        <div className="absolute top-10 left-1/4 w-[500px] h-[500px] bg-primary/15 rounded-full blur-[120px] animate-pulse" style={{ animationDuration: "4s" }} />
+        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-500/15 rounded-full blur-[100px] animate-pulse" style={{ animationDuration: "6s" }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/8 rounded-full blur-[150px] animate-pulse" style={{ animationDuration: "8s" }} />
+
+        {/* Radial gradient overlay */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(16,16,18,0.6)_70%,rgba(16,16,18,0.95)_100%)]" />
+
+        {/* Grid lines (subtle) */}
+        <div className="absolute inset-0 opacity-[0.03]" style={{
+          backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)",
+          backgroundSize: "60px 60px"
+        }} />
+
+        <div className="container relative z-10">
+          <div className="max-w-4xl mx-auto text-center">
+            {/* Badge */}
+            <div
+              className="inline-flex items-center gap-2 px-5 py-2 mb-8 rounded-full border border-primary/30 bg-primary/10 text-primary text-sm font-medium backdrop-blur-sm"
+              style={{ animation: "fadeInUp 0.6s ease-out both" }}
+            >
+              <Sparkles className="h-4 w-4" /> AI 驱动的一站式视频创作平台
             </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight mb-6">
-              用 AI 重新定义
+
+            {/* Main Title */}
+            <h1
+              className="text-4xl sm:text-5xl lg:text-7xl font-extrabold tracking-tight leading-[1.1] mb-8"
+              style={{ animation: "fadeInUp 0.8s ease-out 0.15s both" }}
+            >
+              让你视频的每一帧
               <br />
               <span className="bg-gradient-to-r from-primary via-orange-400 to-amber-400 bg-clip-text text-transparent">
-                MV 创作体验
+                都成为爆款的起点
               </span>
             </h1>
-            <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto leading-relaxed">
-              从 MV 智能分析、虚拟偶像生成到分镜脚本创作，MV Studio Pro 为音乐创作者提供全流程 AI 工具，让每一帧画面都充满灵感。
+
+            {/* Subtitle */}
+            <p
+              className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-2xl mx-auto leading-relaxed"
+              style={{ animation: "fadeInUp 0.8s ease-out 0.3s both" }}
+            >
+              从视频 PK 评分到虚拟偶像生成，AI 驱动的一站式视频创作平台
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+
+            {/* CTA Buttons */}
+            <div
+              className="flex flex-col sm:flex-row gap-4 justify-center"
+              style={{ animation: "fadeInUp 0.8s ease-out 0.45s both" }}
+            >
               {isAuthenticated ? (
                 <Link href="/gallery">
-                  <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8">
-                    进入 MV 展厅 <ArrowRight className="h-5 w-5" />
+                  <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all">
+                    进入视频展厅 <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
               ) : (
                 <Button
                   size="lg"
-                  className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
                   onClick={() => { window.location.href = getLoginUrl(); }}
                 >
                   免费开始创作 <ArrowRight className="h-5 w-5" />
                 </Button>
               )}
               <Link href="/gallery">
-                <Button size="lg" variant="outline" className="gap-2 text-base px-8 bg-transparent">
-                  <Play className="h-5 w-5" /> 浏览精选 MV
+                <Button size="lg" variant="outline" className="gap-2 text-base px-8 bg-transparent border-white/20 hover:bg-white/5 hover:border-white/30 transition-all">
+                  <Play className="h-5 w-5" /> 浏览精选作品
                 </Button>
               </Link>
             </div>
           </div>
         </div>
+
+        {/* Bottom gradient fade */}
+        <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent" />
       </section>
 
-      {/* Features */}
-      <section className="py-20 border-t border-border/30">
+      {/* ═══ Creative Tools (旧版 9 宫格彩色卡片) ═══ */}
+      <section className="py-20">
         <div className="container">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold mb-4">核心功能</h2>
-            <p className="text-muted-foreground max-w-xl mx-auto">六大 AI 工具模块，覆盖 MV 创作全流程</p>
+            <p className="text-primary text-sm font-semibold tracking-widest uppercase mb-3">✨ Creative Tools</p>
+            <h2 className="text-3xl sm:text-4xl font-bold mb-4">创作工具</h2>
+            <p className="text-muted-foreground max-w-xl mx-auto">探索 AI 驱动的全方位视频创作工具</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {FEATURES.map((f) => (
-              <Card key={f.title} className="bg-card/50 border-border/50 hover:border-primary/30 transition-all group">
-                <CardContent className="p-6">
-                  <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                    <f.icon className="h-6 w-6 text-foreground" />
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">{f.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
-                </CardContent>
-              </Card>
+
+          {/* Top row: 5 cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 mb-5">
+            {CREATIVE_TOOLS.slice(0, 5).map((tool) => (
+              <Link key={tool.title} href={tool.ready ? tool.href : "#"} onClick={(e) => { if (!tool.ready) { e.preventDefault(); toast.info("功能即将上线，敬请期待！"); } }}>
+                <Card className={`bg-card/60 border-border/40 ${tool.borderColor} border-t-2 hover:bg-card/80 hover:border-t-3 transition-all group cursor-pointer h-full`}>
+                  <CardContent className="p-5 flex flex-col h-full">
+                    <div className={`w-12 h-12 rounded-xl ${tool.iconBg} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <tool.icon className={`h-6 w-6 ${tool.iconColor}`} />
+                    </div>
+                    <h3 className="text-base font-semibold mb-2">{tool.title}</h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed flex-1">{tool.desc}</p>
+                    {tool.ready && (
+                      <div className={`mt-4 text-xs font-medium ${tool.iconColor} flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
+                        立即使用 <ArrowRight className="h-3 w-3" />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+
+          {/* Bottom row: 4 cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {CREATIVE_TOOLS.slice(5).map((tool) => (
+              <Link key={tool.title} href={tool.ready ? tool.href : "#"} onClick={(e) => { if (!tool.ready) { e.preventDefault(); toast.info("功能即将上线，敬请期待！"); } }}>
+                <Card className={`bg-card/60 border-border/40 ${tool.borderColor} border-t-2 hover:bg-card/80 hover:border-t-3 transition-all group cursor-pointer h-full`}>
+                  <CardContent className="p-5 flex flex-col h-full">
+                    <div className={`w-12 h-12 rounded-xl ${tool.iconBg} flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                      <tool.icon className={`h-6 w-6 ${tool.iconColor}`} />
+                    </div>
+                    <h3 className="text-base font-semibold mb-2">{tool.title}</h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed flex-1">{tool.desc}</p>
+                    {tool.ready && (
+                      <div className={`mt-4 text-xs font-medium ${tool.iconColor} flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
+                        立即使用 <ArrowRight className="h-3 w-3" />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Showcase MVs */}
+      {/* ═══ Showcase MVs ═══ */}
       <section className="py-20 border-t border-border/30">
         <div className="container">
           <div className="flex items-center justify-between mb-10">
             <div>
-              <h2 className="text-3xl font-bold mb-2">精选 MV</h2>
-              <p className="text-muted-foreground">探索由 AI 辅助创作的优秀作品</p>
+              <h2 className="text-3xl font-bold mb-2">精选作品</h2>
+              <p className="text-muted-foreground">探索由 AI 辅助创作的优秀视频</p>
             </div>
             <Link href="/gallery">
               <Button variant="ghost" className="gap-1 text-primary hover:text-primary/80">
@@ -135,11 +326,7 @@ export default function Home() {
               <Link key={mv.id} href="/gallery">
                 <Card className="overflow-hidden bg-card/50 border-border/50 hover:border-primary/30 transition-all group cursor-pointer">
                   <div className="relative aspect-video overflow-hidden">
-                    <img
-                      src={mv.thumbnail}
-                      alt={mv.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
+                    <img src={mv.thumbnail} alt={mv.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="w-14 h-14 rounded-full bg-primary/90 flex items-center justify-center">
                         <Play className="h-6 w-6 text-primary-foreground ml-0.5" />
@@ -157,13 +344,13 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Stats */}
+      {/* ═══ Stats ═══ */}
       <section className="py-16 border-t border-border/30">
         <div className="container">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             {[
               { value: "10,000+", label: "创作者" },
-              { value: "50,000+", label: "MV 分析" },
+              { value: "50,000+", label: "视频分析" },
               { value: "30,000+", label: "虚拟偶像" },
               { value: "98%", label: "满意度" },
             ].map((s) => (
@@ -176,7 +363,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Contact */}
+      {/* ═══ Contact ═══ */}
       <section className="py-20 border-t border-border/30">
         <div className="container max-w-2xl">
           <div className="text-center mb-10">
@@ -186,33 +373,11 @@ export default function Home() {
           <Card className="bg-card/50 border-border/50">
             <CardContent className="p-6 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input
-                  placeholder="您的姓名"
-                  value={contactForm.name}
-                  onChange={(e) => setContactForm(p => ({ ...p, name: e.target.value }))}
-                  className="bg-background/50"
-                />
-                <Input
-                  placeholder="邮箱地址"
-                  type="email"
-                  value={contactForm.email}
-                  onChange={(e) => setContactForm(p => ({ ...p, email: e.target.value }))}
-                  className="bg-background/50"
-                />
+                <Input placeholder="您的姓名" value={contactForm.name} onChange={(e) => setContactForm(p => ({ ...p, name: e.target.value }))} className="bg-background/50" />
+                <Input placeholder="邮箱地址" type="email" value={contactForm.email} onChange={(e) => setContactForm(p => ({ ...p, email: e.target.value }))} className="bg-background/50" />
               </div>
-              <Input
-                placeholder="主题"
-                value={contactForm.subject}
-                onChange={(e) => setContactForm(p => ({ ...p, subject: e.target.value }))}
-                className="bg-background/50"
-              />
-              <Textarea
-                placeholder="请输入您的消息..."
-                rows={4}
-                value={contactForm.message}
-                onChange={(e) => setContactForm(p => ({ ...p, message: e.target.value }))}
-                className="bg-background/50"
-              />
+              <Input placeholder="主题" value={contactForm.subject} onChange={(e) => setContactForm(p => ({ ...p, subject: e.target.value }))} className="bg-background/50" />
+              <Textarea placeholder="请输入您的消息..." rows={4} value={contactForm.message} onChange={(e) => setContactForm(p => ({ ...p, message: e.target.value }))} className="bg-background/50" />
               <Button
                 className="w-full bg-primary text-primary-foreground hover:bg-primary/90 gap-2"
                 disabled={submitGuestbook.isPending || !contactForm.name || !contactForm.subject || !contactForm.message}
@@ -226,7 +391,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Footer */}
+      {/* ═══ Footer ═══ */}
       <footer className="py-10 border-t border-border/30">
         <div className="container flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -237,11 +402,25 @@ export default function Home() {
             &copy; {new Date().getFullYear()} MV Studio Pro. All rights reserved.
           </p>
           <div className="flex gap-6 text-sm text-muted-foreground">
-            <span className="hover:text-foreground cursor-pointer">隐私政策</span>
-            <span className="hover:text-foreground cursor-pointer">服务条款</span>
+            <Link href="/pricing" className="hover:text-foreground no-underline">套餐定价</Link>
+            <Link href="/gallery" className="hover:text-foreground no-underline">视频展厅</Link>
           </div>
         </div>
       </footer>
+
+      {/* ═══ CSS Animations ═══ */}
+      <style>{`
+        @keyframes fadeInUp {
+          from {
+            opacity: 0;
+            transform: translateY(30px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }

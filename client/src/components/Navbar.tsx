@@ -13,11 +13,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const NAV_ITEMS = [
-  { label: "MV 展厅", href: "/gallery" },
-  { label: "MV 分析", href: "/analysis" },
+  { label: "视频展厅", href: "/gallery" },
+  { label: "视频PK评分", href: "/analysis" },
   { label: "虚拟偶像", href: "/idol" },
   { label: "分镜脚本", href: "/storyboard" },
-  { label: "视觉特效", href: "/vfx" },
+  { label: "分镜转视频", href: "/vfx" },
   { label: "套餐", href: "/pricing" },
 ];
 
@@ -137,21 +137,19 @@ export default function Navbar() {
               </Link>
             ))}
             {isAuthenticated && (
-              <>
-                <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
-                  <Link href="/dashboard" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                    个人中心
+              <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
+                <Link href="/dashboard" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
+                  个人中心
+                </Link>
+                <Link href="/team" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
+                  团队管理
+                </Link>
+                {user?.role === "admin" && (
+                  <Link href="/admin" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
+                    管理后台
                   </Link>
-                  <Link href="/team" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                    团队管理
-                  </Link>
-                  {user?.role === "admin" && (
-                    <Link href="/admin" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                      管理后台
-                    </Link>
-                  )}
-                </div>
-              </>
+                )}
+              </div>
             )}
             <div className="pt-2 border-t border-border/50">
               {isAuthenticated ? (

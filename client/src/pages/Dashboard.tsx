@@ -30,7 +30,7 @@ export default function Dashboard() {
   }
 
   const usageItems = [
-    { label: "MV 智能分析", key: "mvAnalysis" as const, icon: BarChart3, color: "text-blue-400", cost: CREDIT_COSTS.mvAnalysis },
+    { label: "视频PK评分", key: "mvAnalysis" as const, icon: BarChart3, color: "text-blue-400", cost: CREDIT_COSTS.mvAnalysis },
     { label: "虚拟偶像生成", key: "idolGeneration" as const, icon: Sparkles, color: "text-purple-400", cost: CREDIT_COSTS.idolGeneration },
     { label: "分镜脚本", key: "storyboard" as const, icon: Clapperboard, color: "text-green-400", cost: CREDIT_COSTS.storyboard },
     { label: "视频生成", key: "videoGeneration" as const, icon: Film, color: "text-primary", cost: CREDIT_COSTS.videoGeneration },
@@ -116,10 +116,10 @@ export default function Dashboard() {
         <h3 className="text-lg font-semibold mb-4">快速开始</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: "MV 分析", href: "/analysis", icon: BarChart3, color: "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20" },
+            { label: "视频PK评分", href: "/analysis", icon: BarChart3, color: "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20" },
             { label: "虚拟偶像", href: "/idol", icon: Sparkles, color: "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20" },
             { label: "分镜脚本", href: "/storyboard", icon: Clapperboard, color: "bg-green-500/10 text-green-400 hover:bg-green-500/20" },
-            { label: "视觉特效", href: "/vfx", icon: Wand2, color: "bg-primary/10 text-primary hover:bg-primary/20" },
+            { label: "分镜转视频", href: "/vfx", icon: Wand2, color: "bg-primary/10 text-primary hover:bg-primary/20" },
           ].map(item => (
             <Link key={item.href} href={item.href}>
               <Card className={`cursor-pointer transition-colors ${item.color} border-transparent`}>
