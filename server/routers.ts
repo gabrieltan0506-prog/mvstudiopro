@@ -28,6 +28,7 @@ import { generateVideo, isVeoAvailable } from "./veo";
 import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { CREDIT_COSTS } from "../shared/plans";
+import { registerOriginalVideo, registerRemixVideo, verifyVideoSignature } from "./video-signature";
 
 export const appRouter = router({
   system: systemRouter,
@@ -71,7 +72,7 @@ export const appRouter = router({
     list: publicProcedure.input(z.object({ mvId: z.string() })).query(async ({ input }) => getMvReviewsByMvId(input.mvId)),
   }),
 
-  // ─── MV Analysis ──────────────────────
+  // ─── MV Analysis (视频 PK 评分) ──────────────────────
   mvAnalysis: router({
     analyze: protectedProcedure.input(z.object({
       videoUrl: z.string().url(),
@@ -86,16 +87,24 @@ export const appRouter = router({
       }
       const response = await invokeLLM({
         messages: [
-          { role: "system", content: `你是一位專業的 MV 影片分析師。請對用戶提供的 MV 影片進行全面分析，包括：
-1. 畫面構圖評分 (1-100)
-2. 色彩風格評分 (1-100)
-3. 節奏感評分 (1-100)
-4. 爆款潛力評分 (1-100)
-5. 綜合評分 (1-100)
-6. 改進建議（至少 3 條）
-7. 亮點分析
-請用 JSON 格式回覆。` },
-          { role: "user", content: [{ type: "text", text: `請分析這個 MV 影片: ${input.fileName || "uploaded video"}` }, { type: "file_url" as const, file_url: { url: input.videoUrl, mime_type: "video/mp4" as const } }] },
+          { role: "system", content: `你是一位資深的影片評審專家，擅長從多個專業維度對短視頻（5分鐘以內）進行深度分析。
+
+請對用戶提供的視頻進行全面 PK 評分，評分維度如下：
+
+1. **故事情感** (1-100)：視頻是否傳達了清晰的情感？是否能引起觀眾共鳴？情感表達是否自然、有層次？
+2. **鏡頭運鏡** (1-100)：攝影機運動是否流暢？構圖是否專業？景別切換是否合理？是否有創意的運鏡手法？
+3. **敘事邏輯** (1-100)：故事線是否清晰？起承轉合是否完整？節奏把控是否得當？觀眾是否能跟上敘事？
+4. **視頻清晰度** (1-100)：畫面是否清晰銳利？色彩是否準確？曝光是否正確？是否有明顯的畫質問題？
+5. **綜合評分** (1-100)：基於以上四個維度的加權綜合評分，同時考慮整體觀感和爆款潛力。
+
+同時請提供：
+- 每個維度的詳細分析說明（每個維度至少 2-3 句話）
+- 至少 3 條具體的改進建議
+- 亮點分析（做得好的地方）
+- 總結評語
+
+請用 JSON 格式回覆。評分要客觀嚴格，不要輕易給高分。` },
+          { role: "user", content: [{ type: "text", text: `請分析這個視頻: ${input.fileName || "uploaded video"}` }, { type: "file_url" as const, file_url: { url: input.videoUrl, mime_type: "video/mp4" as const } }] },
         ],
         response_format: {
           type: "json_schema",
@@ -105,16 +114,20 @@ export const appRouter = router({
             schema: {
               type: "object",
               properties: {
-                composition: { type: "integer", description: "畫面構圖評分 1-100" },
-                colorStyle: { type: "integer", description: "色彩風格評分 1-100" },
-                rhythm: { type: "integer", description: "節奏感評分 1-100" },
-                viralPotential: { type: "integer", description: "爆款潛力評分 1-100" },
+                storyEmotion: { type: "integer", description: "故事情感評分 1-100" },
+                storyEmotionAnalysis: { type: "string", description: "故事情感詳細分析" },
+                cameraWork: { type: "integer", description: "鏡頭運鏡評分 1-100" },
+                cameraWorkAnalysis: { type: "string", description: "鏡頭運鏡詳細分析" },
+                narrativeLogic: { type: "integer", description: "敘事邏輯評分 1-100" },
+                narrativeLogicAnalysis: { type: "string", description: "敘事邏輯詳細分析" },
+                videoClarity: { type: "integer", description: "視頻清晰度評分 1-100" },
+                videoClarityAnalysis: { type: "string", description: "視頻清晰度詳細分析" },
                 overall: { type: "integer", description: "綜合評分 1-100" },
                 improvements: { type: "array", items: { type: "string" }, description: "改進建議" },
                 highlights: { type: "array", items: { type: "string" }, description: "亮點分析" },
                 summary: { type: "string", description: "總結評語" },
               },
-              required: ["composition", "colorStyle", "rhythm", "viralPotential", "overall", "improvements", "highlights", "summary"],
+              required: ["storyEmotion", "storyEmotionAnalysis", "cameraWork", "cameraWorkAnalysis", "narrativeLogic", "narrativeLogicAnalysis", "videoClarity", "videoClarityAnalysis", "overall", "improvements", "highlights", "summary"],
               additionalProperties: false,
             },
           },
@@ -122,7 +135,50 @@ export const appRouter = router({
       });
       const rawContent = String(response.choices[0].message.content ?? "{}");
       const analysis = JSON.parse(rawContent);
-      return { success: true, analysis };
+
+      // 验证视频来源（Hash 水印）
+      const verification = await verifyVideoSignature(input.videoUrl);
+
+      // 根据综合评分计算奖励 Credits
+      const { getRewardTier } = await import("../shared/plans");
+      const reward = getRewardTier(analysis.overall);
+      let rewardGiven = false;
+
+      if (verification.verified && reward.credits > 0) {
+        // 平台视频（原创或二次创作）才发放奖励
+        await addCredits(ctx.user.id, reward.credits, `视频PK评分奖励 - ${reward.labelCn} (${analysis.overall}分)`);
+        rewardGiven = true;
+      }
+
+      return {
+        success: true,
+        analysis,
+        verification: {
+          verified: verification.verified,
+          source: verification.source || null,
+        },
+        reward: {
+          tier: reward.labelCn,
+          emoji: reward.emoji,
+          credits: reward.credits,
+          given: rewardGiven,
+          reason: !verification.verified ? "非平台视频，无法获得奖励" : undefined,
+        },
+      };
+    }),
+    // 注册二次创作视频签名（外来视频在平台编辑后可参加奖励）
+    registerRemix: protectedProcedure.input(z.object({
+      videoUrl: z.string().url(),
+      originalVideoUrl: z.string().url().optional(),
+    })).mutation(async ({ ctx, input }) => {
+      const sig = await registerRemixVideo(ctx.user.id, input.videoUrl, input.originalVideoUrl);
+      return { success: true, signatureHash: sig.signatureHash };
+    }),
+    // 验证视频来源
+    verify: protectedProcedure.input(z.object({
+      videoUrl: z.string().url(),
+    })).query(async ({ input }) => {
+      return verifyVideoSignature(input.videoUrl);
     }),
   }),
 
@@ -311,6 +367,13 @@ export const appRouter = router({
           status: "completed",
           completedAt: new Date(),
         });
+
+        // 注册平台原创视频签名（用于 PK 评分验证）
+        try {
+          await registerOriginalVideo(ctx.user.id, result.videoUrl, genId);
+        } catch (sigErr) {
+          console.error("[Veo] Failed to register video signature:", sigErr);
+        }
 
         return { success: true, id: genId, videoUrl: result.videoUrl };
       } catch (err: any) {

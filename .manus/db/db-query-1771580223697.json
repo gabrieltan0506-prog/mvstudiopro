@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `video_signatures` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`videoUrl` text NOT NULL,\n\t`signatureHash` varchar(128) NOT NULL,\n\t`source` enum('original','remix') NOT NULL DEFAULT 'original',\n\t`videoGenerationId` int,\n\t`originalVideoUrl` text,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `video_signatures_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute CREATE TABLE `video_signatures` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`videoUrl` text NOT NULL,\n\t`signatureHash` varchar(128) NOT NULL,\n\t`source` enum('original','remix') NOT NULL DEFAULT 'original',\n\t`videoGenerationId` int,\n\t`originalVideoUrl` text,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `video_signatures_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2059
+}

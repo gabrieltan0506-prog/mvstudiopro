@@ -372,3 +372,19 @@ export const idol3dGenerations = mysqlTable("idol_3d_generations", {
 });
 export type Idol3dGeneration = typeof idol3dGenerations.$inferSelect;
 export type InsertIdol3dGeneration = typeof idol3dGenerations.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Video Signatures (Hash 水印验证)
+// ═══════════════════════════════════════════
+export const videoSignatures = mysqlTable("video_signatures", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  videoUrl: text("videoUrl").notNull(),
+  signatureHash: varchar("signatureHash", { length: 128 }).notNull(),
+  source: mysqlEnum("source", ["original", "remix"]).default("original").notNull(),
+  videoGenerationId: int("videoGenerationId"),
+  originalVideoUrl: text("originalVideoUrl"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type VideoSignature = typeof videoSignatures.$inferSelect;
+export type InsertVideoSignature = typeof videoSignatures.$inferInsert;
