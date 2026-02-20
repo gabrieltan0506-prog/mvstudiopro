@@ -41,3 +41,12 @@
 - [x] 首页标题长度 30-60 字符
 - [x] 首页 meta description 50-160 字符
 - [x] 首页关键字设置
+
+## Stripe 支付集成
+- [x] 使用 webdev_add_feature 添加 Stripe 基础设施
+- [x] 配置 Stripe API 密钥
+- [x] 实现套餐订阅支付逻辑（基础版/专业版/企业版）
+- [x] 实现 Credits 充值支付
+- [x] 构建前端支付页面与订阅流程
+- [x] Webhook 处理支付回调
+- [x] 测试并保存 checkpoint

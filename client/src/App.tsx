@@ -18,6 +18,7 @@ const Pricing = lazy(() => import("./pages/Pricing"));
 const TeamManagement = lazy(() => import("./pages/TeamManagement"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
+const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 
 function PageLoader() {
   return (
@@ -41,6 +42,7 @@ function Router() {
         <Route path={"/team"} component={TeamManagement} />
         <Route path={"/dashboard"} component={Dashboard} />
         <Route path={"/admin"} component={AdminPanel} />
+        <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />
       </Switch>

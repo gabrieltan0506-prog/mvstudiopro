@@ -7,6 +7,10 @@ import { invokeLLM } from "./_core/llm";
 import { generateImage } from "./_core/imageGeneration";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
+import { getStripe, SUBSCRIPTION_PRODUCTS, CREDIT_PACK_PRODUCTS, getOrCreatePrice } from "./stripe-products";
+import { stripeCustomers } from "../drizzle/schema";
+import { eq } from "drizzle-orm";
+import { getDb } from "./db";
 import {
   createGuestbookMessage, getGuestbookMessages,
   createMvReview, getMvReviewsByMvId,
@@ -341,8 +345,147 @@ export const appRouter = router({
       await createBetaQuota({ userId: input.userId, totalQuota: input.totalQuota, grantedBy: ctx.user.id, inviteCode, note: input.note ?? null });
       return { success: true, inviteCode };
     }),
-    teamList: adminProcedure.query(async () => getAllTeams()),
+     teamList: adminProcedure.query(async () => getAllTeams()),
+  }),
+
+  // ─── Stripe Payment ───────────────────────
+  stripe: router({
+    // Get current user's subscription status
+    status: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return { plan: "free", credits: 0 };
+      const [customer] = await db.select().from(stripeCustomers).where(eq(stripeCustomers.userId, ctx.user.id)).limit(1);
+      const balance = await getOrCreateBalance(ctx.user.id);
+      return {
+        plan: customer?.plan || "free",
+        subscriptionId: customer?.stripeSubscriptionId || null,
+        currentPeriodEnd: customer?.currentPeriodEnd || null,
+        cancelAtPeriodEnd: customer?.cancelAtPeriodEnd === 1,
+        credits: balance.balance,
+      };
+    }),
+
+    // Create checkout session for subscription
+    createSubscription: protectedProcedure.input(z.object({
+      planType: z.enum(["pro", "enterprise"]),
+      interval: z.enum(["month", "year"]),
+    })).mutation(async ({ ctx, input }) => {
+      const stripe = getStripe();
+      const productKey = `${input.planType}_${input.interval === "month" ? "monthly" : "yearly"}` as keyof typeof SUBSCRIPTION_PRODUCTS;
+      const product = SUBSCRIPTION_PRODUCTS[productKey];
+      if (!product) throw new Error("Invalid plan");
+
+      const priceId = await getOrCreatePrice(productKey, product);
+      const origin = ctx.req.headers.origin || "https://mvstudiopro.com";
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        client_reference_id: ctx.user.id.toString(),
+        customer_email: ctx.user.email || undefined,
+        allow_promotion_codes: true,
+        metadata: {
+          user_id: ctx.user.id.toString(),
+          customer_name: ctx.user.name || "",
+          plan_type: input.planType,
+        },
+        subscription_data: {
+          metadata: { plan_type: input.planType, user_id: ctx.user.id.toString() },
+        },
+        success_url: `${origin}/dashboard?payment=success`,
+        cancel_url: `${origin}/pricing?payment=canceled`,
+      });
+
+      // Ensure stripe customer record exists
+      const db = await getDb();
+      if (db && session.customer) {
+        const existing = await db.select().from(stripeCustomers).where(eq(stripeCustomers.userId, ctx.user.id)).limit(1);
+        if (existing.length === 0) {
+          await db.insert(stripeCustomers).values({
+            userId: ctx.user.id,
+            stripeCustomerId: session.customer as string,
+            plan: "free",
+          });
+        }
+      }
+
+      return { url: session.url };
+    }),
+
+    // Create checkout session for credit pack
+    purchaseCredits: protectedProcedure.input(z.object({
+      pack: z.enum(["small", "medium", "large"]),
+    })).mutation(async ({ ctx, input }) => {
+      const stripe = getStripe();
+      const product = CREDIT_PACK_PRODUCTS[input.pack];
+      if (!product) throw new Error("Invalid pack");
+
+      const priceId = await getOrCreatePrice(`credits_${input.pack}`, product);
+      const origin = ctx.req.headers.origin || "https://mvstudiopro.com";
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        client_reference_id: ctx.user.id.toString(),
+        customer_email: ctx.user.email || undefined,
+        allow_promotion_codes: true,
+        metadata: {
+          user_id: ctx.user.id.toString(),
+          customer_name: ctx.user.name || "",
+          credits: product.credits.toString(),
+          pack: input.pack,
+        },
+        success_url: `${origin}/dashboard?credits=purchased`,
+        cancel_url: `${origin}/pricing?payment=canceled`,
+      });
+
+      return { url: session.url };
+    }),
+
+    // Cancel subscription
+    cancelSubscription: protectedProcedure.mutation(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+      const [customer] = await db.select().from(stripeCustomers).where(eq(stripeCustomers.userId, ctx.user.id)).limit(1);
+      if (!customer?.stripeSubscriptionId) throw new Error("No active subscription");
+
+      const stripe = getStripe();
+      await stripe.subscriptions.update(customer.stripeSubscriptionId, {
+        cancel_at_period_end: true,
+      });
+
+      await db.update(stripeCustomers).set({ cancelAtPeriodEnd: 1 }).where(eq(stripeCustomers.userId, ctx.user.id));
+      return { success: true };
+    }),
+
+    // Get payment history (from Stripe API)
+    history: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      const [customer] = await db.select().from(stripeCustomers).where(eq(stripeCustomers.userId, ctx.user.id)).limit(1);
+      if (!customer?.stripeCustomerId) return [];
+
+      try {
+        const stripe = getStripe();
+        const charges = await stripe.charges.list({
+          customer: customer.stripeCustomerId,
+          limit: 20,
+        });
+        return charges.data.map(c => ({
+          id: c.id,
+          amount: c.amount,
+          currency: c.currency,
+          status: c.status,
+          description: c.description,
+          created: c.created * 1000,
+          receiptUrl: c.receipt_url,
+        }));
+      } catch {
+        return [];
+      }
+    }),
   }),
 });
-
 export type AppRouter = typeof appRouter;
