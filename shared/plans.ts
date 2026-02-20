@@ -105,11 +105,29 @@ export const CREDIT_COSTS = {
   idolGeneration: 3,
   storyboard: 15,
   videoGeneration: 25,
+  videoGenerationFast720: 15,
+  videoGenerationFast1080: 25,
+  videoGenerationStd720: 30,
+  videoGenerationStd1080: 50,
   idol3D: 10,
   inspiration: 5,
   storyboardImage2K: 5,
   storyboardImage4K: 9,
 } as const;
+
+/** PK 评分奖励等级：根据综合评分给予不同 Credits 奖励 */
+export const PK_REWARD_TIERS = [
+  { minScore: 95, credits: 50, label: "大师级", labelCn: "大师级", emoji: "\u{1F3C6}" },
+  { minScore: 90, credits: 30, label: "精品级", labelCn: "精品级", emoji: "\u{1F947}" },
+  { minScore: 85, credits: 15, label: "优秀级", labelCn: "优秀级", emoji: "\u{1F31F}" },
+  { minScore: 75, credits: 5,  label: "良好级", labelCn: "良好级", emoji: "\u{1F44D}" },
+  { minScore: 0,  credits: 0,  label: "继续加油", labelCn: "继续加油", emoji: "\u{1F4AA}" },
+] as const;
+
+/** 根据综合评分获取对应的奖励等级 */
+export function getRewardTier(overallScore: number) {
+  return PK_REWARD_TIERS.find(t => overallScore >= t.minScore) ?? PK_REWARD_TIERS[PK_REWARD_TIERS.length - 1];
+}
 
 export const CREDIT_PACKS = {
   small: { credits: 100, price: 9.99, label: "100 Credits", labelCn: "100 Credits 入門包" },

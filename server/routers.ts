@@ -21,7 +21,10 @@ import {
   createTeam, getTeamById, getTeamByOwnerId, getTeamByInviteCode, addTeamMember, getTeamMembers, getUserTeamMembership, removeTeamMember, logTeamActivity, getAllTeams,
   createBetaQuota, getBetaQuotaByUserId, getAllBetaQuotas, updateBetaQuota,
   getAdminStats,
+  createVideoGeneration, updateVideoGeneration, getVideoGenerationsByUserId, getVideoGenerationById,
 } from "./db";
+import { generateVideo, isVeoAvailable } from "./veo";
+import { CREDIT_COSTS } from "../shared/plans";
 
 export const appRouter = router({
   system: systemRouter,
@@ -215,6 +218,86 @@ export const appRouter = router({
       if (!deduction.success) return { success: false, error: "Credits 不足" };
       const { url } = await generateImage({ prompt: `MV storyboard scene: ${input.sceneDescription}. Color tone: ${input.colorTone || "cinematic"}. Professional cinematography, wide angle, film quality.` });
       return { success: true, imageUrl: url };
+    }),
+  }),
+
+  // ─── Veo Video Generation ─────────────
+  veo: router({
+    /** Check if Veo API is available */
+    status: publicProcedure.query(() => ({ available: isVeoAvailable() })),
+
+    /** Generate video from storyboard scene */
+    generate: protectedProcedure.input(z.object({
+      prompt: z.string().min(1).max(2000),
+      imageUrl: z.string().url().optional(),
+      quality: z.enum(["fast", "standard"]).default("fast"),
+      resolution: z.enum(["720p", "1080p"]).default("720p"),
+      aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
+      emotionFilter: z.string().optional(),
+      transition: z.string().optional(),
+      storyboardId: z.number().optional(),
+      negativePrompt: z.string().optional(),
+    })).mutation(async ({ ctx, input }) => {
+      // Determine credit cost based on quality + resolution
+      const costKey = `videoGeneration${input.quality === "fast" ? "Fast" : "Std"}${input.resolution === "1080p" ? "1080" : "720"}` as keyof typeof CREDIT_COSTS;
+      const deduction = await deductCredits(ctx.user.id, costKey);
+      if (!deduction.success) {
+        return { success: false, error: "Credits 不足，请充值后再试" };
+      }
+
+      // Create DB record
+      const genId = await createVideoGeneration({
+        userId: ctx.user.id,
+        storyboardId: input.storyboardId ?? null,
+        prompt: input.prompt,
+        imageUrl: input.imageUrl ?? null,
+        quality: input.quality,
+        resolution: input.resolution,
+        aspectRatio: input.aspectRatio,
+        emotionFilter: input.emotionFilter ?? null,
+        transition: input.transition ?? null,
+        status: "generating",
+        creditsUsed: deduction.cost,
+      });
+
+      try {
+        const result = await generateVideo({
+          prompt: input.prompt,
+          imageUrl: input.imageUrl,
+          quality: input.quality,
+          resolution: input.resolution,
+          aspectRatio: input.aspectRatio,
+          negativePrompt: input.negativePrompt,
+        });
+
+        await updateVideoGeneration(genId, {
+          videoUrl: result.videoUrl,
+          status: "completed",
+          completedAt: new Date(),
+        });
+
+        return { success: true, id: genId, videoUrl: result.videoUrl };
+      } catch (err: any) {
+        // Refund credits on failure
+        await addCredits(ctx.user.id, deduction.cost, "refund", "视频生成失败退款");
+        await updateVideoGeneration(genId, {
+          status: "failed",
+          errorMessage: err.message || "Unknown error",
+        });
+        return { success: false, error: err.message || "视频生成失败，请稍后重试" };
+      }
+    }),
+
+    /** Get user's video generation history */
+    myList: protectedProcedure.query(async ({ ctx }) => {
+      return getVideoGenerationsByUserId(ctx.user.id);
+    }),
+
+    /** Get single video generation by ID */
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+      const gen = await getVideoGenerationById(input.id);
+      if (!gen || gen.userId !== ctx.user.id) return null;
+      return gen;
     }),
   }),
 

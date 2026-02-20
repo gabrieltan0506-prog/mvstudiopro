@@ -15,7 +15,7 @@ import {
   FolderOpen, Flame, Zap
 } from "lucide-react";
 
-/* ── Particle Canvas Background (tapnow.ai style) ── */
+/* ── Particle Canvas Background with light rays & color shifts ── */
 function ParticleBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -26,13 +26,18 @@ function ParticleBackground() {
     if (!ctx) return;
 
     let animId: number;
-    let particles: { x: number; y: number; vx: number; vy: number; r: number; o: number; color: string }[] = [];
+    let t = 0;
+    interface Particle { x: number; y: number; vx: number; vy: number; r: number; baseO: number; color: string; phase: number; }
+    let particles: Particle[] = [];
 
     const colors = [
-      "rgba(232,130,94,", // primary orange
-      "rgba(168,85,247,", // purple
-      "rgba(59,130,246,", // blue
-      "rgba(236,72,153,", // pink
+      "232,130,94",  // warm orange (primary)
+      "168,85,247",  // purple
+      "59,130,246",  // blue
+      "236,72,153",  // pink
+      "245,158,11",  // amber
+      "99,102,241",  // indigo
+      "20,184,166",  // teal
     ];
 
     function resize() {
@@ -42,45 +47,110 @@ function ParticleBackground() {
 
     function initParticles() {
       particles = [];
-      const count = Math.floor((canvas!.width * canvas!.height) / 12000);
+      const count = Math.floor((canvas!.width * canvas!.height) / 10000);
       for (let i = 0; i < count; i++) {
         particles.push({
           x: Math.random() * canvas!.width,
           y: Math.random() * canvas!.height,
-          vx: (Math.random() - 0.5) * 0.3,
-          vy: (Math.random() - 0.5) * 0.3,
-          r: Math.random() * 1.5 + 0.5,
-          o: Math.random() * 0.5 + 0.1,
+          vx: (Math.random() - 0.5) * 0.25,
+          vy: (Math.random() - 0.5) * 0.25,
+          r: Math.random() * 2 + 0.3,
+          baseO: Math.random() * 0.4 + 0.08,
           color: colors[Math.floor(Math.random() * colors.length)],
+          phase: Math.random() * Math.PI * 2,
         });
       }
     }
 
+    function drawLightRays(time: number) {
+      const w = canvas!.width;
+      const h = canvas!.height;
+      // Diagonal light sweep from top-left
+      const sweepX = (Math.sin(time * 0.15) * 0.3 + 0.3) * w;
+      const sweepY = (Math.cos(time * 0.12) * 0.2 + 0.15) * h;
+      const grad1 = ctx!.createRadialGradient(sweepX, sweepY, 0, sweepX, sweepY, w * 0.55);
+      grad1.addColorStop(0, "rgba(232,130,94,0.06)");
+      grad1.addColorStop(0.3, "rgba(168,85,247,0.03)");
+      grad1.addColorStop(1, "rgba(0,0,0,0)");
+      ctx!.fillStyle = grad1;
+      ctx!.fillRect(0, 0, w, h);
+
+      // Secondary light from bottom-right
+      const s2x = (Math.sin(time * 0.1 + 2) * 0.25 + 0.7) * w;
+      const s2y = (Math.cos(time * 0.08 + 1) * 0.2 + 0.75) * h;
+      const grad2 = ctx!.createRadialGradient(s2x, s2y, 0, s2x, s2y, w * 0.45);
+      grad2.addColorStop(0, "rgba(59,130,246,0.05)");
+      grad2.addColorStop(0.4, "rgba(20,184,166,0.025)");
+      grad2.addColorStop(1, "rgba(0,0,0,0)");
+      ctx!.fillStyle = grad2;
+      ctx!.fillRect(0, 0, w, h);
+
+      // Tertiary warm glow center
+      const s3x = (Math.sin(time * 0.07 + 4) * 0.15 + 0.5) * w;
+      const s3y = (Math.cos(time * 0.09 + 3) * 0.15 + 0.45) * h;
+      const grad3 = ctx!.createRadialGradient(s3x, s3y, 0, s3x, s3y, w * 0.35);
+      grad3.addColorStop(0, "rgba(245,158,11,0.035)");
+      grad3.addColorStop(0.5, "rgba(236,72,153,0.015)");
+      grad3.addColorStop(1, "rgba(0,0,0,0)");
+      ctx!.fillStyle = grad3;
+      ctx!.fillRect(0, 0, w, h);
+    }
+
     function draw() {
-      ctx!.clearRect(0, 0, canvas!.width, canvas!.height);
+      t += 0.016;
+      const w = canvas!.width;
+      const h = canvas!.height;
+      ctx!.clearRect(0, 0, w, h);
+
+      // Draw animated light rays first
+      drawLightRays(t);
+
+      // Draw particles with breathing opacity
       for (const p of particles) {
         p.x += p.vx;
         p.y += p.vy;
-        if (p.x < 0) p.x = canvas!.width;
-        if (p.x > canvas!.width) p.x = 0;
-        if (p.y < 0) p.y = canvas!.height;
-        if (p.y > canvas!.height) p.y = 0;
+        if (p.x < 0) p.x = w;
+        if (p.x > w) p.x = 0;
+        if (p.y < 0) p.y = h;
+        if (p.y > h) p.y = 0;
+        const breathe = Math.sin(t * 1.5 + p.phase) * 0.15 + 1;
+        const opacity = p.baseO * breathe;
         ctx!.beginPath();
-        ctx!.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx!.fillStyle = p.color + p.o + ")";
+        ctx!.arc(p.x, p.y, p.r * breathe, 0, Math.PI * 2);
+        ctx!.fillStyle = `rgba(${p.color},${opacity})`;
         ctx!.fill();
       }
+
+      // Subtle connection lines between nearby particles
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = dx * dx + dy * dy;
+          if (dist < 8000) {
+            const lineO = (1 - dist / 8000) * 0.06;
+            ctx!.beginPath();
+            ctx!.moveTo(particles[i].x, particles[i].y);
+            ctx!.lineTo(particles[j].x, particles[j].y);
+            ctx!.strokeStyle = `rgba(232,130,94,${lineO})`;
+            ctx!.lineWidth = 0.5;
+            ctx!.stroke();
+          }
+        }
+      }
+
       animId = requestAnimationFrame(draw);
     }
 
     resize();
     initParticles();
     draw();
-    window.addEventListener("resize", () => { resize(); initParticles(); });
+    const handleResize = () => { resize(); initParticles(); };
+    window.addEventListener("resize", handleResize);
 
     return () => {
       cancelAnimationFrame(animId);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", handleResize);
     };
   }, []);
 
@@ -175,17 +245,25 @@ export default function Home() {
         {/* Particle background */}
         <ParticleBackground />
 
-        {/* Animated gradient orbs */}
-        <div className="absolute top-10 left-1/4 w-[500px] h-[500px] bg-primary/15 rounded-full blur-[120px] animate-pulse" style={{ animationDuration: "4s" }} />
-        <div className="absolute bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-500/15 rounded-full blur-[100px] animate-pulse" style={{ animationDuration: "6s" }} />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-500/8 rounded-full blur-[150px] animate-pulse" style={{ animationDuration: "8s" }} />
+        {/* Multi-layer animated gradient orbs for rich light & color */}
+        <div className="absolute top-[-5%] left-[15%] w-[550px] h-[550px] rounded-full blur-[140px] animate-[heroGlow1_8s_ease-in-out_infinite]" />
+        <div className="absolute bottom-[-8%] right-[10%] w-[480px] h-[480px] rounded-full blur-[120px] animate-[heroGlow2_10s_ease-in-out_infinite]" />
+        <div className="absolute top-[30%] left-[55%] w-[400px] h-[400px] rounded-full blur-[130px] animate-[heroGlow3_12s_ease-in-out_infinite]" />
+        <div className="absolute top-[15%] right-[25%] w-[350px] h-[350px] rounded-full blur-[100px] animate-[heroGlow4_9s_ease-in-out_infinite]" />
+        <div className="absolute bottom-[20%] left-[35%] w-[300px] h-[300px] rounded-full blur-[110px] animate-[heroGlow5_11s_ease-in-out_infinite]" />
 
-        {/* Radial gradient overlay */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,rgba(16,16,18,0.6)_70%,rgba(16,16,18,0.95)_100%)]" />
+        {/* Soft vignette overlay — keeps edges dark, center luminous */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_55%_at_50%_45%,transparent_0%,rgba(16,16,18,0.35)_55%,rgba(16,16,18,0.85)_100%)]" />
 
-        {/* Grid lines (subtle) */}
-        <div className="absolute inset-0 opacity-[0.03]" style={{
-          backgroundImage: "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)",
+        {/* Very subtle noise texture for depth */}
+        <div className="absolute inset-0 opacity-[0.025]" style={{
+          backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+          backgroundSize: "128px 128px"
+        }} />
+
+        {/* Subtle grid lines */}
+        <div className="absolute inset-0 opacity-[0.02]" style={{
+          backgroundImage: "linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)",
           backgroundSize: "60px 60px"
         }} />
 

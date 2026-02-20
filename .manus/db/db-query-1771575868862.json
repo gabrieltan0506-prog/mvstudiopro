@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `video_generations` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`storyboardId` int,\n\t`prompt` text NOT NULL,\n\t`imageUrl` text,\n\t`videoUrl` text,\n\t`quality` enum('fast','standard') NOT NULL DEFAULT 'fast',\n\t`resolution` varchar(10) NOT NULL DEFAULT '720p',\n\t`aspectRatio` varchar(10) NOT NULL DEFAULT '16:9',\n\t`emotionFilter` varchar(50),\n\t`transition` varchar(50),\n\t`status` enum('pending','generating','completed','failed') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`creditsUsed` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`completedAt` timestamp,\n\tCONSTRAINT `video_generations_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute CREATE TABLE `video_generations` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`storyboardId` int,\n\t`prompt` text NOT NULL,\n\t`imageUrl` text,\n\t`videoUrl` text,\n\t`quality` enum('fast','standard') NOT NULL DEFAULT 'fast',\n\t`resolution` varchar(10) NOT NULL DEFAULT '720p',\n\t`aspectRatio` varchar(10) NOT NULL DEFAULT '16:9',\n\t`emotionFilter` varchar(50),\n\t`transition` varchar(50),\n\t`status` enum('pending','generating','completed','failed') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`creditsUsed` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`completedAt` timestamp,\n\tCONSTRAINT `video_generations_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 3430
+}

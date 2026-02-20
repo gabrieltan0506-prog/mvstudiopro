@@ -14,6 +14,7 @@ import {
   stripeAuditLogs, kpiSnapshots,
   stripeCustomers, stripeUsageLogs,
   studentVerifications, InsertStudentVerification,
+  videoGenerations, InsertVideoGeneration,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { CREDIT_COSTS } from "../shared/plans";
@@ -276,4 +277,28 @@ export async function getAdminStats() {
   const [pendingPayments] = await db.select({ count: sql<number>`count(*)` }).from(paymentSubmissions).where(eq(paymentSubmissions.status, "pending"));
   const [betaCount] = await db.select({ count: sql<number>`count(*)` }).from(betaQuotas);
   return { users: userCount.count, teams: teamCount.count, pendingPayments: pendingPayments.count, betaUsers: betaCount.count };
+}
+
+
+// ─── Video Generations ──────────────────
+export async function createVideoGeneration(data: Omit<InsertVideoGeneration, "id" | "createdAt">) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  const [result] = await db.insert(videoGenerations).values(data).$returningId();
+  return result.id;
+}
+
+export async function updateVideoGeneration(id: number, data: Partial<Pick<InsertVideoGeneration, "videoUrl" | "status" | "errorMessage" | "completedAt">>) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  await db.update(videoGenerations).set(data).where(eq(videoGenerations.id, id));
+}
+
+export async function getVideoGenerationsByUserId(userId: number, limit = 20) {
+  const db = await getDb(); if (!db) return [];
+  return db.select().from(videoGenerations).where(eq(videoGenerations.userId, userId)).orderBy(sql`${videoGenerations.createdAt} DESC`).limit(limit);
+}
+
+export async function getVideoGenerationById(id: number) {
+  const db = await getDb(); if (!db) return null;
+  const [row] = await db.select().from(videoGenerations).where(eq(videoGenerations.id, id)).limit(1);
+  return row ?? null;
 }

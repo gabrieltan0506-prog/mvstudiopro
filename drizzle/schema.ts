@@ -323,3 +323,27 @@ export const studentVerifications = mysqlTable("student_verifications", {
 });
 export type StudentVerification = typeof studentVerifications.$inferSelect;
 export type InsertStudentVerification = typeof studentVerifications.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Video Generations (Veo 3.1)
+// ═══════════════════════════════════════════
+export const videoGenerations = mysqlTable("video_generations", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  storyboardId: int("storyboardId"),
+  prompt: text("prompt").notNull(),
+  imageUrl: text("imageUrl"),
+  videoUrl: text("videoUrl"),
+  quality: mysqlEnum("quality", ["fast", "standard"]).default("fast").notNull(),
+  resolution: varchar("resolution", { length: 10 }).default("720p").notNull(),
+  aspectRatio: varchar("aspectRatio", { length: 10 }).default("16:9").notNull(),
+  emotionFilter: varchar("emotionFilter", { length: 50 }),
+  transition: varchar("transition", { length: 50 }),
+  status: mysqlEnum("status", ["pending", "generating", "completed", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  creditsUsed: int("creditsUsed").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+});
+export type VideoGeneration = typeof videoGenerations.$inferSelect;
+export type InsertVideoGeneration = typeof videoGenerations.$inferInsert;
