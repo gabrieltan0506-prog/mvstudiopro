@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { label: "虚拟偶像", href: "/idol" },
   { label: "分镜脚本", href: "/storyboard" },
   { label: "分镜转视频", href: "/vfx" },
+  { label: "歌曲分析", href: "/audio-lab" },
   { label: "套餐", href: "/pricing" },
 ];
 
