@@ -1,4 +1,6 @@
 import { fal } from "@fal-ai/client";
+import { storagePut } from "./storage";
+import { nanoid } from "nanoid";
 
 /**
  * Hunyuan3D 2D to 3D Service
@@ -67,6 +69,42 @@ export function isHunyuan3DAvailable(): boolean {
 }
 
 // ─── 生成 3D 模型 ───────────────────────────────────────
+/**
+ * Ensure image URL is publicly accessible by re-uploading to S3 if needed
+ */
+async function ensurePublicImageUrl(imageUrl: string): Promise<string> {
+  try {
+    // Test if URL is accessible
+    const testRes = await fetch(imageUrl, { method: "HEAD" });
+    if (testRes.ok) {
+      const contentType = testRes.headers.get("content-type") || "";
+      if (contentType.startsWith("image/")) {
+        console.log(`[Hunyuan3D] Image URL is accessible: ${imageUrl}`);
+        return imageUrl;
+      }
+    }
+  } catch (e) {
+    console.log(`[Hunyuan3D] Image URL HEAD check failed, re-uploading...`);
+  }
+
+  // Re-download and upload to S3 to ensure accessibility
+  try {
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`);
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    const contentType = imgRes.headers.get("content-type") || "image/png";
+    const ext = contentType.includes("jpeg") ? "jpg" : "png";
+    const fileKey = `3d-input/${nanoid(12)}.${ext}`;
+    const { url } = await storagePut(fileKey, buffer, contentType);
+    console.log(`[Hunyuan3D] Image re-uploaded to S3: ${url}`);
+    return url;
+  } catch (uploadErr: any) {
+    console.error(`[Hunyuan3D] Failed to re-upload image:`, uploadErr);
+    // Return original URL as fallback
+    return imageUrl;
+  }
+}
+
 export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DTask> {
   const startTime = Date.now();
   const tier = input.tier || "rapid";
@@ -75,9 +113,13 @@ export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DT
   try {
     ensureFalConfigured();
 
+    // Ensure image URL is publicly accessible for fal.ai
+    const publicImageUrl = await ensurePublicImageUrl(input.image_url);
+    console.log(`[Hunyuan3D] Using image URL: ${publicImageUrl}`);
+
     // 构建请求参数
     const falInput: Record<string, any> = {
-      image_url: input.image_url,
+      image_url: publicImageUrl,
       num_inference_steps: input.num_inference_steps ?? (tier === "pro" ? 50 : 30),
     };
 

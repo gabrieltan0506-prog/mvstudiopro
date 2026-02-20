@@ -188,3 +188,10 @@
 - [x] 检查后端 virtualIdol.generate 的 prompt 风格参数传递
 - [x] 修复写实风 prompt：强调 photorealistic photograph、real person、DSLR，明确排除 anime/cartoon/illustration
 - [x] 测试通过并保存 checkpoint
+
+## Phase 21: 修复 2K 生成失败 + 3D URL 问题
+- [ ] 查看服务器日志定位 2K Gemini 生成失败原因
+- [ ] 查看服务器日志定位 3D 生成"图片格式不支持"原因
+- [ ] 修复 2K 生成逻辑
+- [ ] 修复 3D 图片 URL 传递逻辑
+- [ ] 测试通过并保存 checkpoint
