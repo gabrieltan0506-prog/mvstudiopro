@@ -33,6 +33,7 @@ import { generateVideo, isVeoAvailable } from "./veo";
 function isAdmin(user: { role: string }) { return user.role === "admin"; }
 import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
+import { analyzeAudioWithGemini, isGeminiAudioAvailable } from "./gemini-audio";
 import { CREDIT_COSTS } from "../shared/plans";
 import { registerOriginalVideo, registerRemixVideo, verifyVideoSignature } from "./video-signature";
 
@@ -935,6 +936,176 @@ export const appRouter = router({
       const gen = await getIdol3dGenerationById(input.id);
       if (!gen || gen.userId !== ctx.user.id) return null;
       return gen;
+    }),
+  }),
+
+  // ─── Audio Lab: 歌曲上传分析 ──────────────
+  audioLab: router({
+    /** Check if Gemini audio analysis is available */
+    status: publicProcedure.query(() => ({ available: isGeminiAudioAvailable() })),
+
+    /** Analyze uploaded audio with Gemini */
+    analyze: protectedProcedure.input(z.object({
+      audioUrl: z.string().url(),
+      fileName: z.string().optional(),
+    })).mutation(async ({ ctx, input }) => {
+      // Gemini audio analysis costs credits
+      if (!isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, "audioAnalysis");
+        if (!deduction.success) return { success: false as const, error: "Credits 不足，请充值后再试" };
+      }
+
+      try {
+        const analysis = await analyzeAudioWithGemini(input.audioUrl);
+        return { success: true as const, analysis };
+      } catch (err: any) {
+        // Refund on failure
+        if (!isAdmin(ctx.user)) {
+          await addCredits(ctx.user.id, CREDIT_COSTS.audioAnalysis, "refund", "音频分析失败退款");
+        }
+        return { success: false as const, error: err.message || "音频分析失败" };
+      }
+    }),
+
+    /** Generate storyboard from audio analysis result */
+    generateStoryboard: protectedProcedure.input(z.object({
+      lyrics: z.string(),
+      bpm: z.number(),
+      bpmRange: z.string(),
+      overallMood: z.string(),
+      genre: z.string(),
+      sections: z.array(z.object({
+        name: z.string(),
+        timeRange: z.string(),
+        mood: z.string(),
+        energy: z.string(),
+        instruments: z.string(),
+        rhythmPattern: z.string(),
+        lyrics: z.string().optional(),
+      })),
+      suggestedColorPalette: z.string(),
+      suggestedVisualStyle: z.string(),
+      instrumentation: z.string(),
+      sceneCount: z.number().min(2).max(20).default(8),
+    })).mutation(async ({ ctx, input }) => {
+      // Uses storyboard credits (same as normal storyboard)
+      if (!isAdmin(ctx.user)) {
+        const usage = await checkUsageLimit(ctx.user.id, "storyboard");
+        if (!usage.allowed) {
+          const deduction = await deductCredits(ctx.user.id, "storyboard");
+          if (!deduction.success) return { success: false, error: "Credits 不足" };
+        } else {
+          await incrementUsageCount(ctx.user.id, "storyboard");
+        }
+      }
+
+      const sectionInfo = input.sections.map(s => `[${s.name}] ${s.timeRange} | 情绪: ${s.mood} | 能量: ${s.energy} | 乐器: ${s.instruments} | 节奏: ${s.rhythmPattern}${s.lyrics ? ` | 歌词: ${s.lyrics}` : ""}`).join("\n");
+
+      const systemPrompt = `你是一位世界级的 MV 导演、电影摄影指导和分镜师。
+根据 AI 对歌曲的音频分析结果，生成 ${input.sceneCount} 个专业级分镜场景。
+
+【歌曲分析数据】
+- BPM: ${input.bpm}（范围 ${input.bpmRange}）
+- 整体情绪: ${input.overallMood}
+- 音乐风格: ${input.genre}
+- 乐器编排: ${input.instrumentation}
+- 建议色彩: ${input.suggestedColorPalette}
+- 建议视觉风格: ${input.suggestedVisualStyle}
+
+【歌曲段落结构】
+${sectionInfo}
+
+【歌词】
+${input.lyrics || "（纯音乐，无歌词）"}
+
+【每个分镜必须包含以下维度】
+1. 场景编号与时间段（对应歌曲段落）
+2. 画面描述（场景环境、空间布局、视觉元素）
+3. 灯光设计（主光源方向、色温冷暖、光影对比、补光方式、特殊光效）
+4. 人物表情（面部微表情、眼神方向、情绪传达）
+5. 人物动作（肢体动作、手势、身体姿态、运动轨迹）
+6. 人物神态（内心状态、气质表现、情绪张力）
+7. 人物互动（角色之间的空间关系、眼神交流、肢体接触）
+8. 摄影机位（远景/全景/中景/近景/特写/大特写）
+9. 镜头运动（推/拉/摇/移/跟/升降/手持/航拍/旋转）
+10. 色调与调色（整体色调、色彩倾向、对比度、饱和度）
+11. 配乐节奏（对应段落的BPM、节奏强弱、音乐情绪）
+12. 情绪氛围（整体情绪基调、氛围营造手法）
+13. 对应歌词段落
+14. 分镜图提示词（英文prompt，包含场景、灯光、人物、构图等关键视觉信息）
+
+请根据歌曲的节奏变化、情绪起伏和段落结构来安排分镜节奏，确保视觉叙事与音乐完美同步。`;
+
+      const response = await invokeLLM({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: `请根据以上歌曲分析数据生成 ${input.sceneCount} 个分镜场景` },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "audio_storyboard",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "分镜脚本标题" },
+                overallMood: { type: "string", description: "整体情绪基调" },
+                suggestedBPM: { type: "string", description: "配乐BPM" },
+                colorPalette: { type: "string", description: "色彩方案" },
+                scenes: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      sceneNumber: { type: "integer" },
+                      timeRange: { type: "string" },
+                      description: { type: "string" },
+                      lighting: { type: "string" },
+                      characterExpression: { type: "string" },
+                      characterAction: { type: "string" },
+                      characterDemeanor: { type: "string" },
+                      characterInteraction: { type: "string" },
+                      shotType: { type: "string" },
+                      cameraMovement: { type: "string" },
+                      colorTone: { type: "string" },
+                      bpm: { type: "string" },
+                      mood: { type: "string" },
+                      lyrics: { type: "string" },
+                      imagePrompt: { type: "string" },
+                    },
+                    required: ["sceneNumber", "timeRange", "description", "lighting", "characterExpression", "characterAction", "characterDemeanor", "characterInteraction", "shotType", "cameraMovement", "colorTone", "bpm", "mood", "lyrics", "imagePrompt"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["title", "overallMood", "suggestedBPM", "colorPalette", "scenes"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+
+      const storyboardData = String(response.choices[0].message.content ?? "{}");
+      const parsed = JSON.parse(storyboardData);
+      const id = await createStoryboard({ userId: ctx.user.id, lyrics: input.lyrics || "（音频分析生成）", sceneCount: input.sceneCount, storyboard: storyboardData });
+
+      // Auto-generate storyboard images for each scene using Forge (free)
+      const scenesWithImages = await Promise.all(
+        (parsed.scenes || []).map(async (scene: any) => {
+          try {
+            const { url } = await generateImage({
+              prompt: `Cinematic MV storyboard frame: ${scene.imagePrompt}. Professional film quality, 16:9 aspect ratio, detailed lighting.`,
+            });
+            return { ...scene, generatedImageUrl: url };
+          } catch {
+            return { ...scene, generatedImageUrl: null };
+          }
+        })
+      );
+      parsed.scenes = scenesWithImages;
+
+      return { success: true, id, storyboard: parsed };
     }),
   }),
 

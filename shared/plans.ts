@@ -115,6 +115,7 @@ export const CREDIT_COSTS = {
   inspiration: 5,
   storyboardImage2K: 5,
   storyboardImage4K: 9,
+  audioAnalysis: 10,
 } as const;
 
 /** PK 评分奖励等级：根据综合评分给予不同 Credits 奖励 */
