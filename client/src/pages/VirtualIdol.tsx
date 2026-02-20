@@ -25,10 +25,10 @@ const STYLES: { value: IdolStyle; label: string; desc: string }[] = [
   { value: "chibi", label: "Q版可爱", desc: "可爱Q版卡通风格" },
 ];
 
-const QUALITY_TIERS: { id: ImageQuality; label: string; desc: string; credits: number; price: string; icon: typeof Star; color: string }[] = [
-  { id: "free", label: "免费版", desc: "标准画质", credits: 0, price: "免费", icon: Star, color: "text-green-400 border-green-500/50 bg-green-500/10" },
-  { id: "2k", label: "2K 高清", desc: "2048×2048", credits: CREDIT_COSTS.storyboardImage2K, price: "$0.134/张", icon: Zap, color: "text-blue-400 border-blue-500/50 bg-blue-500/10" },
-  { id: "4k", label: "4K 超清", desc: "4096×4096", credits: CREDIT_COSTS.storyboardImage4K, price: "$0.24/张", icon: Crown, color: "text-amber-400 border-amber-500/50 bg-amber-500/10" },
+const QUALITY_TIERS: { id: ImageQuality; label: string; desc: string; credits: number; icon: typeof Star; color: string }[] = [
+  { id: "free", label: "免费版", desc: "标准画质", credits: 0, icon: Star, color: "text-green-400 border-green-500/50 bg-green-500/10" },
+  { id: "2k", label: "2K 高清", desc: "2048×2048", credits: CREDIT_COSTS.storyboardImage2K, icon: Zap, color: "text-blue-400 border-blue-500/50 bg-blue-500/10" },
+  { id: "4k", label: "4K 超清", desc: "4096×4096", credits: CREDIT_COSTS.storyboardImage4K, icon: Crown, color: "text-amber-400 border-amber-500/50 bg-amber-500/10" },
 ];
 
 // ─── 3D Model Viewer ────────────────────────────
@@ -284,11 +284,10 @@ export default function VirtualIdol() {
                                 <span className="text-xs text-muted-foreground">{tier.desc}</span>
                               </div>
                               <div className="flex items-center gap-2 mt-0.5">
-                                <span className={`text-xs font-medium ${tier.id === "free" ? "text-green-400" : "text-primary/70"}`}>
-                                  {tier.price}
-                                </span>
-                                {tier.credits > 0 && (
-                                  <span className="text-xs text-muted-foreground">· {tier.credits} Credits</span>
+                                {tier.credits > 0 ? (
+                                  <span className="text-xs font-medium text-primary/70">{tier.credits} Credits</span>
+                                ) : (
+                                  <span className="text-xs font-medium text-green-400">免费</span>
                                 )}
                               </div>
                             </div>

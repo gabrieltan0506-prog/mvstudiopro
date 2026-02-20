@@ -55,7 +55,7 @@ function ParticleBackground() {
           vx: (Math.random() - 0.5) * 0.25,
           vy: (Math.random() - 0.5) * 0.25,
           r: Math.random() * 2 + 0.3,
-          baseO: Math.random() * 0.4 + 0.08,
+          baseO: Math.random() * 0.5 + 0.15,
           color: colors[Math.floor(Math.random() * colors.length)],
           phase: Math.random() * Math.PI * 2,
         });
@@ -69,8 +69,8 @@ function ParticleBackground() {
       const sweepX = (Math.sin(time * 0.15) * 0.3 + 0.3) * w;
       const sweepY = (Math.cos(time * 0.12) * 0.2 + 0.15) * h;
       const grad1 = ctx!.createRadialGradient(sweepX, sweepY, 0, sweepX, sweepY, w * 0.55);
-      grad1.addColorStop(0, "rgba(232,130,94,0.06)");
-      grad1.addColorStop(0.3, "rgba(168,85,247,0.03)");
+      grad1.addColorStop(0, "rgba(232,130,94,0.20)");
+      grad1.addColorStop(0.3, "rgba(168,85,247,0.10)");
       grad1.addColorStop(1, "rgba(0,0,0,0)");
       ctx!.fillStyle = grad1;
       ctx!.fillRect(0, 0, w, h);
@@ -79,8 +79,8 @@ function ParticleBackground() {
       const s2x = (Math.sin(time * 0.1 + 2) * 0.25 + 0.7) * w;
       const s2y = (Math.cos(time * 0.08 + 1) * 0.2 + 0.75) * h;
       const grad2 = ctx!.createRadialGradient(s2x, s2y, 0, s2x, s2y, w * 0.45);
-      grad2.addColorStop(0, "rgba(59,130,246,0.05)");
-      grad2.addColorStop(0.4, "rgba(20,184,166,0.025)");
+      grad2.addColorStop(0, "rgba(59,130,246,0.16)");
+      grad2.addColorStop(0.4, "rgba(20,184,166,0.08)");
       grad2.addColorStop(1, "rgba(0,0,0,0)");
       ctx!.fillStyle = grad2;
       ctx!.fillRect(0, 0, w, h);
@@ -89,8 +89,8 @@ function ParticleBackground() {
       const s3x = (Math.sin(time * 0.07 + 4) * 0.15 + 0.5) * w;
       const s3y = (Math.cos(time * 0.09 + 3) * 0.15 + 0.45) * h;
       const grad3 = ctx!.createRadialGradient(s3x, s3y, 0, s3x, s3y, w * 0.35);
-      grad3.addColorStop(0, "rgba(245,158,11,0.035)");
-      grad3.addColorStop(0.5, "rgba(236,72,153,0.015)");
+      grad3.addColorStop(0, "rgba(245,158,11,0.14)");
+      grad3.addColorStop(0.5, "rgba(236,72,153,0.07)");
       grad3.addColorStop(1, "rgba(0,0,0,0)");
       ctx!.fillStyle = grad3;
       ctx!.fillRect(0, 0, w, h);
@@ -127,8 +127,8 @@ function ParticleBackground() {
           const dx = particles[i].x - particles[j].x;
           const dy = particles[i].y - particles[j].y;
           const dist = dx * dx + dy * dy;
-          if (dist < 8000) {
-            const lineO = (1 - dist / 8000) * 0.06;
+          if (dist < 10000) {
+            const lineO = (1 - dist / 10000) * 0.10;
             ctx!.beginPath();
             ctx!.moveTo(particles[i].x, particles[i].y);
             ctx!.lineTo(particles[j].x, particles[j].y);
@@ -241,19 +241,19 @@ export default function Home() {
       <Navbar />
 
       {/* ═══ Hero Section (tapnow.ai style) ═══ */}
-      <section className="relative pt-28 pb-24 overflow-hidden min-h-[85vh] flex items-center">
+      <section className="relative pt-28 pb-24 overflow-hidden min-h-[85vh] flex items-center" style={{ background: 'linear-gradient(135deg, #101018 0%, #15131f 25%, #18141a 50%, #121520 75%, #101018 100%)' }}>
         {/* Particle background */}
         <ParticleBackground />
 
         {/* Multi-layer animated gradient orbs for rich light & color */}
-        <div className="absolute top-[-5%] left-[15%] w-[550px] h-[550px] rounded-full blur-[140px] animate-[heroGlow1_8s_ease-in-out_infinite]" />
-        <div className="absolute bottom-[-8%] right-[10%] w-[480px] h-[480px] rounded-full blur-[120px] animate-[heroGlow2_10s_ease-in-out_infinite]" />
-        <div className="absolute top-[30%] left-[55%] w-[400px] h-[400px] rounded-full blur-[130px] animate-[heroGlow3_12s_ease-in-out_infinite]" />
-        <div className="absolute top-[15%] right-[25%] w-[350px] h-[350px] rounded-full blur-[100px] animate-[heroGlow4_9s_ease-in-out_infinite]" />
-        <div className="absolute bottom-[20%] left-[35%] w-[300px] h-[300px] rounded-full blur-[110px] animate-[heroGlow5_11s_ease-in-out_infinite]" />
+        <div className="absolute top-[-10%] left-[5%] w-[700px] h-[700px] rounded-full blur-[160px] animate-[heroGlow1_8s_ease-in-out_infinite]" />
+        <div className="absolute bottom-[-15%] right-[0%] w-[650px] h-[650px] rounded-full blur-[150px] animate-[heroGlow2_10s_ease-in-out_infinite]" />
+        <div className="absolute top-[20%] left-[40%] w-[550px] h-[550px] rounded-full blur-[140px] animate-[heroGlow3_12s_ease-in-out_infinite]" />
+        <div className="absolute top-[5%] right-[15%] w-[500px] h-[500px] rounded-full blur-[130px] animate-[heroGlow4_9s_ease-in-out_infinite]" />
+        <div className="absolute bottom-[10%] left-[25%] w-[450px] h-[450px] rounded-full blur-[120px] animate-[heroGlow5_11s_ease-in-out_infinite]" />
 
         {/* Soft vignette overlay — keeps edges dark, center luminous */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_55%_at_50%_45%,transparent_0%,rgba(16,16,18,0.35)_55%,rgba(16,16,18,0.85)_100%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_65%_at_50%_45%,transparent_0%,rgba(16,16,18,0.15)_60%,rgba(16,16,18,0.55)_100%)]" />
 
         {/* Very subtle noise texture for depth */}
         <div className="absolute inset-0 opacity-[0.025]" style={{
@@ -262,8 +262,8 @@ export default function Home() {
         }} />
 
         {/* Subtle grid lines */}
-        <div className="absolute inset-0 opacity-[0.02]" style={{
-          backgroundImage: "linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)",
+        <div className="absolute inset-0 opacity-[0.06]" style={{
+          backgroundImage: "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
           backgroundSize: "60px 60px"
         }} />
 

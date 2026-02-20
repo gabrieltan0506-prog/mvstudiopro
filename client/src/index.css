@@ -162,3 +162,33 @@
     }
   }
 }
+
+/* ═══ Hero Glow Animations ═══ */
+@keyframes heroGlow1 {
+  0%, 100% { background: radial-gradient(circle, rgba(232,130,94,0.35) 0%, rgba(232,130,94,0.12) 40%, transparent 70%); transform: translate(0, 0) scale(1); }
+  33% { background: radial-gradient(circle, rgba(168,85,247,0.30) 0%, rgba(236,72,153,0.10) 40%, transparent 70%); transform: translate(40px, -25px) scale(1.1); }
+  66% { background: radial-gradient(circle, rgba(245,158,11,0.32) 0%, rgba(232,130,94,0.12) 40%, transparent 70%); transform: translate(-25px, 20px) scale(0.93); }
+}
+@keyframes heroGlow2 {
+  0%, 100% { background: radial-gradient(circle, rgba(59,130,246,0.30) 0%, rgba(99,102,241,0.10) 40%, transparent 70%); transform: translate(0, 0) scale(1); }
+  33% { background: radial-gradient(circle, rgba(20,184,166,0.28) 0%, rgba(59,130,246,0.10) 40%, transparent 70%); transform: translate(-30px, 25px) scale(1.12); }
+  66% { background: radial-gradient(circle, rgba(168,85,247,0.25) 0%, rgba(20,184,166,0.08) 40%, transparent 70%); transform: translate(20px, -18px) scale(0.90); }
+}
+@keyframes heroGlow3 {
+  0%, 100% { background: radial-gradient(circle, rgba(236,72,153,0.25) 0%, rgba(168,85,247,0.08) 40%, transparent 70%); transform: translate(0, 0) scale(1); }
+  50% { background: radial-gradient(circle, rgba(245,158,11,0.28) 0%, rgba(232,130,94,0.10) 40%, transparent 70%); transform: translate(25px, -30px) scale(1.15); }
+}
+@keyframes heroGlow4 {
+  0%, 100% { background: radial-gradient(circle, rgba(168,85,247,0.28) 0%, rgba(99,102,241,0.08) 40%, transparent 70%); transform: translate(0, 0) scale(1); }
+  40% { background: radial-gradient(circle, rgba(59,130,246,0.25) 0%, rgba(20,184,166,0.10) 40%, transparent 70%); transform: translate(-20px, 25px) scale(1.08); }
+  80% { background: radial-gradient(circle, rgba(232,130,94,0.22) 0%, rgba(245,158,11,0.08) 40%, transparent 70%); transform: translate(15px, -12px) scale(0.94); }
+}
+@keyframes heroGlow5 {
+  0%, 100% { background: radial-gradient(circle, rgba(20,184,166,0.25) 0%, rgba(59,130,246,0.08) 40%, transparent 70%); transform: translate(0, 0) scale(1); }
+  50% { background: radial-gradient(circle, rgba(236,72,153,0.22) 0%, rgba(168,85,247,0.08) 40%, transparent 70%); transform: translate(-25px, -20px) scale(1.10); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
