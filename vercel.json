@@ -1,0 +1,6 @@
+{
+  "buildCommand": "pnpm approve-builds && pnpm build",
+  "outputDirectory": "dist/public",
+  "installCommand": "pnpm install",
+  "framework": "vite"
+}
