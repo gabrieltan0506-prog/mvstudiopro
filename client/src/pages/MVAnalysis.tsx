@@ -279,7 +279,7 @@ export default function MVAnalysis() {
                 <CardContent className="p-4 flex items-center gap-3">
                   <div className="text-2xl">{reward.emoji}</div>
                   <div>
-                    <span className="text-sm text-muted-foreground">{reward.tier} — 综合评分 {result.overall} 分，继续努力，85 分以上可获得 Credits 奖励！</span>
+                    <span className="text-sm text-muted-foreground">{reward.tier} — 综合评分 {result.overall} 分，继续努力，80 分以上可获得 Credits 奖励！</span>
                   </div>
                 </CardContent>
               </Card>
@@ -377,18 +377,16 @@ export default function MVAnalysis() {
             <Card className="bg-card/30 border-border/30">
               <CardHeader><CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Gift className="h-4 w-4" /> PK 评分奖励等级</CardTitle></CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  {[
-                    { min: 95, credits: 50, label: "大师级", emoji: "🏆", active: result.overall >= 95 },
-                    { min: 90, credits: 30, label: "精品级", emoji: "🥇", active: result.overall >= 90 && result.overall < 95 },
-                    { min: 85, credits: 15, label: "优秀级", emoji: "🌟", active: result.overall >= 85 && result.overall < 90 },
-                    { min: 75, credits: 5, label: "良好级", emoji: "👍", active: result.overall >= 75 && result.overall < 85 },
-                    { min: 0, credits: 0, label: "继续加油", emoji: "💪", active: result.overall < 75 },
+                <div className="grid grid-cols-3 gap-3">
+                    {[
+                     { min: 90, credits: 25, label: "精品级", emoji: "🏆", active: result.overall >= 90 },
+                     { min: 80, credits: 15, label: "优秀级", emoji: "🌟", active: result.overall >= 80 && result.overall < 90 },
+                     { min: 0, credits: 0, label: "继续加油", emoji: "💪", active: result.overall < 80 },
                   ].map(tier => (
                     <div key={tier.min} className={`text-center p-3 rounded-lg border transition-all ${tier.active ? "border-primary/50 bg-primary/10 scale-105" : "border-border/20 bg-card/20 opacity-50"}`}>
                       <div className="text-xl mb-1">{tier.emoji}</div>
                       <div className={`text-xs font-medium ${tier.active ? "text-primary" : "text-muted-foreground"}`}>{tier.label}</div>
-                      <div className="text-[10px] text-muted-foreground">{tier.min > 0 ? `≥${tier.min}分` : "<75分"}</div>
+                      <div className="text-[10px] text-muted-foreground">{tier.min > 0 ? `≥${tier.min}分` : "<80分"}</div>
                       <div className={`text-xs font-bold mt-1 ${tier.active ? "text-amber-400" : "text-muted-foreground/50"}`}>
                         {tier.credits > 0 ? `+${tier.credits} Credits` : "—"}
                       </div>

@@ -119,10 +119,8 @@ export const CREDIT_COSTS = {
 
 /** PK 评分奖励等级：根据综合评分给予不同 Credits 奖励 */
 export const PK_REWARD_TIERS = [
-  { minScore: 95, credits: 50, label: "大师级", labelCn: "大师级", emoji: "\u{1F3C6}" },
-  { minScore: 90, credits: 30, label: "精品级", labelCn: "精品级", emoji: "\u{1F947}" },
-  { minScore: 85, credits: 15, label: "优秀级", labelCn: "优秀级", emoji: "\u{1F31F}" },
-  { minScore: 75, credits: 5,  label: "良好级", labelCn: "良好级", emoji: "\u{1F44D}" },
+  { minScore: 90, credits: 25, label: "精品级", labelCn: "精品级", emoji: "\u{1F3C6}" },
+  { minScore: 80, credits: 15, label: "优秀级", labelCn: "优秀级", emoji: "\u{1F31F}" },
   { minScore: 0,  credits: 0,  label: "继续加油", labelCn: "继续加油", emoji: "\u{1F4AA}" },
 ] as const;
 

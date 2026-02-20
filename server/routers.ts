@@ -28,6 +28,9 @@ import {
   toggleCommentLike, getUserCommentLikes,
 } from "./db";
 import { generateVideo, isVeoAvailable } from "./veo";
+
+/** 管理员跳过 Credits 扣费 */
+function isAdmin(user: { role: string }) { return user.role === "admin"; }
 import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { CREDIT_COSTS } from "../shared/plans";
@@ -81,12 +84,14 @@ export const appRouter = router({
       videoUrl: z.string().url(),
       fileName: z.string().optional(),
     })).mutation(async ({ ctx, input }) => {
-      const usage = await checkUsageLimit(ctx.user.id, "analysis");
-      if (!usage.allowed) {
-        const deduction = await deductCredits(ctx.user.id, "mvAnalysis");
-        if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
-      } else {
-        await incrementUsageCount(ctx.user.id, "analysis");
+      if (!isAdmin(ctx.user)) {
+        const usage = await checkUsageLimit(ctx.user.id, "analysis");
+        if (!usage.allowed) {
+          const deduction = await deductCredits(ctx.user.id, "mvAnalysis");
+          if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        } else {
+          await incrementUsageCount(ctx.user.id, "analysis");
+        }
       }
       const response = await invokeLLM({
         messages: [
@@ -214,12 +219,14 @@ export const appRouter = router({
 
       if (input.quality === "free") {
         // Free tier: use built-in generateImage, check free usage limit
-        const usage = await checkUsageLimit(ctx.user.id, "avatar");
-        if (!usage.allowed) {
-          const deduction = await deductCredits(ctx.user.id, "idolGeneration");
-          if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
-        } else {
-          await incrementUsageCount(ctx.user.id, "avatar");
+        if (!isAdmin(ctx.user)) {
+          const usage = await checkUsageLimit(ctx.user.id, "avatar");
+          if (!usage.allowed) {
+            const deduction = await deductCredits(ctx.user.id, "idolGeneration");
+            if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+          } else {
+            await incrementUsageCount(ctx.user.id, "avatar");
+          }
         }
         const opts: any = { prompt };
         if (input.referenceImageUrl) {
@@ -228,10 +235,12 @@ export const appRouter = router({
         const { url } = await generateImage(opts);
         return { success: true, imageUrl: url, quality: "free" };
       } else {
-        // 2K / 4K: use Gemini API (Nano Banana Pro), always deduct credits
+        // 2K / 4K: use Gemini API (Nano Banana Pro), always deduct credits (admin skips)
         const creditKey = input.quality === "2k" ? "storyboardImage2K" : "storyboardImage4K";
-        const deduction = await deductCredits(ctx.user.id, creditKey);
-        if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        if (!isAdmin(ctx.user)) {
+          const deduction = await deductCredits(ctx.user.id, creditKey);
+          if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        }
         try {
           const result = await generateGeminiImage({
             prompt,
@@ -240,8 +249,8 @@ export const appRouter = router({
           });
           return { success: true, imageUrl: result.imageUrl, quality: input.quality };
         } catch (err: any) {
-          // Refund credits on failure
-          await addCredits(ctx.user.id, CREDIT_COSTS[creditKey], `偶像生成失败退款 (${input.quality.toUpperCase()})`);
+          // Refund credits on failure (admin doesn't need refund)
+          if (!isAdmin(ctx.user)) await addCredits(ctx.user.id, CREDIT_COSTS[creditKey], `偶像生成失败退款 (${input.quality.toUpperCase()})`);
           console.error("[VirtualIdol] Gemini image generation failed:", err);
           return { success: false, error: "图片生成失败，Credits 已退回" };
         }
@@ -255,12 +264,14 @@ export const appRouter = router({
       lyrics: z.string().min(1).max(5000),
       sceneCount: z.number().min(2).max(20).default(6),
     })).mutation(async ({ ctx, input }) => {
-      const usage = await checkUsageLimit(ctx.user.id, "storyboard");
-      if (!usage.allowed) {
-        const deduction = await deductCredits(ctx.user.id, "storyboard");
-        if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
-      } else {
-        await incrementUsageCount(ctx.user.id, "storyboard");
+      if (!isAdmin(ctx.user)) {
+        const usage = await checkUsageLimit(ctx.user.id, "storyboard");
+        if (!usage.allowed) {
+          const deduction = await deductCredits(ctx.user.id, "storyboard");
+          if (!deduction.success) return { success: false, error: "Credits 不足，請充值後再試" };
+        } else {
+          await incrementUsageCount(ctx.user.id, "storyboard");
+        }
       }
       const response = await invokeLLM({
         messages: [
@@ -309,8 +320,10 @@ export const appRouter = router({
       return items.map(s => ({ ...s, storyboard: JSON.parse(s.storyboard) }));
     }),
     generateImage: protectedProcedure.input(z.object({ sceneDescription: z.string(), colorTone: z.string().optional() })).mutation(async ({ ctx, input }) => {
-      const deduction = await deductCredits(ctx.user.id, "storyboardImage2K");
-      if (!deduction.success) return { success: false, error: "Credits 不足" };
+      if (!isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, "storyboardImage2K");
+        if (!deduction.success) return { success: false, error: "Credits 不足" };
+      }
       const { url } = await generateImage({ prompt: `MV storyboard scene: ${input.sceneDescription}. Color tone: ${input.colorTone || "cinematic"}. Professional cinematography, wide angle, film quality.` });
       return { success: true, imageUrl: url };
     }),
@@ -335,9 +348,13 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       // Determine credit cost based on quality + resolution
       const costKey = `videoGeneration${input.quality === "fast" ? "Fast" : "Std"}${input.resolution === "1080p" ? "1080" : "720"}` as keyof typeof CREDIT_COSTS;
-      const deduction = await deductCredits(ctx.user.id, costKey);
-      if (!deduction.success) {
-        return { success: false, error: "Credits 不足，请充值后再试" };
+      let creditsUsed = 0;
+      if (!isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, costKey);
+        if (!deduction.success) {
+          return { success: false, error: "Credits 不足，请充值后再试" };
+        }
+        creditsUsed = deduction.cost;
       }
 
       // Create DB record
@@ -352,7 +369,7 @@ export const appRouter = router({
         emotionFilter: input.emotionFilter ?? null,
         transition: input.transition ?? null,
         status: "generating",
-        creditsUsed: deduction.cost,
+        creditsUsed,
       });
 
       try {
@@ -381,7 +398,7 @@ export const appRouter = router({
         return { success: true, id: genId, videoUrl: result.videoUrl };
       } catch (err: any) {
         // Refund credits on failure
-        await addCredits(ctx.user.id, deduction.cost, "refund", "视频生成失败退款");
+        if (creditsUsed > 0) await addCredits(ctx.user.id, creditsUsed, "refund", "视频生成失败退款");
         await updateVideoGeneration(genId, {
           status: "failed",
           errorMessage: err.message || "Unknown error",
@@ -687,9 +704,13 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       // Determine credit cost based on mode
       const costKey = input.mode === "pro" ? "idol3DPro" : "idol3DRapid";
-      const deduction = await deductCredits(ctx.user.id, costKey);
-      if (!deduction.success) {
-        return { success: false as const, error: "Credits 不足，请充值后再试" };
+      let creditsUsed3d = 0;
+      if (!isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, costKey);
+        if (!deduction.success) {
+          return { success: false as const, error: "Credits 不足，请充值后再试" };
+        }
+        creditsUsed3d = deduction.cost;
       }
 
       // Create DB record
@@ -700,7 +721,7 @@ export const appRouter = router({
         enablePbr: input.enablePbr,
         enableGeometry: input.enableGeometry,
         status: "generating",
-        creditsUsed: deduction.cost,
+        creditsUsed: creditsUsed3d,
       });
 
       try {
@@ -725,7 +746,7 @@ export const appRouter = router({
         return { success: true as const, id: genId, ...result };
       } catch (err: any) {
         // Refund credits on failure
-        await addCredits(ctx.user.id, deduction.cost, "refund", "3D模型生成失败退款");
+        if (creditsUsed3d > 0) await addCredits(ctx.user.id, creditsUsed3d, "refund", "3D模型生成失败退款");
         await updateIdol3dGeneration(genId, {
           status: "failed",
           errorMessage: err.message || "Unknown error",

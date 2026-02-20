@@ -45,17 +45,16 @@ describe("Veo Video Generation", () => {
 
   it("PK_REWARD_TIERS are properly defined", async () => {
     const { PK_REWARD_TIERS, getRewardTier } = await import("../shared/plans");
-    expect(PK_REWARD_TIERS.length).toBe(5);
-    // 95+ gets 50 credits
-    expect(getRewardTier(95).credits).toBe(50);
-    expect(getRewardTier(95).label).toBe("大师级");
-    // 90-94 gets 30 credits
-    expect(getRewardTier(92).credits).toBe(30);
-    // 85-89 gets 15 credits
-    expect(getRewardTier(87).credits).toBe(15);
-    // 75-84 gets 5 credits
-    expect(getRewardTier(80).credits).toBe(5);
-    // below 75 gets 0
+    expect(PK_REWARD_TIERS.length).toBe(3);
+    // ≥90 gets 25 credits (精品级)
+    expect(getRewardTier(95).credits).toBe(25);
+    expect(getRewardTier(95).label).toBe("精品级");
+    expect(getRewardTier(90).credits).toBe(25);
+    // 80-89 gets 15 credits (优秀级)
+    expect(getRewardTier(85).credits).toBe(15);
+    expect(getRewardTier(80).credits).toBe(15);
+    // below 80 gets 0
+    expect(getRewardTier(79).credits).toBe(0);
     expect(getRewardTier(60).credits).toBe(0);
   });
 });
