@@ -7,8 +7,54 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { useState } from "react";
-import { Clapperboard, Loader2, FileDown, Image, ChevronDown, ChevronUp } from "lucide-react";
+import { useState, useCallback } from "react";
+import { Clapperboard, Loader2, FileDown, Image, ChevronDown, ChevronUp, Copy, Check } from "lucide-react";
+
+/** Format the entire storyboard result into a readable plain-text string. */
+function formatStoryboardText(result: any): string {
+  const lines: string[] = [];
+  lines.push(`【${result.title || "分镜脚本"}】`);
+  lines.push("");
+
+  const scenes: any[] = result.scenes || [];
+  scenes.forEach((scene: any, i: number) => {
+    lines.push(`── 场景 ${i + 1}: ${scene.title || ""} ──`);
+    if (scene.duration || scene.cameraAngle) {
+      lines.push(`时长: ${scene.duration || "4s"}  |  机位: ${scene.cameraAngle || "中景"}`);
+    }
+    if (scene.description || scene.visual) {
+      lines.push(`画面描述: ${scene.description || scene.visual}`);
+    }
+    if (scene.lyrics) {
+      lines.push(`对应歌词: ${scene.lyrics}`);
+    }
+    if (scene.mood) {
+      lines.push(`情绪氛围: ${scene.mood}`);
+    }
+    lines.push("");
+  });
+
+  return lines.join("\n");
+}
+
+/** Format a single scene into plain text. */
+function formatSceneText(scene: any, index: number): string {
+  const lines: string[] = [];
+  lines.push(`── 场景 ${index + 1}: ${scene.title || ""} ──`);
+  if (scene.duration || scene.cameraAngle) {
+    lines.push(`时长: ${scene.duration || "4s"}  |  机位: ${scene.cameraAngle || "中景"}`);
+  }
+  if (scene.description || scene.visual) {
+    lines.push(`画面描述: ${scene.description || scene.visual}`);
+  }
+  if (scene.lyrics) {
+    lines.push(`对应歌词: ${scene.lyrics}`);
+  }
+  if (scene.mood) {
+    lines.push(`情绪氛围: ${scene.mood}`);
+  }
+  return lines.join("\n");
+}
 
 export default function Storyboard() {
   const { isAuthenticated } = useAuth();
@@ -17,6 +63,8 @@ export default function Storyboard() {
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [expandedScene, setExpandedScene] = useState<number | null>(null);
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedScene, setCopiedScene] = useState<number | null>(null);
 
   const generateMutation = trpc.storyboard.generate.useMutation({
     onSuccess: (data) => {
@@ -48,8 +96,35 @@ export default function Storyboard() {
     if (!lyrics.trim()) { toast.error("请输入歌词或文本内容"); return; }
     setGenerating(true);
     setResult(null);
+    setCopiedAll(false);
+    setCopiedScene(null);
     generateMutation.mutate({ lyrics: lyrics.trim(), sceneCount: parseInt(sceneCount) });
   };
+
+  /** Copy the full storyboard to clipboard */
+  const handleCopyAll = useCallback(async () => {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(formatStoryboardText(result));
+      setCopiedAll(true);
+      toast.success("已复制全部脚本内容到剪贴板");
+      setTimeout(() => setCopiedAll(false), 2000);
+    } catch {
+      toast.error("复制失败，请手动选取复制");
+    }
+  }, [result]);
+
+  /** Copy a single scene to clipboard */
+  const handleCopyScene = useCallback(async (scene: any, index: number) => {
+    try {
+      await navigator.clipboard.writeText(formatSceneText(scene, index));
+      setCopiedScene(index);
+      toast.success(`已复制场景 ${index + 1} 到剪贴板`);
+      setTimeout(() => setCopiedScene(null), 2000);
+    } catch {
+      toast.error("复制失败，请手动选取复制");
+    }
+  }, []);
 
   if (!isAuthenticated) {
     return (
@@ -88,7 +163,7 @@ export default function Storyboard() {
                 <div>
                   <label className="text-sm font-medium mb-2 block">歌词 / 文本内容</label>
                   <Textarea
-                    placeholder="在这里粘贴歌词或输入文本内容...&#10;&#10;例如：&#10;月光洒落在窗台&#10;你的影子在风中摇摆&#10;城市的霓虹灯闪烁&#10;我们在人海中相遇"
+                    placeholder={"在这里粘贴歌词或输入文本内容...\n\n例如：\n月光洒落在窗台\n你的影子在风中摇摆\n城市的霓虹灯闪烁\n我们在人海中相遇"}
                     rows={10}
                     value={lyrics}
                     onChange={e => setLyrics(e.target.value)}
@@ -129,7 +204,7 @@ export default function Storyboard() {
                     <button
                       key={s.id}
                       className="w-full text-left p-2 rounded-md bg-background/30 hover:bg-background/50 transition-colors"
-                      onClick={() => setResult(s.storyboard)}
+                      onClick={() => { setResult(s.storyboard); setCopiedAll(false); setCopiedScene(null); }}
                     >
                       <div className="text-xs text-muted-foreground truncate">{s.lyrics?.slice(0, 40)}...</div>
                     </button>
@@ -158,12 +233,30 @@ export default function Storyboard() {
               </Card>
             ) : result && (
               <div className="space-y-4">
+                {/* Title row with Copy All + Export PDF */}
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold">{result.title || "分镜脚本"}</h3>
-                  <Button variant="outline" size="sm" className="bg-transparent gap-1" onClick={() => toast.info("PDF 导出功能即将上线")}>
-                    <FileDown className="h-4 w-4" /> 导出 PDF
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`gap-1.5 transition-all ${
+                        copiedAll
+                          ? "bg-green-500/10 border-green-500/40 text-green-400 hover:bg-green-500/20"
+                          : "bg-transparent"
+                      }`}
+                      onClick={handleCopyAll}
+                    >
+                      {copiedAll ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      {copiedAll ? "已复制" : "一键复制"}
+                    </Button>
+                    <Button variant="outline" size="sm" className="bg-transparent gap-1" onClick={() => toast.info("PDF 导出功能即将上线")}>
+                      <FileDown className="h-4 w-4" /> 导出 PDF
+                    </Button>
+                  </div>
                 </div>
+
+                {/* Scene cards */}
                 {(result.scenes || []).map((scene: any, i: number) => (
                   <Card key={i} className="bg-card/50 border-border/50">
                     <CardContent className="p-4">
@@ -180,7 +273,23 @@ export default function Storyboard() {
                             <div className="text-xs text-muted-foreground">{scene.duration || "4s"} · {scene.cameraAngle || "中景"}</div>
                           </div>
                         </div>
-                        {expandedScene === i ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        <div className="flex items-center gap-1">
+                          {/* Per-scene copy button (visible when expanded) */}
+                          {expandedScene === i && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={`h-7 w-7 transition-all ${
+                                copiedScene === i ? "text-green-400" : "text-muted-foreground hover:text-foreground"
+                              }`}
+                              onClick={(e) => { e.stopPropagation(); handleCopyScene(scene, i); }}
+                              title="复制此场景"
+                            >
+                              {copiedScene === i ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                            </Button>
+                          )}
+                          {expandedScene === i ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </div>
                       </button>
                       {expandedScene === i && (
                         <div className="mt-4 space-y-3 pl-11">
