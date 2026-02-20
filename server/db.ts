@@ -15,6 +15,7 @@ import {
   stripeCustomers, stripeUsageLogs,
   studentVerifications, InsertStudentVerification,
   videoGenerations, InsertVideoGeneration,
+  idol3dGenerations, InsertIdol3dGeneration,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { CREDIT_COSTS } from "../shared/plans";
@@ -300,5 +301,29 @@ export async function getVideoGenerationsByUserId(userId: number, limit = 20) {
 export async function getVideoGenerationById(id: number) {
   const db = await getDb(); if (!db) return null;
   const [row] = await db.select().from(videoGenerations).where(eq(videoGenerations.id, id)).limit(1);
+  return row ?? null;
+}
+
+
+// ─── Idol 3D Generations ────────────────────────
+export async function createIdol3dGeneration(data: InsertIdol3dGeneration) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  const [result] = await db.insert(idol3dGenerations).values(data).$returningId();
+  return result.id;
+}
+
+export async function updateIdol3dGeneration(id: number, data: Partial<Pick<InsertIdol3dGeneration, "thumbnailUrl" | "modelGlbUrl" | "modelObjUrl" | "modelFbxUrl" | "modelUsdzUrl" | "textureUrl" | "status" | "errorMessage" | "completedAt">>) {
+  const db = await getDb(); if (!db) throw new Error("DB not available");
+  await db.update(idol3dGenerations).set(data as any).where(eq(idol3dGenerations.id, id));
+}
+
+export async function getIdol3dGenerationsByUserId(userId: number, limit = 20) {
+  const db = await getDb(); if (!db) return [];
+  return db.select().from(idol3dGenerations).where(eq(idol3dGenerations.userId, userId)).orderBy(sql`${idol3dGenerations.createdAt} DESC`).limit(limit);
+}
+
+export async function getIdol3dGenerationById(id: number) {
+  const db = await getDb(); if (!db) return null;
+  const [row] = await db.select().from(idol3dGenerations).where(eq(idol3dGenerations.id, id)).limit(1);
   return row ?? null;
 }

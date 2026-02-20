@@ -110,6 +110,8 @@ export const CREDIT_COSTS = {
   videoGenerationStd720: 30,
   videoGenerationStd1080: 50,
   idol3D: 10,
+  idol3DRapid: 8,
+  idol3DPro: 15,
   inspiration: 5,
   storyboardImage2K: 5,
   storyboardImage4K: 9,

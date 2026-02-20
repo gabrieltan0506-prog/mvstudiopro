@@ -22,8 +22,10 @@ import {
   createBetaQuota, getBetaQuotaByUserId, getAllBetaQuotas, updateBetaQuota,
   getAdminStats,
   createVideoGeneration, updateVideoGeneration, getVideoGenerationsByUserId, getVideoGenerationById,
+  createIdol3dGeneration, updateIdol3dGeneration, getIdol3dGenerationsByUserId, getIdol3dGenerationById,
 } from "./db";
 import { generateVideo, isVeoAvailable } from "./veo";
+import { generate3DModel, isHunyuan3DAvailable } from "./hunyuan3d";
 import { CREDIT_COSTS } from "../shared/plans";
 
 export const appRouter = router({
@@ -568,6 +570,80 @@ export const appRouter = router({
       } catch {
         return [];
       }
+    }),
+  }),
+
+  // ─── Hunyuan3D 2D转3D ──────────────
+  hunyuan3d: router({
+    /** Check if Hunyuan3D API is available */
+    status: publicProcedure.query(() => ({ available: isHunyuan3DAvailable() })),
+
+    /** Generate 3D model from 2D image */
+    generate: protectedProcedure.input(z.object({
+      inputImageUrl: z.string().url(),
+      mode: z.enum(["rapid", "pro"]).default("rapid"),
+      enablePbr: z.boolean().default(false),
+      enableGeometry: z.boolean().default(false),
+    })).mutation(async ({ ctx, input }) => {
+      // Determine credit cost based on mode
+      const costKey = input.mode === "pro" ? "idol3DPro" : "idol3DRapid";
+      const deduction = await deductCredits(ctx.user.id, costKey);
+      if (!deduction.success) {
+        return { success: false as const, error: "Credits 不足，请充值后再试" };
+      }
+
+      // Create DB record
+      const genId = await createIdol3dGeneration({
+        userId: ctx.user.id,
+        inputImageUrl: input.inputImageUrl,
+        mode: input.mode,
+        enablePbr: input.enablePbr,
+        enableGeometry: input.enableGeometry,
+        status: "generating",
+        creditsUsed: deduction.cost,
+      });
+
+      try {
+        const result = await generate3DModel({
+          inputImageUrl: input.inputImageUrl,
+          mode: input.mode,
+          enablePbr: input.enablePbr,
+          enableGeometry: input.enableGeometry,
+        });
+
+        await updateIdol3dGeneration(genId, {
+          thumbnailUrl: result.thumbnailUrl,
+          modelGlbUrl: result.modelGlbUrl,
+          modelObjUrl: result.modelObjUrl,
+          modelFbxUrl: result.modelFbxUrl,
+          modelUsdzUrl: result.modelUsdzUrl,
+          textureUrl: result.textureUrl,
+          status: "completed",
+          completedAt: new Date(),
+        });
+
+        return { success: true as const, id: genId, ...result };
+      } catch (err: any) {
+        // Refund credits on failure
+        await addCredits(ctx.user.id, deduction.cost, "refund", "3D模型生成失败退款");
+        await updateIdol3dGeneration(genId, {
+          status: "failed",
+          errorMessage: err.message || "Unknown error",
+        });
+        return { success: false as const, error: err.message || "3D模型生成失败，请稍后重试" };
+      }
+    }),
+
+    /** Get user's 3D generation history */
+    myList: protectedProcedure.query(async ({ ctx }) => {
+      return getIdol3dGenerationsByUserId(ctx.user.id);
+    }),
+
+    /** Get single 3D generation by ID */
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+      const gen = await getIdol3dGenerationById(input.id);
+      if (!gen || gen.userId !== ctx.user.id) return null;
+      return gen;
     }),
   }),
 });

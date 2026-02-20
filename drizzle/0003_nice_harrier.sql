@@ -1,0 +1,20 @@
+CREATE TABLE `idol_3d_generations` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`inputImageUrl` text NOT NULL,
+	`thumbnailUrl` text,
+	`modelGlbUrl` text,
+	`modelObjUrl` text,
+	`modelFbxUrl` text,
+	`modelUsdzUrl` text,
+	`textureUrl` text,
+	`mode` enum('rapid','pro') NOT NULL DEFAULT 'rapid',
+	`enablePbr` boolean NOT NULL DEFAULT false,
+	`enableGeometry` boolean NOT NULL DEFAULT false,
+	`idol3dStatus` enum('pending','generating','completed','failed') NOT NULL DEFAULT 'pending',
+	`errorMessage` text,
+	`creditsUsed` int NOT NULL DEFAULT 0,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`completedAt` timestamp,
+	CONSTRAINT `idol_3d_generations_id` PRIMARY KEY(`id`)
+);

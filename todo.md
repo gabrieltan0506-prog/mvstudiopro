@@ -81,3 +81,12 @@
 - [x] 前端分镜转视频页面接入 Veo 3.1 真实 API
 - [x] 异步轮询机制 + 进度显示
 - [x] 验证 API 连接测试
+
+## Phase 8: fal.ai Hunyuan3D 2D转3D 接入
+- [x] 查看 fal.ai API 文档获取接入参数
+- [x] 获取并存储 FAL_API_KEY 环境变量
+- [x] 后端实现 Hunyuan3D 服务模块（Rapid + Pro 两种模式）
+- [x] 后端 tRPC 接口（生成3D模型、查询历史）
+- [x] 数据库表 idol_3d_generations
+- [x] 前端虚拟偶像工坊页面添加 2D转3D Tab
+- [x] 测试并保存 checkpoint

@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `idol_3d_generations` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`inputImageUrl` text NOT NULL,\n\t`thumbnailUrl` text,\n\t`modelGlbUrl` text,\n\t`modelObjUrl` text,\n\t`modelFbxUrl` text,\n\t`modelUsdzUrl` text,\n\t`textureUrl` text,\n\t`mode` enum('rapid','pro') NOT NULL DEFAULT 'rapid',\n\t`enablePbr` boolean NOT NULL DEFAULT false,\n\t`enableGeometry` boolean NOT NULL DEFAULT false,\n\t`idol3dStatus` enum('pending','generating','completed','failed') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`creditsUsed` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`completedAt` timestamp,\n\tCONSTRAINT `idol_3d_generations_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute CREATE TABLE `idol_3d_generations` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`inputImageUrl` text NOT NULL,\n\t`thumbnailUrl` text,\n\t`modelGlbUrl` text,\n\t`modelObjUrl` text,\n\t`modelFbxUrl` text,\n\t`modelUsdzUrl` text,\n\t`textureUrl` text,\n\t`mode` enum('rapid','pro') NOT NULL DEFAULT 'rapid',\n\t`enablePbr` boolean NOT NULL DEFAULT false,\n\t`enableGeometry` boolean NOT NULL DEFAULT false,\n\t`idol3dStatus` enum('pending','generating','completed','failed') NOT NULL DEFAULT 'pending',\n\t`errorMessage` text,\n\t`creditsUsed` int NOT NULL DEFAULT 0,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`completedAt` timestamp,\n\tCONSTRAINT `idol_3d_generations_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1831
+}

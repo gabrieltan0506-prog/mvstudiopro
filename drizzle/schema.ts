@@ -347,3 +347,28 @@ export const videoGenerations = mysqlTable("video_generations", {
 });
 export type VideoGeneration = typeof videoGenerations.$inferSelect;
 export type InsertVideoGeneration = typeof videoGenerations.$inferInsert;
+
+// ═══════════════════════════════════════════
+// Idol 3D Generations (Hunyuan3D)
+// ═══════════════════════════════════════════
+export const idol3dGenerations = mysqlTable("idol_3d_generations", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  inputImageUrl: text("inputImageUrl").notNull(),
+  thumbnailUrl: text("thumbnailUrl"),
+  modelGlbUrl: text("modelGlbUrl"),
+  modelObjUrl: text("modelObjUrl"),
+  modelFbxUrl: text("modelFbxUrl"),
+  modelUsdzUrl: text("modelUsdzUrl"),
+  textureUrl: text("textureUrl"),
+  mode: mysqlEnum("mode", ["rapid", "pro"]).default("rapid").notNull(),
+  enablePbr: boolean("enablePbr").default(false).notNull(),
+  enableGeometry: boolean("enableGeometry").default(false).notNull(),
+  status: mysqlEnum("idol3dStatus", ["pending", "generating", "completed", "failed"]).default("pending").notNull(),
+  errorMessage: text("errorMessage"),
+  creditsUsed: int("creditsUsed").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+});
+export type Idol3dGeneration = typeof idol3dGenerations.$inferSelect;
+export type InsertIdol3dGeneration = typeof idol3dGenerations.$inferInsert;
