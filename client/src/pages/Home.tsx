@@ -8,7 +8,7 @@ import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Film, Sparkles, Clapperboard, Wand2, Users, BarChart3,
   ArrowRight, Play, Star, Send, ChevronRight
@@ -32,6 +32,12 @@ const SHOWCASE_MVS = [
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const [contactForm, setContactForm] = useState({ name: "", email: "", subject: "", message: "" });
+
+  useEffect(() => {
+    document.title = "MV Studio Pro - AI驱动的一站式MV创作与管理平台";
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', 'MV Studio Pro 是专业的AI视频创作平台，提供MV智能分析、虚拟偶像生成、歌词分镜脚本、视觉特效引擎等一站式MV制作工具，助力创作者高效产出爆款音乐视频。');
+  }, []);
   const submitGuestbook = trpc.guestbook.submit.useMutation({
     onSuccess: () => { toast.success("消息已发送！我们会尽快回复您。"); setContactForm({ name: "", email: "", subject: "", message: "" }); },
     onError: () => toast.error("发送失败，请稍后重试"),
