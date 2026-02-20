@@ -442,7 +442,6 @@ export default function VirtualIdol() {
                           <span className="font-medium text-sm">Rapid 快速版</span>
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">~30 秒 · {CREDIT_COSTS.idol3DRapid} Credits</div>
-                        <div className="text-xs text-blue-400/70 mt-0.5">$0.225/次</div>
                       </button>
                       <button
                         onClick={() => setMode3d("pro")}
@@ -457,7 +456,6 @@ export default function VirtualIdol() {
                           <span className="font-medium text-sm">Pro 高质量版</span>
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">~60 秒 · {CREDIT_COSTS.idol3DPro} Credits</div>
-                        <div className="text-xs text-amber-400/70 mt-0.5">$0.375/次</div>
                       </button>
                     </div>
                   </div>

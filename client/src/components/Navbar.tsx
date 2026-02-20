@@ -15,6 +15,7 @@ import {
 const NAV_ITEMS = [
   { label: "视频展厅", href: "/gallery" },
   { label: "视频PK评分", href: "/analysis" },
+  { label: "二次创作", href: "/remix" },
   { label: "虚拟偶像", href: "/idol" },
   { label: "分镜脚本", href: "/storyboard" },
   { label: "分镜转视频", href: "/vfx" },

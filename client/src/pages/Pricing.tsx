@@ -176,14 +176,12 @@ export default function Pricing() {
                       <span className="text-3xl font-bold">免费</span>
                     ) : (
                       <>
-                        <span className="text-3xl font-bold">${price}</span>
-                        <span className="text-muted-foreground text-sm">/{billingInterval === "month" ? "月" : "年"}</span>
+                        <span className="text-3xl font-bold">{plan.monthlyCredits}</span>
+                        <span className="text-muted-foreground text-sm"> Credits/月</span>
                       </>
                     )}
                   </div>
-                  {plan.monthlyCredits > 0 && (
-                    <p className="text-xs text-muted-foreground mt-1">{plan.monthlyCredits} Credits/月</p>
-                  )}
+
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <ul className="space-y-2.5">
@@ -198,24 +196,13 @@ export default function Pricing() {
                   {isAuthenticated ? (
                     <div className="space-y-2">
                       {planId !== "free" ? (
-                        <>
-                          <Button
-                            className={`w-full gap-2 ${planId === "pro" ? "bg-primary text-primary-foreground hover:bg-primary/90" : "bg-purple-600 text-white hover:bg-purple-700"}`}
-                            disabled={isLoading}
-                            onClick={() => handleStripeSubscribe(planId as "pro" | "enterprise")}
-                          >
-                            {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-                            {isLoading ? "处理中..." : "在线支付"}
-                          </Button>
-                          <Button
-                            className="w-full text-xs"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => { setSelectedPlan(planId); setDialogOpen(true); }}
-                          >
-                            或使用截图付款
-                          </Button>
-                        </>
+                        <Button
+                          className="w-full text-sm"
+                          variant="outline"
+                          onClick={() => toast.info("即将开放，敬请期待！")}
+                        >
+                          即将开放
+                        </Button>
                       ) : (
                         <Button className="w-full bg-transparent" variant="outline" disabled>
                           当前方案
@@ -255,9 +242,9 @@ export default function Pricing() {
                   <CardHeader className="text-center pb-3">
                     <CardTitle className="text-base">{pack.labelCn}</CardTitle>
                     <div className="mt-2">
-                      <span className="text-2xl font-bold">${pack.price}</span>
+                      <span className="text-2xl font-bold">{pack.credits}</span>
+                      <span className="text-sm text-muted-foreground"> Credits</span>
                     </div>
-                    <p className="text-xs text-muted-foreground">{pack.credits} Credits</p>
                   </CardHeader>
                   <CardContent>
                     {isAuthenticated ? (
@@ -290,7 +277,7 @@ export default function Pricing() {
               { q: "Credits 是什么？", a: "Credits 是平台的通用积分，每次使用 AI 功能（分析、生成偶像、分镜脚本等）都会消耗一定数量的 Credits。订阅套餐每月自动发放 Credits，也可单独充值。" },
               { q: "支持哪些付款方式？", a: "支持 Visa、Mastercard、American Express 等国际信用卡/借记卡在线支付（通过 Stripe 安全处理）。如需其他付款方式，可选择截图付款，我们的团队会在 24 小时内完成人工审核。" },
               { q: "可以随时升级或降级吗？", a: "可以。升级立即生效，剩余 Credits 会累计；降级将在当前周期结束后生效。" },
-              { q: "年付有什么优惠？", a: "年付享 20% 折扣。专业版年付 $278（相当于每月 $23.2），企业版年付 $950（相当于每月 $79.2）。" },
+              { q: "年付有什么优惠？", a: "年付享 20% 折扣，专业版年付每月可获得更多 Credits，企业版年付同样享受折扣优惠。" },
               { q: "企业版有什么额外服务？", a: "企业版包含专属客户经理、API 接口、自定义品牌水印、优先技术支持、团队席位管理等高级服务。" },
             ].map((item, i) => (
               <Card key={i} className="bg-card/50 border-border/50">
@@ -317,7 +304,6 @@ export default function Pricing() {
             <Card className="bg-background/50 border-border/50">
               <CardContent className="p-4 text-sm space-y-1">
                 <div>套餐：{sp?.nameCn}</div>
-                <div>金额：${billingInterval === "month" ? sp?.monthlyPrice : sp?.yearlyPrice}/{billingInterval === "month" ? "月" : "年"}</div>
                 <div>Credits：{sp?.monthlyCredits}/月</div>
               </CardContent>
             </Card>

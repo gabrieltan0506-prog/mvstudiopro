@@ -196,9 +196,9 @@ export const appRouter = router({
     status: publicProcedure.query(() => ({
       geminiAvailable: isGeminiImageAvailable(),
       tiers: [
-        { id: "free", label: "免费版", desc: "标准画质", credits: 0, price: "免费" },
-        { id: "2k", label: "2K 高清", desc: "2048×2048 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage2K, price: "$0.134/张" },
-        { id: "4k", label: "4K 超清", desc: "4096×4096 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage4K, price: "$0.24/张" },
+        { id: "free", label: "免费版", desc: "标准画质", credits: 0 },
+        { id: "2k", label: "2K 高清", desc: "2048×2048 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage2K },
+        { id: "4k", label: "4K 超清", desc: "4096×4096 Nano Banana Pro", credits: CREDIT_COSTS.storyboardImage4K },
       ],
     })),
 
@@ -318,6 +318,75 @@ export const appRouter = router({
     myList: protectedProcedure.query(async ({ ctx }) => {
       const items = await getStoryboardsByUserId(ctx.user.id);
       return items.map(s => ({ ...s, storyboard: JSON.parse(s.storyboard) }));
+    }),
+    /** 灵感文案生成：用户给三句话，AI 生成完整文案/歌词 */
+    generateInspiration: protectedProcedure.input(z.object({
+      keywords: z.string().min(1).max(500),
+      mode: z.enum(["free", "gemini"]).default("free"),
+    })).mutation(async ({ ctx, input }) => {
+      const maxChars = input.mode === "gemini" ? 2000 : 1000;
+      const maxScenes = input.mode === "gemini" ? 20 : 10;
+
+      // Gemini mode costs credits
+      if (input.mode === "gemini" && !isAdmin(ctx.user)) {
+        const deduction = await deductCredits(ctx.user.id, "inspiration");
+        if (!deduction.success) return { success: false, error: "Credits 不足，请充值后再试" };
+      }
+
+      const systemPrompt = `你是一位顶级的视频剧本作家和歌词创作者。用户会给你几句简短的描述或关键词，你需要根据这些灵感生成一份完整的视频文案或歌词。
+
+要求：
+- 文案内容不超过 ${maxChars} 字
+- 内容要有画面感、情感层次、节奏变化
+- 适合拍摄视频或 MV
+- 如果是歌词，要有押韵和旋律感
+- 可以拆分成段落（主歌/副歌/桥段）
+- 最后建议可以生成 ${maxScenes} 个分镜场景
+
+请用 JSON 格式返回：
+{
+  "title": "文案标题",
+  "content": "完整的文案/歌词内容",
+  "suggestedScenes": ${maxScenes},
+  "mood": "整体情绪基调",
+  "style": "建议的视觉风格"
+}`;
+
+      try {
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `我的灵感关键词：${input.keywords}` },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "inspiration",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  content: { type: "string" },
+                  suggestedScenes: { type: "integer" },
+                  mood: { type: "string" },
+                  style: { type: "string" },
+                },
+                required: ["title", "content", "suggestedScenes", "mood", "style"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+        const data = JSON.parse(String(response.choices[0].message.content ?? "{}"));
+        return { success: true, ...data, mode: input.mode, maxChars, maxScenes };
+      } catch (err: any) {
+        // Refund on failure for gemini mode
+        if (input.mode === "gemini" && !isAdmin(ctx.user)) {
+          await addCredits(ctx.user.id, CREDIT_COSTS.inspiration, "refund", "灵感文案生成失败退款");
+        }
+        return { success: false, error: err.message || "文案生成失败" };
+      }
     }),
     generateImage: protectedProcedure.input(z.object({ sceneDescription: z.string(), colorTone: z.string().optional() })).mutation(async ({ ctx, input }) => {
       if (!isAdmin(ctx.user)) {

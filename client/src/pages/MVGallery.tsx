@@ -5,8 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { useState } from "react";
-import { Play, Star, MessageCircle, X, Send, Film } from "lucide-react";
+import { useState, useRef } from "react";
+import { Play, Star, MessageCircle, X, Send, Film, Pause, Volume2, VolumeX, Maximize } from "lucide-react";
 import { VideoInteraction } from "@/components/VideoInteraction";
 import {
   Dialog,
@@ -16,14 +16,94 @@ import {
 } from "@/components/ui/dialog";
 
 const MV_LIST = [
-  { id: "mv1", title: "Neon Dreams", artist: "CyberVox", genre: "电子/赛博朋克", duration: "3:42", thumbnail: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "霓虹灯下的赛博朋克世界，虚拟偶像与数字灵魂的交织。" },
-  { id: "mv2", title: "Sakura Rain", artist: "Luna AI", genre: "J-Pop/动漫", duration: "4:15", thumbnail: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "樱花飘落的季节，AI 生成的唯美动漫画面与旋律完美融合。" },
-  { id: "mv3", title: "Digital Soul", artist: "PixelBeat", genre: "电子/实验", duration: "3:58", thumbnail: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "数字灵魂在虚拟空间中的觉醒之旅。" },
-  { id: "mv4", title: "Midnight City", artist: "NeonWave", genre: "Synthwave", duration: "4:30", thumbnail: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "午夜城市的霓虹光影，复古未来主义的视觉盛宴。" },
-  { id: "mv5", title: "Ocean Waves", artist: "AquaVerse", genre: "Ambient/Chill", duration: "5:12", thumbnail: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "海浪与音乐的完美交融，沉浸式的视听体验。" },
-  { id: "mv6", title: "Fire Dance", artist: "BlazeStar", genre: "Hip-Hop/Trap", duration: "3:25", thumbnail: "https://images.unsplash.com/photo-1501386761578-0a55d4e96e87?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "火焰与舞蹈的碰撞，热血沸腾的视觉冲击。" },
-  { id: "mv7", title: "Star Voyage", artist: "CosmicAI", genre: "Space/Ambient", duration: "6:00", thumbnail: "https://images.unsplash.com/photo-1506157786151-b8491531f063?w=800&h=450&fit=crop", videoUrl: "https://www.youtube.com/embed/dQw4w9WgXcQ", description: "穿越星际的音乐旅程，AI 生成的宇宙奇观。" },
+  { id: "mv1", title: "Neon Dreams", artist: "CyberVox", genre: "电子/赛博朋克", duration: "0:40", thumbnail: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/LGlMSFWBoydTFxjO.mp4", description: "霓虹灯下的赛博朋克世界，虚拟偶像与数字灵魂的交织。" },
+  { id: "mv2", title: "Sakura Rain", artist: "Luna AI", genre: "J-Pop/动漫", duration: "0:18", thumbnail: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/HsKLmjIiEdfqJwTS.mp4", description: "樱花飘落的季节，AI 生成的唯美动漫画面与旋律完美融合。" },
+  { id: "mv3", title: "Digital Soul", artist: "PixelBeat", genre: "电子/实验", duration: "0:20", thumbnail: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/gieWbRLnhzizmXwt.mp4", description: "数字灵魂在虚拟空间中的觉醒之旅。" },
+  { id: "mv4", title: "Midnight City", artist: "NeonWave", genre: "Synthwave", duration: "0:36", thumbnail: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/cBwAZMJQmgvCVdFD.mp4", description: "午夜城市的霓虹光影，复古未来主义的视觉盛宴。" },
+  { id: "mv5", title: "Ocean Waves", artist: "AquaVerse", genre: "Ambient/Chill", duration: "0:20", thumbnail: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/oFwinfDXhonlAtPs.mp4", description: "海浪与音乐的完美交融，沉浸式的视听体验。" },
+  { id: "mv6", title: "Fire Dance", artist: "BlazeStar", genre: "Hip-Hop/Trap", duration: "0:18", thumbnail: "https://images.unsplash.com/photo-1501386761578-0a55d4e96e87?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/WHScAGWIfOVpIKFQ.mp4", description: "火焰与舞蹈的碰撞，热血沸腾的视觉冲击。" },
+  { id: "mv7", title: "Star Voyage", artist: "CosmicAI", genre: "Space/Ambient", duration: "0:20", thumbnail: "https://images.unsplash.com/photo-1506157786151-b8491531f063?w=800&h=450&fit=crop", videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/ivSRHHzRgsCmuhFi.mp4", description: "穿越星际的音乐旅程，AI 生成的宇宙奇观。" },
 ];
+
+/** Inline video player component */
+function VideoPlayer({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (playing) videoRef.current.pause();
+    else videoRef.current.play();
+    setPlaying(!playing);
+  };
+
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  return (
+    <div className="relative bg-black">
+      <video
+        ref={videoRef}
+        src={src}
+        className="w-full aspect-video object-contain"
+        onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
+        onLoadedMetadata={() => videoRef.current && setDuration(videoRef.current.duration)}
+        onEnded={() => setPlaying(false)}
+        muted={muted}
+        playsInline
+      />
+      {/* Play overlay */}
+      {!playing && (
+        <button
+          className="absolute inset-0 flex items-center justify-center bg-black/20"
+          onClick={togglePlay}
+        >
+          <div className="w-16 h-16 rounded-full bg-primary/90 flex items-center justify-center hover:bg-primary transition-colors">
+            <Play className="h-7 w-7 text-primary-foreground ml-0.5" />
+          </div>
+        </button>
+      )}
+      {/* Controls bar */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3 flex items-center gap-3">
+        <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
+          {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+        </button>
+        <div className="flex-1">
+          <input
+            type="range"
+            min={0}
+            max={duration || 100}
+            value={currentTime}
+            onChange={e => {
+              const t = Number(e.target.value);
+              if (videoRef.current) videoRef.current.currentTime = t;
+              setCurrentTime(t);
+            }}
+            className="w-full h-1 accent-primary"
+          />
+        </div>
+        <span className="text-xs text-white/80 min-w-[70px] text-right">
+          {formatTime(currentTime)} / {formatTime(duration)}
+        </span>
+        <button onClick={() => setMuted(!muted)} className="text-white hover:text-primary transition-colors">
+          {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+        </button>
+        <button
+          onClick={() => videoRef.current?.requestFullscreen?.()}
+          className="text-white hover:text-primary transition-colors"
+        >
+          <Maximize className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function ReviewSection({ mvId }: { mvId: string }) {
   const { data: reviews, refetch } = trpc.mvReview.list.useQuery({ mvId });
@@ -144,14 +224,7 @@ export default function MVGallery() {
         <DialogContent className="max-w-4xl bg-card border-border/50 p-0 overflow-hidden">
           {selectedMV && (
             <>
-              <div className="aspect-video w-full bg-black">
-                <iframe
-                  src={selectedMV.videoUrl}
-                  className="w-full h-full"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                />
-              </div>
+              <VideoPlayer src={selectedMV.videoUrl} />
               <div className="p-6">
                 <DialogHeader>
                   <DialogTitle className="text-xl">{selectedMV.title}</DialogTitle>
