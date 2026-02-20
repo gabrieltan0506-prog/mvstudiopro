@@ -209,3 +209,4 @@
 - [x] 3D API Key 已更新
 - [x] 新 API Key 已生成並更新
 - [x] API Key 再次更新
+- [x] URL 參數已更新
