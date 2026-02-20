@@ -79,11 +79,11 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     });
   }
 
-  // Gemini 3 series models (latest)
+  // Models that support image generation (verified)
   const modelNames = [
     "gemini-3-pro-image-preview",
     "nano-banana-pro-preview",
-    "gemini-3-flash-preview",
+    "gemini-2.5-flash-image",
   ];
 
   let response: any = null;
