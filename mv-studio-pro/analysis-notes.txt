@@ -1,0 +1,15 @@
+Homepage Analysis Notes:
+1. Nav bar: "MV Studio Pro" + "MV 展廳", "MV 分析", "虛擬偶像" - MISSING login button
+2. Hero section: floating album covers, title, CTA buttons - looks good
+3. MV Showcase section: Only shows 6 MVs (MV_SHOWCASE array has 6 items, but gallery has 7)
+   - Need to add 7th MV (愛的旋律) to the homepage showcase
+4. Platform section: Uses MaterialIcons instead of real platform logos
+5. Feature cards: Uses MaterialIcons - could be enhanced with more visual icons
+6. Video modal: Uses HTML5 <video> tag directly - should work on web
+
+Issues to fix:
+- Add 7th MV to MV_SHOWCASE on homepage
+- Add "登入" button to nav bar
+- Replace platform MaterialIcons with real logo images
+- Enhance feature card icons
+- Fix video playback in MV showcase section (the modal uses <video> tag directly)

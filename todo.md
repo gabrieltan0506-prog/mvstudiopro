@@ -220,4 +220,7 @@
 - [x] 新建 ModelViewer 組件（React Web 適配版）
 - [x] 更新前端頁面 import ModelViewer
 - [x] 更新 routers.ts check3DService 描述
+- [x] 解壓 mv-studio-pro.zip 到項目目錄
+- [x] 複製兩個 PDF 文檔到項目目錄
+- [x] 上傳媒體文件到 S3
 - [ ] 保存 checkpoint 並發布

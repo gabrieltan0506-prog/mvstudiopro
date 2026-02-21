@@ -1,0 +1,14 @@
+Video debugging findings:
+- w3schools video (https://www.w3schools.com/html/mov_bbb.mp4) works perfectly: readyState=4, duration=10.02s
+- Google Cloud Storage videos fail with MEDIA_ELEMENT_ERROR: Format error
+- The issue is with the Google Cloud Storage URLs, not with the video element implementation
+- Need to use different video URLs that actually work
+
+Solution: Replace all Google Cloud Storage URLs with working video URLs from other sources.
+Options:
+1. Use w3schools sample videos (small, but work)
+2. Use sample-videos.com
+3. Use Pixabay free videos
+4. Upload the user's actual MV videos to S3 using manus-upload-file
+
+Best approach: Use a mix of working sample video URLs.

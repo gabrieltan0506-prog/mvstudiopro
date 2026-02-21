@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `storyboards` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`lyrics` text NOT NULL,\n\t`sceneCount` int NOT NULL,\n\t`storyboard` text NOT NULL,\n\t`status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',\n\t`rejectionReason` text,\n\t`reviewedBy` int,\n\t`reviewedAt` timestamp,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `storyboards_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE `storyboards` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`lyrics` text NOT NULL,\n\t`sceneCount` int NOT NULL,\n\t`storyboard` text NOT NULL,\n\t`status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',\n\t`rejectionReason` text,\n\t`reviewedBy` int,\n\t`reviewedAt` timestamp,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,\n\tCONSTRAINT `storyboards_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 330
+}

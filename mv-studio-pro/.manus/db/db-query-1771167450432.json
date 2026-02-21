@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE `guestbook_messages` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`name` varchar(100) NOT NULL,\n\t`email` varchar(320),\n\t`phone` varchar(30),\n\t`company` varchar(200),\n\t`subject` varchar(255) NOT NULL,\n\t`message` text NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `guestbook_messages_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE `guestbook_messages` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`name` varchar(100) NOT NULL,\n\t`email` varchar(320),\n\t`phone` varchar(30),\n\t`company` varchar(200),\n\t`subject` varchar(255) NOT NULL,\n\t`message` text NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `guestbook_messages_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1788
+}

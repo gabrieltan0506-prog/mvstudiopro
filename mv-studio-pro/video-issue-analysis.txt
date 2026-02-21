@@ -1,0 +1,10 @@
+Video still failing even with HTTPS URLs. The issue is likely that the video element is being created by React Native's web implementation which may not properly handle HTML5 video. Need to check how the video modal is rendering the video element - it might be using a React Native component that doesn't work on web, or the video element might need different attributes.
+
+The video shows readyState=0, networkState=3 (NETWORK_NO_SOURCE), error="Format error". This suggests the video element is failing to load the source, not a format issue per se.
+
+Possible causes:
+1. The video element might be inside a React Native View that blocks loading
+2. The source might need to be set differently
+3. Need to check if there's a CORS issue with the Google Cloud Storage URLs
+
+Next step: Check the actual video modal implementation in index.tsx and see how the video element is created.

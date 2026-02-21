@@ -1,0 +1,7 @@
+Effects page verification results:
+1. Image preview now shows "contain" instead of "cover" - image is fully visible without cropping ✓
+2. Tool description section "創作工具一覽" is visible at the bottom with horizontal scroll ✓
+3. Each tool card has proper MaterialIcons icon, title, and description ✓
+4. The filter cards show proper icons (sun, snowflake, heart, etc.) ✓
+5. "當前配置" summary section is clean and functional ✓
+6. "導出特效方案" button has gradient styling ✓

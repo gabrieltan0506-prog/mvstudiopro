@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `video_platform_links` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`videoSubmissionId` int NOT NULL,\n\t`platform` enum('douyin','weixin_channels','xiaohongshu','bilibili') NOT NULL,\n\t`videoLink` text NOT NULL,\n\t`dataScreenshotUrl` text NOT NULL,\n\t`playCount` int,\n\t`likeCount` int,\n\t`commentCount` int,\n\t`shareCount` int,\n\t`verifyStatus` enum('pending','verified','rejected') NOT NULL DEFAULT 'pending',\n\t`verifyNotes` text,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `video_platform_links_id` PRIMARY KEY(`id`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE IF NOT EXISTS `video_platform_links` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`videoSubmissionId` int NOT NULL,\n\t`platform` enum('douyin','weixin_channels','xiaohongshu','bilibili') NOT NULL,\n\t`videoLink` text NOT NULL,\n\t`dataScreenshotUrl` text NOT NULL,\n\t`playCount` int,\n\t`likeCount` int,\n\t`commentCount` int,\n\t`shareCount` int,\n\t`verifyStatus` enum('pending','verified','rejected') NOT NULL DEFAULT 'pending',\n\t`verifyNotes` text,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `video_platform_links_id` PRIMARY KEY(`id`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1505
+}

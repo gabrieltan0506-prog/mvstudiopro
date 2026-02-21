@@ -1,0 +1,1 @@
+ALTER TABLE `student_subscriptions` MODIFY COLUMN `subscriptionType` enum('trial','halfYear','fullYear') NOT NULL;

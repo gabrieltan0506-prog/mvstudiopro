@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /dev/
+Disallow: /oauth/
+Disallow: /api/
+
+Sitemap: https://mvstudiopro.com/sitemap.xml

@@ -1,0 +1,8 @@
+Video playback debug:
+- The Google Cloud Storage video URL is returning MEDIA_ELEMENT_ERROR: Format error
+- networkState: 3 (NETWORK_NO_SOURCE)
+- readyState: 0 (HAVE_NOTHING)
+- This is likely because the http:// URL is being blocked by the https:// page (mixed content)
+- Need to use https:// URLs instead of http://
+
+Fix: Change all video URLs from http:// to https://
