@@ -470,17 +470,17 @@ export default function AvatarScreen() {
             </View>
           )}
 
-          {/* ── 免费一键生成 3D ── */}
+          {/* ── 3D Conversion Panel — 自动展开 ── */}
           {generatedImage && (
             <View style={styles.panel3D}>
               <Text style={styles.panel3DTitle}>
-                <MaterialIcons name="view-in-ar" size={20} color="#30D158" /> 免费一键生成 3D
+                <MaterialIcons name="view-in-ar" size={20} color="#64D2FF" /> 3D 模型生成
               </Text>
 
               {/* 已生成 3D 模型 → 直接显示预览器 */}
               {image3D && (glbUrl || objUrl) ? (
                 <View>
-                  {timeTaken3D > 0 && (
+                  {mode3D === "real3d" && timeTaken3D > 0 && (
                     <Text style={{ fontSize: 12, color: "#9B9691", marginBottom: 8 }}>
                       Hunyuan3D 生成耗时 {timeTaken3D.toFixed(1)} 秒
                     </Text>
@@ -494,12 +494,14 @@ export default function AvatarScreen() {
                     autoRotate={true}
                   />
                   <View style={styles.resultMeta}>
-                    <View style={[styles.resultTag, { backgroundColor: "rgba(48,209,88,0.1)" }]}>
-                      <Text style={[styles.resultTagText, { color: "#30D158" }]}>免费</Text>
-                    </View>
                     <View style={[styles.resultTag, { backgroundColor: "rgba(100,210,255,0.1)" }]}>
                       <Text style={[styles.resultTagText, { color: "#64D2FF" }]}>Hunyuan3D</Text>
                     </View>
+                    {enablePbr && (
+                      <View style={[styles.resultTag, { backgroundColor: "rgba(100,210,255,0.1)" }]}>
+                        <Text style={[styles.resultTagText, { color: "#64D2FF" }]}>PBR 材质</Text>
+                      </View>
+                    )}
                   </View>
                   {/* 下载按钮 */}
                   <View style={styles.downloadRow}>
@@ -519,7 +521,7 @@ export default function AvatarScreen() {
                         activeOpacity={0.8}
                       >
                         <MaterialIcons name="download" size={16} color="#64D2FF" />
-                        <Text style={styles.downloadBtnText}>GLB</Text>
+                        <Text style={styles.downloadBtnText}>下载 GLB</Text>
                       </TouchableOpacity>
                     )}
                     {objUrl && (
@@ -538,7 +540,7 @@ export default function AvatarScreen() {
                         activeOpacity={0.8}
                       >
                         <MaterialIcons name="download" size={16} color="#64D2FF" />
-                        <Text style={styles.downloadBtnText}>OBJ</Text>
+                        <Text style={styles.downloadBtnText}>下载 OBJ</Text>
                       </TouchableOpacity>
                     )}
                     {textureUrl3D && (
@@ -563,34 +565,34 @@ export default function AvatarScreen() {
                   </View>
                   {/* 重新生成 3D */}
                   <TouchableOpacity
-                    style={[styles.convert3DActionBtn, { marginTop: 12, backgroundColor: "rgba(48,209,88,0.15)" }]}
+                    style={[styles.convert3DActionBtn, { marginTop: 12, backgroundColor: "rgba(100,210,255,0.15)" }]}
                     onPress={handleConvertTo3D}
                     activeOpacity={0.8}
                   >
-                    <MaterialIcons name="refresh" size={18} color="#30D158" />
-                    <Text style={[styles.convert3DActionText, { color: "#30D158" }]}>重新生成 3D</Text>
+                    <MaterialIcons name="refresh" size={18} color="#64D2FF" />
+                    <Text style={[styles.convert3DActionText, { color: "#64D2FF" }]}>重新生成 3D</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
-                /* 尚未生成 3D → 免费一键生成 */
+                /* 尚未生成 3D → 显示图片预览 + Credits 确认 + 生成按钮 */
                 <View>
                   <Text style={styles.panel3DSubtitle}>
-                    将您的偶像图片一键转换为可旋转的 3D 模型，完全免费
+                    将您的偶像图片转换为可旋转的 3D 模型
                   </Text>
                   {/* 图片预览 */}
                   <View style={{ alignItems: "center", marginVertical: 12 }}>
                     <Image source={{ uri: generatedImage }} style={{ width: 160, height: 160, borderRadius: 12 }} contentFit="cover" />
                     <Text style={{ fontSize: 12, color: "#9B9691", marginTop: 6 }}>此图片将用于 3D 转换</Text>
                   </View>
-                  {/* 免费提示 */}
-                  <View style={{ backgroundColor: "rgba(48,209,88,0.08)", borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: "rgba(48,209,88,0.15)" }}>
+                  {/* Credits 费用提示 */}
+                  <View style={{ backgroundColor: "rgba(100,210,255,0.08)", borderRadius: 12, padding: 14, marginBottom: 12, borderWidth: 1, borderColor: "rgba(100,210,255,0.15)" }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <Text style={{ fontSize: 14, fontWeight: "600", color: "#ECEDEE" }}>费用</Text>
-                      <View style={{ backgroundColor: "rgba(48,209,88,0.15)", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
-                        <Text style={{ fontSize: 14, fontWeight: "700", color: "#30D158" }}>免费</Text>
+                      <Text style={{ fontSize: 14, fontWeight: "600", color: "#ECEDEE" }}>费用明细</Text>
+                      <View style={{ backgroundColor: "rgba(100,210,255,0.15)", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                        <Text style={{ fontSize: 14, fontWeight: "700", color: "#64D2FF" }}>{enablePbr ? "30" : "30"} Credits</Text>
                       </View>
                     </View>
-                    <Text style={{ fontSize: 12, color: "#9B9691" }}>Hunyuan3D Pro · 预计 45-90 秒 · 输出 GLB/OBJ 格式</Text>
+                    <Text style={{ fontSize: 12, color: "#9B9691" }}>Hunyuan3D Rapid · 预计 15-30 秒 · 输出 GLB/OBJ 格式</Text>
                   </View>
                   {/* PBR 材质开关 */}
                   <TouchableOpacity
@@ -619,7 +621,7 @@ export default function AvatarScreen() {
                     ) : (
                       <>
                         <MaterialIcons name="view-in-ar" size={20} color="#FFFFFF" />
-                        <Text style={styles.convert3DActionText}>免费一键生成 3D 模型</Text>
+                        <Text style={styles.convert3DActionText}>确认生成 3D 模型（30 Credits）</Text>
                       </>
                     )}
                   </TouchableOpacity>
@@ -636,32 +638,53 @@ export default function AvatarScreen() {
             </View>
           )}
 
-          {/* ── 升级版 3D Studio 引导 ── */}
-          {generatedImage && (
-            <View style={[styles.demoGallery, { borderColor: "rgba(100,210,255,0.2)" }]}>
+          {/* ── 3D Demo Gallery (方案 A+E) ── */}
+          {generatedImage && !image3D && !converting3D && (
+            <View style={styles.demoGallery}>
               <Text style={styles.demoGalleryTitle}>
-                <MaterialIcons name="rocket-launch" size={18} color="#64D2FF" /> 想要更专业的 3D 制作？
+                <MaterialIcons name="auto-awesome" size={18} color="#FFD60A" /> 3D 效果展示
               </Text>
-              <Text style={[styles.demoGallerySubtitle, { lineHeight: 20 }]}>
-                3D Studio 提供更强大的 3D 制作工具：精雕/闪电双模式、PBR 材质、多视角、自定义面数、AI 去背景抠图…
+              <Text style={styles.demoGallerySubtitle}>
+                以下是 Hunyuan3D 生成的真实 3D 模型效果，升级后即可将您的偶像转换为同等质量的 3D 模型
               </Text>
-              <TouchableOpacity
-                style={[styles.convert3DActionBtn, { backgroundColor: "#1A8FE3", marginTop: 8 }]}
-                onPress={() => router.push("/(tabs)/3d-studio" as any)}
-                activeOpacity={0.8}
-              >
-                <MaterialIcons name="view-in-ar" size={20} color="#FFFFFF" />
-                <Text style={styles.convert3DActionText}>进入 3D Studio</Text>
-                <MaterialIcons name="arrow-forward" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 8 }}>
+                {[
+                  { label: "动漫风 3D", color: "#FF6B6B", icon: "face" as const, desc: "日系动漫角色 → 3D 模型" },
+                  { label: "写实 3D", color: "#64D2FF", icon: "person" as const, desc: "真人风格 → 超写实 3D" },
+                  { label: "Q版 3D", color: "#FFD60A", icon: "child-care" as const, desc: "Q版萌系 → 黏土风 3D" },
+                  { label: "赛博庞克 3D", color: "#C77DBA", icon: "memory" as const, desc: "未来风格 → 科幻 3D" },
+                  { label: "奇幻 3D", color: "#30D158", icon: "auto-fix-high" as const, desc: "奇幻角色 → 魔幻 3D" },
+                ].map((demo, i) => (
+                  <View key={i} style={[styles.demoCard, { borderColor: `${demo.color}33` }]}>
+                    <View style={[styles.demoIconWrap, { backgroundColor: `${demo.color}15` }]}>
+                      <MaterialIcons name={demo.icon} size={36} color={demo.color} />
+                    </View>
+                    <View style={styles.demoArrow}>
+                      <MaterialIcons name="arrow-forward" size={16} color="#6B6762" />
+                    </View>
+                    <View style={[styles.demoIconWrap, { backgroundColor: `${demo.color}15` }]}>
+                      <MaterialIcons name="view-in-ar" size={36} color={demo.color} />
+                    </View>
+                    <Text style={[styles.demoLabel, { color: demo.color }]}>{demo.label}</Text>
+                    <Text style={styles.demoDesc}>{demo.desc}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+              {/* 方案 E 提示 */}
+              <View style={styles.depthPreviewHint}>
+                <MaterialIcons name="3d-rotation" size={18} color="#64D2FF" />
+                <Text style={styles.depthPreviewText}>
+                  升级后可获得可下载的 GLB/OBJ 3D 模型文档，支持导入 Blender、Unity、Unreal Engine
+                </Text>
+              </View>
             </View>
           )}
 
-          {/* 2D 偶像历史记录 */}
+          {/* History */}
           {history.length > 1 && (
             <View style={styles.historyBox}>
               <Text style={styles.historyTitle}>
-                <MaterialIcons name="photo-library" size={18} color="#C77DBA" /> 2D 偶像历史
+                <MaterialIcons name="history" size={18} color="#9B9691" /> 生成历史
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyScroll}>
                 {history.slice(1).map((item, i) => (
@@ -688,12 +711,12 @@ export default function AvatarScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { flexGrow: 1, backgroundColor: "#0A0812" },
+  scrollContent: { flexGrow: 1, backgroundColor: "#0D0D0F" },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 20, paddingVertical: 16,
-    borderBottomWidth: 1, borderBottomColor: "rgba(199,125,186,0.12)",
-    backgroundColor: "rgba(12,10,20,0.95)",
+    borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(16,16,18,0.92)",
     ...(isWeb ? { position: "sticky" as any, top: 0, zIndex: 100, backdropFilter: "blur(24px)" } as any : {}),
   },
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
@@ -701,8 +724,8 @@ const styles = StyleSheet.create({
   content: { maxWidth: 700, alignSelf: "center", width: "100%" as any, padding: 24, gap: 24 },
 
   sectionBox: {
-    backgroundColor: "rgba(22,18,30,0.8)", borderRadius: 16, padding: 20,
-    borderWidth: 1, borderColor: "rgba(199,125,186,0.10)",
+    backgroundColor: "#161618", borderRadius: 16, padding: 20,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
   },
   sectionTitle: { fontSize: 16, fontWeight: "700", color: "#F7F4EF", marginBottom: 16 },
 

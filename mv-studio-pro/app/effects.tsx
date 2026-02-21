@@ -500,13 +500,13 @@ export default function EffectsScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { flexGrow: 1, backgroundColor: "#080C0A" },
+  scrollContent: { flexGrow: 1, backgroundColor: "#0D0D0F" },
 
   /* Header */
   header: {
-    backgroundColor: "rgba(8, 14, 10, 0.95)",
+    backgroundColor: "rgba(16, 16, 18, 0.92)",
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(48,209,88,0.10)",
+    borderBottomColor: "rgba(255,255,255,0.06)",
     ...(isWeb ? { position: "sticky" as any, top: 0, zIndex: 100, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" } as any : {}),
   },
   headerInner: {

@@ -1114,11 +1114,11 @@ export default function KlingStudioScreen() {
 
 const cs = StyleSheet.create({
   header: {
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     paddingTop: isWeb ? 20 : 0,
     paddingBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(168,85,247,0.12)",
+    borderBottomColor: "#1C1C1E",
   },
   headerInner: {
     maxWidth: 900,
@@ -1200,7 +1200,7 @@ const cs = StyleSheet.create({
     marginBottom: 4,
   },
   textArea: {
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     borderRadius: 10,
     padding: 12,
     color: "#fff",
@@ -1211,7 +1211,7 @@ const cs = StyleSheet.create({
     borderColor: "#2C2C2E",
   },
   input: {
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     borderRadius: 10,
     padding: 12,
     color: "#fff",
@@ -1238,7 +1238,7 @@ const cs = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#2C2C2E",
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
   },
   modeBtnActive: {
     borderColor: "#A855F7",
@@ -1339,7 +1339,7 @@ const cs = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     borderWidth: 1,
     borderColor: "#2C2C2E",
   },
@@ -1359,7 +1359,7 @@ const cs = StyleSheet.create({
     gap: 10,
   },
   shotCard: {
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     borderRadius: 10,
     padding: 12,
     borderWidth: 1,
@@ -1542,7 +1542,7 @@ const cs = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    backgroundColor: "#0A0810",
+    backgroundColor: "#0A0A0B",
     borderWidth: 1,
     borderColor: "#2C2C2E",
   },

@@ -574,12 +574,12 @@ export default function PublishScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { flexGrow: 1, backgroundColor: "#0C0808" },
+  scrollContent: { flexGrow: 1, backgroundColor: "#0D0D0F" },
 
   /* Header */
   header: {
-    backgroundColor: "rgba(14, 8, 8, 0.95)",
-    borderBottomWidth: 1, borderBottomColor: "rgba(255,107,107,0.10)",
+    backgroundColor: "rgba(16, 16, 18, 0.92)",
+    borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)",
     ...(isWeb ? { position: "sticky" as any, top: 0, zIndex: 100, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)" } as any : {}),
   },
   headerInner: {

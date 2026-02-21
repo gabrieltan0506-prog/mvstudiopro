@@ -206,9 +206,6 @@ export const CREDIT_COSTS = {
   sunoMusicV5: 22,            // Suno V5 音乐生成消耗 22 credits（最新模型，更高音质，利润率 ~85%）
   sunoLyrics: 3,              // Suno 歌词生成消耗 3 credits（Gemini 转换脚本→歌词）
 
-  // ─── AI 去背景（BiRefNet v2）──────────────
-  removeBg: 2,                // AI 去背景抠图消耗 2 credits（fal.ai BiRefNet）
-
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,             // Kling 视频生成消耗 80 credits（API 成本高）
   klingLipSync: 60,           // Kling 口型同步消耗 60 credits

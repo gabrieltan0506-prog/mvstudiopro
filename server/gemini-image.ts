@@ -2,19 +2,17 @@
  * Gemini Image Generation Service (Nano Banana Pro)
  * Uses Google GenAI SDK for high-quality 2K/4K image generation
  * 
- * Pricing:
- * - 2K (2048×2048): ~$0.134/image
- * - 4K (4096×4096): ~$0.24/image
+ * Uses server-side GEMINI_API_KEY environment variable.
+ * Admin users bypass credits; paid users deduct from their balance.
  */
 import { GoogleGenAI } from "@google/genai";
 import { storagePut } from "./storage";
-import { nanoid } from "nanoid";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 function getClient() {
   if (!GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured");
+    throw new Error("GEMINI_API_KEY is not configured. Please set it in environment variables.");
   }
   return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 }
@@ -79,11 +77,12 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     });
   }
 
-  // Models that support image generation (verified)
+  // Try Gemini 3 series models first, then fall back to older versions
   const modelNames = [
     "gemini-3-pro-image-preview",
     "nano-banana-pro-preview",
-    "gemini-2.5-flash-image",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash-preview-image-generation",
   ];
 
   let response: any = null;
@@ -122,7 +121,6 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
 
   const imagePart = parts.find((p: any) => p.inlineData?.data);
   if (!imagePart || !imagePart.inlineData) {
-    // Check if there's text content explaining why
     const textPart = parts.find((p: any) => p.text);
     console.error(`[GeminiImage] No image in response. Text:`, textPart?.text || 'none');
     throw new Error("图片生成失败，未返回图片数据");
@@ -131,7 +129,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
   const imageBuffer = Buffer.from(imagePart.inlineData.data!, "base64");
   const mimeType = imagePart.inlineData.mimeType || "image/png";
   const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-  const fileKey = `idol-${opts.quality}/${nanoid(12)}.${ext}`;
+  const fileKey = `idol-${opts.quality}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
   const { url } = await storagePut(fileKey, imageBuffer, mimeType);
   console.log(`[GeminiImage] Image saved to S3: ${url}`);
@@ -143,7 +141,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
 }
 
 /**
- * Check if Gemini Image API is available
+ * Check if Gemini Image API is available (server-side key configured)
  */
 export function isGeminiImageAvailable(): boolean {
   return !!GEMINI_API_KEY;

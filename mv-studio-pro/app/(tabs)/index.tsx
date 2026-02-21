@@ -43,10 +43,7 @@ const FEATURES = [
   { id: "video-submit", title: "爆款视频奖励", desc: "上传已发布的爆款视频，AI 自动评分，80分以上可获得 30-80 Credits 奖励", icon: "emoji-events" as const, color: "#FFD60A", route: "/video-submit", available: true },
   { id: "my-videos", title: "我的视频", desc: "查看已上传视频的评分历史、Credits 奖励记录和分析详情", icon: "video-library" as const, color: "#64D2FF", route: "/my-videos", available: true },
   { id: "showcase", title: "平台展厅", desc: "浏览 90 分以上的获奖爆款视频，发现优秀创作者和爆款灵感", icon: "local-fire-department" as const, color: "#FF6B6B", route: "/showcase", available: true },
-  { id: "music-studio", title: "音乐工作室", desc: "Suno V4/V5 AI 作曲，Simple 模式一句话生成歌曲，Custom 模式自填歌词精细控制", icon: "queue-music" as const, color: "#FF9F0A", route: "/music-studio", available: true },
   { id: "kling-studio", title: "Kling AI 工作室", desc: "3.0 Omni 视频生成、Motion Control 动作迁移、Lip-Sync 对口型，一站式 AI 视频制作", icon: "auto-fix-high" as const, color: "#A855F7", route: "/kling-studio", available: true },
-  { id: "wechat-sticker", title: "微信表情包", desc: "AI 一键生成专属微信表情包，12 种情绪 + 24 个热词 + 8 种风格自由组合", icon: "emoji-emotions" as const, color: "#FFD60A", route: "/wechat-sticker", available: true },
-  { id: "redeem", title: "兑换内测码", desc: "输入内测码解锁全部功能，20 次配额免费体验，邀请朋友双方各加 10 次", icon: "card-giftcard" as const, color: "#30D158", route: "/redeem", available: true },
 ];
 
 /* ===== Animated Counter Component ===== */
@@ -458,7 +455,7 @@ const s = StyleSheet.create({
     justifyContent: "center", alignItems: "center",
     paddingHorizontal: 24, paddingVertical: isWide ? 80 : 60,
     position: "relative", overflow: "hidden",
-    backgroundColor: "#0D0618",
+    backgroundColor: "#120818",
   },
   heroBgLayer: {
     ...(isWeb ? {
@@ -552,7 +549,7 @@ const s = StyleSheet.create({
   mvSection: {
     paddingVertical: isWide ? 80 : 56, paddingHorizontal: 24,
     position: "relative", overflow: "hidden",
-    backgroundColor: "#100818",
+    backgroundColor: "#140D1A",
   },
   mvSectionBg: {
     ...(isWeb ? {
@@ -608,7 +605,7 @@ const s = StyleSheet.create({
   /* ===== Latest Uploads Section ===== */
   latestSection: {
     paddingVertical: isWide ? 60 : 40,
-    backgroundColor: "#0A0E1C",
+    backgroundColor: "#0D1220",
   },
   latestCard: {
     width: isWide ? 240 : 180,
@@ -664,7 +661,7 @@ const s = StyleSheet.create({
   featSection: {
     paddingVertical: isWide ? 80 : 56, paddingHorizontal: 24,
     position: "relative", overflow: "hidden",
-    backgroundColor: "#0A0E1C",
+    backgroundColor: "#0D1220",
   },
   featSectionBg: {
     ...(isWeb ? {
@@ -714,7 +711,7 @@ const s = StyleSheet.create({
   statsSection: {
     paddingVertical: isWide ? 60 : 40, paddingHorizontal: 24,
     position: "relative", overflow: "hidden",
-    backgroundColor: "#100A1A",
+    backgroundColor: "#151020",
   },
   statsBg: {
     ...(isWeb ? {
@@ -737,7 +734,7 @@ const s = StyleSheet.create({
   /* ===== Platforms ===== */
   platSection: {
     paddingVertical: isWide ? 80 : 56, paddingHorizontal: 24,
-    backgroundColor: "#0A0E1C",
+    backgroundColor: "#0D1220",
   },
   platGrid: { flexDirection: "row", justifyContent: "center", gap: isWide ? 40 : 24, marginTop: 32 },
   platItem: { alignItems: "center", gap: 10 },
@@ -755,7 +752,7 @@ const s = StyleSheet.create({
   contactSection: {
     paddingVertical: isWide ? 80 : 56, paddingHorizontal: 24,
     position: "relative", overflow: "hidden",
-    backgroundColor: "#100818",
+    backgroundColor: "#140D1A",
   },
   contactBg: {
     ...(isWeb ? {
@@ -766,7 +763,7 @@ const s = StyleSheet.create({
   contactInner: { maxWidth: 600, alignSelf: "center", width: "100%", alignItems: "center", zIndex: 2 },
 
   /* ===== Footer ===== */
-  footer: { paddingVertical: 24, paddingHorizontal: 24, backgroundColor: "#08080E", position: "relative" },
+  footer: { paddingVertical: 24, paddingHorizontal: 24, backgroundColor: "#0A0A0E", position: "relative" },
   footerTopBar: {
     ...(isWeb ? {
       position: "absolute" as any, top: 0, left: 0, right: 0, height: 3,

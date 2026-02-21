@@ -17,7 +17,7 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: "#FF8C42",
+        tabBarActiveTintColor: "#FF6B35",
         headerShown: false,
         tabBarButton: HapticTab,
         // Hide tab bar on web - use top nav instead
@@ -27,8 +27,8 @@ export default function TabLayout() {
               paddingTop: 8,
               paddingBottom: bottomPadding,
               height: tabBarHeight,
-              backgroundColor: "#0A0A10",
-              borderTopColor: "rgba(168,85,247,0.12)",
+              backgroundColor: "#0A0A0B",
+              borderTopColor: "#2C2C2E",
               borderTopWidth: 0.5,
             },
         tabBarLabelStyle: {

@@ -21,7 +21,6 @@ import { initManusRuntime, subscribeSafeAreaInsets } from "@/lib/_core/manus-run
 import { initGA4, trackPageView } from "@/lib/analytics";
 import { initWebFontPreload } from "@/lib/web-font-preload";
 import { usePathname } from "expo-router";
-import { CustomerServiceChat } from "@/components/customer-service-chat";
 
 const DEFAULT_WEB_INSETS: EdgeInsets = { top: 0, right: 0, bottom: 0, left: 0 };
 const DEFAULT_WEB_FRAME: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -114,7 +113,6 @@ export default function RootLayout() {
             <Stack.Screen name="login" options={{ presentation: "fullScreenModal" }} />
             <Stack.Screen name="oauth/callback" />
           </Stack>
-          <CustomerServiceChat />
           <StatusBar style="auto" />
         </QueryClientProvider>
       </trpc.Provider>

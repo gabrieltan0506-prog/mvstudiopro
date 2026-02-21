@@ -26,7 +26,7 @@ function getBetaLevel(referralCount: number) {
   return BETA_LEVELS[0];
 }
 
-type TabType = "manage" | "codes" | "leaderboard";
+type TabType = "manage" | "leaderboard";
 
 export default function AdminBetaScreen() {
   const colors = useColors();
@@ -40,15 +40,6 @@ export default function AdminBetaScreen() {
   const [grantSuccess, setGrantSuccess] = useState("");
   const [grantError, setGrantError] = useState("");
 
-  // Beta codes state
-  const [codeCount, setCodeCount] = useState("10");
-  const [codeQuota, setCodeQuota] = useState("20");
-  const [codeKlingLimit, setCodeKlingLimit] = useState("1");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
-  const [genSuccess, setGenSuccess] = useState("");
-  const [genError, setGenError] = useState("");
-
   // tRPC queries
   const betaUsersQuery = trpc.beta.listBetaUsers.useQuery(undefined, {
     enabled: isAuthenticated && !authLoading && user?.role === "admin",
@@ -61,34 +52,6 @@ export default function AdminBetaScreen() {
   const grantMutation = trpc.beta.grantQuota.useMutation();
   const revokeMutation = trpc.beta.revokeQuota.useMutation();
   const lookupMutation = trpc.beta.lookupUserByEmail.useMutation();
-  const generateCodesMutation = trpc.beta.generateBetaCodes.useMutation();
-  const betaCodesQuery = trpc.beta.listBetaCodes.useQuery(undefined, {
-    enabled: isAuthenticated && !authLoading && user?.role === "admin",
-  });
-
-  const handleGenerateCodes = useCallback(async () => {
-    setGenError("");
-    setGenSuccess("");
-    setGeneratedCodes([]);
-    const count = parseInt(codeCount, 10);
-    const quota = parseInt(codeQuota, 10);
-    const kLimit = parseInt(codeKlingLimit, 10);
-    if (isNaN(count) || count <= 0 || count > 100) {
-      setGenError("数量需在 1-100 之间");
-      return;
-    }
-    setIsGenerating(true);
-    try {
-      const res = await generateCodesMutation.mutateAsync({ count, quota, klingLimit: kLimit });
-      setGeneratedCodes(res.codes);
-      setGenSuccess(res.message);
-      betaCodesQuery.refetch();
-    } catch (err: any) {
-      setGenError(err.message || "生成失败");
-    } finally {
-      setIsGenerating(false);
-    }
-  }, [codeCount, codeQuota, codeKlingLimit, generateCodesMutation, betaCodesQuery]);
 
   const handleGrant = useCallback(async () => {
     setGrantError("");
@@ -291,123 +254,6 @@ export default function AdminBetaScreen() {
     </View>
   );
 
-  const renderCodesTab = () => (
-    <View style={styles.tabContent}>
-      {/* Generate Codes Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>批量生成内测码</Text>
-        <Text style={styles.sectionDesc}>生成未绑定用户的内测码，用户兑换后自动激活</Text>
-
-        <View style={styles.quotaRow}>
-          <Text style={styles.quotaLabel}>数量：</Text>
-          {["10", "50", "100"].map((q) => (
-            <TouchableOpacity
-              key={q}
-              style={[styles.quotaChip, codeCount === q && styles.quotaChipActive]}
-              onPress={() => setCodeCount(q)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.quotaChipText, codeCount === q && styles.quotaChipTextActive]}>
-                {q} 个
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        <View style={styles.quotaRow}>
-          <Text style={styles.quotaLabel}>配额：</Text>
-          <Text style={[styles.quotaLabel, { color: "#F7F4EF" }]}>{codeQuota} 次/码</Text>
-        </View>
-
-        <View style={styles.quotaRow}>
-          <Text style={styles.quotaLabel}>Kling：</Text>
-          <Text style={[styles.quotaLabel, { color: "#F7F4EF" }]}>限 {codeKlingLimit} 次/码</Text>
-        </View>
-
-        {genSuccess ? (
-          <View style={styles.successBanner}>
-            <MaterialIcons name="check-circle" size={16} color="#30D158" />
-            <Text style={styles.successText}>{genSuccess}</Text>
-          </View>
-        ) : null}
-
-        {genError ? <Text style={styles.errorText}>{genError}</Text> : null}
-
-        <TouchableOpacity
-          style={[styles.grantBtn, isGenerating && styles.grantBtnLoading]}
-          onPress={handleGenerateCodes}
-          activeOpacity={0.8}
-          disabled={isGenerating}
-        >
-          {isGenerating ? (
-            <ActivityIndicator color="#FFFFFF" size="small" />
-          ) : (
-            <>
-              <MaterialIcons name="confirmation-number" size={20} color="#FFFFFF" />
-              <Text style={styles.grantBtnText}>生成内测码</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* Generated Codes Display */}
-      {generatedCodes.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>已生成的内测码</Text>
-          <View style={{ gap: 6 }}>
-            {generatedCodes.map((c, i) => (
-              <View key={i} style={[styles.userCard, { paddingVertical: 10 }]}>
-                <Text style={{ fontSize: 16, fontWeight: "700", color: "#FF6B6B", letterSpacing: 1, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>{c}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* All Codes List */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>全部内测码</Text>
-          <Text style={styles.sectionCount}>
-            {betaCodesQuery.data?.length ?? 0} 个
-          </Text>
-        </View>
-
-        {betaCodesQuery.isLoading ? (
-          <ActivityIndicator size="small" color="#FF6B6B" style={{ marginTop: 20 }} />
-        ) : betaCodesQuery.data && betaCodesQuery.data.length > 0 ? (
-          <View style={styles.userList}>
-            {betaCodesQuery.data.map((c: any) => (
-              <View key={c.id} style={styles.userCard}>
-                <View style={styles.userCardLeft}>
-                  <View style={[styles.levelBadge, { backgroundColor: c.isRedeemed ? "rgba(48,209,88,0.15)" : "rgba(255,107,107,0.15)" }]}>
-                    <MaterialIcons
-                      name={c.isRedeemed ? "check-circle" : "confirmation-number"}
-                      size={16}
-                      color={c.isRedeemed ? "#30D158" : "#FF6B6B"}
-                    />
-                  </View>
-                  <View style={styles.userInfo}>
-                    <Text style={[styles.userName, { fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", letterSpacing: 1 }]}>{c.code}</Text>
-                    <Text style={styles.userMeta}>
-                      {c.isRedeemed ? `已兑换 (UID: ${c.redeemedBy})` : "未使用"}
-                      {" · "}{c.quota}次 · Kling {c.klingLimit}次
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View style={styles.emptyState}>
-            <MaterialIcons name="confirmation-number" size={40} color="#3A3530" />
-            <Text style={styles.emptyText}>暂无内测码，点击上方按钮生成</Text>
-          </View>
-        )}
-      </View>
-    </View>
-  );
-
   const renderLeaderboardTab = () => (
     <View style={styles.tabContent}>
       <View style={styles.section}>
@@ -496,14 +342,6 @@ export default function AdminBetaScreen() {
               <Text style={[styles.tabText, activeTab === "manage" && styles.tabTextActive]}>用户管理</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.tab, activeTab === "codes" && styles.tabActive]}
-              onPress={() => setActiveTab("codes")}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons name="confirmation-number" size={18} color={activeTab === "codes" ? "#FF6B6B" : "#6B6560"} />
-              <Text style={[styles.tabText, activeTab === "codes" && styles.tabTextActive]}>内测码</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.tab, activeTab === "leaderboard" && styles.tabActive]}
               onPress={() => setActiveTab("leaderboard")}
               activeOpacity={0.7}
@@ -513,9 +351,7 @@ export default function AdminBetaScreen() {
             </TouchableOpacity>
           </View>
 
-          {activeTab === "manage" && renderManageTab()}
-          {activeTab === "codes" && renderCodesTab()}
-          {activeTab === "leaderboard" && renderLeaderboardTab()}
+          {activeTab === "manage" ? renderManageTab() : renderLeaderboardTab()}
         </View>
       </ScrollView>
     </ScreenContainer>
