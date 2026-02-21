@@ -70,37 +70,44 @@ export function isHunyuan3DAvailable(): boolean {
 
 // ─── 生成 3D 模型 ───────────────────────────────────────
 /**
- * Ensure image URL is publicly accessible by re-uploading to S3 if needed
+ * Ensure image URL is accessible by fal.ai — download and convert to base64 or upload to fal storage
  */
-async function ensurePublicImageUrl(imageUrl: string): Promise<string> {
-  try {
-    // Test if URL is accessible
-    const testRes = await fetch(imageUrl, { method: "HEAD" });
-    if (testRes.ok) {
-      const contentType = testRes.headers.get("content-type") || "";
-      if (contentType.startsWith("image/")) {
-        console.log(`[Hunyuan3D] Image URL is accessible: ${imageUrl}`);
-        return imageUrl;
-      }
-    }
-  } catch (e) {
-    console.log(`[Hunyuan3D] Image URL HEAD check failed, re-uploading...`);
+async function ensureAccessibleUrl(imageUrl: string): Promise<string> {
+  if (imageUrl.startsWith("data:") || imageUrl.includes("fal.media") || imageUrl.includes("fal-cdn")) {
+    console.log("[Hunyuan3D] URL 已可访问，直接使用");
+    return imageUrl;
   }
 
-  // Re-download and upload to S3 to ensure accessibility
+  console.log("[Hunyuan3D] 图片 URL 可能不可公开访问，正在转换...");
+
   try {
-    const imgRes = await fetch(imageUrl);
-    if (!imgRes.ok) throw new Error(`Failed to fetch image: ${imgRes.status}`);
-    const buffer = Buffer.from(await imgRes.arrayBuffer());
-    const contentType = imgRes.headers.get("content-type") || "image/png";
-    const ext = contentType.includes("jpeg") ? "jpg" : "png";
-    const fileKey = `3d-input/${nanoid(12)}.${ext}`;
-    const { url } = await storagePut(fileKey, buffer, contentType);
-    console.log(`[Hunyuan3D] Image re-uploaded to S3: ${url}`);
-    return url;
-  } catch (uploadErr: any) {
-    console.error(`[Hunyuan3D] Failed to re-upload image:`, uploadErr);
-    // Return original URL as fallback
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`下载图片失败: HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get("content-type") || "image/png";
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const sizeMB = buffer.length / (1024 * 1024);
+    console.log(`[Hunyuan3D] 图片大小: ${sizeMB.toFixed(2)} MB, 类型: ${contentType}`);
+
+    if (sizeMB > 6) {
+      console.log("[Hunyuan3D] 文件较大，使用 fal.storage.upload...");
+      const blob = new Blob([buffer], { type: contentType });
+      const falUrl = await fal.storage.upload(blob);
+      console.log("[Hunyuan3D] 已上传到 fal.ai storage:", falUrl);
+      return falUrl;
+    }
+
+    const base64 = buffer.toString("base64");
+    const mimeType = contentType.includes("png") ? "image/png" : "image/jpeg";
+    const dataUri = `data:${mimeType};base64,${base64}`;
+    console.log(`[Hunyuan3D] 已转换为 base64 data URI (${(base64.length / 1024).toFixed(1)} KB)`);
+    return dataUri;
+  } catch (downloadError: any) {
+    console.error("[Hunyuan3D] 下载图片失败:", downloadError.message);
+    console.log("[Hunyuan3D] 回退：尝试直接使用原始 URL...");
     return imageUrl;
   }
 }
@@ -113,13 +120,13 @@ export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DT
   try {
     ensureFalConfigured();
 
-    // Ensure image URL is publicly accessible for fal.ai
-    const publicImageUrl = await ensurePublicImageUrl(input.image_url);
-    console.log(`[Hunyuan3D] Using image URL: ${publicImageUrl}`);
+    // Ensure image URL is accessible for fal.ai
+    const accessibleUrl = await ensureAccessibleUrl(input.image_url);
+    console.log(`[Hunyuan3D] Using image URL: ${accessibleUrl}`);
 
     // 构建请求参数
     const falInput: Record<string, any> = {
-      image_url: publicImageUrl,
+      input_image_url: accessibleUrl,
       num_inference_steps: input.num_inference_steps ?? (tier === "pro" ? 50 : 30),
     };
 
@@ -160,9 +167,9 @@ export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DT
     const data = result.data as any;
 
     // 解析返回结果 — fal.ai 返回结构可能有多种形式
-    const glbUrl = data?.model_mesh?.url || data?.glb?.url || data?.model_url || data?.model_glb?.url || data?.model_urls?.glb?.url || "";
-    const objUrl = data?.obj?.url || data?.obj_url || data?.model_urls?.obj?.url || null;
-    const textureUrl = data?.texture?.url || data?.textures?.[0]?.url || data?.texture_url || data?.model_urls?.texture?.url || null;
+    const glbUrl = data?.model_urls?.glb?.url || data?.model_glb?.url || data?.model_mesh?.url || data?.glb?.url || data?.model_url || "";
+    const objUrl = data?.model_urls?.obj?.url || data?.model_glb?.url || data?.obj?.url || data?.obj_url || null;
+    const textureUrl = data?.texture?.url || data?.textures?.[0]?.url || data?.texture_url || null;
     const previewUrl = data?.thumbnail?.url || data?.preview?.url || data?.preview_url || null;
 
     const availableFormats: string[] = [];

@@ -10,8 +10,8 @@ import { toast } from "sonner";
 import { useState, useRef, useEffect } from "react";
 import { Sparkles, Loader2, Download, Box, Image as ImageIcon, Crown, Zap, Star, ArrowDown, ChevronDown, ChevronUp } from "lucide-react";
 import { CREDIT_COSTS } from "@shared/plans";
-
-// ─── Types ──────────────────────────────────────
+import { ModelViewer } from "@/components/ModelViewer";
+// ─── Types ──────────────────────────────────────────
 type IdolStyle = "anime" | "realistic" | "cyberpunk" | "fantasy" | "chibi";
 type ImageQuality = "free" | "2k" | "4k";
 type Mode3D = "rapid" | "pro";
@@ -30,51 +30,7 @@ const QUALITY_TIERS: { id: ImageQuality; label: string; desc: string; credits: n
   { id: "4k", label: "4K 超清", desc: "4096×4096", credits: CREDIT_COSTS.storyboardImage4K, icon: Crown, color: "text-amber-400 border-amber-500/50 bg-amber-500/10" },
 ];
 
-// ─── 3D Model Viewer ────────────────────────────
-function ModelViewer({ glbUrl, thumbnailUrl }: { glbUrl: string; thumbnailUrl?: string | null }) {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!glbUrl || !canvasRef.current) return;
-    const el = canvasRef.current;
-    const mv = document.createElement("model-viewer") as any;
-    mv.src = glbUrl;
-    mv.alt = "3D Model";
-    mv.setAttribute("auto-rotate", "");
-    mv.setAttribute("camera-controls", "");
-    mv.setAttribute("shadow-intensity", "1");
-    mv.style.width = "100%";
-    mv.style.height = "100%";
-    mv.style.background = "transparent";
-    if (thumbnailUrl) mv.poster = thumbnailUrl;
-    mv.addEventListener("load", () => setLoaded(true));
-    mv.addEventListener("error", () => setError(true));
-    el.innerHTML = "";
-    el.appendChild(mv);
-    return () => { el.innerHTML = ""; };
-  }, [glbUrl, thumbnailUrl]);
-
-  if (error && thumbnailUrl) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-black/20 rounded-lg">
-        <img src={thumbnailUrl} alt="3D Preview" className="max-w-full max-h-full object-contain" />
-      </div>
-    );
-  }
-
-  return (
-    <div ref={canvasRef} className="w-full h-full relative">
-      {!loaded && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 text-primary animate-spin" />
-        </div>
-      )}
-    </div>
-  );
-}
-
+// ─
 // ─── Main Component ─────────────────────────────
 export default function VirtualIdol() {
   const { user, isAuthenticated } = useAuth();
@@ -570,8 +526,7 @@ export default function VirtualIdol() {
         )}
       </div>
 
-      {/* model-viewer script */}
-      <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js" />
+
     </div>
   );
 }

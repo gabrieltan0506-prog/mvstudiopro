@@ -213,3 +213,11 @@
 - [x] 修復錯誤指令
 - [x] 頁面修改已完成
 - [x] 頁面再次修改已完成
+
+## Phase 24: 3D 功能全面修復（Trellis 引擎 + ModelViewer）
+- [x] 替換 server/fal-3d.ts → Trellis 引擎
+- [x] 修改 server/hunyuan3d.ts（ensureAccessibleUrl + API 參數 + 結果解析）
+- [x] 新建 ModelViewer 組件（React Web 適配版）
+- [x] 更新前端頁面 import ModelViewer
+- [x] 更新 routers.ts check3DService 描述
+- [ ] 保存 checkpoint 並發布
