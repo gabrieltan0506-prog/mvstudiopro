@@ -2,8 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { betaQuotas, betaReferrals, users } from "../../drizzle/schema";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { betaQuotas, betaReferrals, betaCodes, users } from "../../drizzle/schema";
+import { eq, desc, sql, and, isNull } from "drizzle-orm";
 import * as crypto from "crypto";
 
 /**
@@ -500,4 +500,165 @@ export const betaRouter = router({
         };
       });
     }),
+
+  // ─── Admin: Batch generate beta codes (not bound to users) ───
+  generateBetaCodes: adminProcedure
+    .input(
+      z.object({
+        count: z.number().int().min(1).max(100).default(10),
+        quota: z.number().int().min(1).max(200).default(20),
+        klingLimit: z.number().int().min(0).max(10).default(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const batchId = crypto.randomBytes(8).toString("hex");
+      const codes: string[] = [];
+
+      for (let i = 0; i < input.count; i++) {
+        const code = "MV" + crypto.randomBytes(3).toString("hex").toUpperCase(); // e.g. MV3A2F1B
+        codes.push(code);
+        await db.insert(betaCodes).values({
+          code,
+          quota: input.quota,
+          klingLimit: input.klingLimit,
+          batchId,
+          createdBy: ctx.user.id,
+        });
+      }
+
+      return {
+        success: true,
+        batchId,
+        count: codes.length,
+        codes,
+        message: `已生成 ${codes.length} 个内测码（${input.quota}次配额，Kling限${input.klingLimit}次）`,
+      };
+    }),
+
+  // ─── Admin: List all beta codes ───
+  listBetaCodes: adminProcedure
+    .input(z.object({ batchId: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      let query = db.select().from(betaCodes).orderBy(desc(betaCodes.createdAt));
+      const results = await query;
+
+      return results.map((c) => ({
+        ...c,
+        isRedeemed: c.redeemedBy !== null,
+      }));
+    }),
+
+  // ─── User: Redeem a beta code ───
+  redeemBetaCode: protectedProcedure
+    .input(z.object({ code: z.string().min(1).max(16) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const codeUpper = input.code.toUpperCase().trim();
+
+      // Find the code
+      const [betaCode] = await db
+        .select()
+        .from(betaCodes)
+        .where(and(eq(betaCodes.code, codeUpper), isNull(betaCodes.redeemedBy)))
+        .limit(1);
+
+      if (!betaCode) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "无效的内测码或已被使用" });
+      }
+
+      // Check expiry
+      if (betaCode.expiresAt && new Date() > betaCode.expiresAt) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "内测码已过期" });
+      }
+
+      // Check if user already has beta quota
+      const [existing] = await db.select().from(betaQuotas).where(eq(betaQuotas.userId, ctx.user.id)).limit(1);
+      if (existing && existing.isActive) {
+        throw new TRPCError({ code: "CONFLICT", message: "您已经是内测用户了" });
+      }
+
+      // Mark code as redeemed
+      await db.update(betaCodes).set({
+        redeemedBy: ctx.user.id,
+        redeemedAt: new Date(),
+      }).where(eq(betaCodes.id, betaCode.id));
+
+      // Create or reactivate beta quota
+      const inviteCode = generateInviteCode();
+      if (existing) {
+        await db.update(betaQuotas).set({
+          totalQuota: betaCode.quota,
+          usedCount: 0,
+          klingLimit: betaCode.klingLimit,
+          klingUsed: 0,
+          isActive: true,
+        }).where(eq(betaQuotas.id, existing.id));
+      } else {
+        await db.insert(betaQuotas).values({
+          userId: ctx.user.id,
+          totalQuota: betaCode.quota,
+          usedCount: 0,
+          bonusQuota: 0,
+          inviteCode,
+          klingLimit: betaCode.klingLimit,
+          klingUsed: 0,
+          isActive: true,
+          grantedBy: betaCode.createdBy,
+          note: `通过内测码 ${codeUpper} 激活`,
+        });
+      }
+
+      return {
+        success: true,
+        quota: betaCode.quota,
+        klingLimit: betaCode.klingLimit,
+        inviteCode: existing?.inviteCode || inviteCode,
+        message: `内测码兑换成功！获得 ${betaCode.quota} 次使用配额，Kling视频 ${betaCode.klingLimit} 次`,
+      };
+    }),
+
+  // ─── User: Check Kling usage limit ───
+  checkKlingAccess: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return { allowed: false, remaining: 0 };
+
+    const [quota] = await db.select().from(betaQuotas).where(eq(betaQuotas.userId, ctx.user.id)).limit(1);
+    if (!quota || !quota.isActive) return { allowed: false, remaining: 0 };
+
+    const remaining = quota.klingLimit - quota.klingUsed;
+    return { allowed: remaining > 0, remaining, klingLimit: quota.klingLimit, klingUsed: quota.klingUsed };
+  }),
+
+  // ─── User: Use Kling quota (called before Kling video generation) ───
+  useKlingQuota: protectedProcedure.mutation(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+    const [quota] = await db.select().from(betaQuotas).where(eq(betaQuotas.userId, ctx.user.id)).limit(1);
+    if (!quota || !quota.isActive) {
+      throw new TRPCError({ code: "FORBIDDEN", message: "您没有内测配额" });
+    }
+
+    if (quota.klingUsed >= quota.klingLimit) {
+      throw new TRPCError({ code: "FORBIDDEN", message: `内测期间 Kling 视频限 ${quota.klingLimit} 次，已用完` });
+    }
+
+    await db.update(betaQuotas).set({
+      klingUsed: quota.klingUsed + 1,
+      usedCount: quota.usedCount + 1,
+    }).where(eq(betaQuotas.id, quota.id));
+
+    return {
+      success: true,
+      klingRemaining: quota.klingLimit - quota.klingUsed - 1,
+    };
+  }),
 });

@@ -62,6 +62,11 @@ const MAPPING = {
   "camera.fill": "photo-camera",
   "mic.fill": "mic",
   "speaker.wave.2.fill": "volume-up",
+  "bubble.left.fill": "chat-bubble",
+  "headphones": "headset",
+  "xmark": "close",
+  "arrow.up": "arrow-upward",
+  "person.crop.circle": "account-circle",
 } as IconMapping;
 
 export function IconSymbol({

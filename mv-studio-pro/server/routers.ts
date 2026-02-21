@@ -23,6 +23,8 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
+import { customerServiceRouter } from "./routers/customerService";
+import { wechatStickerRouter } from "./routers/wechatSticker";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { deductCredits, getCredits, getUserPlan } from "./credits";
 import { CREDIT_COSTS } from "./plans";
@@ -45,6 +47,8 @@ export const appRouter = router({
   kling: klingRouter,
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
+  customerService: customerServiceRouter,
+  wechatSticker: wechatStickerRouter,
   // phoneOtp: phoneOtpRouter, // 暂不上线，等短信服务开通后取消注释
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

@@ -168,6 +168,37 @@ export const hunyuan3dRouter = router({
   /**
    * 检查 3D 服务状态
    */
+  // AI 去背景抠图（BiRefNet v2）
+  removeBackground: protectedProcedure
+    .input(z.object({ imageUrl: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const userId = ctx.user.id;
+      // 扣除 2 Credits
+      const credits = await getCredits(userId);
+      if (credits.totalAvailable < 2) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "積分不足，去背景需要 2 Credits" });
+      }
+      await deductCredits(userId, "removeBg", "AI 去背景");
+
+      try {
+        const { fal } = await import("@fal-ai/client");
+        const falKey = process.env.FAL_KEY;
+        if (!falKey) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "FAL_KEY 未配置" });
+        fal.config({ credentials: falKey });
+
+        const result = await fal.subscribe("fal-ai/birefnet/v2", {
+          input: { image_url: input.imageUrl },
+        }) as any;
+
+        const outputUrl = result?.data?.image?.url || result?.image?.url || result?.data?.url;
+        if (!outputUrl) throw new Error("去背景失败，未返回结果");
+
+        return { success: true, outputUrl };
+      } catch (e: any) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e.message || "去背景失败" });
+      }
+    }),
+
   checkService: protectedProcedure.query(async () => {
     const configured = isFalConfigured();
     return {

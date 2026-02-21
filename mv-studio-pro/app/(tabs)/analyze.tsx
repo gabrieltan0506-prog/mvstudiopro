@@ -644,12 +644,12 @@ export default function AnalyzeScreen() {
 }
 
 const styles = StyleSheet.create({
-  scrollContent: { flexGrow: 1, backgroundColor: "#0D0D0F" },
+  scrollContent: { flexGrow: 1, backgroundColor: "#080C14" },
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 20, paddingVertical: 16,
-    borderBottomWidth: 1, borderBottomColor: "rgba(255,255,255,0.06)",
-    backgroundColor: "rgba(16,16,18,0.92)",
+    borderBottomWidth: 1, borderBottomColor: "rgba(100,210,255,0.10)",
+    backgroundColor: "rgba(10,14,22,0.95)",
     ...(isWeb ? { position: "sticky" as any, top: 0, zIndex: 100, backdropFilter: "blur(24px)" } as any : {}),
   },
   backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },

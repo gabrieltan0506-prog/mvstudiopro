@@ -32,6 +32,9 @@ export const CREDIT_COSTS = {
   sunoMusicV5: 22,
   sunoLyrics: 3,
 
+  // ─── AI 去背景────────────────────────
+  removeBg: 2,
+
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,
   klingLipSync: 60,

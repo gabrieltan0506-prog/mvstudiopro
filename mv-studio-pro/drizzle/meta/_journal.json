@@ -127,6 +127,13 @@
       "when": 1771519006278,
       "tag": "0017_chubby_thunderbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1771709550509,
+      "tag": "0018_chemical_miek",
+      "breakpoints": true
     }
   ]
 }

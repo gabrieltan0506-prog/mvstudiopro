@@ -148,7 +148,20 @@ export default function ThreeDStudioScreen() {
     creditsUsed: number;
     tier: string;
   } | null>(null);
-  const [activeTab, setActiveTab] = useState<"generate" | "compare" | "pricing">("generate");
+  const [activeTab, setActiveTab] = useState<"generate" | "compare" | "pricing" | "removebg">("generate");
+
+  // 3D 模型历史记录
+  const [modelHistory, setModelHistory] = useState<Array<{
+    glbUrl: string; objUrl?: string; textureUrl?: string; previewUrl?: string;
+    tier: string; creditsUsed: number; timeTaken: number; createdAt: Date;
+  }>>([]);
+
+  // 去背景抠图状态
+  const [removeBgImage, setRemoveBgImage] = useState<string | null>(null);
+  const [removeBgResult, setRemoveBgResult] = useState<string | null>(null);
+  const [removingBg, setRemovingBg] = useState(false);
+  const [removeBgError, setRemoveBgError] = useState<string | null>(null);
+  const removeBgMutation = trpc.hunyuan3d.removeBackground.useMutation();
   const [error, setError] = useState<string | null>(null);
 
   // 计算 Credits
@@ -217,7 +230,7 @@ export default function ThreeDStudioScreen() {
         throw new Error("生成失败，请重试");
       }
 
-      setGeneratedResult({
+      const newResult = {
         glbUrl: result.output.model_url,
         objUrl: result.output.obj_url,
         textureUrl: result.output.texture_url,
@@ -226,7 +239,10 @@ export default function ThreeDStudioScreen() {
         timeTaken: result.timeTaken ?? 0,
         creditsUsed: result.creditsUsed,
         tier: result.tier,
-      });
+      };
+      setGeneratedResult(newResult);
+      // 添加到历史记录
+      setModelHistory(prev => [{ ...newResult, createdAt: new Date() }, ...prev]);
 
       setGenerationProgress("");
     } catch (e: any) {
@@ -309,6 +325,7 @@ export default function ThreeDStudioScreen() {
         <View style={s.tabBar}>
           {([
             { key: "generate", label: "生成模型", icon: "auto-fix-high" },
+            { key: "removebg", label: "AI 抠图", icon: "content-cut" },
             { key: "compare", label: "效果对比", icon: "compare" },
             { key: "pricing", label: "维度定价包", icon: "local-offer" },
           ] as const).map((tab) => (
@@ -820,6 +837,184 @@ export default function ThreeDStudioScreen() {
           </View>
         )}
 
+        {/* ===== Tab: AI 去背景抠图 ===== */}
+        {activeTab === "removebg" && (
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>AI 智能去背景</Text>
+            <Text style={s.sectionDesc}>
+              上传图片，AI 自动识别并保留人物/动物主体，去除背景。适合 3D 建模前的图片预处理。
+            </Text>
+
+            {/* 上传图片 */}
+            <TouchableOpacity
+              onPress={async () => {
+                try {
+                  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                  if (status !== "granted") { setRemoveBgError("需要相册权限"); return; }
+                  const result = await ImagePicker.launchImageLibraryAsync({
+                    mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 1,
+                  });
+                  if (!result.canceled && result.assets[0]) {
+                    setRemoveBgImage(result.assets[0].uri);
+                    setRemoveBgResult(null);
+                    setRemoveBgError(null);
+                  }
+                } catch (e) { setRemoveBgError("选择图片失败"); }
+              }}
+              style={[s.uploadPlaceholder, removeBgImage && { borderColor: "#30D158" }]}
+              activeOpacity={0.7}
+            >
+              {removeBgImage ? (
+                <Image source={{ uri: removeBgImage }} style={{ width: "100%", height: 200, borderRadius: 12 }} contentFit="contain" />
+              ) : (
+                <>
+                  <View style={s.uploadIconWrap}>
+                    <MaterialIcons name="content-cut" size={48} color="#C77DBA" />
+                  </View>
+                  <Text style={s.uploadTitle}>点击上传图片</Text>
+                  <Text style={s.uploadHint}>支持人物、动物、物品等主体提取</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* 去背景按钮 */}
+            {removeBgImage && (
+              <TouchableOpacity
+                onPress={async () => {
+                  try {
+                    setRemovingBg(true);
+                    setRemoveBgError(null);
+                    const result = await removeBgMutation.mutateAsync({ imageUrl: removeBgImage });
+                    if (result.success && result.outputUrl) {
+                      setRemoveBgResult(result.outputUrl);
+                    } else {
+                      throw new Error("去背景失败");
+                    }
+                  } catch (e: any) {
+                    setRemoveBgError(e.message || "去背景失败，请重试");
+                  } finally {
+                    setRemovingBg(false);
+                  }
+                }}
+                disabled={removingBg}
+                style={[s.generateBtn, removingBg && { opacity: 0.6 }, { marginTop: 20 }]}
+                activeOpacity={0.8}
+              >
+                <View style={s.generateBtnInner}>
+                  {removingBg ? (
+                    <><ActivityIndicator color="#000" size="small" /><Text style={s.generateBtnText}>AI 抠图中...</Text></>
+                  ) : (
+                    <><MaterialIcons name="auto-fix-high" size={22} color="#000" /><Text style={s.generateBtnText}>一键去背景（2 Credits）</Text></>
+                  )}
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* 抠图结果 */}
+            {removeBgResult && (
+              <View style={[s.resultSection, { marginTop: 24 }]}>
+                <View style={s.resultHeader}>
+                  <MaterialIcons name="check-circle" size={24} color="#30D158" />
+                  <Text style={s.resultTitle}>去背景完成</Text>
+                </View>
+                <View style={{ flexDirection: isWide ? "row" : "column", gap: 16, marginTop: 16 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, color: "#9B9691", marginBottom: 8, textAlign: "center" }}>原图</Text>
+                    <Image source={{ uri: removeBgImage! }} style={{ width: "100%", height: 200, borderRadius: 12 }} contentFit="contain" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, color: "#30D158", marginBottom: 8, textAlign: "center" }}>抠图结果</Text>
+                    <View style={{ backgroundColor: "#2A2A2E", borderRadius: 12, overflow: "hidden" }}>
+                      <Image source={{ uri: removeBgResult }} style={{ width: "100%", height: 200 }} contentFit="contain" />
+                    </View>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    if (isWeb) {
+                      const a = document.createElement("a"); a.href = removeBgResult; a.download = "removed-bg.png"; a.target = "_blank";
+                      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    } else { Linking.openURL(removeBgResult); }
+                  }}
+                  style={[s.generateBtn, { marginTop: 16, backgroundColor: "#30D158" }]}
+                  activeOpacity={0.8}
+                >
+                  <View style={s.generateBtnInner}>
+                    <MaterialIcons name="file-download" size={22} color="#000" />
+                    <Text style={s.generateBtnText}>下载透明背景 PNG</Text>
+                  </View>
+                </TouchableOpacity>
+                {/* 快捷跳转生成 3D */}
+                <TouchableOpacity
+                  onPress={() => { setSelectedImage(removeBgResult); setActiveTab("generate"); }}
+                  style={[s.generateBtn, { marginTop: 12, backgroundColor: "#64D2FF" }]}
+                  activeOpacity={0.8}
+                >
+                  <View style={s.generateBtnInner}>
+                    <MaterialIcons name="view-in-ar" size={22} color="#000" />
+                    <Text style={s.generateBtnText}>用此图生成 3D 模型</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {removeBgError && (
+              <View style={[s.errorBox, { marginTop: 16 }]}>
+                <MaterialIcons name="error-outline" size={18} color="#FF6B6B" />
+                <Text style={s.errorText}>{removeBgError}</Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ===== 3D 模型历史记录 ===== */}
+        {modelHistory.length > 0 && (
+          <View style={[s.section, { paddingTop: 16 }]}>
+            <Text style={s.sectionTitle}>
+              <MaterialIcons name="history" size={20} color="#C77DBA" /> 3D 模型历史
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingVertical: 12 }}>
+              {modelHistory.map((item, i) => (
+                <View key={i} style={{
+                  width: 160, backgroundColor: "#1A1A1D", borderRadius: 12,
+                  borderWidth: 1, borderColor: "#2A2A2E", overflow: "hidden",
+                }}>
+                  {item.previewUrl ? (
+                    <Image source={{ uri: item.previewUrl }} style={{ width: 160, height: 120 }} contentFit="cover" />
+                  ) : (
+                    <View style={{ width: 160, height: 120, alignItems: "center", justifyContent: "center", backgroundColor: "#0D0D0F" }}>
+                      <MaterialIcons name="view-in-ar" size={40} color="#64D2FF" />
+                    </View>
+                  )}
+                  <View style={{ padding: 10 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                      <View style={{
+                        paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+                        backgroundColor: item.tier === "rapid" ? "rgba(100,210,255,0.15)" : "rgba(255,214,10,0.15)",
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: "700", color: item.tier === "rapid" ? "#64D2FF" : "#FFD60A" }}>
+                          {item.tier === "rapid" ? "闪电" : "精雕"}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: 10, color: "#9B9691" }}>{item.creditsUsed} Cr</Text>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity onPress={() => handleDownload(item.glbUrl, "glb")}>
+                        <Text style={{ fontSize: 11, color: "#64D2FF", fontWeight: "600" }}>GLB</Text>
+                      </TouchableOpacity>
+                      {item.objUrl && (
+                        <TouchableOpacity onPress={() => handleDownload(item.objUrl!, "obj")}>
+                          <Text style={{ fontSize: 11, color: "#FFD60A", fontWeight: "600" }}>OBJ</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* ===== 底部间距 ===== */}
         <View style={{ height: 80 }} />
       </ScrollView>
@@ -839,8 +1034,8 @@ const s = StyleSheet.create({
   headerBg: {
     ...(isWeb ? {
       position: "absolute" as any, top: 0, left: 0, right: 0, bottom: 0,
-      backgroundImage: "linear-gradient(135deg, rgba(100,210,255,0.12) 0%, rgba(255,214,10,0.08) 50%, rgba(199,125,186,0.10) 100%)",
-    } as any : { backgroundColor: "#101012" }),
+      backgroundImage: "linear-gradient(135deg, rgba(100,210,255,0.15) 0%, rgba(168,85,247,0.12) 50%, rgba(48,209,88,0.10) 100%)",
+    } as any : { backgroundColor: "#0A0D18" }),
   },
   headerContent: { alignItems: "center", zIndex: 2 },
   titleBadge: {
@@ -863,17 +1058,17 @@ const s = StyleSheet.create({
   tabBar: {
     flexDirection: "row", justifyContent: "center", gap: 8,
     paddingHorizontal: 24, paddingVertical: 12,
-    backgroundColor: "#0D0D0F",
-    borderBottomWidth: 1, borderBottomColor: "#2A2A2E",
+    backgroundColor: "#0A0D18",
+    borderBottomWidth: 1, borderBottomColor: "rgba(100,210,255,0.10)",
   },
   tabItem: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
-    backgroundColor: "#1A1A1D",
+    backgroundColor: "rgba(100,210,255,0.06)",
   },
   tabItemActive: {
-    backgroundColor: "rgba(255,214,10,0.12)",
-    borderWidth: 1, borderColor: "rgba(255,214,10,0.30)",
+    backgroundColor: "rgba(100,210,255,0.15)",
+    borderWidth: 1, borderColor: "rgba(100,210,255,0.35)",
   },
   tabLabel: { fontSize: 13, fontWeight: "600", color: "#9B9691" },
   tabLabelActive: { color: "#FFD60A" },
@@ -900,7 +1095,7 @@ const s = StyleSheet.create({
     gap: 16, marginTop: 16,
   },
   tierCard: {
-    flex: 1, backgroundColor: "#1A1A1D", borderRadius: 20,
+    flex: 1, backgroundColor: "rgba(16,18,30,0.9)", borderRadius: 20,
     padding: 24, borderWidth: 2, position: "relative", overflow: "hidden",
   },
   tierBadge: {

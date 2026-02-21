@@ -463,13 +463,13 @@ const styles = StyleSheet.create({
 
   creditsBar: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    marginHorizontal: 24, marginBottom: 16, backgroundColor: "#1A1A1D",
-    borderRadius: 12, padding: 14, borderWidth: 1, borderColor: "#2A2A2D",
+    marginHorizontal: 24, marginBottom: 16, backgroundColor: "rgba(255,159,10,0.06)",
+    borderRadius: 12, padding: 14, borderWidth: 1, borderColor: "rgba(255,159,10,0.15)",
   },
   creditsBarLeft: { flexDirection: "row", alignItems: "center", gap: 8 },
   creditsBarText: { color: "#ECEDEE", fontSize: 14 },
   creditsBarRight: { flexDirection: "row", alignItems: "center", gap: 4 },
-  creditsBarAmount: { color: "#FF6B35", fontSize: 18, fontWeight: "700" },
+  creditsBarAmount: { color: "#FF8C42", fontSize: 18, fontWeight: "700" },
 
   toggleContainer: {
     flexDirection: "row", marginHorizontal: 24, marginBottom: 20,

@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `beta_codes` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`code` varchar(16) NOT NULL,\n\t`quota` int NOT NULL DEFAULT 20,\n\t`klingLimit` int NOT NULL DEFAULT 1,\n\t`redeemedBy` int,\n\t`redeemedAt` timestamp,\n\t`batchId` varchar(32),\n\t`createdBy` int NOT NULL,\n\t`expiresAt` timestamp,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `beta_codes_id` PRIMARY KEY(`id`),\n\tCONSTRAINT `beta_codes_code_unique` UNIQUE(`code`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE IF NOT EXISTS `beta_codes` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`code` varchar(16) NOT NULL,\n\t`quota` int NOT NULL DEFAULT 20,\n\t`klingLimit` int NOT NULL DEFAULT 1,\n\t`redeemedBy` int,\n\t`redeemedAt` timestamp,\n\t`batchId` varchar(32),\n\t`createdBy` int NOT NULL,\n\t`expiresAt` timestamp,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `beta_codes_id` PRIMARY KEY(`id`),\n\tCONSTRAINT `beta_codes_code_unique` UNIQUE(`code`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1852
+}
