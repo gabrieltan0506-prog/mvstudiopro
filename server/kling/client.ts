@@ -46,7 +46,7 @@ interface JwtCache {
 
 const API_ENDPOINTS = {
   global: "https://api-singapore.klingai.com",
-  cn: "https://api.klingai.com",
+  cn: "https://api-beijing.klingai.com",
 } as const;
 
 const JWT_EXPIRY_SECONDS = 1800; // 30 minutes
