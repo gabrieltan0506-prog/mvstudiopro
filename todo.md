@@ -325,3 +325,8 @@
 - [x] 前端：分鏡生成後添加「不滿意？給我三句話幫你改」AI 改寫區域
 - [x] 前端：分鏡生成後添加 BGM 生成區域（標題+風格預設+描述+Suno V4/V5 引擎選擇+播放）
 - [x] 測試驗證（119 tests passed）並保存 checkpoint
+
+## Phase 34: 分鏡風格選擇器 UI 改進 + Kling API 修復（2026-02-22）
+- [x] 分鏡腳本視覺風格選擇器改為虛擬偶像頁面同款 UI（帶 lucide 圖標的卡片按鈕，3列佈局，藍色選中狀態）
+- [x] 修復 Kling API region 配置問題（設置 KLING_REGION=cn + KLING_DEFAULT_REGION=cn）
+- [x] 測試驗證（122 tests passed）並保存 checkpoint

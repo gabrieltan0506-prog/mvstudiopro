@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
@@ -18,6 +18,10 @@ import {
   Music,
   Play,
   Pause,
+  Clapperboard,
+  Camera,
+  Aperture,
+  Rocket,
 } from "lucide-react";
 
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -97,12 +101,12 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
   },
 ];
 
-const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; emoji: string; desc: string }[] = [
-  { value: "cinematic", label: "電影感", labelEn: "Cinematic", emoji: "🎬", desc: "電影級光影、色彩分級、寬銀幕構圖" },
-  { value: "anime", label: "動漫風", labelEn: "Anime", emoji: "🎨", desc: "日系動漫視覺語言、鮮艷色彩、光效粒子" },
-  { value: "documentary", label: "紀錄片", labelEn: "Documentary", emoji: "📹", desc: "真實感、自然光線、手持鏡頭、沉浸敘事" },
-  { value: "realistic", label: "寫實片", labelEn: "Realistic", emoji: "📷", desc: "自然色調、真實場景、生活化光線構圖" },
-  { value: "scifi", label: "科幻片", labelEn: "Sci-Fi", emoji: "🚀", desc: "霓虹燈光、全息投影、賽博朋克色調" },
+const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; icon: React.ElementType; color: string; desc: string }[] = [
+  { value: "cinematic", label: "電影感", labelEn: "Cinematic", icon: Clapperboard, color: "text-[#FF6B6B]", desc: "電影級光影、色彩分級、寬銀幕構圖" },
+  { value: "anime", label: "動漫風", labelEn: "Anime", icon: Sparkles, color: "text-[#64D2FF]", desc: "日系動漫視覺語言、鮮艷色彩、光效粒子" },
+  { value: "documentary", label: "紀錄片", labelEn: "Documentary", icon: Camera, color: "text-[#FFD60A]", desc: "真實感、自然光線、手持鏡頭、沉浸敘事" },
+  { value: "realistic", label: "寫實片", labelEn: "Realistic", icon: Aperture, color: "text-[#30D158]", desc: "自然色調、真實場景、生活化光線構圖" },
+  { value: "scifi", label: "科幻片", labelEn: "Sci-Fi", icon: Rocket, color: "text-[#C77DBA]", desc: "霓虹燈光、全息投影、賽博朋克色調" },
 ];
 
 export default function StoryboardPage() {
@@ -623,29 +627,26 @@ export default function StoryboardPage() {
 
               {/* 視覺風格選擇 */}
               <div className="mb-4">
-                <div className="flex items-center mb-2">
-                  <Palette className="w-5 h-5 text-primary mr-2" />
-                  <p className="text-lg font-semibold text-foreground">視覺風格</p>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                <label className="text-base font-semibold text-gray-300">視覺風格</label>
+                <div className="grid grid-cols-3 gap-3 mt-3">
                   {VISUAL_STYLES.map((style) => (
                     <button
                       key={style.value}
                       onClick={() => setSelectedStyle(style.value)}
-                      className={`rounded-xl p-3 text-left transition-all border-2 ${
+                      className={`flex flex-col items-center justify-center p-3 rounded-lg transition-all duration-200 ${
                         selectedStyle === style.value
-                          ? "border-primary bg-primary/10 shadow-md"
-                          : "border-transparent bg-muted/30 hover:bg-muted/50"
+                          ? "bg-blue-600/80 ring-2 ring-blue-400"
+                          : "bg-[#2A2A2C] hover:bg-[#3A3A3C]"
                       }`}
                     >
-                      <div className="text-2xl mb-1">{style.emoji}</div>
-                      <p className={`font-semibold text-sm ${selectedStyle === style.value ? "text-primary" : "text-foreground"}`}>
-                        {style.label}
-                      </p>
-                      <p className="text-muted-foreground text-xs mt-0.5 leading-tight">{style.desc}</p>
+                      <style.icon className={`h-6 w-6 mb-1 ${style.color}`} />
+                      <span className="text-xs font-medium">{style.label}</span>
                     </button>
                   ))}
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  {VISUAL_STYLES.find((s) => s.value === selectedStyle)?.desc}
+                </p>
               </div>
 
               {/* AI 模型選擇（下拉選單） */}
