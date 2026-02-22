@@ -245,7 +245,7 @@ export default function StoryboardPage() {
       
       if (result.success && result.pdfUrl) {
         setExportStatus(`${formatName} 已生成，正在下載...`);
-        triggerDownload(result.pdfUrl, `${storyboard.title || 'storyboard'}.${format === 'pdf' ? 'pdf' : 'doc'}`);
+        triggerDownload(result.pdfUrl, `${storyboard.title || 'storyboard'}.${format === 'pdf' ? 'pdf' : 'docx'}`);
         toast.success(`${formatName} 導出成功！`);
         setTimeout(() => setExportStatus(null), 3000);
       } else {

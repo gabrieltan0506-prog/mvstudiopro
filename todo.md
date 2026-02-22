@@ -291,3 +291,9 @@
 - [x] 前端：保留期限到期提醒 UI（ExpiryWarningBanner 組件）
 - [x] 後端：所有生成路由自動記錄到 user_creations（偶像、音樂、3D、分鏡、可靈）
 - [x] 測試驗證（110 tests passed）
+
+## Phase 30: Bug 修復 - 2D轉3D + 腳本分鏡導出（2026-02-22）
+- [x] 修復 2D轉3D 報錯 "No procedure found on path threeD.generate"（前端路由名 threeD → hunyuan3d）
+- [x] 修復腳本分鏡導出 PDF 報錯（改用嵌入式字體方案，先查本地字體再從 CDN 下載）
+- [x] 修復腳本分鏡導出 Word 檔案為空（改用 docx 庫生成正式 .docx 格式）
+- [x] 測試驗證（110 tests passed）

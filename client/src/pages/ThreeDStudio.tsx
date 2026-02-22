@@ -170,7 +170,7 @@ export default function ThreeDStudioPage() {
     fileInputRef.current?.click();
   };
 
-  const generateMutation = trpc.threeD.generate.useMutation(); // Corrected route
+  const generateMutation = trpc.hunyuan3d.generate.useMutation();
 
   // 计算当前配置的 Credits 费用
   const getCreditsRequired = () => {
