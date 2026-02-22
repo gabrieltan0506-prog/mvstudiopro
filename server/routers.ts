@@ -647,6 +647,7 @@ export const appRouter = router({
         lyrics: z.string().min(1),
         sceneCount: z.number().min(1).max(20).default(5),
         model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
+        visualStyle: z.enum(["cinematic", "anime", "documentary", "realistic", "scifi"]).default("cinematic"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -670,6 +671,17 @@ export const appRouter = router({
             {
               role: "system",
               content: `你是一位专业的视频导演和电影摄影师，拥有丰富的视觉叙事经验。请根据歌词或文本内容，生成一个完整且专业的 视频分镜脚本。
+
+## 视觉风格
+本次分镜脚本的视觉风格为：**${{
+  cinematic: "电影感（Cinematic）— 使用电影级别的光影、色彩分级、宽银幕构图。追求胶片质感、浅景深、戏剧性光线。参考风格：王家卫、扎克·施奈德、罗杰·迪金斯。",
+  anime: "动漫风（Anime）— 使用日系动漫的视觉语言。鲜艳色彩、夸张表情、速度线、光效粒子、樱花飘落等经典元素。参考风格：新海诚、宫崎骏、MAPPA。",
+  documentary: "纪录片（Documentary）— 使用纪录片的真实感和沉浸感。自然光线、手持镜头、长镜头、采访式构图。追求真实、客观、有深度的视觉叙事。",
+  realistic: "写实片（Realistic）— 使用写实主义的视觉风格。自然色调、真实场景、生活化的光线和构图。追求贴近现实的质感，避免过度修饰。",
+  scifi: "科幻片（Sci-Fi）— 使用科幻电影的视觉语言。霓虹灯光、全息投影、赛博朋克色调、未来感建筑和科技元素。参考风格：银翼杀手、攻壳机动队、星际穿越。"
+}[input.visualStyle]}**
+
+请确保所有场景的视觉元素、色彩分级、光影设计和特效都严格遵循此风格。
 
 ## 音乐分析维度
 请从以下维度分析歌曲特性：
@@ -808,7 +820,7 @@ export const appRouter = router({
             }
           ],
           response_format: { type: "json_object" },
-          model: input.model === "gpt5" ? "gpt5" as const : input.model === "pro" ? "pro" as const : undefined,
+          model: input.model === "gpt5" ? ("gpt5" as any) : input.model === "pro" ? ("pro" as any) : undefined,
         });
 
         const storyboardData = JSON.parse(response.choices[0].message.content as string);
@@ -977,6 +989,88 @@ export const appRouter = router({
         }
         return { success: true, count: input.storyboardIds.length };
       }),
+    // AI 改寫分鏡腳本 - 用戶提供 3 句話修改意見，AI 重新生成
+    rewrite: protectedProcedure
+      .input(z.object({
+        originalStoryboard: z.object({
+          title: z.string(),
+          musicInfo: z.object({
+            bpm: z.number(),
+            emotion: z.string(),
+            style: z.string(),
+            key: z.string(),
+          }),
+          scenes: z.array(z.object({
+            sceneNumber: z.number(),
+            timestamp: z.string(),
+            duration: z.string(),
+            description: z.string(),
+            cameraMovement: z.string(),
+            mood: z.string(),
+            visualElements: z.array(z.string()),
+            transition: z.string().optional(),
+            previewImageUrl: z.string().nullable().optional(),
+          })),
+          summary: z.string(),
+        }),
+        userFeedback: z.string().min(1).max(500),
+        visualStyle: z.enum(["cinematic", "anime", "documentary", "realistic", "scifi"]).default("cinematic"),
+        model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin";
+
+        // 扣除 Credits（管理員免扣）
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < CREDIT_COSTS.storyboardRewrite) {
+            throw new Error(`Credits 不足，AI 改寫需要 ${CREDIT_COSTS.storyboardRewrite} Credits`);
+          }
+          await deductCredits(userId, "storyboardRewrite", "AI 改寫分鏡腳本");
+        }
+
+        const styleLabels: Record<string, string> = {
+          cinematic: "電影感",
+          anime: "動漫風",
+          documentary: "紀錄片",
+          realistic: "寫實片",
+          scifi: "科幻片",
+        };
+
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `你是一位專業的視頻導演。用戶對之前生成的分鏡腳本不滿意，提供了修改意見。請根據用戶的反饋，重新改寫整個分鏡腳本。
+
+要求：
+1. 保持原有的場景數量（${input.originalStoryboard.scenes.length} 個場景）
+2. 視覺風格：${styleLabels[input.visualStyle] || "電影感"}
+3. 根據用戶反饋大幅調整場景描述、鏡頭運動、情緒氛圍和視覺效果
+4. 保持 JSON 格式輸出，與原始格式完全一致
+5. 確保改寫後的腳本質量更高、更符合用戶期望
+
+輸出格式與原始腳本相同的 JSON 結構。`
+            },
+            {
+              role: "user",
+              content: `原始分鏡腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n請根據以上修改意見，重新改寫整個分鏡腳本。`
+            }
+          ],
+          response_format: { type: "json_object" },
+          model: input.model === "gpt5" ? ("gpt5" as any) : input.model === "pro" ? ("pro" as any) : undefined,
+        });
+
+        const rewrittenData = JSON.parse(response.choices[0].message.content as string);
+
+        return {
+          success: true,
+          storyboard: rewrittenData,
+          message: "分鏡腳本已根據您的意見重新改寫！",
+        };
+      }),
+
     // AI Inspiration Generator - generate script from 3 sentences (Gemini, consumes Credits)
     generateInspiration: protectedProcedure
       .input(z.object({

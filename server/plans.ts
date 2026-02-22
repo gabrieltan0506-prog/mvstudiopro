@@ -217,7 +217,11 @@ export const CREDIT_COSTS = {
   klingImageO1_2K: 10,          // Kling O1 2K 圖片消耗 10 credits（$0.028/張，高解析度）
   klingImageV2_1K: 5,           // Kling V2.1 1K 圖片消耗 5 credits（$0.014/張）
   klingImageV2_2K: 7,           // Kling V2.1 2K 圖片消耗 7 credits（$0.014/張，高解析度）
-  // ─── 音频分析 ────────────────────────────────
+
+  // ─── 分镜脚本 AI 改写 ────────────────────────────
+  storyboardRewrite: 8,          // AI 改写分镜脚本消耗 8 credits
+
+  // ─── 音频分析 ────────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 } as const;
 

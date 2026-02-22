@@ -13,6 +13,11 @@ import {
   Loader2,
   Zap,
   Crown,
+  Palette,
+  RefreshCw,
+  Music,
+  Play,
+  Pause,
 } from "lucide-react";
 
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -66,6 +71,7 @@ const FREE_MAX_SCENES = 10;
 const PAID_MAX_SCENES = 20;
 
 type ModelOption = "flash" | "gpt5" | "pro";
+type VisualStyle = "cinematic" | "anime" | "documentary" | "realistic" | "scifi";
 
 const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: string; icon: React.ElementType }[] = [
   {
@@ -91,6 +97,14 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
   },
 ];
 
+const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; emoji: string; desc: string }[] = [
+  { value: "cinematic", label: "電影感", labelEn: "Cinematic", emoji: "🎬", desc: "電影級光影、色彩分級、寬銀幕構圖" },
+  { value: "anime", label: "動漫風", labelEn: "Anime", emoji: "🎨", desc: "日系動漫視覺語言、鮮艷色彩、光效粒子" },
+  { value: "documentary", label: "紀錄片", labelEn: "Documentary", emoji: "📹", desc: "真實感、自然光線、手持鏡頭、沉浸敘事" },
+  { value: "realistic", label: "寫實片", labelEn: "Realistic", emoji: "📷", desc: "自然色調、真實場景、生活化光線構圖" },
+  { value: "scifi", label: "科幻片", labelEn: "Sci-Fi", emoji: "🚀", desc: "霓虹燈光、全息投影、賽博朋克色調" },
+];
+
 export default function StoryboardPage() {
   const [, navigate] = useLocation();
   const { isAuthenticated, loading, user } = useAuth();
@@ -99,6 +113,7 @@ export default function StoryboardPage() {
   const [lyricsText, setLyricsText] = useState("");
   const [sceneCount, setSceneCount] = useState("5");
   const [selectedModel, setSelectedModel] = useState<ModelOption>("flash");
+  const [selectedStyle, setSelectedStyle] = useState<VisualStyle>("cinematic");
   const [isGenerating, setIsGenerating] = useState(false);
   const [storyboard, setStoryboard] = useState<StoryboardResult | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<number | null>(null);
@@ -114,10 +129,36 @@ export default function StoryboardPage() {
   const [exportMenuVisible, setExportMenuVisible] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
 
+  // AI Rewrite states
+  const [showRewritePanel, setShowRewritePanel] = useState(false);
+  const [rewriteFeedback, setRewriteFeedback] = useState("");
+  const [isRewriting, setIsRewriting] = useState(false);
+
+  // BGM Generation states
+  const [showBgmPanel, setShowBgmPanel] = useState(false);
+  const [bgmDescription, setBgmDescription] = useState("");
+  const [bgmStylePreset, setBgmStylePreset] = useState("cinematic_epic");
+  const [bgmModel, setBgmModel] = useState<"V4" | "V5">("V4");
+  const [bgmTitle, setBgmTitle] = useState("");
+  const [isGeneratingBgm, setIsGeneratingBgm] = useState(false);
+  const [bgmTaskId, setBgmTaskId] = useState<string | null>(null);
+  const [bgmResult, setBgmResult] = useState<any>(null);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
+  const [audioRef] = useState(() => typeof Audio !== 'undefined' ? new Audio() : null);
+
   const generateStoryboard = trpc.storyboard.generate.useMutation();
+  const rewriteMutation = trpc.storyboard.rewrite.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const exportPDFMutation = trpc.storyboard.exportPDF.useMutation();
   const inspirationMutation = trpc.storyboard.generateInspiration.useMutation();
+  const generateMusicMutation = trpc.suno.generateMusic.useMutation();
+  const stylePresetsQuery = trpc.suno.getStylePresets.useQuery(undefined, {
+    enabled: isAuthenticated && !loading,
+  });
+  const creditCostsQuery = trpc.suno.getCreditCosts.useQuery(undefined, {
+    enabled: isAuthenticated && !loading,
+  });
+
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
     enabled: isAuthenticated && !loading,
     refetchOnMount: true,
@@ -127,6 +168,42 @@ export default function StoryboardPage() {
   });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const userCredits = subQuery.data?.credits?.balance ?? 0;
+
+  // BGM task polling
+  const bgmStatusQuery = trpc.suno.getTaskStatus.useQuery(
+    { taskId: bgmTaskId || "" },
+    {
+      enabled: !!bgmTaskId,
+      refetchInterval: bgmTaskId ? 5000 : false,
+    }
+  );
+
+  // Update BGM result when task completes
+  useEffect(() => {
+    if (bgmStatusQuery.data) {
+      const status = bgmStatusQuery.data.status;
+      if (status === "SUCCESS" || status === "FIRST_SUCCESS") {
+        setBgmResult(bgmStatusQuery.data);
+        if (status === "SUCCESS") {
+          setBgmTaskId(null); // Stop polling
+          toast.success("BGM 生成完成！");
+        }
+      } else if (status === "FAILED") {
+        setBgmTaskId(null);
+        toast.error("BGM 生成失敗：" + (bgmStatusQuery.data.errorMessage || "未知錯誤"));
+      }
+    }
+  }, [bgmStatusQuery.data]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef) {
+        audioRef.pause();
+        audioRef.src = "";
+      }
+    };
+  }, [audioRef]);
 
   // 根據用戶方案確定最大分鏡數
   const isPaidUser = isAdmin || userPlan !== "free";
@@ -204,12 +281,17 @@ export default function StoryboardPage() {
         lyrics: lyricsText,
         sceneCount: numSceneCount,
         model: selectedModel,
+        visualStyle: selectedStyle,
       });
 
       if (result.success && result.storyboard) {
         setStoryboard(result.storyboard);
         usageStatsQuery.refetch();
         toast.success(result.message || "分鏡腳本已生成！");
+        // Auto-fill BGM title from storyboard title
+        if (result.storyboard.title) {
+          setBgmTitle(result.storyboard.title + " - BGM");
+        }
       }
     } catch (error: any) {
       console.error("Error generating storyboard:", error);
@@ -225,6 +307,12 @@ export default function StoryboardPage() {
     setStoryboard(null);
     setScriptSource("own");
     setSelectedModel("flash");
+    setSelectedStyle("cinematic");
+    setShowRewritePanel(false);
+    setRewriteFeedback("");
+    setShowBgmPanel(false);
+    setBgmResult(null);
+    setBgmTaskId(null);
   };
 
   const triggerDownload = (url: string, filename: string) => {
@@ -314,6 +402,79 @@ export default function StoryboardPage() {
       toast.error(error.message || "生成失敗，請重試");
     } finally {
       setIsGeneratingInspiration(false);
+    }
+  };
+
+  // AI Rewrite handler
+  const handleRewrite = async () => {
+    if (!storyboard) return;
+    if (!rewriteFeedback.trim()) {
+      toast.warning("請輸入您的修改意見");
+      return;
+    }
+
+    setIsRewriting(true);
+    try {
+      const result = await rewriteMutation.mutateAsync({
+        originalStoryboard: storyboard,
+        userFeedback: rewriteFeedback.trim(),
+        visualStyle: selectedStyle,
+        model: selectedModel,
+      });
+
+      if (result.success && result.storyboard) {
+        setStoryboard(result.storyboard as StoryboardResult);
+        setShowRewritePanel(false);
+        setRewriteFeedback("");
+        toast.success(result.message || "分鏡腳本已改寫！");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "改寫失敗，請重試");
+    } finally {
+      setIsRewriting(false);
+    }
+  };
+
+  // BGM Generation handler
+  const handleGenerateBgm = async () => {
+    if (!bgmTitle.trim()) {
+      toast.warning("請輸入 BGM 標題");
+      return;
+    }
+
+    setIsGeneratingBgm(true);
+    try {
+      const result = await generateMusicMutation.mutateAsync({
+        mode: "bgm",
+        model: bgmModel,
+        title: bgmTitle.trim(),
+        stylePresetId: bgmStylePreset,
+        customStyle: bgmStylePreset === "custom" ? bgmDescription : undefined,
+        mood: bgmDescription || undefined,
+      });
+
+      if (result.taskId) {
+        setBgmTaskId(result.taskId);
+        toast.success(`BGM 生成已提交（${result.model}），消耗 ${result.creditCost} Credits`);
+      }
+    } catch (error: any) {
+      toast.error(error.message || "BGM 生成失敗");
+    } finally {
+      setIsGeneratingBgm(false);
+    }
+  };
+
+  // Audio playback
+  const handlePlayAudio = (url: string) => {
+    if (!audioRef) return;
+    if (playingAudioUrl === url) {
+      audioRef.pause();
+      setPlayingAudioUrl(null);
+    } else {
+      audioRef.src = url;
+      audioRef.play();
+      setPlayingAudioUrl(url);
+      audioRef.onended = () => setPlayingAudioUrl(null);
     }
   };
 
@@ -460,6 +621,33 @@ export default function StoryboardPage() {
                 )}
               </div>
 
+              {/* 視覺風格選擇 */}
+              <div className="mb-4">
+                <div className="flex items-center mb-2">
+                  <Palette className="w-5 h-5 text-primary mr-2" />
+                  <p className="text-lg font-semibold text-foreground">視覺風格</p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                  {VISUAL_STYLES.map((style) => (
+                    <button
+                      key={style.value}
+                      onClick={() => setSelectedStyle(style.value)}
+                      className={`rounded-xl p-3 text-left transition-all border-2 ${
+                        selectedStyle === style.value
+                          ? "border-primary bg-primary/10 shadow-md"
+                          : "border-transparent bg-muted/30 hover:bg-muted/50"
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">{style.emoji}</div>
+                      <p className={`font-semibold text-sm ${selectedStyle === style.value ? "text-primary" : "text-foreground"}`}>
+                        {style.label}
+                      </p>
+                      <p className="text-muted-foreground text-xs mt-0.5 leading-tight">{style.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* AI 模型選擇（下拉選單） */}
               <div className="mb-4">
                 <p className="text-lg font-semibold text-foreground mb-2">AI 模型</p>
@@ -558,7 +746,77 @@ export default function StoryboardPage() {
                 <div className="bg-primary/10 px-3 py-1 rounded-full">
                   <p className="text-primary text-sm font-medium">調性: {storyboard.musicInfo.key}</p>
                 </div>
+                <div className="bg-purple-500/10 px-3 py-1 rounded-full">
+                  <p className="text-purple-400 text-sm font-medium">
+                    風格: {VISUAL_STYLES.find(s => s.value === selectedStyle)?.label || "電影感"}
+                  </p>
+                </div>
               </div>
+            </div>
+
+            {/* AI 改寫面板 */}
+            <div className="mb-4">
+              {!showRewritePanel ? (
+                <button
+                  onClick={() => setShowRewritePanel(true)}
+                  className="rounded-xl p-4 flex items-center w-full bg-orange-500/10 border border-orange-500/20 hover:bg-orange-500/20 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center mr-3 bg-orange-500/10">
+                    <RefreshCw className="w-[22px] h-[22px] text-orange-500" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-foreground font-semibold text-base">不滿意？AI 幫你改</p>
+                    <p className="text-muted-foreground text-sm mt-0.5">給我三句話描述修改方向，AI 重新改寫整個腳本（8 Credits）</p>
+                  </div>
+                  <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
+                </button>
+              ) : (
+                <div className="rounded-xl p-5 bg-orange-500/10 border border-orange-500/20">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center">
+                      <RefreshCw className="w-5 h-5 text-orange-500" />
+                      <p className="text-foreground font-semibold ml-2">AI 改寫腳本</p>
+                      <div className="ml-2 bg-yellow-500/15 px-2 py-0.5 rounded-full">
+                        <p className="text-yellow-500 text-xs font-medium">8 Credits</p>
+                      </div>
+                    </div>
+                    <button onClick={() => { setShowRewritePanel(false); setRewriteFeedback(""); }}>
+                      <X className="w-5 h-5 text-muted-foreground" />
+                    </button>
+                  </div>
+                  <p className="text-muted-foreground text-sm mb-3">
+                    描述您希望如何修改，例如：「場景氛圍太暗了，希望更溫暖明亮」「鏡頭運動太單調，加入更多航拍和環繞鏡頭」「整體節奏太慢，需要更快的剪輯節奏」
+                  </p>
+                  <Textarea
+                    value={rewriteFeedback}
+                    onChange={(e) => setRewriteFeedback(e.target.value)}
+                    placeholder="用 1-3 句話描述您的修改意見..."
+                    maxLength={500}
+                    rows={3}
+                    className="bg-background rounded-lg p-3 text-foreground mb-3 text-base resize-none"
+                  />
+                  <div className="flex items-center justify-between">
+                    <p className="text-muted-foreground text-xs">{rewriteFeedback.length}/500</p>
+                    <Button
+                      onClick={handleRewrite}
+                      disabled={!rewriteFeedback.trim() || isRewriting}
+                      className="bg-orange-500 hover:bg-orange-600 text-white"
+                    >
+                      {isRewriting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                          <span>改寫中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-1" />
+                          <span>AI 改寫</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mb-4">
@@ -665,6 +923,180 @@ export default function StoryboardPage() {
             <div className="bg-card rounded-2xl p-6 border mb-4">
               <h3 className="text-lg font-bold text-foreground mb-3">整體建議</h3>
               <p className="text-foreground leading-relaxed">{storyboard.summary}</p>
+            </div>
+
+            {/* BGM 生成區域 */}
+            <div className="mb-4">
+              {!showBgmPanel ? (
+                <button
+                  onClick={() => setShowBgmPanel(true)}
+                  className="rounded-xl p-4 flex items-center w-full bg-violet-500/10 border border-violet-500/20 hover:bg-violet-500/20 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center mr-3 bg-violet-500/10">
+                    <Music className="w-[22px] h-[22px] text-violet-500" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-foreground font-semibold text-base">為分鏡生成 BGM 配樂</p>
+                    <p className="text-muted-foreground text-sm mt-0.5">Suno AI 根據分鏡風格自動生成配樂（V4: {creditCostsQuery.data?.v4 ?? 12} Cr / V5: {creditCostsQuery.data?.v5 ?? 22} Cr）</p>
+                  </div>
+                  <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
+                </button>
+              ) : (
+                <div className="rounded-xl p-5 bg-violet-500/10 border border-violet-500/20">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center">
+                      <Music className="w-5 h-5 text-violet-500" />
+                      <p className="text-foreground font-semibold ml-2">BGM 配樂生成</p>
+                      <div className="ml-2 bg-yellow-500/15 px-2 py-0.5 rounded-full">
+                        <p className="text-yellow-500 text-xs font-medium">消耗 Credits</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setShowBgmPanel(false)}>
+                      <X className="w-5 h-5 text-muted-foreground" />
+                    </button>
+                  </div>
+
+                  {/* BGM Title */}
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-foreground mb-1">BGM 標題</p>
+                    <input
+                      type="text"
+                      value={bgmTitle}
+                      onChange={(e) => setBgmTitle(e.target.value)}
+                      placeholder="輸入 BGM 標題..."
+                      maxLength={80}
+                      className="w-full bg-background rounded-lg px-3 py-2 text-foreground text-sm border"
+                    />
+                  </div>
+
+                  {/* BGM Style Preset */}
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-foreground mb-1">音樂風格</p>
+                    <Select value={bgmStylePreset} onValueChange={setBgmStylePreset}>
+                      <SelectTrigger className="w-full bg-background">
+                        <SelectValue placeholder="選擇音樂風格" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(stylePresetsQuery.data || []).map((preset: any) => (
+                          <SelectItem key={preset.id} value={preset.id}>
+                            {preset.label} ({preset.labelEn})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Custom description */}
+                  <div className="mb-3">
+                    <p className="text-sm font-medium text-foreground mb-1">補充描述（可選）</p>
+                    <Textarea
+                      value={bgmDescription}
+                      onChange={(e) => setBgmDescription(e.target.value)}
+                      placeholder="描述您想要的 BGM 氛圍，例如：「開頭輕柔鋼琴，副歌時加入弦樂和鼓點，結尾漸弱」"
+                      maxLength={500}
+                      rows={2}
+                      className="bg-background rounded-lg p-3 text-foreground text-sm resize-none"
+                    />
+                  </div>
+
+                  {/* Suno Model Selection */}
+                  <div className="mb-4">
+                    <p className="text-sm font-medium text-foreground mb-1">Suno 引擎</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setBgmModel("V4")}
+                        className={`rounded-lg p-3 text-left transition-all border-2 ${
+                          bgmModel === "V4"
+                            ? "border-violet-500 bg-violet-500/10"
+                            : "border-transparent bg-muted/30 hover:bg-muted/50"
+                        }`}
+                      >
+                        <p className={`font-semibold text-sm ${bgmModel === "V4" ? "text-violet-400" : "text-foreground"}`}>
+                          Suno V4
+                        </p>
+                        <p className="text-muted-foreground text-xs mt-0.5">性價比高</p>
+                        <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v4 ?? 12} Credits</p>
+                      </button>
+                      <button
+                        onClick={() => setBgmModel("V5")}
+                        className={`rounded-lg p-3 text-left transition-all border-2 ${
+                          bgmModel === "V5"
+                            ? "border-violet-500 bg-violet-500/10"
+                            : "border-transparent bg-muted/30 hover:bg-muted/50"
+                        }`}
+                      >
+                        <p className={`font-semibold text-sm ${bgmModel === "V5" ? "text-violet-400" : "text-foreground"}`}>
+                          Suno V5
+                        </p>
+                        <p className="text-muted-foreground text-xs mt-0.5">最新模型，更高音質</p>
+                        <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v5 ?? 22} Credits</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Generate Button */}
+                  <Button
+                    onClick={handleGenerateBgm}
+                    disabled={!bgmTitle.trim() || isGeneratingBgm || !!bgmTaskId}
+                    className="w-full bg-violet-500 hover:bg-violet-600 text-white"
+                  >
+                    {isGeneratingBgm || bgmTaskId ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        <span>{bgmTaskId ? "生成中，請稍候..." : "提交中..."}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Music className="w-4 h-4 mr-1" />
+                        <span>生成 BGM</span>
+                      </>
+                    )}
+                  </Button>
+
+                  {/* BGM Result */}
+                  {bgmResult && bgmResult.songs && bgmResult.songs.length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      <p className="text-sm font-semibold text-foreground">生成結果：</p>
+                      {bgmResult.songs.map((song: any, idx: number) => (
+                        <div key={song.id || idx} className="bg-background rounded-lg p-3 border flex items-center gap-3">
+                          {song.imageUrl && (
+                            <img src={song.imageUrl} alt="cover" className="w-12 h-12 rounded-lg object-cover" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-foreground text-sm font-medium truncate">{song.title || `BGM ${idx + 1}`}</p>
+                            <p className="text-muted-foreground text-xs">{song.tags || "Instrumental"}</p>
+                            {song.duration && (
+                              <p className="text-muted-foreground text-xs">{Math.round(song.duration)}s</p>
+                            )}
+                          </div>
+                          {(song.audioUrl || song.streamUrl) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handlePlayAudio(song.audioUrl || song.streamUrl)}
+                              className="shrink-0"
+                            >
+                              {playingAudioUrl === (song.audioUrl || song.streamUrl) ? (
+                                <Pause className="w-4 h-4" />
+                              ) : (
+                                <Play className="w-4 h-4" />
+                              )}
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* BGM Polling Status */}
+                  {bgmTaskId && !bgmResult && (
+                    <div className="mt-3 bg-background rounded-lg p-3 border flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
+                      <p className="text-muted-foreground text-sm">BGM 正在生成中，預計需要 30-60 秒...</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 導出按鈕 */}

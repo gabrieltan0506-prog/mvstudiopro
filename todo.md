@@ -315,3 +315,13 @@
 - [x] 確認 2D轉3D 頁面已修復可正常使用（前端 tRPC 路由名已修正為 hunyuan3d，頁面正常顯示）
 - [x] 2D轉3D 整合 fal.ai BiRefNet 去背景 API（生成前自動去背，失敗時回退使用原圖）
 - [x] 測試驗證（110 tests passed）
+
+## Phase 33: 分鏡腳本功能增強 - 風格選擇 + AI 改寫 + BGM 整合（2026-02-22）
+- [x] 後端：storyboard.generate 添加視覺風格參數（電影感、動漫風、紀錄片、寫實片、科幻片）
+- [x] 後端：新增 storyboard.rewrite AI 改寫路由（用戶三句話描述修改方向）
+- [x] 後端：BGM 生成整合現有 Suno API（suno.generateMusic + suno.getStylePresets）
+- [x] 後端：新增 storyboardRewrite Credits 定價（8 Credits）
+- [x] 前端：分鏡腳本頁面添加視覺風格選擇器（5 種風格卡片）
+- [x] 前端：分鏡生成後添加「不滿意？給我三句話幫你改」AI 改寫區域
+- [x] 前端：分鏡生成後添加 BGM 生成區域（標題+風格預設+描述+Suno V4/V5 引擎選擇+播放）
+- [x] 測試驗證（119 tests passed）並保存 checkpoint
