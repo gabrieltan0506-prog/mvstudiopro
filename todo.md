@@ -429,5 +429,10 @@
 
 ## Phase 45: Veo 3.1 Pro 視頻生成 + 代碼推送 + 工作報告
 - [x] 用 Veo 3.1 Pro (Gemini API) 生成 10 個 8 秒視頻（4/10 成功，6/10 配額限制）
-- [ ] 保存 checkpoint 並推送代碼到 GitHub 倉庫
-- [ ] 生成完整 Markdown 工作列表（已完成 + 未完成）
+- [x] 保存 checkpoint 並推送代碼到 GitHub 倉庫
+- [x] 生成完整 Markdown 工作列表（已完成 + 未完成）
+
+## Phase 46: 首頁視頻輪播功能
+- [x] 創建 VideoCarousel 組件（自動播放、淡入淡出、標題覆蓋）
+- [x] 整合 4 個 Veo 3.1 視頻到首頁 Hero 下方
+- [x] 測試驗證並保存 checkpoint 推送 GitHub

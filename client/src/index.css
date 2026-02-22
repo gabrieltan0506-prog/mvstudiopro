@@ -546,3 +546,9 @@
   opacity: 1;
   transition: width 0s, height 0s, opacity 0s;
 }
+
+/* Video Carousel Progress Bar */
+@keyframes carouselProgress {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}

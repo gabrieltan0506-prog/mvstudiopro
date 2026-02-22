@@ -8,7 +8,7 @@ import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Link } from "wouter";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Film, Sparkles, Clapperboard, Wand2, Users, BarChart3,
   ArrowRight, Play, Star, Send, ChevronRight, Video, Trophy,
@@ -180,6 +180,174 @@ const SHOWCASE_MVS = [
   { id: "mv3", title: "Digital Soul", artist: "PixelBeat", thumbnail: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&h=340&fit=crop" },
 ];
 
+/* ── AI Video Carousel Data ── */
+const CAROUSEL_VIDEOS = [
+  {
+    id: 1, title: "赛博朋克城市", subtitle: "Cyberpunk City",
+    desc: "霓虹雨夜中的未来都市，全息广告闪烁，飞行器穿梭于摩天大楼之间",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/KxgbvnPXycXGYxkr.mp4",
+    posterUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hyAiNNDJRzyzbWOt.jpg",
+    gradient: "from-cyan-500/20 to-purple-500/20",
+  },
+  {
+    id: 2, title: "海洋女神", subtitle: "Ocean Goddess",
+    desc: "金色黄昏中从发光海浪中升起的空灵女神，生物发光粒子环绕",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/JzowPpiMoOMqoUaO.mp4",
+    posterUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/DZlFTclEtjHiSYjO.jpg",
+    gradient: "from-amber-500/20 to-blue-500/20",
+  },
+  {
+    id: 3, title: "神秘古庙", subtitle: "Ancient Temple",
+    desc: "丛林深处的龙雕古庙，金色阳光穿透树冠，生物发光苔藓脉动",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NOqeglqrzndzEDEF.mp4",
+    posterUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/buJBtLYQTQGbUHsR.jpg",
+    gradient: "from-green-500/20 to-emerald-500/20",
+  },
+  {
+    id: 4, title: "太空站观景台", subtitle: "Space Station",
+    desc: "宇宙空间站的全景观景台，极光在地球上空舞动，银河横跨星际",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NtTJsNzFknFQEWrK.mp4",
+    posterUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hsMtQtgPjSfivVZf.jpg",
+    gradient: "from-indigo-500/20 to-violet-500/20",
+  },
+];
+
+/* ── Video Carousel Component ── */
+function VideoCarousel() {
+  const [current, setCurrent] = useState(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startAutoPlay = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      setIsTransitioning(true);
+      setTimeout(() => {
+        setCurrent(prev => (prev + 1) % CAROUSEL_VIDEOS.length);
+        setIsTransitioning(false);
+      }, 500);
+    }, 8000);
+  }, []);
+
+  useEffect(() => {
+    startAutoPlay();
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [current, startAutoPlay]);
+
+  useEffect(() => {
+    videoRefs.current.forEach((v, i) => {
+      if (!v) return;
+      if (i === current) {
+        v.currentTime = 0;
+        v.play().catch(() => {});
+      } else {
+        v.pause();
+      }
+    });
+  }, [current]);
+
+  const goTo = (idx: number) => {
+    if (idx === current || isTransitioning) return;
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setCurrent(idx);
+      setIsTransitioning(false);
+    }, 400);
+  };
+
+  const item = CAROUSEL_VIDEOS[current];
+
+  return (
+    <section className="py-12 relative overflow-hidden">
+      {/* Background glow matching current video */}
+      <div className={`absolute inset-0 bg-gradient-to-br ${item.gradient} opacity-30 transition-all duration-1000 blur-3xl`} />
+
+      <div className="container relative z-10">
+        <div className="text-center mb-8">
+          <p className="text-primary text-sm font-semibold tracking-widest uppercase mb-2">🎬 AI Generated Videos</p>
+          <h2 className="text-3xl sm:text-4xl font-bold mb-2">AI 生成视频展示</h2>
+          <p className="text-muted-foreground max-w-xl mx-auto">由 Veo 3.1 Pro 实时生成的电影级 8 秒视频</p>
+        </div>
+
+        {/* Main Video Player */}
+        <div className="max-w-4xl mx-auto">
+          <div className="relative aspect-video rounded-2xl overflow-hidden bg-black/50 border border-white/10 shadow-2xl shadow-black/50">
+            {/* All videos stacked, only current visible */}
+            {CAROUSEL_VIDEOS.map((v, i) => (
+              <video
+                key={v.id}
+                ref={el => { videoRefs.current[i] = el; }}
+                src={v.videoUrl}
+                poster={v.posterUrl}
+                muted
+                loop
+                playsInline
+                className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-700 ${
+                  i === current && !isTransitioning ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
+            ))}
+
+            {/* Overlay gradient */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+
+            {/* Video info overlay */}
+            <div className={`absolute bottom-0 left-0 right-0 p-6 transition-all duration-500 ${isTransitioning ? 'opacity-0 translate-y-4' : 'opacity-100 translate-y-0'}`}>
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-xs text-primary/80 font-medium uppercase tracking-wider mb-1">{item.subtitle}</p>
+                  <h3 className="text-2xl font-bold text-white mb-1">{item.title}</h3>
+                  <p className="text-sm text-white/70 max-w-md">{item.desc}</p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-white/60">
+                  <Film className="h-3.5 w-3.5" />
+                  <span>Veo 3.1 Pro · 8s · 720p</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Play indicator */}
+            <div className="absolute top-4 right-4 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm border border-white/10">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-[11px] text-white/80 font-medium">PLAYING</span>
+            </div>
+          </div>
+
+          {/* Thumbnail Navigation */}
+          <div className="flex gap-3 mt-4 justify-center">
+            {CAROUSEL_VIDEOS.map((v, i) => (
+              <button
+                key={v.id}
+                onClick={() => goTo(i)}
+                className={`relative rounded-lg overflow-hidden transition-all duration-400 border-2 hover:scale-105 active:scale-95 ${
+                  i === current
+                    ? 'border-primary shadow-lg shadow-primary/30 scale-105'
+                    : 'border-transparent opacity-60 hover:opacity-90'
+                }`}
+                style={{ width: '120px', height: '68px' }}
+              >
+                <img src={v.posterUrl} alt={v.title} className="w-full h-full object-cover" />
+                {i === current && (
+                  <div className="absolute inset-0 bg-primary/10 flex items-center justify-center">
+                    <Play className="h-4 w-4 text-white drop-shadow-lg" />
+                  </div>
+                )}
+                {/* Progress bar for current */}
+                {i === current && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20">
+                    <div className="h-full bg-primary animate-[carouselProgress_8s_linear_infinite]" />
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 /* ── Staggered Reveal Hook ── */
 function useStaggerReveal(count: number, delay = 80) {
   const [visible, setVisible] = useState<boolean[]>(new Array(count).fill(false));
@@ -302,6 +470,9 @@ export default function Home() {
         {/* Bottom gradient fade — shorter */}
         <div className="absolute bottom-0 left-0 right-0 h-20 bg-gradient-to-t from-background to-transparent" />
       </section>
+
+      {/* ═══ AI Video Carousel ═══ */}
+      <VideoCarousel />
 
       {/* ═══ Creative Tools — Immediately visible, Runway card style ═══ */}
       <section className="pt-10 pb-20 relative">
