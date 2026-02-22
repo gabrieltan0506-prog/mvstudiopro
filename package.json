@@ -88,6 +88,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@vercel/node": "^3.0.0",
     "@builder.io/vite-plugin-jsx-loc": "^0.1.1",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.1.3",
