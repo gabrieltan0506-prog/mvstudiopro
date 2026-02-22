@@ -23,6 +23,7 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
+import { creationsRouter, recordCreation } from "./routers/creations";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { deductCredits, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
 import { CREDIT_COSTS } from "./plans";
@@ -52,6 +53,7 @@ export const appRouter = router({
   kling: klingRouter,
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
+  creations: creationsRouter,
   // phoneOtp: phoneOtpRouter, // 暂不上线，等短信服务开通后取消注释
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
@@ -329,7 +331,7 @@ export const appRouter = router({
         gender: z.enum(["female", "male", "neutral"]),
         description: z.string().max(500).optional(),
         referenceImageUrl: z.string().url().optional(),
-        quality: z.enum(["free", "2k", "4k"]).default("free"),
+        quality: z.enum(["free", "2k", "4k", "kling_1k", "kling_2k"]).default("free"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -389,7 +391,95 @@ export const appRouter = router({
           }
           
           await incrementUsageCount(userId, "avatar");
+          // Auto-record creation
+          try {
+            const plan = await getUserPlan(userId);
+            await recordCreation({
+              userId,
+              type: "idol_image",
+              title: input.description?.slice(0, 100) || `${input.style} ${input.gender} 偶像`,
+              outputUrl: finalUrl,
+              thumbnailUrl: finalUrl,
+              quality: "free",
+              creditsUsed: 0,
+              plan,
+            });
+          } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
           return { success: true, imageUrl: finalUrl, quality: "free" as const };
+        }
+
+        // ─── Kling tier: use Kling Image Generation API ─────
+        if (input.quality === "kling_1k" || input.quality === "kling_2k") {
+          const resolution = input.quality === "kling_2k" ? "2k" : "1k";
+          const creditKey = input.quality === "kling_2k" ? "klingImageO1_2K" as const : "klingImageO1_1K" as const;
+
+          if (!isAdminUser) {
+            const deduction = await deductCredits(userId, creditKey);
+            if (!deduction.success) {
+              return { success: false, error: "Credits 不足，請充值後再試", quality: input.quality };
+            }
+          }
+
+          try {
+            const { createImageTask, getImageTask, buildImageRequest } = await import("./kling/image-generation");
+            const request = buildImageRequest({
+              prompt,
+              model: "kling-image-o1",
+              resolution: resolution as "1k" | "2k",
+              aspectRatio: "1:1",
+              referenceImageUrl: input.referenceImageUrl,
+              imageFidelity: input.referenceImageUrl ? 0.5 : undefined,
+              count: 1,
+            });
+            const taskResult = await createImageTask(request, "global");
+
+            if (!taskResult.task_id) {
+              if (!isAdminUser) {
+                try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
+              }
+              return { success: false, error: taskResult.task_status_msg || "Kling 圖片生成失敗", quality: input.quality };
+            }
+
+            // Poll for result (max 120 seconds)
+            const taskId = taskResult.task_id;
+            const startTime = Date.now();
+            const maxWait = 120000;
+            let imageResult: any = null;
+            while (Date.now() - startTime < maxWait) {
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              imageResult = await getImageTask(taskId, "global");
+              if (imageResult.task_status === "succeed" || imageResult.task_status === "failed") break;
+            }
+            if (imageResult?.task_status === "succeed" && imageResult?.task_result?.images?.[0]?.url) {
+              await incrementUsageCount(userId, "avatar");
+              // Auto-record Kling creation
+              try {
+                const plan = await getUserPlan(userId);
+                await recordCreation({
+                  userId,
+                  type: "idol_image",
+                  title: input.description?.slice(0, 100) || `Kling ${resolution} 偶像`,
+                  outputUrl: imageResult.task_result.images[0].url,
+                  thumbnailUrl: imageResult.task_result.images[0].url,
+                  quality: `kling-o1-${resolution}`,
+                  creditsUsed: CREDIT_COSTS[creditKey],
+                  plan,
+                });
+              } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
+              return { success: true, imageUrl: imageResult.task_result.images[0].url, quality: input.quality };
+            } else {
+              if (!isAdminUser) {
+                try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
+              }
+              return { success: false, error: imageResult?.task_status_msg || "Kling 圖片生成超時", quality: input.quality };
+            }
+          } catch (err: any) {
+            if (!isAdminUser) {
+              try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("[VirtualIdol] Refund failed:", e); }
+            }
+            console.error("[VirtualIdol] Kling image generation failed:", err);
+            return { success: false, error: `Kling 圖片生成失敗: ${err.message || '請稍後再試'}`, quality: input.quality };
+          }
         }
 
         // ─── 2K / 4K tier: use Gemini API (Nano Banana Pro) ─────
@@ -424,6 +514,20 @@ export const appRouter = router({
             referenceImageUrl: input.referenceImageUrl,
           });
           await incrementUsageCount(userId, "avatar");
+          // Auto-record Gemini creation
+          try {
+            const plan = await getUserPlan(userId);
+            await recordCreation({
+              userId,
+              type: "idol_image",
+              title: input.description?.slice(0, 100) || `NBP ${input.quality} 偶像`,
+              outputUrl: result.imageUrl,
+              thumbnailUrl: result.imageUrl,
+              quality: `nbp-${input.quality}`,
+              creditsUsed: CREDIT_COSTS[creditKey],
+              plan,
+            });
+          } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
           return { success: true, imageUrl: result.imageUrl, quality: input.quality };
         } catch (err: any) {
           // Refund credits on failure (admin doesn't need refund)
@@ -492,6 +596,23 @@ export const appRouter = router({
           imageUrl: input.imageUrl,
           enablePbr: input.enablePbr,
         });
+
+        // Auto-record 3D creation
+        try {
+          const plan = await getUserPlan(userId);
+          await recordCreation({
+            userId,
+            type: "idol_3d",
+            title: "3D 模型轉換",
+            outputUrl: result.glbUrl,
+            secondaryUrl: result.objUrl ?? undefined,
+            thumbnailUrl: result.thumbnailUrl || result.glbUrl,
+            metadata: { mode: "real3d", enablePbr: input.enablePbr },
+            quality: input.enablePbr ? "PBR" : "Basic",
+            creditsUsed: CREDIT_COSTS.idol3D,
+            plan,
+          });
+        } catch (e) { console.error("[VirtualIdol] 3D recordCreation failed:", e); }
 
         return {
           success: true,
@@ -1525,6 +1646,20 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         })
       );
       parsed.scenes = scenesWithImages;
+
+      // Auto-record storyboard creation
+      try {
+        const plan = await getUserPlan(ctx.user.id);
+        await recordCreation({
+          userId: ctx.user.id,
+          type: "storyboard",
+          title: parsed.title || "分鏡腳本",
+          metadata: { sceneCount: input.sceneCount, overallMood: parsed.overallMood },
+          quality: `${input.sceneCount} 場景`,
+          creditsUsed: 0,
+          plan,
+        });
+      } catch (e) { console.error("[Storyboard] recordCreation failed:", e); }
 
       return { success: true, id, storyboard: parsed };
     }),

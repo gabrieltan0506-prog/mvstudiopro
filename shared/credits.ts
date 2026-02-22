@@ -36,6 +36,12 @@ export const CREDIT_COSTS = {
   klingVideo: 80,
   klingMotionControl: 70,
   klingLipSync: 60,
+
+  // ─── Kling 圖片生成 ────────────────────────────
+  klingImageO1_1K: 8,
+  klingImageO1_2K: 10,
+  klingImageV2_1K: 5,
+  klingImageV2_2K: 7,
 } as const;
 
 export type CreditAction = keyof typeof CREDIT_COSTS;

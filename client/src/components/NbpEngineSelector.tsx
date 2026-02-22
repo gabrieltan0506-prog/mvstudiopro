@@ -9,9 +9,9 @@
  * 管理员：所有引擎免费，不显示「管理员免费」字样
  * Forge 引擎：显示为「免费」而非「Forge AI」
  */
-import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle } from "lucide-react";
+import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
 
-export type EngineOption = "forge" | "nbp_2k" | "nbp_4k";
+export type EngineOption = "forge" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
 
 interface EngineInfo {
   id: EngineOption;
@@ -88,6 +88,40 @@ export function NbpEngineSelector({
         !isAdmin && effectivePlan !== "enterprise"
           ? "升級到 Enterprise 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 9
+          ? "Credits 不足，請充值"
+          : undefined,
+    },
+    {
+      id: "kling_1k",
+      label: "Kling 1K",
+      desc: isAdmin
+        ? "Kling AI O1，1K 解析度"
+        : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型",
+      cost: isAdmin ? "免費" : "8 Cr/張",
+      icon: Zap,
+      color: "#F97316",
+      available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 8),
+      reason:
+        !isAdmin && effectivePlan === "free"
+          ? "升級到 Pro 方案即可使用"
+          : !isAdmin && (effectiveCredits ?? 0) < 8
+          ? "Credits 不足，請充值"
+          : undefined,
+    },
+    {
+      id: "kling_2k",
+      label: "Kling 2K",
+      desc: isAdmin
+        ? "Kling AI O1，2K 高清"
+        : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型，2K 解析度",
+      cost: isAdmin ? "免費" : "10 Cr/張",
+      icon: Zap,
+      color: "#EF4444",
+      available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 10),
+      reason:
+        !isAdmin && effectivePlan === "free"
+          ? "升級到 Pro 方案即可使用"
+          : !isAdmin && (effectiveCredits ?? 0) < 10
           ? "Credits 不足，請充值"
           : undefined,
     },

@@ -210,6 +210,12 @@ export const CREDIT_COSTS = {
   klingVideo: 80,             // Kling 视频生成消耗 80 credits（API 成本高）
   klingMotionControl: 70,     // Kling 动作迁移消耗 70 credits（API 成本高）
   klingLipSync: 60,           // Kling 口型同步消耗 60 credits
+
+  // ─── Kling 圖片生成 ────────────────────────────
+  klingImageO1_1K: 8,           // Kling O1 1K 圖片消耗 8 credits（$0.028/張）
+  klingImageO1_2K: 10,          // Kling O1 2K 圖片消耗 10 credits（$0.028/張，高解析度）
+  klingImageV2_1K: 5,           // Kling V2.1 1K 圖片消耗 5 credits（$0.014/張）
+  klingImageV2_2K: 7,           // Kling V2.1 2K 圖片消耗 7 credits（$0.014/張，高解析度）
   // ─── 音频分析 ────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 } as const;

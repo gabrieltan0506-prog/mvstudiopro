@@ -7,12 +7,13 @@ import { trpc } from "@/lib/trpc";
 import {
   Sparkles, Footprints, Mic2, Layers, Coins, RefreshCw,
   CheckCircle, Download, Upload, Loader2, Trash2, Play,
-  Image as ImageIcon, Video, Plus, X, Info, ChevronDown,
+  Image as ImageIcon, Video, Plus, X, Info, ChevronDown, Clock, Heart, Star,
 } from "lucide-react";
+import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
 
 // ─── Types ──────────────────────────────────────────
 
-type KlingTab = "omniVideo" | "motionControl" | "lipSync" | "elements";
+type KlingTab = "omniVideo" | "motionControl" | "lipSync" | "elements" | "imageGen" | "history";
 type KlingMode = "std" | "pro";
 type AspectRatio = "16:9" | "9:16" | "1:1";
 type Duration = "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "15";
@@ -34,6 +35,8 @@ const TABS: Array<{ id: KlingTab; label: string; icon: React.ElementType; color:
   { id: "motionControl", label: "Motion Control", icon: Footprints, color: "#3B82F6", desc: "2.6 动作迁移：图片 + 动作视频 → 动画" },
   { id: "lipSync", label: "Lip-Sync", icon: Mic2, color: "#EC4899", desc: "对口型：视频 + 音频 → 口型同步" },
   { id: "elements", label: "Elements", icon: Layers, color: "#10B981", desc: "角色元素库：保持角色一致性" },
+  { id: "imageGen", label: "Image Gen", icon: ImageIcon, color: "#F59E0B", desc: "Kling AI 圖片生成：支持 1K/2K 解析度，O1 和 V2.1 模型" },
+  { id: "history", label: "生成記錄", icon: Clock, color: "#6B7280", desc: "查看可靈工作室的所有生成記錄和收藏" },
 ];
 
 // ─── Shared UI Components ───────────────────────────
@@ -1009,6 +1012,176 @@ function ElementsPanel() {
 }
 
 // ═══════════════════════════════════════════════════════
+// Image Generation Panel (Kling AI)
+// ═══════════════════════════════════════════════════════
+
+function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => void }) {
+  const [prompt, setPrompt] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [model, setModel] = useState<"kling-image-o1" | "kling-v2-1">("kling-image-o1");
+  const [resolution, setResolution] = useState<"1k" | "2k">("1k");
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  const [imageFidelity, setImageFidelity] = useState(0.5);
+  const [count, setCount] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const createImage = trpc.kling.imageGen.create.useMutation();
+  const uploadFile = trpc.kling.uploadFile.useMutation();
+
+  // Credit costs
+  const creditCost = useMemo(() => {
+    if (model === "kling-image-o1") return resolution === "2k" ? 10 : 8;
+    return resolution === "2k" ? 7 : 5;
+  }, [model, resolution]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!prompt.trim()) {
+      toast.error("請輸入圖片描述");
+      return;
+    }
+    setLoading(true);
+    try {
+      let refUrl: string | undefined;
+      if (referenceImage?.startsWith("data:")) {
+        const base64 = referenceImage.split(",")[1];
+        const ext = referenceImage.split(";")[0].split("/")[1] || "png";
+        const uploaded = await uploadFile.mutateAsync({
+          fileBase64: base64, fileName: `img-ref.${ext}`, mimeType: `image/${ext}`, folder: "images",
+        });
+        refUrl = uploaded.url;
+      } else if (referenceImage) {
+        refUrl = referenceImage;
+      }
+
+      const result = await createImage.mutateAsync({
+        prompt: prompt.trim(),
+        negativePrompt: negativePrompt.trim() || undefined,
+        model,
+        resolution,
+        aspectRatio,
+        referenceImageUrl: refUrl,
+        imageFidelity: refUrl ? imageFidelity : undefined,
+        count,
+        region: "global",
+      });
+
+      if (result.success && result.taskId) {
+        onTaskCreated({
+          taskId: result.taskId, type: "imageGen" as any, subType: `${model} ${resolution}`,
+          status: "submitted", createdAt: Date.now(),
+        });
+        toast.success("圖片生成任務已提交");
+      } else {
+        toast.error((result as any).error || "提交失敗");
+      }
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error?.message || "發生錯誤");
+    } finally {
+      setLoading(false);
+    }
+  }, [prompt, negativePrompt, model, resolution, aspectRatio, referenceImage, imageFidelity, count]);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-amber-900/20 border border-amber-800/40 rounded-lg p-3 flex items-start space-x-2">
+        <Info className="h-5 w-5 text-amber-400 mt-0.5 flex-shrink-0" />
+        <p className="text-sm text-amber-300">
+          Kling AI 圖片生成：O1 模型質量更高（8 Credits/張），V2.1 模型速度更快（5 Credits/張）。支持 1K 和 2K 解析度。
+        </p>
+      </div>
+
+      {/* Model selector */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-300">模型選擇</span>
+        <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
+          <button onClick={() => setModel("kling-image-o1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-image-o1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>O1 高質量</button>
+          <button onClick={() => setModel("kling-v2-1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-v2-1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>V2.1 快速</button>
+        </div>
+      </div>
+
+      {/* Resolution */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-300">解析度</span>
+        <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
+          <button onClick={() => setResolution("1k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "1k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>1K 標準</button>
+          <button onClick={() => setResolution("2k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "2k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>2K 高清</button>
+        </div>
+      </div>
+
+      {/* Prompt */}
+      <div className="space-y-2">
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="描述你想生成的圖片..."
+          className="w-full p-3 bg-gray-800 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-amber-500 border border-gray-700 resize-none"
+          rows={4}
+        />
+      </div>
+
+      <AspectRatioSelector ratio={aspectRatio} onRatioChange={setAspectRatio} />
+
+      {/* Count */}
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-gray-300">生成數量</span>
+        <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
+          {[1, 2, 3, 4].map((n) => (
+            <button key={n} onClick={() => setCount(n)} className={`px-3 py-1 text-sm rounded-md transition-colors ${count === n ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>{n}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Reference image */}
+      <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-gray-300">
+        <ChevronDown className={`h-3 w-3 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+        <span>高級選項（參考圖、負面提示詞）</span>
+      </button>
+      {showAdvanced && (
+        <div className="space-y-3 bg-gray-800/30 p-3 rounded-lg">
+          <FileUploadBox label="參考圖片（可選）" accept="image/*" value={referenceImage} onChange={setReferenceImage} preview="image" />
+          {referenceImage && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-300">參考圖影響度</span>
+              <div className="flex items-center space-x-2">
+                <input type="range" min="0" max="1" step="0.05" value={imageFidelity} onChange={(e) => setImageFidelity(parseFloat(e.target.value))} className="w-24 accent-amber-500" />
+                <span className="text-sm text-gray-400 w-8">{imageFidelity.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+          <textarea
+            value={negativePrompt}
+            onChange={(e) => setNegativePrompt(e.target.value)}
+            placeholder="負面提示詞（不希望出現的內容）..."
+            className="w-full p-3 bg-gray-800 rounded-lg text-white placeholder-gray-500 border border-gray-700 resize-none text-sm"
+            rows={2}
+          />
+        </div>
+      )}
+
+      {/* Submit */}
+      <div className="flex justify-between items-center pt-4 border-t border-gray-700">
+        <div className="flex items-center space-x-1 bg-gray-800 text-yellow-400 px-2 py-1 rounded-full text-xs">
+          <Coins className="h-3.5 w-3.5" />
+          <span>{creditCost * count} Credits</span>
+          <span className="text-gray-400">({count}張 x {creditCost})</span>
+        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={loading}
+          className="px-6 py-2.5 bg-amber-600 text-white font-semibold rounded-lg hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+        >
+          {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
+          <span>{loading ? "生成中..." : "生成圖片"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
 // Main Page Component
 // ═══════════════════════════════════════════════════════
 
@@ -1090,6 +1263,10 @@ export default function RemixStudioPage() {
         return <LipSyncPanel onTaskCreated={handleCreateTask} />;
       case "elements":
         return <ElementsPanel />;
+      case "imageGen":
+        return <ImageGenPanel onTaskCreated={handleCreateTask} />;
+      case "history":
+        return <CreationHistoryPanel title="可靈工作室生成記錄" />;
       default:
         return null;
     }
@@ -1105,8 +1282,11 @@ export default function RemixStudioPage() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
             可灵工作室
           </h1>
-          <p className="text-gray-400 mt-1">Kling AI — 视频生成 · 动作迁移 · 口型同步 · 角色元素</p>
+          <p className="text-gray-400 mt-1">Kling AI — 視頻生成 · 動作遷移 · 口型同步 · 圖片生成 · 角色元素</p>
         </div>
+
+        {/* Expiry Warning */}
+        <ExpiryWarningBanner />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Panel: Controls */}

@@ -47,7 +47,15 @@ import {
   estimateOmniVideoCost,
   estimateMotionControlCost,
   estimateLipSyncCost,
+  // Image Generation
+  createImageTask,
+  getImageTask,
+  buildImageRequest,
+  estimateImageCost,
 } from "../kling";
+import { deductCredits, getUserPlan, addCredits } from "../credits";
+import { CREDIT_COSTS } from "../plans";
+import { recordCreation } from "./creations";
 
 // ─── Initialize Kling client from env on module load ─
 
@@ -463,6 +471,105 @@ export const klingRouter = router({
         ensureInitialized();
         await deleteElement(input.elementId, input.region);
         return { success: true };
+      }),
+  }),
+
+  // ═══════════════════════════════════════════════════
+  // Image Generation
+  // ═══════════════════════════════════════════════════
+
+  imageGen: router({
+    create: protectedProcedure
+      .input(z.object({
+        prompt: z.string().min(1).max(2500),
+        negativePrompt: z.string().max(500).optional(),
+        model: z.enum(["kling-image-o1", "kling-v2-1"]).default("kling-image-o1"),
+        resolution: z.enum(["1k", "2k"]).default("1k"),
+        aspectRatio: z.string().default("1:1"),
+        referenceImageUrl: z.string().optional(),
+        imageFidelity: z.number().min(0).max(1).optional(),
+        humanFidelity: z.number().min(0).max(1).optional(),
+        count: z.number().min(1).max(4).default(1),
+        region: regionSchema,
+      }))
+      .mutation(async ({ input, ctx }) => {
+        ensureInitialized();
+        const userId = ctx.user.id;
+        const isAdmin = ctx.user.role === "admin";
+
+        // Determine credit key
+        const creditKey = input.model === "kling-image-o1"
+          ? (input.resolution === "2k" ? "klingImageO1_2K" as const : "klingImageO1_1K" as const)
+          : (input.resolution === "2k" ? "klingImageV2_2K" as const : "klingImageV2_1K" as const);
+
+        // Deduct credits (admin skips)
+        if (!isAdmin) {
+          const totalCredits = CREDIT_COSTS[creditKey] * input.count;
+          const deduction = await deductCredits(userId, creditKey, `Kling ${input.model} ${input.resolution} x${input.count}`);
+          if (!deduction.success) {
+            return { success: false, error: "Credits 不足，請充值後再試" };
+          }
+        }
+
+        try {
+          const request = buildImageRequest({
+            prompt: input.prompt,
+            negativePrompt: input.negativePrompt,
+            model: input.model,
+            resolution: input.resolution,
+            aspectRatio: input.aspectRatio,
+            referenceImageUrl: input.referenceImageUrl,
+            imageFidelity: input.imageFidelity,
+            humanFidelity: input.humanFidelity,
+            count: input.count,
+          });
+          const result = await createImageTask(request, input.region);
+
+          // Record creation
+          const plan = await getUserPlan(userId);
+          await recordCreation({
+            userId,
+            type: "kling_image",
+            title: input.prompt.slice(0, 100),
+            metadata: { model: input.model, resolution: input.resolution, aspectRatio: input.aspectRatio, taskId: result.task_id },
+            quality: `${input.model}-${input.resolution}`,
+            creditsUsed: CREDIT_COSTS[creditKey] * input.count,
+            plan,
+            status: "pending",
+          });
+
+          return { success: true, taskId: result.task_id };
+        } catch (err: any) {
+          // Refund credits on failure
+          if (!isAdmin) {
+            try {
+              await addCredits(userId, CREDIT_COSTS[creditKey] * input.count, "bonus");
+            } catch (refundErr) {
+              console.error("[Kling Image] Failed to refund credits:", refundErr);
+            }
+          }
+          throw err;
+        }
+      }),
+
+    getTask: protectedProcedure
+      .input(z.object({
+        taskId: z.string().min(1),
+        region: regionSchema,
+      }))
+      .query(async ({ input }) => {
+        ensureInitialized();
+        return getImageTask(input.taskId, input.region);
+      }),
+
+    estimateCost: protectedProcedure
+      .input(z.object({
+        model: z.enum(["kling-image-o1", "kling-v2-1"]).default("kling-image-o1"),
+        resolution: z.enum(["1k", "2k"]).default("1k"),
+        count: z.number().min(1).max(4).default(1),
+      }))
+      .query(({ input }) => {
+        return estimateImageCost(input);
       }),
   }),
 

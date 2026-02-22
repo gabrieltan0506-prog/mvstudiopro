@@ -10,6 +10,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -359,6 +360,8 @@ export default function AudioLabPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 pb-32 space-y-6">
+        {/* 到期提醒 */}
+        <ExpiryWarningBanner />
         {/* Mode + Engine Selector */}
         <div className="flex items-center justify-between">
           <div className="flex p-1 bg-white/5 rounded-xl">
@@ -615,6 +618,11 @@ export default function AudioLabPage() {
             <p className="text-red-300 text-sm">{errorMsg}</p>
           </div>
         )}
+
+        {/* 生成歷史和收藏 */}
+        <div className="bg-white/5 rounded-xl p-4">
+          <CreationHistoryPanel type="music" title="音樂生成歷史" />
+        </div>
       </div>
 
       {/* ═══ 底部按钮 ═══ */}

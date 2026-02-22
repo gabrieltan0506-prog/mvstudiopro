@@ -58,6 +58,7 @@ export * from "./schema-extended";
 export * from "./schema-email-auth";
 export * from "./schema-storyboards";
 export * from "./schema-payments";
+export * from "./schema-creations";
 export * from "./schema-beta";
 export * from "./schema-stripe";
 export * from "./schema-teams";

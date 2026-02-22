@@ -1,0 +1,35 @@
+Kling Image Generation API Pricing (from klingai.com/global/dev/pricing)
+
+Model: kling-image-o1 (最新 O1 模型)
+- Text to Image: 8 units, $0.028/image
+- Image to Image: 8 units, $0.028/image
+- Image editing: 8 units, $0.028/image
+- Aspect ratios: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9
+
+Model: kling-v2-1
+- Text to Image: 4 units, $0.014/image
+- Aspect ratios: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9
+
+Model: kling-v2
+- Text to Image: 4 units, $0.014/image
+- Image to Image (multi-image): 16 units, $0.056/image
+- Image to Image (restyle): 8 units, $0.028/image
+
+Model: kling-v1-5
+- Text to Image: 8 units, $0.028/image
+- Image to Image (subject): 8 units, $0.028/image
+- Image to Image (face): 8 units, $0.028/image
+
+Model: kling-v1
+- Text to Image: 1 unit, $0.0035/image
+- Image to Image: 1 unit, $0.0035/image
+
+Resolution info: 
+- Kling image generation outputs at ~1024x1024 (1K) for standard aspect ratios
+- O1 model supports higher quality output
+- No explicit 2K/4K resolution option in API docs - resolution is determined by aspect ratio
+- Comparable to ~1K-2K quality level
+
+For our pricing:
+- kling-image-o1 (best quality): $0.028/image → 8 Credits
+- kling-v2-1 (good quality, cheaper): $0.014/image → 5 Credits

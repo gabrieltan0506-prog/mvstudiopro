@@ -1,0 +1,28 @@
+Kling Image Generation API Notes:
+
+Endpoint: POST /v1/images/generations
+Base URL: https://api-singapore.klingai.com
+
+Key parameters:
+- model_name: "kling-v1", "kling-v1-5", "kling-v2", "kling-v2-1", "kling-image-o1"
+- prompt: Required text description
+- negative_prompt: Optional
+- image: Optional reference image URL
+- resolution: "1k" (default) or "2k" (high-res)
+- n: number of images (default 1)
+- aspect_ratio: "16:9", "1:1", "4:3", etc.
+
+Resolution:
+- 1K: ~1024px standard resolution
+- 2K: ~2048px high resolution (only some models support)
+
+Pricing per image:
+- kling-image-o1 (O1 best): $0.028/image (8 units) - supports 1K and 2K
+- kling-v2-1: $0.014/image (4 units) - supports 1K and 2K
+- kling-v2: $0.014/image (4 units)
+- kling-v1-5: $0.028/image (8 units)
+- kling-v1: $0.0035/image (1 unit)
+
+For our platform:
+- Kling O1 2K: $0.028 → 8 Credits (best quality, 2K resolution)
+- Kling V2.1 1K: $0.014 → 5 Credits (good quality, 1K resolution)

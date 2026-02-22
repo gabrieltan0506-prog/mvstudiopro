@@ -63,6 +63,18 @@ export {
   deleteElement,
 } from "./elements";
 
+// Image Generation
+export {
+  createImageTask,
+  getImageTask,
+  buildImageRequest,
+  estimateImageCost,
+  type CreateImageRequest,
+  type ImageTaskResult,
+  type BuildImageRequestParams,
+  type ImageCostEstimate,
+} from "./image-generation";
+
 // Types & Cost Estimation
 export {
   estimateOmniVideoCost,

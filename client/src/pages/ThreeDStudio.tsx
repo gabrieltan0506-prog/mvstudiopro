@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useCallback, useRef } from "react";
+import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -645,6 +646,11 @@ export default function ThreeDStudioPage() {
                 </div>
             </div>
           )}
+        </div>
+
+        {/* ===== 生成歷史和收藏 ===== */}
+        <div className="bg-[#1A1A1D] rounded-2xl p-6 mt-8">
+          <CreationHistoryPanel type="idol_3d" title="3D 模型生成歷史" />
         </div>
 
         {/* ===== 底部间距 ===== */}

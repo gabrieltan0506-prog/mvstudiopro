@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
 import {
   ChevronRight,
   Sparkles,
@@ -715,6 +716,13 @@ export default function StoryboardPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* 生成歷史和收藏 */}
+      <div className="max-w-6xl mx-auto px-4 pb-8">
+        <div className="bg-card rounded-2xl p-6">
+          <CreationHistoryPanel type="storyboard" title="分鏡生成歷史" />
+        </div>
       </div>
 
       <QuotaExhaustedModal

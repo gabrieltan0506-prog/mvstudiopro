@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -142,10 +143,12 @@ export default function VirtualIdol() {
     setGeneratedImage(null);
     setShow3DPanel(false);
     setImage3D(null);
-    const qualityMap: Record<string, "free" | "2k" | "4k"> = {
+    const qualityMap: Record<string, "free" | "2k" | "4k" | "kling_1k" | "kling_2k"> = {
       forge: "free",
       nbp_2k: "2k",
       nbp_4k: "4k",
+      kling_1k: "kling_1k",
+      kling_2k: "kling_2k",
     };
     const quality = qualityMap[imageEngine] || "free";
 
@@ -247,6 +250,8 @@ export default function VirtualIdol() {
           trialEndDate={(usageStatsQuery.data as any)?.trialEndDate}
           trialExpired={(usageStatsQuery.data as any)?.trialExpired}
         />
+
+        <ExpiryWarningBanner />
 
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 mt-4">
           {/* Left Panel: Controls */}
@@ -437,22 +442,10 @@ export default function VirtualIdol() {
               </div>
             )}
 
-            {/* History Panel */}
-            {history.length > 0 && (
-              <div className="mt-6 bg-[#1A1A1C] p-6 rounded-2xl">
-                <h3 className="text-xl font-bold mb-4">生成历史</h3>
-                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                  {history.map((item, index) => (
-                    <div key={index} className="relative group cursor-pointer" onClick={() => setGeneratedImage(item.imageUrl)}>
-                      <img src={item.imageUrl} alt={`History ${index}`} className="w-full aspect-square object-cover rounded-lg" />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <span className="text-white text-xs text-center">点击查看</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* 生成歷史和收藏管理 */}
+            <div className="mt-6 bg-[#1A1A1C] p-6 rounded-2xl">
+              <CreationHistoryPanel type="idol_image" title="偶像生成歷史" />
+            </div>
           </div>
         </div>
       </div>

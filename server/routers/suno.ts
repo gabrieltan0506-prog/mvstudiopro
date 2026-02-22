@@ -9,7 +9,8 @@
  */
 
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { protectedProcedure, router } from "../_core/trpc";
+import { recordCreation } from "./creations";
 import { invokeLLM } from "../_core/llm";
 import { deductCredits, getCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
@@ -234,6 +235,22 @@ export const sunoRouter = router({
           callBackUrl: input.callbackUrl || "",
         });
 
+        // Auto-record creation
+        try {
+          const { getUserPlan } = await import("../credits");
+          const plan = await getUserPlan(userId);
+          await recordCreation({
+            userId,
+            type: "music",
+            title: input.title || "主題曲",
+            metadata: { mode: "theme_song", model: input.model, taskId: data.taskId },
+            quality: input.model,
+            creditsUsed: creditCost,
+            plan,
+            status: "pending",
+          });
+        } catch (e) { console.error("[Suno] recordCreation failed:", e); }
+
         return {
           taskId: data.taskId,
           mode: "theme_song" as const,
@@ -272,6 +289,22 @@ export const sunoRouter = router({
           title: input.title,
           callBackUrl: input.callbackUrl || "",
         });
+
+        // Auto-record creation
+        try {
+          const { getUserPlan } = await import("../credits");
+          const plan = await getUserPlan(userId);
+          await recordCreation({
+            userId,
+            type: "music",
+            title: input.title || "BGM",
+            metadata: { mode: "bgm", model: input.model, taskId: data.taskId },
+            quality: input.model,
+            creditsUsed: creditCost,
+            plan,
+            status: "pending",
+          });
+        } catch (e) { console.error("[Suno] recordCreation failed:", e); }
 
         return {
           taskId: data.taskId,
