@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { createApp } from "../server/_core/app";
+import { createApp } from "./_app";
 
 const app = createApp();
 
