@@ -109,11 +109,11 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
 ];
 
 const STYLE_PREVIEW_IMAGES: Record<VisualStyle, string> = {
-  cinematic: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wBlJrGcAenmdOJzN.jpg",
-  anime: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OJCxsguWVlqtYkGp.jpg",
-  documentary: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/IlVwTeXIjLZQlCcB.jpg",
-  realistic: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hOAAujvqBydDLPwF.jpg",
-  scifi: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/cvkgbYFVBTswkjqa.jpg",
+  cinematic: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OfYyGiJYGGEyyyaO.jpg",
+  anime: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wJFLERjbQmHglxpX.jpg",
+  documentary: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/kqzgxoltqOaoIBeB.jpg",
+  realistic: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/HgZpAMNOnPhuOARA.jpg",
+  scifi: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/UuptArvXiNFSMyPj.jpg",
 };
 
 const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; icon: React.ElementType; gradient: string; desc: string }[] = [

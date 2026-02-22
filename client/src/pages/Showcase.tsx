@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
@@ -10,8 +10,123 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Flame, Trophy, Star, BadgeCheck, Shield, User, X, Video, PlayCircle, Clapperboard,
   Bookmark, TrendingUp, Heart, Clock, Sparkles, MessageCircle,
-  Upload, Send, Loader2
+  Upload, Send, Loader2, Film, Palette, Camera, Aperture, Rocket, ChevronLeft, ChevronRight, Wand2, ImageIcon
 } from "lucide-react";
+
+/* ── AI 風格作品集 ── */
+const AI_GALLERY_ITEMS: {
+  id: string;
+  title: string;
+  style: string;
+  engine: string;
+  engineColor: string;
+  imageUrl: string;
+  desc: string;
+  icon: React.ElementType;
+}[] = [
+  // Kling 生成
+  {
+    id: "kling-cinematic",
+    title: "暴風雨天台的孤獨身影",
+    style: "電影感",
+    engine: "Kling V1.5",
+    engineColor: "#F59E0B",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OfYyGiJYGGEyyyaO.jpg",
+    desc: "金色夕陽穿透烏雲，青橙色調，王家衛風格電影分鏡",
+    icon: Film,
+  },
+  {
+    id: "kling-anime",
+    title: "櫻花花瓣中的少女",
+    style: "動漫風",
+    engine: "Kling V1.5",
+    engineColor: "#F59E0B",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wJFLERjbQmHglxpX.jpg",
+    desc: "粉色長髮少女被櫻花環繞，霓虹色彩，新海誠美學",
+    icon: Sparkles,
+  },
+  {
+    id: "kling-documentary",
+    title: "非洲大草原角馬遷徙",
+    style: "紀錄片",
+    engine: "Kling V1.5",
+    engineColor: "#F59E0B",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/kqzgxoltqOaoIBeB.jpg",
+    desc: "BBC 地球脈動級別航拍，金色陽光下塵霧瀰漫",
+    icon: Camera,
+  },
+  {
+    id: "kling-realistic",
+    title: "上海夜市霓虹街景",
+    style: "寫實片",
+    engine: "Kling V1.5",
+    engineColor: "#F59E0B",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/HgZpAMNOnPhuOARA.jpg",
+    desc: "年輕女性走過夜市，霓虹燈倒映濕路面，街頭攝影風格",
+    icon: Aperture,
+  },
+  {
+    id: "kling-scifi",
+    title: "外星獨石與宇航員",
+    style: "科幻片",
+    engine: "Kling V1.5",
+    engineColor: "#F59E0B",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/UuptArvXiNFSMyPj.jpg",
+    desc: "外星獨石漂浮荒涼地表，全息數據流，宇航員檢查文物",
+    icon: Rocket,
+  },
+  // Nano Banana Pro 生成
+  {
+    id: "nbp-cinematic",
+    title: "電影感分鏡 — 孤獨旅者",
+    style: "電影感",
+    engine: "Nano Banana Pro",
+    engineColor: "#8B5CF6",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wBlJrGcAenmdOJzN.jpg",
+    desc: "戲劇性光影對比，寬銀幕構圖，電影級色彩分級",
+    icon: Film,
+  },
+  {
+    id: "nbp-anime",
+    title: "動漫風分鏡 — 魔法少女",
+    style: "動漫風",
+    engine: "Nano Banana Pro",
+    engineColor: "#8B5CF6",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OJCxsguWVlqtYkGp.jpg",
+    desc: "日系動漫視覺語言，鮮艷色彩，光效粒子",
+    icon: Sparkles,
+  },
+  {
+    id: "nbp-documentary",
+    title: "紀錄片分鏡 — 手工匠人",
+    style: "紀錄片",
+    engine: "Nano Banana Pro",
+    engineColor: "#8B5CF6",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/IlVwTeXIjLZQlCcB.jpg",
+    desc: "自然窗光，真實紋理，國家地理風格",
+    icon: Camera,
+  },
+  {
+    id: "nbp-realistic",
+    title: "寫實片分鏡 — 城市街景",
+    style: "寫實片",
+    engine: "Nano Banana Pro",
+    engineColor: "#8B5CF6",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hOAAujvqBydDLPwF.jpg",
+    desc: "極度真人攝影品質，自然光線，街頭紀實",
+    icon: Aperture,
+  },
+  {
+    id: "nbp-scifi",
+    title: "科幻片分鏡 — 未來世界",
+    style: "科幻片",
+    engine: "Nano Banana Pro",
+    engineColor: "#8B5CF6",
+    imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/cvkgbYFVBTswkjqa.jpg",
+    desc: "賽博朋克光效，全息界面，未來科技感",
+    icon: Rocket,
+  },
+];
 
 /* ── Platform info ── */
 const PLATFORM_INFO: Record<string, { name: string; color: string; icon: React.ElementType }> = {
@@ -229,6 +344,168 @@ function ShowcaseCard({
   );
 }
 
+/* ── AI Gallery Carousel ── */
+function AIGallerySection() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [selectedItem, setSelectedItem] = useState<typeof AI_GALLERY_ITEMS[0] | null>(null);
+  const [activeFilter, setActiveFilter] = useState<string>("all");
+
+  const filteredItems = activeFilter === "all"
+    ? AI_GALLERY_ITEMS
+    : AI_GALLERY_ITEMS.filter(item => {
+        if (activeFilter === "kling") return item.engine.includes("Kling");
+        if (activeFilter === "nbp") return item.engine.includes("Nano");
+        return item.style === activeFilter;
+      });
+
+  const scroll = (dir: "left" | "right") => {
+    if (!scrollRef.current) return;
+    const amount = 320;
+    scrollRef.current.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
+  };
+
+  return (
+    <section className="mb-12">
+      {/* Section header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center">
+            <Wand2 size={20} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">AI 風格作品集</h2>
+            <p className="text-sm text-muted-foreground">Kling V1.5 + Nano Banana Pro 引擎生成的分鏡風格展示</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => scroll("left")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-colors">
+            <ChevronLeft size={16} />
+          </button>
+          <button onClick={() => scroll("right")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-colors">
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
+        {[
+          { id: "all", label: "全部", icon: ImageIcon },
+          { id: "kling", label: "Kling V1.5", icon: Wand2 },
+          { id: "nbp", label: "Nano Banana Pro", icon: Palette },
+          { id: "電影感", label: "電影感", icon: Film },
+          { id: "動漫風", label: "動漫風", icon: Sparkles },
+          { id: "紀錄片", label: "紀錄片", icon: Camera },
+          { id: "寫實片", label: "寫實片", icon: Aperture },
+          { id: "科幻片", label: "科幻片", icon: Rocket },
+        ].map((tab) => {
+          const TabIcon = tab.icon;
+          const isActive = activeFilter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveFilter(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all ${
+                isActive
+                  ? "bg-primary text-primary-foreground shadow-md"
+                  : "bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground"
+              }`}
+            >
+              <TabIcon size={14} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Horizontal scroll gallery */}
+      <div
+        ref={scrollRef}
+        className="flex gap-4 overflow-x-auto pb-4 scroll-smooth snap-x snap-mandatory"
+        style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+      >
+        {filteredItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div
+              key={item.id}
+              className="snap-start shrink-0 w-[280px] group cursor-pointer"
+              onClick={() => setSelectedItem(item)}
+            >
+              <div className="relative aspect-[16/10] rounded-xl overflow-hidden mb-3">
+                <img
+                  src={item.imageUrl}
+                  alt={item.title}
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                  loading="lazy"
+                />
+                {/* Engine badge */}
+                <div
+                  className="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-bold text-white backdrop-blur-sm"
+                  style={{ backgroundColor: `${item.engineColor}CC` }}
+                >
+                  {item.engine}
+                </div>
+                {/* Style badge */}
+                <div className="absolute top-2.5 right-2.5 flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm text-[10px] font-medium text-white">
+                  <Icon size={10} />
+                  {item.style}
+                </div>
+                {/* Hover overlay */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
+                  <p className="text-xs text-white/90 line-clamp-2">{item.desc}</p>
+                </div>
+              </div>
+              <h4 className="text-sm font-semibold line-clamp-1 group-hover:text-primary transition-colors">{item.title}</h4>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Lightbox modal */}
+      {selectedItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4"
+          onClick={() => setSelectedItem(null)}
+        >
+          <div
+            className="relative max-w-4xl w-full bg-card rounded-2xl overflow-hidden shadow-2xl border border-border/30"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setSelectedItem(null)}
+              className="absolute top-4 right-4 z-10 w-8 h-8 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center hover:bg-black/70 transition-colors"
+            >
+              <X size={16} className="text-white" />
+            </button>
+            <img
+              src={selectedItem.imageUrl}
+              alt={selectedItem.title}
+              className="w-full aspect-video object-contain bg-black"
+            />
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-2">
+                <span
+                  className="px-2.5 py-1 rounded-md text-xs font-bold text-white"
+                  style={{ backgroundColor: selectedItem.engineColor }}
+                >
+                  {selectedItem.engine}
+                </span>
+                <span className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-muted text-xs font-medium">
+                  {(() => { const SIcon = selectedItem.icon; return <SIcon size={12} />; })()}
+                  {selectedItem.style}
+                </span>
+              </div>
+              <h3 className="text-lg font-bold mb-1">{selectedItem.title}</h3>
+              <p className="text-sm text-muted-foreground">{selectedItem.desc}</p>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /* ── Main Page ── */
 export default function Showcase() {
   const { user, isAuthenticated } = useAuth();
@@ -348,6 +625,9 @@ export default function Showcase() {
       <Navbar />
 
       <main className="container pt-24 pb-16">
+        {/* AI Gallery Section */}
+        <AIGallerySection />
+
         {/* Hero */}
         <div className="mb-8 text-center">
           <div className="flex justify-center items-center gap-3 mb-4">

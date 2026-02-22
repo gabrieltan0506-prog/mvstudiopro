@@ -349,3 +349,17 @@
 - [x] 前端：圖標美化升級（lucide 圖標+漸變色背景）
 - [x] 全站「免費」字樣替換為Credits標示（20+個檔案已修改）
 - [x] 測試驗證（125 tests passed）並保存checkpoint推送GitHub
+
+## Phase 37: Kling API 修復 + Kling 生成風格預覽圖（2026-02-22）
+- [ ] 修復 Kling API 端點：cn 改為 api-beijing.klingai.com
+- [ ] 修復 virtualIdol 路由 Kling client 初始化問題
+- [ ] 更新 Kling API Key 環境變量
+- [ ] 用 Kling API 生成 5 張風格預覽圖（電影感、動漫風、紀錄片、寫實片、科幻片）
+- [ ] 上傳新圖片到 S3 並替換前端 URL
+- [ ] 測試驗證並保存 checkpoint 推送 GitHub
+
+## Phase 38: Kling 風格圖更新 + 作品展覽整合（2026-02-22）
+- [x] 上傳新紀錄片預覽圖到 S3 並更新分鏡頁面 URL
+- [x] 前端：展廳頁面頂部新增「AI 風格作品集」展示區塊（10張卡片 + 篩選 + 燈箱）
+- [x] 後端：插入精選作品到 showcase 表（改為前端靜態展示，更乾淨）
+- [x] 測試驗證（125 tests passed）並保存 checkpoint 推送 GitHub
