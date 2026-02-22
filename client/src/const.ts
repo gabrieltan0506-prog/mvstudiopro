@@ -7,11 +7,20 @@ export const getLoginUrl = () => {
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
   const state = btoa(redirectUri);
 
+  
+  if (!oauthPortalUrl || !oauthPortalUrl.startsWith("http")) {
+    return `${window.location.origin}/api/auth/google/start`;
+  }
+
+ 
   const url = new URL(`${oauthPortalUrl}/app-auth`);
-  url.searchParams.set("appId", appId);
+  url.searchParams.set("appId", appId ?? "");
   url.searchParams.set("redirectUri", redirectUri);
   url.searchParams.set("state", state);
   url.searchParams.set("type", "signIn");
+
+  return url.toString();
+};
 
   return url.toString();
 };
