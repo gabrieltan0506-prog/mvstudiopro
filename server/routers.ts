@@ -421,6 +421,15 @@ export const appRouter = router({
           }
 
           try {
+            // Ensure Kling client is initialized with API keys from env
+            const { configureKlingClient, parseKeysFromEnv, getKlingClient } = await import("./kling/client");
+            const klingKeys = parseKeysFromEnv();
+            if (klingKeys.length > 0) {
+              const defaultRegion = (process.env.KLING_DEFAULT_REGION as "global" | "cn") ?? "cn";
+              configureKlingClient(klingKeys, defaultRegion);
+            } else {
+              return { success: false, error: "Kling API 未配置，請聯繫管理員設置 KLING_ACCESS_KEY 和 KLING_SECRET_KEY", quality: input.quality };
+            }
             const { createImageTask, getImageTask, buildImageRequest } = await import("./kling/image-generation");
             const request = buildImageRequest({
               prompt,
