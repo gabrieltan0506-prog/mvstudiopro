@@ -60,7 +60,7 @@ export function UpgradeModal({ open, onOpenChange, action, currentBalance = 0 }:
               <Star size={20} color="#fff" />
               <span className="text-white text-base font-bold">升级专业版</span>
             </div>
-            <span className="text-white/70 text-xs mt-1">$29/月 · 500 Credits</span>
+            <span className="text-white/70 text-xs mt-1">¥108/月 · 200 Credits</span>
           </button>
 
           {/* Buy Credits */}
@@ -69,7 +69,7 @@ export function UpgradeModal({ open, onOpenChange, action, currentBalance = 0 }:
               <PlusCircle size={20} className="text-[#FF6B35]" />
               <span className="text-[#FF6B35] text-[15px] font-semibold">购买 Credits 加值包</span>
             </div>
-            <span className="text-[#9BA1A6] text-xs mt-1">100 Credits $9.99 起</span>
+            <span className="text-[#9BA1A6] text-xs mt-1">50 Credits ¥35 起</span>
           </button>
         </div>
 

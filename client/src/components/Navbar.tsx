@@ -47,7 +47,7 @@ export default function Navbar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`px-3 py-2 rounded-md text-sm font-medium transition-colors no-underline ${
+              className={`px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 no-underline hover:scale-[1.05] active:scale-[0.97] ${
                 location === item.href
                   ? "text-primary bg-primary/10"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent"

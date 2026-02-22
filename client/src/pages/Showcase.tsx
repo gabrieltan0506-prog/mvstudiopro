@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import Navbar from "@/components/Navbar";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -319,17 +319,17 @@ function ShowcaseCard({
 
         {/* Action bar */}
         <div className="pt-3 border-t border-border/30 flex items-center gap-3">
-          <button onClick={() => onToggleLike(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-red-400 transition-colors">
+          <button onClick={() => onToggleLike(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-red-400 transition-all duration-200 hover:scale-110 active:scale-95">
             <Heart size={18} className={isLiked ? "text-red-400 fill-red-400" : ""} />
             <span className={`text-xs font-medium ${isLiked ? "text-red-400" : ""}`}>{video.likeCount || 0}</span>
           </button>
 
-          <button onClick={() => onOpenDetail(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+          <button onClick={() => onOpenDetail(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-all duration-200 hover:scale-110 active:scale-95">
             <MessageCircle size={16} />
             <span className="text-xs font-medium">评论</span>
           </button>
 
-          <button onClick={() => onToggleFavorite(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-yellow-400 transition-colors">
+          <button onClick={() => onToggleFavorite(video.id)} className="flex items-center gap-1 text-muted-foreground hover:text-yellow-400 transition-all duration-200 hover:scale-110 active:scale-95">
             <Bookmark size={16} className={isFavorited ? "text-yellow-400 fill-yellow-400" : ""} />
             <span className={`text-xs font-medium ${isFavorited ? "text-yellow-400" : ""}`}>{isFavorited ? "已收藏" : "收藏"}</span>
           </button>
@@ -346,6 +346,7 @@ function ShowcaseCard({
 
 /* ── AI Gallery Carousel ── */
 function AIGallerySection() {
+  const [, navigate] = useLocation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<typeof AI_GALLERY_ITEMS[0] | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("all");
@@ -378,10 +379,10 @@ function AIGallerySection() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => scroll("left")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-colors">
+          <button onClick={() => scroll("left")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-all duration-200 hover:scale-110 active:scale-90">
             <ChevronLeft size={16} />
           </button>
-          <button onClick={() => scroll("right")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-colors">
+          <button onClick={() => scroll("right")} className="w-8 h-8 rounded-full border border-border/50 flex items-center justify-center hover:bg-muted transition-all duration-200 hover:scale-110 active:scale-90">
             <ChevronRight size={16} />
           </button>
         </div>
@@ -451,9 +452,23 @@ function AIGallerySection() {
                   <Icon size={10} />
                   {item.style}
                 </div>
-                {/* Hover overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end p-3">
-                  <p className="text-xs text-white/90 line-clamp-2">{item.desc}</p>
+                {/* Hover overlay with action buttons */}
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3 gap-2">
+                  <p className="text-xs text-white/90 line-clamp-1 mb-1">{item.desc}</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); navigate(`/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
+                    >
+                      <Wand2 size={10} /> 用此風格生成分鏡
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); navigate(`/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-purple-500/90 hover:bg-purple-500 text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
+                    >
+                      <Video size={10} /> 做同款視頻
+                    </button>
+                  </div>
                 </div>
               </div>
               <h4 className="text-sm font-semibold line-clamp-1 group-hover:text-primary transition-colors">{item.title}</h4>
@@ -497,7 +512,21 @@ function AIGallerySection() {
                 </span>
               </div>
               <h3 className="text-lg font-bold mb-1">{selectedItem.title}</h3>
-              <p className="text-sm text-muted-foreground">{selectedItem.desc}</p>
+              <p className="text-sm text-muted-foreground mb-4">{selectedItem.desc}</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setSelectedItem(null); navigate(`/storyboard?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-primary/20"
+                >
+                  <Wand2 size={16} /> 用此風格生成分鏡
+                </button>
+                <button
+                  onClick={() => { setSelectedItem(null); navigate(`/vfx?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-600/20"
+                >
+                  <Video size={16} /> 做同款視頻
+                </button>
+              </div>
             </div>
           </div>
         </div>

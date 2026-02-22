@@ -92,13 +92,13 @@ export function UsageQuotaBanner({
             <>
               <p className="text-red-500 font-semibold text-base">入門版額度已用完</p>
               <p className="text-red-500/80 text-sm mt-0.5">
-                已使用 {currentCount}/{freeLimit} 次{featureNames[featureType]}（0 Credits）
+                已使用 {currentCount}/{freeLimit} 次{featureNames[featureType]}（入門版免費額度）
               </p>
             </>
           ) : (
             <>
               <p className="text-blue-500 font-semibold text-base">
-                剩餘 {remaining} 次生成（0 Credits）
+                剩餘 {remaining} 次免費生成
               </p>
               <p className="text-blue-500/80 text-sm mt-0.5">
                 已使用 {currentCount}/{freeLimit} 次{featureNames[featureType]}

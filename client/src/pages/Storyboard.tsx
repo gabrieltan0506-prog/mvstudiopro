@@ -636,6 +636,11 @@ export default function StoryboardPage() {
         }
         .style-card:hover {
           transform: scale(1.03);
+          box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        }
+        .style-card:active {
+          transform: scale(0.98);
+          transition-duration: 0.1s;
         }
         .style-card.selected {
           transform: scale(1.02);
@@ -715,7 +720,7 @@ export default function StoryboardPage() {
               {!showInspirationModal ? (
                 <button
                   onClick={() => setShowInspirationModal(true)}
-                  className="mb-4 rounded-xl p-4 flex items-center w-full bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-colors"
+                  className="mb-4 rounded-xl p-4 flex items-center w-full bg-primary/10 border border-primary/20 hover:bg-primary/20 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] hover:shadow-lg hover:shadow-primary/10 hover:border-primary/40"
                 >
                   <div className="w-10 h-10 rounded-full flex items-center justify-center mr-3 bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
                     <Wand2 className="w-5 h-5 text-white" />
@@ -937,11 +942,9 @@ export default function StoryboardPage() {
                     })}
                   </SelectContent>
                 </Select>
-                {selectedModel !== "flash" && (
-                  <p className="text-yellow-500 text-xs mt-1.5">
-                    {selectedModel === "gpt5" ? "GPT 5.1 每次生成消耗 20 Credits" : "Gemini 3.0 Pro 每次生成消耗 15 Credits"}
-                  </p>
-                )}
+                <p className="text-yellow-500 text-xs mt-1.5">
+                  {selectedModel === "gpt5" ? "GPT 5.1 每次生成消耗 20 Credits" : selectedModel === "pro" ? "Gemini 3.0 Pro 每次生成消耗 15 Credits" : "Gemini 3.0 Flash 每次生成消耗 8 Credits"}
+                </p>
               </div>
 
               {/* 分鏡數量 */}
@@ -978,7 +981,7 @@ export default function StoryboardPage() {
               </div>
 
               {/* 生成按鈕 */}
-              <Button onClick={handleGenerate} disabled={!lyricsText.trim() || isGenerating} className="w-full py-6 text-lg bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-lg shadow-indigo-500/20">
+              <Button onClick={handleGenerate} disabled={!lyricsText.trim() || isGenerating} className="w-full py-6 text-lg bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-lg shadow-indigo-500/20 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] hover:shadow-xl hover:shadow-indigo-500/30 ripple-effect">
                 {isGenerating ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -1415,10 +1418,10 @@ export default function StoryboardPage() {
             {/* 導出按鈕 */}
             <div className="mb-6">
               <div className="flex gap-3 mb-3">
-                <Button onClick={handleReset} variant="secondary" className="flex-1 py-6 text-base">
+                <Button onClick={handleReset} variant="secondary" className="flex-1 py-6 text-base transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]">
                   重新生成
                 </Button>
-                <Button onClick={() => setExportMenuVisible(!exportMenuVisible)} className="flex-1 py-6 text-base">
+                <Button onClick={() => setExportMenuVisible(!exportMenuVisible)} className="flex-1 py-6 text-base transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg">
                   <Download className="w-4 h-4 mr-2" />
                   導出腳本
                 </Button>
@@ -1429,7 +1432,7 @@ export default function StoryboardPage() {
                   <button
                     onClick={() => handleExport("pdf")}
                     disabled={exportPDFMutation.isPending}
-                    className="flex items-center p-4 border-b w-full text-left hover:bg-muted/50 disabled:opacity-50"
+                    className="flex items-center p-4 border-b w-full text-left hover:bg-muted/50 disabled:opacity-50 transition-all duration-200 hover:translate-x-1"
                   >
                     <FileText className="w-6 h-6 text-red-600" />
                     <div className="ml-3 flex-1">
@@ -1441,7 +1444,7 @@ export default function StoryboardPage() {
                   <button
                     onClick={() => handleExport("word")}
                     disabled={exportPDFMutation.isPending}
-                    className="flex items-center p-4 w-full text-left hover:bg-muted/50 disabled:opacity-50"
+                    className="flex items-center p-4 w-full text-left hover:bg-muted/50 disabled:opacity-50 transition-all duration-200 hover:translate-x-1"
                   >
                     <FileUp className="w-6 h-6 text-blue-600" />
                     <div className="ml-3 flex-1">

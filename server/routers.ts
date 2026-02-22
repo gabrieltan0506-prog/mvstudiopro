@@ -664,16 +664,16 @@ export const appRouter = router({
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
 
-        // 付費模型需要額外 Credits，管理員免費，flash 免費
-        if (input.model !== "flash" && !isAdminUser) {
+        // 所有模型都需要 Credits，管理員免費
+        if (!isAdminUser) {
           const { deductCredits, hasEnoughCredits } = await import("./credits");
-          const creditKey = input.model === "gpt5" ? "storyboardGpt5" : "storyboard";
+          const creditKey = input.model === "gpt5" ? "storyboardGpt5" : input.model === "pro" ? "storyboard" : "storyboardFlash";
           const canAfford = await hasEnoughCredits(userId, creditKey);
           if (!canAfford) {
-            const modelLabel = input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro";
-            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits 或切換為 Gemini 3.0 Flash（0 Credits）。`);
+            const modelLabel = input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash";
+            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits。`);
           }
-          await deductCredits(userId, creditKey, `分鏡腳本生成 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
+          await deductCredits(userId, creditKey, `分鏡腳本生成 (${input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash"})`);
         }
 
         // Use LLM to analyze lyrics and generate storyboard

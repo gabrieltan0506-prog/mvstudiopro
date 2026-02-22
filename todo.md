@@ -356,7 +356,7 @@
 - [ ] 更新 Kling API Key 環境變量
 - [ ] 用 Kling API 生成 5 張風格預覽圖（電影感、動漫風、紀錄片、寫實片、科幻片）
 - [ ] 上傳新圖片到 S3 並替換前端 URL
-- [ ] 測試驗證並保存 checkpoint 推送 GitHub
+- [x] 測試驗證並保存 checkpoint 推送 GitHub
 
 ## Phase 38: Kling 風格圖更新 + 作品展覽整合（2026-02-22）
 - [x] 上傳新紀錄片預覽圖到 S3 並更新分鏡頁面 URL
@@ -373,3 +373,20 @@
 - [x] TapNow 風格設計升級：ThreeDStudio（毛玻璃卡片、ambient-glow）
 - [x] 全局 CSS 添加 TapNow 風格 utility classes（glass-card、glass-input、ambient-glow、page-enter 等）
 - [x] 測試驗證（125 tests passed）並保存 checkpoint 推送 GitHub
+
+## Phase 40: 用戶緊急修改 5 項（2026-02-22）
+- [x] 全站 Credits 標價修復：所有顯示「0 Credits」「0 Cr」的地方改為正確價格
+- [x] 首頁排版重構：標題和創作工具往上提，讓用戶一進來就看到所有工具
+- [x] 首頁 Hero 區域 + 功能卡片動畫升級（參考 Runway/Midjourney 精緻動畫過渡）
+- [x] 作品集展廳：每個作品添加「用此風格生成分鏡」+「用此風格做同款視頻」按鈕，跳轉對應工作流
+- [x] 八個主要頁面添加互動回饋動畫（按鍵點擊、滑鼠懸停效果）
+- [x] 測試驗證並保存 checkpoint 推送 GitHub
+
+### Credits 定價修復明細（按用戶定價表）
+- [x] ThreeDStudio: 維度·體驗包 price 從 "0 Credits" 改為 "15 Credits"
+- [x] ThreeDStudio: 維度·體驗包按鈕文字從 "立即領取" 改為 "立即購買"
+- [x] NbpEngineSelector: Forge 引擎 cost 從 "0 Cr" 改為 "3 Cr"（偶像生成 3 Credits/次）
+- [x] Pricing: 入門版功能描述從 "0 Credits" 改為正確的免費次數描述
+- [x] UsageQuotaBanner: 移除 "0 Credits" 文字，改為顯示正確的 Credits 消耗
+- [x] Storyboard: Flash 模型顯示 "8 Credits" 但後端 flash 免費，需統一
+- [x] 後端 routers.ts: flash 模型也要收 8 Credits（storyboard: 8 for flash）

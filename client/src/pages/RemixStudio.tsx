@@ -426,7 +426,7 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
         <button
           onClick={handleSubmit}
           disabled={loading}
-          className="px-6 py-2.5 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+          className="px-6 py-2.5 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-purple-600/30 ripple-effect"
         >
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
           <span>{loading ? "生成中..." : "生成视频"}</span>
@@ -559,7 +559,7 @@ function MotionControlPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo)
         <button
           onClick={handleSubmit}
           disabled={loading}
-          className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
+          className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-blue-600/30 ripple-effect"
         >
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Footprints className="h-5 w-5" />}
           <span>{loading ? "提交中..." : "开始动作迁移"}</span>
@@ -829,7 +829,7 @@ function LipSyncPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => vo
             <button
               onClick={handleCreateLipSync}
               disabled={loading || !audioUri}
-              className="flex-1 py-2.5 bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors"
+              className="flex-1 py-2.5 bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-pink-600/30 ripple-effect"
             >
               {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5" />}
               <span>{loading ? "提交中..." : "生成 Lip-Sync"}</span>
@@ -974,7 +974,7 @@ function ElementsPanel() {
         <button
           onClick={handleCreate}
           disabled={loading}
-          className="w-full py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors text-sm"
+          className="w-full py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-emerald-600/30 ripple-effect text-sm"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
           <span>{loading ? "创建中..." : "创建角色元素"}</span>

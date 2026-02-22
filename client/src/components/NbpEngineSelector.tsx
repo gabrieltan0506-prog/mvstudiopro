@@ -54,7 +54,7 @@ export function NbpEngineSelector({
       id: "forge",
       label: "Forge",
       desc: "基礎畫質，含浮水印",
-      cost: "0 Cr",
+      cost: isAdmin ? "0 Cr" : "3 Cr",
       icon: Sparkles,
       color: "#30D158",
       available: true,

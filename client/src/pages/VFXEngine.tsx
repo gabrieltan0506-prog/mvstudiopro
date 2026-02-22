@@ -231,7 +231,7 @@ export default function VFXEngine() {
                   return (
                     <button
                       key={platform.id}
-                      className={`relative glass-card-subtle p-4 text-left transition-all duration-200 ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
+                      className={`relative glass-card-subtle p-4 text-left transition-all duration-200 hover:scale-[1.03] active:scale-[0.97] ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
                       style={{ borderColor: isSelected ? platform.color : 'rgba(255,255,255,0.06)' }}
                       onClick={() => togglePlatform(platform.id)}
                     >
@@ -272,7 +272,7 @@ export default function VFXEngine() {
                   return (
                     <button
                       key={tmpl.id}
-                      className={`relative glass-card-subtle p-3.5 text-center transition-all duration-200 ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
+                      className={`relative glass-card-subtle p-3.5 text-center transition-all duration-200 hover:scale-[1.05] active:scale-[0.95] ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
                       style={{ borderColor: isSelected ? tmpl.color : 'rgba(255,255,255,0.06)' }}
                       onClick={() => setSelectedTemplate(selectedTemplate === tmpl.id ? null : tmpl.id)}
                     >
@@ -346,7 +346,7 @@ export default function VFXEngine() {
             {/* Generate Button */}
             <div className="py-6">
               <button
-                className="w-full flex items-center justify-center gap-2.5 py-4 rounded-full bg-gradient-to-r from-[#FF6B6B] via-[#C77DBA] to-[#64D2FF] shadow-[0_4px_20px_rgba(255,107,107,0.3)] disabled:opacity-40 transition-opacity"
+                className="w-full flex items-center justify-center gap-2.5 py-4 rounded-full bg-gradient-to-r from-[#FF6B6B] via-[#C77DBA] to-[#64D2FF] shadow-[0_4px_20px_rgba(255,107,107,0.3)] disabled:opacity-40 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-[0_8px_30px_rgba(255,107,107,0.4)] ripple-effect"
                 onClick={() => {
                   setPublishStep("generate");
                   handleGenerate();
@@ -422,7 +422,7 @@ export default function VFXEngine() {
                   <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">标题</h3>
-                      <button onClick={() => handleCopy(content.title, `${activePid}-title`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
+                      <button onClick={() => handleCopy(content.title, `${activePid}-title`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-title` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-title` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
                           {copiedField === `${activePid}-title` ? "已拷贝" : "拷贝"}
@@ -436,7 +436,7 @@ export default function VFXEngine() {
                   <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">文案</h3>
-                      <button onClick={() => handleCopy(content.caption, `${activePid}-caption`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
+                      <button onClick={() => handleCopy(content.caption, `${activePid}-caption`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-caption` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-caption` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
                           {copiedField === `${activePid}-caption` ? "已拷贝" : "拷贝"}
@@ -450,7 +450,7 @@ export default function VFXEngine() {
                   <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">标签</h3>
-                      <button onClick={() => handleCopy(content.hashtags.join(" "), `${activePid}-tags`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
+                      <button onClick={() => handleCopy(content.hashtags.join(" "), `${activePid}-tags`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-tags` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-tags` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
                           {copiedField === `${activePid}-tags` ? "已拷贝" : "拷贝"}

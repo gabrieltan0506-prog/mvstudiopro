@@ -96,7 +96,7 @@ interface PricingPack {
 }
 
 const DIMENSION_PACKS: PricingPack[] = [
-  { name: "维度·体验包", subtitle: "新用户专享", contents: "闪电 3D × 3 次", price: "0 Credits", discount: "", color: "#30D158" },
+  { name: "维度·体验包", subtitle: "新用户专享", contents: "闪电 3D × 3 次", price: "15 Credits", discount: "限購 2 次", color: "#30D158" },
   { name: "维度·探索包", subtitle: "入门创作", contents: "闪电 3D × 10 + 精雕 3D × 2", price: "¥58", discount: "约 85 折", color: "#64D2FF" },
   { name: "维度·创作包", subtitle: "进阶创作", contents: "闪电 3D × 20 + 精雕 3D × 10（含 PBR）", price: "¥168", discount: "约 75 折", color: "#C77DBA", popular: true },
   { name: "维度·大师包", subtitle: "专业制作", contents: "精雕 3D × 30（含 PBR）+ 多视角 × 10", price: "¥358", discount: "约 70 折", color: "#FFD60A" },
@@ -342,7 +342,7 @@ export default function ThreeDStudioPage() {
                     <p className="mb-4 text-sm text-gray-400">下载后可直接导入 Blender、Unity、Unreal Engine 等 3D 软件</p>
 
                     <div className="grid gap-4 md:grid-cols-2">
-                      <button onClick={() => handleDownload(generatedResult.glbUrl, "glb")} className="group rounded-xl border-2 border-[#64D2FF] bg-[#1A1A1D] p-4 text-left transition-colors hover:bg-[#64D2FF]/10">
+                      <button onClick={() => handleDownload(generatedResult.glbUrl, "glb")} className="group rounded-xl border-2 border-[#64D2FF] bg-[#1A1A1D] p-4 text-left transition-all duration-300 hover:bg-[#64D2FF]/10 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-[#64D2FF]/10">
                         <div className="flex items-start justify-between">
                           <div className="rounded-lg bg-[#64D2FF]/15 p-3">
                             <Box size={32} className="text-[#64D2FF]" />
@@ -355,7 +355,7 @@ export default function ThreeDStudioPage() {
                         <p className="mt-1 text-xs text-gray-400">二进制 glTF，包含模型+材质+纹理。推荐用于 Web / Unity / Blender。</p>
                       </button>
                       
-                      <button disabled={!generatedResult.objUrl} onClick={() => generatedResult.objUrl && handleDownload(generatedResult.objUrl, "obj")} className="group rounded-xl border-2 border-[#FFD60A] bg-[#1A1A1D] p-4 text-left transition-colors hover:bg-[#FFD60A]/10 disabled:cursor-not-allowed disabled:opacity-50">
+                      <button disabled={!generatedResult.objUrl} onClick={() => generatedResult.objUrl && handleDownload(generatedResult.objUrl, "obj")} className="group rounded-xl border-2 border-[#FFD60A] bg-[#1A1A1D] p-4 text-left transition-all duration-300 hover:bg-[#FFD60A]/10 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-[#FFD60A]/10 disabled:cursor-not-allowed disabled:opacity-50">
                         <div className="flex items-start justify-between">
                           <div className="rounded-lg bg-[#FFD60A]/15 p-3">
                             <Layers size={32} className="text-[#FFD60A]" />
@@ -511,7 +511,7 @@ export default function ThreeDStudioPage() {
                     </div>
                   </div>
 
-                  <button onClick={handleGenerate} disabled={isGenerating} className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#FFD60A] text-lg font-bold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">
+                  <button onClick={handleGenerate} disabled={isGenerating} className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#FFD60A] text-lg font-bold text-black transition-all duration-300 hover:opacity-90 hover:scale-[1.02] active:scale-[0.98] hover:shadow-xl hover:shadow-[#FFD60A]/20 disabled:cursor-not-allowed disabled:opacity-60 ripple-effect">
                     {isGenerating ? (
                       <>
                         <Loader2 size={22} className="animate-spin" />
@@ -619,7 +619,7 @@ export default function ThreeDStudioPage() {
                             <div className="my-5 h-px flex-shrink-0 bg-white/10"></div>
                             <p className="flex-grow text-sm text-gray-300">{pack.contents}</p>
                             <button className="mt-5 w-full rounded-lg py-2.5 font-bold transition-colors" style={{ backgroundColor: `${pack.color}20`, color: pack.color, border: `1px solid ${pack.color}` }}>
-                                {pack.price === "0 Credits" ? "立即領取" : "立即購買"}
+                                立即購買
                             </button>
                         </div>
                     ))}

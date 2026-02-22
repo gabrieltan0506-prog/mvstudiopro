@@ -284,7 +284,7 @@ export default function MVAnalysisPage() {
         <div className="max-w-4xl mx-auto">
           {!selectedImage ? (
             <div className="flex flex-col items-center">
-              <div className="w-full max-w-lg border-2 border-dashed border-gray-700 rounded-xl bg-gray-900/50 p-8 text-center">
+              <div className="w-full max-w-lg border-2 border-dashed border-gray-700 rounded-xl bg-gray-900/50 p-8 text-center card-hover-lift">
                 <button onClick={handleSelectFile} className="w-full">
                   <div className="flex justify-center items-center">
                     <Upload className="w-12 h-12 text-blue-400" />
@@ -294,7 +294,7 @@ export default function MVAnalysisPage() {
                     支持图片（JPG、PNG）或视频（MP4）<br />
                     视频将自动截取画面进行分析
                   </p>
-                  <div className="mt-6 inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-colors">
+                  <div className="mt-6 inline-flex items-center justify-center px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-blue-600/25 ripple-effect">
                     <Plus className="w-5 h-5 mr-2" />
                     选择文件
                   </div>
@@ -403,7 +403,7 @@ export default function MVAnalysisPage() {
                     <button
                       onClick={handleAnalyze}
                       disabled={analyzeMutation.isPending}
-                      className="w-full mt-4 flex items-center justify-center px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full mt-4 flex items-center justify-center px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-green-600/25 disabled:opacity-50 disabled:cursor-not-allowed ripple-effect"
                     >
                       {analyzeMutation.isPending ? (
                         <Loader2 className="w-6 h-6 animate-spin mr-3" />
@@ -475,7 +475,7 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
 
-                      <button onClick={handleReset} className="w-full mt-6 flex items-center justify-center px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-lg transition-colors">
+                      <button onClick={handleReset} className="w-full mt-6 flex items-center justify-center px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-lg transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-blue-600/25 ripple-effect">
                         <Plus className="w-6 h-6 mr-3" />
                         分析下一个画面
                       </button>

@@ -12,8 +12,16 @@ describe("Storyboard Configuration", () => {
     expect(CREDIT_COSTS.storyboard).toBe(15);
   });
 
-  it("should have forge image cost as free (0 credits)", () => {
-    expect(CREDIT_COSTS.forgeImage).toBe(0);
+  it("should have forge image cost as 3 credits", () => {
+    expect(CREDIT_COSTS.forgeImage).toBe(3);
+  });
+
+  it("should have storyboard flash cost as 8 credits", () => {
+    expect(CREDIT_COSTS.storyboardFlash).toBe(8);
+  });
+
+  it("should have storyboard GPT 5.1 cost as 20 credits", () => {
+    expect(CREDIT_COSTS.storyboardGpt5).toBe(20);
   });
 
   it("should not display 'Forge AI' in user-facing plan features", () => {
@@ -31,10 +39,11 @@ describe("Storyboard Configuration", () => {
     }
   });
 
-  it("should have correct model options (flash=free, pro=paid)", () => {
-    // flash model should be free (no extra credits)
-    // pro model should cost storyboard credits (15)
-    expect(CREDIT_COSTS.storyboard).toBeGreaterThan(0);
+  it("should have correct model options (all paid)", () => {
+    // All models cost credits
+    expect(CREDIT_COSTS.storyboardFlash).toBe(8);
+    expect(CREDIT_COSTS.storyboard).toBe(15);
+    expect(CREDIT_COSTS.storyboardGpt5).toBe(20);
   });
 
   it("should have NBP 2K and 4K credit costs defined", () => {

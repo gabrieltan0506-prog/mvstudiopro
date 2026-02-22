@@ -180,7 +180,9 @@ export const CREDIT_COSTS = {
   mvAnalysis: 8,
   idolGeneration: 3,
   storyboard: 15,
-  forgeImage: 0,
+  storyboardFlash: 8,
+  storyboardGpt5: 20,
+  forgeImage: 3,
 
   // ─── AI 文本生成（Gemini）─────────────────────
   aiInspiration: 5,

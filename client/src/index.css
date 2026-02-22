@@ -374,3 +374,175 @@
   0%, 100% { transform: translate(0, 0); }
   50% { transform: translate(-5%, -5%); }
 }
+
+/* ═══ Global Micro-Interaction Animations ═══ */
+
+/* Button press feedback — scale down on click */
+.btn-press {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-press:hover {
+  transform: translateY(-1px);
+}
+.btn-press:active {
+  transform: scale(0.96) translateY(0);
+  transition-duration: 0.1s;
+}
+
+/* Card hover lift with glow */
+.card-hover-lift {
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.card-hover-lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Icon bounce on hover */
+.icon-hover-bounce {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.icon-hover-bounce:hover {
+  transform: scale(1.15) rotate(-3deg);
+}
+
+/* Shimmer loading effect */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.08) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Smooth focus ring for inputs */
+.focus-glow:focus {
+  box-shadow: 0 0 0 3px rgba(232, 130, 94, 0.2), 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: rgba(232, 130, 94, 0.5);
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+/* Tab underline animation */
+.tab-underline {
+  position: relative;
+}
+.tab-underline::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #E8825E, #F5A623);
+  border-radius: 1px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(-50%);
+}
+.tab-underline:hover::after,
+.tab-underline.active::after {
+  width: 80%;
+}
+
+/* Tooltip fade */
+.tooltip-fade {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: all 0.2s ease;
+  pointer-events: none;
+}
+.group:hover .tooltip-fade {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Pulse ring for notification badges */
+@keyframes pulseRing {
+  0% { box-shadow: 0 0 0 0 rgba(232, 130, 94, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(232, 130, 94, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(232, 130, 94, 0); }
+}
+.pulse-ring {
+  animation: pulseRing 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Stagger children animation */
+@keyframes staggerFadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.stagger-children > * {
+  animation: staggerFadeIn 0.5s ease-out both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
+.stagger-children > *:nth-child(2) { animation-delay: 0.10s; }
+.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
+.stagger-children > *:nth-child(4) { animation-delay: 0.20s; }
+.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
+.stagger-children > *:nth-child(6) { animation-delay: 0.30s; }
+.stagger-children > *:nth-child(7) { animation-delay: 0.35s; }
+.stagger-children > *:nth-child(8) { animation-delay: 0.40s; }
+
+/* Magnetic hover effect for interactive elements */
+.magnetic-hover {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.magnetic-hover:hover {
+  transform: scale(1.02);
+}
+
+/* Border glow on hover */
+.border-glow-hover {
+  position: relative;
+  transition: all 0.4s ease;
+}
+.border-glow-hover::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(232,130,94,0.3), rgba(168,85,247,0.3), rgba(59,130,246,0.3));
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: -1;
+  filter: blur(4px);
+}
+.border-glow-hover:hover::before {
+  opacity: 1;
+}
+
+/* Smooth number counter animation */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.count-up {
+  animation: countUp 0.6s ease-out both;
+}
+
+/* Ripple effect on click */
+.ripple-effect {
+  position: relative;
+  overflow: hidden;
+}
+.ripple-effect::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s ease, height 0.6s ease, opacity 0.6s ease;
+  opacity: 0;
+}
+.ripple-effect:active::after {
+  width: 300px;
+  height: 300px;
+  opacity: 1;
+  transition: width 0s, height 0s, opacity 0s;
+}

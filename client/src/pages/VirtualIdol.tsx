@@ -183,7 +183,7 @@ export default function VirtualIdol() {
     } catch (err: any) {
       if (err.message?.includes("仅限专业版")) {
         toast.error("需要升级", {
-          description: "偶像转 3D 功能仅限专业版以上用户使用。升级后可享受 3D 转换，每次消耗 10 Credits。",
+          description: "偶像转 3D 功能仅限專業版以上用戶使用。升級後可享受 3D 轉換，每次消耗 30 Credits。",
           action: { label: "立即升级", onClick: () => navigate("/pricing") },
         });
       } else {
@@ -366,7 +366,7 @@ export default function VirtualIdol() {
               <button
                 onClick={handleGenerate}
                 disabled={generating || uploadingRef}
-                className="w-full mt-8 relative group overflow-hidden rounded-xl py-3.5 font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]"
+                className="w-full mt-8 relative group overflow-hidden rounded-xl py-3.5 font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.02] active:scale-[0.97] hover:shadow-xl hover:shadow-blue-500/20 ripple-effect"
               >
                 <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 transition-all duration-500" />
                 <div className="absolute inset-0 bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -409,7 +409,7 @@ export default function VirtualIdol() {
                 <>
                   <img src={generatedImage} alt="Generated virtual idol" className="object-contain w-full h-full rounded-xl" />
                   <div className="absolute top-4 right-4 flex gap-2">
-                    <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 backdrop-blur-sm p-2.5 rounded-xl text-white/70 hover:bg-black/70 hover:text-white transition-all duration-200">
+                    <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 backdrop-blur-sm p-2.5 rounded-xl text-white/70 hover:bg-black/70 hover:text-white transition-all duration-200 hover:scale-110 active:scale-95">
                       <Download className="h-5 w-5" />
                     </button>
                   </div>
@@ -439,7 +439,7 @@ export default function VirtualIdol() {
                 {show3DPanel && (
                   <div className="mt-5 space-y-4 animate-[fadeIn_0.3s_ease-out]" style={{ animation: 'fadeIn 0.3s ease-out' }}>
                     <p className="text-sm text-white/35 leading-relaxed">
-                      将上方生成的 2D 图片转换为 3D 模型，可用于游戏、VTuber 等场景。每次转换消耗 10 Credits (仅限专业版)。
+                     將上方生成的 2D 圖片轉換為 3D 模型，可用於遊戲、VTuber 等場景。每次轉換消耗 30 Credits（僅限專業版）。
                     </p>
                     <div className="flex items-center gap-4">
                       <label htmlFor="pbr-toggle" className="flex items-center cursor-pointer group">
@@ -461,7 +461,7 @@ export default function VirtualIdol() {
                         {converting3D ? (
                           <><Loader2 className="h-5 w-5 animate-spin" /> 正在转换...</>
                         ) : (
-                          <><Wand2 className="h-5 w-5" /> 开始转换 (消耗 10 Credits)</>
+                          <><Wand2 className="h-5 w-5" /> 開始轉換（消耗 30 Credits）</>
                         )}
                       </span>
                     </button>
@@ -482,7 +482,7 @@ export default function VirtualIdol() {
                           <ModelViewer src={glbUrl} />
                         </div>
                         <div className="flex items-center gap-2">
-                          <a href={glbUrl} download="virtual_idol.glb" className="px-4 py-2 bg-gradient-to-r from-cyan-500/80 to-blue-600/80 rounded-lg text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition-all duration-300">下载 GLB</a>
+                          <a href={glbUrl} download="virtual_idol.glb" className="px-4 py-2 bg-gradient-to-r from-cyan-500/80 to-blue-600/80 rounded-lg text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-cyan-500/20">下载 GLB</a>
                           {objUrl && <a href={objUrl} download="virtual_idol.obj" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载 OBJ</a>}
                           {textureUrl3D && <a href={textureUrl3D} download="virtual_idol_texture.png" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载贴图</a>}
                         </div>

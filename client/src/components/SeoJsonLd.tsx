@@ -42,7 +42,7 @@ export function SeoJsonLd() {
     description: "AI 驱动的一站式视频创作平台 — 视频PK评分、虚拟偶像批量制作、视觉特效、多平台发布策略一站式解决方案",
     offers: {
       "@type": "Offer",
-      price: "0",
+      price: "14.99",
       priceCurrency: "USD",
     },
     featureList: [

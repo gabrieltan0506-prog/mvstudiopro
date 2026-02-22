@@ -114,9 +114,9 @@ export default function Pricing() {
             <h2 className="text-xl font-bold text-white mb-2">入門版</h2>
             <p className="text-4xl font-extrabold text-white">¥0<span className="text-sm font-normal text-gray-400 ml-1">/月</span></p>
             <div className="mt-4 space-y-1.5">
-              <FeatureRow text="視頻 PK 評分（前 2 次）0 Credits" />
-              <FeatureRow text="偶像生成（前 3 次）0 Credits" />
-              <FeatureRow text="分鏡腳本（第 1 次）0 Credits" />
+              <FeatureRow text="視頻 PK 評分（前 2 次免費，之後 8 Credits/次）" />
+              <FeatureRow text="偶像生成（前 3 次免費，之後 3 Credits/次）" />
+              <FeatureRow text="分鏡腳本（Flash 模型 8 Credits/次）" />
               <FeatureRow text="视频展厅浏览" />
             </div>
           </div>
@@ -140,7 +140,7 @@ export default function Pricing() {
             )}
             <div className="flex items-baseline">
                 <p className="text-4xl font-extrabold text-white">
-                    ${interval === "monthly" ? "29" : "23"}
+                    ¥{interval === "monthly" ? "108" : "86"}
                 </p>
                 <span className="text-sm font-normal text-white/80 ml-1">/月</span>
             </div>
@@ -156,13 +156,13 @@ export default function Pricing() {
                 <FeatureRow text="偶像图片转 3D" light />
                 <FeatureRow text="视频生成" light />
                 <FeatureRow text="PDF 报告导出" light />
-                <FeatureRow text="每月 500 Credits" light />
+                <FeatureRow text="每月 200 Credits" light />
                 <FeatureRow text="优先处理队列" light />
             </div>
             <button
               onClick={() => handleSubscribe("pro")}
               disabled={currentPlan === "pro" || loadingPlan === "pro"}
-              className="w-full bg-white rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#0A0A0C] disabled:opacity-50">
+              className="w-full bg-white rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#0A0A0C] disabled:opacity-50 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg hover:shadow-white/20">
               {loadingPlan === "pro" ? (
                 <Loader2 className="h-5 w-5 animate-spin mx-auto" />
               ) : (
@@ -182,7 +182,7 @@ export default function Pricing() {
             )}
             <h2 className="text-xl font-bold text-white mb-2">企业版</h2>
             <div className="flex items-baseline">
-                <p className="text-4xl font-extrabold text-white">${interval === "monthly" ? "99" : "79"}</p>
+                <p className="text-4xl font-extrabold text-white">¥{interval === "monthly" ? "358" : "286"}</p>
                 <span className="text-sm font-normal text-gray-400 ml-1">/月</span>
             </div>
             {interval === "yearly" && (
@@ -196,13 +196,13 @@ export default function Pricing() {
                 <FeatureRow text="白标授权" />
                 <FeatureRow text="专属客服" />
                 <FeatureRow text="团队席位" />
-                <FeatureRow text="每月 2000 Credits" />
+                <FeatureRow text="每月 800 Credits" />
                 <FeatureRow text="发票付款" />
             </div>
             <button
               onClick={() => handleSubscribe("enterprise")}
               disabled={currentPlan === "enterprise" || loadingPlan === "enterprise"}
-              className="w-full border border-[#FF6B35] rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#FF6B35] disabled:opacity-50">
+              className="w-full border border-[#FF6B35] rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#FF6B35] disabled:opacity-50 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:bg-[#FF6B35]/10 hover:shadow-lg hover:shadow-[#FF6B35]/20">
               {loadingPlan === "enterprise" ? (
                 <Loader2 className="h-5 w-5 animate-spin mx-auto text-[#FF6B35]" />
               ) : (
@@ -224,7 +224,7 @@ export default function Pricing() {
             <button
               onClick={() => handleBuyCreditPack("small")}
               disabled={loadingPlan === "small"}
-              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-colors hover:border-[#FF6B35] disabled:opacity-50">
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-all duration-300 hover:border-[#FF6B35] hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-[#FF6B35]/15 disabled:opacity-50">
               <Bolt className="h-8 w-8 text-[#FF6B35]" />
               <span className="text-2xl font-bold text-white mt-2">100</span>
               <span className="text-sm text-gray-400">Credits</span>
@@ -240,7 +240,7 @@ export default function Pricing() {
             <button
               onClick={() => handleBuyCreditPack("medium")}
               disabled={loadingPlan === "medium"}
-              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border-2 border-[#FF6B35] rounded-xl p-4 text-center transition-colors disabled:opacity-50">
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border-2 border-[#FF6B35] rounded-xl p-4 text-center transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-[#FF6B35]/20 disabled:opacity-50">
                 <div className="absolute -top-2.5 bg-[#FF6B35] text-white text-xs font-bold rounded-full px-2 py-0.5">热门</div>
               <Zap className="h-8 w-8 text-[#FF6B35]" />
               <span className="text-2xl font-bold text-white mt-2">250</span>
@@ -258,7 +258,7 @@ export default function Pricing() {
             <button
               onClick={() => handleBuyCreditPack("large")}
               disabled={loadingPlan === "large"}
-              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-colors hover:border-[#FF6B35] disabled:opacity-50">
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-all duration-300 hover:border-[#FF6B35] hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-[#FF6B35]/15 disabled:opacity-50">
                 <div className="absolute -top-2.5 bg-green-500 text-white text-xs font-bold rounded-full px-2 py-0.5">最超值</div>
               <Flame className="h-8 w-8 text-[#FF6B35]" />
               <span className="text-2xl font-bold text-white mt-2">500</span>
