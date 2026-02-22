@@ -112,7 +112,7 @@ export default function AudioLabPage() {
   const generateMusic = trpc.suno.generateMusic.useMutation();
   const generateLyrics = trpc.suno.generateLyrics.useMutation();
 
-  // 水印音频（免費用户播放前加入 MVStudioPro.com 语音）
+  // 水印音頻（入門版用戶播放前加入 MVStudioPro.com 語音）
   const watermarkQuery = trpc.suno.getWatermarkAudio.useQuery(undefined, {
     staleTime: Infinity,
     retry: false,
@@ -132,7 +132,7 @@ export default function AudioLabPage() {
     }
 
     if (watermarkQuery.data?.enabled && watermarkQuery.data?.watermarkUrl) {
-      // 免費用户：先播放水印语音，再播放歌曲
+      // 入門版用戶：先播放水印語音，再播放歌曲
       const wmAudio = new Audio(watermarkQuery.data.watermarkUrl);
       watermarkAudioRef.current = wmAudio;
       wmAudio.onended = () => {

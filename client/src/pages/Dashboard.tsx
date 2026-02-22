@@ -65,7 +65,7 @@ export default function LayoutDashboard() {
             <div className="flex flex-col col-span-2">
               <span className="text-sm text-gray-400">当前方案</span>
               <span className="text-lg font-semibold">
-                {planConfig?.nameCn ?? "免费版"}
+                {planConfig?.nameCn ?? "入門版"}
               </span>
             </div>
           </div>

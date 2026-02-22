@@ -35,12 +35,12 @@ export function QuotaExhaustedModal({
     if (isTrialExpired) return "试用已到期";
     if (isTrialQuotaUsed) return "试用额度已用完";
     if (isPaidPlan) return "本月额度已用完";
-    return "免费额度已用完";
+    return "入門版額度已用完";
   };
 
   const getMessage = () => {
     if (isTrialExpired) {
-      return `您的 2 天免费试用已结束。\n\n您已生成的作品仍可查看，但无法新建作品。\n\n订阅学生方案即可继续使用「${featureName}」等所有功能，半年仅需 $20。`;
+      return `您的 2 天體驗期已結束。\n\n您已生成的作品仍可查看，但無法新建作品。\n\n訂閱學生方案即可繼續使用「${featureName}」等所有功能，半年僅需 $20。`;
     }
     if (isTrialQuotaUsed) {
       return `您在试用期内的「${featureName}」次数已用完。\n\n升级到付费方案可获得更多额度，解锁全部功能。`;
@@ -48,7 +48,7 @@ export function QuotaExhaustedModal({
     if (isPaidPlan) {
       return `您本月的「${featureName}」额度已用完。\n\n额度将在下月 1 日自动重置，请耐心等待。\n\n如需更多额度，可升级到更高方案。`;
     }
-    return `您的「${featureName}」免费体验次数已用完。\n\n购买套餐或申请学生优惠即可继续使用。`;
+    return `您的「${featureName}」入門版額度已用完。\n\n購買套餐或申請學生優惠即可繼續使用。`;
   };
 
   const getIcon = () => {

@@ -2,13 +2,13 @@
  * NBP 引擎选择器组件
  * 
  * 用于分镜页面和虚拟偶像页面，让用户选择图片生成引擎：
- * - 免費（Forge AI，含水印）— 唯一免費選項
+ * - Forge（Forge AI，含水印）— 基礎引擎
  * - NBP 2K（5 Credits/张）
  * - NBP 4K（9 Credits/张）
  * - Kling 1K（8 Credits/张）
  * - Kling 2K（10 Credits/张）
  * 
- * 管理員：所有引擎免費，不顯示「管理員免費」字樣
+ * 管理員：所有引擎不消耗 Credits
  * 所有付費引擎必須標明 Credits 數量
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
@@ -52,9 +52,9 @@ export function NbpEngineSelector({
   const engines: EngineInfo[] = [
     {
       id: "forge",
-      label: "免費",
+      label: "Forge",
       desc: "基礎畫質，含浮水印",
-      cost: "免費",
+      cost: "0 Cr",
       icon: Sparkles,
       color: "#30D158",
       available: true,
@@ -65,7 +65,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "高清 2K，無浮水印"
         : effectivePlan === "free" ? "需升級" : effectivePlan === "pro" ? "含浮水印" : "無浮水印",
-      cost: isAdmin ? "免費" : "5 Cr/張",
+      cost: isAdmin ? "0 Cr" : "5 Cr/張",
       icon: MonitorPlay,
       color: "#64D2FF",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 5),
@@ -82,7 +82,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "超高清 4K，無浮水印"
         : effectivePlan === "enterprise" ? "無浮水印" : "需升級",
-      cost: isAdmin ? "免費" : "9 Cr/張",
+      cost: isAdmin ? "0 Cr" : "9 Cr/張",
       icon: Tv2,
       color: "#FFD60A",
       available: isAdmin || (effectivePlan === "enterprise" && (effectiveCredits ?? 0) >= 9),
@@ -99,7 +99,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "Kling AI O1，1K 解析度"
         : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型",
-      cost: isAdmin ? "免費" : "8 Cr/張",
+      cost: isAdmin ? "0 Cr" : "8 Cr/張",
       icon: Zap,
       color: "#F97316",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 8),
@@ -116,7 +116,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "Kling AI O1，2K 高清"
         : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型，2K 解析度",
-      cost: isAdmin ? "免費" : "10 Cr/張",
+      cost: isAdmin ? "0 Cr" : "10 Cr/張",
       icon: Zap,
       color: "#EF4444",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 10),

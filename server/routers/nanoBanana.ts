@@ -270,7 +270,7 @@ export const nanoBananaRouter = router({
         showUpgradeHint,
         creditsRemaining: 0,
         fallbackMessage: planConfig.nbp.enabled
-          ? "Credits 不足，已自动切换至免费引擎（含水印）。充值即可恢复高清体验。"
+          ? "Credits 不足，已自動切換至 Forge 引擎（0 Credits，含浮水印）。充值即可恢復高清體驗。"
           : undefined,
       };
     }),
@@ -421,7 +421,7 @@ export const nanoBananaRouter = router({
       if (!planConfig.nbp.enabled) {
         return {
           success: false,
-          error: "您的方案不支持 NBP 生成，请升级到初级会员或使用免费 Forge AI",
+          error: "您的方案不支持 NBP 生成，請升級到初級會員或使用 Forge AI（0 Credits）",
           needUpgrade: true,
         };
       }
@@ -435,7 +435,7 @@ export const nanoBananaRouter = router({
       if (!deductResult.success) {
         return {
           success: false,
-          error: "Credits 不足，请充值后重试。或使用免费 Forge AI 生成（含水印）。",
+          error: "Credits 不足，請充值後重試。或使用 Forge AI 生成（0 Credits，含浮水印）。",
           needUpgrade: false,
           creditsNeeded: CREDIT_COSTS[resolution === "4k" ? "nbpImage4K" : "nbpImage2K"],
           creditsAvailable: deductResult.remainingBalance,

@@ -65,7 +65,7 @@ export default function PaymentHistory() {
                   <CreditCard className="h-6 w-6 text-primary" />
                 </div>
                 <div>
-                  <div className="font-medium">当前套餐：<span className="text-primary capitalize">{status.plan === "free" ? "免费版" : status.plan === "pro" ? "专业版" : "企业版"}</span></div>
+                  <div className="font-medium">当前套餐：<span className="text-primary capitalize">{status.plan === "free" ? "入門版" : status.plan === "pro" ? "专业版" : "企业版"}</span></div>
                   <div className="text-sm text-muted-foreground">Credits 余额：{status.credits}</div>
                 </div>
               </div>

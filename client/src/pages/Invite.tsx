@@ -72,7 +72,7 @@ export default function InvitePage() {
 
   const handleShare = useCallback(async () => {
     if (!myStatus?.inviteCode) return;
-    const message = `🎬 我正在使用 MV Studio Pro — 一站式视频创作平台！\n\n使用我的邀请码 ${myStatus.inviteCode} 加入内测，我们双方各获得 10 次免费功能配额！\n\n立即加入：${inviteUrl}`;
+    const message = `🎬 我正在使用 MV Studio Pro — 一站式视频创作平台！\n\n使用我的邀请码 ${myStatus.inviteCode} 加入内测，我們雙方各獲得 10 Credits 獎勵！\n\n立即加入：${inviteUrl}`;
 
     if (typeof navigator !== "undefined" && navigator.share) {
       try {

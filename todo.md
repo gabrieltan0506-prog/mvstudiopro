@@ -337,3 +337,15 @@
 - [ ] 新增 AI 推薦 BGM 描述功能（Gemini 3.0 Pro / GPT 5.1 可選，自動填入 BGM 描述）
 - [ ] 全站收費功能「免費」字樣替換為 Credits 標示（分鏡腳本頁 + 虛擬偶像頁 + 其他頁面）
 - [ ] 測試驗證並保存 checkpoint 推送到 GitHub
+
+## Phase 36: 分鏡腳本深度優化（2026-02-22）
+- [x] 生成5種視覺風格預覽圖並上傳S3（CDN URL 已嵌入前端）
+- [x] 後端：AI推薦BGM描述路由（串接Gemini 3.0 Pro / GPT 5.1，5 Credits）
+- [x] 後端：參考圖上傳+風格分析路由（analyzeReferenceImage，3 Credits）
+- [x] 後端：人物一致性prompt優化（character consistency增強，角色外觀描述鎖定）
+- [x] 前端：風格選擇器加入預覽圖+流暢過渡動畫（scale/blur/glow/fadeSlideUp）
+- [x] 前端：參考圖上傳UI（拖拽上傳+自動風格分析）
+- [x] 前端：AI推薦BGM按鈕（Gemini/GPT5選擇，一鍵自動填入BGM描述）
+- [x] 前端：圖標美化升級（lucide 圖標+漸變色背景）
+- [x] 全站「免費」字樣替換為Credits標示（20+個檔案已修改）
+- [x] 測試驗證（125 tests passed）並保存checkpoint推送GitHub

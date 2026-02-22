@@ -40,7 +40,7 @@ export interface PlanConfig {
 export const PLANS: Record<PlanType, PlanConfig> = {
   free: {
     name: "Free",
-    nameCn: "免费版",
+    nameCn: "入門版",
     monthlyPrice: 0,
     yearlyPrice: 0,
     monthlyCredits: 50,
@@ -53,8 +53,8 @@ export const PLANS: Record<PlanType, PlanConfig> = {
       "Basic Community Features",
     ],
     featuresCn: [
-      "视频 PK 评分（前 2 次免费）",
-      "虚拟偶像生成（前 3 个免费，Forge AI）",
+      "視頻 PK 評分（前 2 次 0 Credits）",
+      "虛擬偶像生成（前 3 個 0 Credits，Forge AI）",
       "分镜脚本生成（不限字数）",
       "分镜图生成（Forge AI，每次最多 10 张，含水印）",
       "视频展厅浏览",
@@ -94,7 +94,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
       "200 Credits/month",
     ],
     featuresCn: [
-      "所有免费版功能",
+      "所有入門版功能",
       "无限视频 PK 评分",
       "无限虚拟偶像生成",
       "NBP 2K 分镜图（每次最多 30 张，含水印）",
@@ -220,6 +220,12 @@ export const CREDIT_COSTS = {
 
   // ─── 分镜脚本 AI 改写 ────────────────────────────
   storyboardRewrite: 8,          // AI 改写分镜脚本消耗 8 credits
+
+  // ─── AI 推荐 BGM 描述 ────────────────────────────
+  recommendBGM: 5,               // AI 推荐 BGM 描述消耗 5 credits（Gemini 分析分镜内容生成 BGM 描述）
+
+  // ─── 参考图风格分析 ────────────────────────────────
+  referenceImageAnalysis: 3,     // 参考图风格分析消耗 3 credits（Gemini Vision 分析图片风格）
 
   // ─── 音频分析 ────────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
@@ -447,12 +453,12 @@ export const DIRECTOR_PACKS: Record<DirectorPackType, DirectorPackConfig> = {
     nameCn: "初级导演包",
     nameEn: "Junior Director Pack",
     description: "Free script generation with Forge AI, storyboard-to-video conversion, and Suno V4 background music",
-    descriptionCn: "Forge AI 免费脚本生成 + 分镜转视频 + Suno V4 配乐",
+    descriptionCn: "Forge AI 腳本生成（0 Credits）+ 分鏡轉視頻 + Suno V4 配樂",
     totalCredits: 62,           // 0 (Forge) + 50 (视频) + 12 (V4音乐)
     savings: 0,                 // 基础包无折扣
     includes: {
       scriptEngine: "forge",
-      scriptCredits: 0,         // Forge 免费
+      scriptCredits: 0,         // Forge 0 Credits
       storyboardToVideo: true,
       videoCredits: 50,
       musicEngine: "v4",
@@ -464,7 +470,7 @@ export const DIRECTOR_PACKS: Record<DirectorPackType, DirectorPackConfig> = {
       "Suno V4 Background Music",
     ],
     featuresCn: [
-      "Forge AI 脚本生成（免费）",
+      "Forge AI 腳本生成（0 Credits）",
       "分镜转视频",
       "Suno V4 配乐",
     ],

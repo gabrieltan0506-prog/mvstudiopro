@@ -111,12 +111,12 @@ export default function Pricing() {
                     <span className="text-[#FF6B35] text-xs font-semibold">当前方案</span>
                 </div>
             )}
-            <h2 className="text-xl font-bold text-white mb-2">免费版</h2>
+            <h2 className="text-xl font-bold text-white mb-2">入門版</h2>
             <p className="text-4xl font-extrabold text-white">¥0<span className="text-sm font-normal text-gray-400 ml-1">/月</span></p>
             <div className="mt-4 space-y-1.5">
-              <FeatureRow text="视频 PK 评分（前 2 次免费）" />
-              <FeatureRow text="偶像生成（前 3 次免费）" />
-              <FeatureRow text="分镜脚本（第 1 次免费）" />
+              <FeatureRow text="視頻 PK 評分（前 2 次）0 Credits" />
+              <FeatureRow text="偶像生成（前 3 次）0 Credits" />
+              <FeatureRow text="分鏡腳本（第 1 次）0 Credits" />
               <FeatureRow text="视频展厅浏览" />
             </div>
           </div>
@@ -135,7 +135,7 @@ export default function Pricing() {
             {currentPlan === "free" && (
                 <div className="flex items-center gap-1.5 mb-2">
                     <Gift className="h-3 w-3 text-white" />
-                    <span className="text-xs text-white font-semibold">7 天免费试用</span>
+                    <span className="text-xs text-white font-semibold">7 天體驗期</span>
                 </div>
             )}
             <div className="flex items-baseline">
@@ -167,7 +167,7 @@ export default function Pricing() {
                 <Loader2 className="h-5 w-5 animate-spin mx-auto" />
               ) : (
                 <span>
-                  {currentPlan === "pro" ? "已订阅" : currentPlan === "free" ? "免费试用 7 天" : "立即升级"}
+                  {currentPlan === "pro" ? "已訂閱" : currentPlan === "free" ? "開始 7 天體驗" : "立即升級"}
                 </span>
               )}
             </button>

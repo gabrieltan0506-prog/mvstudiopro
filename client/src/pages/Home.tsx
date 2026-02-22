@@ -173,7 +173,7 @@ const CREATIVE_TOOLS = [
   },
   {
     icon: Clapperboard, title: "智能脚本与分镜生成", titleEn: "Script & Storyboard",
-    desc: "输入歌词或文本，AI 自动生成专业视频分镜脚本，免费 10 个分镜或 600 字以内",
+    desc: "輸入歌詞或文本，AI 自動生成專業視頻分鏡腳本，入門版 10 個分鏡或 600 字以內",
     borderColor: "border-t-yellow-500", iconBg: "bg-yellow-500/20", iconColor: "text-yellow-400",
     href: "/storyboard", ready: true,
   },
@@ -308,7 +308,7 @@ export default function Home() {
                   className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
                   onClick={() => { window.location.href = getLoginUrl(); }}
                 >
-                  免费开始创作 <ArrowRight className="h-5 w-5" />
+                  開始創作 <ArrowRight className="h-5 w-5" />
                 </Button>
               )}
               <Link href="/showcase">

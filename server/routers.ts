@@ -657,6 +657,8 @@ export const appRouter = router({
         sceneCount: z.number().min(1).max(20).default(5),
         model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
         visualStyle: z.enum(["cinematic", "anime", "documentary", "realistic", "scifi"]).default("cinematic"),
+        referenceImageUrl: z.string().url().optional(),
+        referenceStyleDescription: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -669,7 +671,7 @@ export const appRouter = router({
           const canAfford = await hasEnoughCredits(userId, creditKey);
           if (!canAfford) {
             const modelLabel = input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro";
-            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits 或切換為免費的 Gemini 3.0 Flash。`);
+            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits 或切換為 Gemini 3.0 Flash（0 Credits）。`);
           }
           await deductCredits(userId, creditKey, `分鏡腳本生成 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
         }
@@ -813,6 +815,16 @@ export const appRouter = router({
 }
 \`\`\`
 
+## 人物一致性要求（极其重要）
+- 在 JSON 输出中增加一个顶层字段 "characterDescription"，详细描述主角的外观特征：性别、年龄、发型发色、五官特征、体型、服装风格、标志性配饰等
+- 每个场景的 description 中必须重复描述主角的外观，确保 AI 生图时人物外观一致
+- 主角的服装、发型、体型在所有场景中保持一致（除非剧情需要换装）
+- 如果歌词中没有明确的人物描述，请根据歌词情感和风格创造一个合适的主角形象
+${input.referenceImageUrl ? `
+## 参考图风格
+用户上传了参考图片，请在生成分镜时参考该图片的视觉风格、色彩、构图和氛围。
+${input.referenceStyleDescription ? `参考图风格分析：${input.referenceStyleDescription}` : ''}
+` : ''}
 ## 创意要求
 1. **视觉叙事**：每个场景要与歌词内容和情感紧密结合，形成完整的视觉故事线
 2. **节奏把控**：镜头运动和转场要与音乐节奏（BPM）相匹配
@@ -820,12 +832,18 @@ export const appRouter = router({
 4. **视觉统一**：整体色彩和风格要保持一致性，形成独特的视觉语言
 5. **技术可行性**：建议的镜头和效果要考虑实际拍摄的可行性
 6. **创意亮点**：每个视频要有 1-2 个视觉记忆点，让观众印象深刻
+7. **人物一致性**：主角在所有场景中必须保持外观一致，包括发型、服装、体型、配饰等
 
 请确保生成的分镜脚本专业、详细、具有电影感，能够直接用于视频拍摄指导。`
             },
             {
               role: "user",
-              content: `请根据以下歌词或文本内容，生成 ${input.sceneCount} 个 视频分镜场景：\n\n${input.lyrics}`
+              content: input.referenceImageUrl
+                ? [
+                    { type: "text" as const, text: `请根据以下歌词或文本内容，生成 ${input.sceneCount} 个视频分镜场景。同时参考附图的视觉风格、色彩和氛围：\n\n${input.lyrics}` },
+                    { type: "image_url" as const, image_url: { url: input.referenceImageUrl, detail: "high" as const } },
+                  ]
+                : `请根据以下歌词或文本内容，生成 ${input.sceneCount} 个 视频分镜场景：\n\n${input.lyrics}`
             }
           ],
           response_format: { type: "json_object" },
@@ -837,7 +855,18 @@ export const appRouter = router({
         // Generate preview images for all scenes in parallel
         const sceneImagePromises = storyboardData.scenes.map(async (scene: any) => {
           // Create a detailed prompt for image generation based on scene description
-          const imagePrompt = `Photorealistic cinematic MV scene: ${scene.description}. ${scene.visualElements.join(", ")}. ${scene.mood} mood. Ultra-realistic, real human actors, professional cinematography, film photography, high quality, detailed, 16:9 aspect ratio. NOT anime, NOT cartoon, NOT illustration. Real photography only.`;
+          // 人物一致性優化：提取主角外觀描述並在每個場景中重複使用
+          const characterLock = storyboardData.characterDescription || "";
+          const refStyleNote = input.referenceStyleDescription ? ` Reference style: ${input.referenceStyleDescription}.` : "";
+          const stylePromptMap: Record<string, string> = {
+            cinematic: "Cinematic film style, anamorphic lens, shallow depth of field, teal-orange color grading, dramatic volumetric lighting, 2.39:1 composition.",
+            anime: "Japanese anime cel-shaded style, vibrant saturated colors, bold outlines, speed lines, sparkle effects, Studio Ghibli aesthetic.",
+            documentary: "Documentary photography style, natural lighting, handheld camera feel, film grain, muted earth tones, photojournalistic composition.",
+            realistic: "Hyper-realistic photography, natural colors, DSLR quality, accurate skin textures, soft natural daylight, lifestyle aesthetic.",
+            scifi: "Sci-fi concept art style, neon lighting, holographic displays, cyberpunk color palette with teals and magentas, futuristic architecture.",
+          };
+          const styleNote = stylePromptMap[input.visualStyle] || stylePromptMap.cinematic;
+          const imagePrompt = `${styleNote} ${scene.description}. ${scene.visualElements.join(", ")}. ${scene.mood} mood.${characterLock ? ` IMPORTANT - Main character consistency: ${characterLock}. The main character MUST look exactly the same across all scenes.` : ""}${refStyleNote} High quality, detailed, 16:9 aspect ratio.`;
           
           try {
             const { url } = await generateImage({ prompt: imagePrompt });
@@ -1131,6 +1160,138 @@ export const appRouter = router({
           success: true,
           text: generatedText.trim(),
           message: "灵感脚本已生成！",
+        };
+      }),
+
+    // AI 推荐 BGM 描述 - 使用 Gemini 3.0 Pro 分析分鏡內容生成 BGM 描述
+    recommendBGM: protectedProcedure
+      .input(z.object({
+        storyboard: z.object({
+          title: z.string(),
+          musicInfo: z.object({
+            bpm: z.number(),
+            emotion: z.string(),
+            style: z.string(),
+            key: z.string(),
+          }),
+          scenes: z.array(z.object({
+            sceneNumber: z.number(),
+            description: z.string(),
+            mood: z.string(),
+            visualElements: z.array(z.string()),
+          })),
+          summary: z.string(),
+        }),
+        model: z.enum(["pro", "gpt5"]).default("pro"),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin";
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < CREDIT_COSTS.recommendBGM) {
+            throw new Error(`Credits 不足，AI 推薦 BGM 需要 ${CREDIT_COSTS.recommendBGM} Credits`);
+          }
+          await deductCredits(userId, "recommendBGM", `AI 推薦 BGM 描述 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
+        }
+
+        const sceneSummary = input.storyboard.scenes.map(s =>
+          `场景${s.sceneNumber}: ${s.description} (情绪: ${s.mood})`
+        ).join("\n");
+
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `你是一位专业的影视配乐师和音乐总监。请根据分镜脚本的内容、情绪和音乐信息，生成一段详细的 BGM 描述，用于 Suno AI 音乐生成。
+
+输出要求（严格 JSON 格式）：
+{
+  "title": "BGM 标题（英文，简洁有力）",
+  "description": "用英文描述 BGM 的风格、情绪、节奏、乐器组合，适合 Suno AI 的 prompt 格式，200字以内",
+  "style": "音乐风格标签（如 cinematic orchestral, electronic ambient, lo-fi hip hop 等）",
+  "mood": "情绪标签（如 melancholic, uplifting, intense, dreamy 等）",
+  "bpm": 推荐 BPM 数值,
+  "instruments": ["主要乐器列表"],
+  "duration": "推荐时长（如 2:30）"
+}`
+            },
+            {
+              role: "user",
+              content: `请根据以下分镜脚本信息，生成适合的 BGM 描述：
+
+标题：${input.storyboard.title}
+音乐信息：BPM ${input.storyboard.musicInfo.bpm}, 情感 ${input.storyboard.musicInfo.emotion}, 风格 ${input.storyboard.musicInfo.style}, 调性 ${input.storyboard.musicInfo.key}
+
+场景概要：
+${sceneSummary}
+
+整体建议：${input.storyboard.summary}`
+            }
+          ],
+          response_format: { type: "json_object" },
+          model: input.model === "gpt5" ? ("gpt5" as any) : ("pro" as any),
+        });
+
+        const bgmData = JSON.parse(response.choices[0].message.content as string);
+
+        return {
+          success: true,
+          bgm: bgmData,
+          message: "BGM 描述已生成！可直接用于 Suno 生成音乐。",
+        };
+      }),
+
+    // 參考圖風格分析 - 使用 Gemini Vision 分析上傳的參考圖片
+    analyzeReferenceImage: protectedProcedure
+      .input(z.object({
+        imageUrl: z.string().url(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin";
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < CREDIT_COSTS.referenceImageAnalysis) {
+            throw new Error(`Credits 不足，參考圖分析需要 ${CREDIT_COSTS.referenceImageAnalysis} Credits`);
+          }
+          await deductCredits(userId, "referenceImageAnalysis", "參考圖風格分析 (Gemini Vision)");
+        }
+
+        const response = await invokeLLM({
+          messages: [
+            {
+              role: "system",
+              content: `你是一位专业的视觉设计师和电影摄影师。请分析这张参考图片的视觉风格，输出一段英文描述，用于指导 AI 生成类似风格的分镜图片。
+
+分析维度：
+1. 色彩调性（color palette, grading）
+2. 光影风格（lighting style）
+3. 构图特点（composition）
+4. 氛围感受（mood, atmosphere）
+5. 艺术风格（art style, medium）
+6. 特效元素（special effects, textures）
+
+输出格式：一段 100-200 字的英文描述，可直接用于 AI 生图 prompt。不要加任何 JSON 或标记，直接输出纯文本。`
+            },
+            {
+              role: "user",
+              content: [
+                { type: "text" as const, text: "请分析这张参考图片的视觉风格：" },
+                { type: "image_url" as const, image_url: { url: input.imageUrl, detail: "high" as const } },
+              ]
+            }
+          ],
+        });
+
+        const styleDescription = response.choices[0].message.content as string;
+
+        return {
+          success: true,
+          styleDescription: styleDescription.trim(),
+          message: "參考圖風格分析完成！",
         };
       }),
   }),
