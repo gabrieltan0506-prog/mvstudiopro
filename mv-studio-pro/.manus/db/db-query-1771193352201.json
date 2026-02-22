@@ -1,9 +1,0 @@
-{
-  "query": "CREATE TABLE IF NOT EXISTS `__drizzle_migrations` (\n  `id` int AUTO_INCREMENT PRIMARY KEY,\n  `hash` varchar(255) NOT NULL,\n  `created_at` bigint NOT NULL\n);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0000_init', UNIX_TIMESTAMP() * 1000);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0001_guestbook', UNIX_TIMESTAMP() * 1000);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0002_glorious_chamber', UNIX_TIMESTAMP() * 1000);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE IF NOT EXISTS `__drizzle_migrations` (\n  `id` int AUTO_INCREMENT PRIMARY KEY,\n  `hash` varchar(255) NOT NULL,\n  `created_at` bigint NOT NULL\n);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0000_init', UNIX_TIMESTAMP() * 1000);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0001_guestbook', UNIX_TIMESTAMP() * 1000);\nINSERT IGNORE INTO `__drizzle_migrations` (`hash`, `created_at`) VALUES ('0002_glorious_chamber', UNIX_TIMESTAMP() * 1000);",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 248
-}

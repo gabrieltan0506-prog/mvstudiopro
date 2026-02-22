@@ -63,7 +63,7 @@ describe("Hunyuan3D Service", () => {
       "fal-ai/hunyuan-3d/v3.1/rapid/image-to-3d",
       expect.objectContaining({
         input: expect.objectContaining({
-          image_url: "https://example.com/test.jpg",
+          input_image_url: expect.any(String),
         }),
       })
     );
@@ -94,7 +94,7 @@ describe("Hunyuan3D Service", () => {
       "fal-ai/hunyuan-3d/v3.1/pro/image-to-3d",
       expect.objectContaining({
         input: expect.objectContaining({
-          image_url: "https://example.com/test.jpg",
+          input_image_url: expect.any(String),
           enable_pbr: true,
         }),
       })

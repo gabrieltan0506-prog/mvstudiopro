@@ -1,9 +1,9 @@
-import { cn } from "@/lib/utils";
-import { AlertTriangle, RotateCcw } from "lucide-react";
-import { Component, ReactNode } from "react";
+import React, { Component, ReactNode } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 
 interface Props {
   children: ReactNode;
+  fallback?: (error: Error, resetError: () => void) => ReactNode;
 }
 
 interface State {
@@ -11,7 +11,12 @@ interface State {
   error: Error | null;
 }
 
-class ErrorBoundary extends Component<Props, State> {
+/**
+ * ErrorBoundary 组件
+ * 
+ * 用于捕获子组件中的 JavaScript 错误，防止整个应用崩溃。
+ */
+export default class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -21,36 +26,36 @@ class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  resetError = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
-    if (this.state.hasError) {
+    if (this.state.hasError && this.state.error) {
+      if (this.props.fallback) {
+        return this.props.fallback(this.state.error, this.resetError);
+      }
+
       return (
-        <div className="flex items-center justify-center min-h-screen p-8 bg-background">
-          <div className="flex flex-col items-center w-full max-w-2xl p-8">
-            <AlertTriangle
-              size={48}
-              className="text-destructive mb-6 flex-shrink-0"
-            />
-
-            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
-
-            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
-              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
-                {this.state.error?.stack}
-              </pre>
-            </div>
-
-            <button
-              onClick={() => window.location.reload()}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg",
-                "bg-primary text-primary-foreground",
-                "hover:opacity-90 cursor-pointer"
-              )}
-            >
-              <RotateCcw size={16} />
-              Reload Page
-            </button>
+        <div className="min-h-screen flex flex-col items-center justify-center bg-[#0A0A0C] p-6 text-center">
+          <div className="mb-6">
+            <AlertTriangle size={64} className="text-[#FF453A]" />
           </div>
+          <h2 className="text-2xl font-bold text-[#F7F4EF] mb-3">糟糕！出现错误了</h2>
+          <p className="text-base text-[#9B9691] mb-8 leading-6 max-w-md">
+            {this.state.error.message || "应用程序遇到了一个未预期的错误"}
+          </p>
+          <button
+            className="flex items-center gap-2 bg-[#FF6B35] text-white font-semibold px-6 py-3 rounded-xl hover:bg-orange-600 transition-colors"
+            onClick={this.resetError}
+          >
+            <RefreshCw size={20} />
+            <span>重新加载</span>
+          </button>
         </div>
       );
     }
@@ -58,5 +63,3 @@ class ErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
-
-export default ErrorBoundary;

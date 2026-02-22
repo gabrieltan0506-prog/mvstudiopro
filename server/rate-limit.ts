@@ -16,7 +16,9 @@ const store = new Map<string, RateLimitEntry>();
 // 每 5 分钟清理过期记录
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of store.entries()) {
+  const entries = Array.from(store.entries());
+  for (let i = 0; i < entries.length; i++) {
+    const [key, entry] = entries[i] as [string, RateLimitEntry];
     entry.timestamps = entry.timestamps.filter((t) => now - t < 60_000);
     if (entry.timestamps.length === 0) {
       store.delete(key);

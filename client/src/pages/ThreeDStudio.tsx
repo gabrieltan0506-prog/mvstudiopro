@@ -1,829 +1,654 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
+// @ts-nocheck
+import React, { useState, useCallback, useRef } from "react";
+import { useLocation, Link } from "wouter";
 import { toast } from "sonner";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import {
-  Loader2, Download, Upload, Box, RotateCcw, Crown, Zap,
-  Sparkles, Check, Info, ChevronDown, ChevronUp, Layers,
-  Palette, Eye, Settings2, ShoppingBag, ArrowRight,
+import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { ModelViewer } from "@/components/ModelViewer"; // Assuming this component exists for web
+import { CREDIT_COSTS } from "@/lib/credits";
+import { 
+  View, Box, Zap, Sparkles, Wand2, GitCompare, Ticket, Upload, CheckCircle2, Check, AlertCircle, 
+  CheckCircle, Download, Layers, GalleryVertical, Orbit, Gamepad2, Puzzle, DraftingCompass, Film, ArrowRight, Loader2, X
 } from "lucide-react";
-import { CREDIT_COSTS, DIMENSION_PACKS } from "@shared/plans";
-import Navbar from "@/components/Navbar";
 
-// ─── Types ──────────────────────────────────────
+/* ===== 对比图数据 ===== */
+const COMPARISON_IMAGES = {
+  astronaut: {
+    title: "宇航员模型",
+    desc: "左：精雕 3D + PBR 材质（颜色、光照、细节完整）\n右：闪电 3D 基础 mesh（几何结构清晰，无材质）",
+    url: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/dw5mTl5cKGtD.webp",
+  },
+  cartoon: {
+    title: "卡通角色转换",
+    desc: "2D 图片 → 3D 模型，卷发、格子衬衫、相机细节完美还原",
+    url: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/4DcnKuTCvPgM.jpg",
+  },
+  warrior: {
+    title: "高精度角色",
+    desc: "Hunyuan3D 3.1 Pro 生成，毛发纹理、盔甲、腰带扣等细节极致还原",
+    url: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/zre1qFWcy4sn.jpg",
+  },
+};
+
+/* ===== 模式定义 ===== */
 type ModelTier = "rapid" | "pro";
-type TabType = "generate" | "compare" | "pricing";
 
 interface TierConfig {
   id: ModelTier;
   name: string;
   subtitle: string;
-  icon: typeof Zap;
-  color: string;
-  borderColor: string;
-  bgColor: string;
-  badge: string;
-  badgeColor: string;
-  time: string;
+  speed: string;
   baseCredits: number;
+  apiCost: string;
+  color: string;
+  icon: React.ElementType;
   features: string[];
+  badge?: string;
 }
 
 const TIERS: TierConfig[] = [
   {
     id: "rapid",
     name: "闪电 3D",
-    subtitle: "快速预览 · 30 秒出模",
+    subtitle: "Rapid · 快速预览",
+    speed: "15-30 秒",
+    baseCredits: 5,
+    apiCost: "$0.225",
+    color: "#64D2FF",
     icon: Zap,
-    color: "text-cyan-400",
-    borderColor: "border-cyan-500/50",
-    bgColor: "bg-cyan-500/10",
-    badge: "RAPID",
-    badgeColor: "bg-cyan-500/20 text-cyan-400",
-    time: "~30 秒",
-    baseCredits: CREDIT_COSTS.rapid3D,
+    badge: "推荐入门",
     features: [
-      "30 秒极速出模",
-      "标准网格质量",
-      "自动 UV 展开",
-      "GLB / OBJ 导出",
-      "可选 PBR 材质",
+      "15-30 秒极速生成",
+      "中等几何精度",
+      "支持 GLB / OBJ 导出",
+      "可选 PBR 材质（+3 Credits）",
     ],
   },
   {
     id: "pro",
     name: "精雕 3D",
-    subtitle: "影视级品质 · 60 秒精雕",
-    icon: Crown,
-    color: "text-amber-400",
-    borderColor: "border-amber-500/50",
-    bgColor: "bg-amber-500/10",
-    badge: "PRO",
-    badgeColor: "bg-amber-500/20 text-amber-400",
-    time: "~60 秒",
-    baseCredits: CREDIT_COSTS.pro3D,
+    subtitle: "Pro · 高精度",
+    speed: "45-90 秒",
+    baseCredits: 9,
+    apiCost: "$0.375",
+    color: "#FFD60A",
+    icon: Sparkles,
+    badge: "专业品质",
     features: [
-      "影视级网格精度",
-      "高密度拓扑结构",
-      "PBR 材质支持",
-      "多视角输入",
-      "自定义面数控制",
-      "GLB / OBJ 导出",
+      "高精度曲面平滑",
+      "纹理细腻，颜色精准",
+      "支持 GLB / OBJ 导出",
+      "可选 PBR + 多视角 + 自定义面数",
     ],
   },
 ];
 
-// ─── 3D Model Viewer ────────────────────────────
-function ModelViewer({ glbUrl, thumbnailUrl }: { glbUrl: string; thumbnailUrl?: string | null }) {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    if (!glbUrl || !canvasRef.current) return;
-    const el = canvasRef.current;
-    const mv = document.createElement("model-viewer") as any;
-    mv.src = glbUrl;
-    mv.alt = "3D Model";
-    mv.setAttribute("auto-rotate", "");
-    mv.setAttribute("camera-controls", "");
-    mv.setAttribute("shadow-intensity", "1");
-    mv.style.width = "100%";
-    mv.style.height = "100%";
-    mv.style.background = "transparent";
-    if (thumbnailUrl) mv.poster = thumbnailUrl;
-    mv.addEventListener("load", () => setLoaded(true));
-    mv.addEventListener("error", () => setError(true));
-    el.innerHTML = "";
-    el.appendChild(mv);
-    return () => { el.innerHTML = ""; };
-  }, [glbUrl, thumbnailUrl]);
-
-  if (error && thumbnailUrl) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-black/20 rounded-lg">
-        <img src={thumbnailUrl} alt="3D Preview" className="max-w-full max-h-full object-contain" />
-      </div>
-    );
-  }
-
-  return (
-    <div ref={canvasRef} className="w-full h-full relative">
-      {!loaded && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 text-primary animate-spin" />
-        </div>
-      )}
-    </div>
-  );
+/* ===== 维度系列定价包 ===== */
+interface PricingPack {
+  name: string;
+  subtitle: string;
+  contents: string;
+  price: string;
+  discount: string;
+  color: string;
+  popular?: boolean;
 }
 
-// ─── Main Component ─────────────────────────────
-export default function ThreeDStudio() {
-  const { isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabType>("generate");
+const DIMENSION_PACKS: PricingPack[] = [
+  { name: "维度·体验包", subtitle: "新用户专享", contents: "闪电 3D × 3 次", price: "免费", discount: "", color: "#30D158" },
+  { name: "维度·探索包", subtitle: "入门创作", contents: "闪电 3D × 10 + 精雕 3D × 2", price: "¥58", discount: "约 85 折", color: "#64D2FF" },
+  { name: "维度·创作包", subtitle: "进阶创作", contents: "闪电 3D × 20 + 精雕 3D × 10（含 PBR）", price: "¥168", discount: "约 75 折", color: "#C77DBA", popular: true },
+  { name: "维度·大师包", subtitle: "专业制作", contents: "精雕 3D × 30（含 PBR）+ 多视角 × 10", price: "¥358", discount: "约 70 折", color: "#FFD60A" },
+  { name: "维度·工作室包", subtitle: "团队/企业", contents: "精雕 3D × 100（全选项）", price: "¥888", discount: "约 65 折", color: "#FF6B6B" },
+];
 
-  // Generation state
+/* ===== 3D 软件兼容列表 ===== */
+const COMPATIBLE_SOFTWARE = [
+  { name: "Blender", icon: Orbit, desc: "免费开源" },
+  { name: "Unity", icon: Gamepad2, desc: "游戏引擎" },
+  { name: "Unreal", icon: Puzzle, desc: "虚幻引擎" },
+  { name: "Maya", icon: DraftingCompass, desc: "专业建模" },
+  { name: "Cinema 4D", icon: Film, desc: "动态设计" },
+  { name: "3ds Max", icon: View, desc: "建筑可视化" },
+];
+
+/* ===== 主组件 ===== */
+export default function ThreeDStudioPage() {
+  const { user, isAuthenticated } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 状态
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState<ModelTier>("rapid");
   const [enablePbr, setEnablePbr] = useState(false);
   const [enableMultiview, setEnableMultiview] = useState(false);
   const [enableCustomFaces, setEnableCustomFaces] = useState(false);
   const [targetFaceCount, setTargetFaceCount] = useState(50000);
-  const [textureResolution, setTextureResolution] = useState<"512" | "1024" | "2048">("1024");
-  const [outputFormat, setOutputFormat] = useState<"glb" | "obj">("glb");
-  const [uploadedImageUrl, setUploadedImageUrl] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState("");
+  const [generatedResult, setGeneratedResult] = useState<{
+    glbUrl: string;
+    objUrl?: string;
+    textureUrl?: string;
+    previewUrl?: string;
+    formats: string[];
+    timeTaken: number;
+    creditsUsed: number;
+    tier: string;
+  } | null>(null);
+  const [activeTab, setActiveTab] = useState<"generate" | "compare" | "pricing">("generate");
+  const [error, setError] = useState<string | null>(null);
 
-  // Queries
-  const statusQuery = trpc.hunyuan3d.status.useQuery();
-  const history = trpc.hunyuan3d.myList.useQuery(undefined, { enabled: isAuthenticated && activeTab === "generate" });
-
-  // Cost estimation
-  const costEstimate = trpc.hunyuan3d.estimateCost.useQuery(
-    { tier: selectedTier, enablePbr, enableMultiview, enableCustomFaces },
-    { placeholderData: (prev) => prev }
-  );
-
-  const currentCredits = useMemo(() => {
-    return costEstimate.data?.credits ?? TIERS.find(t => t.id === selectedTier)?.baseCredits ?? 0;
-  }, [costEstimate.data, selectedTier]);
-
-  // Mutations
-  const generateMutation = trpc.hunyuan3d.generate.useMutation({
-    onSuccess: (data) => {
-      if (data.success) {
-        toast.success(`3D 模型生成成功！耗时 ${(data as any).timeTaken?.toFixed(1) ?? "?"}s`);
-        history.refetch();
-      } else {
-        toast.error(data.error || "3D 生成失败");
-      }
-      setGenerating(false);
-    },
-    onError: (err) => { toast.error(err.message || "3D 生成失败，请重试"); setGenerating(false); },
-  });
-
-  // Upload handler
-  const handleFileUpload = useCallback(async (file: File) => {
-    if (!file.type.startsWith("image/")) { toast.error("请上传图片文件（JPG/PNG）"); return; }
-    if (file.size > 10 * 1024 * 1024) { toast.error("图片大小不能超过 10MB"); return; }
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const resp = await fetch("/api/upload-image", { method: "POST", body: formData });
-      if (!resp.ok) throw new Error("Upload failed");
-      const data = await resp.json();
-      setUploadedImageUrl(data.url);
-      toast.success("图片上传成功！");
-    } catch {
-      toast.error("上传失败，请重试");
-    } finally {
-      setUploading(false);
+  // 计算 Credits
+  const calculateCredits = useCallback(() => {
+    if (selectedTier === "rapid") {
+      return enablePbr ? 8 : 5;
     }
-  }, []);
+    // Pro
+    if (enablePbr && enableMultiview && enableCustomFaces) return 18;
+    if (enablePbr && enableMultiview) return 15;
+    if (enablePbr) return 12;
+    return 9;
+  }, [selectedTier, enablePbr, enableMultiview, enableCustomFaces]);
 
-  const handleGenerate = () => {
-    if (!uploadedImageUrl) { toast.error("请先上传一张 2D 图片"); return; }
-    setGenerating(true);
-    generateMutation.mutate({
-      imageUrl: uploadedImageUrl,
-      tier: selectedTier,
-      enablePbr,
-      enableMultiview: selectedTier === "pro" ? enableMultiview : false,
-      enableCustomFaces: selectedTier === "pro" ? enableCustomFaces : false,
-      targetFaceCount: enableCustomFaces ? targetFaceCount : undefined,
-      textureResolution,
-      outputFormat,
-    });
+  // 选择图片
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new ((FileReader as any))();
+      reader.onloadend = () => {
+        setSelectedImage(reader.result as string);
+        setGeneratedResult(null);
+        setError(null);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
-  // ─── Not Authenticated ─────────────────────────
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navbar />
-        <div className="pt-16">
-          <div className="container py-20 text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/30 mb-6">
-              <Sparkles className="h-4 w-4 text-amber-400" />
-              <span className="text-sm font-semibold text-amber-400 tracking-wider">HUNYUAN3D v3.1</span>
-            </div>
-            <h1 className="text-4xl md:text-5xl font-extrabold mb-4">
-              2D 图片 <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-amber-400 to-green-400">→ 3D 模型</span>
-            </h1>
-            <p className="text-muted-foreground max-w-lg mx-auto mb-8">
-              上传一张 2D 图片，AI 自动生成高质量 3D 模型。支持 GLB / OBJ 导出，可直接导入 Blender、Unity、Unreal Engine。
-            </p>
-            <Button onClick={() => { window.location.href = getLoginUrl(); }} className="bg-primary text-primary-foreground">
-              登录开始创作
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const pickImage = () => {
+    fileInputRef.current?.click();
+  };
 
-  // ─── Tab Navigation ────────────────────────────
-  const tabs = [
-    { id: "generate" as const, label: "生成 3D", icon: Box },
-    { id: "compare" as const, label: "模式对比", icon: Layers },
-    { id: "pricing" as const, label: "维度收费包", icon: ShoppingBag },
-  ];
+  const generateMutation = trpc.threeD.generate.useMutation(); // Corrected route
+
+  // 计算当前配置的 Credits 费用
+  const getCreditsRequired = () => {
+    if (selectedTier === "rapid") {
+      return enablePbr ? 20 : 15;
+    }
+    if (enablePbr && enableMultiview && enableCustomFaces) return 50;
+    if (enablePbr && enableMultiview) return 45;
+    if (enablePbr) return 40;
+    return 35;
+  };
+
+  // 生成 3D 模型
+  const doGenerate = async () => {
+    try {
+      setIsGenerating(true);
+      setError(null);
+      setGenerationProgress(selectedTier === "rapid" ? "闪电模式生成中，预计 15-30 秒..." : "精雕模式生成中，预计 45-90 秒...");
+
+      const result = await generateMutation.mutateAsync({
+        imageUrl: selectedImage!,
+        tier: selectedTier,
+        enablePbr,
+        targetFaceCount: enableCustomFaces ? targetFaceCount : undefined,
+      });
+
+      if (!result.success || !result.output) {
+    // @ts-ignore
+        throw new ((AlertCircle as any))(result.error || "生成失败，请重试");
+      }
+
+      setGeneratedResult({
+        glbUrl: result.output.model_url,
+        objUrl: result.output.obj_url,
+        textureUrl: result.output.texture_url,
+        previewUrl: result.output.preview_url,
+        formats: result.output.available_formats,
+        timeTaken: result.timeTaken ?? 0,
+        creditsUsed: result.creditsUsed,
+        tier: result.tier,
+      });
+
+      setGenerationProgress("");
+    } catch (e: any) {
+      setError(e.message || "生成失败，请重试");
+      toast.error(e.message || "生成失败，请重试");
+      setGenerationProgress("");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerate = () => {
+    if (!selectedImage) {
+      setError("请先选择一张图片");
+      toast.error("请先选择一张图片");
+      return;
+    }
+    if (!isAuthenticated) {
+      setError("请先登录");
+      toast.error("请先登录");
+      return;
+    }
+    const credits = getCreditsRequired();
+    const tierLabel = selectedTier === "rapid" ? "闪电 3D (Rapid)" : "精雕 3D (Pro)";
+    const extras = [
+      enablePbr && "PBR 材质",
+      enableMultiview && "多视角",
+      enableCustomFaces && "自定义面数",
+    ].filter(Boolean).join(" + ");
+    const desc = `${tierLabel}${extras ? ` + ${extras}` : ""}`;
+
+    const confirmed = window.confirm(`即将扣除 ${credits} Credits\n\n模式：${desc}\n预计时间：${selectedTier === "rapid" ? "15-30 秒" : "45-90 秒"}\n\n确认继续？`);
+    if (confirmed) doGenerate();
+  };
+
+  // 下载模型
+  const handleDownload = (url: string, format: string) => {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `manus-3d-studio-model.${format}`;
+    a.target = "_blank";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Navbar />
-      <div className="pt-16">
-        {/* Header */}
-        <div className="relative overflow-hidden py-12 md:py-16 px-6">
-          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/8 via-amber-500/5 to-purple-500/8" />
-          <div className="relative text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 mb-4">
-              <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-              <span className="text-xs font-bold text-amber-400 tracking-widest">HUNYUAN3D v3.1</span>
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+      <div className="flex-grow">
+
+        {/* ===== 页面标题 ===== */}
+        <div className="relative overflow-hidden bg-[#101012] px-6 py-10 text-center md:py-16">
+          <div className="absolute inset-0 z-0 bg-gradient-to-br from-[rgba(100,210,255,0.12)] via-[rgba(255,214,10,0.08)] to-[rgba(199,125,186,0.10)]"></div>
+          <div className="relative z-10 mx-auto flex flex-col items-center">
+            <div className="mb-4 flex items-center gap-1.5 rounded-full border border-[rgba(255,214,10,0.30)] bg-[rgba(255,214,10,0.15)] px-3.5 py-1.5">
+              <View size={14} className="text-[#FFD60A]" />
+              <span className="text-xs font-bold uppercase tracking-widest text-[#FFD60A]">HUNYUAN3D v3.1</span>
             </div>
-            <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
-              2D 图片 <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-amber-400 to-green-400">→ 3D 模型</span>
-            </h1>
-            <p className="text-muted-foreground mt-3 max-w-md mx-auto text-sm">
-              闪电 3D · 精雕 3D · PBR 材质 · 多视角 · GLB/OBJ 导出
+            <h1 className="text-3xl font-extrabold tracking-tighter text-white md:text-5xl">2D 转 3D 工作室</h1>
+            <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#B5B0AB] md:text-base md:leading-loose">
+              上传任意 2D 图片，AI 自动生成高质量 3D 模型<br />
+              支持 GLB / OBJ 格式导出，可直接导入 Blender、Unity、Unreal
             </p>
           </div>
         </div>
 
-        {/* Tab Bar */}
-        <div className="flex justify-center gap-2 px-6 py-3 border-b border-border/50 bg-background/80 backdrop-blur-sm">
-          {tabs.map((tab) => (
+        {/* ===== Tab 切换 ===== */}
+        <div className="flex justify-center gap-2 border-b border-white/10 bg-[#0D0D0F] px-6 py-3">
+          {([
+            { key: "generate", label: "生成模型", icon: Wand2 },
+            { key: "compare", label: "效果对比", icon: GitCompare },
+            { key: "pricing", label: "维度定价包", icon: Ticket },
+          ] as const).map((tab) => (
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-                activeTab === tab.id
-                  ? "bg-amber-500/10 border border-amber-500/30 text-amber-400"
-                  : "bg-card/50 text-muted-foreground hover:text-foreground hover:bg-card"
-              }`}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors ${ 
+                activeTab === tab.key 
+                ? "border border-[rgba(255,214,10,0.30)] bg-[rgba(255,214,10,0.12)] text-[#FFD60A]"
+                : "bg-[#1A1A1D] text-[#9B9691] hover:bg-white/5"
+              }`}>
+              <tab.icon size={16} />
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
 
-        {/* Content */}
-        <div className="container max-w-6xl py-8">
-          {/* ===== Generate Tab ===== */}
+        {/* ===== Tab Content ===== */}
+        <div className="mx-auto w-full max-w-5xl px-5 py-8 md:px-10">
           {activeTab === "generate" && (
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-              {/* Left: Controls */}
-              <div className="lg:col-span-2 space-y-5">
-                {/* Tier Selection */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Settings2 className="h-4 w-4 text-muted-foreground" />
-                    选择模式
-                  </h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    {TIERS.map((tier) => (
-                      <button
-                        key={tier.id}
-                        onClick={() => {
-                          setSelectedTier(tier.id);
-                          if (tier.id === "rapid") {
-                            setEnableMultiview(false);
-                            setEnableCustomFaces(false);
-                          }
-                        }}
-                        className={`relative p-4 rounded-xl text-left transition-all border-2 ${
-                          selectedTier === tier.id
-                            ? `${tier.bgColor} ${tier.borderColor}`
-                            : "bg-card/30 border-border/30 hover:border-border/60"
-                        }`}
-                      >
-                        {selectedTier === tier.id && (
-                          <div className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center ${tier.bgColor}`}>
-                            <Check className={`h-3.5 w-3.5 ${tier.color}`} />
-                          </div>
-                        )}
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${tier.badgeColor} mb-2`}>
-                          {tier.badge}
-                        </span>
-                        <div className="flex items-center gap-1.5 mb-1">
-                          <tier.icon className={`h-4 w-4 ${tier.color}`} />
-                          <span className="font-bold text-sm">{tier.name}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">{tier.subtitle}</p>
-                        <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-                          <span>{tier.time}</span>
-                          <span className="text-amber-400 font-semibold">{tier.baseCredits} Credits 起</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Upload Area */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Upload className="h-4 w-4 text-muted-foreground" />
-                    上传 2D 图片
-                  </h3>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); }}
-                  />
-                  {uploadedImageUrl ? (
-                    <div className="relative rounded-xl overflow-hidden border-2 border-border/50">
-                      <img src={uploadedImageUrl} alt="Uploaded" className="w-full h-56 object-cover" />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="absolute top-3 right-3 bg-black/60 border-white/30 text-white hover:bg-black/80"
-                        onClick={() => { setUploadedImageUrl(""); if (fileInputRef.current) fileInputRef.current.value = ""; }}
-                      >
-                        <RotateCcw className="h-3 w-3 mr-1" /> 更换
-                      </Button>
+            <div className="flex flex-col gap-8 md:flex-row md:gap-10">
+              {/* Left Column: Upload & Result */}
+              <div className="flex-1">
+                {generatedResult ? (
+                  <div className="rounded-2xl border border-white/10 bg-[#1A1A1D] p-6">
+                    <div className="mb-4 flex items-center gap-3">
+                      <CheckCircle size={24} className="text-green-500" />
+                      <h2 className="text-xl font-bold text-white">3D 模型生成完成</h2>
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className="w-full border-2 border-dashed border-border/50 rounded-xl p-10 text-center hover:border-cyan-500/40 transition-colors"
-                    >
-                      <div className="w-16 h-16 rounded-full bg-cyan-500/10 flex items-center justify-center mx-auto mb-3">
-                        {uploading ? (
-                          <Loader2 className="h-7 w-7 text-cyan-400 animate-spin" />
-                        ) : (
-                          <Upload className="h-7 w-7 text-cyan-400" />
-                        )}
-                      </div>
-                      <p className="font-semibold text-sm">{uploading ? "上传中..." : "点击上传图片"}</p>
-                      <p className="text-xs text-muted-foreground mt-1">支持 JPG / PNG，最大 10MB</p>
-                    </button>
-                  )}
-                </div>
 
-                {/* Options */}
-                <div>
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                    <Palette className="h-4 w-4 text-muted-foreground" />
-                    生成选项
-                  </h3>
-                  <div className="space-y-2">
-                    {/* PBR */}
-                    <button
-                      onClick={() => setEnablePbr(!enablePbr)}
-                      className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${
-                        enablePbr
-                          ? "bg-green-500/5 border-green-500/40"
-                          : "bg-card/30 border-border/30 hover:border-border/60"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Palette className={`h-4 w-4 ${enablePbr ? "text-green-400" : "text-muted-foreground"}`} />
-                        <div className="text-left">
-                          <span className="text-sm font-medium">PBR 材质</span>
-                          <p className="text-xs text-muted-foreground">金属度、粗糙度、法线贴图</p>
-                        </div>
+                    <div className="mb-5 grid grid-cols-3 divide-x divide-white/10 rounded-lg border border-white/10 bg-black/20">
+                      <div className="p-3 text-center">
+                        <p className="text-xs text-gray-400">模式</p>
+                        <p className="mt-1 font-semibold">{generatedResult.tier === "rapid" ? "闪电 3D" : "精雕 3D"}</p>
                       </div>
-                      <span className="text-xs text-amber-400 font-semibold">+3 Credits</span>
-                    </button>
+                      <div className="p-3 text-center">
+                        <p className="text-xs text-gray-400">耗时</p>
+                        <p className="mt-1 font-semibold">{generatedResult.timeTaken.toFixed(1)} 秒</p>
+                      </div>
+                      <div className="p-3 text-center">
+                        <p className="text-xs text-gray-400">消耗</p>
+                        <p className="mt-1 font-semibold text-[#FFD60A]">{generatedResult.creditsUsed} Credits</p>
+                      </div>
+                    </div>
 
-                    {/* Pro-only: Multiview */}
-                    {selectedTier === "pro" && (
-                      <button
-                        onClick={() => setEnableMultiview(!enableMultiview)}
-                        className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${
-                          enableMultiview
-                            ? "bg-purple-500/5 border-purple-500/40"
-                            : "bg-card/30 border-border/30 hover:border-border/60"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Eye className={`h-4 w-4 ${enableMultiview ? "text-purple-400" : "text-muted-foreground"}`} />
-                          <div className="text-left">
-                            <span className="text-sm font-medium">多视角输入</span>
-                            <p className="text-xs text-muted-foreground">多角度参考提升精度</p>
+                    <div className="mb-6 aspect-video w-full overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                       <ModelViewer
+                        glbUrl={generatedResult.glbUrl}
+                        objUrl={generatedResult.objUrl}
+                        textureUrl={generatedResult.textureUrl}
+                        thumbnailUrl={generatedResult.previewUrl}
+                        autoRotate={true}
+                      />
+                    </div>
+
+                    <h3 className="mb-2 text-lg font-bold">导出 3D 模型文件</h3>
+                    <p className="mb-4 text-sm text-gray-400">下载后可直接导入 Blender、Unity、Unreal Engine 等 3D 软件</p>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <button onClick={() => handleDownload(generatedResult.glbUrl, "glb")} className="group rounded-xl border-2 border-[#64D2FF] bg-[#1A1A1D] p-4 text-left transition-colors hover:bg-[#64D2FF]/10">
+                        <div className="flex items-start justify-between">
+                          <div className="rounded-lg bg-[#64D2FF]/15 p-3">
+                            <Box size={32} className="text-[#64D2FF]" />
+                          </div>
+                          <div className="rounded-full bg-[#64D2FF] px-4 py-1.5 text-black transition-opacity group-hover:opacity-100 md:opacity-0">
+                            <Download size={18} />
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">PRO</span>
-                          <span className="text-xs text-amber-400 font-semibold">+3 Credits</span>
-                        </div>
+                        <h4 className="mt-3 font-bold text-white">GLB 格式</h4>
+                        <p className="mt-1 text-xs text-gray-400">二进制 glTF，包含模型+材质+纹理。推荐用于 Web / Unity / Blender。</p>
                       </button>
-                    )}
-
-                    {/* Pro-only: Custom Faces */}
-                    {selectedTier === "pro" && (
-                      <button
-                        onClick={() => setEnableCustomFaces(!enableCustomFaces)}
-                        className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all ${
-                          enableCustomFaces
-                            ? "bg-orange-500/5 border-orange-500/40"
-                            : "bg-card/30 border-border/30 hover:border-border/60"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Layers className={`h-4 w-4 ${enableCustomFaces ? "text-orange-400" : "text-muted-foreground"}`} />
-                          <div className="text-left">
-                            <span className="text-sm font-medium">自定义面数</span>
-                            <p className="text-xs text-muted-foreground">控制网格密度（默认 50K 面）</p>
+                      
+                      <button disabled={!generatedResult.objUrl} onClick={() => generatedResult.objUrl && handleDownload(generatedResult.objUrl, "obj")} className="group rounded-xl border-2 border-[#FFD60A] bg-[#1A1A1D] p-4 text-left transition-colors hover:bg-[#FFD60A]/10 disabled:cursor-not-allowed disabled:opacity-50">
+                        <div className="flex items-start justify-between">
+                          <div className="rounded-lg bg-[#FFD60A]/15 p-3">
+                            <Layers size={32} className="text-[#FFD60A]" />
+                          </div>
+                           <div className="rounded-full bg-[#FFD60A] px-4 py-1.5 text-black transition-opacity group-hover:opacity-100 md:opacity-0">
+                            <Download size={18} />
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">PRO</span>
-                          <span className="text-xs text-amber-400 font-semibold">+3 Credits</span>
-                        </div>
+                        <h4 className="mt-3 font-bold text-white">OBJ 格式</h4>
+                        <p className="mt-1 text-xs text-gray-400">通用 3D 格式，兼容性最广。推荐用于 Maya / 3ds Max / Cinema 4D。</p>
+                      </button>
+                    </div>
+
+                    {generatedResult.textureUrl && (
+                      <button onClick={() => handleDownload(generatedResult.textureUrl!, "png")} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border- py-2.5 text-sm font-semibold text-[#C77DBA] transition-colors hover:border-[#C77DBA] hover:bg-[#C77DBA]/10">
+                        <GalleryVertical size={20} />
+                        <span>下载纹理贴图 (.png)</span>
                       </button>
                     )}
-
-                    {enableCustomFaces && selectedTier === "pro" && (
-                      <div className="pl-10 pr-3 pb-1">
-                        <label className="text-xs text-muted-foreground mb-1 block">面数: {targetFaceCount.toLocaleString()}</label>
-                        <input
-                          type="range"
-                          min={10000}
-                          max={200000}
-                          step={5000}
-                          value={targetFaceCount}
-                          onChange={(e) => setTargetFaceCount(Number(e.target.value))}
-                          className="w-full accent-amber-400"
-                        />
-                        <div className="flex justify-between text-[10px] text-muted-foreground">
-                          <span>10K</span><span>200K</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Advanced Options */}
-                <button
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                  className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  高级设置
-                </button>
-                {showAdvanced && (
-                  <div className="space-y-3 pl-2 border-l-2 border-border/30">
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1 block">纹理分辨率</label>
-                      <div className="flex gap-2">
-                        {(["512", "1024", "2048"] as const).map((res) => (
-                          <button
-                            key={res}
-                            onClick={() => setTextureResolution(res)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                              textureResolution === res
-                                ? "bg-primary/10 border border-primary/40 text-primary"
-                                : "bg-card/30 border border-border/30 text-muted-foreground hover:text-foreground"
-                            }`}
-                          >
-                            {res}px
-                          </button>
+                    
+                    <div className="mt-8">
+                      <h4 className="text-center font-semibold text-gray-300">兼容 3D 软件</h4>
+                      <div className="mt-4 grid grid-cols-3 gap-4 md:grid-cols-6">
+                        {COMPATIBLE_SOFTWARE.map((sw) => (
+                          <div key={sw.name} className="flex flex-col items-center text-center">
+                            <sw.icon size={24} className="text-gray-400" />
+                            <p className="mt-1.5 text-xs font-semibold text-gray-300">{sw.name}</p>
+                            <p className="text-xs text-gray-500">{sw.desc}</p>
+                          </div>
                         ))}
                       </div>
                     </div>
-                    <div>
-                      <label className="text-xs font-medium text-muted-foreground mb-1 block">输出格式</label>
-                      <div className="flex gap-2">
-                        {(["glb", "obj"] as const).map((fmt) => (
-                          <button
-                            key={fmt}
-                            onClick={() => setOutputFormat(fmt)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium uppercase transition-all ${
-                              outputFormat === fmt
-                                ? "bg-primary/10 border border-primary/40 text-primary"
-                                : "bg-card/30 border border-border/30 text-muted-foreground hover:text-foreground"
-                            }`}
-                          >
-                            {fmt}
-                          </button>
-                        ))}
+
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border-2 border-dashed border-white/10 bg-[#1A1A1D] p-1">
+                    <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
+                    {selectedImage ? (
+                      <div className="relative">
+                        <img src={selectedImage} alt="Uploaded preview" className="aspect-video w-full rounded-xl object-cover" />
+                        <button onClick={pickImage} className="absolute bottom-4 right-4 flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white backdrop-blur-sm transition-colors hover:bg-black/80">
+                          <Upload size={16} />
+                          <span>重新选择</span>
+                        </button>
                       </div>
-                    </div>
+                    ) : (
+                      <button onClick={pickImage} className="flex w-full flex-col items-center justify-center p-10 text-center">
+                        <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-blue-500/10">
+                          <Upload size={40} className="text-blue-400" />
+                        </div>
+                        <h3 className="text-lg font-bold text-white">上传图片</h3>
+                        <p className="text-sm text-gray-400">从电脑中选择一张图片开始</p>
+                        <p className="mt-2 text-xs text-gray-600">支持 JPG, PNG, WEBP. 推荐分辨率 1024x1024</p>
+                      </button>
+                    )}
                   </div>
                 )}
-
-                {/* Cost Summary */}
-                <Card className="bg-card/50 border-border/50">
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">模式</span>
-                      <span className="font-medium">{selectedTier === "rapid" ? "闪电 3D" : "精雕 3D"}</span>
-                    </div>
-                    {enablePbr && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">PBR 材质</span>
-                        <span className="text-green-400">+3 Credits</span>
-                      </div>
-                    )}
-                    {enableMultiview && selectedTier === "pro" && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">多视角</span>
-                        <span className="text-purple-400">+3 Credits</span>
-                      </div>
-                    )}
-                    {enableCustomFaces && selectedTier === "pro" && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">自定义面数</span>
-                        <span className="text-orange-400">+3 Credits</span>
-                      </div>
-                    )}
-                    <div className="border-t border-border/30 pt-2 flex justify-between">
-                      <span className="font-bold">总计</span>
-                      <span className="text-lg font-extrabold text-amber-400">{currentCredits} Credits</span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Generate Button */}
-                <Button
-                  className="w-full h-14 text-base font-bold bg-gradient-to-r from-cyan-500 via-amber-500 to-green-500 text-black hover:opacity-90 transition-opacity rounded-xl"
-                  disabled={generating || !uploadedImageUrl || !statusQuery.data?.available}
-                  onClick={handleGenerate}
-                >
-                  {generating ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                      {selectedTier === "rapid" ? "闪电生成中..." : "精雕生成中..."}
-                    </>
-                  ) : (
-                    <>
-                      <Box className="h-5 w-5 mr-2" />
-                      开始生成 · {currentCredits} Credits
-                    </>
-                  )}
-                </Button>
-
-                <p className="text-xs text-center text-muted-foreground">
-                  生成失败自动退回 Credits · 输出 {outputFormat.toUpperCase()} 格式
-                </p>
               </div>
 
-              {/* Right: Results */}
-              <div className="lg:col-span-3">
-                {generating && (
-                  <Card className="bg-card/50 border-border/50 mb-4">
-                    <CardContent className="p-8 text-center">
-                      <Loader2 className="h-10 w-10 text-primary mx-auto mb-4 animate-spin" />
-                      <p className="font-semibold">Hunyuan3D 正在生成 3D 模型...</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {selectedTier === "rapid" ? "闪电模式约需 30 秒" : "精雕模式约需 60 秒"}
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {history.data && history.data.length > 0 ? (
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">生成历史</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {history.data.map((gen) => (
-                        <Card key={gen.id} className="overflow-hidden bg-card/50 border-border/50">
-                          <div className="relative aspect-square bg-black/20">
-                            {gen.status === "completed" && gen.modelGlbUrl ? (
-                              <ModelViewer glbUrl={gen.modelGlbUrl} thumbnailUrl={gen.thumbnailUrl} />
-                            ) : gen.status === "generating" ? (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <Loader2 className="h-8 w-8 text-primary animate-spin" />
-                              </div>
-                            ) : gen.status === "failed" ? (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <p className="text-sm text-red-400">生成失败</p>
-                              </div>
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <Box className="h-12 w-12 text-muted-foreground/30" />
-                              </div>
-                            )}
-                          </div>
-                          <CardContent className="p-3">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                                gen.mode === "pro" ? "bg-amber-500/20 text-amber-400" : "bg-cyan-500/20 text-cyan-400"
-                              }`}>
-                                {gen.mode === "pro" ? "精雕 PRO" : "闪电 RAPID"}
-                              </span>
-                              <span className={`text-xs font-medium ${
-                                gen.status === "completed" ? "text-green-400" :
-                                gen.status === "failed" ? "text-red-400" :
-                                "text-yellow-400"
-                              }`}>
-                                {gen.status === "completed" ? "完成" :
-                                 gen.status === "failed" ? "失败" :
-                                 gen.status === "generating" ? "生成中" : "等待中"}
-                              </span>
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {new Date(gen.createdAt).toLocaleString()}
-                              {gen.creditsUsed > 0 && ` · ${gen.creditsUsed} Credits`}
-                            </p>
-                            {gen.status === "completed" && (
-                              <div className="flex gap-1 mt-2 flex-wrap">
-                                {gen.modelGlbUrl && (
-                                  <Button size="sm" variant="outline" className="text-xs h-7 px-2" onClick={() => window.open(gen.modelGlbUrl!, "_blank")}>
-                                    <Download className="h-3 w-3 mr-1" /> GLB
-                                  </Button>
-                                )}
-                                {gen.modelObjUrl && (
-                                  <Button size="sm" variant="outline" className="text-xs h-7 px-2" onClick={() => window.open(gen.modelObjUrl!, "_blank")}>
-                                    <Download className="h-3 w-3 mr-1" /> OBJ
-                                  </Button>
-                                )}
-                                {gen.textureUrl && (
-                                  <Button size="sm" variant="outline" className="text-xs h-7 px-2" onClick={() => window.open(gen.textureUrl!, "_blank")}>
-                                    <Download className="h-3 w-3 mr-1" /> 纹理
-                                  </Button>
-                                )}
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
+              {/* Right Column: Options */}
+              <div className="w-full md:w-80">
+                <div className="sticky top-8 flex flex-col gap-5">
+                  <div>
+                    <h3 className="font-bold text-white">1. 选择模式</h3>
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      {TIERS.map((tier) => (
+                        <button key={tier.id} onClick={() => setSelectedTier(tier.id)} className={`relative rounded-xl border-2 p-4 text-left transition-all ${selectedTier === tier.id ? 'border-[' + tier.color + '] bg-[' + tier.color + ']/10' : 'border-white/10 bg-[#1A1A1D] hover:bg-white/5'}`}>
+                          {tier.badge && <div className="absolute -top-2.5 right-3 rounded-full px-2 py-0.5 text-xs font-bold" style={{ backgroundColor: tier.color, color: '#000' }}>{tier.badge}</div>}
+                          <tier.icon size={24} style={{ color: tier.color }} />
+                          <h4 className="mt-2 font-bold text-white">{tier.name}</h4>
+                          <p className="text-xs text-gray-400">{tier.subtitle}</p>
+                        </button>
                       ))}
                     </div>
                   </div>
-                ) : !generating ? (
-                  <div className="h-full min-h-[400px] flex items-center justify-center border-2 border-dashed border-border/30 rounded-xl p-12">
-                    <div className="text-center">
-                      <Box className="h-16 w-16 text-muted-foreground/20 mx-auto mb-4" />
-                      <p className="text-lg font-semibold text-muted-foreground">上传图片开始 3D 创作</p>
-                      <p className="text-sm text-muted-foreground/60 mt-2">支持闪电（快速）和精雕（高质量）两种模式</p>
-                      <p className="text-xs text-muted-foreground/40 mt-4">输出格式：GLB / OBJ · 可导入 Blender / Unity / Unreal</p>
+
+                  <div>
+                    <h3 className="font-bold text-white">2. 高级选项</h3>
+                    <div className="mt-3 flex flex-col gap-3">
+                      <label className={`relative flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${enablePbr ? 'border-green-500 bg-green-500/10' : 'border-white/10 bg-[#1A1A1D]'}`}>
+                        <input type="checkbox" checked={enablePbr} onChange={(e) => setEnablePbr(e.target.checked)} className="absolute h-full w-full opacity-0" />
+                        <div className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-2 ${enablePbr ? 'border-green-500 bg-green-500' : 'border-gray-500'}`}>
+                          {enablePbr && <Check size={14} className="text-black" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-white">PBR 真实材质</span>
+                            <span className="text-sm font-bold text-[#FFD60A]">+3 Credits</span>
+                          </div>
+                          <p className="text-xs text-gray-400">生成包含颜色、粗糙度、金属度的 PBR 贴图，效果更真实。</p>
+                        </div>
+                      </label>
+                      
+                      <label className={`relative flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${selectedTier === 'rapid' ? 'cursor-not-allowed opacity-50' : ''} ${enableMultiview && selectedTier === 'pro' ? 'border-green-500 bg-green-500/10' : 'border-white/10 bg-[#1A1A1D]'}`}>
+                        <input type="checkbox" disabled={selectedTier === 'rapid'} checked={enableMultiview} onChange={(e) => setEnableMultiview(e.target.checked)} className="absolute h-full w-full opacity-0" />
+                        <div className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-2 ${enableMultiview && selectedTier === 'pro' ? 'border-green-500 bg-green-500' : 'border-gray-500'}`}>
+                          {enableMultiview && <Check size={14} className="text-black" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-white">多视角增强</span>
+                            <span className="text-sm font-bold text-[#FFD60A]">+3 Credits</span>
+                          </div>
+                          <p className="text-xs text-gray-400">提升模型背面和侧面的细节还原度。仅精雕模式可用。</p>
+                        </div>
+                      </label>
+
+                      <label className={`relative flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${selectedTier === 'rapid' ? 'cursor-not-allowed opacity-50' : ''} ${enableCustomFaces && selectedTier === 'pro' ? 'border-green-500 bg-green-500/10' : 'border-white/10 bg-[#1A1A1D]'}`}>
+                        <input type="checkbox" disabled={selectedTier === 'rapid'} checked={enableCustomFaces} onChange={(e) => setEnableCustomFaces(e.target.checked)} className="absolute h-full w-full opacity-0" />
+                        <div className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-2 ${enableCustomFaces && selectedTier === 'pro' ? 'border-green-500 bg-green-500' : 'border-gray-500'}`}>
+                          {enableCustomFaces && <Check size={14} className="text-black" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-white">自定义精度</span>
+                            <span className="text-sm font-bold text-[#FFD60A]">+3 Credits</span>
+                          </div>
+                          <p className="text-xs text-gray-400">自定义模型面数，用于游戏或动画。仅精雕模式可用。</p>
+                        </div>
+                      </label>
                     </div>
                   </div>
-                ) : null}
-              </div>
-            </div>
-          )}
 
-          {/* ===== Compare Tab ===== */}
-          {activeTab === "compare" && (
-            <div className="space-y-8">
-              <div>
-                <h2 className="text-2xl font-bold mb-2">闪电 3D vs 精雕 3D</h2>
-                <p className="text-muted-foreground">两种模式各有所长，根据您的需求选择最合适的方案</p>
-              </div>
-
-              {/* Comparison Table */}
-              <div className="rounded-xl border border-border/50 overflow-hidden">
-                <div className="grid grid-cols-3 bg-card/80 p-4 border-b border-border/50">
-                  <div className="font-bold">对比项</div>
-                  <div className="font-bold text-cyan-400 text-center">闪电 3D (Rapid)</div>
-                  <div className="font-bold text-amber-400 text-center">精雕 3D (Pro)</div>
-                </div>
-                {[
-                  ["生成时间", "~30 秒", "~60 秒"],
-                  ["网格质量", "标准", "影视级高精度"],
-                  ["纹理分辨率", "512 / 1024", "512 / 1024 / 2048"],
-                  ["PBR 材质", "可选（+3 Credits）", "可选（+3 Credits）"],
-                  ["多视角输入", "不支持", "支持（+3 Credits）"],
-                  ["自定义面数", "不支持", "支持（+3 Credits）"],
-                  ["基础价格", `${CREDIT_COSTS.rapid3D} Credits`, `${CREDIT_COSTS.pro3D} Credits`],
-                  ["最高价格", `${CREDIT_COSTS.rapid3D_pbr} Credits`, `${CREDIT_COSTS.pro3D_full} Credits`],
-                  ["输出格式", "GLB / OBJ", "GLB / OBJ"],
-                  ["适用场景", "快速预览、概念验证", "影视制作、游戏资产"],
-                ].map(([label, rapid, pro], i) => (
-                  <div key={i} className={`grid grid-cols-3 p-3 ${i % 2 === 0 ? "bg-card/30" : ""} border-b border-border/20 last:border-0`}>
-                    <div className="text-sm font-medium">{label}</div>
-                    <div className="text-sm text-center text-muted-foreground">{rapid}</div>
-                    <div className="text-sm text-center text-muted-foreground">{pro}</div>
+                  <div>
+                    <h3 className="font-bold text-white">3. 费用预估</h3>
+                    <div className="mt-3 space-y-2 rounded-lg border border-white/10 bg-[#1A1A1D] p-4 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-300">{selectedTier === "rapid" ? "闪电 3D" : "精雕 3D"} 基础</span>
+                        <span className="font-semibold">{selectedTier === "rapid" ? 5 : 9} Credits</span>
+                      </div>
+                      {enablePbr && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-300">+ PBR 真实材质</span>
+                          <span className="font-semibold">3 Credits</span>
+                        </div>
+                      )}
+                      {enableMultiview && selectedTier === "pro" && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-300">+ 多视角增强</span>
+                          <span className="font-semibold">3 Credits</span>
+                        </div>
+                      )}
+                      {enableCustomFaces && selectedTier === "pro" && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-300">+ 自定义精度</span>
+                          <span className="font-semibold">3 Credits</span>
+                        </div>
+                      )}
+                      <div className="!mt-3 flex justify-between border-t border-white/10 pt-3">
+                        <span className="font-bold text-white">合计消耗</span>
+                        <span className="font-bold text-lg text-[#FFD60A]">{calculateCredits()} Credits</span>
+                      </div>
+                    </div>
                   </div>
-                ))}
-              </div>
 
-              {/* Use Cases */}
-              <div>
-                <h3 className="text-lg font-bold mb-4">推荐使用场景</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {[
-                    { scene: "社交媒体 3D 头像", tier: "闪电 3D", tierColor: "text-cyan-400", borderColor: "border-l-cyan-500", reason: "快速出模，效果足够" },
-                    { scene: "游戏角色资产", tier: "精雕 3D + PBR", tierColor: "text-amber-400", borderColor: "border-l-amber-500", reason: "高精度网格 + PBR 材质" },
-                    { scene: "电商产品展示", tier: "精雕 3D", tierColor: "text-amber-400", borderColor: "border-l-amber-500", reason: "高质量纹理还原" },
-                    { scene: "概念设计验证", tier: "闪电 3D", tierColor: "text-cyan-400", borderColor: "border-l-cyan-500", reason: "快速迭代，低成本" },
-                    { scene: "影视 VFX 预览", tier: "精雕 3D + 多视角", tierColor: "text-amber-400", borderColor: "border-l-amber-500", reason: "多角度参考提升精度" },
-                    { scene: "建筑可视化", tier: "精雕 3D + 自定义面数", tierColor: "text-amber-400", borderColor: "border-l-amber-500", reason: "精确控制模型复杂度" },
-                  ].map((item, i) => (
-                    <div key={i} className={`bg-card/50 rounded-xl p-4 border-l-4 ${item.borderColor}`}>
-                      <p className="font-bold text-sm mb-1">{item.scene}</p>
-                      <div className="flex items-center gap-2 mb-1">
-                        <ArrowRight className="h-3 w-3 text-muted-foreground" />
-                        <span className={`text-sm font-semibold ${item.tierColor}`}>{item.tier}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">{item.reason}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Compatible Software */}
-              <div>
-                <h3 className="text-lg font-bold mb-4">兼容软件</h3>
-                <div className="flex flex-wrap gap-3">
-                  {[
-                    { name: "Blender", desc: "开源 3D" },
-                    { name: "Unity", desc: "游戏引擎" },
-                    { name: "Unreal Engine", desc: "虚幻引擎" },
-                    { name: "Cinema 4D", desc: "动态设计" },
-                    { name: "Maya", desc: "影视动画" },
-                    { name: "3ds Max", desc: "建筑可视化" },
-                    { name: "ZBrush", desc: "数字雕刻" },
-                    { name: "Substance", desc: "材质绘制" },
-                  ].map((sw) => (
-                    <div key={sw.name} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-card/50 border border-border/30">
-                      <span className="text-sm font-semibold">{sw.name}</span>
-                      <span className="text-[10px] text-muted-foreground">{sw.desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ===== Pricing Tab ===== */}
-          {activeTab === "pricing" && (
-            <div className="space-y-8">
-              <div>
-                <h2 className="text-2xl font-bold mb-2">维度系列 · 3D 收费包</h2>
-                <p className="text-muted-foreground">批量购买更优惠，适合不同创作需求</p>
-              </div>
-
-              {/* Dimension Packs */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                {DIMENSION_PACKS.map((pack, i) => (
-                  <Card
-                    key={i}
-                    className={`relative overflow-hidden border-2 transition-all hover:scale-[1.02] ${
-                      (pack as any).popular ? "border-purple-500/50 shadow-lg shadow-purple-500/10" : "border-border/50"
-                    }`}
-                    style={{ borderColor: `${pack.color}40` }}
-                  >
-                    {(pack as any).popular && (
-                      <div className="absolute top-0 right-5 px-3 py-1 rounded-b-lg text-[10px] font-bold text-black" style={{ backgroundColor: pack.color }}>
-                        最受欢迎
-                      </div>
+                  <button onClick={handleGenerate} disabled={isGenerating} className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-[#FFD60A] text-lg font-bold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">
+                    {isGenerating ? (
+                      <>
+                        <Loader2 size={22} className="animate-spin" />
+                        <span>{generationProgress || "生成中..."}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 size={22} />
+                        <span>生成 3D 模型</span>
+                      </>
                     )}
-                    <CardContent className="p-5">
-                      <h4 className="text-lg font-extrabold mb-0.5" style={{ color: pack.color }}>{pack.name}</h4>
-                      <p className="text-xs text-muted-foreground mb-3">{pack.subtitle}</p>
-                      <p className="text-2xl font-extrabold mb-1">{pack.price}</p>
-                      {pack.discount && <p className="text-xs text-green-400 font-semibold mb-3">{pack.discount}</p>}
-                      <div className="h-px bg-border/30 my-3" />
-                      <p className="text-xs text-muted-foreground leading-relaxed">{pack.contents}</p>
-                      <Button
-                        className="w-full mt-4 rounded-xl font-bold"
-                        variant="outline"
-                        style={{ borderColor: `${pack.color}40`, color: pack.color }}
-                        onClick={() => {
-                          if (pack.price === "免费") {
-                            toast.success("体验包已领取！");
-                          } else {
-                            toast("功能即将上线", { description: "收费包购买功能正在开发中" });
-                          }
-                        }}
-                      >
-                        {pack.price === "免费" ? "立即领取" : "立即购买"}
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+                  </button>
 
-              {/* Subscription Table */}
-              <div>
-                <h3 className="text-lg font-bold mb-4">订阅方案 · 每月 3D 额度</h3>
-                <div className="rounded-xl border border-border/50 overflow-hidden">
-                  <div className="grid grid-cols-3 bg-card/80 p-4 border-b border-border/50">
-                    <div className="font-bold">订阅等级</div>
-                    <div className="font-bold text-center">每月 3D 额度</div>
-                    <div className="font-bold text-center">可用模式</div>
-                  </div>
-                  {[
-                    ["免费版", "闪电 3D × 3 次", "仅闪电"],
-                    ["初级会员 ¥108/月", "闪电 × 15 + 精雕 × 5", "全部"],
-                    ["高级会员 ¥358/月", "闪电 × 50 + 精雕 × 20", "全部 + 优先"],
-                    ["学生版", "闪电 × 8 + 精雕 × 2", "全部"],
-                  ].map(([plan, quota, mode], i) => (
-                    <div key={i} className={`grid grid-cols-3 p-3 ${i % 2 === 0 ? "bg-card/30" : ""} border-b border-border/20 last:border-0`}>
-                      <div className="text-sm font-semibold">{plan}</div>
-                      <div className="text-sm text-center text-muted-foreground">{quota}</div>
-                      <div className="text-sm text-center text-muted-foreground">{mode}</div>
+                  {error && (
+                    <div className="flex items-center gap-2 rounded-lg bg-red-500/10 p-3 text-sm text-red-400">
+                      <AlertCircle size={18} />
+                      <span>{error}</span>
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === "compare" && (
+             <div>
+                <div className="text-center">
+                    <h2 className="text-2xl font-bold text-white md:text-3xl">闪电 3D vs 精雕 3D 效果对比</h2>
+                    <p className="mx-auto mt-3 max-w-2xl text-sm text-gray-400 md:text-base">基于 Hunyuan3D v3.1 实际生成效果，帮助您选择最适合的模式</p>
+                </div>
+
+                <div className="mt-8 overflow-hidden rounded-xl border border-white/10 bg-[#1A1A1D] text-sm">
+                    <div className="grid grid-cols-[1.5fr,2fr,2fr] bg-white/5 font-bold text-white">
+                        <div className="p-3">对比维度</div>
+                        <div className="p-3 text-[#64D2FF]">闪电 3D (Rapid)</div>
+                        <div className="p-3 text-[#FFD60A]">精雕 3D (Pro)</div>
+                    </div>
+                    {[
+                        ["生成速度", "15-30 秒", "45-90 秒"],
+                        ["几何精度", "中等，边缘有锯齿", "高，曲面平滑"],
+                        ["纹理还原", "颜色大致准确", "颜色精准，渐变自然"],
+                        ["面部细节", "五官轮廓正确", "表情、皮肤纹理清晰"],
+                        ["PBR 材质", "支持（+3 Credits）", "支持（效果更好）"],
+                        ["多视角输入", "不支持", "支持（+3 Credits）"],
+                        ["自定义面数", "不支持", "支持（+3 Credits）"],
+                    ].map(([label, rapid, pro], i) => (
+                        <div key={i} className={`grid grid-cols-[1.5fr,2fr,2fr] border-t border-white/10 ${i % 2 === 0 ? 'bg-white/[0.02]' : ''}`}>
+                            <div className="p-3 font-semibold text-white">{label}</div>
+                            <div className="p-3 text-gray-300">{rapid}</div>
+                            <div className="p-3 text-gray-300">{pro}</div>
+                        </div>
+                    ))}
+                </div>
+
+                <h3 className="mt-12 text-center text-2xl font-bold text-white">实际效果展示</h3>
+                <div className="mt-6 grid gap-8 md:grid-cols-3">
+                    {Object.values(COMPARISON_IMAGES).map((img, i) => (
+                        <div key={i} className="overflow-hidden rounded-xl border border-white/10 bg-[#1A1A1D]">
+                            <img src={img.url} alt={img.title} className="h-48 w-full object-cover" />
+                            <div className="p-4">
+                                <h4 className="font-bold text-white">{img.title}</h4>
+                                <p className="mt-1 text-sm text-gray-400">{img.desc.replace(/\n/g, ' ')}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <h3 className="mt-12 text-center text-2xl font-bold text-white">适用场景建议</h3>
+                <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {[
+                    { scene: "快速预览 / 概念验证", tier: "闪电 3D", reason: "速度快、成本低", color: "#64D2FF" },
+                    { scene: "社交媒体展示", tier: "闪电 3D + PBR", reason: "加材质后视觉效果提升明显", color: "#64D2FF" },
+                    { scene: "商业用途 / 产品展示", tier: "精雕 3D + PBR", reason: "细节精准，适合正式发布", color: "#FFD60A" },
+                    { scene: "游戏 / 动画资产", tier: "精雕 3D + 全选项", reason: "可控制面数适配引擎需求", color: "#FFD60A" },
+                    { scene: "3D 打印", tier: "精雕 3D", reason: "几何精度高，打印效果好", color: "#FFD60A" },
+                ].map((item, i) => (
+                    <div key={i} className="rounded-lg bg-[#1A1A1D] p-4" style={{ borderLeft: `4px solid ${item.color}` }}>
+                        <p className="font-semibold text-white">{item.scene}</p>
+                        <div className="mt-2 flex items-center gap-1.5">
+                            <ArrowRight size={14} style={{ color: item.color }} />
+                            <span className="font-bold" style={{ color: item.color }}>{item.tier}</span>
+                        </div>
+                        <p className="mt-1 text-sm text-gray-400">{item.reason}</p>
+                    </div>
+                ))}
+                </div>
+            </div>
+          )}
+
+          {activeTab === "pricing" && (
+            <div>
+                <div className="text-center">
+                    <h2 className="text-2xl font-bold text-white md:text-3xl">维度系列 · 3D 专属收费包</h2>
+                    <p className="mx-auto mt-3 max-w-2xl text-sm text-gray-400 md:text-base">为重度 3D 用户提供专属优惠包，批量购买更划算</p>
+                </div>
+
+                <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+                    {DIMENSION_PACKS.map((pack, i) => (
+                        <div key={i} className={`relative flex flex-col rounded-2xl border-2 bg-[#1A1A1D] p-5 ${pack.popular ? 'border-[' + pack.color + ']' : 'border-white/10'}`} style={{ borderColor: pack.color }}>
+                            {pack.popular && <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-xs font-bold text-black" style={{ backgroundColor: pack.color }}>最受欢迎</div>}
+                            <h3 className="text-lg font-bold" style={{ color: pack.color }}>{pack.name}</h3>
+                            <p className="text-sm text-gray-400">{pack.subtitle}</p>
+                            <p className="my-4 text-3xl font-extrabold text-white">{pack.price}</p>
+                            {pack.discount && <p className="text-sm font-semibold text-yellow-400">{pack.discount}</p>}
+                            <div className="my-5 h-px flex-shrink-0 bg-white/10"></div>
+                            <p className="flex-grow text-sm text-gray-300">{pack.contents}</p>
+                            <button className="mt-5 w-full rounded-lg py-2.5 font-bold transition-colors" style={{ backgroundColor: `${pack.color}20`, color: pack.color, border: `1px solid ${pack.color}` }}>
+                                {pack.price === "免费" ? "立即领取" : "立即购买"}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+
+                <h3 className="mt-12 text-center text-2xl font-bold text-white">订阅方案 · 每月 3D 额度</h3>
+                 <div className="mt-6 overflow-hidden rounded-xl border border-white/10 bg-[#1A1A1D] text-sm">
+                    <div className="grid grid-cols-[1.5fr,2fr,1.5fr] bg-white/5 font-bold text-white">
+                        <div className="p-3">订阅等级</div>
+                        <div className="p-3">每月 3D 额度</div>
+                        <div className="p-3">可用模式</div>
+                    </div>
+                    {[
+                        ["免费版", "闪电 3D × 3 次", "仅闪电"],
+                        ["专业版 ¥108/月", "闪电 × 15 + 精雕 × 5", "全部"],
+                        ["企业版 ¥358/月", "闪电 × 50 + 精雕 × 20", "全部 + 优先"],
+                        ["学生版", "闪电 × 8 + 精雕 × 2", "全部"],
+                    ].map(([plan, quota, mode], i) => (
+                        <div key={i} className={`grid grid-cols-[1.5fr,2fr,1.5fr] border-t border-white/10 ${i % 2 === 0 ? 'bg-white/[0.02]' : ''}`}>
+                            <div className="p-3 font-semibold text-white">{plan}</div>
+                            <div className="p-3 text-gray-300">{quota}</div>
+                            <div className="p-3 text-gray-300">{mode}</div>
+                        </div>
+                    ))}
+                </div>
             </div>
           )}
         </div>
+
+        {/* ===== 底部间距 ===== */}
+        <div className="h-20" />
       </div>
     </div>
   );

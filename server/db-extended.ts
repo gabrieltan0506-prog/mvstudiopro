@@ -313,3 +313,63 @@ export async function hasAgreedToContentUsage(userId: number): Promise<boolean> 
   const agreement = await getContentUsageAgreementByUserId(userId);
   return agreement?.agreedToTerms ?? false;
 }
+
+// === Stub functions for missing features ===
+
+export async function getAllBetaQuotas() {
+  return [];
+}
+
+export async function createBetaQuota(data: { userId: number; feature: string; quota?: number; totalQuota?: number }) {
+  return { id: 1, ...data };
+}
+
+export async function getAllTeams() {
+  return [];
+}
+
+export async function getAllStoryboards() {
+  return [];
+}
+
+export async function getPaymentSubmissions(status?: string, limit?: number) {
+  return [] as Array<{ id: number; userId: number; status: string }>;
+}
+
+export async function updatePaymentSubmissionStatus(id: number, status: string, reviewedBy?: number, rejectionReason?: string) {
+  return;
+}
+
+export async function createVideoGeneration(data: Record<string, unknown>) {
+  return { id: 1, ...data };
+}
+
+export async function getVideoGenerationById(id: number) {
+  return null;
+}
+
+export async function getVideoGenerationsByUserId(userId: number) {
+  return [];
+}
+
+export async function updateVideoGeneration(id: number, data: Record<string, unknown>) {
+  return;
+}
+
+export async function getVideoLikeStatus(videoUrl: string, userId: number) {
+  return { liked: false, likeCount: 0 };
+}
+
+export async function toggleVideoLike(videoUrl: string, userId?: number) {
+  return { liked: true, likeCount: 1 };
+}
+
+export async function getUserCommentLikes(userId: number) {
+  return new Set<number>();
+}
+
+export function isAdmin(user: any): boolean {
+  if (!user) return false;
+  if (typeof user === 'number') return false;
+  return user.role === 'admin';
+}

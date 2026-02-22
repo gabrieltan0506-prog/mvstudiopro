@@ -1,8 +1,0 @@
-Stats section shows: 0+ / 0 / AI / 0
-The counters are stuck at 0 - the animation hasn't triggered.
-The IntersectionObserver approach may not work well in React Native Web's ScrollView.
-The page content is rendered inside a React Native ScrollView, not the browser's native scroll.
-IntersectionObserver may not detect visibility changes within a RN ScrollView.
-
-Solution: Use a simpler approach - trigger animation after a delay when component mounts,
-or use onLayout callback to detect when the component is visible.

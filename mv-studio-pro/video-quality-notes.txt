@@ -1,7 +1,0 @@
-User's video quality standard:
-- Resolution: 1076x1928 (9:16 portrait)
-- Content: Young Asian woman in athletic wear (black crop top + leggings, white sneakers)
-- Setting: Garden/park with natural sunlight, green trees, stone pathway
-- Quality: Photorealistic, natural skin texture, natural lighting with golden hour backlight
-- Style: NOT anime/cartoon - extremely realistic, like a real person filmed with a camera
-- This is the quality level the user expects from the virtual idol generation feature

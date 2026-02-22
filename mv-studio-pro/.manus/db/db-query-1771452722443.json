@@ -1,9 +1,0 @@
-{
-  "query": "ALTER TABLE `student_subscriptions` MODIFY COLUMN `subscriptionType` enum('trial','halfYear','fullYear') NOT NULL;",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute ALTER TABLE `student_subscriptions` MODIFY COLUMN `subscriptionType` enum('trial','halfYear','fullYear') NOT NULL;",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 3441
-}

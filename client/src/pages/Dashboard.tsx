@@ -1,137 +1,179 @@
-import Navbar from "@/components/Navbar";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
+import { useState } from "react";
+import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { toast } from "sonner";
-import { Coins, BarChart3, Sparkles, Clapperboard, Wand2, Film, TrendingUp, CreditCard, ArrowUpRight } from "lucide-react";
-import { Link } from "wouter";
-import { CREDIT_COSTS } from "@shared/plans";
+import { Loader2, ArrowLeft, Plus, BarChart, User, Film, Video } from "lucide-react";
 
-export default function Dashboard() {
-  const { user, isAuthenticated } = useAuth();
-  const { data: balance } = trpc.credits.balance.useQuery(undefined, { enabled: isAuthenticated });
-  const { data: usage } = trpc.credits.usage.useQuery(undefined, { enabled: isAuthenticated });
+type TabType = "transactions" | "usage";
 
-  if (!isAuthenticated) {
+export default function LayoutDashboard() {
+  const [, navigate] = useLocation();
+  const [activeTab, setActiveTab] = useState<TabType>("transactions");
+
+  const { data: subData, isLoading: subLoading } = trpc.stripe.getSubscription.useQuery(undefined, {
+    retry: false,
+  });
+  const { data: transactions, isLoading: txLoading } = trpc.stripe.getTransactions.useQuery({ limit: 100 });
+  const { data: usageLogs, isLoading: usageLoading } = trpc.stripe.getUsageLogs.useQuery({ limit: 100 });
+
+  if (subLoading) {
     return (
-      <div className="min-h-screen bg-background text-foreground">
-        <Navbar />
-        <div className="pt-32 text-center container">
-          <Coins className="h-16 w-16 text-primary mx-auto mb-6" />
-          <h1 className="text-3xl font-bold mb-4">个人中心</h1>
-          <p className="text-muted-foreground mb-8">登录后查看你的 Credits 余额和使用统计</p>
-          <Button size="lg" className="bg-primary text-primary-foreground" onClick={() => { window.location.href = getLoginUrl(); }}>立即登录</Button>
-        </div>
+      <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin" />
       </div>
     );
   }
 
-  const usageItems = [
-    { label: "视频PK评分", key: "mvAnalysis" as const, icon: BarChart3, color: "text-blue-400", cost: CREDIT_COSTS.mvAnalysis },
-    { label: "虚拟偶像生成", key: "idolGeneration" as const, icon: Sparkles, color: "text-purple-400", cost: CREDIT_COSTS.idolGeneration },
-    { label: "分镜脚本", key: "storyboard" as const, icon: Clapperboard, color: "text-green-400", cost: CREDIT_COSTS.storyboard },
-    { label: "视频生成", key: "videoGeneration" as const, icon: Film, color: "text-primary", cost: CREDIT_COSTS.videoGeneration },
-    { label: "偶像转 3D", key: "idol3D" as const, icon: Wand2, color: "text-pink-400", cost: CREDIT_COSTS.idol3D },
-  ];
+  const credits = subData?.credits ?? { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
+  const planConfig = subData?.planConfig;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <Navbar />
-      <div className="pt-24 pb-16 container max-w-5xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">欢迎回来，{user?.name || "创作者"}</h1>
-          <p className="text-muted-foreground">管理你的 Credits 和查看使用统计</p>
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+      <div className="pb-16">
+        {/* Header */}
+        <div className="flex items-center p-4 border-b border-white/10">
+          <button onClick={() => window.history.back()} className="p-2">
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <span className="text-lg font-semibold ml-4">Credits 总览</span>
         </div>
 
-        {/* Credits Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Card className="bg-gradient-to-br from-primary/20 to-primary/5 border-primary/30 md:col-span-2">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Credits 余额</p>
-                  <p className="text-4xl font-bold text-primary">{balance?.balance ?? 0}</p>
-                </div>
-                <Coins className="h-10 w-10 text-primary/50" />
-              </div>
-              <div className="flex gap-3">
-                <Link href="/pricing">
-                  <Button size="sm" className="bg-primary text-primary-foreground gap-1">
-                    <CreditCard className="h-3.5 w-3.5" /> 充值 Credits
-                  </Button>
-                </Link>
-                <Link href="/pricing">
-                  <Button size="sm" variant="outline" className="bg-transparent gap-1">
-                    <ArrowUpRight className="h-3.5 w-3.5" /> 升级套餐
-                  </Button>
-                </Link>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card/50 border-border/50">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <p className="text-sm text-muted-foreground">本月使用</p>
-                <TrendingUp className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <p className="text-3xl font-bold">{(() => { if (!usage) return 0; let t = 0; Object.values(usage).forEach((v: any) => { t += v?.usageCount ?? 0; }); return t; })()}</p>
-              <p className="text-xs text-muted-foreground mt-1">次 AI 功能调用</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Usage Breakdown */}
-        <Card className="bg-card/50 border-border/50 mb-8">
-          <CardHeader><CardTitle>功能使用明细</CardTitle></CardHeader>
-          <CardContent>
-            <div className="space-y-5">
-              {usageItems.map(item => {
-                const count = (usage as any)?.[item.key] ?? 0;
-                const maxCount = Math.max(count, 10);
-                return (
-                  <div key={item.key} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <item.icon className={`h-4 w-4 ${item.color}`} />
-                        <span className="text-sm font-medium">{item.label}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-sm font-bold">{count} 次</span>
-                        <span className="text-xs text-muted-foreground ml-2">({item.cost} Credits/次)</span>
-                      </div>
-                    </div>
-                    <Progress value={(count / maxCount) * 100} className="h-2" />
-                  </div>
-                );
-              })}
+        {/* Balance Card */}
+        <div className="bg-[#1C1C1E] rounded-lg p-6 m-4">
+          <div className="flex justify-between items-center">
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-400">可用 Credits</span>
+              <span className="text-4xl font-bold">{credits.balance}</span>
             </div>
-          </CardContent>
-        </Card>
+            <button
+              onClick={() => navigate("/pricing")}
+              className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-lg"
+            >
+              <Plus className="h-5 w-5" />
+              <span>加值</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mt-6 pt-6 border-t border-white/10">
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-400">累计获得</span>
+              <span className="text-lg font-semibold">{credits.lifetimeEarned}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-400">累计消耗</span>
+              <span className="text-lg font-semibold">{credits.lifetimeSpent}</span>
+            </div>
+            <div className="flex flex-col col-span-2">
+              <span className="text-sm text-gray-400">当前方案</span>
+              <span className="text-lg font-semibold">
+                {planConfig?.nameCn ?? "免费版"}
+              </span>
+            </div>
+          </div>
+        </div>
 
         {/* Quick Actions */}
-        <h3 className="text-lg font-semibold mb-4">快速开始</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: "视频PK评分", href: "/analysis", icon: BarChart3, color: "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20" },
-            { label: "虚拟偶像", href: "/idol", icon: Sparkles, color: "bg-purple-500/10 text-purple-400 hover:bg-purple-500/20" },
-            { label: "分镜脚本", href: "/storyboard", icon: Clapperboard, color: "bg-green-500/10 text-green-400 hover:bg-green-500/20" },
-            { label: "分镜转视频", href: "/vfx", icon: Wand2, color: "bg-primary/10 text-primary hover:bg-primary/20" },
-          ].map(item => (
-            <Link key={item.href} href={item.href}>
-              <Card className={`cursor-pointer transition-colors ${item.color} border-transparent`}>
-                <CardContent className="p-4 text-center">
-                  <item.icon className="h-6 w-6 mx-auto mb-2" />
-                  <span className="text-sm font-medium">{item.label}</span>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+        <div className="m-4">
+          <span className="text-lg font-semibold mb-4 block">Credits 消耗参考</span>
+          <div className="grid grid-cols-2 gap-4">
+            <CostCard icon={<BarChart className="h-6 w-6" />} label="视频 PK 评分" cost={8} balance={credits.balance} />
+            <CostCard icon={<User className="h-6 w-6" />} label="偶像生成" cost={3} balance={credits.balance} />
+            <CostCard icon={<Film className="h-6 w-6" />} label="分镜脚本" cost={15} balance={credits.balance} />
+            <CostCard icon={<Video className="h-6 w-6" />} label="视频生成" cost={25} balance={credits.balance} />
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-4 px-4 mt-6 border-b border-white/10">
+          <TabButton label="交易记录" active={activeTab === "transactions"} onClick={() => setActiveTab("transactions")} />
+          <TabButton label="使用日志" active={activeTab === "usage"} onClick={() => setActiveTab("usage")} />
+        </div>
+
+        {/* Tab Content */}
+        <div className="p-4 space-y-4">
+          {activeTab === "transactions" && (
+            <div>
+              {txLoading ? (
+                <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin" /></div>
+              ) : transactions && transactions.length > 0 ? (
+                transactions.map((tx: any) => (
+                  <div key={tx.id} className="flex justify-between items-center p-3 bg-[#1C1C1E] rounded-lg mb-2">
+                    <div className="flex-1">
+                      <span className="font-medium">
+                        {tx.source === "purchase" ? "Credits 购买" :
+                         tx.source === "subscription" ? "订阅发放" :
+                         tx.source === "bonus" ? "管理员赠送" :
+                         tx.source === "beta" ? "内测奖励" :
+                         tx.source === "referral" ? "邀请奖励" :
+                         tx.source === "usage" ? tx.action : tx.source}
+                      </span>
+                      <span className="text-xs text-gray-400 block">
+                        {tx.createdAt ? new Date(tx.createdAt).toLocaleString("zh-TW") : ""}
+                      </span>
+                    </div>
+                    <span className={`font-bold text-lg ${tx.amount > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {tx.amount > 0 ? "+" : ""}{tx.amount}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span className="block text-center text-gray-500 py-8">暂无交易记录</span>
+              )}
+            </div>
+          )}
+
+          {activeTab === "usage" && (
+            <div>
+              {usageLoading ? (
+                <div className="flex justify-center p-8"><Loader2 className="h-8 w-8 animate-spin" /></div>
+              ) : usageLogs && usageLogs.length > 0 ? (
+                usageLogs.map((log: any) => (
+                  <div key={log.id} className="flex justify-between items-center p-3 bg-[#1C1C1E] rounded-lg mb-2">
+                    <div className="flex-1">
+                      <span className="font-medium">
+                        {log.action === "mvAnalysis" ? "视频 PK 评分" :
+                         log.action === "idolGeneration" ? "虚拟偶像生成" :
+                         log.action === "storyboard" ? "分镜脚本生成" :
+                         log.action === "videoGeneration" ? "视频生成" : log.action}
+                      </span>
+                      <span className="text-xs text-gray-400 block">
+                        {log.createdAt ? new Date(log.createdAt).toLocaleString("zh-TW") : ""}
+                      </span>
+                    </div>
+                    <span className="font-bold text-lg text-red-400">
+                      -{log.creditsCost}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span className="block text-center text-gray-500 py-8">暂无使用记录</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+function CostCard({ icon, label, cost, balance }: { icon: React.ReactNode; label: string; cost: number; balance: number }) {
+  const canAfford = balance >= cost;
+  const times = canAfford ? Math.floor(balance / cost) : 0;
+  return (
+    <div className={`flex flex-col items-center justify-center p-4 rounded-lg bg-[#1C1C1E] ${canAfford ? 'text-white' : 'text-gray-600'}`}>
+      <div className={`mb-2 ${canAfford ? 'text-primary' : 'text-gray-600'}`}>{icon}</div>
+      <span className="text-sm text-center font-medium">{label}</span>
+      <span className="text-xs text-gray-400">{cost} Credits</span>
+      <span className={`text-xs mt-1 ${canAfford ? 'text-green-400' : 'text-red-500'}`}>
+        {canAfford ? `可用 ${times} 次` : '余额不足'}
+      </span>
+    </div>
+  );
+}
+
+function TabButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className={`py-2 px-4 text-sm font-medium ${active ? 'border-b-2 border-primary text-primary' : 'text-gray-400'}`}>
+      <span>{label}</span>
+    </button>
   );
 }

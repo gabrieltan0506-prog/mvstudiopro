@@ -20,7 +20,7 @@ async function isAdmin(userId: number): Promise<boolean> {
 }
 
 // ─── 获取或创建 Credits 余额 ────────────────────────
-async function getOrCreateBalance(userId: number) {
+export async function getOrCreateBalance(userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
@@ -187,7 +187,7 @@ export async function deductCredits(
 export async function addCredits(
   userId: number,
   amount: number,
-  source: "subscription" | "purchase" | "bonus" | "beta" | "referral",
+  source: "subscription" | "purchase" | "bonus" | "beta" | "referral" | "payment" | "refund",
   stripePaymentIntentId?: string
 ) {
   const db = await getDb();

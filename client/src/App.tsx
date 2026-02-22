@@ -16,7 +16,7 @@ const Storyboard = lazy(() => import("./pages/Storyboard"));
 const VFXEngine = lazy(() => import("./pages/VFXEngine"));
 const Pricing = lazy(() => import("./pages/Pricing"));
 const TeamManagement = lazy(() => import("./pages/TeamManagement"));
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+const LayoutDashboard = lazy(() => import("./pages/Dashboard"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 const RemixStudio = lazy(() => import("./pages/RemixStudio"));
@@ -43,7 +43,7 @@ function Router() {
         <Route path={"/vfx"} component={VFXEngine} />
         <Route path={"/pricing"} component={Pricing} />
         <Route path={"/team"} component={TeamManagement} />
-        <Route path={"/dashboard"} component={Dashboard} />
+        <Route path={"/dashboard"} component={LayoutDashboard} />
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/remix"} component={RemixStudio} />

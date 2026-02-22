@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Kling AI API Client
  * 

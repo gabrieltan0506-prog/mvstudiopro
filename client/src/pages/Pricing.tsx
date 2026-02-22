@@ -1,320 +1,407 @@
-import Navbar from "@/components/Navbar";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
+import { useState } from "react";
+import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { useState, useRef, useEffect } from "react";
-import { Check, Crown, Zap, Building2, Upload, Loader2, CreditCard, Coins, ArrowRight } from "lucide-react";
-import { PLANS, CREDIT_PACKS, type PlanType } from "@shared/plans";
-import { useSearch } from "wouter";
+import { Loader2, CheckCircle, Coins, ChevronRight, Gift, Bolt, Zap, Flame, Settings, Receipt, BarChart3, Smile, Box, Film, Video } from "lucide-react";
 
-const PLAN_ORDER: PlanType[] = ["free", "pro", "enterprise"];
-
-const planIcons: Record<PlanType, React.ReactNode> = {
-  free: <Zap className="h-6 w-6" />,
-  pro: <Crown className="h-6 w-6" />,
-  enterprise: <Building2 className="h-6 w-6" />,
-};
-
-const planColors: Record<PlanType, string> = {
-  free: "border-border/50",
-  pro: "border-primary/50 ring-1 ring-primary/20",
-  enterprise: "border-purple-500/50 ring-1 ring-purple-500/20",
-};
-
-const PACK_ORDER = ["small", "medium", "large"] as const;
+type BillingInterval = "monthly" | "yearly";
 
 export default function Pricing() {
-  const { isAuthenticated } = useAuth();
-  const search = useSearch();
-  const [billingInterval, setBillingInterval] = useState<"month" | "year">("month");
-  const [selectedPlan, setSelectedPlan] = useState<PlanType | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [, navigate] = useLocation();
+  const [interval, setInterval] = useState<BillingInterval>("monthly");
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const [loadingPack, setLoadingPack] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    document.title = "套餐定价 - MV Studio Pro";
-    const params = new URLSearchParams(search);
-    if (params.get("payment") === "success") {
-      toast.success("支付成功！感谢您的订阅。");
-    } else if (params.get("payment") === "canceled") {
-      toast.info("支付已取消。");
-    } else if (params.get("credits") === "purchased") {
-      toast.success("Credits 购买成功！");
-    }
-  }, []);
-
-  // Stripe subscription
-  const createSubscription = trpc.stripe.createSubscription.useMutation({
-    onSuccess: (data) => {
-      if (data.url) {
-        toast.info("正在跳转到支付页面...");
-        window.open(data.url, "_blank");
-      }
-      setLoadingPlan(null);
-    },
-    onError: (err) => {
-      toast.error(`订阅失败: ${err.message}`);
-      setLoadingPlan(null);
-    },
+  const { data: planData, isLoading: plansLoading } = trpc.stripe.getPlans.useQuery();
+  const { data: subData, isLoading: subLoading } = trpc.stripe.getSubscription.useQuery(undefined, {
+    retry: false,
   });
 
-  // Stripe credit purchase
-  const purchaseCredits = trpc.stripe.purchaseCredits.useMutation({
-    onSuccess: (data) => {
-      if (data.url) {
-        toast.info("正在跳转到支付页面...");
-        window.open(data.url, "_blank");
-      }
-      setLoadingPack(null);
-    },
-    onError: (err) => {
-      toast.error(`购买失败: ${err.message}`);
-      setLoadingPack(null);
-    },
-  });
+  const checkoutMutation = trpc.stripe.createCheckoutSession.useMutation();
+  const creditPackMutation = trpc.stripe.createCreditPackCheckout.useMutation();
+  const portalMutation = trpc.stripe.getPortalUrl.useMutation();
+  const { data: invoicesData } = trpc.stripe.getInvoices.useQuery(undefined, { retry: false });
 
-  // Screenshot payment (fallback)
-  const submitPayment = trpc.payment.submit.useMutation({
-    onSuccess: () => {
-      toast.success("付款截图已提交，等待人工审核（24小时内）");
-      setDialogOpen(false);
-    },
-    onError: () => toast.error("提交失败，请重试"),
-  });
-
-  const handleStripeSubscribe = (planType: "pro" | "enterprise") => {
-    setLoadingPlan(`${planType}_${billingInterval}`);
-    createSubscription.mutate({ planType, interval: billingInterval });
-  };
-
-  const handleCreditPurchase = (pack: "small" | "medium" | "large") => {
-    setLoadingPack(pack);
-    purchaseCredits.mutate({ pack });
-  };
-
-  const handlePaymentUpload = async (file: File) => {
-    if (!selectedPlan) return;
-    const plan = PLANS[selectedPlan];
-    setUploading(true);
+  const handleOpenPortal = async () => {
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      if (res.ok) {
-        const { url } = await res.json();
-        submitPayment.mutate({ packageType: selectedPlan, screenshotUrl: url, amount: String(plan.monthlyPrice) });
-      } else {
-        toast.error("截图上传失败");
+      const result = await portalMutation.mutateAsync();
+      if (result.url) {
+        window.open(result.url, "_blank");
       }
-    } catch {
-      toast.error("上传失败");
+    } catch (err: any) {
+      toast.error(err.message || "无法打开订阅管理页面");
     }
-    setUploading(false);
   };
 
-  const sp = selectedPlan ? PLANS[selectedPlan] : null;
+  const handleSubscribe = async (plan: "pro" | "enterprise") => {
+    setLoadingPlan(plan);
+    try {
+      const result = await checkoutMutation.mutateAsync({ plan, interval });
+      if (result.url) {
+        window.open(result.url, "_blank");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "无法创建付款页面");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  const handleBuyCreditPack = async (packId: "small" | "medium" | "large") => {
+    setLoadingPlan(packId);
+    try {
+      const result = await creditPackMutation.mutateAsync({ packId });
+      if (result.url) {
+        window.open(result.url, "_blank");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "无法创建付款页面");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  const currentPlan = subData?.plan ?? "free";
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <Navbar />
-      <div className="pt-24 pb-16 container max-w-6xl">
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold mb-3">选择适合你的套餐</h1>
-          <p className="text-muted-foreground max-w-lg mx-auto">从基础创作到企业级制作，为每一位创作者提供专业工具</p>
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+      <div className="overflow-y-auto pb-16">
+        {/* Header */}
+        <div className="px-6 pt-8 pb-4">
+          <h1 className="text-3xl font-extrabold text-white">选择方案</h1>
+          <p className="text-base text-gray-400 mt-1">解锁 AI 创作的全部潜力</p>
         </div>
+
+        {/* Credits Balance (if logged in) */}
+        {subData && (
+          <Link href="/credits-dashboard">
+            <a className="flex justify-between items-center mx-6 mb-4 bg-[#1A1A1D] rounded-xl p-4 border border-white/10 cursor-pointer">
+              <div className="flex items-center gap-2">
+                <Coins className="h-5 w-5 text-[#FF6B35]" />
+                <span className="text-sm text-white">Credits 余额</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="text-lg font-bold text-[#FF6B35]">{subData.credits.balance}</span>
+                <ChevronRight className="h-5 w-5 text-gray-500" />
+              </div>
+            </a>
+          </Link>
+        )}
 
         {/* Billing Toggle */}
-        <div className="flex justify-center mb-8">
-          <div className="inline-flex items-center gap-1 p-1 rounded-lg bg-card/80 border border-border/50">
+        <div className="flex mx-6 mb-5 bg-[#1A1A1D] rounded-lg p-1">
+          <button
+            onClick={() => setInterval("monthly")}
+            className={`flex-1 py-2.5 rounded-md flex items-center justify-center gap-1.5 text-sm font-semibold transition-colors ${interval === "monthly" ? "bg-[#FF6B35] text-white" : "text-gray-400"}`}>
+            月付
+          </button>
+          <button
+            onClick={() => setInterval("yearly")}
+            className={`flex-1 py-2.5 rounded-md flex items-center justify-center gap-1.5 text-sm font-semibold transition-colors ${interval === "yearly" ? "bg-[#FF6B35] text-white" : "text-gray-400"}`}>
+            年付
+            <span className="bg-green-500 text-white text-xs font-bold rounded px-1.5 py-0.5">省 20%</span>
+          </button>
+        </div>
+
+        {/* Plan Cards */}
+        <div className="px-6 space-y-4">
+          {/* Free Plan */}
+          <div className={`relative bg-[#1A1A1D] rounded-2xl p-6 border ${currentPlan === "free" ? "border-[#FF6B35] border-2" : "border-white/10"}`}>
+            {currentPlan === "free" && (
+                <div className="absolute top-3 right-3 bg-[#FF6B35]/20 rounded-full px-3 py-1">
+                    <span className="text-[#FF6B35] text-xs font-semibold">当前方案</span>
+                </div>
+            )}
+            <h2 className="text-xl font-bold text-white mb-2">免费版</h2>
+            <p className="text-4xl font-extrabold text-white">¥0<span className="text-sm font-normal text-gray-400 ml-1">/月</span></p>
+            <div className="mt-4 space-y-1.5">
+              <FeatureRow text="视频 PK 评分（前 2 次免费）" />
+              <FeatureRow text="偶像生成（前 3 次免费）" />
+              <FeatureRow text="分镜脚本（第 1 次免费）" />
+              <FeatureRow text="视频展厅浏览" />
+            </div>
+          </div>
+
+          {/* Pro Plan */}
+          <div className={`relative bg-[#FF6B35] rounded-2xl p-6 border ${currentPlan === "pro" ? "border-white/50 border-2" : "border-[#FF6B35]"}`}>
+             <div className="absolute -top-2.5 left-5 bg-[#0A0A0C] rounded-full px-3 py-1">
+                <span className="text-[#FF6B35] text-xs font-bold">最受欢迎</span>
+            </div>
+            {currentPlan === "pro" && (
+                <div className="absolute top-3 right-3 bg-white/20 rounded-full px-3 py-1">
+                    <span className="text-white text-xs font-semibold">当前方案</span>
+                </div>
+            )}
+            <h2 className="text-xl font-bold text-white mb-2">专业版</h2>
+            {currentPlan === "free" && (
+                <div className="flex items-center gap-1.5 mb-2">
+                    <Gift className="h-3 w-3 text-white" />
+                    <span className="text-xs text-white font-semibold">7 天免费试用</span>
+                </div>
+            )}
+            <div className="flex items-baseline">
+                <p className="text-4xl font-extrabold text-white">
+                    ${interval === "monthly" ? "29" : "23"}
+                </p>
+                <span className="text-sm font-normal text-white/80 ml-1">/月</span>
+            </div>
+            {interval === "yearly" && (
+              <p className="text-white/70 text-sm mt-0.5">
+                年付 ¥1036（省 ¥216）
+              </p>
+            )}
+            <div className="mt-4 space-y-1.5">
+                <FeatureRow text="无限视频 PK 评分" light />
+                <FeatureRow text="无限虚拟偶像生成" light />
+                <FeatureRow text="无限分镜脚本生成" light />
+                <FeatureRow text="偶像图片转 3D" light />
+                <FeatureRow text="视频生成" light />
+                <FeatureRow text="PDF 报告导出" light />
+                <FeatureRow text="每月 500 Credits" light />
+                <FeatureRow text="优先处理队列" light />
+            </div>
             <button
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${billingInterval === "month" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={() => setBillingInterval("month")}
-            >
-              月付
+              onClick={() => handleSubscribe("pro")}
+              disabled={currentPlan === "pro" || loadingPlan === "pro"}
+              className="w-full bg-white rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#0A0A0C] disabled:opacity-50">
+              {loadingPlan === "pro" ? (
+                <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+              ) : (
+                <span>
+                  {currentPlan === "pro" ? "已订阅" : currentPlan === "free" ? "免费试用 7 天" : "立即升级"}
+                </span>
+              )}
             </button>
+          </div>
+
+          {/* Enterprise Plan */}
+          <div className={`relative bg-[#1A1A1D] rounded-2xl p-6 border ${currentPlan === "enterprise" ? "border-[#FF6B35] border-2" : "border-white/10"}`}>
+            {currentPlan === "enterprise" && (
+                <div className="absolute top-3 right-3 bg-[#FF6B35]/20 rounded-full px-3 py-1">
+                    <span className="text-[#FF6B35] text-xs font-semibold">当前方案</span>
+                </div>
+            )}
+            <h2 className="text-xl font-bold text-white mb-2">企业版</h2>
+            <div className="flex items-baseline">
+                <p className="text-4xl font-extrabold text-white">${interval === "monthly" ? "99" : "79"}</p>
+                <span className="text-sm font-normal text-gray-400 ml-1">/月</span>
+            </div>
+            {interval === "yearly" && (
+              <p className="text-gray-400 text-sm mt-0.5">
+                年付 ¥3437（省 ¥859）
+              </p>
+            )}
+            <div className="mt-4 space-y-1.5">
+                <FeatureRow text="所有专业版功能" />
+                <FeatureRow text="API 访问" />
+                <FeatureRow text="白标授权" />
+                <FeatureRow text="专属客服" />
+                <FeatureRow text="团队席位" />
+                <FeatureRow text="每月 2000 Credits" />
+                <FeatureRow text="发票付款" />
+            </div>
             <button
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${billingInterval === "year" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              onClick={() => setBillingInterval("year")}
-            >
-              年付 <span className="text-xs opacity-80">省 20%</span>
+              onClick={() => handleSubscribe("enterprise")}
+              disabled={currentPlan === "enterprise" || loadingPlan === "enterprise"}
+              className="w-full border border-[#FF6B35] rounded-lg py-3.5 mt-5 text-center text-base font-bold text-[#FF6B35] disabled:opacity-50">
+              {loadingPlan === "enterprise" ? (
+                <Loader2 className="h-5 w-5 animate-spin mx-auto text-[#FF6B35]" />
+              ) : (
+                <span>
+                  {currentPlan === "enterprise" ? "已订阅" : "联系销售"}
+                </span>
+              )}
             </button>
           </div>
         </div>
 
-        {/* Subscription Plans */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
-          {PLAN_ORDER.map(planId => {
-            const plan = PLANS[planId];
-            const price = billingInterval === "month" ? plan.monthlyPrice : plan.yearlyPrice;
-            const isLoading = loadingPlan === `${planId}_${billingInterval}`;
-            return (
-              <Card key={planId} className={`bg-card/50 relative ${planColors[planId]}`}>
-                {planId === "pro" && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full">
-                    最受欢迎
+        {/* Credits Packs Section */}
+        <div className="mt-8 px-6">
+          <h3 className="text-2xl font-bold text-white">Credits 加值包</h3>
+          <p className="text-gray-400 mt-1">需要更多 Credits？随时加值，永不过期</p>
+
+          <div className="grid grid-cols-3 gap-4 mt-4">
+            {/* Small Pack */}
+            <button
+              onClick={() => handleBuyCreditPack("small")}
+              disabled={loadingPlan === "small"}
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-colors hover:border-[#FF6B35] disabled:opacity-50">
+              <Bolt className="h-8 w-8 text-[#FF6B35]" />
+              <span className="text-2xl font-bold text-white mt-2">100</span>
+              <span className="text-sm text-gray-400">Credits</span>
+              <span className="text-lg font-semibold text-white mt-2">¥68</span>
+              {loadingPlan === "small" ? (
+                <Loader2 className="h-5 w-5 animate-spin mt-2 text-[#FF6B35]" />
+              ) : (
+                <span className="text-sm font-semibold text-[#FF6B35] mt-2">购买</span>
+              )}
+            </button>
+
+            {/* Medium Pack */}
+            <button
+              onClick={() => handleBuyCreditPack("medium")}
+              disabled={loadingPlan === "medium"}
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border-2 border-[#FF6B35] rounded-xl p-4 text-center transition-colors disabled:opacity-50">
+                <div className="absolute -top-2.5 bg-[#FF6B35] text-white text-xs font-bold rounded-full px-2 py-0.5">热门</div>
+              <Zap className="h-8 w-8 text-[#FF6B35]" />
+              <span className="text-2xl font-bold text-white mt-2">250</span>
+              <span className="text-sm text-gray-400">Credits</span>
+              <span className="text-lg font-semibold text-white mt-2">¥168</span>
+              <span className="text-xs text-green-400">省 4%</span>
+              {loadingPlan === "medium" ? (
+                <Loader2 className="h-5 w-5 animate-spin mt-2 text-[#FF6B35]" />
+              ) : (
+                <span className="text-sm font-semibold text-[#FF6B35] mt-2">购买</span>
+              )}
+            </button>
+
+            {/* Large Pack */}
+            <button
+              onClick={() => handleBuyCreditPack("large")}
+              disabled={loadingPlan === "large"}
+              className="relative flex flex-col items-center justify-center bg-[#1A1A1D] border border-white/10 rounded-xl p-4 text-center transition-colors hover:border-[#FF6B35] disabled:opacity-50">
+                <div className="absolute -top-2.5 bg-green-500 text-white text-xs font-bold rounded-full px-2 py-0.5">最超值</div>
+              <Flame className="h-8 w-8 text-[#FF6B35]" />
+              <span className="text-2xl font-bold text-white mt-2">500</span>
+              <span className="text-sm text-gray-400">Credits</span>
+              <span className="text-lg font-semibold text-white mt-2">¥328</span>
+              <span className="text-xs text-green-400">省 6.3%</span>
+              {loadingPlan === "large" ? (
+                <Loader2 className="h-5 w-5 animate-spin mt-2 text-[#FF6B35]" />
+              ) : (
+                <span className="text-sm font-semibold text-[#FF6B35] mt-2">购买</span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Credits Cost Table */}
+        <div className="mt-8 px-6">
+          <h3 className="text-2xl font-bold text-white">Credits 消耗说明</h3>
+          <div className="bg-[#1A1A1D] border border-white/10 rounded-xl mt-4 divide-y divide-white/10">
+            <CostRow icon={<BarChart3 className="h-5 w-5 text-[#FF6B35]" />} label="视频 PK 评分" cost={8} />
+            <CostRow icon={<Smile className="h-5 w-5 text-[#FF6B35]" />} label="虚拟偶像生成" cost={3} />
+            <CostRow icon={<Box className="h-5 w-5 text-[#FF6B35]" />} label="偶像转 3D" cost={10} badge="PRO" />
+            <CostRow icon={<Film className="h-5 w-5 text-[#FF6B35]" />} label="分镜脚本生成" cost={15} />
+            <CostRow icon={<Video className="h-5 w-5 text-[#FF6B35]" />} label="视频生成" cost={25} />
+          </div>
+        </div>
+
+        {/* Student Discount */}
+        <Link href="/student-verification">
+            <a className="block mx-6 mt-8 p-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl cursor-pointer">
+                <h4 className="text-xl font-bold text-white">🎓 学生优惠</h4>
+                <p className="text-white/80 mt-1 text-sm">验证学生身份，享受超值订阅优惠（一年版含视频生成 2 次/月）</p>
+                <div className="flex gap-4 mt-2">
+                    <div>
+                        <p className="text-lg font-bold text-white">¥138</p>
+                        <p className="text-xs text-white/80">半年</p>
+                    </div>
+                    <div>
+                        <p className="text-lg font-bold text-white">¥268</p>
+                        <p className="text-xs text-white/80">一年</p>
+                    </div>
+                </div>
+            </a>
+        </Link>
+
+        {/* Subscription Management */}
+        {subData?.subscription && subData.plan !== "free" && (
+          <div className="mt-8 px-6">
+            <h3 className="text-2xl font-bold text-white">订阅管理</h3>
+            <div className="bg-[#1A1A1D] border border-white/10 rounded-xl mt-4 p-4">
+              <div className="flex justify-between items-center">
+                <p className="text-base font-semibold text-white">
+                  {subData.planConfig.nameCn}
+                </p>
+                {subData.subscription.cancelAtPeriodEnd && (
+                  <div className="bg-yellow-500/20 px-2 py-0.5 rounded">
+                    <p className="text-yellow-400 text-xs">即将取消</p>
                   </div>
                 )}
-                <CardHeader className="text-center pb-4">
-                  <div className={`mx-auto mb-3 w-12 h-12 rounded-xl flex items-center justify-center ${
-                    planId === "pro" ? "bg-primary/20 text-primary" :
-                    planId === "enterprise" ? "bg-purple-500/20 text-purple-400" :
-                    "bg-muted text-muted-foreground"
-                  }`}>
-                    {planIcons[planId]}
+              </div>
+              {subData.subscription.currentPeriodEnd && (
+                <p className="text-gray-400 text-sm mt-1">
+                  {subData.subscription.cancelAtPeriodEnd ? "到期日" : "下次续费"}：
+                  {new Date(subData.subscription.currentPeriodEnd).toLocaleDateString("zh-TW")}
+                </p>
+              )}
+
+              <div className="flex gap-2.5 mt-3.5">
+                <button
+                  onClick={handleOpenPortal}
+                  disabled={portalMutation.isPending}
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white rounded-md px-3 py-2 text-sm font-semibold disabled:opacity-50">
+                  <Settings className="h-4 w-4 text-[#FF6B35]" />
+                  <span>
+                    {portalMutation.isPending ? "加载中..." : "管理订阅"}
+                  </span>
+                </button>
+                <Link href="/credits-dashboard">
+                    <a className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white rounded-md px-3 py-2 text-sm font-semibold">
+                        <Receipt className="h-4 w-4 text-[#FF6B35]" />
+                        <span>帐单记录</span>
+                    </a>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 历史发票 */}
+        {invoicesData && invoicesData.length > 0 && (
+          <div className="mt-8 px-6">
+            <h3 className="text-2xl font-bold text-white">历史发票</h3>
+            <div className="bg-[#1A1A1D] border border-white/10 rounded-xl mt-4 divide-y divide-white/10">
+              {invoicesData.slice(0, 5).map((inv: any, idx: number) => (
+                <div key={inv.id || idx} className="flex justify-between items-center p-4">
+                  <div className="flex-1">
+                    <p className="text-sm text-white">
+                      {inv.description || `发票 #${inv.stripeInvoiceId?.slice(-6) || idx + 1}`}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString("zh-TW") : ""}
+                    </p>
                   </div>
-                  <CardTitle className="text-lg">{plan.nameCn}</CardTitle>
-                  <div className="mt-2">
-                    {price === 0 ? (
-                      <span className="text-3xl font-bold">免费</span>
-                    ) : (
-                      <>
-                        <span className="text-3xl font-bold">{plan.monthlyCredits}</span>
-                        <span className="text-muted-foreground text-sm"> Credits/月</span>
-                      </>
-                    )}
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-[#FF6B35]">
+                      ${((inv.amountPaid ?? 0) / 100).toFixed(2)}
+                    </p>
+                    <div className={`mt-1 px-2 py-0.5 rounded text-xs inline-block ${inv.status === "paid" ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}`}>
+                        {inv.status === "paid" ? "已付款" : inv.status === "open" ? "待付款" : inv.status}
+                    </div>
                   </div>
-
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <ul className="space-y-2.5">
-                    {plan.featuresCn.map((f, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm">
-                        <Check className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                        <span className="text-muted-foreground">{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  {isAuthenticated ? (
-                    <div className="space-y-2">
-                      {planId !== "free" ? (
-                        <Button
-                          className="w-full text-sm"
-                          variant="outline"
-                          onClick={() => toast.info("即将开放，敬请期待！")}
-                        >
-                          即将开放
-                        </Button>
-                      ) : (
-                        <Button className="w-full bg-transparent" variant="outline" disabled>
-                          当前方案
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button className="w-full bg-transparent" variant="outline" onClick={() => { window.location.href = getLoginUrl(); }}>
-                      登录后订阅
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-
-        {/* Credits Packs */}
-        <div className="mb-16">
-          <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold mb-2 flex items-center justify-center gap-2">
-              <Coins className="h-6 w-6 text-primary" /> Credits 充值
-            </h2>
-            <p className="text-muted-foreground text-sm">按需购买 Credits，灵活使用各项 AI 功能</p>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-            {PACK_ORDER.map(packId => {
-              const pack = CREDIT_PACKS[packId];
-              const isLoading = loadingPack === packId;
-              return (
-                <Card key={packId} className={`bg-card/50 border-border/50 ${packId === "medium" ? "ring-1 ring-primary/20 border-primary/30" : ""}`}>
-                  {packId === "medium" && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full">
-                      性价比之选
-                    </div>
-                  )}
-                  <CardHeader className="text-center pb-3">
-                    <CardTitle className="text-base">{pack.labelCn}</CardTitle>
-                    <div className="mt-2">
-                      <span className="text-2xl font-bold">{pack.credits}</span>
-                      <span className="text-sm text-muted-foreground"> Credits</span>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    {isAuthenticated ? (
-                      <Button
-                        className="w-full gap-2"
-                        variant={packId === "medium" ? "default" : "outline"}
-                        disabled={isLoading}
-                        onClick={() => handleCreditPurchase(packId)}
-                      >
-                        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                        {isLoading ? "处理中..." : "立即购买"}
-                      </Button>
-                    ) : (
-                      <Button className="w-full" variant="outline" onClick={() => { window.location.href = getLoginUrl(); }}>
-                        登录后购买
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* FAQ */}
-        <div className="max-w-2xl mx-auto">
-          <h2 className="text-xl font-bold text-center mb-6">常见问题</h2>
-          <div className="space-y-4">
-            {[
-              { q: "Credits 是什么？", a: "Credits 是平台的通用积分，每次使用 AI 功能（分析、生成偶像、分镜脚本等）都会消耗一定数量的 Credits。订阅套餐每月自动发放 Credits，也可单独充值。" },
-              { q: "支持哪些付款方式？", a: "支持 Visa、Mastercard、American Express 等国际信用卡/借记卡在线支付（通过 Stripe 安全处理）。如需其他付款方式，可选择截图付款，我们的团队会在 24 小时内完成人工审核。" },
-              { q: "可以随时升级或降级吗？", a: "可以。升级立即生效，剩余 Credits 会累计；降级将在当前周期结束后生效。" },
-              { q: "年付有什么优惠？", a: "年付享 20% 折扣，专业版年付每月可获得更多 Credits，企业版年付同样享受折扣优惠。" },
-              { q: "企业版有什么额外服务？", a: "企业版包含专属客户经理、API 接口、自定义品牌水印、优先技术支持、团队席位管理等高级服务。" },
-            ].map((item, i) => (
-              <Card key={i} className="bg-card/50 border-border/50">
-                <CardContent className="p-4">
-                  <h4 className="font-medium text-sm mb-1">{item.q}</h4>
-                  <p className="text-sm text-muted-foreground">{item.a}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
+        )}
       </div>
+    </div>
+  );
+}
 
-      {/* Screenshot Payment Dialog (fallback) */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>截图付款</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              如果您无法使用在线支付，请向以下账户转账后上传付款截图。审核通过后将自动开通 <strong>{sp?.nameCn}</strong> 套餐。
-            </p>
-            <Card className="bg-background/50 border-border/50">
-              <CardContent className="p-4 text-sm space-y-1">
-                <div>套餐：{sp?.nameCn}</div>
-                <div>Credits：{sp?.monthlyCredits}/月</div>
-              </CardContent>
-            </Card>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { if (e.target.files?.[0]) handlePaymentUpload(e.target.files[0]); }} />
-            <Button className="w-full gap-2" variant="outline" disabled={uploading} onClick={() => fileRef.current?.click()}>
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              {uploading ? "上传中..." : "上传付款截图"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+function FeatureRow({ text, light }: { text: string; light?: boolean }) {
+  return (
+    <div className="flex items-center mb-1.5">
+      <CheckCircle className={`h-4 w-4 ${light ? "text-green-300" : "text-green-500"}`} />
+      <span className={`text-sm ml-2 ${light ? "text-white/90" : "text-gray-200"}`}>
+        {text}
+      </span>
+    </div>
+  );
+}
+
+function CostRow({ icon, label, cost, badge }: { icon: React.ReactNode; label: string; cost: number; badge?: string }) {
+  return (
+    <div className="flex justify-between items-center p-4">
+      <div className="flex items-center gap-2.5">
+        {icon}
+        <span className="text-sm text-gray-200">{label}</span>
+        {badge && (
+          <div className="bg-[#FF6B35] rounded text-white text-[10px] font-extrabold px-1.5 py-0.5">{badge}</div>
+        )}
+      </div>
+      <span className="text-sm font-semibold text-[#FF6B35]">{cost} Credits</span>
     </div>
   );
 }

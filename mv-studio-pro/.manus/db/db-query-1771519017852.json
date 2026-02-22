@@ -1,9 +1,0 @@
-{
-  "query": "CREATE TABLE `sessions` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`openId` varchar(64) NOT NULL,\n\t`token` text NOT NULL,\n\t`loginMethod` varchar(64),\n\t`userAgent` varchar(512),\n\t`expiresAt` timestamp NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`lastActiveAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `sessions_id` PRIMARY KEY(`id`),\n\tINDEX `idx_sessions_token` (`openId`),\n\tINDEX `idx_sessions_userId` (`userId`),\n\tINDEX `idx_sessions_expiresAt` (`expiresAt`)\n);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE `sessions` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`userId` int NOT NULL,\n\t`openId` varchar(64) NOT NULL,\n\t`token` text NOT NULL,\n\t`loginMethod` varchar(64),\n\t`userAgent` varchar(512),\n\t`expiresAt` timestamp NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\t`lastActiveAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `sessions_id` PRIMARY KEY(`id`),\n\tINDEX `idx_sessions_token` (`openId`),\n\tINDEX `idx_sessions_userId` (`userId`),\n\tINDEX `idx_sessions_expiresAt` (`expiresAt`)\n);",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1920
-}

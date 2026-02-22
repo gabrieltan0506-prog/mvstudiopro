@@ -1,6 +1,0 @@
-Screenshot analysis:
-- Login button (red circle) visible in top-right corner of nav bar - GOOD
-- Hero section looks good with floating album covers
-- "精華 MV 集錦" section visible below
-- Need to scroll down to see the MV grid cards and other sections
-- The "background" and "animation" style warnings are expected - they are web-only CSS properties that RN logs as warnings but work fine on web

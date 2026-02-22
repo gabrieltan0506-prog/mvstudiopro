@@ -1,7 +1,7 @@
 // Preconfigured storage helpers for Manus WebDev templates
 // Uses the Biz-provided storage proxy (Authorization: Bearer <token>)
 
-import { ENV } from './_core/env';
+import { ENV } from "./_core/env";
 
 type StorageConfig = { baseUrl: string; apiKey: string };
 
@@ -11,7 +11,7 @@ function getStorageConfig(): StorageConfig {
 
   if (!baseUrl || !apiKey) {
     throw new Error(
-      "Storage proxy credentials missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY"
+      "Storage proxy credentials missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY",
     );
   }
 
@@ -24,15 +24,8 @@ function buildUploadUrl(baseUrl: string, relKey: string): URL {
   return url;
 }
 
-async function buildDownloadUrl(
-  baseUrl: string,
-  relKey: string,
-  apiKey: string
-): Promise<string> {
-  const downloadApiUrl = new URL(
-    "v1/storage/downloadUrl",
-    ensureTrailingSlash(baseUrl)
-  );
+async function buildDownloadUrl(baseUrl: string, relKey: string, apiKey: string): Promise<string> {
+  const downloadApiUrl = new URL("v1/storage/downloadUrl", ensureTrailingSlash(baseUrl));
   downloadApiUrl.searchParams.set("path", normalizeKey(relKey));
   const response = await fetch(downloadApiUrl, {
     method: "GET",
@@ -52,7 +45,7 @@ function normalizeKey(relKey: string): string {
 function toFormData(
   data: Buffer | Uint8Array | string,
   contentType: string,
-  fileName: string
+  fileName: string,
 ): FormData {
   const blob =
     typeof data === "string"
@@ -70,7 +63,7 @@ function buildAuthHeaders(apiKey: string): HeadersInit {
 export async function storagePut(
   relKey: string,
   data: Buffer | Uint8Array | string,
-  contentType = "application/octet-stream"
+  contentType = "application/octet-stream",
 ): Promise<{ key: string; url: string }> {
   const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
@@ -85,14 +78,14 @@ export async function storagePut(
   if (!response.ok) {
     const message = await response.text().catch(() => response.statusText);
     throw new Error(
-      `Storage upload failed (${response.status} ${response.statusText}): ${message}`
+      `Storage upload failed (${response.status} ${response.statusText}): ${message}`,
     );
   }
   const url = (await response.json()).url;
   return { key, url };
 }
 
-export async function storageGet(relKey: string): Promise<{ key: string; url: string; }> {
+export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
   return {

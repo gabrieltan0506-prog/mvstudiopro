@@ -15,7 +15,7 @@ type CarouselPlugin = UseCarouselParameters[1];
 type CarouselProps = {
   opts?: CarouselOptions;
   plugins?: CarouselPlugin;
-  orientation?: "horizontal" | "vertical";
+  orientation?: "" | "vertical";
   setApi?: (api: CarouselApi) => void;
 };
 
@@ -41,7 +41,7 @@ function useCarousel() {
 }
 
 function Carousel({
-  orientation = "horizontal",
+  orientation = "",
   opts,
   setApi,
   plugins,
@@ -52,7 +52,7 @@ function Carousel({
   const [carouselRef, api] = useEmblaCarousel(
     {
       ...opts,
-      axis: orientation === "horizontal" ? "x" : "y",
+      axis: orientation === "" ? "x" : "y",
     },
     plugins
   );
@@ -109,7 +109,7 @@ function Carousel({
         api: api,
         opts,
         orientation:
-          orientation || (opts?.axis === "y" ? "vertical" : "horizontal"),
+          orientation || (opts?.axis === "y" ? "vertical" : ""),
         scrollPrev,
         scrollNext,
         canScrollPrev,
@@ -142,7 +142,7 @@ function CarouselContent({ className, ...props }: React.ComponentProps<"div">) {
       <div
         className={cn(
           "flex",
-          orientation === "horizontal" ? "-ml-4" : "-mt-4 flex-col",
+          orientation === "" ? "-ml-4" : "-mt-4 flex-col",
           className
         )}
         {...props}
@@ -161,7 +161,7 @@ function CarouselItem({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="carousel-item"
       className={cn(
         "min-w-0 shrink-0 grow-0 basis-full",
-        orientation === "horizontal" ? "pl-4" : "pt-4",
+        orientation === "" ? "pl-4" : "pt-4",
         className
       )}
       {...props}
@@ -184,7 +184,7 @@ function CarouselPrevious({
       size={size}
       className={cn(
         "absolute size-8 rounded-full",
-        orientation === "horizontal"
+        orientation === ""
           ? "top-1/2 -left-12 -translate-y-1/2"
           : "-top-12 left-1/2 -translate-x-1/2 rotate-90",
         className
@@ -214,7 +214,7 @@ function CarouselNext({
       size={size}
       className={cn(
         "absolute size-8 rounded-full",
-        orientation === "horizontal"
+        orientation === ""
           ? "top-1/2 -right-12 -translate-y-1/2"
           : "-bottom-12 left-1/2 -translate-x-1/2 rotate-90",
         className

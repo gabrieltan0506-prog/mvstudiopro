@@ -15,7 +15,7 @@
 
 import { z } from "zod";
 import { router, publicProcedure } from "../_core/trpc";
-import { invokeLLMFlash, type Message } from "../_core/llm";
+import { invokeLLM, type Message } from "../_core/llm";
 import { notifyOwner } from "../_core/notification";
 
 // ─── 内存会话存储（按 sessionId） ─────────────────────────
@@ -34,7 +34,7 @@ const SESSION_TTL = 2 * 60 * 60 * 1000;
 // 定期清理过期会话（每 30 分钟）
 setInterval(() => {
   const now = Date.now();
-  for (const [id, session] of sessions) {
+  for (const [id, session] of Array.from(sessions.entries())) {
     if (now - session.lastActivity > SESSION_TTL) {
       sessions.delete(id);
     }
@@ -167,7 +167,7 @@ export const customerServiceRouter = router({
       ];
 
       try {
-        const result = await invokeLLMFlash({
+        const result = await invokeLLM({
           messages: llmMessages,
           maxTokens: 1024,
         });

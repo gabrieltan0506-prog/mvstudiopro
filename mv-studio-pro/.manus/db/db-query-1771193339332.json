@@ -1,9 +1,0 @@
-{
-  "query": "CREATE TABLE `mv_reviews` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`mvId` varchar(64) NOT NULL,\n\t`nickname` varchar(100) NOT NULL,\n\t`rating` int NOT NULL,\n\t`comment` text NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `mv_reviews_id` PRIMARY KEY(`id`)\n);",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.ea4f3b5bd2a0 --database ZcSpbTjo8yTZWfuGuozyuC --execute CREATE TABLE `mv_reviews` (\n\t`id` int AUTO_INCREMENT NOT NULL,\n\t`mvId` varchar(64) NOT NULL,\n\t`nickname` varchar(100) NOT NULL,\n\t`rating` int NOT NULL,\n\t`comment` text NOT NULL,\n\t`createdAt` timestamp NOT NULL DEFAULT (now()),\n\tCONSTRAINT `mv_reviews_id` PRIMARY KEY(`id`)\n);",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1584
-}

@@ -1,14 +1,18 @@
 import React, { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-interface ModelViewerProps {
-  glbUrl?: string | null;
-  objUrl?: string | null;
-  textureUrl?: string | null;
-  thumbnailUrl?: string | null;
-  height?: number;
+export interface ModelViewerProps {
+  modelUrl?: string;
+  src?: string;
+  glbUrl?: string;
+  objUrl?: string;
+  format?: string;
+  width?: string | number;
+  height?: string | number;
   autoRotate?: boolean;
+  showWireframe?: boolean;
   backgroundColor?: string;
+  [key: string]: any;
 }
 
 function generateModelViewerHTML(props: {
@@ -32,7 +36,7 @@ function generateModelViewerHTML(props: {
     model-viewer {
       width: 100%;
       height: 100%;
-      --poster-color: transparent;
+      --poster-color: ;
     }
     model-viewer::part(default-progress-bar) {
       background: linear-gradient(90deg, #64D2FF, #FF6B6B);

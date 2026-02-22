@@ -64,13 +64,13 @@ describe("router structure", () => {
     expect(procedures).toContain("auth.logout");
     expect(procedures).toContain("guestbook.submit");
     expect(procedures).toContain("guestbook.list");
-    expect(procedures).toContain("mvReview.submit");
-    expect(procedures).toContain("mvReview.list");
-    expect(procedures).toContain("mvAnalysis.analyze");
+    expect(procedures).toContain("mvReviews.submit");
+    expect(procedures).toContain("mvReviews.list");
+    expect(procedures).toContain("mvAnalysis.analyzeFrame");
     expect(procedures).toContain("storyboard.generate");
-    expect(procedures).toContain("payment.submit");
+    expect(procedures).toContain("payment.getPaymentPackages");
     expect(procedures).toContain("credits.balance");
-    expect(procedures).toContain("team.create");
+    expect(procedures).toContain("team.createTeam");
     expect(procedures).toContain("admin.stats");
   });
 });

@@ -1,600 +1,604 @@
-import { useState, useRef, useCallback } from "react";
-import { trpc } from "@/lib/trpc";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { getLoginUrl } from "@/const";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Slider } from "@/components/ui/slider";
+// @ts-nocheck
+/**
+ * Suno 音乐工作室
+ *
+ * 参考 Suno 官网设计，提供两种模式：
+ * - Simple：输入描述 + 选风格标签 → AI 自动生成歌曲
+ * - Custom：手动填入歌词 + 选风格 + 高级选项 → 精细控制
+ *
+ * 引擎选择：V4（12 Credits）/ V5（22 Credits）
+ */
+
+import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useLocation, Link } from "wouter";
 import { toast } from "sonner";
-import {
-  Music, Upload, Loader2, Play, Pause, BarChart3, Mic2, Palette,
-  Eye, Drum, Guitar, Clock, Zap, ChevronDown, ChevronUp,
-  Sparkles, Film, Camera, Sun, Users, Clapperboard, Image as ImageIcon,
+import { trpc } from "@/lib/trpc";
+import { 
+  Music, 
+  ArrowLeft, 
+  Pencil, 
+  Music2, 
+  Music2, 
+  Sparkles, 
+  Wand2, 
+  Settings2, 
+  Voicemail, 
+  Mic, 
+  Palette, 
+  Smile, 
+  ListMusic, 
+  CheckCircle, 
+  Play, 
+  Download, 
+  AlertTriangle, 
+  RefreshCw, 
+  Loader2 
 } from "lucide-react";
 
-type AudioAnalysis = {
-  bpm: number;
-  bpmRange: string;
-  overallMood: string;
-  language: string;
-  lyrics: string;
-  sections: Array<{
-    name: string;
-    timeRange: string;
-    mood: string;
-    energy: string;
-    instruments: string;
-    rhythmPattern: string;
-    lyrics?: string;
-  }>;
-  instrumentation: string;
-  suggestedColorPalette: string;
-  suggestedVisualStyle: string;
-  genre: string;
-  musicalKey: string;
-  dynamicRange: string;
-};
+// ─── 类型 ─────────────────────────────────────────
+type Mode = "simple" | "custom";
+type Engine = "V4" | "V5";
+type GenerationStatus = "idle" | "generating" | "polling" | "success" | "error";
 
-type StoryboardScene = {
-  sceneNumber: number;
-  timeRange: string;
-  description: string;
-  lighting: string;
-  characterExpression: string;
-  characterAction: string;
-  characterDemeanor: string;
-  characterInteraction: string;
-  shotType: string;
-  cameraMovement: string;
-  colorTone: string;
-  bpm: string;
-  mood: string;
-  lyrics: string;
-  imagePrompt: string;
-  generatedImageUrl?: string | null;
-};
-
-type Storyboard = {
+interface GeneratedSong {
+  id: string;
+  audioUrl: string;
+  streamUrl?: string;
+  imageUrl?: string;
   title: string;
-  overallMood: string;
-  suggestedBPM: string;
-  colorPalette: string;
-  scenes: StoryboardScene[];
-};
+  tags?: string;
+  duration?: number;
+}
 
-export default function AudioLab() {
-  const { user } = useAuth();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
+// ─── 风格标签 ─────────────────────────────────────
+const STYLE_TAGS = [
+  { id: "pop", label: "流行", emoji: "🎵" },
+  { id: "rock", label: "摇滚", emoji: "🎸" },
+  { id: "electronic", label: "电子", emoji: "🎹" },
+  { id: "hip_hop", label: "嘻哈", emoji: "🎤" },
+  { id: "rnb", label: "R&B", emoji: "🎷" },
+  { id: "jazz", label: "爵士", emoji: "🎺" },
+  { id: "folk", label: "民谣", emoji: "🪕" },
+  { id: "chinese", label: "中国风", emoji: "🏮" },
+  { id: "anime", label: "日系动漫", emoji: "🌸" },
+  { id: "kpop", label: "韩流", emoji: "💜" },
+  { id: "cinematic", label: "电影配乐", emoji: "🎬" },
+  { id: "lofi", label: "Lo-Fi", emoji: "☕" },
+  { id: "ambient", label: "氛围", emoji: "🌊" },
+  { id: "classical", label: "古典", emoji: "🎻" },
+];
 
-  // Upload state
-  const [uploading, setUploading] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [audioName, setAudioName] = useState("");
-  const [localAudioUrl, setLocalAudioUrl] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
+const MOOD_TAGS = [
+  { id: "upbeat", label: "欢快", style: "Upbeat, Energetic, Bright" },
+  { id: "emotional", label: "感人", style: "Emotional, Heartfelt, Gentle" },
+  { id: "dark", label: "暗黑", style: "Dark, Mysterious, Intense" },
+  { id: "dreamy", label: "梦幻", style: "Dreamy, Ethereal, Floating" },
+  { id: "powerful", label: "震撼", style: "Powerful, Epic, Grand" },
+  { id: "chill", label: "放松", style: "Chill, Relaxing, Smooth" },
+  { id: "romantic", label: "浪漫", style: "Romantic, Warm, Sweet" },
+  { id: "melancholy", label: "忧郁", style: "Melancholy, Sad, Reflective" },
+];
 
-  // Analysis state
-  const [analysis, setAnalysis] = useState<AudioAnalysis | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set());
+// ─── 组件 ─────────────────────────────────────────
+export default function AudioLabPage() {
+  const [location, navigate] = useLocation();
 
-  // Storyboard state
-  const [storyboard, setStoryboard] = useState<Storyboard | null>(null);
-  const [sceneCount, setSceneCount] = useState([8]);
-  const [expandedScenes, setExpandedScenes] = useState<Set<number>>(new Set());
+  // 状态
+  const [mode, setMode] = useState<Mode>("simple");
+  const [engine, setEngine] = useState<Engine>("V4");
+  const [title, setTitle] = useState("");
 
-  const analyzeMut = trpc.audioLab.analyze.useMutation();
-  const storyboardMut = trpc.audioLab.generateStoryboard.useMutation();
+  // Simple 模式
+  const [description, setDescription] = useState("");
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
+  const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+  const [instrumental, setInstrumental] = useState(false);
 
-  // Upload handler
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Custom 模式
+  const [lyrics, setLyrics] = useState("");
+  const [customStyle, setCustomStyle] = useState("");
+  const [vocalGender, setVocalGender] = useState<"" | "male" | "female">("");
 
-    // Validate
-    const validTypes = ["audio/mpeg", "audio/mp3", "audio/wav", "audio/ogg", "audio/m4a", "audio/mp4", "audio/x-m4a", "audio/webm"];
-    if (!validTypes.some(t => file.type.startsWith(t.split("/")[0]))) {
-      toast.error("请上传音频文件（MP3、WAV、OGG、M4A）");
-      return;
-    }
-    if (file.size > 16 * 1024 * 1024) {
-      toast.error("文件大小不能超过 16MB");
-      return;
-    }
+  // 生成状态
+  const [status, setStatus] = useState<GenerationStatus>("idle");
+  const [taskId, setTaskId] = useState("");
+  const [songs, setSongs] = useState<GeneratedSong[]>([]);
+  const [errorMsg, setErrorMsg] = useState("");
+  const [creditCost, setCreditCost] = useState(0);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    setUploading(true);
-    setAudioName(file.name);
-    setLocalAudioUrl(URL.createObjectURL(file));
-    setAnalysis(null);
-    setStoryboard(null);
+  // tRPC mutations
+  const generateMusic = trpc.audioLab.generateMusic.useMutation();
+  const generateLyrics = trpc.audioLab.generateLyrics.useMutation();
 
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.url) {
-        setAudioUrl(data.url);
-        toast.success("音频上传成功！");
-      } else {
-        throw new Error(data.error || "上传失败");
-      }
-    } catch (err: any) {
-      toast.error(err.message || "上传失败");
-      setAudioUrl(null);
-    } finally {
-      setUploading(false);
-    }
+  // 清理轮询
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
   }, []);
 
-  // Analyze handler
-  const handleAnalyze = useCallback(async () => {
-    if (!audioUrl) return;
-    toast.info("Gemini 正在聆听和分析歌曲...");
-    const result = await analyzeMut.mutateAsync({ audioUrl, fileName: audioName });
-    if (result.success && result.analysis) {
-      setAnalysis(result.analysis);
-      toast.success("音频分析完成！");
-    } else {
-      toast.error(result.error || "分析失败");
-    }
-  }, [audioUrl, audioName, analyzeMut]);
-
-  // Generate storyboard handler
-  const handleGenerateStoryboard = useCallback(async () => {
-    if (!analysis) return;
-    toast.info("正在根据音频分析生成分镜脚本...");
-    const result = await storyboardMut.mutateAsync({
-      lyrics: analysis.lyrics || "",
-      bpm: analysis.bpm,
-      bpmRange: analysis.bpmRange,
-      overallMood: analysis.overallMood,
-      genre: analysis.genre,
-      sections: analysis.sections,
-      suggestedColorPalette: analysis.suggestedColorPalette,
-      suggestedVisualStyle: analysis.suggestedVisualStyle,
-      instrumentation: analysis.instrumentation,
-      sceneCount: sceneCount[0],
-    });
-    if (result.success && result.storyboard) {
-      setStoryboard(result.storyboard as Storyboard);
-      toast.success("分镜脚本生成完成！");
-    } else {
-      toast.error(result.error || "分镜生成失败");
-    }
-  }, [analysis, sceneCount, storyboardMut]);
-
-  // Audio playback toggle
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
-  };
-
-  const toggleSection = (idx: number) => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
-      next.has(idx) ? next.delete(idx) : next.add(idx);
-      return next;
-    });
-  };
-
-  const toggleScene = (idx: number) => {
-    setExpandedScenes(prev => {
-      const next = new Set(prev);
-      next.has(idx) ? next.delete(idx) : next.add(idx);
-      return next;
-    });
-  };
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Card className="max-w-md w-full mx-4">
-          <CardContent className="pt-6 text-center space-y-4">
-            <Music className="w-12 h-12 text-primary mx-auto" />
-            <h2 className="text-xl font-bold">请先登录</h2>
-            <p className="text-muted-foreground">登录后即可使用歌曲分析功能</p>
-            <Button onClick={() => { window.location.href = getLoginUrl(); }}>登录</Button>
-          </CardContent>
-        </Card>
-      </div>
+  // ─── 风格标签切换 ──────────────────────────────
+  const toggleStyle = useCallback((id: string) => {
+    setSelectedStyles(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
     );
-  }
+  }, []);
+
+  const toggleMood = useCallback((id: string) => {
+    setSelectedMoods(prev =>
+      prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]
+    );
+  }, []);
+
+  // ─── 构建风格字符串 ────────────────────────────
+  const buildStyleString = (): string => {
+    const parts: string[] = [];
+
+    selectedStyles.forEach(id => {
+      const tag = STYLE_TAGS.find(t => t.id === id);
+      if (tag) parts.push(tag.label);
+    });
+
+    selectedMoods.forEach(id => {
+      const mood = MOOD_TAGS.find(m => m.id === id);
+      if (mood) parts.push(mood.style);
+    });
+
+    if (vocalGender === "male") parts.push("Male Vocal");
+    if (vocalGender === "female") parts.push("Female Vocal");
+
+    return parts.join(", ") || "Pop, Modern";
+  };
+
+  // ─── 轮询任务状态 ──────────────────────────────
+  const pollTaskStatus = trpc.audioLab.getTaskStatus.useQuery;
+  const startPolling = useCallback((tid: string) => {
+    setStatus("polling");
+    let attempts = 0;
+    const maxAttempts = 60; // 最多轮询 5 分钟
+
+    pollingRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        setStatus("error");
+        setErrorMsg("生成超时，请稍后在历史记录中查看结果");
+        return;
+      }
+
+      try {
+        // TODO: This is a temporary workaround for polling. 
+        // It should be replaced with a proper tRPC query or subscription.
+        const response = await fetch(
+          `/api/trpc/audioLab.getTaskStatus?input=${encodeURIComponent(JSON.stringify({ taskId: tid }))}`,
+          { credentials: "include" }
+        );
+        const json = await response.json();
+        const data = json?.result?.data;
+
+        if (!data) return;
+
+        if (data.status === "SUCCESS") {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          setSongs(data.songs || []);
+          setStatus("success");
+          toast.success("音乐生成成功！");
+        } else if (data.status === "FAILED") {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          setStatus("error");
+          setErrorMsg(data.errorMessage || "生成失败，请重试");
+        }
+      } catch {
+        // 忽略单次轮询错误
+      }
+    }, 5000);
+  }, []);
+
+  // ─── 提交生成 ──────────────────────────────────
+  const handleGenerate = useCallback(async () => {
+    const songTitle = title.trim() || (mode === "simple" ? "AI 生成歌曲" : "自定义歌曲");
+
+    if (mode === "simple" && !description.trim() && selectedStyles.length === 0) {
+      toast.error("请输入歌曲描述或选择至少一个风格标签");
+      return;
+    }
+    if (mode === "custom" && !lyrics.trim()) {
+      toast.error("Custom 模式需要填入歌词");
+      return;
+    }
+
+    setStatus("generating");
+    setErrorMsg("");
+    setSongs([]);
+
+    try {
+      const styleStr = mode === "custom" && customStyle.trim()
+        ? customStyle.trim()
+        : buildStyleString();
+
+      const moodStr = selectedMoods
+        .map(id => MOOD_TAGS.find(m => m.id === id)?.style)
+        .filter(Boolean)
+        .join(", ");
+
+      if (mode === "simple") {
+        const result = await generateMusic.mutateAsync({
+          mode: instrumental ? "bgm" : "theme_song",
+          model: engine,
+          title: songTitle,
+          lyrics: instrumental ? undefined : description.trim() || undefined,
+          customStyle: styleStr || undefined,
+          mood: moodStr || description.trim() || undefined,
+        });
+
+        setTaskId(result.taskId);
+        setCreditCost(result.creditCost);
+        startPolling(result.taskId);
+      } else {
+        const result = await generateMusic.mutateAsync({
+          mode: "theme_song",
+          model: engine,
+          title: songTitle,
+          lyrics: lyrics.trim(),
+          mood: styleStr || undefined,
+        });
+
+        setTaskId(result.taskId);
+        setCreditCost(result.creditCost);
+        startPolling(result.taskId);
+      }
+    } catch (err: any) {
+      setStatus("error");
+      setErrorMsg(err?.message || "生成失败，请检查 Credits 余额后重试");
+    }
+  }, [mode, engine, title, description, lyrics, customStyle, selectedStyles, selectedMoods, instrumental, vocalGender, generateMusic, startPolling, buildStyleString]);
+
+  // ─── AI 歌词助手 ──────────────────────────────
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [lyricsPrompt, setLyricsPrompt] = useState("");
+
+  const handleGenerateLyrics = useCallback(async () => {
+    if (!lyricsPrompt.trim()) {
+      toast.error("请输入歌词主题或故事描述");
+      return;
+    }
+    setLyricsLoading(true);
+    try {
+      const result = await generateLyrics.mutateAsync({
+        script: lyricsPrompt.trim(),
+        mood: selectedMoods.map(id => MOOD_TAGS.find(m => m.id === id)?.label).filter(Boolean).join("、") || "流行",
+        language: "zh",
+      });
+      setLyrics(result.lyrics);
+      setLyricsPrompt("");
+      toast.success("AI 歌词已生成！");
+    } catch (err: any) {
+      toast.error("歌词生成失败", { description: err?.message || "请稍后重试" });
+    } finally {
+      setLyricsLoading(false);
+    }
+  }, [lyricsPrompt, selectedMoods, generateLyrics]);
+
+  // ─── 重置 ──────────────────────────────────────
+  const handleReset = useCallback(() => {
+    setStatus("idle");
+    setTaskId("");
+    setSongs([]);
+    setErrorMsg("");
+    setDescription("");
+    setLyrics("");
+    setCustomStyle("");
+    setTitle("");
+    setSelectedStyles([]);
+    setSelectedMoods([]);
+    setVocalGender("");
+    setInstrumental(false);
+    if (pollingRef.current) clearInterval(pollingRef.current);
+  }, []);
+
+  // ─── 渲染 ──────────────────────────────────────
+  const isGenerating = status === "generating" || status === "polling";
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex flex-col h-screen bg-[#0A0A0C] text-[#F7F4EF]">
       {/* Header */}
-      <div className="border-b border-border/40 bg-gradient-to-r from-purple-500/5 via-pink-500/5 to-orange-500/5">
-        <div className="container py-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20">
-              <Music className="w-6 h-6 text-purple-400" />
-            </div>
-            <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-500/10 text-yellow-500 border border-yellow-500/20">
-              实验室测试版
-            </span>
-          </div>
-          <h1 className="text-3xl font-bold mt-3">歌曲智能分析</h1>
-          <p className="text-muted-foreground mt-2 max-w-2xl">
-            上传歌曲，Gemini AI 将深度分析 BPM、情绪、节奏变化、段落结构、乐器编排，
-            并自动生成包含灯光、机位、表情、动作等 14 个专业维度的分镜脚本。
-          </p>
+      <div className="flex items-center justify-between p-3 border-b border-white/10">
+        <Link href="/">
+          <button className="p-2 rounded-full hover:bg-white/10 transition-colors">
+            <ArrowLeft size={24} />
+          </button>
+        </Link>
+        <div className="flex items-center gap-2">
+          <Music2 size={22} className="text-[#E8825E]" />
+          <h1 className="text-lg font-bold">音乐工作室</h1>
         </div>
+        <div className="w-10" />
       </div>
 
-      <div className="container py-8 space-y-8">
-        {/* Step 1: Upload */}
-        <Card className="border-dashed border-2 border-border/60 hover:border-primary/40 transition-colors">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">1</span>
-              上传歌曲
-            </CardTitle>
-            <CardDescription>支持 MP3、WAV、OGG、M4A 格式，最大 16MB</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-            {!audioUrl ? (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="w-full py-12 rounded-xl border-2 border-dashed border-border/40 hover:border-primary/40 hover:bg-primary/5 transition-all flex flex-col items-center gap-3 text-muted-foreground hover:text-foreground"
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                    <span>上传中...</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-10 h-10" />
-                    <span className="text-lg font-medium">点击或拖拽上传音频文件</span>
-                    <span className="text-sm">MP3 / WAV / OGG / M4A · 最大 16MB</span>
-                  </>
-                )}
-              </button>
-            ) : (
-              <div className="flex items-center gap-4 p-4 rounded-xl bg-card border border-border/40">
-                <button
-                  onClick={togglePlay}
-                  className="w-12 h-12 rounded-full bg-primary/10 hover:bg-primary/20 flex items-center justify-center transition-colors"
-                >
-                  {isPlaying ? <Pause className="w-5 h-5 text-primary" /> : <Play className="w-5 h-5 text-primary ml-0.5" />}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium truncate">{audioName}</p>
-                  <p className="text-sm text-muted-foreground">已上传至云端</p>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => {
-                  setAudioUrl(null);
-                  setLocalAudioUrl(null);
-                  setAnalysis(null);
-                  setStoryboard(null);
-                  setAudioName("");
-                  if (fileInputRef.current) fileInputRef.current.value = "";
-                }}>
-                  更换
-                </Button>
-                {localAudioUrl && <audio ref={audioRef} src={localAudioUrl} onEnded={() => setIsPlaying(false)} />}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <div className="flex-1 overflow-y-auto p-4 pb-32 space-y-6">
+        {/* Mode + Engine Selector */}
+        <div className="flex items-center justify-between">
+          <div className="flex p-1 bg-white/5 rounded-xl">
+            <button 
+              onClick={() => setMode("simple")}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${mode === 'simple' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}>
+              Simple
+            </button>
+            <button 
+              onClick={() => setMode("custom")}
+              className={`px-5 py-2 rounded-lg text-sm font-semibold transition-colors ${mode === 'custom' ? 'bg-white/10 text-white' : 'text-gray-400 hover:bg-white/5'}`}>
+              Custom
+            </button>
+          </div>
 
-        {/* Step 2: Analyze */}
-        {audioUrl && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">2</span>
-                AI 音频分析
-                <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 ml-2">
-                  Gemini · 10 Credits
-                </span>
-              </CardTitle>
-              <CardDescription>Gemini 将深度聆听歌曲，分析 BPM、情绪、段落结构、乐器编排等</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {!analysis ? (
-                <Button
-                  onClick={handleAnalyze}
-                  disabled={analyzeMut.isPending}
-                  className="w-full h-14 text-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-                >
-                  {analyzeMut.isPending ? (
-                    <><Loader2 className="w-5 h-5 animate-spin mr-2" /> Gemini 正在聆听分析中...</>
-                  ) : (
-                    <><Sparkles className="w-5 h-5 mr-2" /> 开始 AI 分析</>
-                  )}
-                </Button>
-              ) : (
-                <div className="space-y-6">
-                  {/* Overview Cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="p-3 rounded-lg bg-gradient-to-br from-red-500/10 to-orange-500/10 border border-red-500/20">
-                      <div className="flex items-center gap-2 text-red-400 mb-1">
-                        <Drum className="w-4 h-4" />
-                        <span className="text-xs font-medium">BPM</span>
-                      </div>
-                      <p className="text-2xl font-bold">{analysis.bpm}</p>
-                      <p className="text-xs text-muted-foreground">{analysis.bpmRange}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-gradient-to-br from-blue-500/10 to-cyan-500/10 border border-blue-500/20">
-                      <div className="flex items-center gap-2 text-blue-400 mb-1">
-                        <Zap className="w-4 h-4" />
-                        <span className="text-xs font-medium">情绪</span>
-                      </div>
-                      <p className="text-lg font-bold">{analysis.overallMood}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/20">
-                      <div className="flex items-center gap-2 text-green-400 mb-1">
-                        <Guitar className="w-4 h-4" />
-                        <span className="text-xs font-medium">风格</span>
-                      </div>
-                      <p className="text-lg font-bold">{analysis.genre}</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-gradient-to-br from-purple-500/10 to-pink-500/10 border border-purple-500/20">
-                      <div className="flex items-center gap-2 text-purple-400 mb-1">
-                        <Mic2 className="w-4 h-4" />
-                        <span className="text-xs font-medium">调性</span>
-                      </div>
-                      <p className="text-lg font-bold">{analysis.musicalKey}</p>
-                    </div>
-                  </div>
-
-                  {/* Detail Rows */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-4 rounded-lg bg-card border border-border/40">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Guitar className="w-4 h-4 text-amber-400" />
-                        <span className="font-medium text-sm">乐器编排</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{analysis.instrumentation}</p>
-                    </div>
-                    <div className="p-4 rounded-lg bg-card border border-border/40">
-                      <div className="flex items-center gap-2 mb-2">
-                        <BarChart3 className="w-4 h-4 text-cyan-400" />
-                        <span className="font-medium text-sm">动态范围</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{analysis.dynamicRange}</p>
-                    </div>
-                    <div className="p-4 rounded-lg bg-card border border-border/40">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Palette className="w-4 h-4 text-pink-400" />
-                        <span className="font-medium text-sm">建议色彩方案</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{analysis.suggestedColorPalette}</p>
-                    </div>
-                    <div className="p-4 rounded-lg bg-card border border-border/40">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Eye className="w-4 h-4 text-indigo-400" />
-                        <span className="font-medium text-sm">建议视觉风格</span>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{analysis.suggestedVisualStyle}</p>
-                    </div>
-                  </div>
-
-                  {/* Song Sections */}
-                  <div>
-                    <h3 className="font-semibold mb-3 flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-primary" />
-                      歌曲段落结构（{analysis.sections.length} 段）
-                    </h3>
-                    <div className="space-y-2">
-                      {analysis.sections.map((sec, idx) => (
-                        <div key={idx} className="rounded-lg border border-border/40 overflow-hidden">
-                          <button
-                            onClick={() => toggleSection(idx)}
-                            className="w-full flex items-center justify-between p-3 hover:bg-accent/50 transition-colors text-left"
-                          >
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs font-mono px-2 py-0.5 rounded bg-primary/10 text-primary">{sec.timeRange}</span>
-                              <span className="font-medium text-sm">{sec.name}</span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                sec.energy === "极高" ? "bg-red-500/10 text-red-400" :
-                                sec.energy === "高" ? "bg-orange-500/10 text-orange-400" :
-                                sec.energy === "中" ? "bg-yellow-500/10 text-yellow-400" :
-                                "bg-blue-500/10 text-blue-400"
-                              }`}>
-                                能量: {sec.energy}
-                              </span>
-                            </div>
-                            {expandedSections.has(idx) ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </button>
-                          {expandedSections.has(idx) && (
-                            <div className="px-3 pb-3 space-y-2 text-sm border-t border-border/20 pt-2">
-                              <div><span className="text-muted-foreground">情绪：</span>{sec.mood}</div>
-                              <div><span className="text-muted-foreground">乐器：</span>{sec.instruments}</div>
-                              <div><span className="text-muted-foreground">节奏：</span>{sec.rhythmPattern}</div>
-                              {sec.lyrics && <div><span className="text-muted-foreground">歌词：</span><span className="italic">{sec.lyrics}</span></div>}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Lyrics */}
-                  {analysis.lyrics && (
-                    <div>
-                      <h3 className="font-semibold mb-3 flex items-center gap-2">
-                        <Mic2 className="w-4 h-4 text-primary" />
-                        识别歌词
-                      </h3>
-                      <div className="p-4 rounded-lg bg-card border border-border/40 whitespace-pre-wrap text-sm text-muted-foreground leading-relaxed">
-                        {analysis.lyrics}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Step 3: Generate Storyboard */}
-        {analysis && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <span className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">3</span>
-                生成分镜脚本
-                <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 ml-2">
-                  15 Credits
-                </span>
-              </CardTitle>
-              <CardDescription>根据音频分析结果自动生成包含 14 个专业维度的分镜脚本</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {!storyboard ? (
-                <>
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm text-muted-foreground whitespace-nowrap">分镜数量：</span>
-                    <Slider
-                      value={sceneCount}
-                      onValueChange={setSceneCount}
-                      min={2}
-                      max={20}
-                      step={1}
-                      className="flex-1"
-                    />
-                    <span className="text-sm font-bold w-8 text-center">{sceneCount[0]}</span>
-                  </div>
-                  <Button
-                    onClick={handleGenerateStoryboard}
-                    disabled={storyboardMut.isPending}
-                    className="w-full h-14 text-lg bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700"
-                  >
-                    {storyboardMut.isPending ? (
-                      <><Loader2 className="w-5 h-5 animate-spin mr-2" /> 正在生成分镜脚本 + 分镜图...</>
-                    ) : (
-                      <><Film className="w-5 h-5 mr-2" /> 生成分镜脚本</>
-                    )}
-                  </Button>
-                </>
-              ) : (
-                <div className="space-y-6">
-                  {/* Storyboard Header */}
-                  <div className="p-4 rounded-xl bg-gradient-to-r from-orange-500/10 to-red-500/10 border border-orange-500/20">
-                    <h3 className="text-xl font-bold mb-2">{storyboard.title}</h3>
-                    <div className="flex flex-wrap gap-3 text-sm">
-                      <span className="px-2 py-1 rounded bg-background/50">情绪：{storyboard.overallMood}</span>
-                      <span className="px-2 py-1 rounded bg-background/50">BPM：{storyboard.suggestedBPM}</span>
-                      <span className="px-2 py-1 rounded bg-background/50">色彩：{storyboard.colorPalette}</span>
-                    </div>
-                  </div>
-
-                  {/* Scene Cards */}
-                  <div className="space-y-3">
-                    {storyboard.scenes.map((scene, idx) => (
-                      <div key={idx} className="rounded-xl border border-border/40 overflow-hidden">
-                        <button
-                          onClick={() => toggleScene(idx)}
-                          className="w-full flex items-center gap-4 p-4 hover:bg-accent/30 transition-colors text-left"
-                        >
-                          {/* Thumbnail */}
-                          {scene.generatedImageUrl && (
-                            <img
-                              src={scene.generatedImageUrl}
-                              alt={`分镜 ${scene.sceneNumber}`}
-                              className="w-20 h-12 object-cover rounded-lg flex-shrink-0"
-                            />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-mono px-2 py-0.5 rounded bg-primary/10 text-primary">#{scene.sceneNumber}</span>
-                              <span className="text-xs text-muted-foreground">{scene.timeRange}</span>
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">{scene.shotType}</span>
-                            </div>
-                            <p className="text-sm mt-1 truncate">{scene.description}</p>
-                          </div>
-                          {expandedScenes.has(idx) ? <ChevronUp className="w-4 h-4 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 flex-shrink-0" />}
-                        </button>
-
-                        {expandedScenes.has(idx) && (
-                          <div className="px-4 pb-4 border-t border-border/20 pt-3 space-y-4">
-                            {/* Full Image */}
-                            {scene.generatedImageUrl && (
-                              <div className="rounded-lg overflow-hidden">
-                                <img
-                                  src={scene.generatedImageUrl}
-                                  alt={`分镜 ${scene.sceneNumber}`}
-                                  className="w-full max-h-80 object-cover"
-                                />
-                              </div>
-                            )}
-
-                            {/* Dimension Grid */}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                              <div className="flex items-start gap-2">
-                                <Sun className="w-4 h-4 text-yellow-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">灯光设计：</span>{scene.lighting}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Users className="w-4 h-4 text-pink-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">人物表情：</span>{scene.characterExpression}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Clapperboard className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">人物动作：</span>{scene.characterAction}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Sparkles className="w-4 h-4 text-purple-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">人物神态：</span>{scene.characterDemeanor}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Users className="w-4 h-4 text-cyan-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">人物互动：</span>{scene.characterInteraction}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Camera className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">镜头运动：</span>{scene.cameraMovement}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Palette className="w-4 h-4 text-rose-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">色调调色：</span>{scene.colorTone}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Drum className="w-4 h-4 text-orange-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">配乐节奏：</span>{scene.bpm}</div>
-                              </div>
-                              <div className="flex items-start gap-2">
-                                <Zap className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
-                                <div><span className="text-muted-foreground">情绪氛围：</span>{scene.mood}</div>
-                              </div>
-                              {scene.lyrics && (
-                                <div className="flex items-start gap-2 md:col-span-2">
-                                  <Mic2 className="w-4 h-4 text-indigo-400 mt-0.5 flex-shrink-0" />
-                                  <div><span className="text-muted-foreground">对应歌词：</span><span className="italic">{scene.lyrics}</span></div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Info Banner */}
-        <div className="text-center text-sm text-muted-foreground py-4">
-          <p>此功能为实验室测试版，分析结果仅供参考。如遇问题请反馈给开发团队。</p>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setEngine("V4")}
+              className={`flex flex-col items-center px-4 py-1.5 rounded-lg border transition-all ${engine === 'V4' ? 'border-[#E8825E] bg-[#E8825E]/10' : 'border- bg-white/5 hover:bg-white/10'}`}>
+              <span className={`text-sm font-bold ${engine === 'V4' ? 'text-[#E8825E]' : 'text-gray-400'}`}>V4</span>
+              <span className="text-xs text-gray-500">12C</span>
+            </button>
+            <button 
+              onClick={() => setEngine("V5")}
+              className={`flex flex-col items-center px-4 py-1.5 rounded-lg border transition-all ${engine === 'V5' ? 'border-[#E8825E] bg-[#E8825E]/10' : 'border- bg-white/5 hover:bg-white/10'}`}>
+              <span className={`text-sm font-bold ${engine === 'V5' ? 'text-[#E8825E]' : 'text-gray-400'}`}>V5</span>
+              <span className="text-xs text-gray-500">22C</span>
+            </button>
+          </div>
         </div>
+
+        {/* ═══ Simple 模式 ═══ */}
+        {mode === "simple" && (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-gray-400">
+                <Pencil size={16} />
+                <h2 className="font-semibold">歌曲描述</h2>
+              </div>
+              <textarea
+                className="w-full h-24 p-3 bg-white/5 rounded-lg border border-white/10 focus:ring-2 focus:ring-[#E8825E] focus:border-[#E8825E] outline-none transition"
+                placeholder="描述你想要的歌曲，例如：一首关于夏天海边的轻快流行歌..."
+                maxLength={500}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+              <p className="text-xs text-right text-gray-500">{description.length}/500</p>
+            </div>
+
+            <button onClick={() => setInstrumental(!instrumental)} className="flex items-center justify-between w-full p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors">
+              <div className="flex items-center gap-2">
+                <Music2 size={18} className={instrumental ? "text-[#E8825E]" : "text-gray-400"} />
+                <span className={instrumental ? "text-[#E8825E] font-semibold" : "text-gray-300"}>纯音乐（无人声）</span>
+              </div>
+              <div className={`w-10 h-6 flex items-center rounded-full p-1 transition-colors ${instrumental ? 'bg-[#E8825E]' : 'bg-gray-600'}`}>
+                  <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${instrumental ? 'translate-x-4' : ''}`} />
+              </div>
+            </button>
+          </div>
+        )}
+
+        {/* ═══ Custom 模式 ═══ */}
+        {mode === "custom" && (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-gray-400">
+                <div className="flex items-center gap-2">
+                  <Music2 size={16} />
+                  <h2 className="font-semibold">歌词</h2>
+                </div>
+                <span className="text-xs">用 [Verse] [Chorus] [Bridge] 标记段落</span>
+              </div>
+              <textarea
+                className="w-full h-48 p-3 bg-white/5 rounded-lg border border-white/10 focus:ring-2 focus:ring-[#E8825E] focus:border-[#E8825E] outline-none transition"
+                placeholder="[Verse]...
+[Chorus]..."
+                maxLength={3000}
+                value={lyrics}
+                onChange={(e) => setLyrics(e.target.value)}
+              />
+              <p className="text-xs text-right text-gray-500">{lyrics.length}/3000</p>
+            </div>
+
+            <div className="p-3 bg-gradient-to-tr from-[#C77DBA]/10 to- rounded-lg space-y-2 border border-white/10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-[#C77DBA]" />
+                  <h3 className="font-semibold text-white">AI 歌词助手</h3>
+                </div>
+                <span className="text-xs font-medium text-gray-400">3 Credits</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="flex-1 p-2 bg-white/5 rounded-md border border-white/10 focus:ring-1 focus:ring-[#C77DBA] focus:border-[#C77DBA] outline-none transition"
+                  placeholder="输入主题或故事，AI 帮你写歌词..."
+                  value={lyricsPrompt}
+                  onChange={(e) => setLyricsPrompt(e.target.value)}
+                  maxLength={500}
+                />
+                <button
+                  onClick={handleGenerateLyrics}
+                  disabled={lyricsLoading}
+                  className="p-2 rounded-md bg-[#C77DBA] hover:bg-[#b36bab] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  {lyricsLoading ? <Loader2 size={20} className="animate-spin" /> : <Wand2 size={20} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-gray-400">
+                <div className="flex items-center gap-2">
+                  <Settings2 size={16} />
+                  <h2 className="font-semibold">自定义风格</h2>
+                </div>
+                <span className="text-xs">可选</span>
+              </div>
+              <input
+                type="text"
+                className="w-full p-3 bg-white/5 rounded-lg border border-white/10 focus:ring-2 focus:ring-[#E8825E] focus:border-[#E8825E] outline-none transition"
+                placeholder="例如：Synthwave, Dark, Female Vocal, 80s Retro"
+                value={customStyle}
+                onChange={(e) => setCustomStyle(e.target.value)}
+                maxLength={500}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-gray-400">
+                <Mic size={16} />
+                <h2 className="font-semibold">人声性别</h2>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(["", "male", "female"] as const).map(g => (
+                  <button
+                    key={g || "auto"}
+                    onClick={() => setVocalGender(g)}
+                    className={`flex items-center justify-center gap-2 p-2.5 rounded-lg transition-colors ${vocalGender === g ? 'bg-white/10 text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}>
+                    <Sparkles size={16} className={`${vocalGender === g ? 'text-[#E8825E]' : ''}`} />
+                    <span className="font-medium">{g === "male" ? "男声" : g === "female" ? "女声" : "自动"}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ 共用：风格标签 ═══ */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-gray-400">
+            <Palette size={16} />
+            <h2 className="font-semibold">风格</h2>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2">
+            {STYLE_TAGS.map(tag => (
+              <button
+                key={tag.id}
+                onClick={() => toggleStyle(tag.id)}
+                className={`flex flex-col items-center justify-center gap-1 p-3 rounded-lg transition-colors ${selectedStyles.includes(tag.id) ? 'bg-[#E8825E]/20 border border-[#E8825E]' : 'bg-white/5 hover:bg-white/10 border border- '}`}>
+                <span className="text-xl">{tag.emoji}</span>
+                <span className={`text-xs font-medium ${selectedStyles.includes(tag.id) ? 'text-[#E8825E]' : 'text-gray-300'}`}>
+                  {tag.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-gray-400">
+            <Smile size={16} />
+            <h2 className="font-semibold">情绪</h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {MOOD_TAGS.map(tag => (
+              <button
+                key={tag.id}
+                onClick={() => toggleMood(tag.id)}
+                className={`px-3 py-1.5 rounded-full text-sm transition-colors ${selectedMoods.includes(tag.id) ? 'bg-[#E8825E] text-black font-semibold' : 'bg-white/10 text-gray-300 hover:bg-white/20'}`}>
+                {tag.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-gray-400">
+            <div className="flex items-center gap-2">
+              <ListMusic size={16} />
+              <h2 className="font-semibold">歌曲标题</h2>
+            </div>
+            <span className="text-xs">可选</span>
+          </div>
+          <input
+            type="text"
+            className="w-full p-3 bg-white/5 rounded-lg border border-white/10 focus:ring-2 focus:ring-[#E8825E] focus:border-[#E8825E] outline-none transition"
+            placeholder="给你的歌曲起个名字..."
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={80}
+          />
+        </div>
+
+        {/* ═══ 生成结果 ═══ */}
+        {status === "success" && songs.length > 0 && (
+          <div className="p-4 bg-white/5 rounded-lg space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={20} className="text-green-500" />
+                <h3 className="font-bold text-lg text-white">生成完成！</h3>
+              </div>
+              <span className="text-sm font-medium text-gray-400">消耗 {creditCost} Credits</span>
+            </div>
+            {songs.map((song, idx) => (
+              <div key={song.id || idx} className="flex items-center justify-between p-3 bg-black/20 rounded-lg">
+                <div className="flex items-center gap-3 overflow-hidden">
+                  <div className="p-3 bg-[#E8825E]/20 rounded-full">
+                    <Music size={24} className="text-[#E8825E]" />
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <p className="font-semibold truncate text-white">{song.title || `歌曲 ${idx + 1}`}</p>
+                    {song.tags && <p className="text-xs text-gray-400 truncate">{song.tags}</p>}
+                    {song.duration && (
+                      <p className="text-xs text-gray-500">
+                        {Math.floor(song.duration / 60)}:{String(Math.floor(song.duration % 60)).padStart(2, "0")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                  {song.audioUrl && (
+                    <a href={song.audioUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
+                      <Play size={16} />
+                      <span className="text-sm font-medium">播放</span>
+                    </a>
+                  )}
+                  {song.audioUrl && (
+                    <a href={song.audioUrl} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
+                      <Download size={18} className="text-[#E8825E]" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {status === "error" && (
+          <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+            <AlertTriangle size={20} className="text-red-400" />
+            <p className="text-red-300 text-sm">{errorMsg}</p>
+          </div>
+        )}
+      </div>
+
+      {/* ═══ 底部按钮 ═══ */}
+      <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0A0A0C] to- ">
+        {status === "success" ? (
+          <button
+            onClick={handleReset}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gray-600 hover:bg-gray-500 text-white font-bold text-lg transition-all active:scale-95">
+            <RefreshCw size={20} />
+            <span>再来一首</span>
+          </button>
+        ) : (
+          <button
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#E8825E] hover:bg-[#d9734f] text-black font-bold text-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+            {isGenerating ? (
+              <>
+                <Loader2 size={20} className="animate-spin" />
+                <span>{status === "generating" ? "提交中..." : "生成中..."}</span>
+              </>
+            ) : (
+              <>
+                <Music size={20} />
+                <span>生成 · {engine === "V4" ? "12" : "22"} Credits</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   );

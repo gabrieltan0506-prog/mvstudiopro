@@ -1,7 +1,0 @@
-Platform section findings:
-- At the top of this viewport, I can see 4 small boxes labeled 21, 22, 23, 24 (小紅書, B站, 抖音, 視頻號)
-- They appear as small colored squares/circles at the top
-- The platform logos section seems to be above this viewport - need to scroll up slightly
-- Below is the contact form section with all fields visible
-
-Need to check if platform logos are actually showing images or just text/emoji icons.
