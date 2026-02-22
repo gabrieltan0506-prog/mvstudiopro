@@ -330,3 +330,10 @@
 - [x] 分鏡腳本視覺風格選擇器改為虛擬偶像頁面同款 UI（帶 lucide 圖標的卡片按鈕，3列佈局，藍色選中狀態）
 - [x] 修復 Kling API region 配置問題（設置 KLING_REGION=cn + KLING_DEFAULT_REGION=cn）
 - [x] 測試驗證（122 tests passed）並保存 checkpoint
+
+## Phase 35: 分鏡頁面設計升級 + Credits 標示 + GitHub 推送（2026-02-22）
+- [ ] 生成 5 種視覺風格預覽圖（電影感/動漫風/紀錄片/寫實片/科幻片）
+- [ ] 分鏡風格選擇器加入預覽圖背景 + 流暢過渡動畫（scale/opacity/ring transition）
+- [ ] 新增 AI 推薦 BGM 描述功能（Gemini 3.0 Pro / GPT 5.1 可選，自動填入 BGM 描述）
+- [ ] 全站收費功能「免費」字樣替換為 Credits 標示（分鏡腳本頁 + 虛擬偶像頁 + 其他頁面）
+- [ ] 測試驗證並保存 checkpoint 推送到 GitHub
