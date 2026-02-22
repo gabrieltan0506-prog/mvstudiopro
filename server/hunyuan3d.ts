@@ -68,6 +68,48 @@ export function isHunyuan3DAvailable(): boolean {
   return !!process.env.FAL_API_KEY;
 }
 
+// ─── BiRefNet 去背景 ───────────────────────────────────
+/**
+ * Use fal.ai BiRefNet to remove background from image before 3D conversion.
+ * This significantly improves 3D model quality by preventing background from being baked into the mesh.
+ */
+export async function removeBackground(imageUrl: string): Promise<string> {
+  ensureFalConfigured();
+  console.log("[BiRefNet] Starting background removal...");
+  const startTime = Date.now();
+
+  try {
+    const accessibleUrl = await ensureAccessibleUrl(imageUrl);
+    const result = await fal.subscribe("fal-ai/birefnet", {
+      input: {
+        image_url: accessibleUrl,
+        model: "General Use (Heavy)",
+        operating_resolution: "2048x2048",
+        output_format: "png",
+      },
+      logs: true,
+    });
+
+    const data = result.data as any;
+    const outputUrl = data?.image?.url;
+    const timeTaken = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    if (!outputUrl) {
+      console.error("[BiRefNet] No output image URL in response:", JSON.stringify(data, null, 2));
+      throw new Error("去背景失敗：未返回有效的图片");
+    }
+
+    console.log(`[BiRefNet] Background removed in ${timeTaken}s. Output: ${outputUrl.substring(0, 80)}`);
+    return outputUrl;
+  } catch (error: any) {
+    const timeTaken = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(`[BiRefNet] Failed after ${timeTaken}s:`, error.message);
+    // Fall back to original image if background removal fails
+    console.log("[BiRefNet] Falling back to original image...");
+    return imageUrl;
+  }
+}
+
 // ─── 生成 3D 模型 ───────────────────────────────────────
 /**
  * Ensure image URL is accessible by fal.ai — download and convert to base64 or upload to fal storage

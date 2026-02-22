@@ -305,3 +305,13 @@
 - [x] 可靈工作室 CostBadge 新增 Credits 顯示（Video 80 Cr、Motion 70 Cr、LipSync 60 Cr）
 - [x] ImageGenPanel 已有 Credits 顯示（O1 1K=8 Cr、O1 2K=10 Cr、V2.1 1K=5 Cr、V2.1 2K=7 Cr）
 - [x] 測試驗證（110 tests passed）
+
+## Phase 32: 分鏡腳本引擎分級收費 + Google API 定期檢查 + 2D轉3D 確認（2026-02-22）
+- [x] 分鏡腳本引擎分級：免費用 Gemini 3.0 Flash，GPT5.1（15 Cr）和 Gemini 3.0 Pro（10 Cr）收費
+- [x] 前端分鏡腳本頁面添加三個引擎選項（Flash 免費、GPT 5.1 15 Cr、Gemini Pro 10 Cr）
+- [x] 後端 invokeLLM 新增 gpt5 模型支持（映射到 gpt-5.1）
+- [x] 後端 storyboard.generate 支持三引擎切換和 Credits 扣費
+- [x] 設定每週一上午 10 點自動檢查 Google AI API 頁面的定時任務
+- [x] 確認 2D轉3D 頁面已修復可正常使用（前端 tRPC 路由名已修正為 hunyuan3d，頁面正常顯示）
+- [x] 2D轉3D 整合 fal.ai BiRefNet 去背景 API（生成前自動去背，失敗時回退使用原圖）
+- [x] 測試驗證（110 tests passed）

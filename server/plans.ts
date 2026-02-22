@@ -179,7 +179,8 @@ export const CREDIT_COSTS = {
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,              // 每次视频 PK 评分消耗 8 credits
   idolGeneration: 3,          // 每次 Forge 偶像生成消耗 3 credits
-  storyboard: 15,             // 每次分镜脚本（文本）消耗 15 credits
+  storyboard: 15,             // 每次分镜脚本 Gemini 3.0 Pro 消耗 15 credits
+  storyboardGpt5: 20,           // 每次分镜脚本 GPT 5.1 消耗 20 credits
   forgeImage: 0,              // Forge AI 图片免费
 
   // ─── AI 文本生成（Gemini）─────────────────────

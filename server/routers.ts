@@ -646,20 +646,22 @@ export const appRouter = router({
       .input(z.object({
         lyrics: z.string().min(1),
         sceneCount: z.number().min(1).max(20).default(5),
-        model: z.enum(["flash", "pro"]).default("flash"),
+        model: z.enum(["flash", "gpt5", "pro"]).default("flash"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
 
-        // 付費模型（pro = Gemini 3.0 Pro）需要額外 Credits，管理員免費
-        if (input.model === "pro" && !isAdminUser) {
+        // 付費模型需要額外 Credits，管理員免費，flash 免費
+        if (input.model !== "flash" && !isAdminUser) {
           const { deductCredits, hasEnoughCredits } = await import("./credits");
-          const canAfford = await hasEnoughCredits(userId, "storyboard");
+          const creditKey = input.model === "gpt5" ? "storyboardGpt5" : "storyboard";
+          const canAfford = await hasEnoughCredits(userId, creditKey);
           if (!canAfford) {
-            throw new Error("Credits 不足，無法使用 Gemini 3.0 Pro 模型。請充值 Credits 或切換為免費模型。");
+            const modelLabel = input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro";
+            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits 或切換為免費的 Gemini 3.0 Flash。`);
           }
-          await deductCredits(userId, "storyboard", "分鏡腳本生成 (Gemini 3.0 Pro)");
+          await deductCredits(userId, creditKey, `分鏡腳本生成 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
         }
 
         // Use LLM to analyze lyrics and generate storyboard
@@ -806,7 +808,7 @@ export const appRouter = router({
             }
           ],
           response_format: { type: "json_object" },
-          model: input.model === "pro" ? "pro" : undefined,
+          model: input.model === "gpt5" ? "gpt5" as const : input.model === "pro" ? "pro" as const : undefined,
         });
 
         const storyboardData = JSON.parse(response.choices[0].message.content as string);

@@ -5,7 +5,8 @@ export const CREDIT_COSTS = {
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,
   idolGeneration: 3,
-  storyboard: 15,
+  storyboard: 15,      // Gemini 3.0 Pro
+  storyboardGpt5: 20,   // GPT 5.1
   forgeImage: 0,
 
   // ─── AI 文本生成（Gemini）─────────────────────

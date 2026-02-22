@@ -265,7 +265,7 @@ const normalizeResponseFormat = ({
   };
 };
 
-export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro" }): Promise<InvokeResult> {
+export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro" | "gpt5" }): Promise<InvokeResult> {
   assertApiKey();
 
   const {
@@ -280,8 +280,8 @@ export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro"
     model: modelTier,
   } = params;
 
-  // Gemini 3 Flash for daily tasks, Gemini 3.1 Pro for advanced tasks
-  const modelName = modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-3-flash-preview";
+  // Gemini 3 Flash for daily tasks, Gemini 3.1 Pro / GPT 5.1 for advanced tasks
+  const modelName = modelTier === "pro" ? "gemini-3.1-pro-preview" : modelTier === "gpt5" ? "gpt-5.1" : "gemini-3-flash-preview";
 
   const payload: Record<string, unknown> = {
     model: modelName,

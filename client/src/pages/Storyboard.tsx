@@ -65,20 +65,27 @@ const OWN_SCRIPT_MAX_CHARS = 2000;
 const FREE_MAX_SCENES = 10;
 const PAID_MAX_SCENES = 20;
 
-type ModelOption = "flash" | "pro";
+type ModelOption = "flash" | "gpt5" | "pro";
 
 const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: string; icon: React.ElementType }[] = [
   {
     value: "flash",
-    label: "GPT 5.1",
+    label: "Gemini 3.0 Flash",
     desc: "快速生成，適合日常使用",
     cost: "免費",
     icon: Zap,
   },
   {
+    value: "gpt5",
+    label: "GPT 5.1",
+    desc: "更創意的分鏡描述與專業建議",
+    cost: "20 Credits",
+    icon: Crown,
+  },
+  {
     value: "pro",
     label: "Gemini 3.0 Pro",
-    desc: "更精準的分鏡描述與專業建議",
+    desc: "最精準的分鏡描述與專業分析",
     cost: "15 Credits",
     icon: Crown,
   },
@@ -470,7 +477,7 @@ export default function StoryboardPage() {
                             <span className="font-medium">{opt.label}</span>
                             <span className="text-muted-foreground text-xs">— {opt.desc}</span>
                             <span className={`text-xs font-semibold ml-auto ${opt.value === "flash" ? "text-green-500" : "text-yellow-500"}`}>
-                              {isAdmin && opt.value === "pro" ? "免費" : opt.cost}
+                              {isAdmin && opt.value !== "flash" ? "免費" : opt.cost}
                             </span>
                           </div>
                         </SelectItem>
@@ -478,9 +485,9 @@ export default function StoryboardPage() {
                     })}
                   </SelectContent>
                 </Select>
-                {selectedModel === "pro" && !isAdmin && (
+                {selectedModel !== "flash" && !isAdmin && (
                   <p className="text-yellow-500 text-xs mt-1.5">
-                    Gemini 3.0 Pro 每次生成消耗 15 Credits
+                    {selectedModel === "gpt5" ? "GPT 5.1 每次生成消耗 20 Credits" : "Gemini 3.0 Pro 每次生成消耗 15 Credits"}
                   </p>
                 )}
               </div>

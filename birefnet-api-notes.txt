@@ -1,0 +1,26 @@
+BiRefNet API (fal-ai/birefnet) - 去背景
+
+調用方式:
+fal.subscribe("fal-ai/birefnet", {
+  input: {
+    image_url: "...",
+    model: "General Use (Light)",  // 默認，最快
+    operating_resolution: "1024x1024",  // 默認
+    refine_foreground: true,  // 默認
+    output_format: "png"  // 默認
+  }
+})
+
+輸出:
+{
+  image: { url, width, height, content_type, file_name }
+}
+
+定價: $0 per compute second (免費)
+
+模型選項:
+- General Use (Light): 最快，推薦
+- General Use (Heavy): 更準確但更慢
+- Portrait: 人像優化
+
+分辨率: 1024x1024 或 2048x2048

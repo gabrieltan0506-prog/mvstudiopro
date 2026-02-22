@@ -5,6 +5,7 @@ import {
   get3DTaskStatus,
   estimate3DCost,
   isFalConfigured,
+  removeBackground,
   type ModelTier,
 } from "../services/hunyuan3d";
 import { TRPCError } from "@trpc/server";
@@ -92,8 +93,13 @@ export const hunyuan3dRouter = router({
         });
       }
 
+      // 自动去背景（BiRefNet），显著提升 3D 模型质量
+      console.log("[3D Generate] Step 1: Removing background with BiRefNet...");
+      const cleanImageUrl = await removeBackground(input.imageUrl);
+      console.log("[3D Generate] Step 2: Generating 3D model...");
+
       const result = await generate3DModel({
-        image_url: input.imageUrl,
+        image_url: cleanImageUrl,
         tier,
         texture_resolution: input.textureResolution
           ? (parseInt(input.textureResolution) as 512 | 1024 | 2048)
