@@ -431,7 +431,7 @@ export const appRouter = router({
               imageFidelity: input.referenceImageUrl ? 0.5 : undefined,
               count: 1,
             });
-            const taskResult = await createImageTask(request, "global");
+            const taskResult = await createImageTask(request, "cn");
 
             if (!taskResult.task_id) {
               if (!isAdminUser) {
@@ -447,7 +447,7 @@ export const appRouter = router({
             let imageResult: any = null;
             while (Date.now() - startTime < maxWait) {
               await new Promise(resolve => setTimeout(resolve, 5000));
-              imageResult = await getImageTask(taskId, "global");
+              imageResult = await getImageTask(taskId, "cn");
               if (imageResult.task_status === "succeed" || imageResult.task_status === "failed") break;
             }
             if (imageResult?.task_status === "succeed" && imageResult?.task_result?.images?.[0]?.url) {

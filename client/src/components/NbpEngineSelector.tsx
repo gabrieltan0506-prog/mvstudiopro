@@ -2,12 +2,14 @@
  * NBP 引擎选择器组件
  * 
  * 用于分镜页面和虚拟偶像页面，让用户选择图片生成引擎：
- * - 免费（Forge AI，含水印）
- * - NBP 2K（5 Credits/张，Pro+ 可用）
- * - NBP 4K（9 Credits/张，Enterprise 可用）
+ * - 免費（Forge AI，含水印）— 唯一免費選項
+ * - NBP 2K（5 Credits/张）
+ * - NBP 4K（9 Credits/张）
+ * - Kling 1K（8 Credits/张）
+ * - Kling 2K（10 Credits/张）
  * 
- * 管理员：所有引擎免费，不显示「管理员免费」字样
- * Forge 引擎：显示为「免费」而非「Forge AI」
+ * 管理員：所有引擎免費，不顯示「管理員免費」字樣
+ * 所有付費引擎必須標明 Credits 數量
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
 
@@ -131,7 +133,7 @@ export function NbpEngineSelector({
     return (
       <div className="flex flex-col gap-1.5">
         <span className="text-xs font-semibold text-[#9BA1A6]">圖片引擎</span>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {engines.map((eng) => {
             const isSelected = selected === eng.id;
             const disabled = !eng.available;
@@ -149,9 +151,9 @@ export function NbpEngineSelector({
                 >
                   {eng.label}
                 </span>
-                {isSelected && (
-                  <span style={{ color: eng.color }} className="text-[11px] font-semibold">{eng.cost}</span>
-                )}
+                <span style={isSelected ? { color: eng.color } : {}} className="text-[10px] font-semibold text-[#666]">
+                  {eng.cost}
+                </span>
                 {disabled && (
                   <Lock size={10} className="text-[#555] ml-0.5" />
                 )}

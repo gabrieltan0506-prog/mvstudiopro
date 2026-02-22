@@ -44,6 +44,17 @@ const TABS: Array<{ id: KlingTab; label: string; icon: React.ElementType; color:
 function CostBadge({ mode, duration, type, hasVideo = false, hasAudio = false }: {
   mode: KlingMode; duration: number; type: string; hasVideo?: boolean; hasAudio?: boolean;
 }) {
+  // 根據類型計算平台 Credits 消耗
+  let credits = 0;
+  if (type === "omniVideo") {
+    credits = 80; // klingVideo
+  } else if (type === "motionControl") {
+    credits = 70; // klingMotionControl
+  } else if (type === "lipSync") {
+    credits = 60; // klingLipSync
+  }
+
+  // 同時計算 Kling API units 供參考
   let units = 0;
   if (type === "omniVideo") {
     const base = mode === "std"
@@ -55,13 +66,13 @@ function CostBadge({ mode, duration, type, hasVideo = false, hasAudio = false }:
   } else if (type === "lipSync") {
     units = 0.05 + 0.5 * Math.ceil(duration / 5);
   }
-  const usd = units * 0.098;
 
   return (
-    <div className="flex items-center space-x-1 bg-gray-800 text-yellow-400 px-2 py-1 rounded-full text-xs">
+    <div className="flex items-center space-x-2 bg-gray-800 text-yellow-400 px-3 py-1.5 rounded-full text-xs">
       <Coins className="h-3.5 w-3.5" />
-      <span>{units.toFixed(1)} units</span>
-      <span className="text-gray-400">(~${usd.toFixed(2)})</span>
+      <span className="font-bold">{credits} Credits</span>
+      <span className="text-gray-500">|</span>
+      <span className="text-gray-400">{units.toFixed(1)} API units</span>
     </div>
   );
 }
@@ -1064,7 +1075,7 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
         referenceImageUrl: refUrl,
         imageFidelity: refUrl ? imageFidelity : undefined,
         count,
-        region: "global",
+        // region defaults to cn on server side
       });
 
       if (result.success && result.taskId) {

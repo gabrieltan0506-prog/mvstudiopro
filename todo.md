@@ -297,3 +297,11 @@
 - [x] 修復腳本分鏡導出 PDF 報錯（改用嵌入式字體方案，先查本地字體再從 CDN 下載）
 - [x] 修復腳本分鏡導出 Word 檔案為空（改用 docx 庫生成正式 .docx 格式）
 - [x] 測試驗證（110 tests passed）
+
+## Phase 31: Kling API 中國版 + Credits 標示修正（2026-02-22）
+- [x] Kling API 改為中國版 region（client.ts、kling router、parseKeysFromEnv 默認 cn）
+- [x] 前端移除硬編碼 region: "global"（RemixStudio.tsx）
+- [x] NbpEngineSelector 所有付費引擎標明具體 Credits（免費 0 Cr、NBP 2K 5 Cr、NBP 4K 9 Cr、Kling O1 1K 8 Cr、Kling O1 2K 10 Cr）
+- [x] 可靈工作室 CostBadge 新增 Credits 顯示（Video 80 Cr、Motion 70 Cr、LipSync 60 Cr）
+- [x] ImageGenPanel 已有 Credits 顯示（O1 1K=8 Cr、O1 2K=10 Cr、V2.1 1K=5 Cr、V2.1 2K=7 Cr）
+- [x] 測試驗證（110 tests passed）

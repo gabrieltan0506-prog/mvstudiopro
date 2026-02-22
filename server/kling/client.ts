@@ -284,7 +284,7 @@ export function getKlingClient(): KlingClient {
     // Initialize with empty keys - will be configured via env vars or admin panel
     clientInstance = new KlingClient({
       keys: [],
-      defaultRegion: "global",
+      defaultRegion: "cn",
       maxRetries: 2,
       requestTimeoutMs: 60_000,
     });
@@ -296,7 +296,7 @@ export function getKlingClient(): KlingClient {
  * Initialize or update the Kling client with API keys.
  * Called from environment setup or admin configuration.
  */
-export function configureKlingClient(keys: KlingApiKey[], defaultRegion: "global" | "cn" = "global") {
+export function configureKlingClient(keys: KlingApiKey[], defaultRegion: "global" | "cn" = "cn") {
   const client = getKlingClient();
   client.updateKeys(keys);
 }
@@ -325,7 +325,7 @@ export function parseKeysFromEnv(): KlingApiKey[] {
           id: k.id ?? `key-${i + 1}`,
           accessKey: k.accessKey,
           secretKey: k.secretKey,
-          region: (k.region as "global" | "cn") ?? "global",
+          region: (k.region as "global" | "cn") ?? "cn",
           enabled: true,
         });
       }
@@ -343,7 +343,7 @@ export function parseKeysFromEnv(): KlingApiKey[] {
       id: "primary",
       accessKey: ak,
       secretKey: sk,
-      region: (process.env.KLING_REGION as "global" | "cn") ?? "global",
+      region: (process.env.KLING_REGION as "global" | "cn") ?? "cn",
       enabled: true,
     });
   }
@@ -357,7 +357,7 @@ export function parseKeysFromEnv(): KlingApiKey[] {
         id: `key-${i}`,
         accessKey: akN,
         secretKey: skN,
-        region: (process.env[`KLING_REGION_${i}`] as "global" | "cn") ?? "global",
+        region: (process.env[`KLING_REGION_${i}`] as "global" | "cn") ?? "cn",
         enabled: true,
       });
     }
