@@ -2,9 +2,12 @@
  * NBP 引擎选择器组件
  * 
  * 用于分镜页面和虚拟偶像页面，让用户选择图片生成引擎：
- * - Forge AI（免费，含水印）
+ * - 免费（Forge AI，含水印）
  * - NBP 2K（5 Credits/张，Pro+ 可用）
  * - NBP 4K（9 Credits/张，Enterprise 可用）
+ * 
+ * 管理员：所有引擎免费，不显示「管理员免费」字样
+ * Forge 引擎：显示为「免费」而非「Forge AI」
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle } from "lucide-react";
 
@@ -47,9 +50,9 @@ export function NbpEngineSelector({
   const engines: EngineInfo[] = [
     {
       id: "forge",
-      label: "Forge AI",
-      desc: "免费生成，含水印",
-      cost: "免费",
+      label: "免費",
+      desc: "基礎畫質，含浮水印",
+      cost: "免費",
       icon: Sparkles,
       color: "#30D158",
       available: true,
@@ -57,31 +60,35 @@ export function NbpEngineSelector({
     {
       id: "nbp_2k",
       label: "NBP 2K",
-      desc: "高清 2K，" + (isAdmin ? "管理员免费" : effectivePlan === "free" ? "需升级" : effectivePlan === "pro" ? "含水印" : "无水印"),
-      cost: isAdmin ? "免费" : "5 Cr/张",
+      desc: isAdmin
+        ? "高清 2K，無浮水印"
+        : effectivePlan === "free" ? "需升級" : effectivePlan === "pro" ? "含浮水印" : "無浮水印",
+      cost: isAdmin ? "免費" : "5 Cr/張",
       icon: MonitorPlay,
       color: "#64D2FF",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 5),
       reason:
-        effectivePlan === "free"
-          ? "升级到 Pro 方案即可使用"
-          : (effectiveCredits ?? 0) < 5
-          ? "Credits 不足，请充值"
+        !isAdmin && effectivePlan === "free"
+          ? "升級到 Pro 方案即可使用"
+          : !isAdmin && (effectiveCredits ?? 0) < 5
+          ? "Credits 不足，請充值"
           : undefined,
     },
     {
       id: "nbp_4k",
       label: "NBP 4K",
-      desc: "超高清 4K，" + (isAdmin ? "管理员免费" : effectivePlan === "enterprise" ? "无水印" : "需升级"),
-      cost: isAdmin ? "免费" : "9 Cr/张",
+      desc: isAdmin
+        ? "超高清 4K，無浮水印"
+        : effectivePlan === "enterprise" ? "無浮水印" : "需升級",
+      cost: isAdmin ? "免費" : "9 Cr/張",
       icon: Tv2,
       color: "#FFD60A",
       available: isAdmin || (effectivePlan === "enterprise" && (effectiveCredits ?? 0) >= 9),
       reason:
-        effectivePlan !== "enterprise"
-          ? "升级到 Enterprise 方案即可使用"
-          : (effectiveCredits ?? 0) < 9
-          ? "Credits 不足，请充值"
+        !isAdmin && effectivePlan !== "enterprise"
+          ? "升級到 Enterprise 方案即可使用"
+          : !isAdmin && (effectiveCredits ?? 0) < 9
+          ? "Credits 不足，請充值"
           : undefined,
     },
   ];
@@ -89,7 +96,7 @@ export function NbpEngineSelector({
   if (compact) {
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold text-[#9BA1A6]">图片引擎</span>
+        <span className="text-xs font-semibold text-[#9BA1A6]">圖片引擎</span>
         <div className="flex gap-2">
           {engines.map((eng) => {
             const isSelected = selected === eng.id;
@@ -118,11 +125,13 @@ export function NbpEngineSelector({
             );
           })}
         </div>
-        {/* Credits 余额 */}
-        <div className="flex items-center gap-1">
-          <Star size={14} className="text-yellow-400" />
-          <span className="text-xs text-[#9BA1A6]">可用 Credits: {creditsAvailable}</span>
-        </div>
+        {/* Credits 余额（管理员不显示） */}
+        {!isAdmin && (
+          <div className="flex items-center gap-1">
+            <Star size={14} className="text-yellow-400" />
+            <span className="text-xs text-[#9BA1A6]">可用 Credits: {creditsAvailable}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -130,11 +139,13 @@ export function NbpEngineSelector({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-[15px] font-bold text-[#ECEDEE]">选择图片生成引擎</p>
-        <div className="flex items-center gap-1 bg-yellow-400/10 px-2.5 py-1 rounded-full">
-          <Star size={14} className="text-yellow-400" />
-          <span className="text-xs font-bold text-yellow-400">{creditsAvailable}</span>
-        </div>
+        <p className="text-[15px] font-bold text-[#ECEDEE]">選擇圖片生成引擎</p>
+        {!isAdmin && (
+          <div className="flex items-center gap-1 bg-yellow-400/10 px-2.5 py-1 rounded-full">
+            <Star size={14} className="text-yellow-400" />
+            <span className="text-xs font-bold text-yellow-400">{creditsAvailable}</span>
+          </div>
+        )}
       </div>
 
       {engines.map((eng) => {

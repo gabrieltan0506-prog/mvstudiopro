@@ -328,7 +328,7 @@ export default function VirtualIdol() {
 
               {/* Engine Selector */}
               <div className="mt-6">
-                 <NbpEngineSelector selectedValue={imageEngine} onValueChange={setImageEngine} userPlan={userPlan} feature="avatar" />
+                 <NbpEngineSelector selected={imageEngine} onSelect={setImageEngine} plan={userPlan} creditsAvailable={userCredits} isAdmin={user?.role === "admin"} compact />
               </div>
 
               {/* Generate Button */}
