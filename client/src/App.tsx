@@ -9,7 +9,7 @@ import { Loader2 } from "lucide-react";
 
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
-const MVGallery = lazy(() => import("./pages/MVGallery"));
+const Showcase = lazy(() => import("./pages/Showcase"));
 const MVAnalysis = lazy(() => import("./pages/MVAnalysis"));
 const VirtualIdol = lazy(() => import("./pages/VirtualIdol"));
 const Storyboard = lazy(() => import("./pages/Storyboard"));
@@ -20,7 +20,7 @@ const LayoutDashboard = lazy(() => import("./pages/Dashboard"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 const RemixStudio = lazy(() => import("./pages/RemixStudio"));
-const AudioLab = lazy(() => import("./pages/AudioLab"));
+
 const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
 function PageLoader() {
@@ -36,7 +36,7 @@ function Router() {
     <Suspense fallback={<PageLoader />}>
       <Switch>
         <Route path={"/"} component={Home} />
-        <Route path={"/gallery"} component={MVGallery} />
+        <Route path={"/showcase"} component={Showcase} />
         <Route path={"/analysis"} component={MVAnalysis} />
         <Route path={"/idol"} component={VirtualIdol} />
         <Route path={"/storyboard"} component={Storyboard} />
@@ -47,7 +47,7 @@ function Router() {
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/remix"} component={RemixStudio} />
-        <Route path={"/audio-lab"} component={AudioLab} />
+
         <Route path={"/3d-studio"} component={ThreeDStudio} />
         <Route path={"/404"} component={NotFound} />
         <Route component={NotFound} />

@@ -1,0 +1,91 @@
+{
+  "query": "SHOW TABLES;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute SHOW TABLES;",
+  "rows": [
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "__drizzle_migrations"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "beta_quotas"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "beta_referrals"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "comment_likes"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "credit_balances"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "credit_transactions"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "email_auth"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "guestbook_messages"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "idol_3d_generations"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "kpi_snapshots"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "mv_reviews"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "payment_submissions"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "showcase_ratings"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "storyboards"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "stripe_audit_logs"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "stripe_customers"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "stripe_usage_logs"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "student_verifications"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "team_activity_logs"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "team_members"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "teams"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "usage_tracking"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "users"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "video_comments"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "video_generations"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "video_likes"
+    },
+    {
+      "Tables_in_LzPte96vGTebdoWip7SPMh": "video_signatures"
+    }
+  ],
+  "messages": [],
+  "stdout": "Tables_in_LzPte96vGTebdoWip7SPMh\n__drizzle_migrations\nbeta_quotas\nbeta_referrals\ncomment_likes\ncredit_balances\ncredit_transactions\nemail_auth\nguestbook_messages\nidol_3d_generations\nkpi_snapshots\nmv_reviews\npayment_submissions\nshowcase_ratings\nstoryboards\nstripe_audit_logs\nstripe_customers\nstripe_usage_logs\nstudent_verifications\nteam_activity_logs\nteam_members\nteams\nusage_tracking\nusers\nvideo_comments\nvideo_generations\nvideo_likes\nvideo_signatures\n",
+  "stderr": "",
+  "execution_time_ms": 1508
+}

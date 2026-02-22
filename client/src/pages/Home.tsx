@@ -160,12 +160,6 @@ function ParticleBackground() {
 /* ── Creative Tools Cards (旧版 9 宫格彩色卡片) ── */
 const CREATIVE_TOOLS = [
   {
-    icon: Film, title: "视频展厅", titleEn: "Video Gallery",
-    desc: "浏览精选视频作品，支持在线播放、评论交互和留言板功能",
-    borderColor: "border-t-red-500", iconBg: "bg-red-500/20", iconColor: "text-red-400",
-    href: "/gallery", ready: true,
-  },
-  {
     icon: BarChart3, title: "视频 PK 评分", titleEn: "Video PK Score",
     desc: "上传视频，AI 自动分析画面构图、色彩风格、节奏感与爆款潜力评分",
     borderColor: "border-t-blue-500", iconBg: "bg-blue-500/20", iconColor: "text-blue-400",
@@ -202,10 +196,10 @@ const CREATIVE_TOOLS = [
     href: "/dashboard", ready: true,
   },
   {
-    icon: Flame, title: "平台展厅", titleEn: "Platform Gallery",
-    desc: "浏览 90 分以上的获奖爆款视频，发现优秀创作者和爆款灵感",
+    icon: Flame, title: "爆款展厅", titleEn: "Showcase Gallery",
+    desc: "浏览 90 分以上的获奖爆款视频，评论互动、用户评分，发现优秀创作者",
     borderColor: "border-t-orange-500", iconBg: "bg-orange-500/20", iconColor: "text-orange-400",
-    href: "/gallery", ready: true,
+    href: "/showcase", ready: true,
   },
   {
     icon: Zap, title: "Kling AI 工作室", titleEn: "Kling AI Studio",
@@ -303,9 +297,9 @@ export default function Home() {
               style={{ animation: "fadeInUp 0.8s ease-out 0.45s both" }}
             >
               {isAuthenticated ? (
-                <Link href="/gallery">
+                <Link href="/showcase">
                   <Button size="lg" className="bg-primary text-primary-foreground hover:bg-primary/90 gap-2 text-base px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all">
-                    进入视频展厅 <ArrowRight className="h-5 w-5" />
+                    进入爆款展厅 <ArrowRight className="h-5 w-5" />
                   </Button>
                 </Link>
               ) : (
@@ -317,7 +311,7 @@ export default function Home() {
                   免费开始创作 <ArrowRight className="h-5 w-5" />
                 </Button>
               )}
-              <Link href="/gallery">
+              <Link href="/showcase">
                 <Button size="lg" variant="outline" className="gap-2 text-base px-8 bg-transparent border-white/20 hover:bg-white/5 hover:border-white/30 transition-all">
                   <Play className="h-5 w-5" /> 浏览精选作品
                 </Button>
@@ -340,8 +334,8 @@ export default function Home() {
           </div>
 
           {/* Top row: 5 cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 mb-5">
-            {CREATIVE_TOOLS.slice(0, 5).map((tool) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-5">
+            {CREATIVE_TOOLS.slice(0, 4).map((tool) => (
               <Link key={tool.title} href={tool.ready ? tool.href : "#"} onClick={(e) => { if (!tool.ready) { e.preventDefault(); toast.info("功能即将上线，敬请期待！"); } }}>
                 <Card className={`bg-card/60 border-border/40 ${tool.borderColor} border-t-2 hover:bg-card/80 hover:border-t-3 transition-all group cursor-pointer h-full`}>
                   <CardContent className="p-5 flex flex-col h-full">
@@ -363,7 +357,7 @@ export default function Home() {
 
           {/* Bottom row: 4 cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {CREATIVE_TOOLS.slice(5).map((tool) => (
+            {CREATIVE_TOOLS.slice(4).map((tool) => (
               <Link key={tool.title} href={tool.ready ? tool.href : "#"} onClick={(e) => { if (!tool.ready) { e.preventDefault(); toast.info("功能即将上线，敬请期待！"); } }}>
                 <Card className={`bg-card/60 border-border/40 ${tool.borderColor} border-t-2 hover:bg-card/80 hover:border-t-3 transition-all group cursor-pointer h-full`}>
                   <CardContent className="p-5 flex flex-col h-full">
@@ -393,7 +387,7 @@ export default function Home() {
               <h2 className="text-3xl font-bold mb-2">精选作品</h2>
               <p className="text-muted-foreground">探索由 AI 辅助创作的优秀视频</p>
             </div>
-            <Link href="/gallery">
+            <Link href="/showcase">
               <Button variant="ghost" className="gap-1 text-primary hover:text-primary/80">
                 查看全部 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -401,7 +395,7 @@ export default function Home() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {SHOWCASE_MVS.map((mv) => (
-              <Link key={mv.id} href="/gallery">
+              <Link key={mv.id} href="/showcase">
                 <Card className="overflow-hidden bg-card/50 border-border/50 hover:border-primary/30 transition-all group cursor-pointer">
                   <div className="relative aspect-video overflow-hidden">
                     <img src={mv.thumbnail} alt={mv.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
@@ -481,7 +475,7 @@ export default function Home() {
           </p>
           <div className="flex gap-6 text-sm text-muted-foreground">
             <Link href="/pricing" className="hover:text-foreground no-underline">套餐定价</Link>
-            <Link href="/gallery" className="hover:text-foreground no-underline">视频展厅</Link>
+            <Link href="/showcase" className="hover:text-foreground no-underline">爆款展厅</Link>
           </div>
         </div>
       </footer>

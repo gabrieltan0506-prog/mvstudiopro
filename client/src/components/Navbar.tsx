@@ -13,14 +13,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const NAV_ITEMS = [
-  { label: "视频展厅", href: "/gallery" },
   { label: "视频PK评分", href: "/analysis" },
   { label: "二次创作", href: "/remix" },
   { label: "虚拟偶像", href: "/idol" },
   { label: "2D转3D", href: "/3d-studio" },
   { label: "分镜脚本", href: "/storyboard" },
   { label: "分镜转视频", href: "/vfx" },
-  { label: "歌曲分析", href: "/audio-lab" },
+  { label: "爆款展厅", href: "/showcase" },
   { label: "套餐", href: "/pricing" },
 ];
 

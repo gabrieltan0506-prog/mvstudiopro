@@ -1,0 +1,9 @@
+{
+  "query": "SHOW TABLES LIKE 'video_submissions';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute SHOW TABLES LIKE 'video_submissions';",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1594
+}

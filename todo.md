@@ -246,3 +246,9 @@
 - [x] 更新 App.tsx 路由配置
 - [x] 修復所有 TS 錯誤（148→0，使用 @ts-nocheck 處理剩餘頁面級錯誤）
 - [x] 測試驗證並保存 checkpoint
+## Phase 26: 用戶要求修改（2026-02-22）
+- [x] 移除頂部導航欄的「歌曲分析」(AudioLab) 入口
+- [x] 開通管理員虛擬偶像使用權限（確認 admin 跳過 Credits 扣費）
+- [x] 移除「視頻展廳」(MVGallery) 導航和路由
+- [x] 平台展廳 (Showcase) 添加評論區與用戶評分互動功能
+- [x] 測試驗證並保存 checkpoint

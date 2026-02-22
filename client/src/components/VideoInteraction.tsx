@@ -109,7 +109,7 @@ export function VideoInteraction({ videoUrl, title, compact = false }: VideoInte
   };
 
   const handleShare = async () => {
-    const shareUrl = `${window.location.origin}/gallery?video=${encodeURIComponent(videoUrl)}`;
+    const shareUrl = `${window.location.origin}/showcase?video=${encodeURIComponent(videoUrl)}`;
     const shareTitle = title || "MV Studio Pro 作品";
 
     if (navigator.share) {

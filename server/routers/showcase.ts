@@ -9,14 +9,135 @@ import {
   showcaseLikes,
   showcaseFavorites,
   showcaseComments,
+  showcaseRatings,
   maintenanceNotices,
   trafficStats,
   videoSubmissions,
   users,
 } from "../../drizzle/schema";
+import { avg } from "drizzle-orm";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 
 export const showcaseRouter = router({
+  // ─── 獲取展廳列表 ────────────────────────────
+  getAll: publicProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(100).default(50),
+      offset: z.number().min(0).default(0),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return { videos: [], total: 0 };
+      const { videoPlatformLinks } = await import("../../drizzle/schema");
+      const videos = await db
+        .select()
+        .from(videoSubmissions)
+        .where(eq(videoSubmissions.showcaseStatus, "showcased"))
+        .orderBy(desc(videoSubmissions.viralScore))
+        .limit(input.limit)
+        .offset(input.offset);
+      const enriched = await Promise.all(
+        videos.map(async (v: any) => {
+          const links = await db
+            .select()
+            .from(videoPlatformLinks)
+            .where(eq(videoPlatformLinks.videoSubmissionId, v.id));
+          const creator = await db
+            .select({ name: users.name })
+            .from(users)
+            .where(eq(users.id, v.userId))
+            .limit(1);
+          // 獲取平均評分
+          const ratingResult = await db
+            .select({
+              avgRating: sql<number>`AVG(${showcaseRatings.rating})`,
+              ratingCount: sql<number>`COUNT(${showcaseRatings.id})`,
+            })
+            .from(showcaseRatings)
+            .where(eq(showcaseRatings.videoSubmissionId, v.id));
+          return {
+            ...v,
+            platformLinks: links,
+            creatorName: creator[0]?.name || "匿名用戶",
+            avgRating: ratingResult[0]?.avgRating ? Number(ratingResult[0].avgRating).toFixed(1) : null,
+            ratingCount: ratingResult[0]?.ratingCount || 0,
+          };
+        })
+      );
+      const countResult = await db
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(videoSubmissions)
+        .where(eq(videoSubmissions.showcaseStatus, "showcased"));
+      return { videos: enriched, total: countResult[0]?.count || 0 };
+    }),
+
+  // ─── 用戶評分（1-5 星） ────────────────────────
+  rateVideo: protectedProcedure
+    .input(z.object({
+      videoId: z.number(),
+      rating: z.number().min(1).max(5),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      // Upsert: 如果已評分則更新，否則插入
+      const existing = await db
+        .select()
+        .from(showcaseRatings)
+        .where(
+          and(
+            eq(showcaseRatings.userId, ctx.user.id),
+            eq(showcaseRatings.videoSubmissionId, input.videoId)
+          )
+        )
+        .limit(1);
+      if (existing.length > 0) {
+        await db
+          .update(showcaseRatings)
+          .set({ rating: input.rating })
+          .where(eq(showcaseRatings.id, existing[0].id));
+      } else {
+        await db.insert(showcaseRatings).values({
+          userId: ctx.user.id,
+          videoSubmissionId: input.videoId,
+          rating: input.rating,
+        });
+      }
+      // 返回更新後的平均分
+      const result = await db
+        .select({
+          avgRating: sql<number>`AVG(${showcaseRatings.rating})`,
+          ratingCount: sql<number>`COUNT(${showcaseRatings.id})`,
+        })
+        .from(showcaseRatings)
+        .where(eq(showcaseRatings.videoSubmissionId, input.videoId));
+      return {
+        success: true,
+        avgRating: result[0]?.avgRating ? Number(result[0].avgRating).toFixed(1) : "0",
+        ratingCount: result[0]?.ratingCount || 0,
+        userRating: input.rating,
+      };
+    }),
+
+  // ─── 獲取用戶對某個视频的評分 ──────────────
+  getUserRating: protectedProcedure
+    .input(z.object({ videoId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return { rating: null };
+      const existing = await db
+        .select()
+        .from(showcaseRatings)
+        .where(
+          and(
+            eq(showcaseRatings.userId, ctx.user.id),
+            eq(showcaseRatings.videoSubmissionId, input.videoId)
+          )
+        )
+        .limit(1);
+      return { rating: existing[0]?.rating || null };
+    }),
+
   // ─── 点赞 ──────────────────────────────────
   toggleLike: protectedProcedure
     .input(z.object({ videoId: z.number() }))

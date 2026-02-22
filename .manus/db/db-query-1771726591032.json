@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS showcase_ratings (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  userId INT NOT NULL,\n  videoSubmissionId INT NOT NULL,\n  rating INT NOT NULL COMMENT '1-5 星評分',\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,\n  UNIQUE KEY unique_user_video (userId, videoSubmissionId)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute CREATE TABLE IF NOT EXISTS showcase_ratings (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  userId INT NOT NULL,\n  videoSubmissionId INT NOT NULL,\n  rating INT NOT NULL COMMENT '1-5 星評分',\n  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,\n  updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,\n  UNIQUE KEY unique_user_video (userId, videoSubmissionId)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 3535
+}

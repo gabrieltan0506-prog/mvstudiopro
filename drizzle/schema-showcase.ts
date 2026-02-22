@@ -40,6 +40,21 @@ export const showcaseComments = mysqlTable("showcase_comments", {
 export type ShowcaseComment = typeof showcaseComments.$inferSelect;
 
 /**
+ * 展廳互動 - 用戶評分記錄（1-5 星）
+ */
+export const showcaseRatings = mysqlTable("showcase_ratings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  videoSubmissionId: int("videoSubmissionId").notNull(),
+  /** 1-5 星評分 */
+  rating: int("rating").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ShowcaseRating = typeof showcaseRatings.$inferSelect;
+
+/**
  * 維護公告表
  */
 export const maintenanceNotices = mysqlTable("maintenance_notices", {
