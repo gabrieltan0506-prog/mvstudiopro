@@ -43,6 +43,7 @@ export async function identifyFaces(
     path: FACE_IDENTIFY_PATH,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -61,6 +62,7 @@ export async function getFaceIdentifyResult(
     method: "GET",
     path: `${FACE_IDENTIFY_PATH}/${taskId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -83,6 +85,7 @@ export async function createLipSyncTask(
     path: LIP_SYNC_PATH,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -101,6 +104,7 @@ export async function getLipSyncTask(
     method: "GET",
     path: `${LIP_SYNC_PATH}/${taskId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;

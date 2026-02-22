@@ -35,6 +35,7 @@ export async function createImageElement(
     path: `${ELEMENT_PATH}/image-character`,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -56,6 +57,7 @@ export async function createVideoElement(
     path: `${ELEMENT_PATH}/video-character`,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -76,6 +78,7 @@ export async function getElement(
     method: "GET",
     path: `${ELEMENT_PATH}/${elementId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -95,6 +98,7 @@ export async function listElements(
     method: "GET",
     path: `${ELEMENT_PATH}?pageNum=${pageNum}&pageSize=${pageSize}`,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -115,6 +119,7 @@ export async function deleteElement(
     method: "DELETE",
     path: `${ELEMENT_PATH}/${elementId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;

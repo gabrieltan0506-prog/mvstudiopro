@@ -54,7 +54,7 @@ export function NbpEngineSelector({
       id: "forge",
       label: "Forge",
       desc: "基礎畫質，含浮水印",
-      cost: isAdmin ? "0 Cr" : "3 Cr",
+      cost: "3 Cr",
       icon: Sparkles,
       color: "#30D158",
       available: true,
@@ -65,7 +65,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "高清 2K，無浮水印"
         : effectivePlan === "free" ? "需升級" : effectivePlan === "pro" ? "含浮水印" : "無浮水印",
-      cost: isAdmin ? "0 Cr" : "5 Cr/張",
+      cost: "5 Cr/張",
       icon: MonitorPlay,
       color: "#64D2FF",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 5),
@@ -82,7 +82,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "超高清 4K，無浮水印"
         : effectivePlan === "enterprise" ? "無浮水印" : "需升級",
-      cost: isAdmin ? "0 Cr" : "9 Cr/張",
+      cost: "9 Cr/張",
       icon: Tv2,
       color: "#FFD60A",
       available: isAdmin || (effectivePlan === "enterprise" && (effectiveCredits ?? 0) >= 9),
@@ -99,7 +99,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "Kling AI O1，1K 解析度"
         : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型",
-      cost: isAdmin ? "0 Cr" : "8 Cr/張",
+      cost: "8 Cr/張",
       icon: Zap,
       color: "#F97316",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 8),
@@ -116,7 +116,7 @@ export function NbpEngineSelector({
       desc: isAdmin
         ? "Kling AI O1，2K 高清"
         : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型，2K 解析度",
-      cost: isAdmin ? "0 Cr" : "10 Cr/張",
+      cost: "10 Cr/張",
       icon: Zap,
       color: "#EF4444",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 10),

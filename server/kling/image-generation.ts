@@ -50,6 +50,7 @@ export async function createImageTask(
     path: "/v1/images/generations",
     body: request as unknown as Record<string, unknown>,
     region,
+    purpose: "image",
   });
   return response.data;
 }
@@ -63,6 +64,7 @@ export async function getImageTask(
     method: "GET",
     path: `/v1/images/generations/${taskId}`,
     region,
+    purpose: "image",
   });
   return response.data;
 }

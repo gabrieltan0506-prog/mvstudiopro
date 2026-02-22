@@ -19,6 +19,7 @@ export interface KlingApiKey {
   accessKey: string;    // Kling Access Key ID
   secretKey: string;    // Kling Secret Key
   region: "global" | "cn";
+  purpose: "image" | "video" | "all"; // Which API this key is for
   enabled: boolean;
   remainingUnits?: number;
   expiresAt?: Date;     // Trial package expiry
@@ -104,19 +105,27 @@ class KeyPool {
     }
   }
 
-  getAvailableKey(preferredRegion: "global" | "cn" = "global"): KlingApiKey | null {
+  getAvailableKey(preferredRegion: "global" | "cn" = "global", purpose: "image" | "video" | "all" = "all"): KlingApiKey | null {
+    // Filter by region + purpose (purpose match: exact match or "all")
     const regionKeys = this.keys.filter(
-      (k) => k.enabled && k.region === preferredRegion && !this.isExpired(k)
+      (k) => k.enabled && k.region === preferredRegion && !this.isExpired(k) &&
+             (k.purpose === purpose || k.purpose === "all" || purpose === "all")
     );
 
     if (regionKeys.length === 0) {
-      // Fallback to any available key
+      // Fallback: match purpose in any region
+      const purposeKeys = this.keys.filter(
+        (k) => k.enabled && !this.isExpired(k) &&
+               (k.purpose === purpose || k.purpose === "all" || purpose === "all")
+      );
+      if (purposeKeys.length > 0) return this.roundRobin(purposeKeys, `${purpose}-any`);
+      // Last fallback: any available key
       const anyKeys = this.keys.filter((k) => k.enabled && !this.isExpired(k));
       if (anyKeys.length === 0) return null;
       return this.roundRobin(anyKeys, "any");
     }
 
-    return this.roundRobin(regionKeys, preferredRegion);
+    return this.roundRobin(regionKeys, `${preferredRegion}-${purpose}`);
   }
 
   getToken(key: KlingApiKey): string {
@@ -175,6 +184,7 @@ export interface KlingRequestOptions {
   path: string;
   body?: Record<string, unknown>;
   region?: "global" | "cn";
+  purpose?: "image" | "video" | "all";
   timeoutMs?: number;
 }
 
@@ -208,7 +218,7 @@ export class KlingClient {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
-      const key = this.keyPool.getAvailableKey(region);
+      const key = this.keyPool.getAvailableKey(region, options.purpose ?? "all");
       if (!key) {
         throw new Error(
           `No available Kling API keys for region "${region}". ` +
@@ -326,6 +336,7 @@ export function parseKeysFromEnv(): KlingApiKey[] {
           accessKey: k.accessKey,
           secretKey: k.secretKey,
           region: (k.region as "global" | "cn") ?? "cn",
+          purpose: "all",
           enabled: true,
         });
       }
@@ -335,15 +346,30 @@ export function parseKeysFromEnv(): KlingApiKey[] {
     }
   }
 
-  // Try individual key format: KLING_ACCESS_KEY, KLING_SECRET_KEY
+  // Image key: KLING_ACCESS_KEY, KLING_SECRET_KEY
   const ak = process.env.KLING_ACCESS_KEY;
   const sk = process.env.KLING_SECRET_KEY;
   if (ak && sk) {
     keys.push({
-      id: "primary",
+      id: "primary-image",
       accessKey: ak,
       secretKey: sk,
       region: (process.env.KLING_REGION as "global" | "cn") ?? "cn",
+      purpose: "image",
+      enabled: true,
+    });
+  }
+
+  // Video key: KLING_VIDEO_ACCESS_KEY, KLING_VIDEO_SECRET_KEY
+  const vak = process.env.KLING_VIDEO_ACCESS_KEY;
+  const vsk = process.env.KLING_VIDEO_SECRET_KEY;
+  if (vak && vsk) {
+    keys.push({
+      id: "primary-video",
+      accessKey: vak,
+      secretKey: vsk,
+      region: (process.env.KLING_DEFAULT_REGION as "global" | "cn") ?? "cn",
+      purpose: "video",
       enabled: true,
     });
   }
@@ -358,6 +384,7 @@ export function parseKeysFromEnv(): KlingApiKey[] {
         accessKey: akN,
         secretKey: skN,
         region: (process.env[`KLING_REGION_${i}`] as "global" | "cn") ?? "cn",
+        purpose: "all",
         enabled: true,
       });
     }

@@ -41,6 +41,7 @@ export async function createOmniVideoTask(
     path: OMNI_VIDEO_PATH,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -59,6 +60,7 @@ export async function getOmniVideoTask(
     method: "GET",
     path: `${OMNI_VIDEO_PATH}/${taskId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -78,6 +80,7 @@ export async function listOmniVideoTasks(
     method: "GET",
     path: `${OMNI_VIDEO_PATH}?pageNum=${pageNum}&pageSize=${pageSize}`,
     region,
+    purpose: "video",
   });
 
   return response.data;

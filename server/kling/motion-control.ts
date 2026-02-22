@@ -35,6 +35,7 @@ export async function createMotionControlTask(
     path: MC_PATH,
     body: params as unknown as Record<string, unknown>,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -53,6 +54,7 @@ export async function getMotionControlTask(
     method: "GET",
     path: `${MC_PATH}/${taskId}`,
     region,
+    purpose: "video",
   });
 
   return response.data;
@@ -72,6 +74,7 @@ export async function listMotionControlTasks(
     method: "GET",
     path: `${MC_PATH}?pageNum=${pageNum}&pageSize=${pageSize}`,
     region,
+    purpose: "video",
   });
 
   return response.data;

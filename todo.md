@@ -390,3 +390,44 @@
 - [x] UsageQuotaBanner: 移除 "0 Credits" 文字，改為顯示正確的 Credits 消耗
 - [x] Storyboard: Flash 模型顯示 "8 Credits" 但後端 flash 免費，需統一
 - [x] 後端 routers.ts: flash 模型也要收 8 Credits（storyboard: 8 for flash）
+
+## Phase 41: 用戶反饋緊急修復（2026-02-22）
+- [ ] NbpEngineSelector 仍顯示「0 Cr」— 徹底修復所有引擎的 Credits 顯示
+- [ ] 分鏡腳本頁面引擎選擇器也顯示「0 Cr」— 同步修復
+- [ ] 首頁 Hero 和創作工具之間大片空白 — 加入 AI 風格作品視頻輪播
+- [ ] 用 10 張風格圖生成 5 秒視頻提示詞，在首頁輪播展示
+- [ ] 可靈生成視頻無法生成 — 排查 Kling API 問題並修復
+- [ ] 測試驗證並保存 checkpoint 發布
+
+## Phase 42: 可靈 Video Key 分離 + 視頻輪播（2026-02-22）
+- [ ] 修改 kling client.ts 支持 Image/Video Key 分離（purpose 字段）
+- [ ] 修改 parseKeysFromEnv 讀取 KLING_VIDEO_ACCESS_KEY / KLING_VIDEO_SECRET_KEY
+- [ ] 修改視頻生成路由使用 video purpose key
+- [ ] 測試 Video Key 可用（生成視頻成功）
+- [ ] 用 10 張展廳圖生成 prompt，每張生成 8 秒視頻
+- [ ] 首頁 Hero 空白區域加入視頻輪播
+- [ ] 確認全站 Credits 0 Cr 已修復
+- [ ] 保存 checkpoint 並交付
+
+## Phase 42b: 可靈改用 fal.ai 代理（2026-02-22）
+- [ ] 查看 fal.ai Kling 3.0 API 文檔
+- [ ] 修改後端可靈視頻生成改用 fal.ai（omni-video, motion-control, lip-sync）
+- [ ] 測試 fal.ai 可靈視頻生成正常
+- [ ] 用展廳 10 張圖生成視頻做首頁輪播
+- [ ] 確認 Credits 0 Cr 問題已修復
+- [ ] 保存 checkpoint 並交付
+
+## Phase 43: 生成 10 張圖片 + 視頻 Prompt（8秒 I2V）
+- [x] 用 AI 生成 10 張高品質電影風格圖片
+- [x] 為每張圖片撰寫 8 秒 Image-to-Video prompt
+- [x] 上傳圖片到 S3 並準備資產列表
+
+## Phase 44: 用 fal.ai Kling V3 生成 10 個 8 秒視頻
+- [x] 提交 10 個 I2V 任務到 fal.ai Kling V3 API（fal.ai 餘額用盡，改用 Veo 3.1）
+- [x] 輪詢並收集完成的視頻結果
+- [x] 下載視頻並交付給用戶（4/10 成功，6/10 因 Gemini 配額限制失敗）
+
+## Phase 45: Veo 3.1 Pro 視頻生成 + 代碼推送 + 工作報告
+- [x] 用 Veo 3.1 Pro (Gemini API) 生成 10 個 8 秒視頻（4/10 成功，6/10 配額限制）
+- [ ] 保存 checkpoint 並推送代碼到 GitHub 倉庫
+- [ ] 生成完整 Markdown 工作列表（已完成 + 未完成）
