@@ -930,15 +930,18 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         }),
         format: z.enum(["pdf", "word"]).default("pdf"),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         const { exportToPDF, exportToWord } = await import("./storyboard-export");
+        const isAdminUser = ctx.user.role === "admin";
+        // Free-tier users get watermark; admin/paid users don't
+        const shouldWatermark = !isAdminUser;
 
         if (input.format === "word") {
-          const result = await exportToWord(input.storyboard);
+          const result = await exportToWord(input.storyboard, { addWatermark: shouldWatermark });
           return { success: true, pdfUrl: result.url, message: result.message };
         }
 
-        const result = await exportToPDF(input.storyboard);
+        const result = await exportToPDF(input.storyboard, { addWatermark: shouldWatermark });
         return { success: true, pdfUrl: result.url, message: result.message };
       }),
 

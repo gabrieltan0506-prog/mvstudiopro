@@ -11,24 +11,29 @@ import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { NbpEngineSelector, type EngineOption } from "@/components/NbpEngineSelector";
 import { ModelViewer } from "@/components/ModelViewer";
 import { toast } from "sonner";
-import { Loader2, Upload, X, Bot, Sparkles, Wand2, ChevronDown, ChevronUp, Download, Check, Copy, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { Loader2, Upload, X, Bot, Sparkles, Wand2, ChevronDown, ChevronUp, Download, Check, Copy, RefreshCw, Eye, EyeOff, Palette, User, Users, Zap, Crown, Flame, Star } from "lucide-react";
 
+// ─── TapNow-inspired glassmorphism utilities ───
+const glassCard = "relative bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] rounded-2xl overflow-hidden";
+const glassCardHover = "hover:bg-white/[0.06] hover:border-white/[0.15] transition-all duration-300";
+const gradientText = "bg-clip-text text-transparent bg-gradient-to-r";
+const sectionTitle = "text-lg font-bold tracking-tight text-white/90";
 
-type StyleOption = { id: string; label: string; icon: React.ElementType; color: string; desc: string };
+type StyleOption = { id: string; label: string; icon: React.ElementType; gradient: string; desc: string };
 type GenderOption = { id: string; label: string; icon: React.ElementType };
 
 const STYLES: StyleOption[] = [
-  { id: "anime", label: "动漫风", icon: Sparkles, color: "text-[#FF6B6B]", desc: "日系动漫角色设计" },
-  { id: "realistic", label: "真人风", icon: Wand2, color: "text-[#64D2FF]", desc: "极度真人・摄影级品质" },
-  { id: "chibi", label: "Q版萌系", icon: Bot, color: "text-[#FFD60A]", desc: "可爱 Q 版造型" },
-  { id: "cyberpunk", label: "赛博庞克", icon: Bot, color: "text-[#C77DBA]", desc: "未来科技风格" },
-  { id: "fantasy", label: "奇幻风", icon: Sparkles, color: "text-[#30D158]", desc: "魔幻梦境风格" },
+  { id: "anime", label: "动漫风", icon: Sparkles, gradient: "from-rose-500 to-pink-600", desc: "日系动漫角色设计，细腻线条与鲜艳色彩" },
+  { id: "realistic", label: "真人风", icon: Crown, gradient: "from-cyan-400 to-blue-600", desc: "极度真人・摄影级品质，超写实渲染" },
+  { id: "chibi", label: "Q版萌系", icon: Star, gradient: "from-amber-400 to-yellow-500", desc: "可爱 Q 版造型，大眼萌系风格" },
+  { id: "cyberpunk", label: "赛博庞克", icon: Zap, gradient: "from-purple-500 to-fuchsia-600", desc: "未来科技风格，霓虹光影" },
+  { id: "fantasy", label: "奇幻风", icon: Flame, gradient: "from-emerald-400 to-teal-600", desc: "魔幻梦境风格，奇幻世界观" },
 ];
 
 const GENDERS: GenderOption[] = [
-  { id: "female", label: "女性", icon: Bot },
-  { id: "male", label: "男性", icon: Bot },
-  { id: "neutral", label: "中性", icon: Bot },
+  { id: "female", label: "女性", icon: User },
+  { id: "male", label: "男性", icon: User },
+  { id: "neutral", label: "中性", icon: Users },
 ];
 
 export default function VirtualIdol() {
@@ -81,7 +86,6 @@ export default function VirtualIdol() {
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = async (e) => {
       const base64 = e.target?.result as string;
@@ -104,27 +108,18 @@ export default function VirtualIdol() {
     reader.readAsDataURL(file);
   };
 
-  const pickReferenceImage = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
+  const pickReferenceImage = useCallback(() => { fileInputRef.current?.click(); }, []);
   const removeReferenceImage = useCallback(() => {
     setReferenceImage(null);
     setReferenceImageUrl(null);
-    if(fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   const handleGenerate = useCallback(async () => {
     try {
       const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "avatar" });
-      
       if (!accessCheck.allowed) {
-        setQuotaModalInfo({
-          isTrial: (accessCheck as any).isTrial,
-          planName: (accessCheck as any).planName,
-        });
+        setQuotaModalInfo({ isTrial: (accessCheck as any).isTrial, planName: (accessCheck as any).planName });
         setQuotaModalVisible(true);
         return;
       }
@@ -132,26 +127,19 @@ export default function VirtualIdol() {
       toast.error("错误", { description: error.message || "无法检查使用权限" });
       return;
     }
-
     if (referenceImage && !referenceImageUrl && uploadingRef) {
       toast.info("请稍候", { description: "参考图正在上传中，请等待上传完成后再生成" });
       return;
     }
-    
     setGenerating(true);
     setError(null);
     setGeneratedImage(null);
     setShow3DPanel(false);
     setImage3D(null);
     const qualityMap: Record<string, "free" | "2k" | "4k" | "kling_1k" | "kling_2k"> = {
-      forge: "free",
-      nbp_2k: "2k",
-      nbp_4k: "4k",
-      kling_1k: "kling_1k",
-      kling_2k: "kling_2k",
+      forge: "free", nbp_2k: "2k", nbp_4k: "4k", kling_1k: "kling_1k", kling_2k: "kling_2k",
     };
     const quality = qualityMap[imageEngine] || "free";
-
     try {
       const result = await generateMutation.mutateAsync({
         style: selectedStyle as any,
@@ -176,7 +164,6 @@ export default function VirtualIdol() {
 
   const handleConvertTo3D = useCallback(async () => {
     if (!generatedImage) return;
-
     setConverting3D(true);
     setError3D(null);
     setImage3D(null);
@@ -185,10 +172,7 @@ export default function VirtualIdol() {
     setMode3D(null);
     setTimeTaken3D(0);
     try {
-      const result = await convert3DMutation.mutateAsync({
-        imageUrl: generatedImage,
-        enablePbr,
-      });
+      const result = await convert3DMutation.mutateAsync({ imageUrl: generatedImage, enablePbr });
       setImage3D(result.imageUrl3D);
       setGlbUrl(result.glbUrl ?? null);
       setObjUrl(result.objUrl ?? null);
@@ -200,10 +184,7 @@ export default function VirtualIdol() {
       if (err.message?.includes("仅限专业版")) {
         toast.error("需要升级", {
           description: "偶像转 3D 功能仅限专业版以上用户使用。升级后可享受 3D 转换，每次消耗 10 Credits。",
-          action: {
-            label: "立即升级",
-            onClick: () => navigate("/pricing"),
-          },
+          action: { label: "立即升级", onClick: () => navigate("/pricing") },
         });
       } else {
         setError3D(err.message || "3D 转换失败，请稍后再试");
@@ -216,224 +197,294 @@ export default function VirtualIdol() {
   const currentStyleInfo = useMemo(() => STYLES.find(s => s.id === selectedStyle), [selectedStyle]);
 
   useEffect(() => {
-    if (!loading && !isAuthenticated) {
-      console.log("[Avatar] Not authenticated, redirecting to login...");
-      navigate("/login");
-    }
+    if (!loading && !isAuthenticated) navigate("/login");
   }, [loading, isAuthenticated, navigate]);
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        <p className="mt-4 text-muted-foreground">检查登录状态...</p>
+      <div className="min-h-screen bg-[#08080A] flex flex-col items-center justify-center">
+        <div className="relative">
+          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 rounded-full blur-2xl animate-pulse" />
+          <Loader2 className="h-12 w-12 animate-spin text-white/60 relative" />
+        </div>
+        <p className="mt-6 text-white/40 text-sm tracking-wide">检查登录状态...</p>
       </div>
     );
   }
 
-  if (!isAuthenticated) {
-    return null;
-  }
+  if (!isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
-      <div className="overflow-y-auto p-4 md:p-6 lg:p-8">
+    <div className="min-h-screen bg-[#08080A] text-white/90">
+      {/* Ambient background glow */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-gradient-to-br from-cyan-500/[0.04] to-purple-500/[0.02] rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 right-1/4 w-[500px] h-[500px] bg-gradient-to-br from-rose-500/[0.03] to-amber-500/[0.02] rounded-full blur-[100px]" />
+      </div>
+
+      <div className="relative overflow-y-auto p-4 md:p-6 lg:p-8">
         <UsageQuotaBanner
           featureType="avatar"
           currentCount={usageStatsQuery.data?.features.avatar.currentCount ?? 0}
           freeLimit={usageStatsQuery.data?.features.avatar.limit ?? 3}
           loading={usageStatsQuery.isPending}
         />
-
         <TrialCountdownBanner
           isTrial={(usageStatsQuery.data as any)?.isTrial}
           trialEndDate={(usageStatsQuery.data as any)?.trialEndDate}
           trialExpired={(usageStatsQuery.data as any)?.trialExpired}
         />
-
         <ExpiryWarningBanner />
 
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 mt-4">
-          {/* Left Panel: Controls */}
+          {/* ═══ Left Panel: Controls ═══ */}
           <div className="lg:col-span-4 space-y-6">
-            <div className="bg-[#1A1A1C] p-6 rounded-2xl">
-              <h2 className="text-2xl font-bold mb-4">虚拟偶像生成</h2>
-              <p className="text-sm text-gray-400 mb-6">创建属于你的虚拟偶像。选择风格、性别，并用文字描述你的想法。</p>
+            <div className={`${glassCard} p-6`}>
+              {/* Header with gradient */}
+              <div className="mb-6">
+                <h2 className={`text-2xl font-bold ${gradientText} from-cyan-300 via-blue-400 to-purple-400`}>
+                  虚拟偶像生成
+                </h2>
+                <p className="text-sm text-white/40 mt-2 leading-relaxed">
+                  创建属于你的虚拟偶像。选择风格、性别，并用文字描述你的想法。
+                </p>
+              </div>
 
-              {/* Style Selector */}
+              {/* ── Style Selector ── */}
               <div>
-                <label className="text-base font-semibold text-gray-300">选择风格</label>
+                <label className={sectionTitle}>选择风格</label>
                 <div className="grid grid-cols-3 gap-3 mt-3">
-                  {STYLES.map((style) => (
-                    <button
-                      key={style.id}
-                      onClick={() => setSelectedStyle(style.id)}
-                      className={`flex flex-col items-center justify-center p-3 rounded-lg transition-all duration-200 ${selectedStyle === style.id ? 'bg-blue-600/80 ring-2 ring-blue-400' : 'bg-[#2A2A2C] hover:bg-[#3A3A3C]'}`}>
-                      <style.icon className={`h-6 w-6 mb-1 ${style.color}`} />
-                      <span className="text-xs font-medium">{style.label}</span>
-                    </button>
-                  ))}
+                  {STYLES.map((style) => {
+                    const isSelected = selectedStyle === style.id;
+                    const Icon = style.icon;
+                    return (
+                      <button
+                        key={style.id}
+                        onClick={() => setSelectedStyle(style.id)}
+                        className={`group relative flex flex-col items-center justify-center p-4 rounded-xl transition-all duration-300 ${
+                          isSelected
+                            ? `bg-gradient-to-br ${style.gradient} shadow-lg shadow-white/5 scale-[1.02]`
+                            : `bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/[0.12] hover:scale-[1.02]`
+                        }`}
+                      >
+                        {isSelected && (
+                          <div className={`absolute inset-0 bg-gradient-to-br ${style.gradient} opacity-20 rounded-xl blur-xl`} />
+                        )}
+                        <div className="relative">
+                          <Icon className={`h-6 w-6 mb-2 transition-all duration-300 ${
+                            isSelected ? 'text-white drop-shadow-lg' : 'text-white/50 group-hover:text-white/70'
+                          }`} />
+                        </div>
+                        <span className={`text-xs font-semibold relative ${
+                          isSelected ? 'text-white' : 'text-white/60 group-hover:text-white/80'
+                        }`}>{style.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-xs text-gray-500 mt-2">{currentStyleInfo?.desc}</p>
+                {/* Style description with fade animation */}
+                <div className="mt-3 min-h-[2rem]">
+                  <p
+                    key={selectedStyle}
+                    className="text-xs text-white/40 animate-[fadeIn_0.3s_ease-out]"
+                    style={{ animation: 'fadeIn 0.3s ease-out' }}
+                  >
+                    {currentStyleInfo?.desc}
+                  </p>
+                </div>
               </div>
 
-              {/* Gender Selector */}
-              <div className="mt-6">
-                <label className="text-base font-semibold text-gray-300">选择性别</label>
-                <div className="flex items-center space-x-3 mt-3">
-                  {GENDERS.map((gender) => (
-                    <button
-                      key={gender.id}
-                      onClick={() => setSelectedGender(gender.id)}
-                      className={`flex items-center px-4 py-2 rounded-full text-sm font-medium transition-colors ${selectedGender === gender.id ? 'bg-blue-600 text-white' : 'bg-[#2A2A2C] hover:bg-[#3A3A3C]'}`}>
-                      <gender.icon className="h-4 w-4 mr-2" />
-                      {gender.label}
-                    </button>
-                  ))}
+              {/* ── Gender Selector ── */}
+              <div className="mt-5">
+                <label className={sectionTitle}>选择性别</label>
+                <div className="flex items-center gap-3 mt-3">
+                  {GENDERS.map((gender) => {
+                    const isSelected = selectedGender === gender.id;
+                    const Icon = gender.icon;
+                    return (
+                      <button
+                        key={gender.id}
+                        onClick={() => setSelectedGender(gender.id)}
+                        className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-all duration-300 ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-cyan-500/80 to-blue-600/80 text-white shadow-lg shadow-cyan-500/10'
+                            : 'bg-white/[0.04] border border-white/[0.06] text-white/50 hover:bg-white/[0.08] hover:text-white/70'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {gender.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Description Input */}
+              {/* ── Description Input ── */}
               <div className="mt-6">
-                <label htmlFor="description" className="text-base font-semibold text-gray-300">外貌描述 (Prompt)</label>
+                <label htmlFor="description" className={sectionTitle}>外貌描述 (Prompt)</label>
                 <textarea
                   id="description"
                   rows={4}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="例如：1女孩，棕色长发，蓝色眼睛，穿着白色连衣裙，微笑"
-                  className="w-full mt-3 bg-[#2A2A2C] border border-gray-600 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
+                  className="w-full mt-3 bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 text-sm text-white/80 placeholder:text-white/20 focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500/30 focus:bg-white/[0.06] transition-all duration-300 resize-none"
                 />
               </div>
 
-              {/* Reference Image */}
+              {/* ── Reference Image ── */}
               <div className="mt-6">
-                <label className="text-base font-semibold text-gray-300">参考图 (选填)</label>
+                <label className={sectionTitle}>参考图 (选填)</label>
                 <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                 {referenceImage ? (
-                  <div className="mt-3 relative group">
-                    <img src={referenceImage} alt="Reference" className="w-full rounded-lg" />
-                    <button onClick={removeReferenceImage} className="absolute top-2 right-2 bg-black/50 rounded-full p-1.5 text-white hover:bg-black/80 transition-colors">
+                  <div className="mt-3 relative group rounded-xl overflow-hidden">
+                    <img src={referenceImage} alt="Reference" className="w-full rounded-xl" />
+                    <button onClick={removeReferenceImage} className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm rounded-full p-2 text-white/80 hover:bg-black/80 hover:text-white transition-all duration-200">
                       <X className="h-4 w-4" />
                     </button>
                     {uploadingRef && (
-                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-lg">
-                        <Loader2 className="h-6 w-6 animate-spin" />
-                        <span className="ml-2 text-sm">上传中...</span>
+                      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center rounded-xl">
+                        <Loader2 className="h-6 w-6 animate-spin text-cyan-400" />
+                        <span className="ml-3 text-sm text-white/70">上传中...</span>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <button onClick={pickReferenceImage} className="mt-3 w-full flex flex-col items-center justify-center border-2 border-dashed border-gray-600 rounded-lg py-8 hover:border-gray-500 transition-colors">
-                    <Upload className="h-8 w-8 text-gray-500" />
-                    <span className="mt-2 text-sm text-gray-400">点击上传图片</span>
+                  <button onClick={pickReferenceImage} className="mt-3 w-full flex flex-col items-center justify-center border-2 border-dashed border-white/[0.08] rounded-xl py-8 hover:border-white/[0.15] hover:bg-white/[0.02] transition-all duration-300 group">
+                    <Upload className="h-8 w-8 text-white/20 group-hover:text-white/40 transition-colors duration-300" />
+                    <span className="mt-3 text-sm text-white/30 group-hover:text-white/50 transition-colors duration-300">点击上传图片</span>
                   </button>
                 )}
               </div>
 
-              {/* Engine Selector */}
+              {/* ── Engine Selector ── */}
               <div className="mt-6">
-                 <NbpEngineSelector selected={imageEngine} onSelect={setImageEngine} plan={userPlan} creditsAvailable={userCredits} isAdmin={user?.role === "admin"} compact />
+                <NbpEngineSelector selected={imageEngine} onSelect={setImageEngine} plan={userPlan} creditsAvailable={userCredits} isAdmin={user?.role === "admin"} compact />
               </div>
 
-              {/* Generate Button */}
+              {/* ── Generate Button ── */}
               <button
                 onClick={handleGenerate}
                 disabled={generating || uploadingRef}
-                className="w-full mt-8 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold py-3 rounded-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition-transform transform hover:scale-105">
-                {generating ? (
-                  <><Loader2 className="h-5 w-5 animate-spin mr-2" /> 正在生成...</>
-                ) : (
-                  <><Sparkles className="h-5 w-5 mr-2" /> 开始生成</>
-                )}
+                className="w-full mt-8 relative group overflow-hidden rounded-xl py-3.5 font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 via-blue-600 to-purple-600 transition-all duration-500" />
+                <div className="absolute inset-0 bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                <span className="relative flex items-center justify-center gap-2">
+                  {generating ? (
+                    <><Loader2 className="h-5 w-5 animate-spin" /> 正在生成...</>
+                  ) : (
+                    <><Sparkles className="h-5 w-5" /> 开始生成</>
+                  )}
+                </span>
               </button>
             </div>
           </div>
 
-          {/* Right Panel: Output */}
-          <div className="lg:col-span-8">
+          {/* ═══ Right Panel: Output ═══ */}
+          <div className="lg:col-span-8 space-y-6">
             {/* Generated Image Display */}
-            <div className="bg-[#1A1A1C] rounded-2xl p-4 aspect-square flex items-center justify-center relative">
+            <div className={`${glassCard} aspect-square flex items-center justify-center p-1`}>
               {generating && (
-                <div className="flex flex-col items-center text-gray-400">
-                  <Loader2 className="h-16 w-16 animate-spin text-blue-500" />
-                  <p className="mt-4 text-lg">正在为你生成虚拟偶像...</p>
-                  <p className="text-sm text-gray-500">通常需要 15-30 秒</p>
+                <div className="flex flex-col items-center">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/20 to-purple-500/20 rounded-full blur-3xl animate-pulse" />
+                    <Loader2 className="h-16 w-16 animate-spin text-cyan-400/60 relative" />
+                  </div>
+                  <p className="mt-6 text-lg text-white/50">正在为你生成虚拟偶像...</p>
+                  <p className="text-sm text-white/25 mt-1">通常需要 15-30 秒</p>
                 </div>
               )}
               {error && !generating && (
-                <div className="text-center text-red-400">
-                  <p className="font-semibold">生成失败</p>
-                  <p className="text-sm mt-2">{error}</p>
+                <div className="text-center px-8">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
+                    <X className="h-8 w-8 text-red-400/60" />
+                  </div>
+                  <p className="font-semibold text-red-400/80">生成失败</p>
+                  <p className="text-sm mt-2 text-red-400/50">{error}</p>
                 </div>
               )}
               {generatedImage && !generating && (
                 <>
-                  <img src={generatedImage} alt="Generated virtual idol" className="object-contain w-full h-full rounded-lg" />
-                  <div className="absolute top-3 right-3 flex space-x-2">
-                     <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 p-2 rounded-full text-white hover:bg-black/70 transition-colors">
-                        <Download className="h-5 w-5" />
-                     </button>
+                  <img src={generatedImage} alt="Generated virtual idol" className="object-contain w-full h-full rounded-xl" />
+                  <div className="absolute top-4 right-4 flex gap-2">
+                    <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 backdrop-blur-sm p-2.5 rounded-xl text-white/70 hover:bg-black/70 hover:text-white transition-all duration-200">
+                      <Download className="h-5 w-5" />
+                    </button>
                   </div>
                 </>
               )}
               {!generatedImage && !generating && !error && (
-                <div className="text-center text-gray-500 flex flex-col items-center">
-                  <Bot className="h-20 w-20" />
-                  <p className="mt-4 text-lg">你的虚拟偶像将在这里出现</p>
+                <div className="text-center flex flex-col items-center">
+                  <div className="w-24 h-24 rounded-2xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mb-4">
+                    <Bot className="h-12 w-12 text-white/15" />
+                  </div>
+                  <p className="text-white/30 text-lg">你的虚拟偶像将在这里出现</p>
                 </div>
               )}
             </div>
 
-            {/* 3D Conversion Panel */}
+            {/* ── 3D Conversion Panel ── */}
             {generatedImage && (
-              <div className="mt-6 bg-[#1A1A1C] p-6 rounded-2xl">
-                <div className="flex justify-between items-center cursor-pointer" onClick={() => setShow3DPanel(!show3DPanel)}>
-                  <h3 className="text-xl font-bold">一键转换为 3D 模型</h3>
-                  {show3DPanel ? <ChevronUp /> : <ChevronDown />}
+              <div className={`${glassCard} p-6`}>
+                <div className="flex justify-between items-center cursor-pointer group" onClick={() => setShow3DPanel(!show3DPanel)}>
+                  <h3 className={`text-xl font-bold ${gradientText} from-emerald-300 to-cyan-400`}>
+                    一键转换为 3D 模型
+                  </h3>
+                  <div className="p-2 rounded-lg bg-white/[0.04] group-hover:bg-white/[0.08] transition-colors duration-200">
+                    {show3DPanel ? <ChevronUp className="h-5 w-5 text-white/50" /> : <ChevronDown className="h-5 w-5 text-white/50" />}
+                  </div>
                 </div>
                 {show3DPanel && (
-                  <div className="mt-4">
-                    <p className="text-sm text-gray-400 mb-4">将上方生成的 2D 图片转换为 3D 模型，可用于游戏、VTuber 等场景。每次转换消耗 10 点数 (仅限专业版)。</p>
-                    <div className="flex items-center space-x-4 mb-4">
-                      <label htmlFor="pbr-toggle" className="flex items-center cursor-pointer">
+                  <div className="mt-5 space-y-4 animate-[fadeIn_0.3s_ease-out]" style={{ animation: 'fadeIn 0.3s ease-out' }}>
+                    <p className="text-sm text-white/35 leading-relaxed">
+                      将上方生成的 2D 图片转换为 3D 模型，可用于游戏、VTuber 等场景。每次转换消耗 10 Credits (仅限专业版)。
+                    </p>
+                    <div className="flex items-center gap-4">
+                      <label htmlFor="pbr-toggle" className="flex items-center cursor-pointer group">
                         <input type="checkbox" id="pbr-toggle" checked={enablePbr} onChange={(e) => setEnablePbr(e.target.checked)} className="sr-only" />
-                        <div className={`w-10 h-5 rounded-full transition-colors ${enablePbr ? 'bg-blue-600' : 'bg-gray-500'}`}>
-                          <div className={`w-4 h-4 m-0.5 bg-white rounded-full transition-transform ${enablePbr ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                        <div className={`w-11 h-6 rounded-full transition-all duration-300 ${enablePbr ? 'bg-gradient-to-r from-emerald-500 to-cyan-500' : 'bg-white/10'}`}>
+                          <div className={`w-5 h-5 m-0.5 bg-white rounded-full shadow-lg transition-transform duration-300 ${enablePbr ? 'translate-x-5' : 'translate-x-0'}`} />
                         </div>
-                        <span className="ml-3 text-sm font-medium">启用 PBR 材质 (效果更好)</span>
+                        <span className="ml-3 text-sm font-medium text-white/60">启用 PBR 材质 (效果更好)</span>
                       </label>
                     </div>
                     <button
                       onClick={handleConvertTo3D}
                       disabled={converting3D}
-                      className="w-full bg-green-600 text-white font-bold py-3 rounded-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transition-transform transform hover:scale-105">
-                      {converting3D ? (
-                        <><Loader2 className="h-5 w-5 animate-spin mr-2" /> 正在转换...</>
-                      ) : (
-                        <><Wand2 className="h-5 w-5 mr-2" /> 开始转换 (消耗 10 点数)</>
-                      )}
+                      className="w-full relative group overflow-hidden rounded-xl py-3 font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.01]"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 to-cyan-600" />
+                      <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                      <span className="relative flex items-center justify-center gap-2">
+                        {converting3D ? (
+                          <><Loader2 className="h-5 w-5 animate-spin" /> 正在转换...</>
+                        ) : (
+                          <><Wand2 className="h-5 w-5" /> 开始转换 (消耗 10 Credits)</>
+                        )}
+                      </span>
                     </button>
 
                     {converting3D && (
-                      <div className="mt-4 text-center">
-                        <p className="text-sm text-gray-400">3D 模型转换中，通常需要 1-2 分钟...</p>
+                      <div className="text-center py-4">
+                        <p className="text-sm text-white/30">3D 模型转换中，通常需要 1-2 分钟...</p>
                       </div>
                     )}
                     {error3D && !converting3D && (
-                       <p className="mt-4 text-center text-red-400">{error3D}</p>
+                      <p className="text-center text-red-400/70 text-sm">{error3D}</p>
                     )}
-                    
+
                     {glbUrl && (
-                      <div className="mt-6">
-                        <h4 className="font-semibold mb-2">3D 模型预览与下载</h4>
-                        <div className="aspect-video bg-gray-800 rounded-lg overflow-hidden">
-                           <ModelViewer src={glbUrl} />
+                      <div className="mt-4 space-y-4">
+                        <h4 className="font-semibold text-white/80">3D 模型预览与下载</h4>
+                        <div className="aspect-video bg-black/30 rounded-xl overflow-hidden border border-white/[0.06]">
+                          <ModelViewer src={glbUrl} />
                         </div>
-                        <div className="flex items-center space-x-2 mt-2">
-                          <a href={glbUrl} download="virtual_idol.glb" className="px-4 py-2 bg-blue-600 rounded-md text-sm">下载 GLB</a>
-                          <a href={objUrl} download="virtual_idol.obj" className="px-4 py-2 bg-gray-600 rounded-md text-sm">下载 OBJ</a>
-                          <a href={textureUrl3D} download="virtual_idol_texture.png" className="px-4 py-2 bg-gray-600 rounded-md text-sm">下载贴图</a>
+                        <div className="flex items-center gap-2">
+                          <a href={glbUrl} download="virtual_idol.glb" className="px-4 py-2 bg-gradient-to-r from-cyan-500/80 to-blue-600/80 rounded-lg text-sm font-medium hover:from-cyan-400 hover:to-blue-500 transition-all duration-300">下载 GLB</a>
+                          {objUrl && <a href={objUrl} download="virtual_idol.obj" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载 OBJ</a>}
+                          {textureUrl3D && <a href={textureUrl3D} download="virtual_idol_texture.png" className="px-4 py-2 bg-white/[0.06] border border-white/[0.08] rounded-lg text-sm text-white/60 hover:bg-white/[0.1] transition-all duration-300">下载贴图</a>}
                         </div>
                       </div>
                     )}
@@ -442,19 +493,28 @@ export default function VirtualIdol() {
               </div>
             )}
 
-            {/* 生成歷史和收藏管理 */}
-            <div className="mt-6 bg-[#1A1A1C] p-6 rounded-2xl">
+            {/* ── History ── */}
+            <div className={`${glassCard} p-6`}>
               <CreationHistoryPanel type="idol_image" title="偶像生成歷史" />
             </div>
           </div>
         </div>
       </div>
+
       <QuotaExhaustedModal
         isOpen={quotaModalVisible}
         onClose={() => setQuotaModalVisible(false)}
         isTrial={quotaModalInfo.isTrial}
         planName={quotaModalInfo.planName}
       />
+
+      {/* Inline keyframes */}
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }

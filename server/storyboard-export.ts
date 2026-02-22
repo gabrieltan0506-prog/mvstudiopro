@@ -3,10 +3,15 @@
  * Handles PDF and Word export for storyboard scripts.
  * PDF: Uses pdfkit with embedded font (downloaded from CDN on first use)
  * Word: Uses docx library for proper .docx generation
+ * 
+ * Features:
+ * - Preserves original image aspect ratio in Word export
+ * - Adds colored watermark for free-tier users (PDF diagonal + Word header/footer)
  */
 import fs from "fs";
 import path from "path";
 import axios from "axios";
+import sharp from "sharp";
 import { storagePut, storageGet } from "./storage";
 
 // ─── Types ──────────────────────────────────────────────
@@ -34,19 +39,29 @@ interface StoryboardData {
   summary: string;
 }
 
+interface ExportOptions {
+  addWatermark?: boolean; // Whether to add watermark (free-tier)
+}
+
+// ─── Constants ─────────────────────────────────────────
+const WATERMARK_TEXT = "MV Studio Pro";
+const WATERMARK_URL = "mvstudiopro.com";
+const WATERMARK_COLOR_HEX = "FF6B35"; // Vibrant orange for visibility
+const WATERMARK_COLOR_RGBA = "rgba(255, 107, 53, 0.35)"; // Semi-transparent orange
+const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.18)";
+const MAX_IMAGE_WIDTH = 480; // Max width in Word document (points)
+
 // ─── Font Management ────────────────────────────────────
 const FONT_DIR = "/tmp/mvstudio-fonts";
 const FONT_REGULAR = path.join(FONT_DIR, "NotoSansSC-Regular.ttf");
 const FONT_BOLD = path.join(FONT_DIR, "NotoSansSC-Bold.ttf");
 
-// Google Fonts CDN URLs for Noto Sans SC
 const FONT_URLS = {
   regular: "https://fonts.gstatic.com/s/notosanssc/v37/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_EnYxNbPzS5HE.ttf",
   bold: "https://fonts.gstatic.com/s/notosanssc/v37/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_EnYxNbPzS5HE.ttf",
 };
 
 async function ensureFonts(): Promise<{ regular: string; bold: string }> {
-  // First try local system fonts
   const localRegular = "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf";
   const localBold = "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf";
   
@@ -54,7 +69,6 @@ async function ensureFonts(): Promise<{ regular: string; bold: string }> {
     return { regular: localRegular, bold: localBold };
   }
 
-  // Download from CDN if local fonts not available
   if (!fs.existsSync(FONT_DIR)) {
     fs.mkdirSync(FONT_DIR, { recursive: true });
   }
@@ -71,9 +85,7 @@ async function ensureFonts(): Promise<{ regular: string; bold: string }> {
     }
   }
 
-  // For bold, use regular as fallback (same weight from Google Fonts variable font)
   if (!fs.existsSync(FONT_BOLD)) {
-    // Copy regular as bold fallback
     if (fs.existsSync(FONT_REGULAR)) {
       fs.copyFileSync(FONT_REGULAR, FONT_BOLD);
     }
@@ -82,10 +94,96 @@ async function ensureFonts(): Promise<{ regular: string; bold: string }> {
   return { regular: FONT_REGULAR, bold: FONT_BOLD };
 }
 
+// ─── Image Helper ──────────────────────────────────────
+/**
+ * Download image and get its actual dimensions for proper aspect ratio
+ */
+async function downloadImageWithDimensions(url: string): Promise<{
+  buffer: Buffer;
+  width: number;
+  height: number;
+  scaledWidth: number;
+  scaledHeight: number;
+}> {
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    timeout: 15000,
+  });
+  const buffer = Buffer.from(response.data);
+  
+  // Use sharp to get actual image dimensions
+  const metadata = await sharp(buffer).metadata();
+  const origWidth = metadata.width || 1024;
+  const origHeight = metadata.height || 576;
+  
+  // Scale to fit max width while preserving aspect ratio
+  const aspectRatio = origHeight / origWidth;
+  const scaledWidth = Math.min(origWidth, MAX_IMAGE_WIDTH);
+  const scaledHeight = Math.round(scaledWidth * aspectRatio);
+  
+  return { buffer, width: origWidth, height: origHeight, scaledWidth, scaledHeight };
+}
+
+/**
+ * Add colored watermark overlay to an image buffer for PDF/Word export
+ */
+async function addExportWatermark(imageBuffer: Buffer): Promise<Buffer> {
+  const image = sharp(imageBuffer);
+  const metadata = await image.metadata();
+  const width = metadata.width || 1024;
+  const height = metadata.height || 576;
+  
+  const fontSize = Math.max(18, Math.floor(Math.min(width, height) * 0.07));
+  
+  // Create diagonal repeating watermark with orange color
+  const svgOverlay = `
+    <svg width="${width}" height="${height}">
+      <defs>
+        <style>
+          .wm { 
+            fill: ${WATERMARK_COLOR_RGBA}; 
+            font-family: Arial, sans-serif; 
+            font-weight: 700; 
+            letter-spacing: 3px;
+          }
+          .wm-sm { 
+            fill: ${WATERMARK_COLOR_RGBA_LIGHT}; 
+            font-family: Arial, sans-serif; 
+            font-weight: 600; 
+            letter-spacing: 2px;
+          }
+        </style>
+      </defs>
+      <text x="50%" y="25%" text-anchor="middle" dominant-baseline="middle" 
+        class="wm-sm" font-size="${fontSize * 0.6}" 
+        transform="rotate(-25, ${width / 2}, ${height * 0.25})">${WATERMARK_TEXT}</text>
+      <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" 
+        class="wm" font-size="${fontSize}" 
+        transform="rotate(-25, ${width / 2}, ${height / 2})">${WATERMARK_TEXT}</text>
+      <text x="50%" y="75%" text-anchor="middle" dominant-baseline="middle" 
+        class="wm-sm" font-size="${fontSize * 0.6}" 
+        transform="rotate(-25, ${width / 2}, ${height * 0.75})">${WATERMARK_URL}</text>
+      <text x="20%" y="40%" text-anchor="middle" dominant-baseline="middle" 
+        class="wm-sm" font-size="${fontSize * 0.5}" 
+        transform="rotate(-25, ${width * 0.2}, ${height * 0.4})">${WATERMARK_URL}</text>
+      <text x="80%" y="60%" text-anchor="middle" dominant-baseline="middle" 
+        class="wm-sm" font-size="${fontSize * 0.5}" 
+        transform="rotate(-25, ${width * 0.8}, ${height * 0.6})">${WATERMARK_URL}</text>
+    </svg>`;
+  
+  return image
+    .composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }])
+    .toBuffer();
+}
+
 // ─── PDF Export ─────────────────────────────────────────
-export async function exportToPDF(storyboard: StoryboardData): Promise<{ url: string; message: string }> {
+export async function exportToPDF(
+  storyboard: StoryboardData,
+  options: ExportOptions = {}
+): Promise<{ url: string; message: string }> {
   const fonts = await ensureFonts();
   const PDFDocument = (await import("pdfkit")).default;
+  const { addWatermark = false } = options;
 
   const doc = new PDFDocument({ size: "A4", margin: 50 });
   const fileName = `storyboard_${Date.now()}.pdf`;
@@ -93,13 +191,41 @@ export async function exportToPDF(storyboard: StoryboardData): Promise<{ url: st
   const writeStream = fs.createWriteStream(filePath);
   doc.pipe(writeStream);
 
-  // Helper: set Chinese font
+  const pageWidth = 595.28 - 100; // A4 width minus margins
   const fontBold = (size: number) => doc.fontSize(size).font(fonts.bold);
   const fontRegular = (size: number) => doc.fontSize(size).font(fonts.regular);
 
-  // Title
+  // Helper: Add PDF page watermark (colored diagonal text)
+  const addPageWatermark = () => {
+    if (!addWatermark) return;
+    doc.save();
+    doc.rotate(-30, { origin: [297.64, 420.94] });
+    doc.fontSize(48).font("Helvetica-Bold")
+      .fillColor("#FF6B35")
+      .opacity(0.12)
+      .text(WATERMARK_TEXT, 80, 350, { align: "center" });
+    doc.fontSize(24).font("Helvetica")
+      .fillColor("#FF6B35")
+      .opacity(0.08)
+      .text(WATERMARK_URL, 80, 410, { align: "center" });
+    doc.restore();
+    doc.fillColor("#000000").opacity(1); // Reset
+  };
+
+  // Title page
+  addPageWatermark();
   fontBold(24).text(storyboard.title, { align: "center" });
   doc.moveDown();
+
+  // Watermark notice for free tier
+  if (addWatermark) {
+    doc.moveDown();
+    fontRegular(9)
+      .fillColor("#FF6B35")
+      .text("本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印", { align: "center" });
+    doc.fillColor("#000000");
+    doc.moveDown();
+  }
 
   // Music Info
   fontBold(14).text("音樂信息", { underline: true });
@@ -113,20 +239,32 @@ export async function exportToPDF(storyboard: StoryboardData): Promise<{ url: st
   // Scenes
   for (const scene of storyboard.scenes) {
     doc.addPage();
+    addPageWatermark();
 
     fontBold(18).text(`場景 ${scene.sceneNumber}`, { underline: true });
     fontRegular(12).text(`${scene.timestamp} (${scene.duration})`);
     doc.moveDown();
 
-    // Preview image
+    // Preview image with watermark
     if (scene.previewImageUrl) {
       try {
-        const response = await axios.get(scene.previewImageUrl, {
-          responseType: "arraybuffer",
-          timeout: 15000,
+        const imgData = await downloadImageWithDimensions(scene.previewImageUrl);
+        let imageBuffer = imgData.buffer;
+        
+        // Add watermark to image if free tier
+        if (addWatermark) {
+          imageBuffer = await addExportWatermark(imageBuffer);
+        }
+        
+        // Use actual aspect ratio for PDF
+        const pdfMaxWidth = Math.min(pageWidth, 500);
+        const aspectRatio = imgData.height / imgData.width;
+        const pdfHeight = Math.round(pdfMaxWidth * aspectRatio);
+        
+        doc.image(imageBuffer, { 
+          fit: [pdfMaxWidth, Math.min(pdfHeight, 350)], 
+          align: "center" 
         });
-        const imageBuffer = Buffer.from(response.data);
-        doc.image(imageBuffer, { fit: [500, 300], align: "center" });
         doc.moveDown();
       } catch (error) {
         console.error(`Failed to load image for scene ${scene.sceneNumber}:`, error);
@@ -160,6 +298,7 @@ export async function exportToPDF(storyboard: StoryboardData): Promise<{ url: st
 
   // Summary
   doc.addPage();
+  addPageWatermark();
   fontBold(18).text("整體建議", { underline: true });
   doc.moveDown();
   fontRegular(11).text(storyboard.summary);
@@ -175,13 +314,16 @@ export async function exportToPDF(storyboard: StoryboardData): Promise<{ url: st
   const { key: pdfKey } = await storagePut(fileName, pdfBuffer, "application/pdf");
   fs.unlinkSync(filePath);
   const { url: pdfDownloadUrl } = await storageGet(pdfKey);
-  console.log("[StoryboardExport] PDF generated:", { key: pdfKey, url: pdfDownloadUrl });
+  console.log("[StoryboardExport] PDF generated:", { key: pdfKey, url: pdfDownloadUrl, watermark: addWatermark });
 
-  return { url: pdfDownloadUrl, message: "PDF 已生成！" };
+  return { url: pdfDownloadUrl, message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！" };
 }
 
 // ─── Word Export ────────────────────────────────────────
-export async function exportToWord(storyboard: StoryboardData): Promise<{ url: string; message: string }> {
+export async function exportToWord(
+  storyboard: StoryboardData,
+  options: ExportOptions = {}
+): Promise<{ url: string; message: string }> {
   const {
     Document,
     Packer,
@@ -190,14 +332,11 @@ export async function exportToWord(storyboard: StoryboardData): Promise<{ url: s
     HeadingLevel,
     AlignmentType,
     ImageRun,
-    Table,
-    TableRow,
-    TableCell,
-    WidthType,
-    BorderStyle,
-    ShadingType,
+    Header,
+    Footer,
   } = await import("docx");
 
+  const { addWatermark = false } = options;
   const children: any[] = [];
 
   // Title
@@ -209,6 +348,25 @@ export async function exportToWord(storyboard: StoryboardData): Promise<{ url: s
       spacing: { after: 300 },
     })
   );
+
+  // Watermark notice for free tier
+  if (addWatermark) {
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({
+            text: "⚠ 本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印",
+            size: 18,
+            color: WATERMARK_COLOR_HEX,
+            italics: true,
+            font: "Microsoft YaHei",
+          }),
+        ],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+      })
+    );
+  }
 
   // Music Info
   children.push(
@@ -258,20 +416,26 @@ export async function exportToWord(storyboard: StoryboardData): Promise<{ url: s
       })
     );
 
-    // Preview image
+    // Preview image - FIXED: preserve aspect ratio
     if (scene.previewImageUrl) {
       try {
-        const response = await axios.get(scene.previewImageUrl, {
-          responseType: "arraybuffer",
-          timeout: 15000,
-        });
-        const imageBuffer = Buffer.from(response.data);
+        const imgData = await downloadImageWithDimensions(scene.previewImageUrl);
+        let imageBuffer = imgData.buffer;
+        
+        // Add watermark to image if free tier
+        if (addWatermark) {
+          imageBuffer = await addExportWatermark(imageBuffer);
+        }
+        
         children.push(
           new Paragraph({
             children: [
               new ImageRun({
                 data: imageBuffer,
-                transformation: { width: 500, height: 280 },
+                transformation: { 
+                  width: imgData.scaledWidth, 
+                  height: imgData.scaledHeight,
+                },
                 type: "png",
               }),
             ],
@@ -332,20 +496,64 @@ export async function exportToWord(storyboard: StoryboardData): Promise<{ url: s
     })
   );
 
+  // Build document with optional watermark header/footer
+  const headerChildren = addWatermark
+    ? [
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `${WATERMARK_TEXT} | ${WATERMARK_URL} | 免費版 — 升級專業版移除水印`,
+              size: 16,
+              color: WATERMARK_COLOR_HEX,
+              italics: true,
+              font: "Arial",
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+        }),
+      ]
+    : [];
+
+  const footerChildren = addWatermark
+    ? [
+        new Paragraph({
+          children: [
+            new TextRun({
+              text: `© ${WATERMARK_TEXT} — ${WATERMARK_URL} | 本文檔含水印，升級專業版可移除`,
+              size: 14,
+              color: WATERMARK_COLOR_HEX,
+              italics: true,
+              font: "Arial",
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+        }),
+      ]
+    : [];
+
+  const sectionConfig: any = {
+    properties: {},
+    children,
+  };
+
+  if (addWatermark) {
+    sectionConfig.headers = {
+      default: new Header({ children: headerChildren }),
+    };
+    sectionConfig.footers = {
+      default: new Footer({ children: footerChildren }),
+    };
+  }
+
   const doc = new Document({
-    sections: [
-      {
-        properties: {},
-        children,
-      },
-    ],
+    sections: [sectionConfig],
   });
 
   const buffer = await Packer.toBuffer(doc);
   const wordFileName = `storyboard_${Date.now()}.docx`;
   const { key: wordKey } = await storagePut(wordFileName, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   const { url: wordDownloadUrl } = await storageGet(wordKey);
-  console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl });
+  console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl, watermark: addWatermark });
 
-  return { url: wordDownloadUrl, message: "Word 文檔已生成！" };
+  return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！" };
 }

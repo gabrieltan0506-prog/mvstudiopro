@@ -363,3 +363,13 @@
 - [x] 前端：展廳頁面頂部新增「AI 風格作品集」展示區塊（10張卡片 + 篩選 + 燈箱）
 - [x] 後端：插入精選作品到 showcase 表（改為前端靜態展示，更乾淨）
 - [x] 測試驗證（125 tests passed）並保存 checkpoint 推送 GitHub
+
+## Phase 39: 分鏡導出修復 + TapNow 風格全站升級（2026-02-22）
+- [x] 診斷並修復 Word 導出圖片比例壓縮問題（用 sharp 讀取實際寬高，按比例縮放）
+- [x] 免費版分鏡導出添加彩色水印（PDF 對角線重複橙色水印 + Word 頁眉頁腳水印）
+- [x] TapNow 風格設計升級：虛擬偶像頁面（毛玻璃卡片、漸變背景、ambient-glow）
+- [x] TapNow 風格設計升級：RemixStudio（毛玻璃卡片、透明按鈕）
+- [x] TapNow 風格設計升級：VFXEngine（毛玻璃卡片、glass-input）
+- [x] TapNow 風格設計升級：ThreeDStudio（毛玻璃卡片、ambient-glow）
+- [x] 全局 CSS 添加 TapNow 風格 utility classes（glass-card、glass-input、ambient-glow、page-enter 等）
+- [x] 測試驗證（125 tests passed）並保存 checkpoint 推送 GitHub

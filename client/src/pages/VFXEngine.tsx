@@ -168,7 +168,8 @@ export default function VFXEngine() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] page-enter">
+      <div className="ambient-glow" />
       <div className="overflow-y-auto">
         {/* ===== Header ===== */}
         <div className="sticky top-0 z-50 bg-[rgba(16,16,18,0.92)] border-b border-[rgba(255,255,255,0.06)] backdrop-blur-xl">
@@ -230,7 +231,7 @@ export default function VFXEngine() {
                   return (
                     <button
                       key={platform.id}
-                      className={`relative bg-[#161618] rounded-2xl p-4 border text-left transition-all duration-200 ${isSelected ? 'border-2' : 'border-[rgba(255,255,255,0.06)]'}`}
+                      className={`relative glass-card-subtle p-4 text-left transition-all duration-200 ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
                       style={{ borderColor: isSelected ? platform.color : 'rgba(255,255,255,0.06)' }}
                       onClick={() => togglePlatform(platform.id)}
                     >
@@ -271,7 +272,7 @@ export default function VFXEngine() {
                   return (
                     <button
                       key={tmpl.id}
-                      className={`relative bg-[#161618] rounded-xl p-3.5 border text-center transition-all duration-200 ${isSelected ? 'border-2' : 'border-[rgba(255,255,255,0.06)]'}`}
+                      className={`relative glass-card-subtle p-3.5 text-center transition-all duration-200 ${isSelected ? 'border-2 !border-opacity-100' : ''}`}
                       style={{ borderColor: isSelected ? tmpl.color : 'rgba(255,255,255,0.06)' }}
                       onClick={() => setSelectedTemplate(selectedTemplate === tmpl.id ? null : tmpl.id)}
                     >
@@ -299,7 +300,7 @@ export default function VFXEngine() {
                 <label className="text-sm font-semibold text-[#F7F4EF] mb-2 block">视频标题</label>
                 <input
                   type="text"
-                  className="w-full bg-[#161618] rounded-xl px-4 py-3.5 border border-[rgba(255,255,255,0.08)] text-[#F7F4EF] text-base focus:ring-2 focus:ring-[#64D2FF] outline-none"
+                  className="w-full glass-input px-4 py-3.5 text-base focus:ring-2 focus:ring-[#64D2FF]"
                   placeholder="例如：忆网情深 M&F"
                   value={mvTitle}
                   onChange={(e) => setMvTitle(e.target.value)}
@@ -308,7 +309,7 @@ export default function VFXEngine() {
               <div>
                 <label className="text-sm font-semibold text-[#F7F4EF] mb-2 block">视频描述（可选）</label>
                 <textarea
-                  className="w-full bg-[#161618] rounded-xl px-4 py-3.5 border border-[rgba(255,255,255,0.08)] text-[#F7F4EF] text-base min-h-[80px] focus:ring-2 focus:ring-[#64D2FF] outline-none"
+                  className="w-full glass-input px-4 py-3.5 text-base min-h-[80px] focus:ring-2 focus:ring-[#64D2FF]"
                   placeholder="简述视频的主题、风格或亮点..."
                   value={mvDescription}
                   onChange={(e) => setMvDescription(e.target.value)}
@@ -330,7 +331,7 @@ export default function VFXEngine() {
                   return (
                     <button
                       key={slot.id}
-                      className={`bg-[#161618] rounded-xl p-3 border text-center transition-all duration-200 ${isSelected ? 'border-[#FFD60A] bg-[rgba(255,214,10,0.08)]' : 'border-[rgba(255,255,255,0.06)]'}`}
+                      className={`glass-card-subtle p-3 text-center transition-all duration-200 ${isSelected ? '!border-[#FFD60A] !bg-[rgba(255,214,10,0.08)]' : ''}`}
                       onClick={() => setSelectedTimeSlot(slot.id)}
                     >
                       <Icon size={20} className={`mx-auto ${isSelected ? 'text-[#FFD60A]' : 'text-[#9B9691]'}`} />
@@ -418,7 +419,7 @@ export default function VFXEngine() {
               return (
                 <div className="py-2">
                   {/* Title */}
-                  <div className="bg-[#161618] rounded-2xl p-4 border border-[rgba(255,255,255,0.06)] mb-3">
+                  <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">标题</h3>
                       <button onClick={() => handleCopy(content.title, `${activePid}-title`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
@@ -432,7 +433,7 @@ export default function VFXEngine() {
                   </div>
 
                   {/* Caption */}
-                  <div className="bg-[#161618] rounded-2xl p-4 border border-[rgba(255,255,255,0.06)] mb-3">
+                  <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">文案</h3>
                       <button onClick={() => handleCopy(content.caption, `${activePid}-caption`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
@@ -446,7 +447,7 @@ export default function VFXEngine() {
                   </div>
 
                   {/* Hashtags */}
-                  <div className="bg-[#161618] rounded-2xl p-4 border border-[rgba(255,255,255,0.06)] mb-3">
+                  <div className="glass-card-subtle p-4 mb-3">
                     <div className="flex justify-between items-center mb-2.5">
                       <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider">标签</h3>
                       <button onClick={() => handleCopy(content.hashtags.join(" "), `${activePid}-tags`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)]">
@@ -466,7 +467,7 @@ export default function VFXEngine() {
                   </div>
 
                   {/* Platform Tips */}
-                  <div className="bg-[#161618] rounded-2xl p-4 border border-[rgba(255,255,255,0.06)] mb-3">
+                  <div className="glass-card-subtle p-4 mb-3">
                     <h3 className="text-sm font-bold text-[#9B9691] uppercase tracking-wider mb-2.5">发布建议</h3>
                     <div className="space-y-2">
                       {platform.tips.map((tip, i) => (

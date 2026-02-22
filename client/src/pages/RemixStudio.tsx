@@ -1286,7 +1286,8 @@ export default function RemixStudioPage() {
   const activeTabInfo = TABS.find((t) => t.id === activeTab);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] page-enter">
+      <div className="ambient-glow" />
       <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header */}
         <div className="mb-8">
@@ -1301,7 +1302,7 @@ export default function RemixStudioPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Panel: Controls */}
-          <div className="lg:col-span-2 bg-[#1A1A1C] p-6 rounded-2xl shadow-lg border border-gray-800/50">
+          <div className="lg:col-span-2 glass-card p-6">
             {/* Tab navigation */}
             <div className="flex items-center space-x-1 mb-6 overflow-x-auto pb-2">
               {TABS.map((tab) => (
@@ -1310,8 +1311,8 @@ export default function RemixStudioPage() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex items-center space-x-2 px-4 py-2.5 rounded-lg whitespace-nowrap transition-all ${
                     activeTab === tab.id
-                      ? "bg-gray-800 text-white shadow-md"
-                      : "text-gray-400 hover:text-white hover:bg-gray-800/50"
+                      ? "bg-white/10 text-white shadow-md backdrop-blur-sm"
+                      : "text-gray-400 hover:text-white hover:bg-white/5"
                   }`}
                 >
                   <tab.icon className="h-5 w-5" style={{ color: activeTab === tab.id ? tab.color : undefined }} />
@@ -1330,7 +1331,7 @@ export default function RemixStudioPage() {
           </div>
 
           {/* Right Panel: Task Queue */}
-          <div className="bg-[#1A1A1C] p-6 rounded-2xl shadow-lg border border-gray-800/50">
+          <div className="glass-card p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold">任务队列</h2>
               {tasks.length > 0 && (

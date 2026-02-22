@@ -259,7 +259,8 @@ export default function ThreeDStudioPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
+    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] page-enter">
+      <div className="ambient-glow" />
       <div className="flex-grow">
 
         {/* ===== 页面标题 ===== */}
@@ -306,7 +307,7 @@ export default function ThreeDStudioPage() {
               {/* Left Column: Upload & Result */}
               <div className="flex-1">
                 {generatedResult ? (
-                  <div className="rounded-2xl border border-white/10 bg-[#1A1A1D] p-6">
+                  <div className="glass-card p-6">
                     <div className="mb-4 flex items-center gap-3">
                       <CheckCircle size={24} className="text-green-500" />
                       <h2 className="text-xl font-bold text-white">3D 模型生成完成</h2>
@@ -390,7 +391,7 @@ export default function ThreeDStudioPage() {
 
                   </div>
                 ) : (
-                  <div className="rounded-2xl border-2 border-dashed border-white/10 bg-[#1A1A1D] p-1">
+                  <div className="glass-card p-1 !border-dashed !border-2">
                     <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileSelect} className="hidden" />
                     {selectedImage ? (
                       <div className="relative">
@@ -542,7 +543,7 @@ export default function ThreeDStudioPage() {
                     <p className="mx-auto mt-3 max-w-2xl text-sm text-gray-400 md:text-base">基于 Hunyuan3D v3.1 实际生成效果，帮助您选择最适合的模式</p>
                 </div>
 
-                <div className="mt-8 overflow-hidden rounded-xl border border-white/10 bg-[#1A1A1D] text-sm">
+                <div className="mt-8 overflow-hidden glass-card-subtle text-sm">
                     <div className="grid grid-cols-[1.5fr,2fr,2fr] bg-white/5 font-bold text-white">
                         <div className="p-3">对比维度</div>
                         <div className="p-3 text-[#64D2FF]">闪电 3D (Rapid)</div>
