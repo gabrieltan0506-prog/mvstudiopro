@@ -14,7 +14,7 @@ import {
 
 const NAV_ITEMS = [
   { label: "视频PK评分", href: "/analysis" },
-  { label: "二次创作", href: "/remix" },
+  { label: "可靈工作室", href: "/remix" },
   { label: "虚拟偶像", href: "/idol" },
   { label: "2D转3D", href: "/3d-studio" },
   { label: "分镜脚本", href: "/storyboard" },

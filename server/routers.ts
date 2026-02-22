@@ -373,8 +373,23 @@ export const appRouter = router({
           const { url } = await generateImage({ prompt, originalImages });
           if (!url) throw new Error("Image generation failed - no URL returned");
           
+          // 免費生圖添加 MVStudioPro.com 水印（管理員跳過）
+          let finalUrl = url;
+          if (!isAdminUser) {
+            try {
+              const { addWatermarkToUrl } = await import("./watermark");
+              const { storagePut } = await import("./storage");
+              const watermarkedBuffer = await addWatermarkToUrl(url, "bottom-right");
+              const key = `watermarked/${userId}/${Date.now()}-idol.png`;
+              const uploaded = await storagePut(key, watermarkedBuffer, "image/png");
+              finalUrl = uploaded.url;
+            } catch (wmErr) {
+              console.error("[VirtualIdol] Watermark failed, using original:", wmErr);
+            }
+          }
+          
           await incrementUsageCount(userId, "avatar");
-          return { success: true, imageUrl: url, quality: "free" as const };
+          return { success: true, imageUrl: finalUrl, quality: "free" as const };
         }
 
         // ─── 2K / 4K tier: use Gemini API (Nano Banana Pro) ─────
@@ -682,7 +697,19 @@ export const appRouter = router({
           
           try {
             const { url } = await generateImage({ prompt: imagePrompt });
-            return { ...scene, previewImageUrl: url };
+            // 免費生圖添加水印（管理員跳過）
+            let finalUrl = url;
+            if (!isAdminUser && url) {
+              try {
+                const { addWatermarkToUrl } = await import("./watermark");
+                const { storagePut } = await import("./storage");
+                const wmBuf = await addWatermarkToUrl(url, "bottom-right");
+                const wmKey = `watermarked/${userId}/${Date.now()}-scene-${scene.sceneNumber}.png`;
+                const wmUp = await storagePut(wmKey, wmBuf, "image/png");
+                finalUrl = wmUp.url;
+              } catch { /* fallback to original */ }
+            }
+            return { ...scene, previewImageUrl: finalUrl };
           } catch (error) {
             console.error(`Failed to generate preview image for scene ${scene.sceneNumber}:`, error);
             return { ...scene, previewImageUrl: null };

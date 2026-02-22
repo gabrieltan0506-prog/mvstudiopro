@@ -34,6 +34,7 @@ export const CREDIT_COSTS = {
 
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,
+  klingMotionControl: 70,
   klingLipSync: 60,
 } as const;
 

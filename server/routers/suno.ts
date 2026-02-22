@@ -306,6 +306,23 @@ export const sunoRouter = router({
       };
     }),
 
+  // 获取音频水印 URL（免費用户播放前加入 MVStudioPro.com 语音）
+  getWatermarkAudio: protectedProcedure
+    .query(async ({ ctx }) => {
+      const isAdmin = ctx.user.role === "admin";
+      if (isAdmin) {
+        return { watermarkUrl: null, enabled: false };
+      }
+      try {
+        const { getWatermarkAudioUrl } = await import("../audio-watermark");
+        const url = await getWatermarkAudioUrl();
+        return { watermarkUrl: url, enabled: true };
+      } catch (err) {
+        console.error("[Suno] Failed to get watermark audio:", err);
+        return { watermarkUrl: null, enabled: false };
+      }
+    }),
+
   // 获取 Credits 消耗信息
   getCreditCosts: protectedProcedure.query(() => {
     return {

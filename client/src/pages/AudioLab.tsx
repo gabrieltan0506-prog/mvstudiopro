@@ -108,8 +108,50 @@ export default function AudioLabPage() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // tRPC mutations
-  const generateMusic = trpc.audioLab.generateMusic.useMutation();
-  const generateLyrics = trpc.audioLab.generateLyrics.useMutation();
+  const generateMusic = trpc.suno.generateMusic.useMutation();
+  const generateLyrics = trpc.suno.generateLyrics.useMutation();
+
+  // 水印音频（免費用户播放前加入 MVStudioPro.com 语音）
+  const watermarkQuery = trpc.suno.getWatermarkAudio.useQuery(undefined, {
+    staleTime: Infinity,
+    retry: false,
+  });
+  const watermarkAudioRef = useRef<HTMLAudioElement | null>(null);
+  const songAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePlayWithWatermark = useCallback((audioUrl: string) => {
+    // 停止之前的播放
+    if (watermarkAudioRef.current) {
+      watermarkAudioRef.current.pause();
+      watermarkAudioRef.current = null;
+    }
+    if (songAudioRef.current) {
+      songAudioRef.current.pause();
+      songAudioRef.current = null;
+    }
+
+    if (watermarkQuery.data?.enabled && watermarkQuery.data?.watermarkUrl) {
+      // 免費用户：先播放水印语音，再播放歌曲
+      const wmAudio = new Audio(watermarkQuery.data.watermarkUrl);
+      watermarkAudioRef.current = wmAudio;
+      wmAudio.onended = () => {
+        const songAudio = new Audio(audioUrl);
+        songAudioRef.current = songAudio;
+        songAudio.play().catch(() => {});
+      };
+      wmAudio.play().catch(() => {
+        // 如果水印播放失败，直接播放歌曲
+        const songAudio = new Audio(audioUrl);
+        songAudioRef.current = songAudio;
+        songAudio.play().catch(() => {});
+      });
+    } else {
+      // 管理員或水印不可用：直接播放
+      const songAudio = new Audio(audioUrl);
+      songAudioRef.current = songAudio;
+      songAudio.play().catch(() => {});
+    }
+  }, [watermarkQuery.data]);
 
   // 清理轮询
   useEffect(() => {
@@ -152,7 +194,7 @@ export default function AudioLabPage() {
   };
 
   // ─── 轮询任务状态 ──────────────────────────────
-  const pollTaskStatus = trpc.audioLab.getTaskStatus.useQuery;
+  const pollTaskStatus = trpc.suno.getTaskStatus.useQuery;
   const startPolling = useCallback((tid: string) => {
     setStatus("polling");
     let attempts = 0;
@@ -171,7 +213,7 @@ export default function AudioLabPage() {
         // TODO: This is a temporary workaround for polling. 
         // It should be replaced with a proper tRPC query or subscription.
         const response = await fetch(
-          `/api/trpc/audioLab.getTaskStatus?input=${encodeURIComponent(JSON.stringify({ taskId: tid }))}`,
+          `/api/trpc/suno.getTaskStatus?input=${encodeURIComponent(JSON.stringify({ taskId: tid }))}`,
           { credentials: "include" }
         );
         const json = await response.json();
@@ -548,10 +590,13 @@ export default function AudioLabPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                   {song.audioUrl && (
-                    <a href={song.audioUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
+                    <button
+                      onClick={() => handlePlayWithWatermark(song.audioUrl)}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-md hover:bg-white/20 transition-colors cursor-pointer"
+                    >
                       <Play size={16} />
                       <span className="text-sm font-medium">播放</span>
-                    </a>
+                    </button>
                   )}
                   {song.audioUrl && (
                     <a href={song.audioUrl} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">

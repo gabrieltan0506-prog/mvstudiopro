@@ -208,6 +208,7 @@ export const CREDIT_COSTS = {
 
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,             // Kling 视频生成消耗 80 credits（API 成本高）
+  klingMotionControl: 70,     // Kling 动作迁移消耗 70 credits（API 成本高）
   klingLipSync: 60,           // Kling 口型同步消耗 60 credits
   // ─── 音频分析 ────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits

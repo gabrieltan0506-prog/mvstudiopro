@@ -1,0 +1,16 @@
+{
+  "query": "SELECT id, name, openId, role FROM users WHERE role = 'admin';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 1eAqNqce666eDxh.27e8122944db --database LzPte96vGTebdoWip7SPMh --execute SELECT id, name, openId, role FROM users WHERE role = 'admin';",
+  "rows": [
+    {
+      "id": "1",
+      "name": "Gabriel Tan",
+      "openId": "AksNoahzErQPvMtDDjcT4i",
+      "role": "admin"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tname\topenId\trole\n1\tGabriel Tan\tAksNoahzErQPvMtDDjcT4i\tadmin\n",
+  "stderr": "",
+  "execution_time_ms": 1542
+}

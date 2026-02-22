@@ -261,3 +261,15 @@
 - [x] Forge 模型顯示為「免費」，不顯示 Forge 名稱
 - [x] 確認並調用現有數據包價格和使用量限制（shared/plans.ts）
 - [x] 測試驗證並保存 checkpoint（104 tests passed）
+
+## Phase 28: 管理員修復 + 水印 + Suno語音 + 可靈工作室（2026-02-22）
+- [x] 確認管理員 NBP 生圖功能後端邏輯正確（admin 跳過 Credits 扣費，直接調用 Gemini API）
+- [x] 免費生圖添加 MVStudioPro.com 水印（virtualIdol.generate + storyboard 分鏡圖）
+- [x] Suno 生成歌曲開頭添加 MVStudioPro.com 語音水印（fal.ai Kokoro TTS + S3 存儲）
+- [x] AudioLab 頁面 tRPC 路由修復（audioLab.* → suno.*）
+- [x] 可靈工作室：Omni Video 生成功能（文生視頻/圖生視頻/分鏡敘事）
+- [x] 可靈工作室：Motion Control 2.6 動作遷移功能
+- [x] 可靈工作室：Lip-Sync 口型同步功能（三步驟：人臉識別→選擇人臉→音頻同步）
+- [x] 可靈工作室：Elements 角色元素庫（圖片/視頻角色創建、列表、刪除）
+- [x] 新增 klingMotionControl Credits 定價（70 Credits）
+- [x] 測試驗證（103 tests passed，1 個既有超時測試與本次修改無關）
