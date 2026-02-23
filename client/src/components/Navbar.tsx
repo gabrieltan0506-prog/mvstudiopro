@@ -65,7 +65,7 @@ export default function Navbar() {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="gap-2">
                   <User className="h-4 w-4" />
-                  <span className="max-w-[100px] truncate">{user.name || "用户"}</span>
+                  <span className="max-w-[140px] truncate">{user.email || user.name || "用户"}</span>
                   <ChevronDown className="h-3 w-3 opacity-50" />
                 </Button>
               </DropdownMenuTrigger>

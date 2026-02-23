@@ -1,26 +1,60 @@
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
 
 type UseAuthOptions = {
   redirectOnUnauthenticated?: boolean;
   redirectPath?: string;
+  autoFetch?: boolean;
 };
 
 export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
-    options ?? {};
+  const {
+    redirectOnUnauthenticated = false,
+    redirectPath = getLoginUrl(),
+    autoFetch = true,
+  } = options ?? {};
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
+
+  const apiMeQuery = useQuery({
+    queryKey: ["api-me"],
+    queryFn: async () => {
+      const res = await fetch("/api/me", {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (res.status === 401) return null;
+      if (!res.ok) {
+        throw new Error(`Failed to fetch /api/me: ${res.status}`);
+      }
+
+      return (await res.json()) as {
+        email: string;
+        googleId: string;
+      };
+    },
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    enabled: autoFetch,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+  });
 
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
+    enabled: autoFetch,
     refetchOnWindowFocus: false,
   });
 
   const logoutMutation = trpc.auth.logout.useMutation({
     onSuccess: () => {
       utils.auth.me.setData(undefined, null);
+      queryClient.setQueryData(["api-me"], null);
     },
   });
 
@@ -37,22 +71,37 @@ export function useAuth(options?: UseAuthOptions) {
       throw error;
     } finally {
       utils.auth.me.setData(undefined, null);
+      queryClient.setQueryData(["api-me"], null);
       await utils.auth.me.invalidate();
     }
-  }, [logoutMutation, utils]);
+  }, [logoutMutation, queryClient, utils]);
 
   const state = useMemo(() => {
+    const apiMeUser = apiMeQuery.data
+      ? {
+          ...apiMeQuery.data,
+          name: apiMeQuery.data.email,
+          role: "user" as const,
+        }
+      : null;
+    const user = meQuery.data ?? apiMeUser ?? null;
+
     localStorage.setItem(
       "manus-runtime-user-info",
-      JSON.stringify(meQuery.data)
+      JSON.stringify(user)
     );
+
     return {
-      user: meQuery.data ?? null,
-      loading: meQuery.isPending || logoutMutation.isPending,
-      error: meQuery.error ?? logoutMutation.error ?? null,
-      isAuthenticated: Boolean(meQuery.data),
+      user,
+      loading:
+        meQuery.isPending || apiMeQuery.isPending || logoutMutation.isPending,
+      error: apiMeQuery.error ?? meQuery.error ?? logoutMutation.error ?? null,
+      isAuthenticated: Boolean(user),
     };
   }, [
+    apiMeQuery.data,
+    apiMeQuery.error,
+    apiMeQuery.isPending,
     meQuery.data,
     meQuery.error,
     meQuery.isPending,
@@ -62,7 +111,9 @@ export function useAuth(options?: UseAuthOptions) {
 
   useEffect(() => {
     if (!redirectOnUnauthenticated) return;
-    if (meQuery.isPending || logoutMutation.isPending) return;
+    if (meQuery.isPending || apiMeQuery.isPending || logoutMutation.isPending) {
+      return;
+    }
     if (state.user) return;
     if (typeof window === "undefined") return;
     if (window.location.pathname === redirectPath) return;
@@ -71,6 +122,7 @@ export function useAuth(options?: UseAuthOptions) {
   }, [
     redirectOnUnauthenticated,
     redirectPath,
+    apiMeQuery.isPending,
     logoutMutation.isPending,
     meQuery.isPending,
     state.user,
