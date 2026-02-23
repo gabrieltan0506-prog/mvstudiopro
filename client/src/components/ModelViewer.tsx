@@ -29,7 +29,13 @@ function generateModelViewerHTML(props: {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3D Model Viewer</title>
-  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"><\/script>
+  <script>
+    window.ModelViewerElement = {
+      dracoDecoderLocation: '/vendor/model-viewer/draco/',
+      ktx2TranscoderLocation: '/vendor/model-viewer/ktx2/'
+    };
+  <\/script>
+  <script type="module" src="/vendor/model-viewer.min.js"><\/script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: ${backgroundColor}; }

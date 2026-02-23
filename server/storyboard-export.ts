@@ -1,7 +1,7 @@
 /**
  * Storyboard Export Module
  * Handles PDF and Word export for storyboard scripts.
- * PDF: Uses pdfkit with embedded font (downloaded from CDN on first use)
+ * PDF: Uses local/system fonts when available, with built-in PDF fallback
  * Word: Uses docx library for proper .docx generation
  * 
  * Features:
@@ -52,46 +52,24 @@ const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.18)";
 const MAX_IMAGE_WIDTH = 480; // Max width in Word document (points)
 
 // ─── Font Management ────────────────────────────────────
-const FONT_DIR = "/tmp/mvstudio-fonts";
-const FONT_REGULAR = path.join(FONT_DIR, "NotoSansSC-Regular.ttf");
-const FONT_BOLD = path.join(FONT_DIR, "NotoSansSC-Bold.ttf");
+async function ensureFonts(): Promise<{ regular: string | null; bold: string | null }> {
+  const regularCandidates = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+  ];
+  const boldCandidates = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
+    "/usr/share/fonts/truetype/noto/NotoSansSC-Bold.ttf",
+  ];
 
-const FONT_URLS = {
-  regular: "https://fonts.gstatic.com/s/notosanssc/v37/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_EnYxNbPzS5HE.ttf",
-  bold: "https://fonts.gstatic.com/s/notosanssc/v37/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_EnYxNbPzS5HE.ttf",
-};
+  const regular = regularCandidates.find((fontPath) => fs.existsSync(fontPath)) ?? null;
+  const bold = boldCandidates.find((fontPath) => fs.existsSync(fontPath)) ?? null;
 
-async function ensureFonts(): Promise<{ regular: string; bold: string }> {
-  const localRegular = "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf";
-  const localBold = "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf";
-  
-  if (fs.existsSync(localRegular) && fs.existsSync(localBold)) {
-    return { regular: localRegular, bold: localBold };
+  if (!regular || !bold) {
+    console.warn("[StoryboardExport] Local CJK fonts unavailable, falling back to built-in PDF fonts.");
   }
 
-  if (!fs.existsSync(FONT_DIR)) {
-    fs.mkdirSync(FONT_DIR, { recursive: true });
-  }
-
-  if (!fs.existsSync(FONT_REGULAR)) {
-    console.log("[StoryboardExport] Downloading regular font from CDN...");
-    try {
-      const resp = await axios.get(FONT_URLS.regular, { responseType: "arraybuffer", timeout: 30000 });
-      fs.writeFileSync(FONT_REGULAR, Buffer.from(resp.data));
-      console.log("[StoryboardExport] Regular font downloaded successfully");
-    } catch (e) {
-      console.error("[StoryboardExport] Failed to download regular font:", e);
-      throw new Error("無法下載中文字體，PDF 導出暫時不可用。請嘗試 Word 格式導出。");
-    }
-  }
-
-  if (!fs.existsSync(FONT_BOLD)) {
-    if (fs.existsSync(FONT_REGULAR)) {
-      fs.copyFileSync(FONT_REGULAR, FONT_BOLD);
-    }
-  }
-
-  return { regular: FONT_REGULAR, bold: FONT_BOLD };
+  return { regular, bold };
 }
 
 // ─── Image Helper ──────────────────────────────────────
@@ -192,8 +170,8 @@ export async function exportToPDF(
   doc.pipe(writeStream);
 
   const pageWidth = 595.28 - 100; // A4 width minus margins
-  const fontBold = (size: number) => doc.fontSize(size).font(fonts.bold);
-  const fontRegular = (size: number) => doc.fontSize(size).font(fonts.regular);
+  const fontBold = (size: number) => doc.fontSize(size).font(fonts.bold ?? "Helvetica-Bold");
+  const fontRegular = (size: number) => doc.fontSize(size).font(fonts.regular ?? "Helvetica");
 
   // Helper: Add PDF page watermark (colored diagonal text)
   const addPageWatermark = () => {

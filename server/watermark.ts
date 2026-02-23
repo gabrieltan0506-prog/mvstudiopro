@@ -32,16 +32,11 @@ export async function addWatermark(
     const diagonalFontSize = Math.max(20, Math.floor(Math.min(width, height) * 0.06));
     svgOverlay = `
       <svg width="${width}" height="${height}">
-        <defs>
-          <style>
-            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@700&amp;display=swap');
-          </style>
-        </defs>
         <text 
           x="50%" y="50%" 
           text-anchor="middle" 
           dominant-baseline="middle"
-          font-family="Inter, Arial, sans-serif" 
+          font-family="Arial, sans-serif" 
           font-size="${diagonalFontSize}" 
           font-weight="700"
           fill="rgba(255,255,255,0.25)"
@@ -52,7 +47,7 @@ export async function addWatermark(
           x="50%" y="30%" 
           text-anchor="middle" 
           dominant-baseline="middle"
-          font-family="Inter, Arial, sans-serif" 
+          font-family="Arial, sans-serif" 
           font-size="${diagonalFontSize * 0.7}" 
           font-weight="700"
           fill="rgba(255,255,255,0.15)"
@@ -63,7 +58,7 @@ export async function addWatermark(
           x="50%" y="70%" 
           text-anchor="middle" 
           dominant-baseline="middle"
-          font-family="Inter, Arial, sans-serif" 
+          font-family="Arial, sans-serif" 
           font-size="${diagonalFontSize * 0.7}" 
           font-weight="700"
           fill="rgba(255,255,255,0.15)"
@@ -78,7 +73,7 @@ export async function addWatermark(
         <text 
           x="50%" y="${height - padding}" 
           text-anchor="middle" 
-          font-family="Inter, Arial, sans-serif" 
+          font-family="Arial, sans-serif" 
           font-size="${fontSize}" 
           font-weight="700"
           fill="rgba(255,255,255,0.8)"
@@ -94,7 +89,7 @@ export async function addWatermark(
         <text 
           x="${width - padding}" y="${height - padding}" 
           text-anchor="end" 
-          font-family="Inter, Arial, sans-serif" 
+          font-family="Arial, sans-serif" 
           font-size="${fontSize}" 
           font-weight="700"
           fill="rgba(255,255,255,0.85)"
