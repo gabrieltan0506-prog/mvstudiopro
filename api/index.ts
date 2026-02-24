@@ -10,6 +10,8 @@ type SessionPayload = {
 
 const app = express();
 const textEncoder = new TextEncoder();
+const TEST_EMAIL_IDEMPOTENCY_WINDOW_MS = 60 * 1000;
+const recentTestEmailSends = new Map<string, number>();
 
 app.use(cookieParser());
 app.use(express.json({ limit: "50mb" }));
@@ -173,10 +175,19 @@ app.get("/api/test-email", async (req, res) => {
     return res.status(400).json({ error: "Query param 'to' is required" });
   }
 
+  const normalizedTo = to.trim().toLowerCase();
+  const now = Date.now();
+  const lastSentAt = recentTestEmailSends.get(normalizedTo);
+  if (typeof lastSentAt === "number" && now - lastSentAt < TEST_EMAIL_IDEMPOTENCY_WINDOW_MS) {
+    return res.status(200).json({ success: true, to: to.trim() });
+  }
+
+  recentTestEmailSends.set(normalizedTo, now);
   try {
     await sendTencentSesTestEmail(to.trim());
     return res.status(200).json({ success: true, to: to.trim() });
   } catch (error) {
+    recentTestEmailSends.delete(normalizedTo);
     console.error("Failed to send Tencent SES test email", error);
     return res.status(500).json({ error: "Failed to send test email" });
   }
