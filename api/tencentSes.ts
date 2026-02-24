@@ -32,14 +32,18 @@ export async function sendTencentSesTestEmail(to: string): Promise<void> {
   const subject = "MVStudioPro Tencent SES Test Email";
   const text = "This is a test email sent via Tencent SES.";
   const html = "<p>This is a test email sent via Tencent SES.</p>";
+  const textBase64 = Buffer.from(text, "utf8").toString("base64");
+  const htmlBase64 = Buffer.from(html, "utf8").toString("base64");
 
-  await client.SendEmail({
+  const params = {
     FromEmailAddress: fromEmail,
     Destination: [to],
+    Subject: subject,
     Simple: {
-      Subject: { Data: subject },
-      Html: { Data: html },
-      Text: { Data: text },
+      Html: htmlBase64,
+      Text: textBase64,
     },
-  });
+  };
+
+  await client.SendEmail(params);
 }
