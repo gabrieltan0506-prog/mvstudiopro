@@ -32,6 +32,7 @@ import {
 
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
@@ -162,6 +163,9 @@ export default function StoryboardPage() {
   const [isGeneratingBgm, setIsGeneratingBgm] = useState(false);
   const [bgmTaskId, setBgmTaskId] = useState<string | null>(null);
   const [bgmResult, setBgmResult] = useState<any>(null);
+  const [bgmErrorMessage, setBgmErrorMessage] = useState<string | null>(null);
+  const [bgmProgressMessage, setBgmProgressMessage] = useState<string>(JOB_PROGRESS_MESSAGES.audio[0]);
+  const bgmPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [playingAudioUrl, setPlayingAudioUrl] = useState<string | null>(null);
   const [audioRef] = useState(() => typeof Audio !== 'undefined' ? new Audio() : null);
 
@@ -181,7 +185,6 @@ export default function StoryboardPage() {
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const exportPDFMutation = trpc.storyboard.exportPDF.useMutation();
   const inspirationMutation = trpc.storyboard.generateInspiration.useMutation();
-  const generateMusicMutation = trpc.suno.generateMusic.useMutation();
   const recommendBGMMutation = trpc.storyboard.recommendBGM.useMutation();
   const analyzeRefMutation = trpc.storyboard.analyzeReferenceImage.useMutation();
   const stylePresetsQuery = trpc.suno.getStylePresets.useQuery(undefined, {
@@ -201,35 +204,48 @@ export default function StoryboardPage() {
   const userPlan = (subQuery.data?.plan || "free") as string;
   const userCredits = subQuery.data?.credits?.balance ?? 0;
 
-  // BGM task polling
-  const bgmStatusQuery = trpc.suno.getTaskStatus.useQuery(
-    { taskId: bgmTaskId || "" },
-    {
-      enabled: !!bgmTaskId,
-      refetchInterval: bgmTaskId ? 5000 : false,
-    }
-  );
+  const startBgmPolling = (jobId: string) => {
+    if (bgmPollingRef.current) clearInterval(bgmPollingRef.current);
+    let attempts = 0;
+    setBgmProgressMessage(JOB_PROGRESS_MESSAGES.audio[0]);
 
-  // Update BGM result when task completes
-  useEffect(() => {
-    if (bgmStatusQuery.data) {
-      const status = bgmStatusQuery.data.status;
-      if (status === "SUCCESS" || status === "FIRST_SUCCESS") {
-        setBgmResult(bgmStatusQuery.data);
-        if (status === "SUCCESS") {
+    bgmPollingRef.current = setInterval(async () => {
+      attempts++;
+      const idx = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
+      setBgmProgressMessage(JOB_PROGRESS_MESSAGES.audio[idx]);
+
+      try {
+        const job = await getJob(jobId);
+        if (job.status === "succeeded") {
+          if (bgmPollingRef.current) {
+            clearInterval(bgmPollingRef.current);
+            bgmPollingRef.current = null;
+          }
           setBgmTaskId(null);
+          setBgmResult(job.output);
+          setBgmErrorMessage(null);
           toast.success("BGM 生成完成！");
+        } else if (job.status === "failed") {
+          if (bgmPollingRef.current) {
+            clearInterval(bgmPollingRef.current);
+            bgmPollingRef.current = null;
+          }
+          setBgmTaskId(null);
+          setBgmErrorMessage("这次生成没有成功，请重试。");
         }
-      } else if (status === "FAILED") {
-        setBgmTaskId(null);
-        toast.error("BGM 生成失敗：" + (bgmStatusQuery.data.errorMessage || "未知錯誤"));
+      } catch {
+        // Keep polling for transient errors.
       }
-    }
-  }, [bgmStatusQuery.data]);
+    }, 1800);
+  };
 
   // Cleanup audio on unmount
   useEffect(() => {
     return () => {
+      if (bgmPollingRef.current) {
+        clearInterval(bgmPollingRef.current);
+        bgmPollingRef.current = null;
+      }
       if (audioRef) {
         audioRef.pause();
         audioRef.src = "";
@@ -395,6 +411,10 @@ export default function StoryboardPage() {
   };
 
   const handleReset = () => {
+    if (bgmPollingRef.current) {
+      clearInterval(bgmPollingRef.current);
+      bgmPollingRef.current = null;
+    }
     setLyricsText("");
     setSceneCount("5");
     setStoryboard(null);
@@ -406,6 +426,8 @@ export default function StoryboardPage() {
     setShowBgmPanel(false);
     setBgmResult(null);
     setBgmTaskId(null);
+    setBgmErrorMessage(null);
+    setBgmProgressMessage(JOB_PROGRESS_MESSAGES.audio[0]);
     setReferenceImageUrl(null);
     setReferenceImagePreview(null);
     setReferenceStyleDescription("");
@@ -578,24 +600,36 @@ export default function StoryboardPage() {
       toast.warning("請輸入 BGM 標題");
       return;
     }
+    if (!user?.id) {
+      toast.error("登录状态已失效，请重新登录后再试。");
+      return;
+    }
 
     setIsGeneratingBgm(true);
+    setBgmErrorMessage(null);
+    setBgmResult(null);
     try {
-      const result = await generateMusicMutation.mutateAsync({
-        mode: "bgm",
-        model: bgmModel,
-        title: bgmTitle.trim(),
-        stylePresetId: bgmStylePreset,
-        customStyle: bgmStylePreset === "custom" ? bgmDescription : undefined,
-        mood: bgmDescription || undefined,
+      const { jobId } = await createJob({
+        type: "audio",
+        userId: String(user.id),
+        input: {
+          action: "suno_music",
+          params: {
+            mode: "bgm",
+            model: bgmModel,
+            title: bgmTitle.trim(),
+            stylePresetId: bgmStylePreset,
+            customStyle: bgmStylePreset === "custom" ? bgmDescription : undefined,
+            mood: bgmDescription || undefined,
+          },
+        },
       });
 
-      if (result.taskId) {
-        setBgmTaskId(result.taskId);
-        toast.success(`BGM 生成已提交（${result.model}），消耗 ${result.creditCost} Credits`);
-      }
+      setBgmTaskId(jobId);
+      startBgmPolling(jobId);
+      toast.success("BGM 任务已提交，正在生成中...");
     } catch (error: any) {
-      toast.error(error.message || "BGM 生成失敗");
+      toast.error("BGM 任务提交失败，请重试");
     } finally {
       setIsGeneratingBgm(false);
     }
@@ -1408,7 +1442,22 @@ export default function StoryboardPage() {
                   {bgmTaskId && !bgmResult && (
                     <div className="mt-3 bg-background rounded-lg p-3 border flex items-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
-                      <p className="text-muted-foreground text-sm">BGM 正在生成中，預計需要 30-60 秒...</p>
+                      <p className="text-muted-foreground text-sm">{bgmProgressMessage}</p>
+                    </div>
+                  )}
+
+                  {bgmErrorMessage && (
+                    <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3">
+                      <p className="text-sm text-red-300">{bgmErrorMessage}</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-2"
+                        onClick={handleGenerateBgm}
+                      >
+                        <RefreshCw className="w-3.5 h-3.5 mr-1" />
+                        重试 BGM
+                      </Button>
                     </div>
                   )}
                 </div>

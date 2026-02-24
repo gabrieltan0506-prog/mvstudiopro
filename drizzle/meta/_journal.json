@@ -43,6 +43,13 @@
       "when": 1771580780826,
       "tag": "0005_breezy_the_renegades",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1771660000000,
+      "tag": "0006_job_queue_mvp",
+      "breakpoints": true
     }
   ]
 }
