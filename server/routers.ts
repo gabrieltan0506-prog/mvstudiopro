@@ -24,6 +24,7 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { creationsRouter, recordCreation } from "./routers/creations";
+import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { deductCredits, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
 import { CREDIT_COSTS } from "./plans";
@@ -54,6 +55,7 @@ export const appRouter = router({
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
   creations: creationsRouter,
+  workflow: workflowRouter,
   // phoneOtp: phoneOtpRouter, // 暂不上线，等短信服务开通后取消注释
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

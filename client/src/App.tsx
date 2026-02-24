@@ -20,6 +20,8 @@ const LayoutDashboard = lazy(() => import("./pages/Dashboard"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 const RemixStudio = lazy(() => import("./pages/RemixStudio"));
+const WorkspaceStudio = lazy(() => import("./pages/WorkspaceStudio"));
+const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
 
 const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
@@ -47,6 +49,8 @@ function Router() {
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/remix"} component={RemixStudio} />
+        <Route path={"/workspace"} component={WorkspaceStudio} />
+        <Route path={"/templates"} component={TemplatesLibrary} />
 
         <Route path={"/3d-studio"} component={ThreeDStudio} />
         <Route path={"/404"} component={NotFound} />
