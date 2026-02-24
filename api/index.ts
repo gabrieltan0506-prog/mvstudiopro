@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { SignJWT, jwtVerify } from "jose";
+import { sendTencentSesTestEmail } from "../server/services/tencentSes";
 
 type SessionPayload = {
   email: string;
@@ -165,6 +166,21 @@ app.get("/api/me", async (req, res) => {
   }
 
   return res.status(200).json({ email: session.email, googleId: session.googleId });
+});
+
+app.get("/api/test-email", async (req, res) => {
+  const { to } = req.query;
+  if (typeof to !== "string" || !to.trim()) {
+    return res.status(400).json({ error: "Query param 'to' is required" });
+  }
+
+  try {
+    await sendTencentSesTestEmail(to.trim());
+    return res.status(200).json({ success: true, to: to.trim() });
+  } catch (error) {
+    console.error("Failed to send Tencent SES test email", error);
+    return res.status(500).json({ error: "Failed to send test email" });
+  }
 });
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
