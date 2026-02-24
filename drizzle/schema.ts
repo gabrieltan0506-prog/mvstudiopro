@@ -68,3 +68,4 @@ export * from "./schema-showcase";
 export * from "./schema-sessions";
 export * from "./schema-video-signatures";
 export * from "./schema-jobs";
+export * from "./schema-workflow";
