@@ -56,16 +56,22 @@ async function startServer() {
       if (type !== "video" && type !== "image" && type !== "audio") {
         return res.status(400).json({ error: "Invalid job type" });
       }
-      if (!userId || typeof userId !== "string") {
-        return res.status(400).json({ error: "userId is required" });
-      }
       if (!input || typeof input !== "object") {
         return res.status(400).json({ error: "input is required" });
       }
 
       const ctx = await createContext({ req: req as any, res: res as any });
-      if (ctx.user && String(ctx.user.id) !== userId && ctx.user.openId !== userId) {
-        return res.status(403).json({ error: "Forbidden" });
+      let resolvedUserId = "public";
+      if (typeof userId === "string" && userId.trim()) {
+        if (!ctx.user) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+        if (String(ctx.user.id) !== userId && ctx.user.openId !== userId) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+        resolvedUserId = userId;
+      } else if (ctx.user) {
+        resolvedUserId = String(ctx.user.id ?? ctx.user.openId);
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
@@ -81,13 +87,13 @@ async function startServer() {
       const jobId = nanoid(16);
       await createJob({
         id: jobId,
-        userId,
+        userId: resolvedUserId,
         type,
         provider,
         input,
       });
 
-      return res.status(200).json({ jobId });
+      return res.status(200).json({ jobId, status: "queued" });
     } catch (error) {
       console.error("[Jobs] POST /api/jobs failed:", error);
       return res.status(500).json({ error: "Failed to create job" });
@@ -107,12 +113,16 @@ async function startServer() {
       }
 
       const ctx = await createContext({ req: req as any, res: res as any });
-      if (
-        ctx.user &&
-        String(ctx.user.id) !== String(job.userId) &&
-        ctx.user.openId !== String(job.userId)
-      ) {
-        return res.status(403).json({ error: "Forbidden" });
+      if (job.userId !== "public") {
+        if (!ctx.user) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+        if (
+          String(ctx.user.id) !== String(job.userId) &&
+          ctx.user.openId !== String(job.userId)
+        ) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
       }
 
       return res.status(200).json({
