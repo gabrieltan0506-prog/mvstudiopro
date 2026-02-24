@@ -2,8 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { SignJWT, jwtVerify } from "jose";
-import { sendTencentSesTestEmail } from "../server/services/tencentSes";
-
+import { sendTencentSesTestEmail } from "./tencentSes";
 type SessionPayload = {
   email: string;
   googleId: string;
