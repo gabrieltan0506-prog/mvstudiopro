@@ -12,8 +12,10 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
 import { useLocation, Link } from "wouter";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
 import { 
   Music, 
   ArrowLeft, 
@@ -83,6 +85,7 @@ const MOOD_TAGS = [
 // ─── 组件 ─────────────────────────────────────────
 export default function AudioLabPage() {
   const [location, navigate] = useLocation();
+  const { user } = useAuth();
 
   // 状态
   const [mode, setMode] = useState<Mode>("simple");
@@ -105,11 +108,10 @@ export default function AudioLabPage() {
   const [taskId, setTaskId] = useState("");
   const [songs, setSongs] = useState<GeneratedSong[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [progressMessage, setProgressMessage] = useState("");
   const [creditCost, setCreditCost] = useState(0);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // tRPC mutations
-  const generateMusic = trpc.suno.generateMusic.useMutation();
   const generateLyrics = trpc.suno.generateLyrics.useMutation();
 
   // 水印音頻（入門版用戶播放前加入 MVStudioPro.com 語音）
@@ -157,7 +159,10 @@ export default function AudioLabPage() {
   // 清理轮询
   useEffect(() => {
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
     };
   }, []);
 
@@ -194,48 +199,51 @@ export default function AudioLabPage() {
     return parts.join(", ") || "Pop, Modern";
   };
 
-  // ─── 轮询任务状态 ──────────────────────────────
-  const pollTaskStatus = trpc.suno.getTaskStatus.useQuery;
   const startPolling = useCallback((tid: string) => {
     setStatus("polling");
+    setProgressMessage(JOB_PROGRESS_MESSAGES.audio[0]);
     let attempts = 0;
-    const maxAttempts = 60; // 最多轮询 5 分钟
+    const maxAttempts = 120;
 
     pollingRef.current = setInterval(async () => {
       attempts++;
       if (attempts > maxAttempts) {
-        if (pollingRef.current) clearInterval(pollingRef.current);
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
         setStatus("error");
-        setErrorMsg("生成超时，请稍后在历史记录中查看结果");
+        setErrorMsg("这次生成时间有点久，请点击重试。");
         return;
       }
 
       try {
-        // TODO: This is a temporary workaround for polling. 
-        // It should be replaced with a proper tRPC query or subscription.
-        const response = await fetch(
-          `/api/trpc/suno.getTaskStatus?input=${encodeURIComponent(JSON.stringify({ taskId: tid }))}`,
-          { credentials: "include" }
-        );
-        const json = await response.json();
-        const data = json?.result?.data;
+        const data = await getJob(tid);
+        const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
+        setProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
 
-        if (!data) return;
-
-        if (data.status === "SUCCESS") {
-          if (pollingRef.current) clearInterval(pollingRef.current);
-          setSongs(data.songs || []);
+        if (data.status === "succeeded") {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+          const output = (data.output || {}) as any;
+          setSongs(output.songs || []);
+          setCreditCost(typeof output.creditCost === "number" ? output.creditCost : 0);
           setStatus("success");
           toast.success("音乐生成成功！");
-        } else if (data.status === "FAILED") {
-          if (pollingRef.current) clearInterval(pollingRef.current);
+        } else if (data.status === "failed") {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
           setStatus("error");
-          setErrorMsg(data.errorMessage || "生成失败，请重试");
+          setErrorMsg("这次生成没有成功，请点击重试。");
         }
       } catch {
         // 忽略单次轮询错误
       }
-    }, 5000);
+    }, 1800);
   }, []);
 
   // ─── 提交生成 ──────────────────────────────────
@@ -253,7 +261,13 @@ export default function AudioLabPage() {
 
     setStatus("generating");
     setErrorMsg("");
+    setProgressMessage("正在提交任务...");
     setSongs([]);
+    if (!user?.id) {
+      setStatus("error");
+      setErrorMsg("登录状态已失效，请重新登录后再试。");
+      return;
+    }
 
     try {
       const styleStr = mode === "custom" && customStyle.trim()
@@ -266,36 +280,48 @@ export default function AudioLabPage() {
         .join(", ");
 
       if (mode === "simple") {
-        const result = await generateMusic.mutateAsync({
-          mode: instrumental ? "bgm" : "theme_song",
-          model: engine,
-          title: songTitle,
-          lyrics: instrumental ? undefined : description.trim() || undefined,
-          customStyle: styleStr || undefined,
-          mood: moodStr || description.trim() || undefined,
+        const { jobId } = await createJob({
+          type: "audio",
+          userId: String(user.id),
+          input: {
+            action: "suno_music",
+            params: {
+              mode: instrumental ? "bgm" : "theme_song",
+              model: engine,
+              title: songTitle,
+              lyrics: instrumental ? undefined : description.trim() || undefined,
+              customStyle: styleStr || undefined,
+              mood: moodStr || description.trim() || undefined,
+            },
+          },
         });
 
-        setTaskId(result.taskId);
-        setCreditCost(result.creditCost);
-        startPolling(result.taskId);
+        setTaskId(jobId);
+        startPolling(jobId);
       } else {
-        const result = await generateMusic.mutateAsync({
-          mode: "theme_song",
-          model: engine,
-          title: songTitle,
-          lyrics: lyrics.trim(),
-          mood: styleStr || undefined,
+        const { jobId } = await createJob({
+          type: "audio",
+          userId: String(user.id),
+          input: {
+            action: "suno_music",
+            params: {
+              mode: "theme_song",
+              model: engine,
+              title: songTitle,
+              lyrics: lyrics.trim(),
+              mood: styleStr || undefined,
+            },
+          },
         });
 
-        setTaskId(result.taskId);
-        setCreditCost(result.creditCost);
-        startPolling(result.taskId);
+        setTaskId(jobId);
+        startPolling(jobId);
       }
     } catch (err: any) {
       setStatus("error");
-      setErrorMsg(err?.message || "生成失败，请检查 Credits 余额后重试");
+      setErrorMsg("任务提交失败，请稍后重试。");
     }
-  }, [mode, engine, title, description, lyrics, customStyle, selectedStyles, selectedMoods, instrumental, vocalGender, generateMusic, startPolling, buildStyleString]);
+  }, [mode, engine, title, description, lyrics, customStyle, selectedStyles, selectedMoods, instrumental, vocalGender, startPolling, buildStyleString, user?.id]);
 
   // ─── AI 歌词助手 ──────────────────────────────
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -329,6 +355,7 @@ export default function AudioLabPage() {
     setTaskId("");
     setSongs([]);
     setErrorMsg("");
+    setProgressMessage("");
     setDescription("");
     setLyrics("");
     setCustomStyle("");
@@ -337,7 +364,10 @@ export default function AudioLabPage() {
     setSelectedMoods([]);
     setVocalGender("");
     setInstrumental(false);
-    if (pollingRef.current) clearInterval(pollingRef.current);
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
   }, []);
 
   // ─── 渲染 ──────────────────────────────────────
@@ -613,9 +643,28 @@ export default function AudioLabPage() {
         )}
 
         {status === "error" && (
-          <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <AlertTriangle size={20} className="text-red-400" />
-            <p className="text-red-300 text-sm">{errorMsg}</p>
+          <div className="space-y-3 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
+            <div className="flex items-center gap-3">
+              <AlertTriangle size={20} className="text-red-400" />
+              <p className="text-red-300 text-sm">{errorMsg}</p>
+            </div>
+            <button
+              onClick={handleGenerate}
+              className="inline-flex items-center gap-2 rounded-lg bg-red-500/20 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/30 transition-colors"
+            >
+              <RefreshCw size={14} />
+              重试生成
+            </button>
+          </div>
+        )}
+
+        {isGenerating && (
+          <div className="flex items-center gap-3 p-4 bg-[#E8825E]/10 border border-[#E8825E]/30 rounded-lg">
+            <Loader2 size={18} className="animate-spin text-[#E8825E]" />
+            <div>
+              <p className="text-sm text-[#f6b39f]">正在处理中</p>
+              <p className="text-xs text-[#f1a890]">{progressMessage}</p>
+            </div>
           </div>
         )}
 

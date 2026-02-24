@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob, type JobType, type JobStatus } from "@/lib/jobs";
 import {
   Sparkles, Footprints, Mic2, Layers, Coins, RefreshCw,
   CheckCircle, Download, Upload, Loader2, Trash2, Play,
@@ -20,11 +21,13 @@ type Duration = "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "15";
 
 interface TaskInfo {
   taskId: string;
+  jobType: JobType;
+  jobInput: Record<string, unknown>;
   type: KlingTab;
   subType?: string;
-  status: "submitted" | "processing" | "succeed" | "failed";
+  status: JobStatus;
   createdAt: number;
-  videoUrl?: string;
+  output?: Record<string, any>;
   error?: string;
 }
 
@@ -170,17 +173,17 @@ function FileUploadBox({ label, accept, value, onChange, preview }: {
 
 // ─── Task Status Card ───────────────────────────────
 
-function TaskStatusCard({ task, onPoll }: { task: TaskInfo; onPoll: () => void }) {
+function TaskStatusCard({ task, onPoll, onRetry }: { task: TaskInfo; onPoll: () => void; onRetry: () => void }) {
   const statusColors: Record<string, string> = {
-    submitted: "bg-yellow-400",
-    processing: "bg-blue-500",
-    succeed: "bg-green-500",
+    queued: "bg-yellow-400",
+    running: "bg-blue-500",
+    succeeded: "bg-green-500",
     failed: "bg-red-500",
   };
   const statusLabels: Record<string, string> = {
-    submitted: "已提交",
-    processing: "生成中...",
-    succeed: "完成",
+    queued: "排队中",
+    running: "生成中...",
+    succeeded: "完成",
     failed: "失败",
   };
   const typeLabels: Record<string, string> = {
@@ -188,7 +191,16 @@ function TaskStatusCard({ task, onPoll }: { task: TaskInfo; onPoll: () => void }
     motionControl: "Motion Control",
     lipSync: "Lip-Sync",
     elements: "Elements",
+    imageGen: "Image Gen",
   };
+  const messageIndex = Math.floor((Date.now() - task.createdAt) / 2200) % JOB_PROGRESS_MESSAGES[task.jobType].length;
+  const progressMessage = JOB_PROGRESS_MESSAGES[task.jobType][messageIndex];
+  const videoUrl = task.output?.videoUrl as string | undefined;
+  const imageUrls = Array.isArray(task.output?.images)
+    ? (task.output?.images as string[])
+    : typeof task.output?.imageUrl === "string"
+    ? [task.output.imageUrl]
+    : [];
 
   return (
     <div className="bg-gray-800 p-4 rounded-lg">
@@ -197,11 +209,11 @@ function TaskStatusCard({ task, onPoll }: { task: TaskInfo; onPoll: () => void }
           <div className={`h-2.5 w-2.5 rounded-full ${statusColors[task.status]}`} />
           <span className="font-semibold text-white">{typeLabels[task.type] || task.type}</span>
           {task.subType && <span className="text-xs text-gray-400">({task.subType})</span>}
-          <span className={`font-medium text-sm ${task.status === "succeed" ? "text-green-400" : task.status === "failed" ? "text-red-400" : task.status === "processing" ? "text-blue-400" : "text-yellow-400"}`}>
+          <span className={`font-medium text-sm ${task.status === "succeeded" ? "text-green-400" : task.status === "failed" ? "text-red-400" : task.status === "running" ? "text-blue-400" : "text-yellow-400"}`}>
             {statusLabels[task.status]}
           </span>
         </div>
-        {(task.status === "processing" || task.status === "submitted") && (
+        {(task.status === "running" || task.status === "queued") && (
           <button onClick={onPoll} className="flex items-center space-x-1 text-purple-400 hover:text-purple-300 transition-colors">
             <RefreshCw className="h-4 w-4" />
             <span className="text-sm">刷新</span>
@@ -209,17 +221,35 @@ function TaskStatusCard({ task, onPoll }: { task: TaskInfo; onPoll: () => void }
         )}
       </div>
       <p className="text-xs text-gray-500 mt-1.5 font-mono">Task: {task.taskId.slice(0, 20)}...</p>
-      {task.status === "succeed" && task.videoUrl && (
+      {(task.status === "running" || task.status === "queued") && (
+        <p className="mt-2 text-xs text-gray-400">{progressMessage}</p>
+      )}
+      {task.status === "succeeded" && videoUrl && (
         <div className="mt-3 space-y-2">
-          <video src={task.videoUrl} controls className="w-full rounded-md max-h-48" />
-          <a href={task.videoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-700 transition-colors">
+          <video src={videoUrl} controls className="w-full rounded-md max-h-48" />
+          <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-700 transition-colors">
             <Download className="h-4 w-4" />
             <span>下载视频</span>
           </a>
         </div>
       )}
+      {task.status === "succeeded" && imageUrls.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {imageUrls.slice(0, 4).map((url) => (
+            <a key={url} href={url} target="_blank" rel="noopener noreferrer">
+              <img src={url} alt="Generated" className="h-24 w-full rounded-md object-cover" />
+            </a>
+          ))}
+        </div>
+      )}
       {task.status === "failed" && task.error && (
-        <p className="mt-2 text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{task.error}</p>
+        <div className="mt-2 space-y-2">
+          <p className="text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{task.error}</p>
+          <button onClick={onRetry} className="inline-flex items-center space-x-1 rounded-md bg-red-500/20 px-2.5 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/30">
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>重试</span>
+          </button>
+        </div>
       )}
     </div>
   );
@@ -229,7 +259,7 @@ function TaskStatusCard({ task, onPoll }: { task: TaskInfo; onPoll: () => void }
 // Omni Video Panel
 // ═══════════════════════════════════════════════════════
 
-function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => void }) {
+function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType; taskType: KlingTab; subType?: string; jobInput: Record<string, unknown> }) => Promise<void> }) {
   const [subTab, setSubTab] = useState<"t2v" | "i2v" | "storyboard">("t2v");
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
@@ -245,9 +275,6 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
     { prompt: "", duration: "5" },
   ]);
 
-  const createT2V = trpc.kling.omniVideo.createT2V.useMutation();
-  const createI2V = trpc.kling.omniVideo.createI2V.useMutation();
-  const createStoryboard = trpc.kling.omniVideo.createStoryboard.useMutation();
   const uploadFile = trpc.kling.uploadFile.useMutation();
 
   const handleSubmit = useCallback(async () => {
@@ -257,13 +284,21 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
     }
     setLoading(true);
     try {
-      let result: { success: boolean; taskId: string };
-
       if (subTab === "t2v") {
-        result = await createT2V.mutateAsync({
-          prompt: prompt.trim(),
-          negativePrompt: negativePrompt.trim() || undefined,
-          mode, aspectRatio, duration,
+        await enqueueTask({
+          jobType: "video",
+          taskType: "omniVideo",
+          subType: "t2v",
+          jobInput: {
+            action: "omni_t2v",
+            params: {
+              prompt: prompt.trim(),
+              negativePrompt: negativePrompt.trim() || undefined,
+              mode,
+              aspectRatio,
+              duration,
+            },
+          },
         });
       } else if (subTab === "i2v") {
         if (!imageUri) {
@@ -284,10 +319,20 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
           });
           imageUrl = uploaded.url;
         }
-        result = await createI2V.mutateAsync({
-          prompt: prompt.trim(),
-          imageUrl,
-          mode, aspectRatio, duration,
+        await enqueueTask({
+          jobType: "video",
+          taskType: "omniVideo",
+          subType: "i2v",
+          jobInput: {
+            action: "omni_i2v",
+            params: {
+              prompt: prompt.trim(),
+              imageUrl,
+              mode,
+              aspectRatio,
+              duration,
+            },
+          },
         });
       } else {
         const validShots = shots.filter((s) => s.prompt.trim());
@@ -296,22 +341,28 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
           setLoading(false);
           return;
         }
-        result = await createStoryboard.mutateAsync({
-          shots: validShots, mode, aspectRatio,
+        await enqueueTask({
+          jobType: "video",
+          taskType: "omniVideo",
+          subType: "storyboard",
+          jobInput: {
+            action: "omni_storyboard",
+            params: {
+              shots: validShots,
+              mode,
+              aspectRatio,
+            },
+          },
         });
       }
-
-      if (result.success) {
-        onTaskCreated({ taskId: result.taskId, type: "omniVideo", subType: subTab, status: "submitted", createdAt: Date.now() });
-        toast.success("任务已提交，请在右侧查看进度");
-      }
+      toast.success("任务已加入队列，请在右侧查看进度");
     } catch (error: any) {
       console.error(error);
       toast.error(error?.message || "发生错误，请稍后再试");
     } finally {
       setLoading(false);
     }
-  }, [prompt, negativePrompt, mode, aspectRatio, duration, imageUri, subTab, shots]);
+  }, [prompt, negativePrompt, mode, aspectRatio, duration, imageUri, subTab, shots, enqueueTask]);
 
   return (
     <div className="space-y-4">
@@ -440,7 +491,7 @@ function OmniVideoPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => 
 // Motion Control Panel (2.6)
 // ═══════════════════════════════════════════════════════
 
-function MotionControlPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => void }) {
+function MotionControlPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType; taskType: KlingTab; subType?: string; jobInput: Record<string, unknown> }) => Promise<void> }) {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [mode, setMode] = useState<KlingMode>("std");
@@ -449,7 +500,6 @@ function MotionControlPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo)
   const [keepSound, setKeepSound] = useState(true);
   const [loading, setLoading] = useState(false);
 
-  const createMotion = trpc.kling.motionControl.create.useMutation();
   const uploadFile = trpc.kling.uploadFile.useMutation();
 
   const handleSubmit = useCallback(async () => {
@@ -485,29 +535,30 @@ function MotionControlPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo)
         videoUrl = uploaded.url;
       }
 
-      const result = await createMotion.mutateAsync({
-        imageUrl,
-        videoUrl,
-        orientation,
-        mode,
-        prompt: prompt.trim() || undefined,
-        keepOriginalSound: keepSound,
+      await enqueueTask({
+        jobType: "video",
+        taskType: "motionControl",
+        subType: `${orientation} orientation`,
+        jobInput: {
+          action: "motion_control",
+          params: {
+            imageUrl,
+            videoUrl,
+            orientation,
+            mode,
+            prompt: prompt.trim() || undefined,
+            keepOriginalSound: keepSound,
+          },
+        },
       });
-
-      if (result.success) {
-        onTaskCreated({
-          taskId: result.taskId, type: "motionControl", subType: `${orientation} orientation`,
-          status: "submitted", createdAt: Date.now(),
-        });
-        toast.success("Motion Control 任务已提交");
-      }
+      toast.success("Motion Control 任务已加入队列");
     } catch (error: any) {
       console.error(error);
       toast.error(error?.message || "提交失败，请稍后再试");
     } finally {
       setLoading(false);
     }
-  }, [imageUri, videoUri, mode, orientation, prompt, keepSound]);
+  }, [imageUri, videoUri, mode, orientation, prompt, keepSound, enqueueTask]);
 
   return (
     <div className="space-y-4">
@@ -573,8 +624,9 @@ function MotionControlPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo)
 // Lip-Sync Panel
 // ═══════════════════════════════════════════════════════
 
-function LipSyncPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => void }) {
+function LipSyncPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType; taskType: KlingTab; subType?: string; jobInput: Record<string, unknown> }) => Promise<void> }) {
   const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [videoUrlForJob, setVideoUrlForJob] = useState<string | null>(null);
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [step, setStep] = useState<"upload" | "selectFace" | "configure">("upload");
   const [faceTaskId, setFaceTaskId] = useState<string | null>(null);
@@ -586,7 +638,6 @@ function LipSyncPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => vo
   const [pollLoading, setPollLoading] = useState(false);
 
   const identifyFaces = trpc.kling.lipSync.identifyFaces.useMutation();
-  const createLipSync = trpc.kling.lipSync.create.useMutation();
   const uploadFile = trpc.kling.uploadFile.useMutation();
 
   // Step 1: Upload video and identify faces
@@ -609,6 +660,7 @@ function LipSyncPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => vo
 
       const result = await identifyFaces.mutateAsync({ videoUrl });
       if (result?.task_id) {
+        setVideoUrlForJob(videoUrl);
         setFaceTaskId(result.task_id);
         setStep("selectFace");
         toast.success("人脸识别任务已提交，请点击「查询结果」获取人脸列表");
@@ -669,35 +721,37 @@ function LipSyncPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => vo
         audioUrl = uploaded.url;
       }
 
-      const result = await createLipSync.mutateAsync({
-        sessionId: faceTaskId,
-        faceId: selectedFace,
-        audioUrl,
-        soundVolume,
-        originalAudioVolume: originalVolume,
+      await enqueueTask({
+        jobType: "video",
+        taskType: "lipSync",
+        subType: "audio sync",
+        jobInput: {
+          action: "lip_sync",
+          params: {
+            sessionId: faceTaskId,
+            faceId: selectedFace,
+            audioUrl,
+            soundVolume,
+            originalAudioVolume: originalVolume,
+            videoUrl: videoUrlForJob || undefined,
+          },
+        },
       });
-
-      if (result.success) {
-        onTaskCreated({
-          taskId: result.taskId, type: "lipSync", subType: "audio sync",
-          status: "submitted", createdAt: Date.now(),
-        });
-        toast.success("Lip-Sync 任务已提交");
-        // Reset
-        setStep("upload");
-        setVideoUri(null);
-        setAudioUri(null);
-        setFaceTaskId(null);
-        setFaces([]);
-        setSelectedFace(null);
-      }
+      toast.success("Lip-Sync 任务已加入队列");
+      setStep("upload");
+      setVideoUri(null);
+      setVideoUrlForJob(null);
+      setAudioUri(null);
+      setFaceTaskId(null);
+      setFaces([]);
+      setSelectedFace(null);
     } catch (error: any) {
       console.error(error);
       toast.error(error?.message || "Lip-Sync 提交失败");
     } finally {
       setLoading(false);
     }
-  }, [selectedFace, faceTaskId, audioUri, soundVolume, originalVolume]);
+  }, [selectedFace, faceTaskId, audioUri, soundVolume, originalVolume, videoUrlForJob, enqueueTask]);
 
   return (
     <div className="space-y-4">
@@ -1026,11 +1080,11 @@ function ElementsPanel() {
 // Image Generation Panel (Kling AI)
 // ═══════════════════════════════════════════════════════
 
-function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => void }) {
+function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType; taskType: KlingTab; subType?: string; jobInput: Record<string, unknown> }) => Promise<void> }) {
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
-  const [model, setModel] = useState<"kling-image-o1" | "kling-v2-1">("kling-image-o1");
-  const [resolution, setResolution] = useState<"1k" | "2k">("1k");
+  const [model, setModel] = useState<"kling-image-o1" | "kling-v2-1" | "nano-banana">("kling-image-o1");
+  const [resolution, setResolution] = useState<"1k" | "2k" | "4k">("1k");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [imageFidelity, setImageFidelity] = useState(0.5);
@@ -1038,11 +1092,11 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
   const [loading, setLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const createImage = trpc.kling.imageGen.create.useMutation();
   const uploadFile = trpc.kling.uploadFile.useMutation();
 
   // Credit costs
   const creditCost = useMemo(() => {
+    if (model === "nano-banana") return resolution === "4k" ? 18 : 12;
     if (model === "kling-image-o1") return resolution === "2k" ? 10 : 8;
     return resolution === "2k" ? 7 : 5;
   }, [model, resolution]);
@@ -1066,34 +1120,48 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
         refUrl = referenceImage;
       }
 
-      const result = await createImage.mutateAsync({
-        prompt: prompt.trim(),
-        negativePrompt: negativePrompt.trim() || undefined,
-        model,
-        resolution,
-        aspectRatio,
-        referenceImageUrl: refUrl,
-        imageFidelity: refUrl ? imageFidelity : undefined,
-        count,
-        // region defaults to cn on server side
-      });
-
-      if (result.success && result.taskId) {
-        onTaskCreated({
-          taskId: result.taskId, type: "imageGen" as any, subType: `${model} ${resolution}`,
-          status: "submitted", createdAt: Date.now(),
+      if (model === "nano-banana") {
+        await enqueueTask({
+          jobType: "image",
+          taskType: "imageGen",
+          subType: `nano ${resolution === "4k" ? "4k" : "2k"}`,
+          jobInput: {
+            action: "nano_image",
+            params: {
+              prompt: prompt.trim(),
+              quality: resolution === "4k" ? "4k" : "2k",
+              referenceImageUrl: refUrl,
+            },
+          },
         });
-        toast.success("圖片生成任務已提交");
       } else {
-        toast.error((result as any).error || "提交失敗");
+        await enqueueTask({
+          jobType: "image",
+          taskType: "imageGen",
+          subType: `${model} ${resolution}`,
+          jobInput: {
+            action: "kling_image",
+            params: {
+              prompt: prompt.trim(),
+              negativePrompt: negativePrompt.trim() || undefined,
+              model,
+              resolution,
+              aspectRatio,
+              referenceImageUrl: refUrl,
+              imageFidelity: refUrl ? imageFidelity : undefined,
+              count,
+            },
+          },
+        });
       }
+      toast.success("圖片生成任務已加入隊列");
     } catch (error: any) {
       console.error(error);
       toast.error(error?.message || "發生錯誤");
     } finally {
       setLoading(false);
     }
-  }, [prompt, negativePrompt, model, resolution, aspectRatio, referenceImage, imageFidelity, count]);
+  }, [prompt, negativePrompt, model, resolution, aspectRatio, referenceImage, imageFidelity, count, enqueueTask]);
 
   return (
     <div className="space-y-4">
@@ -1110,6 +1178,15 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
           <button onClick={() => setModel("kling-image-o1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-image-o1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>O1 高質量</button>
           <button onClick={() => setModel("kling-v2-1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-v2-1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>V2.1 快速</button>
+          <button
+            onClick={() => {
+              setModel("nano-banana");
+              if (resolution === "1k") setResolution("2k");
+            }}
+            className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "nano-banana" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}
+          >
+            Nano
+          </button>
         </div>
       </div>
 
@@ -1117,8 +1194,13 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-gray-300">解析度</span>
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
-          <button onClick={() => setResolution("1k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "1k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>1K 標準</button>
+          {model !== "nano-banana" && (
+            <button onClick={() => setResolution("1k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "1k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>1K 標準</button>
+          )}
           <button onClick={() => setResolution("2k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "2k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>2K 高清</button>
+          {model === "nano-banana" && (
+            <button onClick={() => setResolution("4k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "4k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>4K 超清</button>
+          )}
         </div>
       </div>
 
@@ -1133,17 +1215,19 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
         />
       </div>
 
-      <AspectRatioSelector ratio={aspectRatio} onRatioChange={setAspectRatio} />
+      {model !== "nano-banana" && <AspectRatioSelector ratio={aspectRatio} onRatioChange={setAspectRatio} />}
 
       {/* Count */}
-      <div className="flex items-center justify-between">
+      {model !== "nano-banana" && (
+        <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-gray-300">生成數量</span>
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
           {[1, 2, 3, 4].map((n) => (
             <button key={n} onClick={() => setCount(n)} className={`px-3 py-1 text-sm rounded-md transition-colors ${count === n ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>{n}</button>
           ))}
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Reference image */}
       <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-gray-300">
@@ -1176,8 +1260,8 @@ function ImageGenPanel({ onTaskCreated }: { onTaskCreated: (task: TaskInfo) => v
       <div className="flex justify-between items-center pt-4 border-t border-gray-700">
         <div className="flex items-center space-x-1 bg-gray-800 text-yellow-400 px-2 py-1 rounded-full text-xs">
           <Coins className="h-3.5 w-3.5" />
-          <span>{creditCost * count} Credits</span>
-          <span className="text-gray-400">({count}張 x {creditCost})</span>
+          <span>{creditCost * (model === "nano-banana" ? 1 : count)} Credits</span>
+          <span className="text-gray-400">({model === "nano-banana" ? 1 : count}張 x {creditCost})</span>
         </div>
         <button
           onClick={handleSubmit}
@@ -1201,50 +1285,66 @@ export default function RemixStudioPage() {
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const { user } = useAuth();
 
-  const handleCreateTask = useCallback((task: TaskInfo) => {
-    setTasks((prev) => [task, ...prev]);
-  }, []);
+  const enqueueTask = useCallback(
+    async (payload: {
+      jobType: JobType;
+      taskType: KlingTab;
+      subType?: string;
+      jobInput: Record<string, unknown>;
+    }) => {
+      if (!user?.id) {
+        throw new Error("请先登录");
+      }
 
-  // Poll task status using fetch (since getTask is nested under sub-routers)
-  const pollTaskStatus = useCallback(async (taskId: string, type: KlingTab) => {
+      const { jobId } = await createJob({
+        type: payload.jobType,
+        userId: String(user.id),
+        input: payload.jobInput,
+      });
+
+      setTasks((prev) => [
+        {
+          taskId: jobId,
+          jobType: payload.jobType,
+          jobInput: payload.jobInput,
+          type: payload.taskType,
+          subType: payload.subType,
+          status: "queued",
+          createdAt: Date.now(),
+        },
+        ...prev,
+      ]);
+    },
+    [user?.id]
+  );
+
+  const pollTaskStatus = useCallback(async (taskId: string) => {
     try {
-      let endpoint = "";
-      if (type === "omniVideo") {
-        endpoint = `kling.omniVideo.getTask`;
-      } else if (type === "motionControl") {
-        endpoint = `kling.motionControl.getTask`;
-      } else if (type === "lipSync") {
-        endpoint = `kling.lipSync.getTask`;
-      } else {
-        return;
-      }
+      const data = await getJob(taskId);
 
-      const response = await fetch(
-        `/api/trpc/${endpoint}?input=${encodeURIComponent(JSON.stringify({ taskId }))}`,
-        { credentials: "include" }
-      );
-      const json = await response.json();
-      const data = json?.result?.data;
+      setTasks((prev) => {
+        const current = prev.find((task) => task.taskId === taskId);
+        if (!current) return prev;
 
-      if (data) {
-        const status = data.task_status || data.status;
-        const videoUrl = data.task_result?.videos?.[0]?.url || data.video_url || data.videoUrl;
-        const error = data.task_status_msg || data.error;
-
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.taskId === taskId
-              ? { ...t, status: status === "succeed" ? "succeed" : status === "failed" ? "failed" : status === "processing" ? "processing" : t.status, videoUrl: videoUrl || t.videoUrl, error: error || t.error }
-              : t
-          )
-        );
-
-        if (status === "succeed") {
-          toast.success(`任务完成！`);
-        } else if (status === "failed") {
-          toast.error(`任务失败: ${error || "未知错误"}`);
+        if (current.status !== data.status) {
+          if (data.status === "succeeded") {
+            toast.success("任务完成！");
+          } else if (data.status === "failed") {
+            toast.error("任务失败，请点击重试。");
+          }
         }
-      }
+
+        return prev.map((task) =>
+          task.taskId === taskId
+            ? {
+                ...task,
+                status: data.status,
+                output: data.output || task.output,
+                error: data.status === "failed" ? "这次生成没有成功，请点击重试。" : task.error,
+              }
+            : task
+        );
+      });
     } catch (error) {
       console.error(`Failed to poll task ${taskId}`, error);
     }
@@ -1252,30 +1352,46 @@ export default function RemixStudioPage() {
 
   // Auto-poll active tasks
   useEffect(() => {
-    const activeTasks = tasks.filter((t) => t.status === "submitted" || t.status === "processing");
+    const activeTasks = tasks.filter((t) => t.status === "queued" || t.status === "running");
     if (activeTasks.length === 0) return;
 
     const interval = setInterval(() => {
       activeTasks.forEach((task) => {
-        pollTaskStatus(task.taskId, task.type);
+        pollTaskStatus(task.taskId);
       });
-    }, 15000);
+    }, 1800);
 
     return () => clearInterval(interval);
   }, [tasks, pollTaskStatus]);
 
+  const handleRetryTask = useCallback(
+    async (task: TaskInfo) => {
+      try {
+        await enqueueTask({
+          jobType: task.jobType,
+          taskType: task.type,
+          subType: task.subType,
+          jobInput: task.jobInput,
+        });
+      } catch (error: any) {
+        toast.error(error?.message || "重试失败");
+      }
+    },
+    [enqueueTask]
+  );
+
   const renderPanel = () => {
     switch (activeTab) {
       case "omniVideo":
-        return <OmniVideoPanel onTaskCreated={handleCreateTask} />;
+        return <OmniVideoPanel enqueueTask={enqueueTask} />;
       case "motionControl":
-        return <MotionControlPanel onTaskCreated={handleCreateTask} />;
+        return <MotionControlPanel enqueueTask={enqueueTask} />;
       case "lipSync":
-        return <LipSyncPanel onTaskCreated={handleCreateTask} />;
+        return <LipSyncPanel enqueueTask={enqueueTask} />;
       case "elements":
         return <ElementsPanel />;
       case "imageGen":
-        return <ImageGenPanel onTaskCreated={handleCreateTask} />;
+        return <ImageGenPanel enqueueTask={enqueueTask} />;
       case "history":
         return <CreationHistoryPanel title="可靈工作室生成記錄" />;
       default:
@@ -1344,7 +1460,8 @@ export default function RemixStudioPage() {
                   <TaskStatusCard
                     key={task.taskId}
                     task={task}
-                    onPoll={() => pollTaskStatus(task.taskId, task.type)}
+                    onPoll={() => pollTaskStatus(task.taskId)}
+                    onRetry={() => handleRetryTask(task)}
                   />
                 ))
               ) : (

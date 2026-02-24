@@ -67,3 +67,4 @@ export * from "./schema-video-submissions";
 export * from "./schema-showcase";
 export * from "./schema-sessions";
 export * from "./schema-video-signatures";
+export * from "./schema-jobs";

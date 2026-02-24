@@ -4,6 +4,7 @@ import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/com
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
@@ -44,6 +45,8 @@ export default function VirtualIdol() {
   const [selectedGender, setSelectedGender] = useState<string>("female");
   const [description, setDescription] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [generationJobId, setGenerationJobId] = useState<string | null>(null);
+  const [progressMessage, setProgressMessage] = useState<string>(JOB_PROGRESS_MESSAGES.image[0]);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<{ imageUrl: string; style: string; gender: string }>>([]);
@@ -54,6 +57,7 @@ export default function VirtualIdol() {
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
   const [uploadingRef, setUploadingRef] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const generationPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [show3DPanel, setShow3DPanel] = useState(false);
   const [converting3D, setConverting3D] = useState(false);
@@ -69,7 +73,6 @@ export default function VirtualIdol() {
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
 
-  const generateMutation = trpc.virtualIdol.generate.useMutation();
   const convert3DMutation = trpc.virtualIdol.convertTo3D.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const uploadScreenshotMutation = trpc.paymentSubmission.uploadScreenshot.useMutation();
@@ -115,6 +118,51 @@ export default function VirtualIdol() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
+  const startGenerationPolling = useCallback((jobId: string) => {
+    if (generationPollingRef.current) {
+      clearInterval(generationPollingRef.current);
+      generationPollingRef.current = null;
+    }
+    let attempts = 0;
+    setProgressMessage(JOB_PROGRESS_MESSAGES.image[0]);
+
+    generationPollingRef.current = setInterval(async () => {
+      attempts++;
+      const index = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.image.length;
+      setProgressMessage(JOB_PROGRESS_MESSAGES.image[index]);
+
+      try {
+        const job = await getJob(jobId);
+        if (job.status === "succeeded") {
+          if (generationPollingRef.current) {
+            clearInterval(generationPollingRef.current);
+            generationPollingRef.current = null;
+          }
+          setGenerationJobId(null);
+          const imageUrl = (job.output as any)?.imageUrl as string | undefined;
+          if (imageUrl) {
+            setGeneratedImage(imageUrl);
+            setHistory(prev => [{ imageUrl, style: selectedStyle, gender: selectedGender }, ...prev].slice(0, 6));
+            usageStatsQuery.refetch();
+          } else {
+            setError("生成完成但未返回图片，请重试。");
+          }
+          setGenerating(false);
+        } else if (job.status === "failed") {
+          if (generationPollingRef.current) {
+            clearInterval(generationPollingRef.current);
+            generationPollingRef.current = null;
+          }
+          setGenerationJobId(null);
+          setGenerating(false);
+          setError("这次生成没有成功，请点击重试。");
+        }
+      } catch {
+        // Ignore single polling failures.
+      }
+    }, 1800);
+  }, [selectedStyle, selectedGender, usageStatsQuery]);
+
   const handleGenerate = useCallback(async () => {
     try {
       const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "avatar" });
@@ -131,7 +179,13 @@ export default function VirtualIdol() {
       toast.info("请稍候", { description: "参考图正在上传中，请等待上传完成后再生成" });
       return;
     }
+    if (!user?.id) {
+      setError("登录状态已失效，请重新登录后再试。");
+      return;
+    }
     setGenerating(true);
+    setGenerationJobId(null);
+    setProgressMessage(JOB_PROGRESS_MESSAGES.image[0]);
     setError(null);
     setGeneratedImage(null);
     setShow3DPanel(false);
@@ -141,26 +195,28 @@ export default function VirtualIdol() {
     };
     const quality = qualityMap[imageEngine] || "free";
     try {
-      const result = await generateMutation.mutateAsync({
-        style: selectedStyle as any,
-        gender: selectedGender as any,
-        description: description || undefined,
-        referenceImageUrl: referenceImageUrl || undefined,
-        quality,
+      const { jobId } = await createJob({
+        type: "image",
+        userId: String(user.id),
+        input: {
+          action: "virtual_idol",
+          params: {
+            style: selectedStyle,
+            gender: selectedGender,
+            description: description || undefined,
+            referenceImageUrl: referenceImageUrl || undefined,
+            quality,
+          },
+        },
       });
-      if (result.success === false) {
-        setError((result as any).error || "生成失败");
-      } else if (result.imageUrl) {
-        setGeneratedImage(result.imageUrl);
-        setHistory(prev => [{ imageUrl: result.imageUrl!, style: selectedStyle, gender: selectedGender }, ...prev].slice(0, 6));
-      }
-      usageStatsQuery.refetch();
+      setGenerationJobId(jobId);
+      startGenerationPolling(jobId);
     } catch (err: any) {
-      setError(err.message || "生成失败，请稍后再试");
-    } finally {
+      setGenerationJobId(null);
       setGenerating(false);
+      setError("任务提交失败，请稍后重试。");
     }
-  }, [selectedStyle, selectedGender, description, generateMutation, checkAccessMutation, navigate, usageStatsQuery, referenceImageUrl, referenceImage, uploadingRef, imageEngine]);
+  }, [selectedStyle, selectedGender, description, checkAccessMutation, navigate, usageStatsQuery, referenceImageUrl, referenceImage, uploadingRef, imageEngine, user?.id, startGenerationPolling]);
 
   const handleConvertTo3D = useCallback(async () => {
     if (!generatedImage) return;
@@ -195,6 +251,15 @@ export default function VirtualIdol() {
   }, [generatedImage, enablePbr, convert3DMutation, navigate]);
 
   const currentStyleInfo = useMemo(() => STYLES.find(s => s.id === selectedStyle), [selectedStyle]);
+
+  useEffect(() => {
+    return () => {
+      if (generationPollingRef.current) {
+        clearInterval(generationPollingRef.current);
+        generationPollingRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) navigate("/login");
@@ -373,7 +438,7 @@ export default function VirtualIdol() {
                 <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 <span className="relative flex items-center justify-center gap-2">
                   {generating ? (
-                    <><Loader2 className="h-5 w-5 animate-spin" /> 正在生成...</>
+                    <><Loader2 className="h-5 w-5 animate-spin" /> {generationJobId ? "排队处理中..." : "正在提交..."}</>
                   ) : (
                     <><Sparkles className="h-5 w-5" /> 开始生成</>
                   )}
@@ -393,7 +458,7 @@ export default function VirtualIdol() {
                     <Loader2 className="h-16 w-16 animate-spin text-cyan-400/60 relative" />
                   </div>
                   <p className="mt-6 text-lg text-white/50">正在为你生成虚拟偶像...</p>
-                  <p className="text-sm text-white/25 mt-1">通常需要 15-30 秒</p>
+                  <p className="text-sm text-white/25 mt-1">{progressMessage}</p>
                 </div>
               )}
               {error && !generating && (
@@ -403,6 +468,13 @@ export default function VirtualIdol() {
                   </div>
                   <p className="font-semibold text-red-400/80">生成失败</p>
                   <p className="text-sm mt-2 text-red-400/50">{error}</p>
+                  <button
+                    onClick={handleGenerate}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-red-500/15 px-3 py-2 text-sm font-semibold text-red-200 hover:bg-red-500/25 transition-colors"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    重试
+                  </button>
                 </div>
               )}
               {generatedImage && !generating && (
