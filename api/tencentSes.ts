@@ -29,16 +29,17 @@ export async function sendTencentSesTestEmail(to: string): Promise<void> {
     },
   });
 
-  const textContent = "This is a test email sent via Tencent SES.";
-  const htmlContent = "<p>This is a test email sent via Tencent SES.</p>";
+  const subject = "MVStudioPro Tencent SES Test Email";
+  const text = "This is a test email sent via Tencent SES.";
+  const html = "<p>This is a test email sent via Tencent SES.</p>";
 
   await client.SendEmail({
     FromEmailAddress: fromEmail,
     Destination: [to],
-    Subject: "MVStudioPro Tencent SES Test Email",
     Simple: {
-      Text: Buffer.from(textContent, "utf8").toString("base64"),
-      Html: Buffer.from(htmlContent, "utf8").toString("base64"),
+      Subject: { Data: subject },
+      Html: { Data: html },
+      Text: { Data: text },
     },
   });
 }
