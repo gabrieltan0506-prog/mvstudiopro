@@ -5,7 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { nanoid } from "nanoid";
 import { sendTencentSesTestEmail } from "./tencentSes.js";
 import { createContext } from "../server/_core/context";
-import { createJob, getJobById, type JobType } from "../server/jobs/repository";
+import { createJob as createStoredJob, getJobById, type JobType } from "../server/jobs/repository";
 type SessionPayload = {
   email: string;
   googleId: string;
@@ -250,7 +250,7 @@ app.post("/api/jobs", async (req, res) => {
         : "kling-cn";
 
     const jobId = nanoid(16);
-    await createJob({
+    await createStoredJob({
       id: jobId,
       userId: resolvedUserId,
       type,
@@ -264,6 +264,13 @@ app.post("/api/jobs", async (req, res) => {
     return res.status(500).json({ error: "Failed to create job" });
   }
 });
+
+function createJob() {
+  return {
+    jobId: nanoid(16),
+    status: "queued",
+  };
+}
 
 app.get("/api/jobs/:id", async (req, res) => {
   try {
@@ -302,5 +309,10 @@ app.get("/api/jobs/:id", async (req, res) => {
 });
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.url?.startsWith("/api/jobs")) {
+    const job = createJob();
+    return res.status(200).json(job);
+  }
+
   return app(req as any, res as any);
 }
