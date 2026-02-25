@@ -16,6 +16,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
+import { GenerationConsentModal } from "@/components/GenerationConsentModal";
 import { 
   Music, 
   ArrowLeft, 
@@ -105,6 +106,7 @@ export default function AudioLabPage() {
 
   // 生成状态
   const [status, setStatus] = useState<GenerationStatus>("idle");
+  const [consentModalOpen, setConsentModalOpen] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [songs, setSongs] = useState<GeneratedSong[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
@@ -113,6 +115,12 @@ export default function AudioLabPage() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const generateLyrics = trpc.suno.generateLyrics.useMutation();
+  const consentQuery = trpc.generationConsent.status.useQuery(undefined, {
+    enabled: Boolean(user?.id),
+  });
+  const acceptConsentMutation = trpc.generationConsent.accept.useMutation({
+    onSuccess: () => consentQuery.refetch(),
+  });
 
   // 水印音頻（入門版用戶播放前加入 MVStudioPro.com 語音）
   const watermarkQuery = trpc.suno.getWatermarkAudio.useQuery(undefined, {
@@ -248,6 +256,12 @@ export default function AudioLabPage() {
 
   // ─── 提交生成 ──────────────────────────────────
   const handleGenerate = useCallback(async () => {
+    const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+    if (!consentState?.hasAccepted) {
+      setConsentModalOpen(true);
+      return;
+    }
+
     const songTitle = title.trim() || (mode === "simple" ? "AI 生成歌曲" : "自定义歌曲");
 
     if (mode === "simple" && !description.trim() && selectedStyles.length === 0) {
@@ -321,13 +335,19 @@ export default function AudioLabPage() {
       setStatus("error");
       setErrorMsg("任务提交失败，请稍后重试。");
     }
-  }, [mode, engine, title, description, lyrics, customStyle, selectedStyles, selectedMoods, instrumental, vocalGender, startPolling, buildStyleString, user?.id]);
+  }, [mode, engine, title, description, lyrics, customStyle, selectedStyles, selectedMoods, instrumental, vocalGender, startPolling, buildStyleString, user?.id, consentQuery]);
 
   // ─── AI 歌词助手 ──────────────────────────────
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsPrompt, setLyricsPrompt] = useState("");
 
   const handleGenerateLyrics = useCallback(async () => {
+    const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+    if (!consentState?.hasAccepted) {
+      setConsentModalOpen(true);
+      return;
+    }
+
     if (!lyricsPrompt.trim()) {
       toast.error("请输入歌词主题或故事描述");
       return;
@@ -347,7 +367,7 @@ export default function AudioLabPage() {
     } finally {
       setLyricsLoading(false);
     }
-  }, [lyricsPrompt, selectedMoods, generateLyrics]);
+  }, [lyricsPrompt, selectedMoods, generateLyrics, consentQuery]);
 
   // ─── 重置 ──────────────────────────────────────
   const handleReset = useCallback(() => {
@@ -702,6 +722,16 @@ export default function AudioLabPage() {
           </button>
         )}
       </div>
+      <GenerationConsentModal
+        open={consentModalOpen}
+        onOpenChange={setConsentModalOpen}
+        loading={acceptConsentMutation.isPending}
+        onAccept={async () => {
+          await acceptConsentMutation.mutateAsync({ accepted: true });
+          setConsentModalOpen(false);
+          toast.success("Consent saved. You can now generate.");
+        }}
+      />
     </div>
   );
 }

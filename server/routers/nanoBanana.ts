@@ -4,7 +4,7 @@
  * 提供 NBP 图片生成 API 代理，包含：
  * - 分镜图生成（单张/批量）
  * - 虚拟偶像 2K/4K 生成
- * - 水印逻辑（免费/初级有水印，高级无水印）
+ * - 水印逻辑（非付费用户强制水印）
  * - Credits 不足自动降级到 Forge AI
  * - 会员层级限制（免费 10 张、初级 30 张、高级 70 张）
  */
@@ -15,6 +15,7 @@ import { generateImage } from "../_core/imageGeneration";
 import { storagePut } from "../storage";
 import { deductNbpCredits, checkNbpCapacity, getUserPlan, deductCredits } from "../credits";
 import { PLANS, CREDIT_COSTS } from "../plans";
+import { ensureGenerationConsent, isPaidUser } from "../generation-consent";
 
 // ─── NBP 图片生成（通过用户的 Gemini API Key）─────────
 async function generateNbpImage(
@@ -83,20 +84,22 @@ async function addWatermark(imageBuffer: Buffer, _mimeType: string): Promise<Buf
     const width = metadata.width || 1024;
     const height = metadata.height || 1024;
 
-    const fontSize = Math.max(16, Math.floor(width / 40));
-    const watermarkText = "Powered by MV Studio Pro";
+    const fontSize = Math.max(16, Math.floor(width * 0.04));
+    const watermarkText = "mvstudiopro.com free";
     const svgWatermark = `
       <svg width="${width}" height="${height}">
         <style>
           .watermark {
-            fill: rgba(255, 255, 255, 0.5);
+            fill: rgba(255, 255, 255, 0.25);
             font-size: ${fontSize}px;
             font-family: Arial, sans-serif;
             font-weight: bold;
+            stroke: rgba(0, 0, 0, 0.8);
+            stroke-width: ${Math.max(1, Math.floor(fontSize * 0.08))};
+            paint-order: stroke;
           }
         </style>
         <text x="${width - 20}" y="${height - 20}" text-anchor="end" class="watermark">${watermarkText}</text>
-        <text x="${width - 20}" y="${height - 20 - fontSize - 5}" text-anchor="end" class="watermark" style="font-size: ${fontSize * 0.7}px;">mvstudiopro.com</text>
       </svg>
     `;
 
@@ -135,6 +138,7 @@ export const nanoBananaRouter = router({
       const userId = ctx.user!.id;
       const plan = await getUserPlan(userId);
       const planConfig = PLANS[plan];
+      const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
 
       const capacity = await checkNbpCapacity(userId, input.resolution);
 
@@ -142,7 +146,7 @@ export const nanoBananaRouter = router({
         plan,
         nbpEnabled: planConfig.nbp.enabled,
         maxResolution: planConfig.nbp.maxResolution,
-        watermark: planConfig.nbp.watermark,
+        watermark: shouldWatermark,
         maxImagesPerSession: planConfig.limits.storyboardImages,
         upgradeAt: planConfig.limits.storyboardImageUpgradeAt,
         creditsAvailable: capacity.totalAvailable,
@@ -168,8 +172,10 @@ export const nanoBananaRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user!.id;
+      await ensureGenerationConsent(userId);
       const plan = await getUserPlan(userId);
       const planConfig = PLANS[plan];
+      const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
 
       // 检查分镜图数量限制
       if (input.sceneIndex >= planConfig.limits.storyboardImages) {
@@ -218,7 +224,7 @@ export const nanoBananaRouter = router({
 
             if (result) {
               let finalImage = result.imageData;
-              if (planConfig.nbp.watermark) {
+              if (shouldWatermark) {
                 finalImage = await addWatermark(finalImage, result.mimeType);
               }
 
@@ -231,7 +237,7 @@ export const nanoBananaRouter = router({
                 imageUrl,
                 engine,
                 resolution,
-                watermark: planConfig.nbp.watermark,
+                watermark: shouldWatermark,
                 showUpgradeHint,
                 creditsRemaining: deductResult.remainingBalance,
               };
@@ -266,7 +272,7 @@ export const nanoBananaRouter = router({
         imageUrl,
         engine: "forge" as const,
         resolution: "standard",
-        watermark: true,
+        watermark: shouldWatermark,
         showUpgradeHint,
         creditsRemaining: 0,
         fallbackMessage: planConfig.nbp.enabled
@@ -292,8 +298,10 @@ export const nanoBananaRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user!.id;
+      await ensureGenerationConsent(userId);
       const plan = await getUserPlan(userId);
       const planConfig = PLANS[plan];
+      const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
 
       const maxScenes = planConfig.limits.storyboardImages;
       const scenes = input.scenes.slice(0, maxScenes);
@@ -340,7 +348,7 @@ export const nanoBananaRouter = router({
 
               if (result) {
                 let finalImage = result.imageData;
-                if (planConfig.nbp.watermark) {
+                if (shouldWatermark) {
                   finalImage = await addWatermark(finalImage, result.mimeType);
                 }
                 const filename = `storyboard/nbp_batch_${scene.index + 1}_${Date.now()}.png`;
@@ -397,7 +405,7 @@ export const nanoBananaRouter = router({
             && results.length >= planConfig.limits.storyboardImageUpgradeAt,
         },
         plan,
-        watermark: planConfig.nbp.watermark,
+        watermark: shouldWatermark,
       };
     }),
 
@@ -415,8 +423,10 @@ export const nanoBananaRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user!.id;
+      await ensureGenerationConsent(userId);
       const plan = await getUserPlan(userId);
       const planConfig = PLANS[plan];
+      const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
 
       if (!planConfig.nbp.enabled) {
         return {
@@ -466,7 +476,7 @@ export const nanoBananaRouter = router({
       }
 
       let finalImage = result.imageData;
-      if (planConfig.nbp.watermark) {
+      if (shouldWatermark) {
         finalImage = await addWatermark(finalImage, result.mimeType);
       }
 
@@ -477,7 +487,7 @@ export const nanoBananaRouter = router({
         success: true,
         imageUrl,
         resolution,
-        watermark: planConfig.nbp.watermark,
+        watermark: shouldWatermark,
         creditsRemaining: deductResult.remainingBalance,
         engine: "nbp" as const,
       };

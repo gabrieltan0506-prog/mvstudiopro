@@ -33,6 +33,12 @@ import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, t
 import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
+import {
+  acceptGenerationConsent,
+  ensureGenerationConsent,
+  getGenerationConsentStatus,
+  isPaidUser,
+} from "./generation-consent";
 import { nanoid } from "nanoid";
 
 export const appRouter = router({
@@ -54,6 +60,16 @@ export const appRouter = router({
   hunyuan3d: hunyuan3dRouter,
   suno: sunoRouter,
   creations: creationsRouter,
+  generationConsent: router({
+    status: protectedProcedure.query(async ({ ctx }) => {
+      return getGenerationConsentStatus(ctx.user.id);
+    }),
+    accept: protectedProcedure
+      .input(z.object({ accepted: z.literal(true) }))
+      .mutation(async ({ ctx }) => {
+        return acceptGenerationConsent(ctx.user.id);
+      }),
+  }),
   // phoneOtp: phoneOtpRouter, // 暂不上线，等短信服务开通后取消注释
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),
@@ -336,6 +352,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        await ensureGenerationConsent(userId);
+        await ensureGenerationConsent(userId);
+        const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
         const stylePrompts: Record<string, string> = {
           anime: "anime style virtual idol singer, vibrant colors, detailed eyes, professional character design, concert stage background, high quality anime illustration",
           realistic: "ultra photorealistic portrait photo of a real person, natural skin texture with pores and fine details, real human being not CGI not 3D render not anime not cartoon, shot on Canon EOS R5 85mm f/1.4 lens, natural golden hour sunlight, shallow depth of field bokeh background, professional fashion photography, 8K resolution, RAW photo quality, real person photographed in outdoor garden setting",
@@ -872,7 +891,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
             const { url } = await generateImage({ prompt: imagePrompt });
             // 免費生圖添加水印（管理員跳過）
             let finalUrl = url;
-            if (!isAdminUser && url) {
+            if (shouldWatermark && url) {
               try {
                 const { addWatermarkToUrl } = await import("./watermark");
                 const { storagePut } = await import("./storage");
@@ -932,9 +951,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
       }))
       .mutation(async ({ input, ctx }) => {
         const { exportToPDF, exportToWord } = await import("./storyboard-export");
-        const isAdminUser = ctx.user.role === "admin";
-        // Free-tier users get watermark; admin/paid users don't
-        const shouldWatermark = !isAdminUser;
+        const shouldWatermark = !(await isPaidUser(ctx.user.id, ctx.user.role));
 
         if (input.format === "word") {
           const result = await exportToWord(input.storyboard, { addWatermark: shouldWatermark });
@@ -1121,6 +1138,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         // 检查并扣除 Credits（管理员免扣）
         const { deductCredits, hasEnoughCredits } = await import("./credits");
         const userId = ctx.user.id;
+        await ensureGenerationConsent(userId);
 
         const canAfford = await hasEnoughCredits(userId, "aiInspiration");
         if (!canAfford) {
@@ -1190,6 +1208,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        await ensureGenerationConsent(userId);
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -1254,6 +1273,7 @@ ${sceneSummary}
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        await ensureGenerationConsent(userId);
 
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
@@ -1640,6 +1660,7 @@ ${sceneSummary}
       instrumentation: z.string(),
       sceneCount: z.number().min(2).max(20).default(8),
     })).mutation(async ({ ctx, input }) => {
+      await ensureGenerationConsent(ctx.user.id);
       // Uses storyboard credits (same as normal storyboard)
       if (!isAdmin(ctx.user)) {
         const usage = await checkUsageLimit(ctx.user.id, "storyboard");
@@ -1862,6 +1883,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       storyboardId: z.number().optional(),
       negativePrompt: z.string().optional(),
     })).mutation(async ({ ctx, input }) => {
+      await ensureGenerationConsent(ctx.user.id);
       // Determine credit cost based on quality + resolution
       const costKey = `videoGeneration${input.quality === "fast" ? "Fast" : "Std"}${input.resolution === "1080p" ? "1080" : "720"}` as keyof typeof CREDIT_COSTS;
       let creditsUsed = 0;
@@ -1897,21 +1919,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           aspectRatio: input.aspectRatio,
           negativePrompt: input.negativePrompt,
         });
+        let finalVideoUrl = result.videoUrl;
+        const shouldWatermark = !(await isPaidUser(ctx.user.id, ctx.user.role));
+        if (shouldWatermark) {
+          try {
+            const { addVideoWatermarkToUrl } = await import("./video-watermark");
+            finalVideoUrl = await addVideoWatermarkToUrl(result.videoUrl);
+          } catch (watermarkErr) {
+            console.error("[Veo] Video watermark failed, using original:", watermarkErr);
+          }
+        }
 
         await updateVideoGeneration(genId, {
-          videoUrl: result.videoUrl,
+          videoUrl: finalVideoUrl,
           status: "completed",
           completedAt: new Date(),
         });
 
         // 注册平台原创视频签名（用于 PK 评分验证）
         try {
-          await registerOriginalVideo(ctx.user.id, result.videoUrl, genId);
+          await registerOriginalVideo(ctx.user.id, finalVideoUrl, genId);
         } catch (sigErr) {
           console.error("[Veo] Failed to register video signature:", sigErr);
         }
 
-        return { success: true, id: genId, videoUrl: result.videoUrl };
+        return { success: true, id: genId, videoUrl: finalVideoUrl };
       } catch (err: any) {
         // Refund credits on failure
         if (creditsUsed > 0) await addCredits(ctx.user.id, creditsUsed, "refund", "视频生成失败退款");

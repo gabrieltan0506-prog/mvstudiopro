@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob, type JobType, type JobStatus } from "@/lib/jobs";
+import { GenerationConsentModal } from "@/components/GenerationConsentModal";
 import {
   Sparkles, Footprints, Mic2, Layers, Coins, RefreshCw,
   CheckCircle, Download, Upload, Loader2, Trash2, Play,
@@ -1283,7 +1284,14 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
 export default function RemixStudioPage() {
   const [activeTab, setActiveTab] = useState<KlingTab>("omniVideo");
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
+  const [consentModalOpen, setConsentModalOpen] = useState(false);
   const { user } = useAuth();
+  const consentQuery = trpc.generationConsent.status.useQuery(undefined, {
+    enabled: Boolean(user?.id),
+  });
+  const acceptConsentMutation = trpc.generationConsent.accept.useMutation({
+    onSuccess: () => consentQuery.refetch(),
+  });
 
   const enqueueTask = useCallback(
     async (payload: {
@@ -1294,6 +1302,11 @@ export default function RemixStudioPage() {
     }) => {
       if (!user?.id) {
         throw new Error("请先登录");
+      }
+      const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+      if (!consentState?.hasAccepted) {
+        setConsentModalOpen(true);
+        throw new Error("请先同意生成条款");
       }
 
       const { jobId } = await createJob({
@@ -1315,7 +1328,7 @@ export default function RemixStudioPage() {
         ...prev,
       ]);
     },
-    [user?.id]
+    [user?.id, consentQuery]
   );
 
   const pollTaskStatus = useCallback(async (taskId: string) => {
@@ -1475,6 +1488,16 @@ export default function RemixStudioPage() {
           </div>
         </div>
       </div>
+      <GenerationConsentModal
+        open={consentModalOpen}
+        onOpenChange={setConsentModalOpen}
+        loading={acceptConsentMutation.isPending}
+        onAccept={async () => {
+          await acceptConsentMutation.mutateAsync({ accepted: true });
+          setConsentModalOpen(false);
+          toast.success("Consent saved. You can now generate.");
+        }}
+      />
     </div>
   );
 }

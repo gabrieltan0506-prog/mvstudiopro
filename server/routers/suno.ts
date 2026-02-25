@@ -14,6 +14,8 @@ import { recordCreation } from "./creations";
 import { invokeLLM } from "../_core/llm";
 import { deductCredits, getCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
+import { addGeneratedByMetadataToAudioUrl } from "../audio-metadata";
+import { ensureGenerationConsent, isPaidUser } from "../generation-consent";
 
 // Suno API 配置（通过 sunoapi.org 或 kie.ai 第三方代理）
 const SUNO_API_BASE = process.env.SUNO_API_BASE || "https://api.sunoapi.org";
@@ -167,6 +169,7 @@ export const sunoRouter = router({
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const isAdmin = ctx.user.role === "admin";
+      await ensureGenerationConsent(userId);
 
       // 扣除 Credits（管理员免扣）
       if (!isAdmin) {
@@ -200,6 +203,7 @@ export const sunoRouter = router({
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const isAdmin = ctx.user.role === "admin";
+      await ensureGenerationConsent(userId);
 
       // 根据模型版本确定 Credits 消耗
       const creditCost = input.model === "V5" ? CREDIT_COSTS.sunoMusicV5 : CREDIT_COSTS.sunoMusicV4;
@@ -320,40 +324,48 @@ export const sunoRouter = router({
     .input(z.object({
       taskId: z.string().min(1),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const data = await getSunoTaskStatus(input.taskId);
+      const paidUser = await isPaidUser(ctx.user.id, ctx.user.role);
+
+      const songs = data.response?.data?.map((song: any) => ({
+        id: song.id,
+        audioUrl: song.audio_url || song.stream_audio_url,
+        streamUrl: song.stream_audio_url,
+        imageUrl: song.image_url,
+        title: song.title,
+        tags: song.tags,
+        duration: song.duration,
+      })) || [];
+
+      if (!paidUser) {
+        for (const song of songs) {
+          if (!song.audioUrl || String(song.audioUrl).includes("/watermarked/audio/")) continue;
+          try {
+            const taggedUrl = await addGeneratedByMetadataToAudioUrl(song.audioUrl);
+            song.audioUrl = taggedUrl;
+            song.streamUrl = taggedUrl;
+            (song as any).metadata = { generated_by: "mvstudiopro_free" };
+          } catch (err) {
+            console.error("[Suno] Audio metadata tagging failed:", err);
+            (song as any).metadata = { generated_by: "mvstudiopro_free" };
+          }
+        }
+      }
 
       return {
         taskId: data.taskId,
         status: data.status as "PENDING" | "TEXT_SUCCESS" | "FIRST_SUCCESS" | "SUCCESS" | "FAILED",
-        songs: data.response?.data?.map((song: any) => ({
-          id: song.id,
-          audioUrl: song.audio_url || song.stream_audio_url,
-          streamUrl: song.stream_audio_url,
-          imageUrl: song.image_url,
-          title: song.title,
-          tags: song.tags,
-          duration: song.duration,
-        })) || [],
+        songs,
         errorMessage: data.errorMessage,
       };
     }),
 
   // 获取音频水印 URL（免費用户播放前加入 MVStudioPro.com 语音）
   getWatermarkAudio: protectedProcedure
-    .query(async ({ ctx }) => {
-      const isAdmin = ctx.user.role === "admin";
-      if (isAdmin) {
-        return { watermarkUrl: null, enabled: false };
-      }
-      try {
-        const { getWatermarkAudioUrl } = await import("../audio-watermark");
-        const url = await getWatermarkAudioUrl();
-        return { watermarkUrl: url, enabled: true };
-      } catch (err) {
-        console.error("[Suno] Failed to get watermark audio:", err);
-        return { watermarkUrl: null, enabled: false };
-      }
+    .query(async () => {
+      // Audio watermark is disabled; free users receive metadata tag only.
+      return { watermarkUrl: null, enabled: false };
     }),
 
   // 获取 Credits 消耗信息

@@ -37,6 +37,7 @@ import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
+import { GenerationConsentModal } from "@/components/GenerationConsentModal";
 import {
   NbpEngineSelector,
   type EngineOption,
@@ -145,6 +146,7 @@ export default function StoryboardPage() {
   const [upgradePromptDismissed, setUpgradePromptDismissed] = useState(false);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
+  const [consentModalOpen, setConsentModalOpen] = useState(false);
   const [scriptSource, setScriptSource] = useState<"own" | "ai">("own");
   const [exportMenuVisible, setExportMenuVisible] = useState(false);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
@@ -203,6 +205,12 @@ export default function StoryboardPage() {
   });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const userCredits = subQuery.data?.credits?.balance ?? 0;
+  const consentQuery = trpc.generationConsent.status.useQuery(undefined, {
+    enabled: isAuthenticated && !loading,
+  });
+  const acceptConsentMutation = trpc.generationConsent.accept.useMutation({
+    onSuccess: () => consentQuery.refetch(),
+  });
 
   const startBgmPolling = (jobId: string) => {
     if (bgmPollingRef.current) clearInterval(bgmPollingRef.current);
@@ -344,6 +352,12 @@ export default function StoryboardPage() {
   };
 
   const handleGenerate = async () => {
+    const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+    if (!consentState?.hasAccepted) {
+      setConsentModalOpen(true);
+      return;
+    }
+
     if (!lyricsText.trim()) {
       toast.warning("請輸入歌詞或文本內容");
       return;
@@ -596,6 +610,12 @@ export default function StoryboardPage() {
 
   // BGM Generation handler
   const handleGenerateBgm = async () => {
+    const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+    if (!consentState?.hasAccepted) {
+      setConsentModalOpen(true);
+      return;
+    }
+
     if (!bgmTitle.trim()) {
       toast.warning("請輸入 BGM 標題");
       return;
@@ -1227,6 +1247,9 @@ export default function StoryboardPage() {
             <div className="bg-card rounded-2xl p-6 border mb-4">
               <h3 className="text-lg font-bold text-foreground mb-3">整體建議</h3>
               <p className="text-foreground leading-relaxed">{storyboard.summary}</p>
+              {!isPaidUser && (
+                <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">mvstudiopro.com free</p>
+              )}
             </div>
 
             {/* BGM 生成區域 */}
@@ -1535,6 +1558,16 @@ export default function StoryboardPage() {
         isTrial={quotaModalInfo.isTrial}
         planName={quotaModalInfo.planName}
         onClose={() => setQuotaModalVisible(false)}
+      />
+      <GenerationConsentModal
+        open={consentModalOpen}
+        onOpenChange={setConsentModalOpen}
+        loading={acceptConsentMutation.isPending}
+        onAccept={async () => {
+          await acceptConsentMutation.mutateAsync({ accepted: true });
+          setConsentModalOpen(false);
+          toast.success("Consent saved. You can now generate.");
+        }}
       />
     </div>
   );

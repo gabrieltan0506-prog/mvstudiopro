@@ -30,6 +30,11 @@ import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "
 import { generateImage } from "../_core/imageGeneration";
 import { appRouter } from "../routers";
 import { getDb } from "../db";
+import { storagePut } from "../storage";
+import { addWatermarkToUrl } from "../watermark";
+import { addVideoWatermarkToUrl } from "../video-watermark";
+import { addGeneratedByMetadataToAudioUrl } from "../audio-metadata";
+import { ensureGenerationConsent, isPaidUser } from "../generation-consent";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -475,6 +480,90 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
   throw new Error(`Unsupported image action: ${input.action}`);
 }
 
+async function applyImageWatermarkIfNeeded(output: any): Promise<any> {
+  if (!output || typeof output !== "object") return output;
+
+  if (typeof output.imageUrl === "string" && output.imageUrl.length > 0) {
+    try {
+      const watermarkedBuffer = await addWatermarkToUrl(output.imageUrl, "bottom-right");
+      const uploaded = await storagePut(`watermarked/jobs/${Date.now()}-${Math.random().toString(36).slice(2)}.png`, watermarkedBuffer, "image/png");
+      output.imageUrl = uploaded.url;
+    } catch (err) {
+      console.error("[Jobs] Image watermark failed, using original imageUrl:", err);
+    }
+  }
+
+  if (Array.isArray(output.images) && output.images.length > 0) {
+    const rewritten = await Promise.all(
+      output.images.map(async (url: unknown) => {
+        if (typeof url !== "string" || url.length === 0) return url;
+        try {
+          const watermarkedBuffer = await addWatermarkToUrl(url, "bottom-right");
+          const uploaded = await storagePut(`watermarked/jobs/${Date.now()}-${Math.random().toString(36).slice(2)}.png`, watermarkedBuffer, "image/png");
+          return uploaded.url;
+        } catch {
+          return url;
+        }
+      })
+    );
+    output.images = rewritten;
+    if (typeof rewritten[0] === "string") {
+      output.imageUrl = rewritten[0];
+    }
+  }
+
+  return output;
+}
+
+async function applyVideoWatermarkIfNeeded(output: any): Promise<any> {
+  if (!output || typeof output !== "object") return output;
+  if (typeof output.videoUrl !== "string" || output.videoUrl.length === 0) return output;
+
+  try {
+    const watermarkedUrl = await addVideoWatermarkToUrl(output.videoUrl);
+    output.videoUrl = watermarkedUrl;
+  } catch (err) {
+    console.error("[Jobs] Video watermark failed, using original videoUrl:", err);
+  }
+  return output;
+}
+
+async function applyAudioMetadataIfNeeded(output: any): Promise<any> {
+  if (!output || typeof output !== "object") return output;
+  if (!Array.isArray(output.songs)) return output;
+
+  output.songs = await Promise.all(
+    output.songs.map(async (song: any) => {
+      if (!song || typeof song !== "object") return song;
+      if (typeof song.audioUrl !== "string" || song.audioUrl.length === 0) return song;
+
+      try {
+        const taggedUrl = await addGeneratedByMetadataToAudioUrl(song.audioUrl);
+        return {
+          ...song,
+          audioUrl: taggedUrl,
+          streamUrl: taggedUrl,
+          metadata: {
+            ...(song.metadata || {}),
+            generated_by: "mvstudiopro_free",
+          },
+        };
+      } catch (err) {
+        console.error("[Jobs] Audio metadata tagging failed, using original audio:", err);
+        return {
+          ...song,
+          metadata: {
+            ...(song.metadata || {}),
+            generated_by: "mvstudiopro_free",
+          },
+        };
+      }
+    })
+  );
+
+  return output;
+}
+
 async function callSunoAPI(endpoint: string, body: Record<string, unknown>) {
   if (!SUNO_API_KEY) {
     throw new Error("Suno API key not configured");
@@ -616,9 +705,31 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number): Promise<{
 
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
-  if (type === "video") return processVideoJob(input, timeoutMs);
-  if (type === "image") return processImageJob(input, timeoutMs, userId);
-  return processAudioJob(input, timeoutMs);
+  const user = await resolveUserForJob(userId);
+  await ensureGenerationConsent(user.id);
+  const paidUser = await isPaidUser(user.id, user.role ?? undefined);
+
+  if (type === "video") {
+    const result = await processVideoJob(input, timeoutMs);
+    if (!paidUser) {
+      result.output = await applyVideoWatermarkIfNeeded(result.output as any);
+    }
+    return result;
+  }
+
+  if (type === "image") {
+    const result = await processImageJob(input, timeoutMs, userId);
+    if (!paidUser && input.action !== "virtual_idol") {
+      result.output = await applyImageWatermarkIfNeeded(result.output as any);
+    }
+    return result;
+  }
+
+  const result = await processAudioJob(input, timeoutMs);
+  if (!paidUser) {
+    result.output = await applyAudioMetadataIfNeeded(result.output as any);
+  }
+  return result;
 }
 
 async function processOneJob() {

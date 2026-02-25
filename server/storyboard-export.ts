@@ -44,8 +44,8 @@ interface ExportOptions {
 }
 
 // ─── Constants ─────────────────────────────────────────
-const WATERMARK_TEXT = "MV Studio Pro";
-const WATERMARK_URL = "mvstudiopro.com";
+const WATERMARK_TEXT = "mvstudiopro.com free";
+const WATERMARK_URL = "mvstudiopro.com free";
 const WATERMARK_COLOR_HEX = "FF6B35"; // Vibrant orange for visibility
 const WATERMARK_COLOR_RGBA = "rgba(255, 107, 53, 0.35)"; // Semi-transparent orange
 const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.18)";
@@ -200,7 +200,7 @@ export async function exportToPDF(
     doc.moveDown();
     fontRegular(9)
       .fillColor("#FF6B35")
-      .text("本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印", { align: "center" });
+      .text("本文檔由 mvstudiopro.com free 生成，升級付費版可移除水印", { align: "center" });
     doc.fillColor("#000000");
     doc.moveDown();
   }
@@ -333,7 +333,7 @@ export async function exportToWord(
       new Paragraph({
         children: [
           new TextRun({
-            text: "⚠ 本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印",
+            text: "⚠ 本文檔由 mvstudiopro.com free 生成，升級付費版可移除水印",
             size: 18,
             color: WATERMARK_COLOR_HEX,
             italics: true,
@@ -480,7 +480,7 @@ export async function exportToWord(
         new Paragraph({
           children: [
             new TextRun({
-              text: `${WATERMARK_TEXT} | ${WATERMARK_URL} | 免費版 — 升級專業版移除水印`,
+              text: `${WATERMARK_TEXT} | 免費版 — 升級付費版移除水印`,
               size: 16,
               color: WATERMARK_COLOR_HEX,
               italics: true,
@@ -497,7 +497,7 @@ export async function exportToWord(
         new Paragraph({
           children: [
             new TextRun({
-              text: `© ${WATERMARK_TEXT} — ${WATERMARK_URL} | 本文檔含水印，升級專業版可移除`,
+              text: `© ${WATERMARK_TEXT} | 本文檔含水印，升級付費版可移除`,
               size: 14,
               color: WATERMARK_COLOR_HEX,
               italics: true,

@@ -9,6 +9,7 @@ import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
+import { GenerationConsentModal } from "@/components/GenerationConsentModal";
 import { NbpEngineSelector, type EngineOption } from "@/components/NbpEngineSelector";
 import { ModelViewer } from "@/components/ModelViewer";
 import { toast } from "sonner";
@@ -72,6 +73,7 @@ export default function VirtualIdol() {
   const [thumbnailUrl3D, setThumbnailUrl3D] = useState<string | null>(null);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
+  const [consentModalOpen, setConsentModalOpen] = useState(false);
 
   const convert3DMutation = trpc.virtualIdol.convertTo3D.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -85,6 +87,12 @@ export default function VirtualIdol() {
   });
   const userPlan = (subQuery.data?.plan || "free") as string;
   const userCredits = subQuery.data?.credits?.balance ?? 0;
+  const consentQuery = trpc.generationConsent.status.useQuery(undefined, {
+    enabled: isAuthenticated && !loading,
+  });
+  const acceptConsentMutation = trpc.generationConsent.accept.useMutation({
+    onSuccess: () => consentQuery.refetch(),
+  });
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -164,6 +172,12 @@ export default function VirtualIdol() {
   }, [selectedStyle, selectedGender, usageStatsQuery]);
 
   const handleGenerate = useCallback(async () => {
+    const consentState = consentQuery.data ?? (await consentQuery.refetch()).data;
+    if (!consentState?.hasAccepted) {
+      setConsentModalOpen(true);
+      return;
+    }
+
     try {
       const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "avatar" });
       if (!accessCheck.allowed) {
@@ -216,7 +230,7 @@ export default function VirtualIdol() {
       setGenerating(false);
       setError("任务提交失败，请稍后重试。");
     }
-  }, [selectedStyle, selectedGender, description, checkAccessMutation, navigate, usageStatsQuery, referenceImageUrl, referenceImage, uploadingRef, imageEngine, user?.id, startGenerationPolling]);
+  }, [selectedStyle, selectedGender, description, checkAccessMutation, navigate, usageStatsQuery, referenceImageUrl, referenceImage, uploadingRef, imageEngine, user?.id, startGenerationPolling, consentQuery]);
 
   const handleConvertTo3D = useCallback(async () => {
     if (!generatedImage) return;
@@ -578,6 +592,16 @@ export default function VirtualIdol() {
         onClose={() => setQuotaModalVisible(false)}
         isTrial={quotaModalInfo.isTrial}
         planName={quotaModalInfo.planName}
+      />
+      <GenerationConsentModal
+        open={consentModalOpen}
+        onOpenChange={setConsentModalOpen}
+        loading={acceptConsentMutation.isPending}
+        onAccept={async () => {
+          await acceptConsentMutation.mutateAsync({ accepted: true });
+          setConsentModalOpen(false);
+          toast.success("Consent saved. You can now generate.");
+        }}
       />
 
       {/* Inline keyframes */}

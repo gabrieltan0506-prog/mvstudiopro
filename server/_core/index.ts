@@ -12,6 +12,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
+import { CONSENT_REQUIRED_CODE, ensureGenerationConsent } from "../generation-consent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -64,9 +65,13 @@ async function startServer() {
       }
 
       const ctx = await createContext({ req: req as any, res: res as any });
-      if (ctx.user && String(ctx.user.id) !== userId && ctx.user.openId !== userId) {
+      if (!ctx.user) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      if (String(ctx.user.id) !== userId && ctx.user.openId !== userId) {
         return res.status(403).json({ error: "Forbidden" });
       }
+      await ensureGenerationConsent(ctx.user.id);
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
       const provider =
@@ -90,6 +95,9 @@ async function startServer() {
       return res.status(200).json({ jobId });
     } catch (error) {
       console.error("[Jobs] POST /api/jobs failed:", error);
+      if ((error as any)?.code === CONSENT_REQUIRED_CODE) {
+        return res.status(403).json({ error: "Consent required", code: CONSENT_REQUIRED_CODE });
+      }
       return res.status(500).json({ error: "Failed to create job" });
     }
   });

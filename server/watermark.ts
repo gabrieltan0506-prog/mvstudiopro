@@ -1,10 +1,10 @@
 /**
  * Watermark Service
- * Adds "MVStudioPro.com" watermark to free-tier generated images
+ * Adds mandatory watermark to non-paid generated images
  */
 import sharp from "sharp";
 
-const WATERMARK_TEXT = "MVStudioPro.com";
+const WATERMARK_TEXT = "mvstudiopro.com free";
 
 /**
  * Add a semi-transparent text watermark to an image
@@ -21,8 +21,8 @@ export async function addWatermark(
   const width = metadata.width || 1024;
   const height = metadata.height || 1024;
 
-  // Calculate font size based on image dimensions
-  const fontSize = Math.max(16, Math.floor(Math.min(width, height) * 0.04));
+  // 3%-5% of image width, clamped for readability
+  const fontSize = Math.max(16, Math.floor(width * 0.04));
   const padding = Math.floor(fontSize * 0.8);
 
   let svgOverlay: string;
@@ -81,18 +81,20 @@ export async function addWatermark(
         >${WATERMARK_TEXT}</text>
       </svg>`;
   } else {
-    // bottom-right (default)
-    const textWidth = WATERMARK_TEXT.length * fontSize * 0.6;
+    // bottom-right (default): 25% opacity, white text with dark outline
+    const textWidth = WATERMARK_TEXT.length * fontSize * 0.58;
     svgOverlay = `
       <svg width="${width}" height="${height}">
-        <rect x="${width - textWidth - padding * 2}" y="${height - fontSize - padding * 2}" width="${textWidth + padding * 2}" height="${fontSize + padding * 2}" fill="rgba(0,0,0,0.5)" rx="${Math.floor(fontSize * 0.3)}"/>
         <text 
           x="${width - padding}" y="${height - padding}" 
           text-anchor="end" 
           font-family="Arial, sans-serif" 
           font-size="${fontSize}" 
-          font-weight="700"
-          fill="rgba(255,255,255,0.85)"
+          font-weight="700" 
+          stroke="rgba(0,0,0,0.85)"
+          stroke-width="${Math.max(1, Math.floor(fontSize * 0.08))}"
+          paint-order="stroke"
+          fill="rgba(255,255,255,0.25)"
           letter-spacing="1"
         >${WATERMARK_TEXT}</text>
       </svg>`;
