@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { SignJWT, jwtVerify } from "jose";
+import { registerCoreRoutes } from "./_core/router.js";
 import { sendTencentSesTestEmail } from "./tencentSes.js";
 type SessionPayload = {
   email: string;
@@ -16,6 +17,7 @@ const recentTestEmailSends = new Map<string, number>();
 app.use(cookieParser());
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+registerCoreRoutes(app);
 
 function getRequiredEnv(name: string): string {
   const value = process.env[name];
