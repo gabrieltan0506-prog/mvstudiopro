@@ -30,6 +30,7 @@ import { deductCredits, getCredits, getUserPlan, addCredits, getCreditTransactio
 import { CREDIT_COSTS } from "./plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
+import { executeProviderFallback } from "./services/provider-manager";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
 import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
@@ -373,17 +374,52 @@ export const appRouter = router({
           const originalImages = input.referenceImageUrl
             ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
             : undefined;
+          const imageResult = await executeProviderFallback<{ imageUrl: string }>({
+            apiName: "virtualIdol.generate.image",
+            execute: async (provider) => {
+              if (provider === "fal.ai") {
+                const { url } = await generateImage({ prompt, originalImages });
+                if (!url) throw new Error("Image generation failed - no URL returned");
+                return { data: { imageUrl: url } };
+              }
 
-          const { url } = await generateImage({ prompt, originalImages });
-          if (!url) throw new Error("Image generation failed - no URL returned");
+              if (provider === "nano-banana-pro") {
+                if (!isGeminiImageAvailable()) {
+                  throw new Error("Nano Banana Pro unavailable: GEMINI_API_KEY is not configured");
+                }
+                const result = await generateGeminiImage({
+                  prompt: `high resolution 2K, ${prompt}`,
+                  quality: "2k",
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl: result.imageUrl } };
+              }
+
+              // Veo3.1 Pro fallback: reuse image backend to keep image API available.
+              const { url } = await generateImage({ prompt, originalImages });
+              if (!url) throw new Error("Image generation failed - no URL returned");
+              return { data: { imageUrl: url } };
+            },
+          });
+          if (!imageResult.success) {
+            return {
+              success: false,
+              error: imageResult.error,
+              quality: "free" as const,
+              providerUsed: imageResult.providerUsed,
+              jobId: imageResult.jobId,
+              data: imageResult.data,
+              fallback: imageResult.fallback,
+            };
+          }
           
           // 免費生圖添加 MVStudioPro.com 水印（管理員跳過）
-          let finalUrl = url;
+          let finalUrl = imageResult.data.imageUrl;
           if (!isAdminUser) {
             try {
               const { addWatermarkToUrl } = await import("./watermark");
               const { storagePut } = await import("./storage");
-              const watermarkedBuffer = await addWatermarkToUrl(url, "bottom-right");
+              const watermarkedBuffer = await addWatermarkToUrl(imageResult.data.imageUrl, "bottom-right");
               const key = `watermarked/${userId}/${Date.now()}-idol.png`;
               const uploaded = await storagePut(key, watermarkedBuffer, "image/png");
               finalUrl = uploaded.url;
@@ -407,7 +443,15 @@ export const appRouter = router({
               plan,
             });
           } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
-          return { success: true, imageUrl: finalUrl, quality: "free" as const };
+          return {
+            success: true,
+            imageUrl: finalUrl,
+            quality: "free" as const,
+            providerUsed: imageResult.providerUsed,
+            jobId: imageResult.jobId,
+            data: { imageUrl: finalUrl },
+            fallback: imageResult.fallback,
+          };
         }
 
         // ─── Kling tier: use Kling Image Generation API ─────
@@ -679,7 +723,19 @@ export const appRouter = router({
         }
 
         // Use LLM to analyze lyrics and generate storyboard
-        const response = await invokeLLM({
+        const llmResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
+          apiName: "storyboard.generate.story",
+          execute: async (provider) => {
+            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
+              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
+            }
+            const providerModel =
+              provider === "nano-banana-pro"
+                ? ("pro" as const)
+                : provider === "veo3.1-pro"
+                  ? ("gpt5" as const)
+                  : (input.model === "gpt5" ? "gpt5" : input.model === "pro" ? "pro" : undefined);
+            const response = await invokeLLM({
           messages: [
             {
               role: "system",
@@ -849,8 +905,22 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
             }
           ],
           response_format: { type: "json_object" },
-          model: input.model === "gpt5" ? ("gpt5" as any) : input.model === "pro" ? ("pro" as any) : undefined,
+          model: providerModel as any,
+            });
+            return { data: response };
+          },
         });
+        if (!llmResult.success) {
+          return {
+            success: false,
+            error: llmResult.error,
+            providerUsed: llmResult.providerUsed,
+            jobId: llmResult.jobId,
+            data: llmResult.data,
+            fallback: llmResult.fallback,
+          };
+        }
+        const response = llmResult.data;
 
         const storyboardData = JSON.parse(response.choices[0].message.content as string);
         
@@ -902,7 +972,11 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         return { 
           success: true, 
           storyboard: storyboardData,
-          message: "分镜脚本已生成！"
+          message: "分镜脚本已生成！",
+          providerUsed: llmResult.providerUsed,
+          jobId: llmResult.jobId,
+          data: { storyboard: storyboardData },
+          fallback: llmResult.fallback,
         };
       }),
 
@@ -1081,11 +1155,23 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           scifi: "科幻片",
         };
 
-        const response = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: `你是一位專業的視頻導演。用戶對之前生成的分鏡腳本不滿意，提供了修改意見。請根據用戶的反饋，重新改寫整個分鏡腳本。
+        const rewriteResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
+          apiName: "storyboard.rewrite.story",
+          execute: async (provider) => {
+            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
+              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
+            }
+            const providerModel =
+              provider === "nano-banana-pro"
+                ? ("pro" as const)
+                : provider === "veo3.1-pro"
+                  ? ("gpt5" as const)
+                  : (input.model === "gpt5" ? "gpt5" : input.model === "pro" ? "pro" : undefined);
+            const response = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content: `你是一位專業的視頻導演。用戶對之前生成的分鏡腳本不滿意，提供了修改意見。請根據用戶的反饋，重新改寫整個分鏡腳本。
 
 要求：
 1. 保持原有的場景數量（${input.originalStoryboard.scenes.length} 個場景）
@@ -1095,22 +1181,38 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 5. 確保改寫後的腳本質量更高、更符合用戶期望
 
 輸出格式與原始腳本相同的 JSON 結構。`
-            },
-            {
-              role: "user",
-              content: `原始分鏡腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n請根據以上修改意見，重新改寫整個分鏡腳本。`
-            }
-          ],
-          response_format: { type: "json_object" },
-          model: input.model === "gpt5" ? ("gpt5" as any) : input.model === "pro" ? ("pro" as any) : undefined,
+                },
+                {
+                  role: "user",
+                  content: `原始分鏡腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n請根據以上修改意見，重新改寫整個分鏡腳本。`
+                }
+              ],
+              response_format: { type: "json_object" },
+              model: providerModel as any,
+            });
+            return { data: response };
+          },
         });
-
-        const rewrittenData = JSON.parse(response.choices[0].message.content as string);
+        if (!rewriteResult.success) {
+          return {
+            success: false,
+            error: rewriteResult.error,
+            providerUsed: rewriteResult.providerUsed,
+            jobId: rewriteResult.jobId,
+            data: rewriteResult.data,
+            fallback: rewriteResult.fallback,
+          };
+        }
+        const rewrittenData = JSON.parse(rewriteResult.data.choices[0].message.content as string);
 
         return {
           success: true,
           storyboard: rewrittenData,
           message: "分鏡腳本已根據您的意見重新改寫！",
+          providerUsed: rewriteResult.providerUsed,
+          jobId: rewriteResult.jobId,
+          data: { storyboard: rewrittenData },
+          fallback: rewriteResult.fallback,
         };
       }),
 
@@ -1131,11 +1233,23 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 
         await deductCredits(userId, "aiInspiration", "AI 灵感助手生成脚本 (Gemini)");
 
-        const response = await invokeLLM({
-          messages: [
-            {
-              role: "system",
-              content: `你是一位专业的视频创作助手，擅长将简短的灵感描述扩展成完整的视频脚本文本。
+        const scriptResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
+          apiName: "storyboard.generateInspiration.script",
+          execute: async (provider) => {
+            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
+              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
+            }
+            const providerModel =
+              provider === "nano-banana-pro"
+                ? ("pro" as const)
+                : provider === "veo3.1-pro"
+                  ? ("gpt5" as const)
+                  : ("flash" as const);
+            const response = await invokeLLM({
+              messages: [
+                {
+                  role: "system",
+                  content: `你是一位专业的视频创作助手，擅长将简短的灵感描述扩展成完整的视频脚本文本。
 
 用户会给你一段简短的描述（通常 1-3 句话），你需要将它扩展成一个完整的视频脚本，包含：
 
@@ -1151,20 +1265,38 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 - 语言要有画面感，像电影剧本一样
 - 不要加标题或分镜号，直接输出文本内容
 - 可以适当加入对话、旁白、音乐描述`
-            },
-            {
-              role: "user",
-              content: `请根据以下灵感描述，扩展成一个完整的视频脚本文本：\n\n${input.briefDescription}`
-            }
-          ],
+                },
+                {
+                  role: "user",
+                  content: `请根据以下灵感描述，扩展成一个完整的视频脚本文本：\n\n${input.briefDescription}`
+                }
+              ],
+              model: providerModel as any,
+            });
+            return { data: response };
+          },
         });
+        if (!scriptResult.success) {
+          return {
+            success: false,
+            error: scriptResult.error,
+            providerUsed: scriptResult.providerUsed,
+            jobId: scriptResult.jobId,
+            data: scriptResult.data,
+            fallback: scriptResult.fallback,
+          };
+        }
 
-        const generatedText = response.choices[0].message.content as string;
+        const generatedText = scriptResult.data.choices[0].message.content as string;
 
         return {
           success: true,
           text: generatedText.trim(),
           message: "灵感脚本已生成！",
+          providerUsed: scriptResult.providerUsed,
+          jobId: scriptResult.jobId,
+          data: { text: generatedText.trim() },
+          fallback: scriptResult.fallback,
         };
       }),
 
@@ -1609,14 +1741,41 @@ ${sceneSummary}
         if (!deduction.success) return { success: false as const, error: "Credits 不足，请充值后再试" };
       }
 
+      const audioResult = await executeProviderFallback({
+        apiName: "audioLab.analyze.audio",
+        execute: async (provider) => {
+          if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
+            throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
+          }
+          const analysis = await analyzeAudioWithGemini(input.audioUrl);
+          return { data: analysis };
+        },
+      });
+      if (audioResult.success) {
+        return {
+          success: true as const,
+          analysis: audioResult.data,
+          providerUsed: audioResult.providerUsed,
+          jobId: audioResult.jobId,
+          data: { analysis: audioResult.data },
+          fallback: audioResult.fallback,
+        };
+      }
+
       try {
-        const analysis = await analyzeAudioWithGemini(input.audioUrl);
-        return { success: true as const, analysis };
-      } catch (err: any) {
         // Refund on failure
         if (!isAdmin(ctx.user)) {
           await addCredits(ctx.user.id, CREDIT_COSTS.audioAnalysis, "refund", "音频分析失败退款");
         }
+        return {
+          success: false as const,
+          error: audioResult.error || "音频分析失败",
+          providerUsed: audioResult.providerUsed,
+          jobId: audioResult.jobId,
+          data: audioResult.data,
+          fallback: audioResult.fallback,
+        };
+      } catch (err: any) {
         return { success: false as const, error: err.message || "音频分析失败" };
       }
     }),
@@ -1890,15 +2049,47 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         creditsUsed,
       })) as unknown as number;
 
-      try {
-        const result = await generateVideo({
-          prompt: input.prompt,
-          imageUrl: input.imageUrl,
-          quality: input.quality,
-          resolution: input.resolution,
-          aspectRatio: input.aspectRatio,
-          negativePrompt: input.negativePrompt,
-        });
+      const videoResult = await executeProviderFallback<{
+        videoUrl: string;
+        mimeType?: string;
+      }>({
+        apiName: "veo.generate.video",
+        execute: async (provider) => {
+          if (provider === "fal.ai") {
+            const { falKlingSubmit } = await import("./kling/fal-proxy");
+            const endpoint = input.imageUrl ? "v3-pro-i2v" : "v3-pro-t2v";
+            const falResult = await falKlingSubmit(
+              endpoint,
+              {
+                prompt: input.prompt,
+                ...(input.imageUrl ? { image_url: input.imageUrl } : {}),
+                aspect_ratio: input.aspectRatio,
+                duration: 5,
+                negative_prompt: input.negativePrompt,
+              },
+              () => undefined
+            );
+            const videoUrl = falResult.video?.url;
+            if (!videoUrl) {
+              throw new Error("fal.ai video generation succeeded but no video URL returned");
+            }
+            return { data: { videoUrl, mimeType: falResult.video?.content_type || "video/mp4" }, jobId: falResult.request_id || null };
+          }
+
+          const result = await generateVideo({
+            prompt: input.prompt,
+            imageUrl: input.imageUrl,
+            quality: provider === "veo3.1-pro" ? "standard" : input.quality,
+            resolution: input.resolution,
+            aspectRatio: input.aspectRatio,
+            negativePrompt: input.negativePrompt,
+          });
+          return { data: result };
+        },
+      });
+
+      if (videoResult.success) {
+        const result = videoResult.data;
 
         await updateVideoGeneration(genId, {
           videoUrl: result.videoUrl,
@@ -1913,16 +2104,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           console.error("[Veo] Failed to register video signature:", sigErr);
         }
 
-        return { success: true, id: genId, videoUrl: result.videoUrl };
-      } catch (err: any) {
-        // Refund credits on failure
-        if (creditsUsed > 0) await addCredits(ctx.user.id, creditsUsed, "refund", "视频生成失败退款");
-        await updateVideoGeneration(genId, {
-          status: "failed",
-          errorMessage: err.message || "Unknown error",
-        });
-        return { success: false, error: err.message || "视频生成失败，请稍后重试" };
+        return {
+          success: true,
+          id: genId,
+          videoUrl: result.videoUrl,
+          providerUsed: videoResult.providerUsed,
+          jobId: videoResult.jobId,
+          data: { videoUrl: result.videoUrl },
+          fallback: videoResult.fallback,
+        };
       }
+
+      // Refund credits on failure
+      if (creditsUsed > 0) await addCredits(ctx.user.id, creditsUsed, "refund", "视频生成失败退款");
+      await updateVideoGeneration(genId, {
+        status: "failed",
+        errorMessage: videoResult.error || "Unknown error",
+      });
+      return {
+        success: false,
+        error: videoResult.error || "视频生成失败，请稍后重试",
+        providerUsed: videoResult.providerUsed,
+        jobId: videoResult.jobId,
+        data: videoResult.data,
+        fallback: videoResult.fallback,
+      };
     }),
 
     /** Get user's video generation history */
