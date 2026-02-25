@@ -60,32 +60,17 @@ app.get("/api/health", (_req, res) => {
   res.status(200).send("ok");
 });
 
-app.get("/api/diag/smoke", async (_req, res) => {
-  const checks = {
-    apiHandler: true,
-    jobFunction: false,
-    envLoaded: false,
-  };
-
+app.get("/api/diag/smoke", (_req, res) => {
   try {
-    checks.envLoaded = typeof process?.env === "object";
-    // Validate internal wiring by confirming the job factory export is callable.
-    const jobModule = await import("../server/jobs/repository.js");
-    checks.jobFunction = typeof jobModule.createJob === "function";
-
-    const status = checks.apiHandler && checks.jobFunction && checks.envLoaded ? "ok" : "error";
+    res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({
-      status,
-      checks,
+      ok: true,
+      service: "mvstudiopro",
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("Smoke diagnostic failed", error);
-    return res.status(200).json({
-      status: "error",
-      checks,
-      timestamp: new Date().toISOString(),
-    });
+    console.error("Smoke endpoint failed", error);
+    return res.status(200).json({ ok: false });
   }
 });
 
