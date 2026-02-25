@@ -63,6 +63,20 @@ app.get("/api/health", (_req, res) => {
   res.status(200).send("ok");
 });
 
+app.get("/api/diag/smoke", (_req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({
+      ok: true,
+      service: "mvstudiopro",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Smoke endpoint failed", error);
+    return res.status(200).json({ ok: false });
+  }
+});
+
 app.get("/api/auth/google/start", (_req, res) => {
   try {
     const appUrl = normalizeBaseUrl(getRequiredEnv("APP_URL"));
