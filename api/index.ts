@@ -2,7 +2,6 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { SignJWT, jwtVerify } from "jose";
-import { sendTencentSesTestEmail } from "./tencentSes.js";
 type SessionPayload = {
   email: string;
   googleId: string;
@@ -184,6 +183,7 @@ app.get("/api/test-email", async (req, res) => {
 
   recentTestEmailSends.set(normalizedTo, now);
   try {
+    const { sendTencentSesTestEmail } = await import("./tencentSes.js");
     await sendTencentSesTestEmail(to.trim());
     return res.status(200).json({ success: true, to: to.trim() });
   } catch (error) {
