@@ -353,7 +353,6 @@ export const appRouter = router({
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
         await ensureGenerationConsent(userId);
-        await ensureGenerationConsent(userId);
         const shouldWatermark = !(await isPaidUser(userId, ctx.user.role));
         const stylePrompts: Record<string, string> = {
           anime: "anime style virtual idol singer, vibrant colors, detailed eyes, professional character design, concert stage background, high quality anime illustration",
