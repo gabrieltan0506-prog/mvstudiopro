@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import cookieParser from "cookie-parser";
 import express from "express";
 import { SignJWT, jwtVerify } from "jose";
+import { createContext } from "../server/_core/context";
 import { sendTencentSesTestEmail } from "./tencentSes.js";
 type SessionPayload = {
   email: string;
@@ -58,6 +59,19 @@ async function verifySession(token: string): Promise<SessionPayload | null> {
 
 app.get("/api/health", (_req, res) => {
   res.status(200).send("ok");
+});
+
+app.all("/api/jobs", async (req, res) => {
+  await createContext({ req: req as any, res: res as any });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
+  return res.status(404).json({ error: "Not Found" });
+});
+
+app.get("/api/jobs/:id", async (req, res) => {
+  await createContext({ req: req as any, res: res as any });
+  return res.status(404).json({ error: "Not Found" });
 });
 
 app.get("/api/auth/google/start", (_req, res) => {
