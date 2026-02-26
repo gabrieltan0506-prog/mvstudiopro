@@ -95,9 +95,9 @@ function buildProviders(): ProviderDiagItem[] {
 
   const gptState = cometState;
 
-  const sunoState = hasValue(process.env.SUNO_API_KEY)
+  const sunoState = hasValue(process.env.COMETAPI_KEY)
     ? { state: "reachable" as const, error: null }
-    : { state: "unconfigured" as const, error: "SUNO_API_KEY missing" };
+    : { state: "unconfigured" as const, error: "COMETAPI key missing" };
 
   return [
     {
