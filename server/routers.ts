@@ -31,11 +31,114 @@ import { CREDIT_COSTS } from "./plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
+import { getTierProviderChain, resolveUserTier, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
 import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
+
+async function generateKlingBeijingVideo(params: {
+  prompt: string;
+  imageUrl?: string;
+  aspectRatio: "16:9" | "9:16";
+  negativePrompt?: string;
+}): Promise<{ videoUrl: string; mimeType: string; jobId: string | null }> {
+  const { configureKlingClient, parseKeysFromEnv, createOmniVideoTask, getOmniVideoTask, buildT2VRequest, buildI2VRequest } = await import("./kling");
+  const keys = parseKeysFromEnv();
+  if (keys.length === 0) {
+    throw new Error("kling_beijing unavailable: Kling API keys not configured");
+  }
+  configureKlingClient(keys, "cn");
+
+  const request = params.imageUrl
+    ? buildI2VRequest({
+        prompt: params.prompt,
+        imageUrl: params.imageUrl,
+        aspectRatio: params.aspectRatio,
+        mode: "pro",
+        negativePrompt: params.negativePrompt,
+        duration: "5",
+      })
+    : buildT2VRequest({
+        prompt: params.prompt,
+        aspectRatio: params.aspectRatio,
+        mode: "pro",
+        negativePrompt: params.negativePrompt,
+        duration: "5",
+      });
+
+  const created = await createOmniVideoTask(request, "cn");
+  if (!created.task_id) {
+    throw new Error("kling_beijing failed: task creation returned no task id");
+  }
+
+  const timeoutMs = 90_000;
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+    const task = await getOmniVideoTask(created.task_id, "cn");
+    if (task.task_status === "succeed") {
+      const videoUrl = task.task_result?.videos?.[0]?.url;
+      if (!videoUrl) {
+        throw new Error("kling_beijing succeeded but no video URL returned");
+      }
+      return {
+        videoUrl,
+        mimeType: "video/mp4",
+        jobId: created.task_id,
+      };
+    }
+    if (task.task_status === "failed") {
+      throw new Error(task.task_status_msg || "kling_beijing video generation failed");
+    }
+  }
+
+  throw new Error("kling_beijing video generation timeout");
+}
+
+async function generateKlingFallbackImage(params: {
+  prompt: string;
+  referenceImageUrl?: string;
+}): Promise<string> {
+  const { configureKlingClient, parseKeysFromEnv, createImageTask, getImageTask, buildImageRequest } = await import("./kling");
+  const keys = parseKeysFromEnv();
+  if (keys.length === 0) {
+    throw new Error("kling_image unavailable: Kling API keys not configured");
+  }
+  configureKlingClient(keys, "cn");
+
+  const request = buildImageRequest({
+    prompt: params.prompt,
+    model: "kling-image-o1",
+    resolution: "1k",
+    aspectRatio: "1:1",
+    referenceImageUrl: params.referenceImageUrl,
+    imageFidelity: params.referenceImageUrl ? 0.5 : undefined,
+    count: 1,
+  });
+  const created = await createImageTask(request, "cn");
+  if (!created.task_id) {
+    throw new Error(created.task_status_msg || "kling_image task creation failed");
+  }
+
+  const timeoutMs = 75_000;
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+    const task = await getImageTask(created.task_id, "cn");
+    if (task.task_status === "succeed" && task.task_result?.images?.[0]?.url) {
+      return task.task_result.images[0].url;
+    }
+    if (task.task_status === "failed") {
+      throw new Error(task.task_status_msg || "kling_image generation failed");
+    }
+  }
+
+  throw new Error("kling_image generation timeout");
+}
 
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -339,6 +442,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        const userTier = await resolveUserTier(userId, isAdminUser);
         const stylePrompts: Record<string, string> = {
           anime: "anime style virtual idol singer, vibrant colors, detailed eyes, professional character design, concert stage background, high quality anime illustration",
           realistic: "ultra photorealistic portrait photo of a real person, natural skin texture with pores and fine details, real human being not CGI not 3D render not anime not cartoon, shot on Canon EOS R5 85mm f/1.4 lens, natural golden hour sunlight, shallow depth of field bokeh background, professional fashion photography, 8K resolution, RAW photo quality, real person photographed in outdoor garden setting",
@@ -374,10 +478,12 @@ export const appRouter = router({
           const originalImages = input.referenceImageUrl
             ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
             : undefined;
+          const imageProviderChain = getTierProviderChain(userTier, "image");
           const imageResult = await executeProviderFallback<{ imageUrl: string }>({
             apiName: "virtualIdol.generate.image",
+            providers: imageProviderChain,
             execute: async (provider) => {
-              if (provider === "fal.ai") {
+              if (provider === "forge" || provider === "fal.ai") {
                 const { url } = await generateImage({ prompt, originalImages });
                 if (!url) throw new Error("Image generation failed - no URL returned");
                 return { data: { imageUrl: url } };
@@ -395,10 +501,15 @@ export const appRouter = router({
                 return { data: { imageUrl: result.imageUrl } };
               }
 
-              // Veo3.1 Pro fallback: reuse image backend to keep image API available.
-              const { url } = await generateImage({ prompt, originalImages });
-              if (!url) throw new Error("Image generation failed - no URL returned");
-              return { data: { imageUrl: url } };
+              if (provider === "kling_image") {
+                const imageUrl = await generateKlingFallbackImage({
+                  prompt,
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl } };
+              }
+
+              throw new Error(`Unsupported image provider: ${provider}`);
             },
           });
           if (!imageResult.success) {
@@ -415,7 +526,7 @@ export const appRouter = router({
           
           // 免費生圖添加 MVStudioPro.com 水印（管理員跳過）
           let finalUrl = imageResult.data.imageUrl;
-          if (!isAdminUser) {
+          if (shouldApplyWatermarkForTier(userTier)) {
             try {
               const { addWatermarkToUrl } = await import("./watermark");
               const { storagePut } = await import("./storage");
@@ -563,11 +674,40 @@ export const appRouter = router({
 
         try {
           const qualityHint = input.quality === "4k" ? "ultra high resolution 4K 4096x4096, extremely detailed" : "high resolution 2K 2048x2048, detailed";
-          const result = await generateGeminiImage({
-            prompt: `${qualityHint}, ${prompt}`,
-            quality: input.quality as "2k" | "4k",
-            referenceImageUrl: input.referenceImageUrl,
+          const paidImageProviderChain = getTierProviderChain(userTier, "image");
+          const imageResult = await executeProviderFallback<{ imageUrl: string }>({
+            apiName: "virtualIdol.generate.image.paid",
+            providers: paidImageProviderChain,
+            execute: async (provider) => {
+              if (provider === "nano-banana-pro") {
+                const result = await generateGeminiImage({
+                  prompt: `${qualityHint}, ${prompt}`,
+                  quality: input.quality as "2k" | "4k",
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl: result.imageUrl } };
+              }
+              if (provider === "forge" || provider === "fal.ai") {
+                const originalImages = input.referenceImageUrl
+                  ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
+                  : undefined;
+                const { url } = await generateImage({ prompt, originalImages });
+                if (!url) throw new Error("Image generation failed - no URL returned");
+                return { data: { imageUrl: url } };
+              }
+              if (provider === "kling_image") {
+                const imageUrl = await generateKlingFallbackImage({
+                  prompt,
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl } };
+              }
+              throw new Error(`Unsupported image provider: ${provider}`);
+            },
           });
+          if (!imageResult.success) {
+            throw new Error(imageResult.error || "图片生成失败");
+          }
           await incrementUsageCount(userId, "avatar");
           // Auto-record Gemini creation
           try {
@@ -576,14 +716,22 @@ export const appRouter = router({
               userId,
               type: "idol_image",
               title: input.description?.slice(0, 100) || `NBP ${input.quality} 偶像`,
-              outputUrl: result.imageUrl,
-              thumbnailUrl: result.imageUrl,
+              outputUrl: imageResult.data.imageUrl,
+              thumbnailUrl: imageResult.data.imageUrl,
               quality: `nbp-${input.quality}`,
               creditsUsed: CREDIT_COSTS[creditKey],
               plan,
             });
           } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
-          return { success: true, imageUrl: result.imageUrl, quality: input.quality };
+          return {
+            success: true,
+            imageUrl: imageResult.data.imageUrl,
+            quality: input.quality,
+            providerUsed: imageResult.providerUsed,
+            jobId: imageResult.jobId,
+            data: imageResult.data,
+            fallback: imageResult.fallback,
+          };
         } catch (err: any) {
           // Refund credits on failure (admin doesn't need refund)
           if (!isAdminUser) {
@@ -709,6 +857,7 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        const userTier = await resolveUserTier(userId, isAdminUser);
 
         // 所有模型都需要 Credits，管理員免費
         if (!isAdminUser) {
@@ -725,16 +874,14 @@ export const appRouter = router({
         // Use LLM to analyze lyrics and generate storyboard
         const llmResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
           apiName: "storyboard.generate.story",
+          providers: getTierProviderChain(userTier, "text"),
           execute: async (provider) => {
-            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
-              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
-            }
             const providerModel =
-              provider === "nano-banana-pro"
+              provider === "gpt_5_1" || provider === "veo3.1-pro"
+                ? ("gpt5" as const)
+                : provider === "gemini_3_pro" || provider === "nano-banana-pro"
                 ? ("pro" as const)
-                : provider === "veo3.1-pro"
-                  ? ("gpt5" as const)
-                  : (input.model === "gpt5" ? "gpt5" : input.model === "pro" ? "pro" : undefined);
+                : ("flash" as const);
             const response = await invokeLLM({
           messages: [
             {
@@ -944,7 +1091,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
             const { url } = await generateImage({ prompt: imagePrompt });
             // 免費生圖添加水印（管理員跳過）
             let finalUrl = url;
-            if (!isAdminUser && url) {
+            if (shouldApplyWatermarkForTier(userTier) && url) {
               try {
                 const { addWatermarkToUrl } = await import("./watermark");
                 const { storagePut } = await import("./storage");
@@ -1009,8 +1156,8 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
       .mutation(async ({ input, ctx }) => {
         const { exportToPDF, exportToWord } = await import("./storyboard-export");
         const isAdminUser = ctx.user.role === "admin";
-        // Free-tier users get watermark; admin/paid users don't
-        const shouldWatermark = !isAdminUser;
+        const userTier = await resolveUserTier(ctx.user.id, isAdminUser);
+        const shouldWatermark = shouldApplyWatermarkForTier(userTier);
 
         if (input.format === "word") {
           const result = await exportToWord(input.storyboard, { addWatermark: shouldWatermark });
@@ -1137,6 +1284,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const isAdminUser = ctx.user.role === "admin";
+        const userTier = await resolveUserTier(userId, isAdminUser);
 
         // 扣除 Credits（管理員免扣）
         if (!isAdminUser) {
@@ -1157,16 +1305,14 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 
         const rewriteResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
           apiName: "storyboard.rewrite.story",
+          providers: getTierProviderChain(userTier, "text"),
           execute: async (provider) => {
-            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
-              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
-            }
             const providerModel =
-              provider === "nano-banana-pro"
+              provider === "gpt_5_1" || provider === "veo3.1-pro"
+                ? ("gpt5" as const)
+                : provider === "gemini_3_pro" || provider === "nano-banana-pro"
                 ? ("pro" as const)
-                : provider === "veo3.1-pro"
-                  ? ("gpt5" as const)
-                  : (input.model === "gpt5" ? "gpt5" : input.model === "pro" ? "pro" : undefined);
+                : ("flash" as const);
             const response = await invokeLLM({
               messages: [
                 {
@@ -1225,6 +1371,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         // 检查并扣除 Credits（管理员免扣）
         const { deductCredits, hasEnoughCredits } = await import("./credits");
         const userId = ctx.user.id;
+        const userTier = await resolveUserTier(userId, ctx.user.role === "admin");
 
         const canAfford = await hasEnoughCredits(userId, "aiInspiration");
         if (!canAfford) {
@@ -1235,16 +1382,14 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 
         const scriptResult = await executeProviderFallback<Awaited<ReturnType<typeof invokeLLM>>>({
           apiName: "storyboard.generateInspiration.script",
+          providers: getTierProviderChain(userTier, "text"),
           execute: async (provider) => {
-            if (provider === "fal.ai" && !process.env.FAL_API_KEY) {
-              throw new Error("fal.ai unavailable: FAL_API_KEY is not configured");
-            }
             const providerModel =
-              provider === "nano-banana-pro"
+              provider === "gpt_5_1" || provider === "veo3.1-pro"
+                ? ("gpt5" as const)
+                : provider === "gemini_3_pro" || provider === "nano-banana-pro"
                 ? ("pro" as const)
-                : provider === "veo3.1-pro"
-                  ? ("gpt5" as const)
-                  : ("flash" as const);
+                : ("flash" as const);
             const response = await invokeLLM({
               messages: [
                 {
@@ -2023,6 +2168,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       storyboardId: z.number().optional(),
       negativePrompt: z.string().optional(),
     })).mutation(async ({ ctx, input }) => {
+      const userTier = await resolveUserTier(ctx.user.id, isAdmin(ctx.user));
       // Determine credit cost based on quality + resolution
       const costKey = `videoGeneration${input.quality === "fast" ? "Fast" : "Std"}${input.resolution === "1080p" ? "1080" : "720"}` as keyof typeof CREDIT_COSTS;
       let creditsUsed = 0;
@@ -2054,8 +2200,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         mimeType?: string;
       }>({
         apiName: "veo.generate.video",
+        providers: getTierProviderChain(userTier, "video"),
         execute: async (provider) => {
-          if (provider === "fal.ai") {
+          if (provider === "fal_kling_video" || provider === "fal.ai") {
             const { falKlingSubmit } = await import("./kling/fal-proxy");
             const endpoint = input.imageUrl ? "v3-pro-i2v" : "v3-pro-t2v";
             const falResult = await falKlingSubmit(
@@ -2076,10 +2223,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             return { data: { videoUrl, mimeType: falResult.video?.content_type || "video/mp4" }, jobId: falResult.request_id || null };
           }
 
+          if (provider === "kling_beijing") {
+            const kling = await generateKlingBeijingVideo({
+              prompt: input.prompt,
+              imageUrl: input.imageUrl,
+              aspectRatio: input.aspectRatio,
+              negativePrompt: input.negativePrompt,
+            });
+            return {
+              data: { videoUrl: kling.videoUrl, mimeType: kling.mimeType },
+              jobId: kling.jobId,
+            };
+          }
+
+          if (provider === "cometapi") {
+            const hasComet = Boolean(process.env.COMETAPI_API_KEY || process.env.COMET_API_KEY || process.env.COMETAPI_KEY);
+            if (!hasComet) {
+              throw new Error("cometapi unavailable: API key is not configured");
+            }
+            throw new Error("cometapi fallback is configured but not integrated in this deployment");
+          }
+
           const result = await generateVideo({
             prompt: input.prompt,
             imageUrl: input.imageUrl,
-            quality: provider === "veo3.1-pro" ? "standard" : input.quality,
+            quality: provider === "veo3.1-pro" || provider === "veo_3_1" ? "standard" : input.quality,
             resolution: input.resolution,
             aspectRatio: input.aspectRatio,
             negativePrompt: input.negativePrompt,
