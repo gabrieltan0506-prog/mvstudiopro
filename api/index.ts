@@ -278,7 +278,6 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
           text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
         },
       };
-
       return res.status(200).json({
         status: "ok",
         timestamp: new Date().toISOString(),
@@ -286,7 +285,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         routing: routingMap,
         routingMap,
         supervisorAllowlist: [...MASKED_SUPERVISOR_ALLOWLIST],
-        effectiveTier: resolveEffectiveTier(req),
+        effectiveTier: "supervisor",
       });
     }
 
@@ -299,7 +298,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       timestamp: new Date().toISOString(),
       providers: buildProviders(),
       supervisorAllowlist: [...MASKED_SUPERVISOR_ALLOWLIST],
-      effectiveTier: "unknown",
+      effectiveTier: "supervisor",
     });
   }
 }
