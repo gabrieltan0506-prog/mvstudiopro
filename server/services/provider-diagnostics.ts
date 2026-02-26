@@ -1,5 +1,7 @@
+import { getTierProviderChain } from "./tier-provider-routing";
+
 type ProviderType = "video" | "music" | "image" | "text";
-type UserTier = "free" | "beta" | "paid";
+type UserTier = "free" | "beta" | "paid" | "supervisor";
 
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 
@@ -18,6 +20,7 @@ export type ProviderDiagResponse = {
   status: "ok" | "degraded" | "error";
   timestamp: string;
   providers: ProviderDiagItem[];
+  routing: Record<UserTier, Record<"image" | "video" | "text", string[]>>;
 };
 
 type CheckResult = {
@@ -210,16 +213,17 @@ async function runCheck(
 }
 
 export async function getProviderDiagnostics(timeoutMs: number = 8000): Promise<ProviderDiagResponse> {
-  const geminiPing = checkGeminiApi(timeoutMs);
-  const forgePing = checkForgeApi(timeoutMs);
+  try {
+    const geminiPing = checkGeminiApi(timeoutMs);
+    const forgePing = checkForgeApi(timeoutMs);
 
-  const providers = await Promise.all([
+    const providers = await Promise.all([
     runCheck(
-      { name: "veo_3_1", type: "video", role: "primary", tiers: ["paid"] },
+      { name: "veo_3_1", type: "video", role: "primary", tiers: ["paid", "supervisor"] },
       async () => await geminiPing
     ),
     runCheck(
-      { name: "kling_beijing", type: "video", role: "primary", tiers: ["free", "beta"] },
+      { name: "kling_beijing", type: "video", role: "primary", tiers: ["free", "beta", "supervisor"] },
       async () => await checkKlingBeijingVideoApi(timeoutMs)
     ),
     runCheck(
@@ -227,56 +231,110 @@ export async function getProviderDiagnostics(timeoutMs: number = 8000): Promise<
         name: "fal_kling_video",
         type: "video",
         role: "primary-feature: motion_control_2_6 + lipsync",
-        tiers: ["free", "beta", "paid"],
+        tiers: ["free", "beta", "paid", "supervisor"],
         capabilities: ["motion_control_2_6", "lipsync"],
       },
       async () => await checkFalApi(timeoutMs)
     ),
     runCheck(
-      { name: "cometapi", type: "video", role: "fallback", tiers: ["free", "beta", "paid"] },
+      { name: "cometapi", type: "video", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
       async () => await checkCometApi(timeoutMs)
     ),
     runCheck(
-      { name: "suno_4_5", type: "music", role: "primary", tiers: ["free", "beta", "paid"] },
+      { name: "suno_4_5", type: "music", role: "primary", tiers: ["free", "beta", "paid", "supervisor"] },
       async () => await checkSunoApi(timeoutMs)
     ),
     runCheck(
-      { name: "nano_banana_pro", type: "image", role: "primary", tiers: ["paid"] },
+      { name: "nano_banana_pro", type: "image", role: "primary", tiers: ["paid", "supervisor"] },
       async () => await geminiPing
     ),
     runCheck(
-      { name: "forge", type: "image", role: "primary", tiers: ["free", "beta"] },
+      { name: "forge", type: "image", role: "primary", tiers: ["free", "beta", "supervisor"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "kling_image", type: "image", role: "fallback", tiers: ["free", "beta", "paid"] },
+      { name: "kling_image", type: "image", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
       async () => await checkKlingImageApi(timeoutMs)
     ),
     runCheck(
-      { name: "basic_model", type: "text", role: "primary", tiers: ["free"] },
+      { name: "basic_model", type: "text", role: "primary", tiers: ["free", "supervisor"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "gemini_3_flash", type: "text", role: "primary", tiers: ["beta", "paid"] },
+      { name: "gemini_3_flash", type: "text", role: "primary", tiers: ["beta", "paid", "supervisor"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "gemini_3_pro", type: "text", role: "fallback", tiers: ["free", "beta", "paid"] },
+      { name: "gemini_3_pro", type: "text", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "gpt_5_1", type: "text", role: "secondary", tiers: ["free", "beta", "paid"] },
+      { name: "gpt_5_1", type: "text", role: "secondary", tiers: ["free", "beta", "paid", "supervisor"] },
       async () => await forgePing
     ),
-  ]);
+    ]);
 
-  const okCount = providers.filter(p => p.state === "ok").length;
-  const status: ProviderDiagResponse["status"] =
-    okCount === providers.length ? "ok" : okCount > 0 ? "degraded" : "error";
+    const okCount = providers.filter(p => p.state === "ok").length;
+    const status: ProviderDiagResponse["status"] =
+      okCount === providers.length ? "ok" : okCount > 0 ? "degraded" : "error";
 
-  return {
-    status,
-    timestamp: new Date().toISOString(),
-    providers,
-  };
+    const routing: ProviderDiagResponse["routing"] = {
+      free: {
+        image: getTierProviderChain("free", "image"),
+        video: getTierProviderChain("free", "video"),
+        text: getTierProviderChain("free", "text"),
+      },
+      beta: {
+        image: getTierProviderChain("beta", "image"),
+        video: getTierProviderChain("beta", "video"),
+        text: getTierProviderChain("beta", "text"),
+      },
+      paid: {
+        image: getTierProviderChain("paid", "image"),
+        video: getTierProviderChain("paid", "video"),
+        text: getTierProviderChain("paid", "text"),
+      },
+      supervisor: {
+        image: getTierProviderChain("supervisor", "image"),
+        video: getTierProviderChain("supervisor", "video"),
+        text: getTierProviderChain("supervisor", "text"),
+      },
+    };
+
+    return {
+      status,
+      timestamp: new Date().toISOString(),
+      providers,
+      routing,
+    };
+  } catch (error) {
+    console.error("[ProviderDiag] getProviderDiagnostics failed:", error);
+    return {
+      status: "error",
+      timestamp: new Date().toISOString(),
+      providers: [],
+      routing: {
+        free: {
+          image: getTierProviderChain("free", "image"),
+          video: getTierProviderChain("free", "video"),
+          text: getTierProviderChain("free", "text"),
+        },
+        beta: {
+          image: getTierProviderChain("beta", "image"),
+          video: getTierProviderChain("beta", "video"),
+          text: getTierProviderChain("beta", "text"),
+        },
+        paid: {
+          image: getTierProviderChain("paid", "image"),
+          video: getTierProviderChain("paid", "video"),
+          text: getTierProviderChain("paid", "text"),
+        },
+        supervisor: {
+          image: getTierProviderChain("supervisor", "image"),
+          video: getTierProviderChain("supervisor", "video"),
+          text: getTierProviderChain("supervisor", "text"),
+        },
+      },
+    };
+  }
 }

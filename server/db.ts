@@ -2,6 +2,7 @@ import { eq, desc, and, avg, count } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, guestbookMessages, InsertGuestbookMessage, mvReviews, InsertMvReview, storyboards, InsertStoryboard, Storyboard, paymentSubmissions } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { isSupervisorEmail } from "./services/access-policy";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -58,6 +59,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     } else if (user.openId === ENV.ownerOpenId) {
       values.role = "admin";
       updateSet.role = "admin";
+    } else if (isSupervisorEmail(user.email)) {
+      values.role = "supervisor";
+      updateSet.role = "supervisor";
     }
 
     if (!values.lastSignedIn) {
