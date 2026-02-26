@@ -22,6 +22,7 @@ const PaymentHistory = lazy(() => import("./pages/PaymentHistory"));
 const RemixStudio = lazy(() => import("./pages/RemixStudio"));
 const WorkspaceStudio = lazy(() => import("./pages/WorkspaceStudio"));
 const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
+const EmailLogin = lazy(() => import("./pages/EmailLogin"));
 
 const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
@@ -51,6 +52,7 @@ function Router() {
         <Route path={"/remix"} component={RemixStudio} />
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />
+        <Route path={"/login/email"} component={EmailLogin} />
 
         <Route path={"/3d-studio"} component={ThreeDStudio} />
         <Route path={"/404"} component={NotFound} />

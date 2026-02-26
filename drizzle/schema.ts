@@ -56,6 +56,7 @@ export type InsertMvReview = typeof mvReviews.$inferInsert;
 // Re-export extended schema
 export * from "./schema-extended";
 export * from "./schema-email-auth";
+export * from "./schema-email-otps";
 export * from "./schema-storyboards";
 export * from "./schema-payments";
 export * from "./schema-creations";

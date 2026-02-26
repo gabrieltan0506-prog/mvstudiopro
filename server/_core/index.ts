@@ -15,6 +15,9 @@ import { startJobWorker } from "../jobs/runner";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
+import { requestEmailOtp, verifyEmailOtpAndCreateSession, EmailOtpAuthError } from "../services/email-otp-auth";
+import { getSessionCookieOptions } from "./cookies";
+import { COOKIE_NAME, ONE_YEAR_MS } from "../../shared/const";
 
 function buildRoutingMap() {
   return {
@@ -196,6 +199,80 @@ async function startServer() {
         supervisorAllowlist: getSupervisorAllowlist(true),
         effectiveTier: "unknown",
       });
+    }
+  });
+
+  app.get("/api/me", async (req, res) => {
+    try {
+      const ctx = await createContext({ req: req as any, res: res as any });
+      if (!ctx.user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      return res.status(200).json({
+        id: ctx.user.id,
+        name: ctx.user.name,
+        email: ctx.user.email,
+        role: ctx.user.role,
+        openId: ctx.user.openId,
+      });
+    } catch (error) {
+      console.error("[Auth] GET /api/me failed:", error);
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+  });
+
+  app.post("/api/auth/email/request-otp", async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "Invalid email" });
+      }
+
+      const result = await requestEmailOtp(email);
+      return res.status(200).json({
+        success: true,
+        expiresIn: result.expiresInSeconds,
+      });
+    } catch (error) {
+      if (error instanceof EmailOtpAuthError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      console.error("[Auth] POST /api/auth/email/request-otp failed:", error);
+      return res.status(500).json({ message: "Failed to send OTP" });
+    }
+  });
+
+  app.post("/api/auth/email/verify-otp", async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+      const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ message: "Invalid email" });
+      }
+      if (!/^\d{6}$/.test(otp)) {
+        return res.status(400).json({ message: "Invalid OTP" });
+      }
+
+      const { sessionToken, user } = await verifyEmailOtpAndCreateSession({
+        emailInput: email,
+        otp,
+        userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined,
+      });
+
+      const cookieOptions = getSessionCookieOptions(req);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+      return res.status(200).json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      if (error instanceof EmailOtpAuthError) {
+        return res.status(error.status).json({ message: error.message });
+      }
+      console.error("[Auth] POST /api/auth/email/verify-otp failed:", error);
+      return res.status(500).json({ message: "Failed to verify OTP" });
     }
   });
 

@@ -47,3 +47,42 @@ export async function sendTencentSesTestEmail(to: string): Promise<void> {
 
   await client.SendEmail(params);
 }
+
+export async function sendTencentSesOtpEmail(to: string, otp: string, expireMinutes: number): Promise<void> {
+  const secretId = process.env.TENCENT_SECRET_ID;
+  const secretKey = process.env.TENCENT_SECRET_KEY;
+  const region = process.env.TENCENT_SES_REGION;
+  const fromEmail = process.env.TENCENT_SES_FROM_EMAIL;
+
+  if (!secretId || !secretKey || !region || !fromEmail) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[Email OTP][DEV] ${to} -> ${otp} (expires in ${expireMinutes} minutes)`);
+      return;
+    }
+    throw new Error("Tencent SES is not fully configured");
+  }
+
+  const client = new SesClient({
+    credential: { secretId, secretKey },
+    region,
+    profile: {
+      httpProfile: {
+        endpoint: "ses.tencentcloudapi.com",
+      },
+    },
+  });
+
+  const subject = "MVStudioPro Email Verification Code";
+  const text = `Your verification code is ${otp}. It expires in ${expireMinutes} minutes.`;
+  const html = `<p>Your verification code is <strong>${otp}</strong>.</p><p>It expires in ${expireMinutes} minutes.</p>`;
+
+  await client.SendEmail({
+    FromEmailAddress: fromEmail,
+    Destination: [to],
+    Subject: subject,
+    Simple: {
+      Html: Buffer.from(html, "utf8").toString("base64"),
+      Text: Buffer.from(text, "utf8").toString("base64"),
+    },
+  });
+}
