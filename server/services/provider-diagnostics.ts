@@ -1,4 +1,5 @@
 type ProviderType = "video" | "music" | "image" | "text";
+type UserTier = "free" | "beta" | "paid";
 
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 
@@ -6,6 +7,7 @@ export type ProviderDiagItem = {
   name: string;
   type: ProviderType;
   role: string;
+  tiers: UserTier[];
   state: ProviderState;
   latencyMs: number;
   error: string | null;
@@ -110,6 +112,15 @@ async function checkKlingImageApi(timeoutMs: number): Promise<CheckResult> {
   return await pingUrl(base, timeoutMs);
 }
 
+async function checkKlingBeijingVideoApi(timeoutMs: number): Promise<CheckResult> {
+  const videoAccessKey = getFirstEnv(["KLING_VIDEO_ACCESS_KEY", "KLING_ACCESS_KEY", "KLING_ACCESS_KEY_1"]);
+  const videoSecretKey = getFirstEnv(["KLING_VIDEO_SECRET_KEY", "KLING_SECRET_KEY", "KLING_SECRET_KEY_1"]);
+  if (!hasValue(videoAccessKey) || !hasValue(videoSecretKey)) {
+    return { ok: false, error: "KLING video key missing" };
+  }
+  return await pingUrl("https://api-beijing.klingai.com", timeoutMs);
+}
+
 async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
   const forgeApiKey = process.env.BUILT_IN_FORGE_API_KEY;
   if (!hasValue(forgeApiKey)) {
@@ -141,6 +152,7 @@ async function runCheck(
     name: string;
     type: ProviderType;
     role: string;
+    tiers: UserTier[];
     capabilities?: string[];
   },
   check: () => Promise<CheckResult>
@@ -154,6 +166,7 @@ async function runCheck(
         name: config.name,
         type: config.type,
         role: config.role,
+        tiers: config.tiers,
         state: "ok",
         latencyMs,
         error: null,
@@ -174,6 +187,7 @@ async function runCheck(
       name: config.name,
       type: config.type,
       role: config.role,
+      tiers: config.tiers,
       state,
       latencyMs,
       error: errorMessage,
@@ -186,6 +200,7 @@ async function runCheck(
       name: config.name,
       type: config.type,
       role: config.role,
+      tiers: config.tiers,
       state: message.toLowerCase().includes("timeout") ? "timeout" : "error",
       latencyMs,
       error: message,
@@ -200,44 +215,57 @@ export async function getProviderDiagnostics(timeoutMs: number = 8000): Promise<
 
   const providers = await Promise.all([
     runCheck(
-      { name: "veo_3_1", type: "video", role: "primary" },
+      { name: "veo_3_1", type: "video", role: "primary", tiers: ["paid"] },
       async () => await geminiPing
+    ),
+    runCheck(
+      { name: "kling_beijing", type: "video", role: "primary", tiers: ["free", "beta"] },
+      async () => await checkKlingBeijingVideoApi(timeoutMs)
     ),
     runCheck(
       {
         name: "fal_kling_video",
         type: "video",
         role: "primary-feature: motion_control_2_6 + lipsync",
+        tiers: ["free", "beta", "paid"],
         capabilities: ["motion_control_2_6", "lipsync"],
       },
       async () => await checkFalApi(timeoutMs)
     ),
     runCheck(
-      { name: "cometapi", type: "video", role: "fallback" },
+      { name: "cometapi", type: "video", role: "fallback", tiers: ["free", "beta", "paid"] },
       async () => await checkCometApi(timeoutMs)
     ),
     runCheck(
-      { name: "suno_4_5", type: "music", role: "primary" },
+      { name: "suno_4_5", type: "music", role: "primary", tiers: ["free", "beta", "paid"] },
       async () => await checkSunoApi(timeoutMs)
     ),
     runCheck(
-      { name: "nano_banana_pro", type: "image", role: "primary" },
+      { name: "nano_banana_pro", type: "image", role: "primary", tiers: ["paid"] },
       async () => await geminiPing
     ),
     runCheck(
-      { name: "kling_image", type: "image", role: "fallback" },
+      { name: "forge", type: "image", role: "primary", tiers: ["free", "beta"] },
+      async () => await forgePing
+    ),
+    runCheck(
+      { name: "kling_image", type: "image", role: "fallback", tiers: ["free", "beta", "paid"] },
       async () => await checkKlingImageApi(timeoutMs)
     ),
     runCheck(
-      { name: "gemini_3_flash", type: "text", role: "primary" },
+      { name: "basic_model", type: "text", role: "primary", tiers: ["free"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "gemini_3_pro", type: "text", role: "fallback" },
+      { name: "gemini_3_flash", type: "text", role: "primary", tiers: ["beta", "paid"] },
       async () => await forgePing
     ),
     runCheck(
-      { name: "gpt_5_1", type: "text", role: "secondary" },
+      { name: "gemini_3_pro", type: "text", role: "fallback", tiers: ["free", "beta", "paid"] },
+      async () => await forgePing
+    ),
+    runCheck(
+      { name: "gpt_5_1", type: "text", role: "secondary", tiers: ["free", "beta", "paid"] },
       async () => await forgePing
     ),
   ]);
