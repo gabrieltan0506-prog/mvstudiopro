@@ -12,7 +12,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
-import { getProviderDiagnostics } from "../services/provider-diagnostics";
+import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
+import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -137,23 +138,18 @@ async function startServer() {
     }
   });
 
-  app.get("/api/diag/providers", async (_req, res) => {
+  app.get("/api/diag/providers", async (req, res) => {
+    let effectiveTier: UserTier | "unknown" = "unknown";
     try {
-      const diagnostics = await getProviderDiagnostics(8000);
+      const ctx = await createContext({ req: req as any, res: res as any });
+      if (ctx.user?.id) {
+        effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
+      }
+      const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
       return res.status(200).json(diagnostics);
     } catch (error) {
       console.error("[Diag] GET /api/diag/providers failed:", error);
-      return res.status(200).json({
-        status: "degraded",
-        timestamp: new Date().toISOString(),
-        providers: [],
-        routing: {
-          free: { image: [], video: [], text: [] },
-          beta: { image: [], video: [], text: [] },
-          paid: { image: [], video: [], text: [] },
-          supervisor: { image: [], video: [], text: [] },
-        },
-      });
+      return res.status(200).json(getProviderDiagnosticsFallback(effectiveTier));
     }
   });
 

@@ -1,6 +1,8 @@
 import express from "express";
 import cookieParser from "cookie-parser";
-import { getProviderDiagnostics } from "../services/provider-diagnostics";
+import { createContext } from "./context";
+import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
+import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 
 export function createApp() {
   const app = express();
@@ -14,23 +16,18 @@ export function createApp() {
     res.status(200).send("ok");
   });
 
-  app.get("/api/diag/providers", async (_req, res) => {
+  app.get("/api/diag/providers", async (req, res) => {
+    let effectiveTier: UserTier | "unknown" = "unknown";
     try {
-      const diagnostics = await getProviderDiagnostics(8000);
+      const ctx = await createContext({ req: req as any, res: res as any });
+      if (ctx.user?.id) {
+        effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
+      }
+      const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
       res.status(200).json(diagnostics);
     } catch (error) {
       console.error("[Diag] /api/diag/providers failed:", error);
-      res.status(200).json({
-        status: "degraded",
-        timestamp: new Date().toISOString(),
-        providers: [],
-        routing: {
-          free: { image: [], video: [], text: [] },
-          beta: { image: [], video: [], text: [] },
-          paid: { image: [], video: [], text: [] },
-          supervisor: { image: [], video: [], text: [] },
-        },
-      });
+      res.status(200).json(getProviderDiagnosticsFallback(effectiveTier));
     }
   });
 

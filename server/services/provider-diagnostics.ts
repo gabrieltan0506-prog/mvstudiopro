@@ -1,26 +1,28 @@
-import { getTierProviderChain } from "./tier-provider-routing";
+import { getTierProviderChain, type UserTier } from "./tier-provider-routing";
 
 type ProviderType = "video" | "music" | "image" | "text";
-type UserTier = "free" | "beta" | "paid" | "supervisor";
-
+type ProviderName = "veo" | "kling" | "fal" | "comet" | "gemini" | "nano" | "forge" | "suno";
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
+type EffectiveTier = UserTier | "unknown";
+type RoutingMap = Record<UserTier, Record<"image" | "video" | "text", string[]>>;
 
 export type ProviderDiagItem = {
-  name: string;
+  name: ProviderName;
   type: ProviderType;
   role: string;
-  tiers: UserTier[];
+  paidOnly: boolean;
   state: ProviderState;
   latencyMs: number;
   error: string | null;
-  capabilities?: string[];
 };
 
 export type ProviderDiagResponse = {
   status: "ok" | "degraded" | "error";
   timestamp: string;
+  effectiveTier: EffectiveTier;
   providers: ProviderDiagItem[];
-  routing: Record<UserTier, Record<"image" | "video" | "text", string[]>>;
+  routingMap: RoutingMap;
+  routing: RoutingMap;
 };
 
 type CheckResult = {
@@ -150,51 +152,83 @@ async function checkCometApi(timeoutMs: number): Promise<CheckResult> {
   });
 }
 
+type ProviderSpec = {
+  name: ProviderName;
+  type: ProviderType;
+  role: string;
+  paidOnly: boolean;
+  check: () => Promise<CheckResult>;
+};
+
+function inferProviderState(errorMessage: string): ProviderState {
+  const lower = errorMessage.toLowerCase();
+  if (lower.includes("missing")) return "not_configured";
+  if (lower.includes("timeout") || lower.includes("abort")) return "timeout";
+  return "error";
+}
+
+function buildRoutingMap(): RoutingMap {
+  const safeTierChain = (tier: UserTier, surface: "image" | "video" | "text"): string[] => {
+    try {
+      return getTierProviderChain(tier, surface);
+    } catch (error) {
+      console.error(`[ProviderDiag] Failed to build routing chain for ${tier}/${surface}:`, error);
+      return [];
+    }
+  };
+
+  return {
+    free: {
+      image: safeTierChain("free", "image"),
+      video: safeTierChain("free", "video"),
+      text: safeTierChain("free", "text"),
+    },
+    beta: {
+      image: safeTierChain("beta", "image"),
+      video: safeTierChain("beta", "video"),
+      text: safeTierChain("beta", "text"),
+    },
+    paid: {
+      image: safeTierChain("paid", "image"),
+      video: safeTierChain("paid", "video"),
+      text: safeTierChain("paid", "text"),
+    },
+    supervisor: {
+      image: safeTierChain("supervisor", "image"),
+      video: safeTierChain("supervisor", "video"),
+      text: safeTierChain("supervisor", "text"),
+    },
+  };
+}
+
 async function runCheck(
-  config: {
-    name: string;
-    type: ProviderType;
-    role: string;
-    tiers: UserTier[];
-    capabilities?: string[];
-  },
-  check: () => Promise<CheckResult>
+  config: ProviderSpec
 ): Promise<ProviderDiagItem> {
   const start = nowMs();
   try {
-    const result = await check();
+    const result = await config.check();
     const latencyMs = nowMs() - start;
     if (result.ok) {
       return {
         name: config.name,
         type: config.type,
         role: config.role,
-        tiers: config.tiers,
+        paidOnly: config.paidOnly,
         state: "ok",
         latencyMs,
         error: null,
-        ...(config.capabilities ? { capabilities: config.capabilities } : {}),
       };
     }
 
     const errorMessage = result.error || "check failed";
-    const lower = errorMessage.toLowerCase();
-    const state: ProviderState =
-      lower.includes("missing")
-        ? "not_configured"
-        : lower.includes("timeout") || lower.includes("abort")
-        ? "timeout"
-        : "error";
-
     return {
       name: config.name,
       type: config.type,
       role: config.role,
-      tiers: config.tiers,
-      state,
+      paidOnly: config.paidOnly,
+      state: inferProviderState(errorMessage),
       latencyMs,
       error: errorMessage,
-      ...(config.capabilities ? { capabilities: config.capabilities } : {}),
     };
   } catch (error) {
     const latencyMs = nowMs() - start;
@@ -203,138 +237,141 @@ async function runCheck(
       name: config.name,
       type: config.type,
       role: config.role,
-      tiers: config.tiers,
-      state: message.toLowerCase().includes("timeout") ? "timeout" : "error",
+      paidOnly: config.paidOnly,
+      state: inferProviderState(message),
       latencyMs,
       error: message,
-      ...(config.capabilities ? { capabilities: config.capabilities } : {}),
     };
   }
 }
 
-export async function getProviderDiagnostics(timeoutMs: number = 8000): Promise<ProviderDiagResponse> {
-  try {
-    const geminiPing = checkGeminiApi(timeoutMs);
-    const forgePing = checkForgeApi(timeoutMs);
-
-    const providers = await Promise.all([
-    runCheck(
-      { name: "veo_3_1", type: "video", role: "primary", tiers: ["paid", "supervisor"] },
-      async () => await geminiPing
-    ),
-    runCheck(
-      { name: "kling_beijing", type: "video", role: "primary", tiers: ["free", "beta", "supervisor"] },
-      async () => await checkKlingBeijingVideoApi(timeoutMs)
-    ),
-    runCheck(
-      {
-        name: "fal_kling_video",
-        type: "video",
-        role: "primary-feature: motion_control_2_6 + lipsync",
-        tiers: ["free", "beta", "paid", "supervisor"],
-        capabilities: ["motion_control_2_6", "lipsync"],
+function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
+  let geminiPingPromise: Promise<CheckResult> | null = null;
+  let forgePingPromise: Promise<CheckResult> | null = null;
+  const geminiPing = () => {
+    if (!geminiPingPromise) {
+      geminiPingPromise = checkGeminiApi(timeoutMs);
+    }
+    return geminiPingPromise;
+  };
+  const forgePing = () => {
+    if (!forgePingPromise) {
+      forgePingPromise = checkForgeApi(timeoutMs);
+    }
+    return forgePingPromise;
+  };
+  return [
+    {
+      name: "veo",
+      type: "video",
+      role: "primary",
+      paidOnly: true,
+      check: async () => await geminiPing(),
+    },
+    {
+      name: "kling",
+      type: "video",
+      role: "primary",
+      paidOnly: false,
+      check: async () => {
+        const videoResult = await checkKlingBeijingVideoApi(timeoutMs);
+        if (videoResult.ok) return videoResult;
+        return await checkKlingImageApi(timeoutMs);
       },
-      async () => await checkFalApi(timeoutMs)
-    ),
-    runCheck(
-      { name: "cometapi", type: "video", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await checkCometApi(timeoutMs)
-    ),
-    runCheck(
-      { name: "suno_4_5", type: "music", role: "primary", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await checkSunoApi(timeoutMs)
-    ),
-    runCheck(
-      { name: "nano_banana_pro", type: "image", role: "primary", tiers: ["paid", "supervisor"] },
-      async () => await geminiPing
-    ),
-    runCheck(
-      { name: "forge", type: "image", role: "primary", tiers: ["free", "beta", "supervisor"] },
-      async () => await forgePing
-    ),
-    runCheck(
-      { name: "kling_image", type: "image", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await checkKlingImageApi(timeoutMs)
-    ),
-    runCheck(
-      { name: "basic_model", type: "text", role: "primary", tiers: ["free", "supervisor"] },
-      async () => await forgePing
-    ),
-    runCheck(
-      { name: "gemini_3_flash", type: "text", role: "primary", tiers: ["beta", "paid", "supervisor"] },
-      async () => await forgePing
-    ),
-    runCheck(
-      { name: "gemini_3_pro", type: "text", role: "fallback", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await forgePing
-    ),
-    runCheck(
-      { name: "gpt_5_1", type: "text", role: "secondary", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await forgePing
-    ),
-    ]);
+    },
+    {
+      name: "fal",
+      type: "video",
+      role: "fallback",
+      paidOnly: false,
+      check: async () => await checkFalApi(timeoutMs),
+    },
+    {
+      name: "comet",
+      type: "video",
+      role: "fallback",
+      paidOnly: false,
+      check: async () => await checkCometApi(timeoutMs),
+    },
+    {
+      name: "gemini",
+      type: "text",
+      role: "primary",
+      paidOnly: false,
+      check: async () => await geminiPing(),
+    },
+    {
+      name: "nano",
+      type: "image",
+      role: "primary",
+      paidOnly: true,
+      check: async () => await geminiPing(),
+    },
+    {
+      name: "forge",
+      type: "image",
+      role: "primary",
+      paidOnly: false,
+      check: async () => await forgePing(),
+    },
+    {
+      name: "suno",
+      type: "music",
+      role: "primary",
+      paidOnly: false,
+      check: async () => await checkSunoApi(timeoutMs),
+    },
+  ];
+}
 
-    const okCount = providers.filter(p => p.state === "ok").length;
+function buildUnavailableProviders(specs: ProviderSpec[]): ProviderDiagItem[] {
+  return specs.map((spec) => ({
+    name: spec.name,
+    type: spec.type,
+    role: spec.role,
+    paidOnly: spec.paidOnly,
+    state: "error",
+    latencyMs: 0,
+    error: "diagnostics unavailable",
+  }));
+}
+
+export function getProviderDiagnosticsFallback(effectiveTier: EffectiveTier = "unknown"): ProviderDiagResponse {
+  const routingMap = buildRoutingMap();
+  return {
+    status: "error",
+    timestamp: new Date().toISOString(),
+    effectiveTier,
+    providers: buildUnavailableProviders(buildProviderSpecs(0)),
+    routingMap,
+    routing: routingMap,
+  };
+}
+
+export async function getProviderDiagnostics(
+  timeoutMs: number = 8000,
+  effectiveTier: EffectiveTier = "unknown"
+): Promise<ProviderDiagResponse> {
+  const routingMap = buildRoutingMap();
+  const providerSpecs = buildProviderSpecs(timeoutMs);
+
+  try {
+    const providers = await Promise.all(providerSpecs.map((spec) => runCheck(spec)));
+
+    const okCount = providers.filter((p) => p.state === "ok").length;
     const status: ProviderDiagResponse["status"] =
       okCount === providers.length ? "ok" : okCount > 0 ? "degraded" : "error";
-
-    const routing: ProviderDiagResponse["routing"] = {
-      free: {
-        image: getTierProviderChain("free", "image"),
-        video: getTierProviderChain("free", "video"),
-        text: getTierProviderChain("free", "text"),
-      },
-      beta: {
-        image: getTierProviderChain("beta", "image"),
-        video: getTierProviderChain("beta", "video"),
-        text: getTierProviderChain("beta", "text"),
-      },
-      paid: {
-        image: getTierProviderChain("paid", "image"),
-        video: getTierProviderChain("paid", "video"),
-        text: getTierProviderChain("paid", "text"),
-      },
-      supervisor: {
-        image: getTierProviderChain("supervisor", "image"),
-        video: getTierProviderChain("supervisor", "video"),
-        text: getTierProviderChain("supervisor", "text"),
-      },
-    };
 
     return {
       status,
       timestamp: new Date().toISOString(),
+      effectiveTier,
       providers,
-      routing,
+      routingMap,
+      routing: routingMap,
     };
   } catch (error) {
     console.error("[ProviderDiag] getProviderDiagnostics failed:", error);
-    return {
-      status: "error",
-      timestamp: new Date().toISOString(),
-      providers: [],
-      routing: {
-        free: {
-          image: getTierProviderChain("free", "image"),
-          video: getTierProviderChain("free", "video"),
-          text: getTierProviderChain("free", "text"),
-        },
-        beta: {
-          image: getTierProviderChain("beta", "image"),
-          video: getTierProviderChain("beta", "video"),
-          text: getTierProviderChain("beta", "text"),
-        },
-        paid: {
-          image: getTierProviderChain("paid", "image"),
-          video: getTierProviderChain("paid", "video"),
-          text: getTierProviderChain("paid", "text"),
-        },
-        supervisor: {
-          image: getTierProviderChain("supervisor", "image"),
-          video: getTierProviderChain("supervisor", "video"),
-          text: getTierProviderChain("supervisor", "text"),
-        },
-      },
-    };
+    return getProviderDiagnosticsFallback(effectiveTier);
   }
 }
