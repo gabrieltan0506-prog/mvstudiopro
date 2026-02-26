@@ -113,14 +113,14 @@ async function checkFalApi(timeoutMs: number): Promise<CheckResult> {
 }
 
 async function checkSunoApi(timeoutMs: number): Promise<CheckResult> {
-  const sunoKey = process.env.SUNO_API_KEY;
-  if (!hasValue(sunoKey)) {
-    return { ok: false, error: "SUNO_API_KEY missing" };
+  const cometKey = process.env.COMETAPI_KEY;
+  if (!hasValue(cometKey)) {
+    return { ok: false, error: "COMETAPI key missing" };
   }
-  const base = process.env.SUNO_API_BASE || "https://api.sunoapi.org";
-  const url = `${base.replace(/\/$/, "")}/api/v1/generate/record-info?taskId=diag-health-check`;
+  const base = getCometApiBaseUrl();
+  const url = `${base}/v1/models`;
   return await pingUrl(url, timeoutMs, {
-    Authorization: `Bearer ${sunoKey}`,
+    Authorization: `Bearer ${cometKey}`,
   });
 }
 
