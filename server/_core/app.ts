@@ -1,33 +1,9 @@
 import express from "express";
 import cookieParser from "cookie-parser";
-import { getProviderDiagnostics } from "../services/provider-diagnostics";
-import { getTierProviderChain } from "../services/tier-provider-routing";
+import { createContext } from "./context";
+import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getSupervisorAllowlist } from "../services/access-policy";
-
-function buildRoutingMap() {
-  return {
-    free: {
-      image: getTierProviderChain("free", "image"),
-      video: getTierProviderChain("free", "video"),
-      text: getTierProviderChain("free", "text"),
-    },
-    beta: {
-      image: getTierProviderChain("beta", "image"),
-      video: getTierProviderChain("beta", "video"),
-      text: getTierProviderChain("beta", "text"),
-    },
-    paid: {
-      image: getTierProviderChain("paid", "image"),
-      video: getTierProviderChain("paid", "video"),
-      text: getTierProviderChain("paid", "text"),
-    },
-    supervisor: {
-      image: getTierProviderChain("supervisor", "image"),
-      video: getTierProviderChain("supervisor", "video"),
-      text: getTierProviderChain("supervisor", "text"),
-    },
-  };
-}
+import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 
 export function createApp() {
   const app = express();
@@ -41,27 +17,23 @@ export function createApp() {
     res.status(200).send("ok");
   });
 
-  app.get("/api/diag/providers", async (_req, res) => {
+  app.get("/api/diag/providers", async (req, res) => {
+    let effectiveTier: UserTier | "unknown" = "unknown";
     try {
-      const diagnostics = await getProviderDiagnostics(8000);
-      const routingMap = (diagnostics as any).routingMap ?? diagnostics.routing ?? buildRoutingMap();
+      const ctx = await createContext({ req: req as any, res: res as any });
+      if (ctx.user?.id) {
+        effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
+      }
+      const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
       res.status(200).json({
         ...diagnostics,
-        routingMap,
         supervisorAllowlist: getSupervisorAllowlist(true),
-        effectiveTier: "unknown",
       });
     } catch (error) {
       console.error("[Diag] /api/diag/providers failed:", error);
-      const routingMap = buildRoutingMap();
       res.status(200).json({
-        status: "degraded",
-        timestamp: new Date().toISOString(),
-        providers: [],
-        routing: routingMap,
-        routingMap,
+        ...getProviderDiagnosticsFallback(effectiveTier),
         supervisorAllowlist: getSupervisorAllowlist(true),
-        effectiveTier: "unknown",
       });
     }
   });

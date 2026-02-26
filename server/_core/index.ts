@@ -12,7 +12,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
-import { getProviderDiagnostics } from "../services/provider-diagnostics";
+import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
 
@@ -166,9 +166,6 @@ async function startServer() {
 
   app.get("/api/diag/providers", async (req, res) => {
     try {
-      const diagnostics = await getProviderDiagnostics(8000);
-      const routingMap = (diagnostics as any).routingMap ?? diagnostics.routing ?? buildRoutingMap();
-
       let effectiveTier: "free" | "beta" | "paid" | "supervisor" | "unknown" = "unknown";
       try {
         const ctx = await createContext({ req: req as any, res: res as any });
@@ -180,6 +177,8 @@ async function startServer() {
       } catch (tierError) {
         console.warn("[Diag] unable to resolve effectiveTier:", tierError);
       }
+      const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
+      const routingMap = (diagnostics as any).routingMap ?? diagnostics.routing ?? buildRoutingMap();
 
       return res.status(200).json({
         ...diagnostics,
@@ -191,9 +190,7 @@ async function startServer() {
       console.error("[Diag] GET /api/diag/providers failed:", error);
       const routingMap = buildRoutingMap();
       return res.status(200).json({
-        status: "degraded",
-        timestamp: new Date().toISOString(),
-        providers: [],
+        ...getProviderDiagnosticsFallback("unknown"),
         routing: routingMap,
         routingMap,
         supervisorAllowlist: getSupervisorAllowlist(true),
