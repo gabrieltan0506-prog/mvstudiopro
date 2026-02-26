@@ -1,4 +1,9 @@
 import { ENV } from "./env";
+import {
+  COMETAPI_GPT_5_1_MODEL_ID,
+  getCometApiBaseUrl,
+  getCometApiKey,
+} from "../services/cometapi";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
 
@@ -209,15 +214,45 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
+type ModelTier = "flash" | "pro" | "gpt5";
+
+type LlmTarget = {
+  apiUrl: string;
+  apiKey: string;
+  modelName: string;
+  provider: "forge" | "cometapi";
+};
+
+const resolveForgeApiUrl = () =>
   ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
     ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
     : "https://forge.manus.im/v1/chat/completions";
 
-const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+const resolveTarget = (modelTier: ModelTier | undefined): LlmTarget => {
+  if (modelTier === "gpt5") {
+    const cometApiKey = getCometApiKey();
+    if (!cometApiKey) {
+      throw new Error("COMET_API_KEY is not configured");
+    }
+
+    return {
+      apiUrl: `${getCometApiBaseUrl()}/v1/chat/completions`,
+      apiKey: cometApiKey,
+      modelName: COMETAPI_GPT_5_1_MODEL_ID,
+      provider: "cometapi",
+    };
   }
+
+  if (!ENV.forgeApiKey) {
+    throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
+  }
+
+  return {
+    apiUrl: resolveForgeApiUrl(),
+    apiKey: ENV.forgeApiKey,
+    modelName: modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-3-flash-preview",
+    provider: "forge",
+  };
 };
 
 const normalizeResponseFormat = ({
@@ -265,9 +300,7 @@ const normalizeResponseFormat = ({
   };
 };
 
-export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro" | "gpt5" }): Promise<InvokeResult> {
-  assertApiKey();
-
+export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
   const {
     messages,
     tools,
@@ -280,11 +313,10 @@ export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro"
     model: modelTier,
   } = params;
 
-  // Gemini 3 Flash for daily tasks, Gemini 3.1 Pro / GPT 5.1 for advanced tasks
-  const modelName = modelTier === "pro" ? "gemini-3.1-pro-preview" : modelTier === "gpt5" ? "gpt-5.1" : "gemini-3-flash-preview";
+  const target = resolveTarget(modelTier);
 
   const payload: Record<string, unknown> = {
-    model: modelName,
+    model: target.modelName,
     messages: messages.map(normalizeMessage),
   };
 
@@ -300,9 +332,11 @@ export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro"
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
+  payload.max_tokens = 32768;
+  if (target.provider === "forge") {
+    payload.thinking = {
+      budget_tokens: 128,
+    };
   }
 
   const normalizedResponseFormat = normalizeResponseFormat({
@@ -316,11 +350,11 @@ export async function invokeLLM(params: InvokeParams & { model?: "flash" | "pro"
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetch(resolveApiUrl(), {
+  const response = await fetch(target.apiUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      authorization: `Bearer ${target.apiKey}`,
     },
     body: JSON.stringify(payload),
   });

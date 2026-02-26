@@ -13,7 +13,33 @@ import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
-import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
+import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
+import { getSupervisorAllowlist } from "../services/access-policy";
+
+function buildRoutingMap() {
+  return {
+    free: {
+      image: getTierProviderChain("free", "image"),
+      video: getTierProviderChain("free", "video"),
+      text: getTierProviderChain("free", "text"),
+    },
+    beta: {
+      image: getTierProviderChain("beta", "image"),
+      video: getTierProviderChain("beta", "video"),
+      text: getTierProviderChain("beta", "text"),
+    },
+    paid: {
+      image: getTierProviderChain("paid", "image"),
+      video: getTierProviderChain("paid", "video"),
+      text: getTierProviderChain("paid", "text"),
+    },
+    supervisor: {
+      image: getTierProviderChain("supervisor", "image"),
+      video: getTierProviderChain("supervisor", "video"),
+      text: getTierProviderChain("supervisor", "text"),
+    },
+  };
+}
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -139,17 +165,37 @@ async function startServer() {
   });
 
   app.get("/api/diag/providers", async (req, res) => {
-    let effectiveTier: UserTier | "unknown" = "unknown";
     try {
-      const ctx = await createContext({ req: req as any, res: res as any });
-      if (ctx.user?.id) {
-        effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
+      let effectiveTier: "free" | "beta" | "paid" | "supervisor" | "unknown" = "unknown";
+      try {
+        const ctx = await createContext({ req: req as any, res: res as any });
+        const rawUserId = ctx.user?.id;
+        const userId = Number(rawUserId);
+        if (rawUserId != null && Number.isFinite(userId)) {
+          effectiveTier = await resolveUserTier(userId, ctx.user?.role === "admin");
+        }
+      } catch (tierError) {
+        console.warn("[Diag] unable to resolve effectiveTier:", tierError);
       }
       const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
-      return res.status(200).json(diagnostics);
+      const routingMap = (diagnostics as any).routingMap ?? diagnostics.routing ?? buildRoutingMap();
+
+      return res.status(200).json({
+        ...diagnostics,
+        routingMap,
+        supervisorAllowlist: getSupervisorAllowlist(true),
+        effectiveTier,
+      });
     } catch (error) {
       console.error("[Diag] GET /api/diag/providers failed:", error);
-      return res.status(200).json(getProviderDiagnosticsFallback(effectiveTier));
+      const routingMap = buildRoutingMap();
+      return res.status(200).json({
+        ...getProviderDiagnosticsFallback("unknown"),
+        routing: routingMap,
+        routingMap,
+        supervisorAllowlist: getSupervisorAllowlist(true),
+        effectiveTier: "unknown",
+      });
     }
   });
 

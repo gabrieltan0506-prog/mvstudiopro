@@ -1,4 +1,5 @@
 import { getTierProviderChain, type UserTier } from "./tier-provider-routing";
+import { getCometApiBaseUrl, getCometApiKey } from "./cometapi";
 
 type ProviderType = "video" | "music" | "image" | "text";
 type ProviderName = "veo" | "kling" | "fal" | "comet" | "gemini" | "nano" | "forge" | "suno";
@@ -8,6 +9,8 @@ type RoutingMap = Record<UserTier, Record<"image" | "video" | "text", string[]>>
 
 export type ProviderDiagItem = {
   name: ProviderName;
+  provider?: string;
+  modelId?: string;
   type: ProviderType;
   role: string;
   paidOnly: boolean;
@@ -28,6 +31,16 @@ export type ProviderDiagResponse = {
 type CheckResult = {
   ok: boolean;
   error?: string;
+};
+
+type ProviderSpec = {
+  name: ProviderName;
+  provider?: string;
+  modelId?: string;
+  type: ProviderType;
+  role: string;
+  paidOnly: boolean;
+  check: () => Promise<CheckResult>;
 };
 
 function nowMs() {
@@ -53,6 +66,13 @@ function toErrorMessage(error: unknown): string {
   return String(error ?? "unknown error");
 }
 
+function inferProviderState(errorMessage: string): ProviderState {
+  const lower = errorMessage.toLowerCase();
+  if (lower.includes("missing")) return "not_configured";
+  if (lower.includes("timeout") || lower.includes("abort")) return "timeout";
+  return "error";
+}
+
 async function pingUrl(url: string, timeoutMs: number, headers?: Record<string, string>): Promise<CheckResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -63,9 +83,7 @@ async function pingUrl(url: string, timeoutMs: number, headers?: Record<string, 
       signal: controller.signal,
     });
     const ok = response.status < 500;
-    return ok
-      ? { ok: true }
-      : { ok: false, error: `HTTP ${response.status}` };
+    return ok ? { ok: true } : { ok: false, error: `HTTP ${response.status}` };
   } catch (error) {
     return { ok: false, error: toErrorMessage(error) };
   } finally {
@@ -139,32 +157,14 @@ async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
 }
 
 async function checkCometApi(timeoutMs: number): Promise<CheckResult> {
-  const cometKey = getFirstEnv(["COMETAPI_API_KEY", "COMET_API_KEY", "COMETAPI_KEY"]);
+  const cometKey = getCometApiKey();
   if (!hasValue(cometKey)) {
     return { ok: false, error: "COMETAPI key missing" };
   }
-  const base = process.env.COMETAPI_BASE_URL || process.env.COMET_API_BASE_URL;
-  if (!hasValue(base)) {
-    return { ok: true };
-  }
-  return await pingUrl(base!, timeoutMs, {
+  const base = getCometApiBaseUrl();
+  return await pingUrl(`${base}/v1/models`, timeoutMs, {
     Authorization: `Bearer ${cometKey}`,
   });
-}
-
-type ProviderSpec = {
-  name: ProviderName;
-  type: ProviderType;
-  role: string;
-  paidOnly: boolean;
-  check: () => Promise<CheckResult>;
-};
-
-function inferProviderState(errorMessage: string): ProviderState {
-  const lower = errorMessage.toLowerCase();
-  if (lower.includes("missing")) return "not_configured";
-  if (lower.includes("timeout") || lower.includes("abort")) return "timeout";
-  return "error";
 }
 
 function buildRoutingMap(): RoutingMap {
@@ -201,9 +201,7 @@ function buildRoutingMap(): RoutingMap {
   };
 }
 
-async function runCheck(
-  config: ProviderSpec
-): Promise<ProviderDiagItem> {
+async function runCheck(config: ProviderSpec): Promise<ProviderDiagItem> {
   const start = nowMs();
   try {
     const result = await config.check();
@@ -211,6 +209,8 @@ async function runCheck(
     if (result.ok) {
       return {
         name: config.name,
+        ...(config.provider ? { provider: config.provider } : {}),
+        ...(config.modelId ? { modelId: config.modelId } : {}),
         type: config.type,
         role: config.role,
         paidOnly: config.paidOnly,
@@ -223,6 +223,8 @@ async function runCheck(
     const errorMessage = result.error || "check failed";
     return {
       name: config.name,
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.modelId ? { modelId: config.modelId } : {}),
       type: config.type,
       role: config.role,
       paidOnly: config.paidOnly,
@@ -235,6 +237,8 @@ async function runCheck(
     const message = toErrorMessage(error);
     return {
       name: config.name,
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.modelId ? { modelId: config.modelId } : {}),
       type: config.type,
       role: config.role,
       paidOnly: config.paidOnly,
@@ -248,18 +252,21 @@ async function runCheck(
 function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
   let geminiPingPromise: Promise<CheckResult> | null = null;
   let forgePingPromise: Promise<CheckResult> | null = null;
+
   const geminiPing = () => {
     if (!geminiPingPromise) {
       geminiPingPromise = checkGeminiApi(timeoutMs);
     }
     return geminiPingPromise;
   };
+
   const forgePing = () => {
     if (!forgePingPromise) {
       forgePingPromise = checkForgeApi(timeoutMs);
     }
     return forgePingPromise;
   };
+
   return [
     {
       name: "veo",
@@ -288,6 +295,7 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
     },
     {
       name: "comet",
+      provider: "cometapi",
       type: "video",
       role: "fallback",
       paidOnly: false,
@@ -295,6 +303,7 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
     },
     {
       name: "gemini",
+      provider: "gemini",
       type: "text",
       role: "primary",
       paidOnly: false,
@@ -327,6 +336,8 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
 function buildUnavailableProviders(specs: ProviderSpec[]): ProviderDiagItem[] {
   return specs.map((spec) => ({
     name: spec.name,
+    ...(spec.provider ? { provider: spec.provider } : {}),
+    ...(spec.modelId ? { modelId: spec.modelId } : {}),
     type: spec.type,
     role: spec.role,
     paidOnly: spec.paidOnly,

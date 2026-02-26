@@ -2,6 +2,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { createContext } from "./context";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
+import { getSupervisorAllowlist } from "../services/access-policy";
 import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 
 export function createApp() {
@@ -24,10 +25,16 @@ export function createApp() {
         effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
       }
       const diagnostics = await getProviderDiagnostics(8000, effectiveTier);
-      res.status(200).json(diagnostics);
+      res.status(200).json({
+        ...diagnostics,
+        supervisorAllowlist: getSupervisorAllowlist(true),
+      });
     } catch (error) {
       console.error("[Diag] /api/diag/providers failed:", error);
-      res.status(200).json(getProviderDiagnosticsFallback(effectiveTier));
+      res.status(200).json({
+        ...getProviderDiagnosticsFallback(effectiveTier),
+        supervisorAllowlist: getSupervisorAllowlist(true),
+      });
     }
   });
 
