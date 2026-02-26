@@ -1,4 +1,9 @@
 import { getTierProviderChain } from "./tier-provider-routing";
+import {
+  COMETAPI_GPT_5_1_MODEL_ID,
+  getCometApiBaseUrl,
+  getCometApiKey,
+} from "./cometapi";
 
 type ProviderType = "video" | "music" | "image" | "text";
 type UserTier = "free" | "beta" | "paid" | "supervisor";
@@ -7,6 +12,8 @@ type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 
 export type ProviderDiagItem = {
   name: string;
+  provider?: string;
+  modelId?: string;
   type: ProviderType;
   role: string;
   tiers: UserTier[];
@@ -137,15 +144,12 @@ async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
 }
 
 async function checkCometApi(timeoutMs: number): Promise<CheckResult> {
-  const cometKey = getFirstEnv(["COMETAPI_API_KEY", "COMET_API_KEY", "COMETAPI_KEY"]);
+  const cometKey = getCometApiKey();
   if (!hasValue(cometKey)) {
     return { ok: false, error: "COMETAPI key missing" };
   }
-  const base = process.env.COMETAPI_BASE_URL || process.env.COMET_API_BASE_URL;
-  if (!hasValue(base)) {
-    return { ok: true };
-  }
-  return await pingUrl(base!, timeoutMs, {
+  const base = getCometApiBaseUrl();
+  return await pingUrl(`${base}/v1/models`, timeoutMs, {
     Authorization: `Bearer ${cometKey}`,
   });
 }
@@ -153,6 +157,8 @@ async function checkCometApi(timeoutMs: number): Promise<CheckResult> {
 async function runCheck(
   config: {
     name: string;
+    provider?: string;
+    modelId?: string;
     type: ProviderType;
     role: string;
     tiers: UserTier[];
@@ -167,6 +173,8 @@ async function runCheck(
     if (result.ok) {
       return {
         name: config.name,
+        ...(config.provider ? { provider: config.provider } : {}),
+        ...(config.modelId ? { modelId: config.modelId } : {}),
         type: config.type,
         role: config.role,
         tiers: config.tiers,
@@ -188,6 +196,8 @@ async function runCheck(
 
     return {
       name: config.name,
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.modelId ? { modelId: config.modelId } : {}),
       type: config.type,
       role: config.role,
       tiers: config.tiers,
@@ -201,6 +211,8 @@ async function runCheck(
     const message = toErrorMessage(error);
     return {
       name: config.name,
+      ...(config.provider ? { provider: config.provider } : {}),
+      ...(config.modelId ? { modelId: config.modelId } : {}),
       type: config.type,
       role: config.role,
       tiers: config.tiers,
@@ -269,8 +281,15 @@ export async function getProviderDiagnostics(timeoutMs: number = 8000): Promise<
       async () => await forgePing
     ),
     runCheck(
-      { name: "gpt_5_1", type: "text", role: "secondary", tiers: ["free", "beta", "paid", "supervisor"] },
-      async () => await forgePing
+      {
+        name: "gpt_5_1",
+        provider: "cometapi",
+        modelId: COMETAPI_GPT_5_1_MODEL_ID,
+        type: "text",
+        role: "secondary",
+        tiers: ["paid", "supervisor"],
+      },
+      async () => await checkCometApi(timeoutMs)
     ),
     ]);
 
