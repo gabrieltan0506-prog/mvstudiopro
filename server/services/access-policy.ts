@@ -25,3 +25,14 @@ export function hasUnlimitedAccess(user: {
   return user.role === "admin" || isSupervisorAccount(user);
 }
 
+function maskEmail(email: string): string {
+  const [local = "", domain = ""] = email.split("@");
+  if (!local || !domain) return "***";
+  if (local.length <= 2) return `${local[0] ?? "*"}*@${domain}`;
+  return `${local[0]}***${local[local.length - 1]}@${domain}`;
+}
+
+export function getSupervisorAllowlist(mask: boolean = true): string[] {
+  const emails = Array.from(SUPERVISOR_EMAILS.values());
+  return mask ? emails.map(maskEmail) : emails;
+}
