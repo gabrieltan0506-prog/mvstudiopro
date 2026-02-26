@@ -1,8 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { COOKIE_NAME } from "../shared/const";
-import * as db from "../server/db";
-import { sdk } from "../server/_core/sdk";
-import { getSupervisorAllowlist, isSupervisorEmail } from "../server/services/access-policy";
+
+const COOKIE_NAME = "app_session_id";
+const SUPERVISOR_ALLOWLIST = [
+  "gabrieltan0506@gmail.com",
+  "benjamintan0506@163.com",
+] as const;
+const MASKED_SUPERVISOR_ALLOWLIST = ["g***6@gmail.com", "b***6@163.com"] as const;
 
 type ProviderDiagState = "reachable" | "unconfigured" | "error";
 
@@ -190,32 +193,46 @@ function buildProviders(): ProviderDiagItem[] {
   ];
 }
 
-async function resolveEffectiveTier(
-  req: VercelRequest
-): Promise<"free" | "beta" | "paid" | "supervisor" | "unknown"> {
-  try {
-    const cookieValue = req.cookies?.[COOKIE_NAME];
-    const session = await sdk.verifySession(cookieValue);
+function normalizeEmail(email: string | undefined): string {
+  return (email ?? "").trim().toLowerCase();
+}
 
-    if (!session?.openId) return "unknown";
+function isSupervisorEmail(email: string | undefined): boolean {
+  const normalized = normalizeEmail(email);
+  return SUPERVISOR_ALLOWLIST.includes(normalized as (typeof SUPERVISOR_ALLOWLIST)[number]);
+}
 
-    const user = await db.getUserByOpenId(session.openId);
-    if (!user) return "unknown";
+function getCookie(req: VercelRequest, name: string): string | undefined {
+  const direct = req.cookies?.[name];
+  if (typeof direct === "string" && direct.length > 0) return direct;
 
-    if (isSupervisorEmail(user.email) || user.role === "supervisor") {
-      return "supervisor";
-    }
-    if (user.role === "paid" || user.role === "admin") {
-      return "paid";
-    }
-    if (user.role === "beta") {
-      return "beta";
-    }
-
-    return "free";
-  } catch {
-    return "unknown";
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+  const cookieHeader = Array.isArray(header) ? header.join("; ") : header;
+  const parts = cookieHeader.split(";");
+  for (const part of parts) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return rest.join("=");
   }
+
+  return undefined;
+}
+
+function resolveEffectiveTier(req: VercelRequest): "free" | "beta" | "paid" | "supervisor" | "unknown" {
+  const cookieValue = getCookie(req, COOKIE_NAME);
+  if (!cookieValue) return "unknown";
+
+  const emailHeader = req.headers["x-user-email"];
+  const email = typeof emailHeader === "string" ? emailHeader : undefined;
+  if (isSupervisorEmail(email)) return "supervisor";
+
+  const tierHeader = req.headers["x-user-tier"];
+  const tier = (typeof tierHeader === "string" ? tierHeader : "").toLowerCase();
+  if (tier === "supervisor" || tier === "paid" || tier === "beta" || tier === "free") {
+    return tier;
+  }
+
+  return "free";
 }
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
@@ -262,29 +279,15 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         },
       };
 
-      return resolveEffectiveTier(req)
-        .then(effectiveTier => {
-          return res.status(200).json({
-            status: "ok",
-            timestamp: new Date().toISOString(),
-            providers: buildProviders(),
-            routing: routingMap,
-            routingMap,
-            supervisorAllowlist: getSupervisorAllowlist(true),
-            effectiveTier,
-          });
-        })
-        .catch(() => {
-          return res.status(200).json({
-            status: "degraded",
-            timestamp: new Date().toISOString(),
-            providers: buildProviders(),
-            routing: routingMap,
-            routingMap,
-            supervisorAllowlist: getSupervisorAllowlist(true),
-            effectiveTier: "unknown",
-          });
-        });
+      return res.status(200).json({
+        status: "ok",
+        timestamp: new Date().toISOString(),
+        providers: buildProviders(),
+        routing: routingMap,
+        routingMap,
+        supervisorAllowlist: [...MASKED_SUPERVISOR_ALLOWLIST],
+        effectiveTier: resolveEffectiveTier(req),
+      });
     }
 
     res.setHeader("Content-Security-Policy", "default-src 'self'");
@@ -295,7 +298,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       status: "error",
       timestamp: new Date().toISOString(),
       providers: buildProviders(),
-      supervisorAllowlist: getSupervisorAllowlist(true),
+      supervisorAllowlist: [...MASKED_SUPERVISOR_ALLOWLIST],
       effectiveTier: "unknown",
     });
   }
