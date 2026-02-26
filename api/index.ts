@@ -54,9 +54,9 @@ function classifyConfig(parts: { keys: string[]; label: string }[]): {
 }
 
 function buildProviders(): ProviderDiagItem[] {
-  const forgeState = hasValue(process.env.BUILT_IN_FORGE_API_KEY)
+  const forgeState = hasValue(process.env.PLAYGROUND_API_KEY)
     ? { state: "reachable" as const, error: null }
-    : { state: "unconfigured" as const, error: "BUILT_IN_FORGE_API_KEY missing" };
+    : { state: "unconfigured" as const, error: "PLAYGROUND_API_KEY missing" };
 
   const nanoState = hasValue(process.env.GEMINI_API_KEY)
     ? { state: "reachable" as const, error: null }
@@ -101,7 +101,7 @@ function buildProviders(): ProviderDiagItem[] {
 
   return [
     {
-      name: "forge",
+      name: "playground-v2.5-1024px-aesthetic",
       type: "image",
       role: "free",
       paidOnly: false,
@@ -258,22 +258,22 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     if (isDiagProviders) {
       const routingMap = {
         free: {
-          image: ["forge", "nano-banana-pro", "kling_image"],
+          image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
           video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
           text: ["basic_model", "gemini_3_flash", "gemini_3_pro", "gpt_5_1"],
         },
         beta: {
-          image: ["forge", "nano-banana-pro", "kling_image"],
+          image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
           video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
           text: ["gemini_3_flash", "basic_model", "gemini_3_pro", "gpt_5_1"],
         },
         paid: {
-          image: ["nano-banana-pro", "forge", "kling_image"],
+          image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
           video: ["veo_3_1", "fal_kling_video", "kling_beijing", "cometapi"],
           text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
         },
         supervisor: {
-          image: ["nano-banana-pro", "forge", "kling_image"],
+          image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
           video: ["veo_3_1", "kling_beijing", "fal_kling_video", "cometapi"],
           text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
         },
