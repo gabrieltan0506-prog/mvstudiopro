@@ -14,6 +14,7 @@ import {
   contentUsageAgreements,
   InsertContentUsageAgreement,
 } from "../drizzle/schema";
+import { hasUnlimitedAccess } from "./services/access-policy";
 
 // ── User Phone Verification ──
 
@@ -371,5 +372,5 @@ export async function getUserCommentLikes(userId: number) {
 export function isAdmin(user: any): boolean {
   if (!user) return false;
   if (typeof user === 'number') return false;
-  return user.role === 'admin';
+  return hasUnlimitedAccess({ role: user.role, email: user.email });
 }

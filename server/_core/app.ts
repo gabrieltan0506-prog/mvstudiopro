@@ -20,10 +20,16 @@ export function createApp() {
       res.status(200).json(diagnostics);
     } catch (error) {
       console.error("[Diag] /api/diag/providers failed:", error);
-      res.status(500).json({
-        status: "error",
+      res.status(200).json({
+        status: "degraded",
         timestamp: new Date().toISOString(),
         providers: [],
+        routing: {
+          free: { image: [], video: [], text: [] },
+          beta: { image: [], video: [], text: [] },
+          paid: { image: [], video: [], text: [] },
+          supervisor: { image: [], video: [], text: [] },
+        },
       });
     }
   });

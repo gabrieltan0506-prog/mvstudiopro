@@ -10,13 +10,18 @@ import {
   users,
 } from "../drizzle/schema";
 import { CREDIT_COSTS, PLANS, type PlanType } from "./plans";
+import { hasUnlimitedAccess } from "./services/access-policy";
 
-// ─── 检查用户是否为管理员 ─────────────────────────────
+// ─── 检查用户是否为无限额度账户（admin/supervisor） ─────
 async function isAdmin(userId: number): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
-  const user = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  return user.length > 0 && user[0].role === "admin";
+  const [user] = await db
+    .select({ role: users.role, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return hasUnlimitedAccess({ role: user?.role, email: user?.email });
 }
 
 // ─── 获取或创建 Credits 余额 ────────────────────────
