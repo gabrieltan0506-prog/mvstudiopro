@@ -2,7 +2,7 @@ import { getTierProviderChain, type UserTier } from "./tier-provider-routing";
 import { getCometApiBaseUrl, getCometApiKey } from "./cometapi";
 
 type ProviderType = "video" | "music" | "image" | "text";
-type ProviderName = "veo" | "kling" | "fal" | "comet" | "gemini" | "nano" | "forge" | "suno";
+type ProviderName = "veo" | "kling" | "fal" | "comet" | "gemini" | "nano" | "playground-v2.5-1024px-aesthetic" | "suno";
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 type EffectiveTier = UserTier | "unknown";
 type RoutingMap = Record<UserTier, Record<"image" | "video" | "text", string[]>>;
@@ -145,9 +145,9 @@ async function checkKlingBeijingVideoApi(timeoutMs: number): Promise<CheckResult
 }
 
 async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
-  const forgeApiKey = process.env.BUILT_IN_FORGE_API_KEY;
+  const forgeApiKey = process.env.PLAYGROUND_API_KEY;
   if (!hasValue(forgeApiKey)) {
-    return { ok: false, error: "BUILT_IN_FORGE_API_KEY missing" };
+    return { ok: false, error: "PLAYGROUND_API_KEY missing" };
   }
   const forgeBase = process.env.BUILT_IN_FORGE_API_URL || "https://forge.manus.im";
   const url = `${forgeBase.replace(/\/$/, "")}/v1/models`;
@@ -317,7 +317,7 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
       check: async () => await geminiPing(),
     },
     {
-      name: "forge",
+      name: "playground-v2.5-1024px-aesthetic",
       type: "image",
       role: "primary",
       paidOnly: false,
