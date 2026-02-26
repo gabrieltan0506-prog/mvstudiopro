@@ -12,6 +12,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
+import { getProviderDiagnostics } from "../services/provider-diagnostics";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -133,6 +134,20 @@ async function startServer() {
     } catch (error) {
       console.error("[Jobs] GET /api/jobs/:id failed:", error);
       return res.status(500).json({ error: "Failed to fetch job" });
+    }
+  });
+
+  app.get("/api/diag/providers", async (_req, res) => {
+    try {
+      const diagnostics = await getProviderDiagnostics(8000);
+      return res.status(200).json(diagnostics);
+    } catch (error) {
+      console.error("[Diag] GET /api/diag/providers failed:", error);
+      return res.status(500).json({
+        status: "error",
+        timestamp: new Date().toISOString(),
+        providers: [],
+      });
     }
   });
 
