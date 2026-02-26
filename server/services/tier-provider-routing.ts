@@ -18,12 +18,12 @@ const PROVIDER_CHAINS: Record<UserTier, Record<ProviderSurface, GenerationProvid
   free: {
     image: ["forge", "nano-banana-pro", "kling_image"],
     video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
-    text: ["basic_model", "gemini_3_flash", "gemini_3_pro", "gpt_5_1"],
+    text: ["basic_model", "gemini_3_flash", "gemini_3_pro"],
   },
   beta: {
     image: ["forge", "nano-banana-pro", "kling_image"],
     video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
-    text: ["gemini_3_flash", "basic_model", "gemini_3_pro", "gpt_5_1"],
+    text: ["gemini_3_flash", "basic_model", "gemini_3_pro"],
   },
   paid: {
     image: ["nano-banana-pro", "forge", "kling_image"],
