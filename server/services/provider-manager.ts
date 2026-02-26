@@ -1,4 +1,17 @@
-export type GenerationProvider = "fal.ai" | "nano-banana-pro" | "veo3.1-pro";
+export type GenerationProvider =
+  | "fal.ai"
+  | "nano-banana-pro"
+  | "veo3.1-pro"
+  | "forge"
+  | "kling_beijing"
+  | "veo_3_1"
+  | "fal_kling_video"
+  | "cometapi"
+  | "kling_image"
+  | "basic_model"
+  | "gemini_3_flash"
+  | "gemini_3_pro"
+  | "gpt_5_1";
 
 export const DEFAULT_PROVIDER_CHAIN: GenerationProvider[] = [
   "fal.ai",
