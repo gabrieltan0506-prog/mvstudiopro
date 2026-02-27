@@ -267,6 +267,10 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [duration, setDuration] = useState<Duration>("5");
   const [imageUri, setImageUri] = useState<string | null>(null);
+  const [enableFaceConsistency, setEnableFaceConsistency] = useState(false);
+  const [useReferenceImage, setUseReferenceImage] = useState(false);
+  const [smoothLayeredTransformation, setSmoothLayeredTransformation] = useState(false);
+  const [referenceImageUri, setReferenceImageUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -284,6 +288,34 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
     }
     setLoading(true);
     try {
+      let referenceImageUrl: string | undefined;
+      if (useReferenceImage && referenceImageUri) {
+        referenceImageUrl = referenceImageUri;
+        if (referenceImageUri.startsWith("data:")) {
+          const base64 = referenceImageUri.split(",")[1];
+          const ext = referenceImageUri.split(";")[0].split("/")[1] || "png";
+          const uploaded = await uploadFile.mutateAsync({
+            fileBase64: base64,
+            fileName: `kling-ref.${ext}`,
+            mimeType: `image/${ext}`,
+            folder: "images",
+          });
+          referenceImageUrl = uploaded.url;
+        }
+      }
+
+      const optionalParams: Record<string, unknown> = {};
+      if (referenceImageUrl) {
+        optionalParams.reference_image = referenceImageUrl;
+      }
+      if (enableFaceConsistency) {
+        optionalParams.face_consistency = true;
+        optionalParams.identity_strength = 0.8;
+      }
+      if (smoothLayeredTransformation) {
+        optionalParams.transformation_mode = "layered";
+      }
+
       if (subTab === "t2v") {
         await enqueueTask({
           jobType: "video",
@@ -297,6 +329,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
               mode,
               aspectRatio,
               duration,
+              ...optionalParams,
             },
           },
         });
@@ -331,6 +364,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
               mode,
               aspectRatio,
               duration,
+              ...optionalParams,
             },
           },
         });
@@ -351,6 +385,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
               shots: validShots,
               mode,
               aspectRatio,
+              ...optionalParams,
             },
           },
         });
@@ -362,7 +397,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
     } finally {
       setLoading(false);
     }
-  }, [prompt, negativePrompt, mode, aspectRatio, duration, imageUri, subTab, shots, enqueueTask]);
+  }, [prompt, negativePrompt, mode, aspectRatio, duration, imageUri, subTab, shots, enqueueTask, useReferenceImage, referenceImageUri, enableFaceConsistency, smoothLayeredTransformation]);
 
   return (
     <div className="space-y-4">
@@ -413,6 +448,49 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
       {/* Image upload for I2V */}
       {subTab === "i2v" && (
         <FileUploadBox label="参考图片" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
+      )}
+
+      <div className="space-y-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
+        <label className="flex items-center justify-between text-sm text-gray-200">
+          <span>Enable Face Consistency</span>
+          <input
+            type="checkbox"
+            checked={enableFaceConsistency}
+            onChange={(e) => setEnableFaceConsistency(e.target.checked)}
+            className="h-4 w-4 accent-purple-600"
+          />
+        </label>
+        <label className="flex items-center justify-between text-sm text-gray-200">
+          <span>Use Reference Image</span>
+          <input
+            type="checkbox"
+            checked={useReferenceImage}
+            onChange={(e) => {
+              setUseReferenceImage(e.target.checked);
+              if (!e.target.checked) setReferenceImageUri(null);
+            }}
+            className="h-4 w-4 accent-purple-600"
+          />
+        </label>
+        <label className="flex items-center justify-between text-sm text-gray-200">
+          <span>Smooth Layered Transformation</span>
+          <input
+            type="checkbox"
+            checked={smoothLayeredTransformation}
+            onChange={(e) => setSmoothLayeredTransformation(e.target.checked)}
+            className="h-4 w-4 accent-purple-600"
+          />
+        </label>
+      </div>
+
+      {useReferenceImage && (
+        <FileUploadBox
+          label="Reference Image"
+          accept="image/*"
+          value={referenceImageUri}
+          onChange={setReferenceImageUri}
+          preview="image"
+        />
       )}
 
       {/* Storyboard shots */}

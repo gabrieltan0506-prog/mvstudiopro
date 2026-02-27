@@ -12,7 +12,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       })()
     : ((req.body as Record<string, unknown>) ?? {});
 
-  const provider = (req.query.provider ?? body?.provider ?? "").toString();
+  const input = (body.input && typeof body.input === "object") ? (body.input as Record<string, unknown>) : null;
+  const params = (input?.params && typeof input.params === "object") ? (input.params as Record<string, unknown>) : null;
+  const action = String(input?.action ?? body?.action ?? "");
+  const inferredProvider = action === "omni_t2v" || action === "omni_i2v" || action === "omni_storyboard"
+    ? "kling_beijing"
+    : "";
+  const provider = (req.query.provider ?? body?.provider ?? input?.provider ?? inferredProvider ?? "").toString();
   const taskIdQuery = req.query.task_id;
   const taskId = (Array.isArray(taskIdQuery) ? taskIdQuery[0] : taskIdQuery ?? "").toString().trim();
 
@@ -143,11 +149,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const signature = crypto.createHmac("sha256", secretKey).update(signingInput).digest();
   const token = `${signingInput}.${toBase64Url(signature)}`;
 
-  const prompt = String(body.prompt ?? "");
-  const duration = String(body.duration ?? "8");
-  const aspectRatio = String(body.aspectRatio ?? "16:9");
+  const prompt = String(body.prompt ?? params?.prompt ?? "");
+  const duration = String(body.duration ?? params?.duration ?? "8");
+  const aspectRatio = String(body.aspectRatio ?? params?.aspectRatio ?? "16:9");
+  const referenceImage = body.reference_image ?? params?.reference_image;
+  const faceConsistency = body.face_consistency ?? params?.face_consistency;
+  const identityStrength = body.identity_strength ?? params?.identity_strength;
+  const transformationMode = body.transformation_mode ?? params?.transformation_mode;
   if (!prompt.trim()) {
     return res.status(400).json({ ok: false, error: "Missing prompt" });
+  }
+
+  const requestBody: Record<string, unknown> = {
+    model_name: "kling-v3-omni",
+    prompt,
+    duration,
+    aspect_ratio: aspectRatio,
+    mode: "std",
+  };
+  if (referenceImage != null && String(referenceImage).trim()) {
+    requestBody.reference_image = String(referenceImage).trim();
+  }
+  if (faceConsistency === true || faceConsistency === "true") {
+    requestBody.face_consistency = true;
+  }
+  if (identityStrength != null && String(identityStrength).trim() !== "") {
+    const strength = Number(identityStrength);
+    if (Number.isFinite(strength)) {
+      requestBody.identity_strength = strength;
+    }
+  }
+  if (transformationMode != null && String(transformationMode).trim()) {
+    requestBody.transformation_mode = String(transformationMode).trim();
   }
 
   try {
@@ -157,13 +190,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        model_name: "kling-v3-omni",
-        prompt,
-        duration,
-        aspect_ratio: aspectRatio,
-        mode: "std",
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const text = await upstream.text();
