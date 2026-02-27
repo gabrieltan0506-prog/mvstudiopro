@@ -79,7 +79,7 @@ function ensureKlingInitialized() {
   if (klingInitialized) return;
   const keys = parseKeysFromEnv();
   if (keys.length === 0) {
-    throw new Error("Kling API is not configured: Missing KLING_CN_VIDEO_KEY");
+    throw new Error("Kling API is not configured: Missing KLING_CN_VIDEO_ACCESS_KEY and KLING_CN_VIDEO_SECRET_KEY");
   }
   configureKlingClient(keys, "cn");
   klingInitialized = true;

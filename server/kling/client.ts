@@ -3,7 +3,7 @@
  * Kling AI API Client
  *
  * CN-only bearer-key client:
- * - Uses KLING_CN_BASE_URL + KLING_CN_VIDEO_KEY
+ * - Uses KLING_CN_BASE_URL + KLING_CN_VIDEO_ACCESS_KEY / KLING_CN_VIDEO_SECRET_KEY
  * - Ignores all legacy KLING_* key env vars
  */
 
@@ -110,7 +110,7 @@ export class KlingClient {
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       const key = this.keyPool.getAvailableKey(options.purpose ?? "all");
       if (!key) {
-        throw new Error("No available Kling CN API key. Missing KLING_CN_VIDEO_KEY.");
+        throw new Error("No available Kling CN API key. Missing KLING_CN_VIDEO_ACCESS_KEY and KLING_CN_VIDEO_SECRET_KEY.");
       }
 
       try {
@@ -189,11 +189,11 @@ export function configureKlingClient(keys: KlingApiKey[], defaultRegion: "global
 }
 
 export function parseKeysFromEnv(): KlingApiKey[] {
-  const { apiKey } = getKlingCnConfig();
+  const { accessKey } = getKlingCnConfig();
   return [
     {
       id: "primary-cn-video",
-      apiKey,
+      apiKey: accessKey,
       region: "cn",
       purpose: "all",
       enabled: true,

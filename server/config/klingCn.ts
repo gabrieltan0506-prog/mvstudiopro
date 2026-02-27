@@ -22,7 +22,19 @@ export function warnLegacyKlingEnvIgnored(): void {
   }
 }
 
-export function getKlingCnConfig(): { baseUrl: string; apiKey: string } {
+function getMissingKlingCnVideoEnvError(): string | null {
+  const missing: string[] = [];
+  if (!isTruthy(process.env.KLING_CN_VIDEO_ACCESS_KEY)) {
+    missing.push("KLING_CN_VIDEO_ACCESS_KEY");
+  }
+  if (!isTruthy(process.env.KLING_CN_VIDEO_SECRET_KEY)) {
+    missing.push("KLING_CN_VIDEO_SECRET_KEY");
+  }
+  if (missing.length === 0) return null;
+  return `Missing ${missing.join(" and ")}`;
+}
+
+export function getKlingCnConfig(): { baseUrl: string; accessKey: string; secretKey: string } {
   warnLegacyKlingEnvIgnored();
 
   const envBaseUrl = process.env.KLING_CN_BASE_URL?.trim();
@@ -33,15 +45,17 @@ export function getKlingCnConfig(): { baseUrl: string; apiKey: string } {
   }
 
   const baseUrl = envBaseUrl || DEFAULT_KLING_CN_BASE_URL;
-  const apiKey = process.env.KLING_CN_VIDEO_KEY?.trim();
-
-  if (!apiKey) {
-    throw new Error("Missing KLING_CN_VIDEO_KEY");
+  const missingEnvError = getMissingKlingCnVideoEnvError();
+  if (missingEnvError) {
+    throw new Error(missingEnvError);
   }
+
+  const accessKey = process.env.KLING_CN_VIDEO_ACCESS_KEY!.trim();
+  const secretKey = process.env.KLING_CN_VIDEO_SECRET_KEY!.trim();
 
   if (!baseUrl) {
     throw new Error("Missing KLING_CN_BASE_URL");
   }
 
-  return { baseUrl, apiKey };
+  return { baseUrl, accessKey, secretKey };
 }

@@ -3,11 +3,12 @@
  * Usage: node scripts/generate-style-previews.mjs
  */
 
-const KLING_CN_VIDEO_KEY = process.env.KLING_CN_VIDEO_KEY;
+const KLING_CN_VIDEO_ACCESS_KEY = process.env.KLING_CN_VIDEO_ACCESS_KEY;
+const KLING_CN_VIDEO_SECRET_KEY = process.env.KLING_CN_VIDEO_SECRET_KEY;
 const BASE_URL = (process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com").replace(/\/$/, "");
 
-if (!KLING_CN_VIDEO_KEY) {
-  console.error("Missing KLING_CN_VIDEO_KEY");
+if (!KLING_CN_VIDEO_ACCESS_KEY || !KLING_CN_VIDEO_SECRET_KEY) {
+  console.error("Missing KLING_CN_VIDEO_ACCESS_KEY or KLING_CN_VIDEO_SECRET_KEY");
   process.exit(1);
 }
 
@@ -16,7 +17,7 @@ async function createImageTask(prompt, aspectRatio = "16:9") {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${KLING_CN_VIDEO_KEY}`,
+      Authorization: `Bearer ${KLING_CN_VIDEO_ACCESS_KEY}`,
     },
     body: JSON.stringify({
       model_name: "kling-v2-1",
@@ -38,7 +39,7 @@ async function getImageTask(taskId) {
   const response = await fetch(`${BASE_URL}/v1/images/generations/${taskId}`, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${KLING_CN_VIDEO_KEY}`,
+      Authorization: `Bearer ${KLING_CN_VIDEO_ACCESS_KEY}`,
     },
   });
 

@@ -584,7 +584,7 @@ export const appRouter = router({
             if (klingKeys.length > 0) {
               configureKlingClient(klingKeys, "cn");
             } else {
-              return { success: false, error: "Kling API 未配置，請聯繫管理員設置 KLING_CN_VIDEO_KEY", quality: input.quality };
+              return { success: false, error: "Kling API 未配置，請聯繫管理員設置 KLING_CN_VIDEO_ACCESS_KEY 和 KLING_CN_VIDEO_SECRET_KEY", quality: input.quality };
             }
             const { createImageTask, getImageTask, buildImageRequest } = await import("./kling/image-generation");
             const request = buildImageRequest({

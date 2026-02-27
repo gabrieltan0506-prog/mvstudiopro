@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 
 describe("Kling CN Environment Validation", () => {
-  it("should have KLING_CN_VIDEO_KEY set", () => {
-    expect(process.env.KLING_CN_VIDEO_KEY).toBeDefined();
-    expect(process.env.KLING_CN_VIDEO_KEY!.length).toBeGreaterThan(5);
+  it("should have KLING_CN_VIDEO_ACCESS_KEY set", () => {
+    expect(process.env.KLING_CN_VIDEO_ACCESS_KEY).toBeDefined();
+    expect(process.env.KLING_CN_VIDEO_ACCESS_KEY!.length).toBeGreaterThan(5);
+  });
+
+  it("should have KLING_CN_VIDEO_SECRET_KEY set", () => {
+    expect(process.env.KLING_CN_VIDEO_SECRET_KEY).toBeDefined();
+    expect(process.env.KLING_CN_VIDEO_SECRET_KEY!.length).toBeGreaterThan(5);
   });
 
   it("should use KLING_CN_BASE_URL when provided", () => {

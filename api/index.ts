@@ -54,8 +54,16 @@ function classifyConfig(parts: { keys: string[]; label: string }[]): {
 }
 
 function resolveKlingCnState(): { state: ProviderDiagState; error: string | null } {
-  if (!hasValue(process.env.KLING_CN_VIDEO_KEY)) {
-    return { state: "unconfigured", error: "Missing KLING_CN_VIDEO_KEY" };
+  const hasAccessKey = hasValue(process.env.KLING_CN_VIDEO_ACCESS_KEY);
+  const hasSecretKey = hasValue(process.env.KLING_CN_VIDEO_SECRET_KEY);
+  if (!hasAccessKey && !hasSecretKey) {
+    return { state: "unconfigured", error: "Missing KLING_CN_VIDEO_ACCESS_KEY and KLING_CN_VIDEO_SECRET_KEY" };
+  }
+  if (!hasAccessKey) {
+    return { state: "unconfigured", error: "Missing KLING_CN_VIDEO_ACCESS_KEY" };
+  }
+  if (!hasSecretKey) {
+    return { state: "unconfigured", error: "Missing KLING_CN_VIDEO_SECRET_KEY" };
   }
   return { state: "reachable", error: null };
 }
