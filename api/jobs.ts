@@ -2,8 +2,17 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const providerQuery = req.query.provider;
-  const provider = Array.isArray(providerQuery) ? providerQuery[0] : providerQuery;
+  const body = typeof req.body === "string"
+    ? (() => {
+        try {
+          return JSON.parse(req.body) as Record<string, unknown>;
+        } catch {
+          return {} as Record<string, unknown>;
+        }
+      })()
+    : ((req.body as Record<string, unknown>) ?? {});
+
+  const provider = (req.query.provider ?? body?.provider ?? "").toString();
   if (req.method === "GET" && (provider === "kling_beijing" || provider === "kling")) {
     const accessKey = process.env.KLING_CN_VIDEO_ACCESS_KEY?.trim();
     const secretKey = process.env.KLING_CN_VIDEO_SECRET_KEY?.trim();
@@ -68,17 +77,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const body = typeof req.body === "string"
-    ? (() => {
-        try {
-          return JSON.parse(req.body) as Record<string, unknown>;
-        } catch {
-          return {} as Record<string, unknown>;
-        }
-      })()
-    : ((req.body as Record<string, unknown>) ?? {});
-
-  const provider = String(body.provider ?? "");
   if (provider !== "kling_beijing") {
     return res.status(400).json({ ok: false, error: "Unsupported provider" });
   }
