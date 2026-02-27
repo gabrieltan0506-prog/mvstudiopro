@@ -8,6 +8,7 @@
  */
 
 import { getKlingCnConfig } from "../config/klingCn";
+import crypto from "crypto";
 
 export interface KlingApiKey {
   id: string;
@@ -189,11 +190,22 @@ export function configureKlingClient(keys: KlingApiKey[], defaultRegion: "global
 }
 
 export function parseKeysFromEnv(): KlingApiKey[] {
-  const { accessKey } = getKlingCnConfig();
+  const { accessKey, secretKey } = getKlingCnConfig();
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "HS256", typ: "JWT" };
+  const payload = { iss: accessKey, exp: now + 1800, nbf: now - 5, iat: now };
+  const toBase64Url = (value: Buffer) =>
+    value.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const headerB64 = toBase64Url(Buffer.from(JSON.stringify(header)));
+  const payloadB64 = toBase64Url(Buffer.from(JSON.stringify(payload)));
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const signature = crypto.createHmac("sha256", secretKey).update(signingInput).digest();
+  const jwt = `${signingInput}.${toBase64Url(signature)}`;
+
   return [
     {
       id: "primary-cn-video",
-      apiKey: accessKey,
+      apiKey: jwt,
       region: "cn",
       purpose: "all",
       enabled: true,

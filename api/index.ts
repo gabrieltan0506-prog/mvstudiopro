@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import klingVideoHandler from "./test/kling-video";
 
 const COOKIE_NAME = "app_session_id";
 const SUPERVISOR_ALLOWLIST = [
@@ -241,7 +242,7 @@ function resolveEffectiveTier(req: VercelRequest): "free" | "beta" | "paid" | "s
   return "free";
 }
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method !== "GET") {
       return res.status(405).setHeader("Allow", "GET").send("Method Not Allowed");
@@ -260,6 +261,12 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
       .map(value => value.split("?")[0]);
     const pathCandidates = [pathname, ...headerPaths];
     const isDiagProviders = pathCandidates.includes("/api/diag/providers");
+    const isKlingVideoTest = pathCandidates.includes("/api/test/kling-video");
+
+    if (isKlingVideoTest) {
+      await klingVideoHandler(req, res);
+      return;
+    }
 
     if (isDiagProviders) {
       const routingMap = {
