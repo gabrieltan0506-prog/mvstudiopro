@@ -2,7 +2,7 @@ import { getTierProviderChain, type UserTier } from "./tier-provider-routing";
 import { getCometApiBaseUrl, getCometApiKey } from "./cometapi";
 
 type ProviderType = "video" | "music" | "image" | "text";
-type ProviderName = "veo" | "kling" | "fal" | "comet" | "gemini" | "nano" | "playground-v2.5-1024px-aesthetic" | "suno";
+type ProviderName = "veo" | "kling" | "kling_beijing" | "fal" | "comet" | "gemini" | "nano" | "playground-v2.5-1024px-aesthetic" | "suno";
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 type EffectiveTier = UserTier | "unknown";
 type RoutingMap = Record<UserTier, Record<"image" | "video" | "text", string[]>>;
@@ -49,16 +49,6 @@ function nowMs() {
 
 function hasValue(value: string | undefined): boolean {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function getFirstEnv(keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = process.env[key];
-    if (hasValue(value)) {
-      return value;
-    }
-  }
-  return undefined;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -125,23 +115,22 @@ async function checkSunoApi(timeoutMs: number): Promise<CheckResult> {
 }
 
 async function checkKlingImageApi(timeoutMs: number): Promise<CheckResult> {
-  const klingAccessKey = getFirstEnv(["KLING_ACCESS_KEY", "KLING_ACCESS_KEY_1"]);
-  const klingSecretKey = getFirstEnv(["KLING_SECRET_KEY", "KLING_SECRET_KEY_1"]);
-  if (!hasValue(klingAccessKey) || !hasValue(klingSecretKey)) {
-    return { ok: false, error: "KLING_ACCESS_KEY/KLING_SECRET_KEY missing" };
+  const hasAccessKey = hasValue(process.env.KLING_CN_VIDEO_ACCESS_KEY);
+  const hasSecretKey = hasValue(process.env.KLING_CN_VIDEO_SECRET_KEY);
+  if (!hasAccessKey && !hasSecretKey) {
+    return { ok: false, error: "Missing KLING_CN_VIDEO_ACCESS_KEY and KLING_CN_VIDEO_SECRET_KEY" };
   }
-  const region = (process.env.KLING_REGION || process.env.KLING_DEFAULT_REGION || "cn").toLowerCase();
-  const base = region === "global" ? "https://api-singapore.klingai.com" : "https://api-beijing.klingai.com";
-  return await pingUrl(base, timeoutMs);
+  if (!hasAccessKey) {
+    return { ok: false, error: "Missing KLING_CN_VIDEO_ACCESS_KEY" };
+  }
+  if (!hasSecretKey) {
+    return { ok: false, error: "Missing KLING_CN_VIDEO_SECRET_KEY" };
+  }
+  return { ok: true };
 }
 
 async function checkKlingBeijingVideoApi(timeoutMs: number): Promise<CheckResult> {
-  const videoAccessKey = getFirstEnv(["KLING_VIDEO_ACCESS_KEY", "KLING_ACCESS_KEY", "KLING_ACCESS_KEY_1"]);
-  const videoSecretKey = getFirstEnv(["KLING_VIDEO_SECRET_KEY", "KLING_SECRET_KEY", "KLING_SECRET_KEY_1"]);
-  if (!hasValue(videoAccessKey) || !hasValue(videoSecretKey)) {
-    return { ok: false, error: "KLING video key missing" };
-  }
-  return await pingUrl("https://api-beijing.klingai.com", timeoutMs);
+  return await checkKlingImageApi(timeoutMs);
 }
 
 async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
@@ -276,7 +265,7 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
       check: async () => await geminiPing(),
     },
     {
-      name: "kling",
+      name: "kling_beijing",
       type: "video",
       role: "primary",
       paidOnly: false,

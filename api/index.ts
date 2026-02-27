@@ -53,6 +53,13 @@ function classifyConfig(parts: { keys: string[]; label: string }[]): {
   };
 }
 
+function resolveKlingCnState(): { state: ProviderDiagState; error: string | null } {
+  if (!hasValue(process.env.KLING_CN_VIDEO_KEY)) {
+    return { state: "unconfigured", error: "Missing KLING_CN_VIDEO_KEY" };
+  }
+  return { state: "reachable", error: null };
+}
+
 function buildProviders(): ProviderDiagItem[] {
   const forgeState = hasValue(process.env.PLAYGROUND_API_KEY)
     ? { state: "reachable" as const, error: null }
@@ -62,16 +69,7 @@ function buildProviders(): ProviderDiagItem[] {
     ? { state: "reachable" as const, error: null }
     : { state: "unconfigured" as const, error: "GEMINI_API_KEY missing" };
 
-  const klingState = classifyConfig([
-    {
-      keys: ["KLING_VIDEO_ACCESS_KEY", "KLING_ACCESS_KEY", "KLING_ACCESS_KEY_1"],
-      label: "KLING video access key",
-    },
-    {
-      keys: ["KLING_VIDEO_SECRET_KEY", "KLING_SECRET_KEY", "KLING_SECRET_KEY_1"],
-      label: "KLING video secret key",
-    },
-  ]);
+  const klingState = resolveKlingCnState();
 
   const falState = hasValue(process.env.FAL_API_KEY)
     ? { state: "reachable" as const, error: null }

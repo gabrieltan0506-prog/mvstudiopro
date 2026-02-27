@@ -15,6 +15,7 @@ import { startJobWorker } from "../jobs/runner";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
+import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 
 function buildRoutingMap() {
   return {
@@ -61,6 +62,8 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  warnLegacyKlingEnvIgnored();
+
   const app = express();
   const server = createServer(app);
   // Stripe webhook MUST be registered BEFORE express.json() for signature verification

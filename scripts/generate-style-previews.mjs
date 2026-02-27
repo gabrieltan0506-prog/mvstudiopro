@@ -3,40 +3,20 @@
  * Usage: node scripts/generate-style-previews.mjs
  */
 
-import jwt from "jsonwebtoken";
+const KLING_CN_VIDEO_KEY = process.env.KLING_CN_VIDEO_KEY;
+const BASE_URL = (process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com").replace(/\/$/, "");
 
-// Kling API configuration
-const KLING_ACCESS_KEY = process.env.KLING_ACCESS_KEY;
-const KLING_SECRET_KEY = process.env.KLING_SECRET_KEY;
-
-if (!KLING_ACCESS_KEY || !KLING_SECRET_KEY) {
-  console.error("Missing KLING_ACCESS_KEY or KLING_SECRET_KEY");
+if (!KLING_CN_VIDEO_KEY) {
+  console.error("Missing KLING_CN_VIDEO_KEY");
   process.exit(1);
 }
 
-function generateJWT() {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: KLING_ACCESS_KEY,
-    exp: now + 1800,
-    nbf: now - 5,
-    iat: now,
-  };
-  return jwt.sign(payload, KLING_SECRET_KEY, {
-    algorithm: "HS256",
-    header: { alg: "HS256", typ: "JWT" },
-  });
-}
-
-const BASE_URL = "https://api.klingai.com";
-
 async function createImageTask(prompt, aspectRatio = "16:9") {
-  const token = generateJWT();
   const response = await fetch(`${BASE_URL}/v1/images/generations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${KLING_CN_VIDEO_KEY}`,
     },
     body: JSON.stringify({
       model_name: "kling-v2-1",
@@ -55,11 +35,10 @@ async function createImageTask(prompt, aspectRatio = "16:9") {
 }
 
 async function getImageTask(taskId) {
-  const token = generateJWT();
   const response = await fetch(`${BASE_URL}/v1/images/generations/${taskId}`, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${KLING_CN_VIDEO_KEY}`,
     },
   });
 
@@ -119,7 +98,6 @@ async function main() {
 
   const tasks = [];
 
-  // Create all tasks in parallel
   for (const style of STYLES) {
     console.log(`Creating task for: ${style.name}`);
     try {
@@ -133,7 +111,6 @@ async function main() {
 
   console.log(`\nCreated ${tasks.length} tasks. Waiting for results...\n`);
 
-  // Wait for all tasks
   const results = [];
   for (const task of tasks) {
     console.log(`Waiting for: ${task.name}`);
@@ -151,7 +128,6 @@ async function main() {
     console.log(`${r.name}: ${r.url}`);
   }
 
-  // Output as JSON for easy parsing
   console.log("\n=== JSON ===");
   console.log(JSON.stringify(results, null, 2));
 }

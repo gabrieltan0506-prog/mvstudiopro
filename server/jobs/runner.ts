@@ -79,10 +79,9 @@ function ensureKlingInitialized() {
   if (klingInitialized) return;
   const keys = parseKeysFromEnv();
   if (keys.length === 0) {
-    throw new Error("Kling API keys are not configured");
+    throw new Error("Kling API is not configured: Missing KLING_CN_VIDEO_KEY");
   }
-  const defaultRegion = (process.env.KLING_DEFAULT_REGION as "global" | "cn") ?? "cn";
-  configureKlingClient(keys, defaultRegion);
+  configureKlingClient(keys, "cn");
   klingInitialized = true;
 }
 

@@ -64,9 +64,8 @@ function ensureInitialized() {
   if (initialized) return;
   const keys = parseKeysFromEnv();
   if (keys.length > 0) {
-    const defaultRegion = (process.env.KLING_DEFAULT_REGION as "global" | "cn") ?? "cn";
-    configureKlingClient(keys, defaultRegion);
-    console.log(`[Kling] Initialized with ${keys.length} API key(s), default region: ${defaultRegion}`);
+    configureKlingClient(keys, "cn");
+    console.log(`[Kling] Initialized with ${keys.length} CN API key(s), region: cn`);
   }
   initialized = true;
 }
