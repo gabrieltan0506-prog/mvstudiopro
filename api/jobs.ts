@@ -4,7 +4,7 @@ import crypto from "crypto";
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const providerQuery = req.query.provider;
   const provider = Array.isArray(providerQuery) ? providerQuery[0] : providerQuery;
-  if (req.method === "GET" && provider === "kling_beijing") {
+  if (req.method === "GET" && (provider === "kling_beijing" || provider === "kling")) {
     const accessKey = process.env.KLING_CN_VIDEO_ACCESS_KEY?.trim();
     const secretKey = process.env.KLING_CN_VIDEO_SECRET_KEY?.trim();
     if (!accessKey || !secretKey) {
