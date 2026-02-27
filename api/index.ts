@@ -1,6 +1,4 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import klingVideoHandler from "./test/kling-video";
-import klingVideoStatusHandler from "./test/kling-video-status";
 
 const COOKIE_NAME = "app_session_id";
 const SUPERVISOR_ALLOWLIST = [
@@ -262,18 +260,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map(value => value.split("?")[0]);
     const pathCandidates = [pathname, ...headerPaths];
     const isDiagProviders = pathCandidates.includes("/api/diag/providers");
-    const isKlingVideoStatusTest = pathCandidates.includes("/api/test/kling-video/status");
-    const isKlingVideoTest = pathCandidates.includes("/api/test/kling-video");
-
-    if (isKlingVideoStatusTest) {
-      await klingVideoStatusHandler(req, res);
-      return;
-    }
-
-    if (isKlingVideoTest) {
-      await klingVideoHandler(req, res);
-      return;
-    }
 
     if (isDiagProviders) {
       const routingMap = {
