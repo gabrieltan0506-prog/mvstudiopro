@@ -452,7 +452,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
 
       <div className="space-y-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>Enable Face Consistency</span>
+          <span>鎖定人臉一致性</span>
           <input
             type="checkbox"
             checked={enableFaceConsistency}
@@ -461,7 +461,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
           />
         </label>
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>Use Reference Image</span>
+          <span>使用參考圖片</span>
           <input
             type="checkbox"
             checked={useReferenceImage}
@@ -473,7 +473,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
           />
         </label>
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>Smooth Layered Transformation</span>
+          <span>平滑分層換裝（避免整體變形）</span>
           <input
             type="checkbox"
             checked={smoothLayeredTransformation}
@@ -485,7 +485,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
 
       {useReferenceImage && (
         <FileUploadBox
-          label="Reference Image"
+          label="上傳參考圖片"
           accept="image/*"
           value={referenceImageUri}
           onChange={setReferenceImageUri}
