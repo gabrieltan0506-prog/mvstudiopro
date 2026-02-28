@@ -16,6 +16,7 @@ import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../servi
 import { getTierProviderChain, resolveUserTier } from "../services/tier-provider-routing";
 import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
+import { registerAuthApiRoutes } from "../routers/authApi";
 
 function buildRoutingMap() {
   return {
@@ -75,6 +76,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   // File upload
   app.use(uploadRouter);
+  registerAuthApiRoutes(app);
 
   app.post("/api/jobs", async (req, res) => {
     try {

@@ -1,467 +1,226 @@
-// @ts-nocheck
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import { Loader2, RefreshCw } from "lucide-react";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { useLocation, useLocation } from "wouter";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { trpc } from "@/lib/trpc";
-import { getLoginUrl } from "@/const";
-import { CheckCircle, ArrowLeft, AlertTriangle, Mail, Lock, Gift, BarChart, Users, Sparkles, Megaphone, Loader2 } from "lucide-react";
+const OTP_SECONDS = 60;
 
-
-type LoginMode = "otp" | "password" | "register" | "invite";
+type CaptchaResponse = {
+  imageBase64: string;
+  captchaId: string;
+};
 
 export default function Login() {
-  const navigate = useLocation();
-  const [location, setLocation] = useLocation();
-  const params = new URLSearchParams(location.split('?')[1] || '');
-  const errorParam = params.get('error');
-  const inviteParam = params.get('invite');
-
-  const { refresh } = useAuth({ autoFetch: false });
-
-  const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<LoginMode>(inviteParam ? "invite" : "otp");
+  const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [inviteCode, setInviteCode] = useState(inviteParam || "");
-  const [error, setError] = useState(
-    errorParam === "oauth_failed"
-      ? "Google 登录失败，请重试"
-      : errorParam === "invalid_redirect"
-      ? "Sandbox 域名已变更，请重新发起 Google 登录"
-      : ""
-  );
-  const [otpSent, setOtpSent] = useState(false);
+  const [captchaId, setCaptchaId] = useState("");
+  const [captchaImage, setCaptchaImage] = useState("");
+  const [captchaText, setCaptchaText] = useState("");
+  const [otp, setOtp] = useState("");
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [loadingCaptcha, setLoadingCaptcha] = useState(false);
   const [countdown, setCountdown] = useState(0);
-  const [successMessage, setSuccessMessage] = useState("");
-
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const registerMutation = trpc.emailAuth.register.useMutation();
-  const loginMutation = trpc.emailAuth.login.useMutation();
-  const sendOtpMutation = trpc.emailOtp.sendCode.useMutation();
-  const verifyOtpMutation = trpc.emailOtp.verifyAndLogin.useMutation();
-  const redeemInviteMutation = trpc.beta.redeemInviteCode.useMutation();
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   useEffect(() => {
-    if (countdown > 0) {
-      countdownRef.current = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            if (countdownRef.current) clearInterval(countdownRef.current);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [countdown > 0]);
+    void refreshCaptcha();
+  }, []);
 
-  const handleGoogleLogin = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = window.setInterval(() => {
+      setCountdown(value => (value > 1 ? value - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [countdown]);
+
+  const isValidEmail = useMemo(() => /[^\s@]+@[^\s@]+\.[^\s@]+/.test(email.trim()), [email]);
+
+  const refreshCaptcha = useCallback(async () => {
+    setLoadingCaptcha(true);
     setError("");
     try {
-      window.location.href = getLoginUrl();
+      const response = await fetch("/api/auth/captcha", { method: "GET", credentials: "include" });
+      const data = (await response.json()) as CaptchaResponse;
+      if (!response.ok) {
+        throw new Error("获取图形验证码失败，请重试");
+      }
+      setCaptchaId(data.captchaId);
+      setCaptchaImage(data.imageBase64);
+      setCaptchaText("");
     } catch (err) {
-      console.error("[Login] Google login failed:", err);
-      setError("Google 登录失败，请重试");
+      setError(err instanceof Error ? err.message : "获取图形验证码失败，请重试");
     } finally {
-      setLoading(false);
+      setLoadingCaptcha(false);
     }
   }, []);
 
   const handleSendOtp = useCallback(async () => {
     setError("");
-    if (!email) {
-      setError("请输入 Mail 地址");
+    setSuccess("");
+
+    if (!isValidEmail) {
+      setError("请输入有效的邮箱地址");
       return;
     }
-    setLoading(true);
-    try {
-      await sendOtpMutation.mutateAsync({ email });
-      setOtpSent(true);
-      setCountdown(60);
-      setSuccessMessage("验证码已发送到您的邮箱");
-      setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err: any) {
-      setError(err.message || "发送验证码失败");
-    } finally {
-      setLoading(false);
+    if (!captchaId || !captchaText.trim()) {
+      setError("请输入图形验证码");
+      return;
     }
-  }, [email, sendOtpMutation]);
+
+    setSendingOtp(true);
+    try {
+      const response = await fetch("/api/auth/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          email: email.trim(),
+          captchaId,
+          captchaText: captchaText.trim(),
+        }),
+      });
+
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "发送验证码失败，请稍后重试");
+      }
+
+      setSuccess("验证码已发送，请查收邮箱");
+      setCountdown(OTP_SECONDS);
+      await refreshCaptcha();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "发送验证码失败，请稍后重试");
+      await refreshCaptcha();
+    } finally {
+      setSendingOtp(false);
+    }
+  }, [captchaId, captchaText, email, isValidEmail, refreshCaptcha]);
 
   const handleVerifyOtp = useCallback(async () => {
     setError("");
-    if (!otpCode || otpCode.length !== 6) {
-      setError("请输入 6 位验证码");
+    setSuccess("");
+
+    if (!isValidEmail) {
+      setError("请输入有效的邮箱地址");
       return;
     }
-    setLoading(true);
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setError("请输入 6 位数字 OTP");
+      return;
+    }
+
+    setVerifying(true);
     try {
-      const result = await verifyOtpMutation.mutateAsync({ email, code: otpCode });
-      if (result.success) {
-        await refresh();
-        window.history.back();
+      const response = await fetch("/api/auth/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+      });
+
+      const data = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "登录失败，请稍后重试");
       }
-    } catch (err: any) {
-      setError(err.message || "验证失败");
+
+      setSuccess("登录成功，正在跳转...");
+      window.setTimeout(() => {
+        setLocation("/dashboard");
+      }, 600);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "登录失败，请稍后重试");
     } finally {
-      setLoading(false);
+      setVerifying(false);
     }
-  }, [email, otpCode, verifyOtpMutation, refresh]);
-
-  const handlePasswordLogin = useCallback(async () => {
-    setError("");
-    if (!email || !password) {
-      setError("请输入 Mail 和密码");
-      return;
-    }
-    setLoading(true);
-    try {
-      await loginMutation.mutateAsync({ email, password });
-      await refresh();
-      window.history.back();
-    } catch (err: any) {
-      setError(err.message || "登录失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [email, password, loginMutation, refresh]);
-
-  const handleRegister = useCallback(async () => {
-    setError("");
-    if (!email || !password) {
-      setError("请输入 Mail 和密码");
-      return;
-    }
-    if (!name) {
-      setError("请输入姓名");
-      return;
-    }
-    setLoading(true);
-    try {
-      await registerMutation.mutateAsync({ email, password, name });
-      setSuccessMessage("注册成功！请登录");
-      setMode("password");
-      setTimeout(() => setSuccessMessage(""), 3000);
-    } catch (err: any) {
-      setError(err.message || "注册失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [email, password, name, registerMutation]);
-
-  const handleRedeemInvite = useCallback(async () => {
-    setError("");
-    if (!inviteCode) {
-      setError("请输入邀请码");
-      return;
-    }
-    setLoading(true);
-    try {
-      const result = await redeemInviteMutation.mutateAsync({ inviteCode });
-      setSuccessMessage(result.message);
-      setTimeout(() => {
-        window.history.back();
-      }, 2000);
-    } catch (err: any) {
-      setError(err.message || "邀请码兑换失败");
-    } finally {
-      setLoading(false);
-    }
-  }, [inviteCode, redeemInviteMutation]);
-
-  const renderOtpForm = () => (
-    <div className="mb-2">
-      <input
-        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-base text-[#F7F4EF] mb-3 disabled:opacity-50"
-        placeholder="Mail 地址"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        type="email"
-        autoCapitalize="none"
-        disabled={otpSent}
-      />
-
-      {otpSent && (
-        <div className="flex gap-2.5">
-          <input
-            className="flex-1 w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-lg text-[#F7F4EF] tracking-[0.5em] font-semibold text-center mb-3"
-            placeholder="6 位验证码"
-            value={otpCode}
-            onChange={(e) => setOtpCode(e.target.value)}
-            type="number"
-            maxLength={6}
-            onKeyDown={(e) => e.key === 'Enter' && handleVerifyOtp()}
-          />
-          <button
-            className="bg-red-500/15 rounded-xl px-4 justify-center items-center mb-3 disabled:opacity-50"
-            onClick={handleSendOtp}
-            disabled={countdown > 0 || loading}
-          >
-            <span className="text-sm font-semibold text-red-400">
-              {countdown > 0 ? `${countdown}s` : "重发"}
-            </span>
-          </button>
-        </div>
-      )}
-
-      {successMessage && (
-        <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/25 rounded-lg px-3.5 py-2.5 mb-3">
-          <CheckCircle className="w-4 h-4 text-green-400" />
-          <p className="flex-1 text-xs text-green-400 leading-snug">{successMessage}</p>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
-
-      <button
-        className="w-full bg-red-400 hover:bg-red-500 transition-colors py-4 rounded-xl flex items-center justify-center mb-3 disabled:opacity-60"
-        onClick={otpSent ? handleVerifyOtp : handleSendOtp}
-        disabled={loading}
-      >
-        {loading ? (
-          <Loader2 className="w-5 h-5 text-white animate-spin" />
-        ) : (
-          <span className="text-base font-semibold text-white">
-            {otpSent ? "验证并登录" : "发送验证码"}
-          </span>
-        )}
-      </button>
-
-      {otpSent && (
-        <button onClick={() => { setOtpSent(false); setOtpCode(""); setError(""); }} className="mt-2 w-full">
-          <span className="text-sm text-[#9B9691] text-center">更换 Mail 地址</span>
-        </button>
-      )}
-    </div>
-  );
-
-  const renderPasswordForm = () => (
-    <div className="mb-2">
-      {mode === "register" && (
-        <input
-          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-base text-[#F7F4EF] mb-3"
-          placeholder="姓名"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoCapitalize="words"
-        />
-      )}
-      <input
-        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-base text-[#F7F4EF] mb-3"
-        placeholder="Mail"
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        type="email"
-        autoCapitalize="none"
-      />
-      <input
-        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-base text-[#F7F4EF] mb-3"
-        placeholder="密码"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        type="password"
-        onKeyDown={(e) => e.key === 'Enter' && (mode === "register" ? handleRegister() : handlePasswordLogin())}
-      />
-
-      {successMessage && (
-         <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/25 rounded-lg px-3.5 py-2.5 mb-3">
-          <CheckCircle className="w-4 h-4 text-green-400" />
-          <p className="flex-1 text-xs text-green-400 leading-snug">{successMessage}</p>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
-
-      <button
-        className="w-full bg-red-400 hover:bg-red-500 transition-colors py-4 rounded-xl flex items-center justify-center mb-3 disabled:opacity-60"
-        onClick={mode === "register" ? handleRegister : handlePasswordLogin}
-        disabled={loading}
-      >
-        {loading ? (
-          <Loader2 className="w-5 h-5 text-white animate-spin" />
-        ) : (
-          <span className="text-base font-semibold text-white">
-            {mode === "register" ? "注册" : "登录"}
-          </span>
-        )}
-      </button>
-
-      <button onClick={() => setMode(mode === "register" ? "password" : "register")} className="w-full">
-        <span className="text-sm text-[#9B9691] text-center">
-          {mode === "register" ? "已有帐号？登录" : "还没有帐号？注册"}
-        </span>
-      </button>
-    </div>
-  );
-
-  const renderInviteForm = () => (
-    <div className="mb-2">
-      <div className="flex flex-col items-center gap-2 mb-6">
-        <Gift className="w-8 h-8 text-red-400" />
-        <h2 className="text-xl font-bold text-[#F7F4EF]">兑换邀请码</h2>
-        <p className="text-sm text-[#9B9691] text-center leading-snug">输入朋友的邀请码，双方各获得 10 次额外配额</p>
-      </div>
-
-      <input
-        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3.5 text-lg text-[#F7F4EF] tracking-[0.25em] font-semibold text-center mb-3"
-        placeholder="输入 8 位邀请码"
-        value={inviteCode}
-        onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-        autoCapitalize="characters"
-        maxLength={8}
-        onKeyDown={(e) => e.key === 'Enter' && handleRedeemInvite()}
-      />
-
-      {successMessage && (
-        <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/25 rounded-lg px-3.5 py-2.5 mb-3">
-          <CheckCircle className="w-4 h-4 text-green-400" />
-          <p className="flex-1 text-xs text-green-400 leading-snug">{successMessage}</p>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-red-400 mb-3 text-center">{error}</p>}
-
-      <button
-        className="w-full bg-red-400 hover:bg-red-500 transition-colors py-4 rounded-xl flex items-center justify-center mb-3 disabled:opacity-60"
-        onClick={handleRedeemInvite}
-        disabled={loading}
-      >
-        {loading ? (
-          <Loader2 className="w-5 h-5 text-white animate-spin" />
-        ) : (
-          <span className="text-base font-semibold text-white">兑换邀请码</span>
-        )}
-      </button>
-    </div>
-  );
+  }, [email, isValidEmail, otp, setLocation]);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-5 overflow-hidden relative">
-      <button onClick={() => window.history.back()} className="absolute top-4 left-5 md:top-6 flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/5 z-10 hover:bg-white/10 transition-colors">
-        <ArrowLeft className="w-4 h-4 text-[#9B9691]" />
-        <span className="text-sm text-[#9B9691] font-medium">返回</span>
-      </button>
+    <div className="min-h-screen bg-slate-950 text-slate-100 px-4 py-10">
+      <div className="max-w-md mx-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
+        <h1 className="text-2xl font-semibold mb-1">邮箱 + 图形验证码登录</h1>
+        <p className="text-sm text-slate-400 mb-6">一次性会话登录，关闭浏览器后需重新登录</p>
 
-      <div className="absolute w-[300px] h-[300px] -top-20 -right-16 bg-red-500/5 rounded-full" />
-      <div className="absolute w-[250px] h-[250px] -bottom-10 -left-20 bg-blue-400/5 rounded-full" />
+        <label className="block text-sm mb-2">邮箱</label>
+        <input
+          className="w-full mb-4 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-600"
+          placeholder="请输入邮箱"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          type="email"
+        />
 
-      <div className="flex flex-col items-center mt-10 mb-8 z-0">
-        <div className="w-20 h-20 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4 shadow-[0_0_40px_rgba(255,107,107,0.15)]">
-          <img src="/icon.png" alt="MV Studio Pro Logo" className="w-14 h-14 rounded-xl" />
-        </div>
-        <h1 className="text-3xl font-extrabold text-[#F7F4EF] tracking-tight">MV Studio Pro</h1>
-        <p className="text-sm text-[#9B9691] mt-1.5">My Video, I am the team.</p>
-      </div>
-
-      <div className="w-full max-w-md bg-[rgba(20,15,25,0.7)] rounded-2xl p-7 md:p-9 border border-white/10 backdrop-blur-xl shadow-2xl z-0">
-        <h2 className="text-2xl font-bold text-[#F7F4EF] text-center mb-2">欢迎使用</h2>
-        <p className="text-sm text-[#9B9691] text-center mb-6 leading-relaxed">
-          {mode === "invite"
-            ? "使用邀请码加入内测，获得额外功能配额"
-            : "使用 Google 或 Mail 帐号登录，即可享受完整的视频创作功能"}
-        </p>
-
-        {errorParam === "oauth_failed" && (
-          <div className="flex items-center gap-2.5 bg-red-500/10 border border-red-500/25 rounded-xl px-4 py-3 mb-5">
-            <AlertTriangle className="w-5 h-5 text-red-400" />
-            <p className="flex-1 text-sm text-red-400 leading-snug">Google 登录验证失败，请重新尝试</p>
-          </div>
-        )}
-
-        {mode !== "invite" && (
-          <div className="flex bg-black/20 rounded-xl p-1 mb-6">
-            <button
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg transition-colors ${mode === "otp" ? "bg-red-500/15" : "hover:bg-white/5"}`}
-              onClick={() => { setMode("otp"); setError(""); }}
-            >
-              <Mail className={`w-4 h-4 ${mode === "otp" ? "text-red-400" : "text-gray-500"}`} />
-              <span className={`text-sm font-medium ${mode === "otp" ? "text-red-400" : "text-gray-400"}`}>验证码登录</span>
-            </button>
-            <button
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg transition-colors ${(mode === "password" || mode === "register") ? "bg-red-500/15" : "hover:bg-white/5"}`}
-              onClick={() => { setMode("password"); setError(""); }}
-            >
-              <Lock className={`w-4 h-4 ${(mode === "password" || mode === "register") ? "text-red-400" : "text-gray-500"}`} />
-              <span className={`text-sm font-medium ${(mode === "password" || mode === "register") ? "text-red-400" : "text-gray-400"}`}>密码登录</span>
-            </button>
-          </div>
-        )}
-
-        {mode === "otp" && renderOtpForm()}
-        {(mode === "password" || mode === "register") && renderPasswordForm()}
-        {mode === "invite" && renderInviteForm()}
-
-        {mode !== "invite" && (
-          <>
-            <div className="flex items-center my-4">
-              <div className="flex-1 h-px bg-white/10" />
-              <span className="text-xs text-[#9B9691] px-3">或</span>
-              <div className="flex-1 h-px bg-white/10" />
-            </div>
-
-            <button
-              className="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-white text-black/80 shadow-md hover:shadow-lg transition-shadow disabled:opacity-60"
-              onClick={handleGoogleLogin}
-              disabled={loading}
-            >
-              <img src="https://www.google.com/favicon.ico" alt="Google Icon" className="w-5 h-5" />
-              <span className="text-base font-semibold">
-                {loading ? "连接中..." : "使用 Google 帐号登录"}
-              </span>
-            </button>
-
-            <button
-              className="w-full flex items-center justify-center gap-2 py-3 mt-4 rounded-xl border border-dashed border-red-500/30 hover:bg-red-500/10 transition-colors"
-              onClick={() => { setMode("invite"); setError(""); }}
-            >
-              <Gift className="w-4 h-4 text-red-400" />
-              <span className="text-sm font-medium text-red-400">有邀请码？点此兑换</span>
-            </button>
-          </>
-        )}
-
-        {mode === "invite" && (
+        <label className="block text-sm mb-2">图形验证码</label>
+        <div className="flex items-center gap-3 mb-3">
           <button
-            className="w-full flex items-center justify-center gap-1.5 py-3 mt-2"
-            onClick={() => { setMode("otp"); setError(""); setSuccessMessage(""); }}
+            type="button"
+            onClick={() => void refreshCaptcha()}
+            className="h-[50px] w-[160px] rounded-md border border-slate-700 bg-white disabled:opacity-60"
+            disabled={loadingCaptcha}
+            title="点击刷新验证码"
           >
-            <ArrowLeft className="w-4 h-4 text-[#9B9691]" />
-            <span className="text-sm text-[#9B9691]">返回登录</span>
+            {loadingCaptcha ? (
+              <div className="flex h-full items-center justify-center text-slate-500">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            ) : captchaImage ? (
+              <img src={captchaImage} alt="验证码" className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-slate-500 text-xs">加载失败</span>
+            )}
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => void refreshCaptcha()}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-2 text-sm hover:bg-slate-800"
+            disabled={loadingCaptcha}
+          >
+            <RefreshCw className={`h-4 w-4 ${loadingCaptcha ? "animate-spin" : ""}`} />
+            刷新
+          </button>
+        </div>
 
-        {mode !== "invite" && (
-          <div className="mt-6 pt-5 border-t border-white/10">
-            <h3 className="text-sm font-semibold text-[#9B9691] mb-3.5 text-center">登录后可使用</h3>
-            <div className="space-y-3">
-              {[
-                { icon: BarChart, text: "视频 PK 评分 — AI 深度解析爆款潜力" },
-                { icon: Users, text: "虚拟偶像工坊 — 生成多风格虚拟形象" },
-                { icon: Sparkles, text: "分镜转视频 — 将分镜脚本转化为视频" },
-                { icon: Megaphone, text: "多平台发布 — 一键跨平台发布" },
-              ].map((feat, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <feat.icon className="w-5 h-5 text-red-400" />
-                  <p className="text-sm text-[#F7F4EF] flex-1 leading-snug">{feat.text}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <input
+          className="w-full mb-4 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 uppercase outline-none focus:ring-2 focus:ring-sky-600"
+          placeholder="请输入图形验证码"
+          value={captchaText}
+          onChange={e => setCaptchaText(e.target.value)}
+          maxLength={8}
+        />
 
-        <p className="text-xs text-gray-600 text-center mt-6 leading-relaxed">
-          继续即表示您同意我们的
-          <a href="#" className="text-red-400 hover:underline"> 服务条款 </a>
-          和
-          <a href="#" className="text-red-400 hover:underline"> 隐私政策</a>
-        </p>
+        <div className="flex gap-2 mb-4">
+          <button
+            type="button"
+            onClick={() => void handleSendOtp()}
+            disabled={sendingOtp || countdown > 0}
+            className="flex-1 rounded-lg bg-sky-600 px-3 py-2 font-medium hover:bg-sky-500 disabled:opacity-60"
+          >
+            {sendingOtp ? "发送中..." : countdown > 0 ? `${countdown}s 后可重发` : "发送 OTP"}
+          </button>
+        </div>
+
+        <label className="block text-sm mb-2">OTP</label>
+        <input
+          className="w-full mb-4 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-600"
+          placeholder="请输入 6 位 OTP"
+          value={otp}
+          onChange={e => setOtp(e.target.value)}
+          maxLength={6}
+        />
+
+        {error && <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-300">{error}</div>}
+        {success && <div className="mb-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2 text-sm text-emerald-300">{success}</div>}
+
+        <button
+          type="button"
+          onClick={() => void handleVerifyOtp()}
+          disabled={verifying}
+          className="w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500 disabled:opacity-60"
+        >
+          {verifying ? "登录中..." : "登录"}
+        </button>
       </div>
     </div>
   );

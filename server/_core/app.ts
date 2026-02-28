@@ -4,6 +4,7 @@ import { createContext } from "./context";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
 import { getSupervisorAllowlist } from "../services/access-policy";
 import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
+import { registerAuthApiRoutes } from "../routers/authApi";
 
 export function createApp() {
   const app = express();
@@ -11,6 +12,7 @@ export function createApp() {
   app.use(cookieParser());
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  registerAuthApiRoutes(app);
 
   // health check
   app.get("/api/health", (_req, res) => {
