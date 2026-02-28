@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
-import { saveVideoShortLink } from "../server/services/video-short-links";
+import { saveVideoShortLink } from "./_core/video-short-links";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = typeof req.body === "string"
