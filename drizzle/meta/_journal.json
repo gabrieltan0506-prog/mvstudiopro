@@ -64,6 +64,13 @@
       "when": 1772269200000,
       "tag": "0008_video_short_links",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1772503200000,
+      "tag": "0009_music_membership_credits",
+      "breakpoints": true
     }
   ]
 }

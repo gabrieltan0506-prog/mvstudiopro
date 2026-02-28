@@ -51,6 +51,7 @@ interface GeneratedSong {
   title: string;
   tags?: string;
   duration?: number;
+  downloadAllowed?: boolean;
 }
 
 // ─── 风格标签 ─────────────────────────────────────
@@ -110,6 +111,7 @@ export default function AudioLabPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [progressMessage, setProgressMessage] = useState("");
   const [creditCost, setCreditCost] = useState(0);
+  const [downloadAllowed, setDownloadAllowed] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const generateLyrics = trpc.suno.generateLyrics.useMutation();
@@ -230,6 +232,7 @@ export default function AudioLabPage() {
           const output = (data.output || {}) as any;
           setSongs(output.songs || []);
           setCreditCost(typeof output.creditCost === "number" ? output.creditCost : 0);
+          setDownloadAllowed(Boolean(output.downloadAllowed));
           setStatus("success");
           toast.success("音乐生成成功！");
         } else if (data.status === "failed") {
@@ -263,6 +266,7 @@ export default function AudioLabPage() {
     setErrorMsg("");
     setProgressMessage("正在提交任务...");
     setSongs([]);
+    setDownloadAllowed(false);
     if (!user?.id) {
       setStatus("error");
       setErrorMsg("登录状态已失效，请重新登录后再试。");
@@ -364,6 +368,7 @@ export default function AudioLabPage() {
     setSelectedMoods([]);
     setVocalGender("");
     setInstrumental(false);
+    setDownloadAllowed(false);
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
@@ -632,13 +637,29 @@ export default function AudioLabPage() {
                     </button>
                   )}
                   {song.audioUrl && (
-                    <a href={song.audioUrl} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
-                      <Download size={18} className="text-[#E8825E]" />
-                    </a>
+                    song.downloadAllowed ?? downloadAllowed ? (
+                      <a href={song.audioUrl} download={`${song.title || "song"}.mp3`} className="p-2.5 bg-white/10 rounded-md hover:bg-white/20 transition-colors">
+                        <Download size={18} className="text-[#E8825E]" />
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toast.error("免费模式不支持下载，请购买单次或套餐。")}
+                        className="p-2.5 bg-white/5 rounded-md text-gray-500 cursor-not-allowed"
+                        title="免费模式不支持下载"
+                      >
+                        <Download size={18} />
+                      </button>
+                    )
                   )}
                 </div>
               </div>
             ))}
+            {!downloadAllowed && (
+              <p className="text-xs text-amber-300">
+                免费模式仅支持在线播放，下载需单次购买或套餐额度。
+              </p>
+            )}
           </div>
         )}
 

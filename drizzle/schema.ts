@@ -70,3 +70,4 @@ export * from "./schema-video-signatures";
 export * from "./schema-jobs";
 export * from "./schema-workflow";
 export * from "./schema-video-short-links";
+export * from "./schema-music-membership";

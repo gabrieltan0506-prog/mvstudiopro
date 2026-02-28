@@ -14,6 +14,14 @@ import { recordCreation } from "./creations";
 import { invokeLLM } from "../_core/llm";
 import { deductCredits, getCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
+import {
+  DEFAULT_TRACK_SECONDS,
+  FREE_SECONDS_LIMIT,
+  FREE_TRACK_LIMIT,
+  consumeMusicGenerationCredit,
+  getMusicMembershipState,
+  isDownloadAllowedForMode,
+} from "../music-membership";
 
 // Suno API 配置（通过 sunoapi.org 或 kie.ai 第三方代理）
 const SUNO_API_BASE = process.env.SUNO_API_BASE || "https://api.sunoapi.org";
@@ -200,18 +208,11 @@ export const sunoRouter = router({
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const isAdmin = ctx.user.role === "admin";
-
-      // 根据模型版本确定 Credits 消耗
-      const creditCost = input.model === "V5" ? CREDIT_COSTS.sunoMusicV5 : CREDIT_COSTS.sunoMusicV4;
-
-      // 扣除 Credits（管理员免扣）
-      if (!isAdmin) {
-        const creditsInfo = await getCredits(userId);
-        if (creditsInfo.totalAvailable < creditCost) {
-          throw new Error(`Credits 不足，${input.model} 音乐生成需要 ${creditCost} Credits`);
-        }
-        await deductCredits(userId, input.model === "V5" ? "sunoMusicV5" : "sunoMusicV4");
-      }
+      const requestedSeconds = DEFAULT_TRACK_SECONDS;
+      const billing = isAdmin
+        ? { mode: "admin" as const, deducted: 0 }
+        : await consumeMusicGenerationCredit(userId, requestedSeconds);
+      const creditCost = billing.deducted;
 
       // 构建 Suno API 请求
       const sunoModel = MODEL_MAP[input.model];
@@ -256,6 +257,8 @@ export const sunoRouter = router({
           mode: "theme_song" as const,
           model: input.model,
           creditCost,
+          billingMode: billing.mode,
+          downloadAllowed: isDownloadAllowedForMode(billing.mode),
         };
       } else {
         // BGM 模式：customMode + instrumental
@@ -311,6 +314,8 @@ export const sunoRouter = router({
           mode: "bgm" as const,
           model: input.model,
           creditCost,
+          billingMode: billing.mode,
+          downloadAllowed: isDownloadAllowedForMode(billing.mode),
         };
       }
     }),
@@ -320,8 +325,10 @@ export const sunoRouter = router({
     .input(z.object({
       taskId: z.string().min(1),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const data = await getSunoTaskStatus(input.taskId);
+      const membership = await getMusicMembershipState(ctx.user.id);
+      const downloadAllowed = membership.canDownload || membership.mode === "admin";
 
       return {
         taskId: data.taskId,
@@ -334,7 +341,10 @@ export const sunoRouter = router({
           title: song.title,
           tags: song.tags,
           duration: song.duration,
+          downloadAllowed,
         })) || [],
+        billingMode: membership.mode,
+        downloadAllowed,
         errorMessage: data.errorMessage,
       };
     }),
@@ -342,8 +352,9 @@ export const sunoRouter = router({
   // 获取音频水印 URL（免費用户播放前加入 MVStudioPro.com 语音）
   getWatermarkAudio: protectedProcedure
     .query(async ({ ctx }) => {
-      const isAdmin = ctx.user.role === "admin";
-      if (isAdmin) {
+      const membership = await getMusicMembershipState(ctx.user.id);
+      const isFreeMode = membership.mode === "free";
+      if (!isFreeMode) {
         return { watermarkUrl: null, enabled: false };
       }
       try {
@@ -362,6 +373,10 @@ export const sunoRouter = router({
       v4: CREDIT_COSTS.sunoMusicV4,
       v5: CREDIT_COSTS.sunoMusicV5,
       lyrics: CREDIT_COSTS.sunoLyrics,
+      singleDeduct: 8,
+      packageDeduct: 1,
+      freeTrackLimit: FREE_TRACK_LIMIT,
+      freeSecondsLimit: FREE_SECONDS_LIMIT,
     };
   }),
 });

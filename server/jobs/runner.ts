@@ -546,6 +546,19 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number): Promise<{
   const customStyle = typeof params.customStyle === "string" ? params.customStyle : undefined;
   const mood = typeof params.mood === "string" ? params.mood : undefined;
   const callbackUrl = typeof params.callbackUrl === "string" ? params.callbackUrl : "";
+  const billingMode =
+    params.__musicBillingMode === "single" || params.__musicBillingMode === "package" || params.__musicBillingMode === "admin"
+      ? params.__musicBillingMode
+      : "free";
+  const deducted =
+    typeof params.__musicDeducted === "number" && Number.isFinite(params.__musicDeducted)
+      ? params.__musicDeducted
+      : billingMode === "single"
+      ? 8
+      : billingMode === "package"
+      ? 1
+      : 0;
+  const downloadAllowed = billingMode === "single" || billingMode === "package" || billingMode === "admin";
 
   const submitPayload: Record<string, unknown> = {
     customMode: true,
@@ -597,7 +610,9 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number): Promise<{
           songs,
           model,
           mode,
-          creditCost: model === "V5" ? 22 : 12,
+          creditCost: deducted,
+          billingMode,
+          downloadAllowed,
         },
       };
     }

@@ -18,6 +18,11 @@ import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { saveVideoShortLink } from "../services/video-short-links";
+import {
+  DEFAULT_TRACK_SECONDS,
+  consumeMusicGenerationCredit,
+  isDownloadAllowedForMode,
+} from "../music-membership";
 
 function buildRoutingMap() {
   return {
@@ -109,6 +114,8 @@ async function startServer() {
       }
 
       const action = typeof (input as any).action === "string" ? String((input as any).action) : "";
+      const inputRecord = input as Record<string, any>;
+      let inputToPersist: Record<string, any> = inputRecord;
       const provider =
         type === "audio"
           ? "suno"
@@ -118,13 +125,42 @@ async function startServer() {
           ? "nano"
           : "kling-cn";
 
+      if (type === "audio" && action === "suno_music") {
+        if (!ctx.user || !Number.isFinite(Number(ctx.user.id))) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+
+        const requestedSecondsRaw = inputRecord?.params?.requestedSeconds;
+        const requestedSeconds =
+          typeof requestedSecondsRaw === "number" && Number.isFinite(requestedSecondsRaw)
+            ? requestedSecondsRaw
+            : DEFAULT_TRACK_SECONDS;
+
+        try {
+          const billing = await consumeMusicGenerationCredit(Number(ctx.user.id), requestedSeconds);
+          inputToPersist = {
+            ...inputRecord,
+            params: {
+              ...(inputRecord.params ?? {}),
+              __musicBillingMode: billing.mode,
+              __musicDeducted: billing.deducted,
+              __musicRequestedSeconds: requestedSeconds,
+            },
+          };
+        } catch (musicError: any) {
+          return res.status(403).json({
+            error: musicError?.message || "Music credits exhausted",
+          });
+        }
+      }
+
       const jobId = nanoid(16);
       await createJob({
         id: jobId,
         userId: resolvedUserId,
         type,
         provider,
-        input,
+        input: inputToPersist,
       });
 
       return res.status(200).json({ jobId, status: "queued" });
@@ -162,8 +198,32 @@ async function startServer() {
       const output = (job.output && typeof job.output === "object")
         ? { ...(job.output as Record<string, unknown>) }
         : undefined;
+      const jobInput = (job.input && typeof job.input === "object")
+        ? (job.input as Record<string, any>)
+        : null;
 
       if (job.status === "succeeded" && output) {
+        if (job.type === "audio" && jobInput?.action === "suno_music") {
+          const modeFromOutput = typeof output.billingMode === "string" ? output.billingMode : undefined;
+          const modeFromInput = typeof jobInput?.params?.__musicBillingMode === "string"
+            ? jobInput.params.__musicBillingMode
+            : undefined;
+          const billingMode = modeFromOutput ?? modeFromInput ?? "free";
+          const downloadAllowed = isDownloadAllowedForMode(billingMode);
+          output.billingMode = billingMode;
+          output.downloadAllowed = downloadAllowed;
+
+          if (Array.isArray(output.songs)) {
+            output.songs = output.songs.map((song) => {
+              if (!song || typeof song !== "object") return song;
+              return {
+                ...(song as Record<string, unknown>),
+                downloadAllowed,
+              };
+            });
+          }
+        }
+
         const taskId = typeof output.taskId === "string" ? output.taskId.trim() : "";
         const videoUrl = typeof output.videoUrl === "string" ? output.videoUrl.trim() : "";
         if (taskId && videoUrl) {
