@@ -96,7 +96,7 @@ interface PricingPack {
 }
 
 const DIMENSION_PACKS: PricingPack[] = [
-  { name: "维度·体验包", subtitle: "新用户专享", contents: "闪电 3D × 3 次", price: "15 Credits", discount: "限購 2 次", color: "#30D158" },
+  { name: "维度·体验包", subtitle: "新用户专享", contents: "闪电 3D × 3 次", price: "15 Credits", discount: "限购 2 次", color: "#30D158" },
   { name: "维度·探索包", subtitle: "入门创作", contents: "闪电 3D × 10 + 精雕 3D × 2", price: "¥58", discount: "约 85 折", color: "#64D2FF" },
   { name: "维度·创作包", subtitle: "进阶创作", contents: "闪电 3D × 20 + 精雕 3D × 10（含 PBR）", price: "¥168", discount: "约 75 折", color: "#C77DBA", popular: true },
   { name: "维度·大师包", subtitle: "专业制作", contents: "精雕 3D × 30（含 PBR）+ 多视角 × 10", price: "¥358", discount: "约 70 折", color: "#FFD60A" },
@@ -105,7 +105,7 @@ const DIMENSION_PACKS: PricingPack[] = [
 
 /* ===== 3D 软件兼容列表 ===== */
 const COMPATIBLE_SOFTWARE = [
-  { name: "Blender", icon: Orbit, desc: "開源工具" },
+  { name: "Blender", icon: Orbit, desc: "开源工具" },
   { name: "Unity", icon: Gamepad2, desc: "游戏引擎" },
   { name: "Unreal", icon: Puzzle, desc: "虚幻引擎" },
   { name: "Maya", icon: DraftingCompass, desc: "专业建模" },
@@ -619,7 +619,7 @@ export default function ThreeDStudioPage() {
                             <div className="my-5 h-px flex-shrink-0 bg-white/10"></div>
                             <p className="flex-grow text-sm text-gray-300">{pack.contents}</p>
                             <button className="mt-5 w-full rounded-lg py-2.5 font-bold transition-colors" style={{ backgroundColor: `${pack.color}20`, color: pack.color, border: `1px solid ${pack.color}` }}>
-                                立即購買
+                                立即购买
                             </button>
                         </div>
                     ))}
@@ -633,7 +633,7 @@ export default function ThreeDStudioPage() {
                         <div className="p-3">可用模式</div>
                     </div>
                     {[
-                        ["入門版", "闪电 3D × 3 次", "仅闪电"],
+                        ["入门版", "闪电 3D × 3 次", "仅闪电"],
                         ["专业版 ¥108/月", "闪电 × 15 + 精雕 × 5", "全部"],
                         ["企业版 ¥358/月", "闪电 × 50 + 精雕 × 20", "全部 + 优先"],
                         ["学生版", "闪电 × 8 + 精雕 × 2", "全部"],
@@ -649,9 +649,9 @@ export default function ThreeDStudioPage() {
           )}
         </div>
 
-        {/* ===== 生成歷史和收藏 ===== */}
+        {/* ===== 生成历史和收藏 ===== */}
         <div className="bg-[#1A1A1D] rounded-2xl p-6 mt-8">
-          <CreationHistoryPanel type="idol_3d" title="3D 模型生成歷史" />
+          <CreationHistoryPanel type="idol_3d" title="3D 模型生成历史" />
         </div>
 
         {/* ===== 底部间距 ===== */}

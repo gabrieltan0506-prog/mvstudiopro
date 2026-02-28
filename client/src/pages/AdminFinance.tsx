@@ -242,7 +242,7 @@ export default function AdminFinance() {
                         <div className="flex-1">
                           <p className="text-sm font-medium">用户 #{tx.userId}</p>
                           <p className="text-xs text-gray-500">
-                            {tx.source} · {tx.action ?? "-"} · {tx.createdAt ? new Date(tx.createdAt).toLocaleString("zh-TW") : ""}
+                            {tx.source} · {tx.action ?? "-"} · {tx.createdAt ? new Date(tx.createdAt).toLocaleString("zh-CN") : ""}
                           </p>
                         </div>
                         <p className={`text-base font-bold ${tx.amount > 0 ? "text-green-500" : "text-red-500"}`}>
@@ -268,7 +268,7 @@ export default function AdminFinance() {
                             <p className="text-sm font-semibold">{log.action}</p>
                           </div>
                           <p className="ml-4 text-xs text-gray-500">
-                            {log.eventType} · {log.userId ? `用户#${log.userId}` : ""} · {log.createdAt ? new Date(log.createdAt).toLocaleString("zh-TW") : ""}
+                            {log.eventType} · {log.userId ? `用户#${log.userId}` : ""} · {log.createdAt ? new Date(log.createdAt).toLocaleString("zh-CN") : ""}
                           </p>
                         </div>
                         {log.amount !== null && log.amount !== 0 && (

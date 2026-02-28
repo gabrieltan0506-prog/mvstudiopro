@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * 聯絡我們頁面
+ * 联络我们页面
  * 
- * 用戶可填寫姓名、郵箱、主題、內容，提交後通過 notifyOwner 通知管理員。
- * 從客服浮窗「聯絡我們」按鈕跳轉而來。
+ * 用户可填写姓名、邮箱、主题、内容，提交后通过 notifyOwner 通知管理员。
+ * 从客服浮窗「联络我们」按钮跳转而来。
  */
 
 import React, { useState, useCallback } from "react";
@@ -71,7 +71,7 @@ export default function Contact() {
     }
   }, [navigate]);
 
-  // 提交成功頁面
+  // 提交成功页面
   if (isSubmitted) {
     return (
       <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF] flex flex-col items-center justify-center p-8 gap-3 text-center">
@@ -135,7 +135,7 @@ export default function Contact() {
             />
           </div>
 
-          {/* 郵箱 */}
+          {/* 邮箱 */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-semibold text-[#F7F4EF] pl-0.5">
               邮箱地址 <span className="text-[#E8825E]">*</span>
@@ -150,7 +150,7 @@ export default function Contact() {
             />
           </div>
 
-          {/* 主題選擇 */}
+          {/* 主题选择 */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-semibold text-[#F7F4EF] pl-0.5">咨询主题</label>
             <div className="flex flex-row flex-wrap gap-2">
@@ -176,7 +176,7 @@ export default function Contact() {
             </div>
           </div>
 
-          {/* 內容 */}
+          {/* 内容 */}
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-semibold text-[#F7F4EF] pl-0.5">
               详细内容 <span className="text-[#E8825E]">*</span>
@@ -190,7 +190,7 @@ export default function Contact() {
             />
           </div>
 
-          {/* 提交按鈕 */}
+          {/* 提交按钮 */}
           <button
             className={`flex flex-row items-center justify-center gap-2 rounded-2xl py-3.5 mt-1.5 transition-opacity ${ 
               isValid ? "bg-[#E8825E] hover:opacity-85" : "bg-[#2A2A2E] cursor-not-allowed"
@@ -210,7 +210,7 @@ export default function Contact() {
             )}
           </button>
 
-          {/* 直接聯繫 */}
+          {/* 直接联系 */}
           <div className="flex flex-col items-center pt-3 gap-1">
             <p className="text-sm text-[#9B9691]">或直接发送邮件至</p>
             <p className="text-base text-[#E8825E] font-semibold">

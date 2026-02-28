@@ -138,7 +138,7 @@ const CREATIVE_TOOLS = [
   },
   {
     icon: Clapperboard, title: "智能分镜生成", titleEn: "AI Storyboard",
-    desc: "輸入歌詞或文本，AI 自動生成專業視頻分鏡腳本與分鏡圖",
+    desc: "输入歌词或文本，AI 自动生成专业视频分镜脚本与分镜图",
     gradient: "from-yellow-500 to-amber-400", iconColor: "text-yellow-400", glowColor: "rgba(245,158,11,0.3)",
     href: "/storyboard", ready: true, credits: "8 Credits 起",
   },
@@ -149,8 +149,8 @@ const CREATIVE_TOOLS = [
     href: "/vfx", ready: true, credits: "50 Credits/次",
   },
   {
-    icon: Zap, title: "可靈工作室", titleEn: "Kling AI Studio",
-    desc: "Kling 2.1 视频生成、Motion Control 动作迁移、Lip-Sync 对口型",
+    icon: Zap, title: "可灵工作室", titleEn: "Kling AI Studio",
+    desc: "Kling 2.1 视频生成、动作控制（Motion Control）迁移、口型同步（Lip-Sync）",
     gradient: "from-purple-500 to-violet-400", iconColor: "text-purple-400", glowColor: "rgba(168,85,247,0.3)",
     href: "/remix", ready: true, credits: "按模型计费",
   },
@@ -455,7 +455,7 @@ export default function Home() {
                   className="btn-gradient-primary gap-2 text-base px-8 shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97]"
                   onClick={() => { window.location.href = getLoginUrl(); }}
                 >
-                  開始創作 <ArrowRight className="h-5 w-5" />
+                  开始创作 <ArrowRight className="h-5 w-5" />
                 </Button>
               )}
               <Link href="/showcase">
@@ -628,7 +628,7 @@ export default function Home() {
             <span className="font-semibold">MV Studio Pro</span>
           </div>
           <p className="text-sm text-muted-foreground">
-            &copy; {new Date().getFullYear()} MV Studio Pro. All rights reserved.
+            &copy; {new Date().getFullYear()} MV Studio Pro。保留所有权利。
           </p>
           <div className="flex gap-6 text-sm text-muted-foreground">
             <Link href="/pricing" className="hover:text-foreground no-underline transition-colors duration-300">套餐定价</Link>

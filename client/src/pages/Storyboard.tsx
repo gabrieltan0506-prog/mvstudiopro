@@ -89,21 +89,21 @@ const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: st
   {
     value: "flash",
     label: "Gemini 3.0 Flash",
-    desc: "快速生成，適合日常使用",
+    desc: "快速生成，适合日常使用",
     cost: "8 Credits",
     icon: Zap,
   },
   {
     value: "gpt5",
     label: "GPT 5.1",
-    desc: "更創意的分鏡描述與專業建議",
+    desc: "更创意的分镜描述与专业建议",
     cost: "20 Credits",
     icon: Crown,
   },
   {
     value: "pro",
     label: "Gemini 3.0 Pro",
-    desc: "最精準的分鏡描述與專業分析",
+    desc: "最精准的分镜描述与专业分析",
     cost: "15 Credits",
     icon: Crown,
   },
@@ -118,11 +118,11 @@ const STYLE_PREVIEW_IMAGES: Record<VisualStyle, string> = {
 };
 
 const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; icon: React.ElementType; gradient: string; desc: string }[] = [
-  { value: "cinematic", label: "電影感", labelEn: "Cinematic", icon: Film, gradient: "from-amber-500/80 to-red-600/80", desc: "電影級光影、色彩分級、寬銀幕構圖。參考：王家衛、扎克·施奈德" },
-  { value: "anime", label: "動漫風", labelEn: "Anime", icon: Sparkles, gradient: "from-cyan-400/80 to-blue-600/80", desc: "日系動漫視覺語言、鮮艷色彩、光效粒子。參考：新海誠、宮崎駿" },
-  { value: "documentary", label: "紀錄片", labelEn: "Documentary", icon: Camera, gradient: "from-yellow-500/80 to-orange-600/80", desc: "真實感、自然光線、手持鏡頭、沉浸式敘事" },
-  { value: "realistic", label: "寫實片", labelEn: "Realistic", icon: Aperture, gradient: "from-emerald-400/80 to-teal-600/80", desc: "自然色調、真實場景、生活化光線構圖" },
-  { value: "scifi", label: "科幻片", labelEn: "Sci-Fi", icon: Rocket, gradient: "from-purple-500/80 to-indigo-600/80", desc: "霓虹燈光、全息投影、賽博朋克色調" },
+  { value: "cinematic", label: "电影感", labelEn: "Cinematic", icon: Film, gradient: "from-amber-500/80 to-red-600/80", desc: "电影级光影、色彩分级、宽银幕构图。参考：王家卫、扎克·施奈德" },
+  { value: "anime", label: "动漫风", labelEn: "Anime", icon: Sparkles, gradient: "from-cyan-400/80 to-blue-600/80", desc: "日系动漫视觉语言、鲜艳色彩、光效粒子。参考：新海诚、宫崎骏" },
+  { value: "documentary", label: "纪录片", labelEn: "Documentary", icon: Camera, gradient: "from-yellow-500/80 to-orange-600/80", desc: "真实感、自然光线、手持镜头、沉浸式叙事" },
+  { value: "realistic", label: "写实片", labelEn: "Realistic", icon: Aperture, gradient: "from-emerald-400/80 to-teal-600/80", desc: "自然色调、真实场景、生活化光线构图" },
+  { value: "scifi", label: "科幻片", labelEn: "Sci-Fi", icon: Rocket, gradient: "from-purple-500/80 to-indigo-600/80", desc: "霓虹灯光、全息投影、赛博朋克色调" },
 ];
 
 export default function StoryboardPage() {
@@ -253,11 +253,11 @@ export default function StoryboardPage() {
     };
   }, [audioRef]);
 
-  // 根據用戶方案確定最大分鏡數
+  // 根据用户方案确定最大分镜数
   const isPaidUser = isAdmin || userPlan !== "free";
   const maxScenes = isPaidUser ? PAID_MAX_SCENES : FREE_MAX_SCENES;
 
-  // 生成分鏡數下拉選單選項
+  // 生成分镜数下拉选单选项
   const sceneCountOptions = useMemo(() => {
     const options: { value: string; label: string; disabled?: boolean }[] = [];
     for (let i = 1; i <= PAID_MAX_SCENES; i++) {
@@ -265,8 +265,8 @@ export default function StoryboardPage() {
       options.push({
         value: String(i),
         label: isPaidOnly && !isPaidUser
-          ? `${i} 個分鏡（需付費）`
-          : `${i} 個分鏡`,
+          ? `${i} 个分镜（需付费）`
+          : `${i} 个分镜`,
         disabled: isPaidOnly && !isPaidUser,
       });
     }
@@ -288,7 +288,7 @@ export default function StoryboardPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
-      toast.error("圖片大小不能超過 10MB");
+      toast.error("图片大小不能超过 10MB");
       return;
     }
 
@@ -319,7 +319,7 @@ export default function StoryboardPage() {
       const uploadData = await uploadResult.json();
       if (uploadData?.result?.data?.json?.url) {
         setReferenceImageUrl(uploadData.result.data.json.url);
-        toast.success("參考圖已上傳");
+        toast.success("参考图已上传");
 
         // Auto-analyze style
         setIsAnalyzingRef(true);
@@ -329,29 +329,29 @@ export default function StoryboardPage() {
           });
           if (analysis.success && analysis.styleDescription) {
             setReferenceStyleDescription(analysis.styleDescription);
-            toast.success("參考圖風格分析完成（3 Credits）");
+            toast.success("参考图风格分析完成（3 Credits）");
           }
         } catch (err: any) {
-          toast.error(err.message || "風格分析失敗");
+          toast.error(err.message || "风格分析失败");
         } finally {
           setIsAnalyzingRef(false);
         }
       }
     } catch (err: any) {
-      toast.error("圖片上傳失敗");
+      toast.error("图片上传失败");
       setReferenceImagePreview(null);
     }
   };
 
   const handleGenerate = async () => {
     if (!lyricsText.trim()) {
-      toast.warning("請輸入歌詞或文本內容");
+      toast.warning("请输入歌词或文本内容");
       return;
     }
 
     if (isOverCharLimit) {
       toast.error(
-        `您的文本為 ${charCount} 字，超出${scriptSource === "ai" ? "AI 生成" : "自有腳本"}的額度 ${currentMaxChars} 字。超出部分需消耗 Credits。`,
+        `您的文本为 ${charCount} 字，超出${scriptSource === "ai" ? "AI 生成" : "自有脚本"}的额度 ${currentMaxChars} 字。超出部分需消耗 Credits。`,
         {
           action: {
             label: "查看 Credits",
@@ -364,7 +364,7 @@ export default function StoryboardPage() {
 
     const numSceneCount = parseInt(sceneCount, 10);
     if (numSceneCount > maxScenes) {
-      toast.error(`當前方案最多 ${FREE_MAX_SCENES} 個分鏡，請升級方案或減少分鏡數`);
+      toast.error(`当前方案最多 ${FREE_MAX_SCENES} 个分镜，请升级方案或减少分镜数`);
       return;
     }
 
@@ -379,7 +379,7 @@ export default function StoryboardPage() {
         return;
       }
     } catch (error: any) {
-      toast.error(error.message || "無法檢查使用權限");
+      toast.error(error.message || "无法检查使用权限");
       return;
     }
 
@@ -397,14 +397,14 @@ export default function StoryboardPage() {
       if (result.success && result.storyboard) {
         setStoryboard(result.storyboard as StoryboardResult);
         usageStatsQuery.refetch();
-        toast.success(result.message || "分鏡腳本已生成！");
+        toast.success(result.message || "分镜脚本已生成！");
         if ((result.storyboard as any).title) {
           setBgmTitle((result.storyboard as any).title + " - BGM");
         }
       }
     } catch (error: any) {
       console.error("Error generating storyboard:", error);
-      toast.error(error.message || "生成分鏡腳本失敗，請重試");
+      toast.error(error.message || "生成分镜脚本失败，请重试");
     } finally {
       setIsGenerating(false);
     }
@@ -446,7 +446,7 @@ export default function StoryboardPage() {
 
   const handleExport = async (format: "pdf" | "word") => {
     if (!storyboard) {
-      toast.error("請先生成分鏡腳本");
+      toast.error("请先生成分镜脚本");
       return;
     }
 
@@ -457,20 +457,20 @@ export default function StoryboardPage() {
       const result = await exportPDFMutation.mutateAsync({ storyboard, format });
       
       if (result.success && result.pdfUrl) {
-        setExportStatus(`${formatName} 已生成，正在下載...`);
+        setExportStatus(`${formatName} 已生成，正在下载...`);
         triggerDownload(result.pdfUrl, `${storyboard.title || 'storyboard'}.${format === 'pdf' ? 'pdf' : 'docx'}`);
-        toast.success(`${formatName} 導出成功！`);
+        toast.success(`${formatName} 导出成功！`);
         setTimeout(() => setExportStatus(null), 3000);
       } else {
-        setExportStatus(result.message || `${formatName} 生成失敗，請重試`);
-        toast.error(`${formatName} 生成失敗`);
+        setExportStatus(result.message || `${formatName} 生成失败，请重试`);
+        toast.error(`${formatName} 生成失败`);
         setTimeout(() => setExportStatus(null), 5000);
       }
     } catch (error: any) {
       console.error(`[Export ${formatName} Error]`, error);
-      const errMsg = error.message || '未知錯誤';
-      setExportStatus(`導出失敗: ${errMsg}`);
-      toast.error(`導出失敗: ${errMsg}`);
+      const errMsg = error.message || '未知错误';
+      setExportStatus(`导出失败: ${errMsg}`);
+      toast.error(`导出失败: ${errMsg}`);
       setTimeout(() => setExportStatus(null), 5000);
     }
   };
@@ -488,7 +488,7 @@ export default function StoryboardPage() {
     setStoryboard({ ...storyboard, scenes: updatedScenes });
     setEditingSceneId(null);
     setEditedScene(null);
-    toast.success("場景已更新！");
+    toast.success("场景已更新！");
   };
 
   const handleCancelEdit = () => {
@@ -503,7 +503,7 @@ export default function StoryboardPage() {
 
   const handleGenerateInspiration = async () => {
     if (!inspirationInput.trim()) {
-      toast.warning("請輸入靈感描述");
+      toast.warning("请输入灵感描述");
       return;
     }
     setIsGeneratingInspiration(true);
@@ -514,10 +514,10 @@ export default function StoryboardPage() {
         setScriptSource("ai");
         setShowInspirationModal(false);
         setInspirationInput("");
-        toast.success("靈感腳本已生成，您可以繼續編輯或直接生成分鏡");
+        toast.success("灵感脚本已生成，您可以继续编辑或直接生成分镜");
       }
     } catch (error: any) {
-      toast.error(error.message || "生成失敗，請重試");
+      toast.error(error.message || "生成失败，请重试");
     } finally {
       setIsGeneratingInspiration(false);
     }
@@ -527,7 +527,7 @@ export default function StoryboardPage() {
   const handleRewrite = async () => {
     if (!storyboard) return;
     if (!rewriteFeedback.trim()) {
-      toast.warning("請輸入您的修改意見");
+      toast.warning("请输入您的修改意见");
       return;
     }
 
@@ -544,10 +544,10 @@ export default function StoryboardPage() {
         setStoryboard(result.storyboard as StoryboardResult);
         setShowRewritePanel(false);
         setRewriteFeedback("");
-        toast.success(result.message || "分鏡腳本已改寫！");
+        toast.success(result.message || "分镜脚本已改写！");
       }
     } catch (error: any) {
-      toast.error(error.message || "改寫失敗，請重試");
+      toast.error(error.message || "改写失败，请重试");
     } finally {
       setIsRewriting(false);
     }
@@ -584,11 +584,11 @@ export default function StoryboardPage() {
           );
           if (matchedPreset) setBgmStylePreset((matchedPreset as any).id);
         }
-        toast.success(`AI 已推薦 BGM 描述（${recommendBgmModel === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"}，5 Credits）`);
+        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"}，5 Credits）`);
         setShowBgmPanel(true);
       }
     } catch (error: any) {
-      toast.error(error.message || "AI 推薦失敗");
+      toast.error(error.message || "AI 推荐失败");
     } finally {
       setIsRecommendingBgm(false);
     }
@@ -597,7 +597,7 @@ export default function StoryboardPage() {
   // BGM Generation handler
   const handleGenerateBgm = async () => {
     if (!bgmTitle.trim()) {
-      toast.warning("請輸入 BGM 標題");
+      toast.warning("请输入 BGM 标题");
       return;
     }
     if (!user?.id) {
@@ -653,7 +653,7 @@ export default function StoryboardPage() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="mt-4 text-muted-foreground">檢查登入狀態...</p>
+        <p className="mt-4 text-muted-foreground">检查登录状态...</p>
       </div>
     );
   }
@@ -743,14 +743,14 @@ export default function StoryboardPage() {
         )}
 
         <div className="px-6 pt-6 pb-4">
-          <h1 className="text-3xl font-bold text-foreground mb-2">智能腳本與分鏡生成</h1>
-          <p className="text-base text-muted-foreground">輸入歌詞或文本，AI 自動生成專業視頻分鏡腳本</p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">智能脚本与分镜生成</h1>
+          <p className="text-base text-muted-foreground">输入歌词或文本，AI 自动生成专业视频分镜脚本</p>
         </div>
 
         {!storyboard && (
           <div className="px-6 py-4">
             <div className="bg-card rounded-2xl p-6 border">
-              {/* AI 靈感助手 */}
+              {/* AI 灵感助手 */}
               {!showInspirationModal ? (
                 <button
                   onClick={() => setShowInspirationModal(true)}
@@ -760,8 +760,8 @@ export default function StoryboardPage() {
                     <Wand2 className="w-5 h-5 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-foreground font-semibold text-base">創作沒靈感？</p>
-                    <p className="text-muted-foreground text-sm mt-0.5">給我三句話，我幫你生成完整腳本（5 Credits）</p>
+                    <p className="text-foreground font-semibold text-base">创作没灵感？</p>
+                    <p className="text-muted-foreground text-sm mt-0.5">给我三句话，我帮你生成完整脚本（5 Credits）</p>
                   </div>
                   <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
                 </button>
@@ -770,7 +770,7 @@ export default function StoryboardPage() {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center">
                       <Wand2 className="w-5 h-5 text-primary" />
-                      <p className="text-foreground font-semibold ml-2">AI 靈感助手</p>
+                      <p className="text-foreground font-semibold ml-2">AI 灵感助手</p>
                       <div className="ml-2 bg-yellow-500/15 px-2 py-0.5 rounded-full">
                         <p className="text-yellow-500 text-xs font-medium">5 Credits</p>
                       </div>
@@ -779,12 +779,12 @@ export default function StoryboardPage() {
                       <X className="w-5 h-5 text-muted-foreground" />
                     </button>
                   </div>
-                  <p className="text-muted-foreground text-sm mb-1">接入 Gemini 大模型，根據描述生成專業腳本</p>
-                  <p className="text-muted-foreground text-sm mb-3">例如：「一對情侶在雨天的東京重逢，從陳舊的咖啡廳開始」</p>
+                  <p className="text-muted-foreground text-sm mb-1">接入 Gemini 大模型，根据描述生成专业脚本</p>
+                  <p className="text-muted-foreground text-sm mb-3">例如：「一对情侣在雨天的东京重逢，从陈旧的咖啡厅开始」</p>
                   <Textarea
                     value={inspirationInput}
                     onChange={(e) => setInspirationInput(e.target.value)}
-                    placeholder="用 1-3 句話描述你的靈感..."
+                    placeholder="用 1-3 句话描述你的灵感..."
                     maxLength={200}
                     rows={3}
                     className="bg-background rounded-lg p-3 text-foreground mb-3 text-base resize-none"
@@ -803,7 +803,7 @@ export default function StoryboardPage() {
                       ) : (
                         <>
                           <Wand2 className="w-4 h-4 mr-1" />
-                          <span>生成腳本</span>
+                          <span>生成脚本</span>
                         </>
                       )}
                     </Button>
@@ -811,11 +811,11 @@ export default function StoryboardPage() {
                 </div>
               )}
 
-              {/* 歌詞/文本輸入 */}
+              {/* 歌词/文本输入 */}
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center">
-                    <p className="text-lg font-semibold text-foreground">歌詞或文本內容</p>
+                    <p className="text-lg font-semibold text-foreground">歌词或文本内容</p>
                     {scriptSource === "ai" && (
                       <div className="ml-2 bg-primary/15 px-2 py-0.5 rounded-full">
                         <p className="text-primary text-xs font-medium">AI 生成</p>
@@ -832,20 +832,20 @@ export default function StoryboardPage() {
                     setLyricsText(e.target.value);
                     if (e.target.value.length === 0) setScriptSource("own");
                   }}
-                  placeholder="請輸入歌詞或文本內容..."
+                  placeholder="请输入歌词或文本内容..."
                   rows={10}
                   className={`bg-background rounded-xl p-4 text-foreground text-base resize-none ${isOverCharLimit ? "border-destructive" : "border"}`}
                 />
                 {isOverCharLimit && (
                   <p className="text-destructive text-sm mt-2">
-                    超出額度 {charCount - currentMaxChars} 字，超出部分需消耗 Credits
+                    超出额度 {charCount - currentMaxChars} 字，超出部分需消耗 Credits
                   </p>
                 )}
               </div>
 
-              {/* 視覺風格選擇 - 帶預覽圖的卡片 */}
+              {/* 视觉风格选择 - 带预览图的卡片 */}
               <div className="mb-5">
-                <label className="text-base font-semibold text-foreground mb-3 block">視覺風格</label>
+                <label className="text-base font-semibold text-foreground mb-3 block">视觉风格</label>
                 <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
                   {VISUAL_STYLES.map((style) => {
                     const Icon = style.icon;
@@ -895,10 +895,10 @@ export default function StoryboardPage() {
                 </div>
               </div>
 
-              {/* 參考圖上傳 */}
+              {/* 参考图上传 */}
               <div className="mb-5">
-                <label className="text-base font-semibold text-foreground mb-2 block">參考圖片（可選）</label>
-                <p className="text-xs text-muted-foreground mb-3">上傳參考圖，AI 會分析其風格並生成類似視覺效果的分鏡（3 Credits）</p>
+                <label className="text-base font-semibold text-foreground mb-2 block">参考图像（可选）</label>
+                <p className="text-xs text-muted-foreground mb-3">上传参考图，AI 会分析其风格并生成类似视觉效果的分镜（3 Credits）</p>
                 <input
                   ref={refImageInputRef}
                   type="file"
@@ -914,7 +914,7 @@ export default function StoryboardPage() {
                     <div className="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-2">
                       <Upload className="w-6 h-6 text-muted-foreground" />
                     </div>
-                    <p className="text-muted-foreground text-sm">點擊上傳參考圖片</p>
+                    <p className="text-muted-foreground text-sm">点击上传参考图像</p>
                     <p className="text-muted-foreground/60 text-xs mt-1">支持 JPG、PNG，最大 10MB</p>
                   </button>
                 ) : (
@@ -934,7 +934,7 @@ export default function StoryboardPage() {
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-sm">
                         <div className="flex items-center gap-2 bg-black/60 rounded-lg px-4 py-2">
                           <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                          <span className="text-white text-sm">分析風格中...</span>
+                          <span className="text-white text-sm">分析风格中...</span>
                         </div>
                       </div>
                     )}
@@ -942,7 +942,7 @@ export default function StoryboardPage() {
                       <div className="p-3 bg-indigo-500/10 border-t border-indigo-500/20">
                         <div className="flex items-center gap-1.5 mb-1">
                           <Eye className="w-3.5 h-3.5 text-indigo-400" />
-                          <span className="text-indigo-400 text-xs font-medium">風格分析結果</span>
+                          <span className="text-indigo-400 text-xs font-medium">风格分析结果</span>
                         </div>
                         <p className="text-muted-foreground text-xs leading-relaxed">{referenceStyleDescription}</p>
                       </div>
@@ -951,12 +951,12 @@ export default function StoryboardPage() {
                 )}
               </div>
 
-              {/* AI 模型選擇 */}
+              {/* AI 模型选择 */}
               <div className="mb-4">
                 <p className="text-lg font-semibold text-foreground mb-2">AI 模型</p>
                 <Select value={selectedModel} onValueChange={(v) => setSelectedModel(v as ModelOption)}>
                   <SelectTrigger className="w-full bg-background">
-                    <SelectValue placeholder="選擇 AI 模型" />
+                    <SelectValue placeholder="选择 AI 模型" />
                   </SelectTrigger>
                   <SelectContent>
                     {MODEL_OPTIONS.map((opt) => {
@@ -981,17 +981,17 @@ export default function StoryboardPage() {
                 </p>
               </div>
 
-              {/* 分鏡數量 */}
+              {/* 分镜数量 */}
               <div className="mb-6">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-lg font-semibold text-foreground">分鏡數量</p>
+                  <p className="text-lg font-semibold text-foreground">分镜数量</p>
                   <p className="text-xs text-muted-foreground">
-                    {isPaidUser ? `最多 ${PAID_MAX_SCENES} 個` : `基礎版最多 ${FREE_MAX_SCENES} 個`}
+                    {isPaidUser ? `最多 ${PAID_MAX_SCENES} 个` : `基础版最多 ${FREE_MAX_SCENES} 个`}
                   </p>
                 </div>
                 <Select value={sceneCount} onValueChange={setSceneCount}>
                   <SelectTrigger className="w-full bg-background">
-                    <SelectValue placeholder="選擇分鏡數量" />
+                    <SelectValue placeholder="选择分镜数量" />
                   </SelectTrigger>
                   <SelectContent>
                     {sceneCountOptions.map((opt) => (
@@ -1003,7 +1003,7 @@ export default function StoryboardPage() {
                 </Select>
               </div>
 
-              {/* 圖片引擎選擇 */}
+              {/* 图像引擎选择 */}
               <div className="mb-6">
                 <NbpEngineSelector
                   selected={imageEngine}
@@ -1014,7 +1014,7 @@ export default function StoryboardPage() {
                 />
               </div>
 
-              {/* 生成按鈕 */}
+              {/* 生成按钮 */}
               <Button onClick={handleGenerate} disabled={!lyricsText.trim() || isGenerating} className="w-full py-6 text-lg bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 shadow-lg shadow-indigo-500/20 transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] hover:shadow-xl hover:shadow-indigo-500/30 ripple-effect">
                 {isGenerating ? (
                   <>
@@ -1024,7 +1024,7 @@ export default function StoryboardPage() {
                 ) : (
                   <>
                     <Sparkles className="w-5 h-5 mr-2" />
-                    <span>生成分鏡腳本</span>
+                    <span>生成分镜脚本</span>
                   </>
                 )}
               </Button>
@@ -1032,7 +1032,7 @@ export default function StoryboardPage() {
           </div>
         )}
 
-        {/* 分鏡結果展示 */}
+        {/* 分镜结果展示 */}
         {storyboard && (
           <div className="px-6 py-4">
             <div className="bg-card rounded-2xl p-6 border mb-4">
@@ -1048,17 +1048,17 @@ export default function StoryboardPage() {
                   <p className="text-primary text-sm font-medium">{storyboard.musicInfo.style}</p>
                 </div>
                 <div className="bg-primary/10 px-3 py-1 rounded-full">
-                  <p className="text-primary text-sm font-medium">調性: {storyboard.musicInfo.key}</p>
+                  <p className="text-primary text-sm font-medium">调性: {storyboard.musicInfo.key}</p>
                 </div>
                 <div className="bg-purple-500/10 px-3 py-1 rounded-full">
                   <p className="text-purple-400 text-sm font-medium">
-                    風格: {VISUAL_STYLES.find(s => s.value === selectedStyle)?.label || "電影感"}
+                    风格: {VISUAL_STYLES.find(s => s.value === selectedStyle)?.label || "电影感"}
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* AI 改寫面板 */}
+            {/* AI 改写面板 */}
             <div className="mb-4">
               {!showRewritePanel ? (
                 <button
@@ -1069,8 +1069,8 @@ export default function StoryboardPage() {
                     <RefreshCw className="w-5 h-5 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-foreground font-semibold text-base">不滿意？AI 幫你改</p>
-                    <p className="text-muted-foreground text-sm mt-0.5">給我三句話描述修改方向，AI 重新改寫整個腳本（8 Credits）</p>
+                    <p className="text-foreground font-semibold text-base">不满意？AI 帮你改</p>
+                    <p className="text-muted-foreground text-sm mt-0.5">给我三句话描述修改方向，AI 重新改写整个脚本（8 Credits）</p>
                   </div>
                   <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
                 </button>
@@ -1079,7 +1079,7 @@ export default function StoryboardPage() {
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center">
                       <RefreshCw className="w-5 h-5 text-orange-500" />
-                      <p className="text-foreground font-semibold ml-2">AI 改寫腳本</p>
+                      <p className="text-foreground font-semibold ml-2">AI 改写脚本</p>
                       <div className="ml-2 bg-yellow-500/15 px-2 py-0.5 rounded-full">
                         <p className="text-yellow-500 text-xs font-medium">8 Credits</p>
                       </div>
@@ -1089,12 +1089,12 @@ export default function StoryboardPage() {
                     </button>
                   </div>
                   <p className="text-muted-foreground text-sm mb-3">
-                    描述您希望如何修改，例如：「場景氛圍太暗了，希望更溫暖明亮」「鏡頭運動太單調，加入更多航拍和環繞鏡頭」
+                    描述您希望如何修改，例如：「场景氛围太暗了，希望更温暖明亮」「镜头运动太单调，加入更多航拍和环绕镜头」
                   </p>
                   <Textarea
                     value={rewriteFeedback}
                     onChange={(e) => setRewriteFeedback(e.target.value)}
-                    placeholder="用 1-3 句話描述您的修改意見..."
+                    placeholder="用 1-3 句话描述您的修改意见..."
                     maxLength={500}
                     rows={3}
                     className="bg-background rounded-lg p-3 text-foreground mb-3 text-base resize-none"
@@ -1109,12 +1109,12 @@ export default function StoryboardPage() {
                       {isRewriting ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                          <span>改寫中...</span>
+                          <span>改写中...</span>
                         </>
                       ) : (
                         <>
                           <RefreshCw className="w-4 h-4 mr-1" />
-                          <span>AI 改寫</span>
+                          <span>AI 改写</span>
                         </>
                       )}
                     </Button>
@@ -1124,7 +1124,7 @@ export default function StoryboardPage() {
             </div>
 
             <div className="mb-4">
-              <h2 className="text-xl font-bold text-foreground mb-3">分鏡詳情</h2>
+              <h2 className="text-xl font-bold text-foreground mb-3">分镜详情</h2>
               {storyboard.scenes.map((scene) => {
                 const isEditing = editingSceneId === scene.sceneNumber;
                 const displayScene = isEditing && editedScene ? editedScene : scene;
@@ -1132,14 +1132,14 @@ export default function StoryboardPage() {
                 return (
                   <div key={scene.sceneNumber} className="bg-card rounded-2xl p-5 border mb-4">
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-lg font-bold text-foreground">場景 {scene.sceneNumber}</h3>
+                      <h3 className="text-lg font-bold text-foreground">场景 {scene.sceneNumber}</h3>
                       <div className="flex items-center gap-2">
                         <p className="text-muted-foreground text-sm">
                           {scene.timestamp} ({scene.duration})
                         </p>
                         {!isEditing && (
                           <Button variant="outline" size="sm" onClick={() => handleEditScene(scene)} className="text-xs">
-                            編輯
+                            编辑
                           </Button>
                         )}
                       </div>
@@ -1158,19 +1158,19 @@ export default function StoryboardPage() {
                     {!isEditing ? (
                       <div className="space-y-3">
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">場景描述</p>
+                          <p className="text-xs text-muted-foreground mb-1">场景描述</p>
                           <p className="text-foreground text-sm leading-relaxed">{displayScene.description}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">鏡頭運動</p>
+                          <p className="text-xs text-muted-foreground mb-1">镜头运动</p>
                           <p className="text-foreground text-sm">{displayScene.cameraMovement}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">情緒氛圍</p>
+                          <p className="text-xs text-muted-foreground mb-1">情绪氛围</p>
                           <p className="text-foreground text-sm">{displayScene.mood}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">視覺元素</p>
+                          <p className="text-xs text-muted-foreground mb-1">视觉元素</p>
                           <div className="flex flex-wrap gap-1.5">
                             {displayScene.visualElements.map((el, idx) => (
                               <span key={idx} className="bg-primary/10 text-primary text-xs px-2 py-0.5 rounded-full">{el}</span>
@@ -1179,7 +1179,7 @@ export default function StoryboardPage() {
                         </div>
                         {displayScene.transition && (
                           <div>
-                            <p className="text-xs text-muted-foreground mb-1">轉場建議</p>
+                            <p className="text-xs text-muted-foreground mb-1">转场建议</p>
                             <p className="text-foreground text-sm">{displayScene.transition}</p>
                           </div>
                         )}
@@ -1187,7 +1187,7 @@ export default function StoryboardPage() {
                     ) : (
                       <div className="space-y-3">
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">場景描述</p>
+                          <p className="text-xs text-muted-foreground mb-1">场景描述</p>
                           <Textarea
                             value={editedScene?.description || ""}
                             onChange={(e) => handleUpdateField("description", e.target.value)}
@@ -1196,7 +1196,7 @@ export default function StoryboardPage() {
                           />
                         </div>
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">鏡頭運動</p>
+                          <p className="text-xs text-muted-foreground mb-1">镜头运动</p>
                           <Textarea
                             value={editedScene?.cameraMovement || ""}
                             onChange={(e) => handleUpdateField("cameraMovement", e.target.value)}
@@ -1205,7 +1205,7 @@ export default function StoryboardPage() {
                           />
                         </div>
                         <div>
-                          <p className="text-xs text-muted-foreground mb-1">情緒氛圍</p>
+                          <p className="text-xs text-muted-foreground mb-1">情绪氛围</p>
                           <Textarea
                             value={editedScene?.mood || ""}
                             onChange={(e) => handleUpdateField("mood", e.target.value)}
@@ -1225,11 +1225,11 @@ export default function StoryboardPage() {
             </div>
 
             <div className="bg-card rounded-2xl p-6 border mb-4">
-              <h3 className="text-lg font-bold text-foreground mb-3">整體建議</h3>
+              <h3 className="text-lg font-bold text-foreground mb-3">整体建议</h3>
               <p className="text-foreground leading-relaxed">{storyboard.summary}</p>
             </div>
 
-            {/* BGM 生成區域 */}
+            {/* BGM 生成区域 */}
             <div className="mb-4">
               {!showBgmPanel ? (
                 <div className="space-y-3">
@@ -1241,13 +1241,13 @@ export default function StoryboardPage() {
                       <Music className="w-5 h-5 text-white" />
                     </div>
                     <div className="flex-1 text-left">
-                      <p className="text-foreground font-semibold text-base">為分鏡生成 BGM 配樂</p>
-                      <p className="text-muted-foreground text-sm mt-0.5">Suno AI 根據分鏡風格自動生成配樂（V4: {creditCostsQuery.data?.v4 ?? 12} Cr / V5: {creditCostsQuery.data?.v5 ?? 22} Cr）</p>
+                      <p className="text-foreground font-semibold text-base">为分镜生成 BGM 配乐</p>
+                      <p className="text-muted-foreground text-sm mt-0.5">Suno AI 根据分镜风格自动生成配乐（V4: {creditCostsQuery.data?.v4 ?? 12} Cr / V5: {creditCostsQuery.data?.v5 ?? 22} Cr）</p>
                     </div>
                     <ChevronRight className="w-[22px] h-[22px] text-muted-foreground" />
                   </button>
 
-                  {/* AI 推薦 BGM 按鈕 */}
+                  {/* AI 推荐 BGM 按钮 */}
                   <button
                     onClick={handleRecommendBGM}
                     disabled={isRecommendingBgm}
@@ -1262,10 +1262,10 @@ export default function StoryboardPage() {
                     </div>
                     <div className="flex-1 text-left">
                       <p className="text-foreground font-semibold text-base">
-                        {isRecommendingBgm ? "AI 分析分鏡中..." : "AI 智能推薦 BGM 描述"}
+                        {isRecommendingBgm ? "AI 分析分镜中..." : "AI 智能推荐 BGM 描述"}
                       </p>
                       <p className="text-muted-foreground text-sm mt-0.5">
-                        Gemini 3.0 Pro / GPT 5.1 分析分鏡內容，自動填入最適合的 BGM 描述（5 Credits）
+                        Gemini 3.0 Pro / GPT 5.1 分析分镜内容，自动填入最适合的 BGM 描述（5 Credits）
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1286,7 +1286,7 @@ export default function StoryboardPage() {
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center">
                       <Music className="w-5 h-5 text-violet-500" />
-                      <p className="text-foreground font-semibold ml-2">BGM 配樂生成</p>
+                      <p className="text-foreground font-semibold ml-2">BGM 配乐生成</p>
                       <div className="ml-2 bg-yellow-500/15 px-2 py-0.5 rounded-full">
                         <p className="text-yellow-500 text-xs font-medium">消耗 Credits</p>
                       </div>
@@ -1298,12 +1298,12 @@ export default function StoryboardPage() {
 
                   {/* BGM Title */}
                   <div className="mb-3">
-                    <p className="text-sm font-medium text-foreground mb-1">BGM 標題</p>
+                    <p className="text-sm font-medium text-foreground mb-1">BGM 标题</p>
                     <input
                       type="text"
                       value={bgmTitle}
                       onChange={(e) => setBgmTitle(e.target.value)}
-                      placeholder="輸入 BGM 標題..."
+                      placeholder="输入 BGM 标题..."
                       maxLength={80}
                       className="w-full bg-background rounded-lg px-3 py-2 text-foreground text-sm border"
                     />
@@ -1311,10 +1311,10 @@ export default function StoryboardPage() {
 
                   {/* BGM Style Preset */}
                   <div className="mb-3">
-                    <p className="text-sm font-medium text-foreground mb-1">音樂風格</p>
+                    <p className="text-sm font-medium text-foreground mb-1">音乐风格</p>
                     <Select value={bgmStylePreset} onValueChange={setBgmStylePreset}>
                       <SelectTrigger className="w-full bg-background">
-                        <SelectValue placeholder="選擇音樂風格" />
+                        <SelectValue placeholder="选择音乐风格" />
                       </SelectTrigger>
                       <SelectContent>
                         {(stylePresetsQuery.data || []).map((preset: any) => (
@@ -1329,7 +1329,7 @@ export default function StoryboardPage() {
                   {/* Custom description */}
                   <div className="mb-3">
                     <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-medium text-foreground">補充描述（可選）</p>
+                      <p className="text-sm font-medium text-foreground">补充描述（可选）</p>
                       <button
                         onClick={handleRecommendBGM}
                         disabled={isRecommendingBgm}
@@ -1342,7 +1342,7 @@ export default function StoryboardPage() {
                     <Textarea
                       value={bgmDescription}
                       onChange={(e) => setBgmDescription(e.target.value)}
-                      placeholder="描述您想要的 BGM 氛圍，例如：「開頭輕柔鋼琴，副歌時加入弦樂和鼓點，結尾漸弱」"
+                      placeholder="描述您想要的 BGM 氛围，例如：「开头轻柔钢琴，副歌时加入弦乐和鼓点，结尾渐弱」"
                       maxLength={500}
                       rows={2}
                       className="bg-background rounded-lg p-3 text-foreground text-sm resize-none"
@@ -1364,7 +1364,7 @@ export default function StoryboardPage() {
                         <p className={`font-semibold text-sm ${bgmModel === "V4" ? "text-violet-400" : "text-foreground"}`}>
                           Suno V4
                         </p>
-                        <p className="text-muted-foreground text-xs mt-0.5">性價比高</p>
+                        <p className="text-muted-foreground text-xs mt-0.5">性价比高</p>
                         <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v4 ?? 12} Credits</p>
                       </button>
                       <button
@@ -1378,7 +1378,7 @@ export default function StoryboardPage() {
                         <p className={`font-semibold text-sm ${bgmModel === "V5" ? "text-violet-400" : "text-foreground"}`}>
                           Suno V5
                         </p>
-                        <p className="text-muted-foreground text-xs mt-0.5">最新模型，更高音質</p>
+                        <p className="text-muted-foreground text-xs mt-0.5">最新模型，更高音质</p>
                         <p className="text-yellow-500 text-xs font-semibold mt-1">{creditCostsQuery.data?.v5 ?? 22} Credits</p>
                       </button>
                     </div>
@@ -1393,7 +1393,7 @@ export default function StoryboardPage() {
                     {isGeneratingBgm || bgmTaskId ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        <span>{bgmTaskId ? "生成中，請稍候..." : "提交中..."}</span>
+                        <span>{bgmTaskId ? "生成中，请稍候..." : "提交中..."}</span>
                       </>
                     ) : (
                       <>
@@ -1406,7 +1406,7 @@ export default function StoryboardPage() {
                   {/* BGM Result */}
                   {bgmResult && bgmResult.songs && bgmResult.songs.length > 0 && (
                     <div className="mt-4 space-y-3">
-                      <p className="text-sm font-semibold text-foreground">生成結果：</p>
+                      <p className="text-sm font-semibold text-foreground">生成结果：</p>
                       {bgmResult.songs.map((song: any, idx: number) => (
                         <div key={song.id || idx} className="bg-background rounded-lg p-3 border flex items-center gap-3">
                           {song.imageUrl && (
@@ -1464,7 +1464,7 @@ export default function StoryboardPage() {
               )}
             </div>
 
-            {/* 導出按鈕 */}
+            {/* 导出按钮 */}
             <div className="mb-6">
               <div className="flex gap-3 mb-3">
                 <Button onClick={handleReset} variant="secondary" className="flex-1 py-6 text-base transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]">
@@ -1472,7 +1472,7 @@ export default function StoryboardPage() {
                 </Button>
                 <Button onClick={() => setExportMenuVisible(!exportMenuVisible)} className="flex-1 py-6 text-base transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] hover:shadow-lg">
                   <Download className="w-4 h-4 mr-2" />
-                  導出腳本
+                  导出脚本
                 </Button>
               </div>
 
@@ -1485,8 +1485,8 @@ export default function StoryboardPage() {
                   >
                     <FileText className="w-6 h-6 text-red-600" />
                     <div className="ml-3 flex-1">
-                      <p className="text-foreground font-semibold">導出 PDF</p>
-                      <p className="text-muted-foreground text-xs mt-0.5">含分鏡圖片，適合列印和分享</p>
+                      <p className="text-foreground font-semibold">导出 PDF</p>
+                      <p className="text-muted-foreground text-xs mt-0.5">含分镜图片，适合列印和分享</p>
                     </div>
                     {exportPDFMutation.isPending && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
                   </button>
@@ -1497,8 +1497,8 @@ export default function StoryboardPage() {
                   >
                     <FileUp className="w-6 h-6 text-blue-600" />
                     <div className="ml-3 flex-1">
-                      <p className="text-foreground font-semibold">導出 Word</p>
-                      <p className="text-muted-foreground text-xs mt-0.5">可編輯格式，適合團隊協作</p>
+                      <p className="text-foreground font-semibold">导出 Word</p>
+                      <p className="text-muted-foreground text-xs mt-0.5">可编辑格式，适合团队协作</p>
                     </div>
                     {exportPDFMutation.isPending && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
                   </button>
@@ -1522,16 +1522,16 @@ export default function StoryboardPage() {
         )}
       </div>
 
-      {/* 生成歷史和收藏 */}
+      {/* 生成历史和收藏 */}
       <div className="max-w-6xl mx-auto px-4 pb-8">
         <div className="bg-card rounded-2xl p-6">
-          <CreationHistoryPanel type="storyboard" title="分鏡生成歷史" />
+          <CreationHistoryPanel type="storyboard" title="分镜生成历史" />
         </div>
       </div>
 
       <QuotaExhaustedModal
         style={{ display: quotaModalVisible ? 'flex' : 'none' }}
-        featureName="智能腳本與分鏡生成"
+        featureName="智能脚本与分镜生成"
         isTrial={quotaModalInfo.isTrial}
         planName={quotaModalInfo.planName}
         onClose={() => setQuotaModalVisible(false)}

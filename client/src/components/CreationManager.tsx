@@ -1,10 +1,10 @@
 /**
- * CreationManager - 通用的生成記錄、收藏管理和到期提醒組件
+ * CreationManager - 通用的生成记录、收藏管理和到期提醒组件
  * 
- * 可嵌入任何生成頁面，提供：
- * - 收藏/取消收藏按鈕
+ * 可嵌入任何生成页面，提供：
+ * - 收藏/取消收藏按钮
  * - 到期提醒 Banner
- * - 生成歷史記錄列表
+ * - 生成历史记录列表
  */
 
 import React, { useState, useMemo } from "react";
@@ -23,15 +23,15 @@ type CreationType =
   | "kling_video" | "kling_lipsync" | "kling_motion" | "kling_image";
 
 const TYPE_LABELS: Record<CreationType, string> = {
-  idol_image: "偶像圖片",
+  idol_image: "偶像图片",
   idol_3d: "3D 模型",
-  music: "音樂",
-  video: "視頻",
-  storyboard: "分鏡圖",
-  kling_video: "可靈視頻",
+  music: "音乐",
+  video: "视频",
+  storyboard: "分镜图",
+  kling_video: "可灵视频",
   kling_lipsync: "口型同步",
-  kling_motion: "動作遷移",
-  kling_image: "可靈圖片",
+  kling_motion: "动作迁移",
+  kling_image: "可灵图片",
 };
 
 const TYPE_ICONS: Record<CreationType, React.ElementType> = {
@@ -71,7 +71,7 @@ export function FavoriteButton({ creationId, size = "sm" }: { creationId: number
       utils.creations.listFavorites.invalidate();
       utils.creations.batchCheckFavorites.invalidate();
     } catch (err: any) {
-      toast.error(err?.message || "操作失敗");
+      toast.error(err?.message || "操作失败");
     } finally {
       setLoading(false);
     }
@@ -134,11 +134,11 @@ export function ExpiryWarningBanner() {
           <div>
             <h3 className="text-sm font-semibold text-amber-300">
               {urgentItems.length > 0
-                ? `${urgentItems.length} 個作品即將過期！`
-                : `${data.count} 個作品將在近期過期`}
+                ? `${urgentItems.length} 个作品即将过期！`
+                : `${data.count} 个作品将在近期过期`}
             </h3>
             <p className="text-xs text-amber-400/70 mt-1">
-              免費用戶作品保留 10 天，初級會員 3 個月，高級會員 6 個月。請及時下載或升級方案。
+              免费用户作品保留 10 天，初级会员 3 个月，高级会员 6 个月。请及时下载或升级方案。
             </p>
           </div>
         </div>
@@ -170,7 +170,7 @@ export function ExpiryWarningBanner() {
                 </div>
                 <div className="flex items-center space-x-2">
                   <span className={`text-xs font-medium ${isUrgent ? "text-red-400" : "text-amber-400"}`}>
-                    {item.daysUntilExpiry <= 0 ? "今天過期" : `${item.daysUntilExpiry} 天後過期`}
+                    {item.daysUntilExpiry <= 0 ? "今天过期" : `${item.daysUntilExpiry} 天后过期`}
                   </span>
                   {item.outputUrl && (
                     <a
@@ -196,7 +196,7 @@ export function ExpiryWarningBanner() {
 
 export function CreationHistoryPanel({
   type,
-  title = "生成歷史",
+  title = "生成历史",
 }: {
   type?: CreationType;
   title?: string;
@@ -220,14 +220,14 @@ export function CreationHistoryPanel({
   const isLoading = showFavoritesOnly ? favoritesQuery.isLoading : creationsQuery.isLoading;
 
   const handleDelete = async (id: number) => {
-    if (!confirm("確定要刪除此作品嗎？")) return;
+    if (!confirm("确定要删除此作品吗？")) return;
     try {
       await deleteMutation.mutateAsync({ id });
-      toast.success("已刪除");
+      toast.success("已删除");
       utils.creations.list.invalidate();
       utils.creations.listFavorites.invalidate();
     } catch (err: any) {
-      toast.error(err?.message || "刪除失敗");
+      toast.error(err?.message || "删除失败");
     }
   };
 
@@ -263,12 +263,12 @@ export function CreationHistoryPanel({
       {isLoading ? (
         <div className="text-center py-8">
           <Loader2 className="h-6 w-6 animate-spin mx-auto text-gray-500" />
-          <p className="text-sm text-gray-500 mt-2">載入中...</p>
+          <p className="text-sm text-gray-500 mt-2">载入中...</p>
         </div>
       ) : items.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <Sparkles className="h-8 w-8 mx-auto opacity-30" />
-          <p className="text-sm mt-2">{showFavoritesOnly ? "暫無收藏" : "暫無生成記錄"}</p>
+          <p className="text-sm mt-2">{showFavoritesOnly ? "暂无收藏" : "暂无生成记录"}</p>
         </div>
       ) : (
         <>
@@ -332,7 +332,7 @@ export function CreationHistoryPanel({
                     {isExpiringSoon && (
                       <div className="absolute top-1 left-1 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center space-x-0.5">
                         <Clock className="h-2.5 w-2.5" />
-                        <span>即將過期</span>
+                        <span>即将过期</span>
                       </div>
                     )}
                   </div>
@@ -362,7 +362,7 @@ export function CreationHistoryPanel({
                 disabled={page === 1}
                 className="px-3 py-1 text-sm bg-gray-800 text-gray-300 rounded-md disabled:opacity-50"
               >
-                上一頁
+                上一页
               </button>
               <span className="text-sm text-gray-500">
                 {page} / {(data as any)?.totalPages}
@@ -372,7 +372,7 @@ export function CreationHistoryPanel({
                 disabled={page >= ((data as any)?.totalPages ?? 1)}
                 className="px-3 py-1 text-sm bg-gray-800 text-gray-300 rounded-md disabled:opacity-50"
               >
-                下一頁
+                下一页
               </button>
             </div>
           )}

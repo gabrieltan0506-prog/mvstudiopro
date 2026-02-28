@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, Baby, Grid, Paintbrush, Smile, Box, Crop, Laugh, Sparkles, Info, Loader2 } from 'lucide-react';
 
-// ─── 情緒分類 ───────────────────────────────────
+// ─── 情绪分类 ───────────────────────────────────
 const EMOTIONS = [
   { id: "happy", label: "开心", emoji: "😄", color: "#FFD60A" },
   { id: "love", label: "爱心", emoji: "❤️", color: "#FF2D55" },
@@ -21,7 +21,7 @@ const EMOTIONS = [
   { id: "grateful", label: "感谢", emoji: "🙏", color: "#30D158" },
 ];
 
-// ─── 常用詞語 ───────────────────────────────────
+// ─── 常用词语 ───────────────────────────────────
 const PHRASES = [
   "好的", "收到", "谢谢", "再见", "加油", "没问题",
   "哈哈哈", "666", "太棒了", "不要", "救命", "无语",
@@ -29,7 +29,7 @@ const PHRASES = [
   "恭喜", "我错了", "在吗", "等等", "冲鸭", "摸鱼",
 ];
 
-// ─── 表情風格 ───────────────────────────────────
+// ─── 表情风格 ───────────────────────────────────
 const STYLES = [
   { id: "cute-cartoon", label: "可爱卡通", icon: Baby, color: "#FFD60A" },
   { id: "pixel-art", label: "像素风", icon: Grid, color: "#30D158" },
@@ -97,7 +97,7 @@ export default function WechatSticker() {
         </header>
 
         <main className="px-4">
-          {/* Step 1: 選擇情緒 */}
+          {/* Step 1: 选择情绪 */}
           <section className="py-6 space-y-4">
             <div className="flex items-center space-x-3">
               <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#FF6B6B" }}>
@@ -123,7 +123,7 @@ export default function WechatSticker() {
             </div>
           </section>
 
-          {/* Step 2: 選擇詞語 */}
+          {/* Step 2: 选择词语 */}
           <section className="py-6 space-y-4">
             <div className="flex items-center space-x-3">
               <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#FFD60A" }}>
@@ -153,7 +153,7 @@ export default function WechatSticker() {
             />
           </section>
 
-          {/* Step 3: 選擇風格 */}
+          {/* Step 3: 选择风格 */}
           <section className="py-6 space-y-4">
             <div className="flex items-center space-x-3">
               <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#A855F7" }}>
@@ -198,7 +198,7 @@ export default function WechatSticker() {
             />
           </section>
 
-          {/* 生成按鈕 & 预览 */}
+          {/* 生成按钮 & 预览 */}
           <div className="sticky bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0A0A0C] to- ">
             {selectedEmotion && (
               <div className="bg-white/5 border border-white/10 rounded-lg p-3 mb-4">
@@ -239,7 +239,7 @@ export default function WechatSticker() {
             </button>
           </div>
 
-          {/* 生成結果 */}
+          {/* 生成结果 */}
           {results.length > 0 && (
             <section className="py-6">
               <h2 className="text-lg font-semibold mb-4">已生成 · {results.length} 个表情</h2>

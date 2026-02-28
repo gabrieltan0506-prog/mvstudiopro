@@ -34,12 +34,12 @@ interface TaskInfo {
 // ─── Tab Config ─────────────────────────────────────
 
 const TABS: Array<{ id: KlingTab; label: string; icon: React.ElementType; color: string; desc: string }> = [
-  { id: "omniVideo", label: "Omni Video", icon: Sparkles, color: "#A855F7", desc: "3.0 文生视频 / 图生视频 / 分镜叙事" },
-  { id: "motionControl", label: "Motion Control", icon: Footprints, color: "#3B82F6", desc: "2.6 动作迁移：图片 + 动作视频 → 动画" },
-  { id: "lipSync", label: "Lip-Sync", icon: Mic2, color: "#EC4899", desc: "对口型：视频 + 音频 → 口型同步" },
-  { id: "elements", label: "Elements", icon: Layers, color: "#10B981", desc: "角色元素库：保持角色一致性" },
-  { id: "imageGen", label: "Image Gen", icon: ImageIcon, color: "#F59E0B", desc: "Kling AI 圖片生成：支持 1K/2K 解析度，O1 和 V2.1 模型" },
-  { id: "history", label: "生成記錄", icon: Clock, color: "#6B7280", desc: "查看可靈工作室的所有生成記錄和收藏" },
+  { id: "omniVideo", label: "全能视频 (Omni Video)", icon: Sparkles, color: "#A855F7", desc: "3.0 文生视频 / 图生视频 / 分镜叙事" },
+  { id: "motionControl", label: "动作控制 (Motion Control)", icon: Footprints, color: "#3B82F6", desc: "2.6 动作迁移：图像 + 动作视频 → 动画" },
+  { id: "lipSync", label: "口型同步 (Lip-Sync)", icon: Mic2, color: "#EC4899", desc: "对口型：视频 + 音频 → 口型同步" },
+  { id: "elements", label: "角色元素 (Elements)", icon: Layers, color: "#10B981", desc: "角色元素库：保持角色一致性" },
+  { id: "imageGen", label: "图像生成 (Image Gen)", icon: ImageIcon, color: "#F59E0B", desc: "Kling AI 图像生成：支持 1K/2K 分辨率，O1 和 V2.1 模型" },
+  { id: "history", label: "生成记录", icon: Clock, color: "#6B7280", desc: "查看可灵工作室的所有生成记录和收藏" },
 ];
 
 // ─── Shared UI Components ───────────────────────────
@@ -47,7 +47,7 @@ const TABS: Array<{ id: KlingTab; label: string; icon: React.ElementType; color:
 function CostBadge({ mode, duration, type, hasVideo = false, hasAudio = false }: {
   mode: KlingMode; duration: number; type: string; hasVideo?: boolean; hasAudio?: boolean;
 }) {
-  // 根據類型計算平台 Credits 消耗
+  // 根据类型计算平台 Credits 消耗
   let credits = 0;
   if (type === "omniVideo") {
     credits = 80; // klingVideo
@@ -57,7 +57,7 @@ function CostBadge({ mode, duration, type, hasVideo = false, hasAudio = false }:
     credits = 60; // klingLipSync
   }
 
-  // 同時計算 Kling API units 供參考
+  // 同时计算 Kling API units 供参考
   let units = 0;
   if (type === "omniVideo") {
     const base = mode === "std"
@@ -183,15 +183,15 @@ function TaskStatusCard({ task, onPoll, onRetry }: { task: TaskInfo; onPoll: () 
   const statusLabels: Record<string, string> = {
     queued: "排队中",
     running: "生成中...",
-    succeeded: "完成",
+    succeeded: "已完成",
     failed: "失败",
   };
   const typeLabels: Record<string, string> = {
-    omniVideo: "Omni Video",
-    motionControl: "Motion Control",
-    lipSync: "Lip-Sync",
-    elements: "Elements",
-    imageGen: "Image Gen",
+    omniVideo: "全能视频 (Omni Video)",
+    motionControl: "动作控制 (Motion Control)",
+    lipSync: "口型同步 (Lip-Sync)",
+    elements: "角色元素 (Elements)",
+    imageGen: "图像生成 (Image Gen)",
   };
   const messageIndex = Math.floor((Date.now() - task.createdAt) / 2200) % JOB_PROGRESS_MESSAGES[task.jobType].length;
   const progressMessage = JOB_PROGRESS_MESSAGES[task.jobType][messageIndex];
@@ -355,7 +355,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
         });
       } else if (subTab === "i2v") {
         if (!imageUri) {
-          toast.error("请选择一张参考图片");
+          toast.error("请选择一张参考图像");
           setLoading(false);
           return;
         }
@@ -467,12 +467,12 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
 
       {/* Image upload for I2V */}
       {subTab === "i2v" && (
-        <FileUploadBox label="参考图片" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
+        <FileUploadBox label="参考图像" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
       )}
 
       <div className="space-y-3 rounded-lg border border-gray-700 bg-gray-800/40 p-3">
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>鎖定人臉一致性</span>
+          <span>锁定人脸一致性</span>
           <input
             type="checkbox"
             checked={enableFaceConsistency}
@@ -481,7 +481,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
           />
         </label>
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>使用參考圖片</span>
+          <span>使用参考图像</span>
           <input
             type="checkbox"
             checked={useReferenceImage}
@@ -493,7 +493,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
           />
         </label>
         <label className="flex items-center justify-between text-sm text-gray-200">
-          <span>平滑分層換裝（避免整體變形）</span>
+          <span>平滑分层换装（避免整体变形）</span>
           <input
             type="checkbox"
             checked={smoothLayeredTransformation}
@@ -505,7 +505,7 @@ function OmniVideoPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTy
 
       {useReferenceImage && (
         <FileUploadBox
-          label="上傳參考圖片"
+          label="上传参考图像"
           accept="image/*"
           value={referenceImageUri}
           onChange={setReferenceImageUri}
@@ -602,7 +602,7 @@ function MotionControlPanel({ enqueueTask }: { enqueueTask: (input: { jobType: J
 
   const handleSubmit = useCallback(async () => {
     if (!imageUri) {
-      toast.error("请上传角色图片");
+      toast.error("请上传角色图像");
       return;
     }
     if (!videoUri) {
@@ -649,7 +649,7 @@ function MotionControlPanel({ enqueueTask }: { enqueueTask: (input: { jobType: J
           },
         },
       });
-      toast.success("Motion Control 任务已加入队列");
+      toast.success("动作控制任务已加入队列");
     } catch (error: any) {
       console.error(error);
       toast.error(error?.message || "提交失败，请稍后再试");
@@ -663,12 +663,12 @@ function MotionControlPanel({ enqueueTask }: { enqueueTask: (input: { jobType: J
       <div className="bg-blue-900/20 border border-blue-800/40 rounded-lg p-3 flex items-start space-x-2">
         <Info className="h-5 w-5 text-blue-400 mt-0.5 flex-shrink-0" />
         <p className="text-sm text-blue-300">
-          上传一张角色图片和一段动作参考视频，AI 会将角色"穿上"视频中的动作。适合舞蹈、运动、手势等动作迁移。
+          上传一张角色图像和一段动作参考视频，AI 会将角色"穿上"视频中的动作。适合舞蹈、运动、手势等动作迁移。
         </p>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <FileUploadBox label="角色图片" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
+        <FileUploadBox label="角色图像" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
         <FileUploadBox label="动作参考视频" accept="video/*" value={videoUri} onChange={setVideoUri} preview="video" />
       </div>
 
@@ -835,7 +835,7 @@ function LipSyncPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType
           },
         },
       });
-      toast.success("Lip-Sync 任务已加入队列");
+      toast.success("口型同步任务已加入队列");
       setStep("upload");
       setVideoUri(null);
       setVideoUrlForJob(null);
@@ -845,7 +845,7 @@ function LipSyncPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType
       setSelectedFace(null);
     } catch (error: any) {
       console.error(error);
-      toast.error(error?.message || "Lip-Sync 提交失败");
+      toast.error(error?.message || "口型同步提交失败");
     } finally {
       setLoading(false);
     }
@@ -984,7 +984,7 @@ function LipSyncPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobType
               className="flex-1 py-2.5 bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-all duration-300 hover:scale-[1.03] active:scale-[0.97] hover:shadow-lg hover:shadow-pink-600/30 ripple-effect"
             >
               {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Play className="h-5 w-5" />}
-              <span>{loading ? "提交中..." : "生成 Lip-Sync"}</span>
+              <span>{loading ? "提交中..." : "生成口型同步视频"}</span>
             </button>
           </div>
         </div>
@@ -1015,7 +1015,7 @@ function ElementsPanel() {
     try {
       if (createType === "image") {
         if (!imageUri) {
-          toast.error("请上传角色图片");
+          toast.error("请上传角色图像");
           setLoading(false);
           return;
         }
@@ -1088,7 +1088,7 @@ function ElementsPanel() {
       <div className="bg-emerald-900/20 border border-emerald-800/40 rounded-lg p-3 flex items-start space-x-2">
         <Info className="h-5 w-5 text-emerald-400 mt-0.5 flex-shrink-0" />
         <p className="text-sm text-emerald-300">
-          创建角色元素后，可在 Omni Video 的分镜叙事和 All-in-One 模式中引用，确保多个视频中角色外观一致。
+          创建角色元素后，可在全能视频（Omni Video）的分镜叙事和一体化模式中引用，确保多个视频中角色外观一致。
         </p>
       </div>
 
@@ -1108,7 +1108,7 @@ function ElementsPanel() {
         </div>
 
         {createType === "image" ? (
-          <FileUploadBox label="角色图片" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
+          <FileUploadBox label="角色图像" accept="image/*" value={imageUri} onChange={setImageUri} preview="image" />
         ) : (
           <FileUploadBox label="角色视频" accept="video/*" value={videoUri} onChange={setVideoUri} preview="video" />
         )}
@@ -1201,7 +1201,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
 
   const handleSubmit = useCallback(async () => {
     if (!prompt.trim()) {
-      toast.error("請輸入圖片描述");
+      toast.error("请输入图像描述");
       return;
     }
     setLoading(true);
@@ -1252,10 +1252,10 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
           },
         });
       }
-      toast.success("圖片生成任務已加入隊列");
+      toast.success("图像生成任务已加入队列");
     } catch (error: any) {
       console.error(error);
-      toast.error(error?.message || "發生錯誤");
+      toast.error(error?.message || "发生错误");
     } finally {
       setLoading(false);
     }
@@ -1266,15 +1266,15 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
       <div className="bg-amber-900/20 border border-amber-800/40 rounded-lg p-3 flex items-start space-x-2">
         <Info className="h-5 w-5 text-amber-400 mt-0.5 flex-shrink-0" />
         <p className="text-sm text-amber-300">
-          Kling AI 圖片生成：O1 模型質量更高（8 Credits/張），V2.1 模型速度更快（5 Credits/張）。支持 1K 和 2K 解析度。
+          Kling AI 图像生成：O1 模型质量更高（8 Credits/张），V2.1 模型速度更快（5 Credits/张）。支持 1K 和 2K 分辨率。
         </p>
       </div>
 
       {/* Model selector */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-300">模型選擇</span>
+        <span className="text-sm font-medium text-gray-300">模型选择</span>
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
-          <button onClick={() => setModel("kling-image-o1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-image-o1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>O1 高質量</button>
+          <button onClick={() => setModel("kling-image-o1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-image-o1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>O1 高质量</button>
           <button onClick={() => setModel("kling-v2-1")} className={`px-3 py-1 text-sm rounded-md transition-colors ${model === "kling-v2-1" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>V2.1 快速</button>
           <button
             onClick={() => {
@@ -1293,7 +1293,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
         <span className="text-sm font-medium text-gray-300">解析度</span>
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
           {model !== "nano-banana" && (
-            <button onClick={() => setResolution("1k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "1k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>1K 標準</button>
+            <button onClick={() => setResolution("1k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "1k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>1K 标准</button>
           )}
           <button onClick={() => setResolution("2k")} className={`px-3 py-1 text-sm rounded-md transition-colors ${resolution === "2k" ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>2K 高清</button>
           {model === "nano-banana" && (
@@ -1307,7 +1307,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="描述你想生成的圖片..."
+          placeholder="描述你想生成的图片..."
           className="w-full p-3 bg-gray-800 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-amber-500 border border-gray-700 resize-none"
           rows={4}
         />
@@ -1318,7 +1318,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
       {/* Count */}
       {model !== "nano-banana" && (
         <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-300">生成數量</span>
+        <span className="text-sm font-medium text-gray-300">生成数量</span>
         <div className="flex items-center space-x-2 rounded-lg bg-gray-800 p-1">
           {[1, 2, 3, 4].map((n) => (
             <button key={n} onClick={() => setCount(n)} className={`px-3 py-1 text-sm rounded-md transition-colors ${count === n ? "bg-amber-600 text-white" : "text-gray-300 hover:text-white"}`}>{n}</button>
@@ -1330,14 +1330,14 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
       {/* Reference image */}
       <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-gray-300">
         <ChevronDown className={`h-3 w-3 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
-        <span>高級選項（參考圖、負面提示詞）</span>
+        <span>高级选项（参考图、负面提示词）</span>
       </button>
       {showAdvanced && (
         <div className="space-y-3 bg-gray-800/30 p-3 rounded-lg">
-          <FileUploadBox label="參考圖片（可選）" accept="image/*" value={referenceImage} onChange={setReferenceImage} preview="image" />
+          <FileUploadBox label="参考图像（可选）" accept="image/*" value={referenceImage} onChange={setReferenceImage} preview="image" />
           {referenceImage && (
             <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-300">參考圖影響度</span>
+              <span className="text-sm text-gray-300">参考图影响度</span>
               <div className="flex items-center space-x-2">
                 <input type="range" min="0" max="1" step="0.05" value={imageFidelity} onChange={(e) => setImageFidelity(parseFloat(e.target.value))} className="w-24 accent-amber-500" />
                 <span className="text-sm text-gray-400 w-8">{imageFidelity.toFixed(2)}</span>
@@ -1347,7 +1347,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
           <textarea
             value={negativePrompt}
             onChange={(e) => setNegativePrompt(e.target.value)}
-            placeholder="負面提示詞（不希望出現的內容）..."
+            placeholder="负面提示词（不希望出现的内容）..."
             className="w-full p-3 bg-gray-800 rounded-lg text-white placeholder-gray-500 border border-gray-700 resize-none text-sm"
             rows={2}
           />
@@ -1359,7 +1359,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
         <div className="flex items-center space-x-1 bg-gray-800 text-yellow-400 px-2 py-1 rounded-full text-xs">
           <Coins className="h-3.5 w-3.5" />
           <span>{creditCost * (model === "nano-banana" ? 1 : count)} Credits</span>
-          <span className="text-gray-400">({model === "nano-banana" ? 1 : count}張 x {creditCost})</span>
+          <span className="text-gray-400">({model === "nano-banana" ? 1 : count}张 x {creditCost})</span>
         </div>
         <button
           onClick={handleSubmit}
@@ -1367,7 +1367,7 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
           className="px-6 py-2.5 bg-amber-600 text-white font-semibold rounded-lg hover:bg-amber-700 disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center space-x-2 transition-colors"
         >
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
-          <span>{loading ? "生成中..." : "生成圖片"}</span>
+          <span>{loading ? "生成中..." : "生成图像"}</span>
         </button>
       </div>
     </div>
@@ -1491,7 +1491,7 @@ export default function RemixStudioPage() {
       case "imageGen":
         return <ImageGenPanel enqueueTask={enqueueTask} />;
       case "history":
-        return <CreationHistoryPanel title="可靈工作室生成記錄" />;
+        return <CreationHistoryPanel title="可灵工作室生成记录" />;
       default:
         return null;
     }
@@ -1508,7 +1508,7 @@ export default function RemixStudioPage() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 bg-clip-text text-transparent">
             可灵工作室
           </h1>
-          <p className="text-gray-400 mt-1">Kling AI — 視頻生成 · 動作遷移 · 口型同步 · 圖片生成 · 角色元素</p>
+          <p className="text-gray-400 mt-1">Kling AI — 视频生成 · 动作迁移 · 口型同步 · 图像生成 · 角色元素</p>
         </div>
 
         {/* Expiry Warning */}

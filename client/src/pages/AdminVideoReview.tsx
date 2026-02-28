@@ -126,7 +126,7 @@ export default function AdminVideoReview() {
             </div>
             <div>
               <span>⚡</span> /* TODO: replace MaterialIcons schedule */
-              <span>{new Date(item.createdAt).toLocaleString("zh-TW")}</span>
+              <span>{new Date(item.createdAt).toLocaleString("zh-CN")}</span>
             </div>
           </div>
           <div>

@@ -114,7 +114,7 @@ export default function AudioLabPage() {
 
   const generateLyrics = trpc.suno.generateLyrics.useMutation();
 
-  // 水印音頻（入門版用戶播放前加入 MVStudioPro.com 語音）
+  // 水印音频（入门版用户播放前加入 MVStudioPro.com 语音）
   const watermarkQuery = trpc.suno.getWatermarkAudio.useQuery(undefined, {
     staleTime: Infinity,
     retry: false,
@@ -134,7 +134,7 @@ export default function AudioLabPage() {
     }
 
     if (watermarkQuery.data?.enabled && watermarkQuery.data?.watermarkUrl) {
-      // 入門版用戶：先播放水印語音，再播放歌曲
+      // 入门版用户：先播放水印语音，再播放歌曲
       const wmAudio = new Audio(watermarkQuery.data.watermarkUrl);
       watermarkAudioRef.current = wmAudio;
       wmAudio.onended = () => {
@@ -149,7 +149,7 @@ export default function AudioLabPage() {
         songAudio.play().catch(() => {});
       });
     } else {
-      // 管理員或水印不可用：直接播放
+      // 管理员或水印不可用：直接播放
       const songAudio = new Audio(audioUrl);
       songAudioRef.current = songAudio;
       songAudio.play().catch(() => {});
@@ -668,9 +668,9 @@ export default function AudioLabPage() {
           </div>
         )}
 
-        {/* 生成歷史和收藏 */}
+        {/* 生成历史和收藏 */}
         <div className="bg-white/5 rounded-xl p-4">
-          <CreationHistoryPanel type="music" title="音樂生成歷史" />
+          <CreationHistoryPanel type="music" title="音乐生成历史" />
         </div>
       </div>
 

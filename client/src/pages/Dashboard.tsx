@@ -65,7 +65,7 @@ export default function LayoutDashboard() {
             <div className="flex flex-col col-span-2">
               <span className="text-sm text-gray-400">当前方案</span>
               <span className="text-lg font-semibold">
-                {planConfig?.nameCn ?? "入門版"}
+                {planConfig?.nameCn ?? "入门版"}
               </span>
             </div>
           </div>
@@ -107,7 +107,7 @@ export default function LayoutDashboard() {
                          tx.source === "usage" ? tx.action : tx.source}
                       </span>
                       <span className="text-xs text-gray-400 block">
-                        {tx.createdAt ? new Date(tx.createdAt).toLocaleString("zh-TW") : ""}
+                        {tx.createdAt ? new Date(tx.createdAt).toLocaleString("zh-CN") : ""}
                       </span>
                     </div>
                     <span className={`font-bold text-lg ${tx.amount > 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -136,7 +136,7 @@ export default function LayoutDashboard() {
                          log.action === "videoGeneration" ? "视频生成" : log.action}
                       </span>
                       <span className="text-xs text-gray-400 block">
-                        {log.createdAt ? new Date(log.createdAt).toLocaleString("zh-TW") : ""}
+                        {log.createdAt ? new Date(log.createdAt).toLocaleString("zh-CN") : ""}
                       </span>
                     </div>
                     <span className="font-bold text-lg text-red-400">

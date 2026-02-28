@@ -143,7 +143,7 @@ function VideoCard({ video, onClick }: { video: any; onClick: () => void }) {
               </>
             ) : null}
             <span className="text-xs text-[#9BA1A6]">
-              {new Date(video.createdAt).toLocaleDateString("zh-TW")}
+              {new Date(video.createdAt).toLocaleDateString("zh-CN")}
             </span>
           </div>
 

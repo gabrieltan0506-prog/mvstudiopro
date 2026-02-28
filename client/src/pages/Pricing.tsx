@@ -111,12 +111,12 @@ export default function Pricing() {
                     <span className="text-[#FF6B35] text-xs font-semibold">当前方案</span>
                 </div>
             )}
-            <h2 className="text-xl font-bold text-white mb-2">入門版</h2>
+            <h2 className="text-xl font-bold text-white mb-2">入门版</h2>
             <p className="text-4xl font-extrabold text-white">¥0<span className="text-sm font-normal text-gray-400 ml-1">/月</span></p>
             <div className="mt-4 space-y-1.5">
-              <FeatureRow text="視頻 PK 評分（前 2 次免費，之後 8 Credits/次）" />
-              <FeatureRow text="偶像生成（前 3 次免費，之後 3 Credits/次）" />
-              <FeatureRow text="分鏡腳本（Flash 模型 8 Credits/次）" />
+              <FeatureRow text="视频 PK 评分（前 2 次免费，之后 8 Credits/次）" />
+              <FeatureRow text="偶像生成（前 3 次免费，之后 3 Credits/次）" />
+              <FeatureRow text="分镜脚本（Flash 模型 8 Credits/次）" />
               <FeatureRow text="视频展厅浏览" />
             </div>
           </div>
@@ -135,7 +135,7 @@ export default function Pricing() {
             {currentPlan === "free" && (
                 <div className="flex items-center gap-1.5 mb-2">
                     <Gift className="h-3 w-3 text-white" />
-                    <span className="text-xs text-white font-semibold">7 天體驗期</span>
+                    <span className="text-xs text-white font-semibold">7 天体验期</span>
                 </div>
             )}
             <div className="flex items-baseline">
@@ -167,7 +167,7 @@ export default function Pricing() {
                 <Loader2 className="h-5 w-5 animate-spin mx-auto" />
               ) : (
                 <span>
-                  {currentPlan === "pro" ? "已訂閱" : currentPlan === "free" ? "開始 7 天體驗" : "立即升級"}
+                  {currentPlan === "pro" ? "已订阅" : currentPlan === "free" ? "开始 7 天体验" : "立即升级"}
                 </span>
               )}
             </button>
@@ -322,7 +322,7 @@ export default function Pricing() {
               {subData.subscription.currentPeriodEnd && (
                 <p className="text-gray-400 text-sm mt-1">
                   {subData.subscription.cancelAtPeriodEnd ? "到期日" : "下次续费"}：
-                  {new Date(subData.subscription.currentPeriodEnd).toLocaleDateString("zh-TW")}
+                  {new Date(subData.subscription.currentPeriodEnd).toLocaleDateString("zh-CN")}
                 </p>
               )}
 
@@ -359,7 +359,7 @@ export default function Pricing() {
                       {inv.description || `发票 #${inv.stripeInvoiceId?.slice(-6) || idx + 1}`}
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString("zh-TW") : ""}
+                      {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString("zh-CN") : ""}
                     </p>
                   </div>
                   <div className="text-right">

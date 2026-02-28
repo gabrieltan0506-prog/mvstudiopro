@@ -116,7 +116,7 @@ export default function AdminVideoReviewPage() {
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-400">
               <Calendar size={12} />
-              <span>{new Date(item.createdAt).toLocaleString("zh-TW")}</span>
+              <span>{new Date(item.createdAt).toLocaleString("zh-CN")}</span>
             </div>
           </div>
           <div className={`px-2 py-1 rounded-md text-xs font-bold ${status.className}`}>
