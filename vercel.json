@@ -1,9 +1,4 @@
 {
   "buildCommand": "pnpm build",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "@vercel/node"
-    }
-  }
+  "outputDirectory": "dist"
 }
