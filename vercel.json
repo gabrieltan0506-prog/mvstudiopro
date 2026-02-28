@@ -3,6 +3,7 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "dist/public",
   "rewrites": [
+    { "source": "/v/(.*)", "destination": "/api/v/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
