@@ -1,7 +1,4 @@
 {
-  "routes": [
-    { "src": "^/api/(.*)$", "dest": "/api/$1" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
-  ]
+  "buildCommand": "pnpm build",
+  "outputDirectory": "dist"
 }
