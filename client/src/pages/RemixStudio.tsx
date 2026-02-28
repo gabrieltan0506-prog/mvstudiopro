@@ -195,22 +195,27 @@ function TaskStatusCard({ task, onPoll, onRetry }: { task: TaskInfo; onPoll: () 
   };
   const messageIndex = Math.floor((Date.now() - task.createdAt) / 2200) % JOB_PROGRESS_MESSAGES[task.jobType].length;
   const progressMessage = JOB_PROGRESS_MESSAGES[task.jobType][messageIndex];
+  const taskOutputId = typeof task.output?.taskId === "string" ? task.output.taskId.trim() : "";
   const shortUrl =
     (task.output?.shortUrl as string | undefined) ??
-    (typeof task.output?.taskId === "string" && task.output.taskId.trim()
-      ? `/v/${encodeURIComponent(task.output.taskId.trim())}`
+    (taskOutputId
+      ? `/api/v/${encodeURIComponent(taskOutputId)}`
       : undefined);
-  const playableVideoUrl = typeof shortUrl === "string" && shortUrl.trim() ? shortUrl : undefined;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const playableVideoUrl =
+    typeof shortUrl === "string" && shortUrl.trim()
+      ? `${origin}${shortUrl}`
+      : undefined;
   const handleCopyLink = useCallback(async () => {
-    if (!playableVideoUrl) return;
-    const absoluteUrl = `${window.location.origin}${playableVideoUrl}`;
+    if (!shortUrl || !origin) return;
+    const absoluteUrl = `${origin}${shortUrl}`;
     try {
       await navigator.clipboard.writeText(absoluteUrl);
       toast.success("链接已复制");
     } catch {
       toast.error("复制失败，请手动复制");
     }
-  }, [playableVideoUrl]);
+  }, [origin, shortUrl]);
   const imageUrls = Array.isArray(task.output?.images)
     ? (task.output?.images as string[])
     : typeof task.output?.imageUrl === "string"

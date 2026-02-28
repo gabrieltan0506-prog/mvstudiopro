@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
-import { saveVideoShortLink } from "./_core/video-short-links";
+import { setShortLink } from "./_core/shortlink-store";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = typeof req.body === "string"
@@ -64,13 +64,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         null;
 
       if (status === "succeed" && typeof videoUrl === "string" && videoUrl.trim()) {
-        await saveVideoShortLink(taskId, videoUrl);
+        await setShortLink(taskId, videoUrl);
         return res.status(200).json({
           ok: true,
           taskId,
           status,
           videoUrl,
-          shortUrl: `/v/${encodeURIComponent(taskId)}`,
+          shortUrl: `/api/v/${encodeURIComponent(taskId)}`,
           raw: parsed,
         });
       }

@@ -17,7 +17,7 @@ import { getTierProviderChain, resolveUserTier } from "../services/tier-provider
 import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
-import { getVideoUrlByTaskId, saveVideoShortLink } from "../services/video-short-links";
+import { saveVideoShortLink } from "../services/video-short-links";
 
 function buildRoutingMap() {
   return {
@@ -168,7 +168,7 @@ async function startServer() {
         const videoUrl = typeof output.videoUrl === "string" ? output.videoUrl.trim() : "";
         if (taskId && videoUrl) {
           await saveVideoShortLink(taskId, videoUrl);
-          output.shortUrl = `/v/${encodeURIComponent(taskId)}`;
+          output.shortUrl = `/api/v/${encodeURIComponent(taskId)}`;
         }
       }
 
@@ -180,25 +180,6 @@ async function startServer() {
     } catch (error) {
       console.error("[Jobs] GET /api/jobs/:id failed:", error);
       return res.status(500).json({ error: "Failed to fetch job" });
-    }
-  });
-
-  app.get("/v/:taskId", async (req, res) => {
-    try {
-      const taskId = String(req.params.taskId || "").trim();
-      if (!taskId) {
-        return res.status(404).json({ ok: false, error: "Video not found" });
-      }
-
-      const videoUrl = await getVideoUrlByTaskId(taskId);
-      if (!videoUrl) {
-        return res.status(404).json({ ok: false, error: "Video not found" });
-      }
-
-      return res.redirect(302, videoUrl);
-    } catch (error) {
-      console.error("[VideoShortLinks] GET /v/:taskId failed:", error);
-      return res.status(500).json({ ok: false, error: "Failed to resolve short link" });
     }
   });
 
