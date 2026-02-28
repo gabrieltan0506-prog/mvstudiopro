@@ -239,7 +239,7 @@ export default function VirtualIdol() {
     } catch (err: any) {
       if (err.message?.includes("仅限专业版")) {
         toast.error("需要升级", {
-          description: "偶像转 3D 功能仅限專業版以上用戶使用。升級後可享受 3D 轉換，每次消耗 30 Credits。",
+          description: "偶像转 3D 功能仅限专业版以上用户使用。升级后可享受 3D 转换，每次消耗 30 Credits。",
           action: { label: "立即升级", onClick: () => navigate("/pricing") },
         });
       } else {
@@ -438,7 +438,7 @@ export default function VirtualIdol() {
                 <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 <span className="relative flex items-center justify-center gap-2">
                   {generating ? (
-                    <><Loader2 className="h-5 w-5 animate-spin" /> {generationJobId ? "排队处理中..." : "正在提交..."}</>
+                    <><Loader2 className="h-5 w-5 animate-spin" /> {generationJobId ? "排队中..." : "正在提交..."}</>
                   ) : (
                     <><Sparkles className="h-5 w-5" /> 开始生成</>
                   )}
@@ -511,7 +511,7 @@ export default function VirtualIdol() {
                 {show3DPanel && (
                   <div className="mt-5 space-y-4 animate-[fadeIn_0.3s_ease-out]" style={{ animation: 'fadeIn 0.3s ease-out' }}>
                     <p className="text-sm text-white/35 leading-relaxed">
-                     將上方生成的 2D 圖片轉換為 3D 模型，可用於遊戲、VTuber 等場景。每次轉換消耗 30 Credits（僅限專業版）。
+                     将上方生成的 2D 图片转换为 3D 模型，可用于游戏、VTuber 等场景。每次转换消耗 30 Credits（仅限专业版）。
                     </p>
                     <div className="flex items-center gap-4">
                       <label htmlFor="pbr-toggle" className="flex items-center cursor-pointer group">
@@ -533,7 +533,7 @@ export default function VirtualIdol() {
                         {converting3D ? (
                           <><Loader2 className="h-5 w-5 animate-spin" /> 正在转换...</>
                         ) : (
-                          <><Wand2 className="h-5 w-5" /> 開始轉換（消耗 30 Credits）</>
+                          <><Wand2 className="h-5 w-5" /> 开始转换（消耗 30 Credits）</>
                         )}
                       </span>
                     </button>
@@ -567,7 +567,7 @@ export default function VirtualIdol() {
 
             {/* ── History ── */}
             <div className={`${glassCard} p-6`}>
-              <CreationHistoryPanel type="idol_image" title="偶像生成歷史" />
+              <CreationHistoryPanel type="idol_image" title="偶像生成历史" />
             </div>
           </div>
         </div>

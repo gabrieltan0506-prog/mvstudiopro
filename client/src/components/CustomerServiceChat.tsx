@@ -4,18 +4,18 @@
  * AI 客服助手聊天浮窗
  *
  * 功能：
- * - 右下角浮動按鈕，點擊展開聊天面板
- * - AI 自動回答（Gemini Flash）
- * - 「轉人工客服」按鈕（Mail 通知管理員）
- * - 歡迎語 + 快捷問題
- * - 深色主題，與 MV Studio Pro 風格一致
+ * - 右下角浮动按钮，点击展开聊天面板
+ * - AI 自动回答（Gemini Flash）
+ * - 「转人工客服」按钮（Mail 通知管理员）
+ * - 欢迎语 + 快捷问题
+ * - 深色主题，与 MV Studio Pro 风格一致
  */
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { trpc } from "@/lib/trpc";
 import { Headset, X, Send, Loader2, User, Mail } from "lucide-react";
 
-// ─── 類型 ─────────────────────────────────────────────────
+// ─── 类型 ─────────────────────────────────────────────────
 interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -44,7 +44,7 @@ function generateSessionId(): string {
   return `cs_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-// ─── 主組件 ───────────────────────────────────────────────
+// ─── 主组件 ───────────────────────────────────────────────
 export function CustomerServiceChat() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
@@ -63,7 +63,7 @@ export function CustomerServiceChat() {
   const sendMessageMutation = trpc.community.addComment.useMutation();
   const escalateMutation = trpc.community.toggleLike.useMutation();
 
-  // 滾動到底部
+  // 滚动到底部
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
       if (messagesContainerRef.current) {
@@ -72,7 +72,7 @@ export function CustomerServiceChat() {
     }, 100);
   }, []);
 
-  // 發送消息
+  // 发送消息
   const handleSend = useCallback(async (text?: string) => {
     const messageText = (text || inputText).trim();
     if (!messageText || isLoading) return;
@@ -128,7 +128,7 @@ export function CustomerServiceChat() {
     }
   }, [inputText, isLoading, sessionId, sendMessageMutation, scrollToBottom, isOpen]);
 
-  // 轉人工
+  // 转人工
   const handleEscalate = useCallback(async () => {
     setIsLoading(true);
     try {

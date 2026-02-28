@@ -187,7 +187,7 @@ export default function TeamManagementPage() {
 
   const copyInviteCode = async (code: string) => {
     await navigator.clipboard.writeText(code);
-    toast.success(`邀请码 ${code} 已拷贝到剪贴板`);
+    toast.success(`邀请码 ${code} 已复制到剪贴板`);
   };
 
   const team = teamQuery.data;
@@ -280,7 +280,7 @@ export default function TeamManagementPage() {
                           <div className="flex items-center gap-2 mt-2">
                             <span className="text-sm text-gray-400">邀请码: {team.team.inviteCode}</span>
                             <Button variant="ghost" size="sm" onClick={() => copyInviteCode(team.team.inviteCode!)}>
-                              拷贝
+                              复制
                             </Button>
                           </div>
                         )}

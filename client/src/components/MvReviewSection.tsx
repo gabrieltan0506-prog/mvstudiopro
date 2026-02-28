@@ -63,7 +63,7 @@ function formatDate(date: string | Date): string {
   if (diffMins < 60) return `${diffMins} 分钟前`;
   if (diffHours < 24) return `${diffHours} 小时前`;
   if (diffDays < 7) return `${diffDays} 天前`;
-  return d.toLocaleDateString("zh-TW", { year: "numeric", month: "short", day: "numeric" });
+  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
 }
 
 export function MvReviewSection({ mvId, mvTitle }: MvReviewSectionProps) {

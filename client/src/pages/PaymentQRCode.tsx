@@ -87,7 +87,7 @@ export default function PaymentQRCode() {
 
   const handleCopyOrderId = async () => {
     await navigator.clipboard.writeText(params.orderId);
-    toast.success("订单号已拷贝到剪贴板");
+    toast.success("订单号已复制到剪贴板");
   };
 
   const paymentMethodName = params.paymentMethod === "wechat" ? "微信支付" : "支付宝";

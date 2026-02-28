@@ -252,7 +252,7 @@ export default function AdminPaymentReview() {
                   </button>
 
                   <p className="text-sm text-gray-400">
-                    提交时间：{new Date(payment.createdAt).toLocaleString("zh-TW")}
+                    提交时间：{new Date(payment.createdAt).toLocaleString("zh-CN")}
                   </p>
                 </div>
 

@@ -425,7 +425,7 @@ export default function VFXEngine() {
                       <button onClick={() => handleCopy(content.title, `${activePid}-title`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-title` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-title` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
-                          {copiedField === `${activePid}-title` ? "已拷贝" : "拷贝"}
+                          {copiedField === `${activePid}-title` ? "已复制" : "复制"}
                         </span>
                       </button>
                     </div>
@@ -439,7 +439,7 @@ export default function VFXEngine() {
                       <button onClick={() => handleCopy(content.caption, `${activePid}-caption`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-caption` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-caption` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
-                          {copiedField === `${activePid}-caption` ? "已拷贝" : "拷贝"}
+                          {copiedField === `${activePid}-caption` ? "已复制" : "复制"}
                         </span>
                       </button>
                     </div>
@@ -453,7 +453,7 @@ export default function VFXEngine() {
                       <button onClick={() => handleCopy(content.hashtags.join(" "), `${activePid}-tags`)} className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] transition-all duration-200 hover:bg-[rgba(255,255,255,0.12)] hover:scale-105 active:scale-95">
                         <Copy size={16} className={copiedField === `${activePid}-tags` ? "text-[#30D158]" : "text-[#9B9691]"} />
                         <span className={`text-xs font-medium ${copiedField === `${activePid}-tags` ? "text-[#30D158]" : "text-[#9B9691]"}`}>
-                          {copiedField === `${activePid}-tags` ? "已拷贝" : "拷贝"}
+                          {copiedField === `${activePid}-tags` ? "已复制" : "复制"}
                         </span>
                       </button>
                     </div>
@@ -499,7 +499,7 @@ export default function VFXEngine() {
                   >
                     {copiedField === `${activePid}-all` ? <CheckCircle size={20} style={{ color: platform.color }} /> : <Copy size={20} style={{ color: platform.color }} />}
                     <span className="text-base font-bold" style={{ color: platform.color }}>
-                      {copiedField === `${activePid}-all` ? "全部已拷贝！" : "一键拷贝全部内容"}
+                      {copiedField === `${activePid}-all` ? "全部已复制！" : "一键复制全部内容"}
                     </span>
                   </button>
                 </div>

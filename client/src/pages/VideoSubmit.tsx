@@ -26,7 +26,7 @@ type Step = "verify" | "upload" | "review" | "analyzing" | "result";
 
 const SHOWCASE_CONTENT = [
     { type: "feature" as const, icon: Sparkles, title: "AI 智能分镜脚本", desc: "上传歌曲即可自动生成专业视频分镜脚本，包含画面描述、运镜指导、情绪节奏", color: "#FF6B35" },
-    { type: "feature" as const, icon: Paintbrush, title: "NanoBanana 图片生成", desc: "全新 AI 图片生成引擎，支持多种风格，为你的视频创作绝美视觉素材", color: "#C77DBA" },
+    { type: "feature" as const, icon: Paintbrush, title: "NanoBanana 图像生成", desc: "全新 AI 图像生成引擎，支持多种风格，为你的视频创作绝美视觉素材", color: "#C77DBA" },
     { type: "feature" as const, icon: Film, title: "一键生成视频", desc: "从脚本到成片，AI 自动完成画面生成、音乐匹配、特效合成", color: "#64D2FF" },
     { type: "tip" as const, icon: Lightbulb, title: "爆款视频秘诀", desc: "前 3 秒决定留存率，开场要有冲击力！保持节奏紧凑，每 15-20 秒设置一个高潮点", color: "#FFD60A" },
     { type: "tip" as const, icon: Palette, title: "色彩运用技巧", desc: "统一的色调能提升专业感。尝试使用互补色制造视觉张力，让画面更具表现力", color: "#30D158" },

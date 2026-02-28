@@ -1,15 +1,15 @@
 /**
  * NBP 引擎选择器组件
  * 
- * 用于分镜页面和虚拟偶像页面，让用户选择图片生成引擎：
- * - Forge（Forge AI，含水印）— 基礎引擎
+ * 用于分镜页面和虚拟偶像页面，让用户选择图像生成引擎：
+ * - Forge（Forge AI，含水印）— 基础引擎
  * - NBP 2K（5 Credits/张）
  * - NBP 4K（9 Credits/张）
  * - Kling 1K（8 Credits/张）
  * - Kling 2K（10 Credits/张）
  * 
- * 管理員：所有引擎不消耗 Credits
- * 所有付費引擎必須標明 Credits 數量
+ * 管理员：所有引擎不消耗 Credits
+ * 所有付费引擎必须标明 Credits 数量
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
 
@@ -53,7 +53,7 @@ export function NbpEngineSelector({
     {
       id: "forge",
       label: "Forge",
-      desc: "基礎畫質，含浮水印",
+      desc: "基础画质，含浮水印",
       cost: "3 Cr",
       icon: Sparkles,
       color: "#30D158",
@@ -63,34 +63,34 @@ export function NbpEngineSelector({
       id: "nbp_2k",
       label: "NBP 2K",
       desc: isAdmin
-        ? "高清 2K，無浮水印"
-        : effectivePlan === "free" ? "需升級" : effectivePlan === "pro" ? "含浮水印" : "無浮水印",
-      cost: "5 Cr/張",
+        ? "高清 2K，无浮水印"
+        : effectivePlan === "free" ? "需升级" : effectivePlan === "pro" ? "含浮水印" : "无浮水印",
+      cost: "5 Cr/张",
       icon: MonitorPlay,
       color: "#64D2FF",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 5),
       reason:
         !isAdmin && effectivePlan === "free"
-          ? "升級到 Pro 方案即可使用"
+          ? "升级到 Pro 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 5
-          ? "Credits 不足，請充值"
+          ? "Credits 不足，请充值"
           : undefined,
     },
     {
       id: "nbp_4k",
       label: "NBP 4K",
       desc: isAdmin
-        ? "超高清 4K，無浮水印"
-        : effectivePlan === "enterprise" ? "無浮水印" : "需升級",
-      cost: "9 Cr/張",
+        ? "超高清 4K，无浮水印"
+        : effectivePlan === "enterprise" ? "无浮水印" : "需升级",
+      cost: "9 Cr/张",
       icon: Tv2,
       color: "#FFD60A",
       available: isAdmin || (effectivePlan === "enterprise" && (effectiveCredits ?? 0) >= 9),
       reason:
         !isAdmin && effectivePlan !== "enterprise"
-          ? "升級到 Enterprise 方案即可使用"
+          ? "升级到 Enterprise 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 9
-          ? "Credits 不足，請充值"
+          ? "Credits 不足，请充值"
           : undefined,
     },
     {
@@ -98,16 +98,16 @@ export function NbpEngineSelector({
       label: "Kling 1K",
       desc: isAdmin
         ? "Kling AI O1，1K 解析度"
-        : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型",
-      cost: "8 Cr/張",
+        : effectivePlan === "free" ? "需升级" : "Kling AI O1 模型",
+      cost: "8 Cr/张",
       icon: Zap,
       color: "#F97316",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 8),
       reason:
         !isAdmin && effectivePlan === "free"
-          ? "升級到 Pro 方案即可使用"
+          ? "升级到 Pro 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 8
-          ? "Credits 不足，請充值"
+          ? "Credits 不足，请充值"
           : undefined,
     },
     {
@@ -115,16 +115,16 @@ export function NbpEngineSelector({
       label: "Kling 2K",
       desc: isAdmin
         ? "Kling AI O1，2K 高清"
-        : effectivePlan === "free" ? "需升級" : "Kling AI O1 模型，2K 解析度",
-      cost: "10 Cr/張",
+        : effectivePlan === "free" ? "需升级" : "Kling AI O1 模型，2K 解析度",
+      cost: "10 Cr/张",
       icon: Zap,
       color: "#EF4444",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 10),
       reason:
         !isAdmin && effectivePlan === "free"
-          ? "升級到 Pro 方案即可使用"
+          ? "升级到 Pro 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 10
-          ? "Credits 不足，請充值"
+          ? "Credits 不足，请充值"
           : undefined,
     },
   ];
@@ -132,7 +132,7 @@ export function NbpEngineSelector({
   if (compact) {
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-semibold text-[#9BA1A6]">圖片引擎</span>
+        <span className="text-xs font-semibold text-[#9BA1A6]">图像引擎</span>
         <div className="flex gap-2 flex-wrap">
           {engines.map((eng) => {
             const isSelected = selected === eng.id;
@@ -175,7 +175,7 @@ export function NbpEngineSelector({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-[15px] font-bold text-[#ECEDEE]">選擇圖片生成引擎</p>
+        <p className="text-[15px] font-bold text-[#ECEDEE]">选择图像生成引擎</p>
         {!isAdmin && (
           <div className="flex items-center gap-1 bg-yellow-400/10 px-2.5 py-1 rounded-full">
             <Star size={14} className="text-yellow-400" />

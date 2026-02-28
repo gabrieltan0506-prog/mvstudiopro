@@ -35,7 +35,7 @@ export default function StudentVerificationScreen() {
     try {
       const result = await startTrial.mutateAsync();
       toast.success("试用已开始", {
-        description: `您的 2 天免费试用已启动！到期时间：${new Date(result.endDate).toLocaleDateString("zh-TW")}`,
+        description: `您的 2 天免费试用已启动！到期时间：${new Date(result.endDate).toLocaleDateString("zh-CN")}`,
         action: {
           label: "开始探索",
           onClick: () => window.history.back(),

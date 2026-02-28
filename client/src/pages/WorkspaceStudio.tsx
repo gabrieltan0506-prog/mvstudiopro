@@ -12,19 +12,19 @@ import { toast } from "sonner";
 type StepType = "script" | "storyboard" | "images" | "video" | "audio" | "export";
 
 const FIXED_STEPS: { key: StepType; label: string; hint: string }[] = [
-  { key: "script", label: "Script", hint: "Narrative, hooks, and timing blocks" },
-  { key: "storyboard", label: "Storyboard", hint: "Frame plan and shot direction" },
-  { key: "images", label: "Images", hint: "Reference and generated stills" },
-  { key: "video", label: "Video", hint: "Primary motion render" },
-  { key: "audio", label: "Audio", hint: "Voice/music pass" },
-  { key: "export", label: "Export", hint: "Delivery package and publish assets" },
+  { key: "script", label: "脚本", hint: "叙事结构、钩子设计与节奏分段" },
+  { key: "storyboard", label: "分镜", hint: "画面规划与镜头调度" },
+  { key: "images", label: "图像", hint: "参考图像与已生成静态图" },
+  { key: "video", label: "视频", hint: "主要动态渲染结果" },
+  { key: "audio", label: "音频", hint: "人声与音乐处理" },
+  { key: "export", label: "导出", hint: "交付包与发布素材" },
 ];
 
 const RENDER_MESSAGES = [
-  "Analyzing your latest creative pattern...",
-  "Drafting the next version based on prior runs...",
-  "Optimizing timing and visual rhythm...",
-  "Packaging artifacts for this step...",
+  "正在分析你最近的创作模式...",
+  "正在基于历史运行结果起草下一版...",
+  "正在优化时序与画面节奏...",
+  "正在打包当前步骤产物...",
 ];
 
 export default function WorkspaceStudioPage() {
@@ -133,7 +133,7 @@ export default function WorkspaceStudioPage() {
   const updateStudioControls = trpc.workflow.updateStudioControls.useMutation({
     onSuccess: async () => {
       await utils.workflow.getWorkflow.invalidate();
-      toast.success("Studio controls saved");
+      toast.success("工作室设置已保存");
     },
     onError: (error) => toast.error(error.message),
   });
@@ -221,7 +221,7 @@ export default function WorkspaceStudioPage() {
   };
 
   const handleRenameWorkspace = async (id: number, name: string, description: string | null) => {
-    const next = window.prompt("Workspace name", name)?.trim();
+    const next = window.prompt("工作区名称", name)?.trim();
     if (!next || next === name) return;
     await updateWorkspace.mutateAsync({ id, name: next, description });
   };
@@ -235,7 +235,7 @@ export default function WorkspaceStudioPage() {
   };
 
   const handleRenameWorkflow = async (id: number, name: string, description: string | null, status: "draft" | "active" | "archived") => {
-    const next = window.prompt("Workflow name", name)?.trim();
+    const next = window.prompt("工作流名称", name)?.trim();
     if (!next || next === name) return;
     await updateWorkflow.mutateAsync({
       id,
@@ -288,7 +288,7 @@ export default function WorkspaceStudioPage() {
           runId: run.id,
           status: "completed",
           output: {
-            summary: `Auto-finished ${stepType} version ${run.version}`,
+            summary: `自动完成 ${stepType} 版本 ${run.version}`,
           },
         });
 
@@ -300,7 +300,7 @@ export default function WorkspaceStudioPage() {
       }, 4200);
     } catch (error: any) {
       setIsRendering(false);
-      toast.error(error?.message ?? "Failed to run step");
+      toast.error(error?.message ?? "步骤执行失败");
     }
   };
 
@@ -308,12 +308,12 @@ export default function WorkspaceStudioPage() {
     <div className="min-h-screen bg-[#0C1117] text-[#E8EDF2] p-4 md:p-6">
       <div className="max-w-[1400px] mx-auto grid grid-cols-1 lg:grid-cols-[280px_340px_1fr] gap-4">
         <section className="rounded-xl border border-white/10 bg-[#111827] p-4">
-          <h2 className="text-sm uppercase tracking-wider text-white/70 mb-3">Workspace CRUD</h2>
+          <h2 className="text-sm uppercase tracking-wider text-white/70 mb-3">工作区管理</h2>
           <div className="flex gap-2 mb-3">
             <Input
               value={newWorkspaceName}
               onChange={(e) => setNewWorkspaceName(e.target.value)}
-              placeholder="New workspace"
+              placeholder="新建工作区"
             />
             <Button size="icon" onClick={handleCreateWorkspace} disabled={createWorkspace.isPending}>
               <Plus className="h-4 w-4" />
@@ -332,7 +332,7 @@ export default function WorkspaceStudioPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="font-medium">{workspace.name}</p>
-                    <p className="text-xs text-white/60">{workspace.workflowCount} workflows</p>
+                    <p className="text-xs text-white/60">{workspace.workflowCount} 个工作流</p>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -367,12 +367,12 @@ export default function WorkspaceStudioPage() {
         </section>
 
         <section className="rounded-xl border border-white/10 bg-[#111827] p-4">
-          <h2 className="text-sm uppercase tracking-wider text-white/70 mb-3">Workflow CRUD</h2>
+          <h2 className="text-sm uppercase tracking-wider text-white/70 mb-3">工作流管理</h2>
           <div className="flex gap-2 mb-3">
             <Input
               value={newWorkflowName}
               onChange={(e) => setNewWorkflowName(e.target.value)}
-              placeholder="New workflow"
+              placeholder="新建工作流"
               disabled={!selectedWorkspaceId}
             />
             <Button
@@ -401,7 +401,7 @@ export default function WorkspaceStudioPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-medium">{workflow.name}</p>
-                      <p className="text-xs text-white/60">Status: {workflow.status}</p>
+                      <p className="text-xs text-white/60">状态：{workflow.status}</p>
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
@@ -443,35 +443,35 @@ export default function WorkspaceStudioPage() {
 
         <section className="rounded-xl border border-white/10 bg-[#111827] p-4 md:p-5">
           {!selectedWorkflowId ? (
-            <p className="text-white/70">Select a workflow to manage steps and studio controls.</p>
+            <p className="text-white/70">请选择一个工作流来管理步骤与工作室设置。</p>
           ) : (
             <>
               <div className="flex flex-wrap items-center gap-2 mb-4">
-                <h2 className="text-lg font-semibold mr-2">Workflow Steps + Version History</h2>
+                <h2 className="text-lg font-semibold mr-2">工作流步骤与版本历史</h2>
                 {workflowQuery.data ? <Badge variant="secondary">{workflowQuery.data.name}</Badge> : null}
               </div>
 
               <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/5 p-3 mb-4">
-                <h3 className="font-medium mb-2">Studio Controls V1 (Kling)</h3>
+                <h3 className="font-medium mb-2">工作室控制 V1（Kling）</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">Motion control</span>
+                    <span className="text-sm">动作控制</span>
                     <Switch checked={motionControl} onCheckedChange={setMotionControl} />
                   </label>
                   <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">Lipsync</span>
+                    <span className="text-sm">口型同步</span>
                     <Switch checked={lipsync} onCheckedChange={setLipsync} />
                   </label>
                   <label className="flex items-center justify-between rounded-md border border-white/10 px-3 py-2">
-                    <span className="text-sm">Elements</span>
+                    <span className="text-sm">角色元素</span>
                     <Switch checked={elements} onCheckedChange={setElements} />
                   </label>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
-                  <Input value={motionIntensity} onChange={(e) => setMotionIntensity(e.target.value)} placeholder="Motion intensity (0-1)" />
-                  <Input value={lipsyncStrength} onChange={(e) => setLipsyncStrength(e.target.value)} placeholder="Lipsync strength (0-1)" />
-                  <Input value={elementsPrompt} onChange={(e) => setElementsPrompt(e.target.value)} placeholder="Elements prompt" />
+                  <Input value={motionIntensity} onChange={(e) => setMotionIntensity(e.target.value)} placeholder="动作强度（0-1）" />
+                  <Input value={lipsyncStrength} onChange={(e) => setLipsyncStrength(e.target.value)} placeholder="口型强度（0-1）" />
+                  <Input value={elementsPrompt} onChange={(e) => setElementsPrompt(e.target.value)} placeholder="元素提示词" />
                 </div>
 
                 <Button onClick={handleSaveStudioControls} disabled={updateStudioControls.isPending}>
@@ -541,7 +541,7 @@ export default function WorkspaceStudioPage() {
                             <span className="text-white/60">{new Date(run.startedAt).toLocaleString()}</span>
                           </div>
                         ))}
-                        {runs.length === 0 ? <p className="text-xs text-white/50">No versions yet.</p> : null}
+                        {runs.length === 0 ? <p className="text-xs text-white/50">暂无版本记录。</p> : null}
                       </div>
                     </div>
                   );

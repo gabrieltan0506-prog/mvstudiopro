@@ -1378,9 +1378,9 @@ export default function ComponentsShowcase() {
                           setTimeout(resolve, 2000)
                         );
                         sonnerToast.promise(promise, {
-                          loading: "Processing...",
-                          success: "Processing complete!",
-                          error: "Processing failed",
+                          loading: "生成中...",
+                          success: "已完成",
+                          error: "失败",
                         });
                       }}
                     >

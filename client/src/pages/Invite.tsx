@@ -62,17 +62,17 @@ export default function InvitePage() {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      toast.success("已拷贝到剪贴板！");
+      toast.success("已复制到剪贴板！");
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("Copy failed:", err);
-      toast.error("拷贝失败");
+      toast.error("复制失败");
     }
   }, []);
 
   const handleShare = useCallback(async () => {
     if (!myStatus?.inviteCode) return;
-    const message = `🎬 我正在使用 MV Studio Pro — 一站式视频创作平台！\n\n使用我的邀请码 ${myStatus.inviteCode} 加入内测，我們雙方各獲得 10 Credits 獎勵！\n\n立即加入：${inviteUrl}`;
+    const message = `🎬 我正在使用 MV Studio Pro — 一站式视频创作平台！\n\n使用我的邀请码 ${myStatus.inviteCode} 加入内测，我们双方各获得 10 Credits 奖励！\n\n立即加入：${inviteUrl}`;
 
     if (typeof navigator !== "undefined" && navigator.share) {
       try {
@@ -199,7 +199,7 @@ export default function InvitePage() {
               </button>
               <button onClick={() => handleCopy(inviteUrl)} className="flex-1 flex items-center justify-center gap-2 bg-primary/10 py-3.5 rounded-2xl border border-primary/20 font-semibold text-primary">
                 <LinkIcon className="h-5 w-5" />
-                <span>拷贝链接</span>
+                <span>复制链接</span>
               </button>
             </div>
 

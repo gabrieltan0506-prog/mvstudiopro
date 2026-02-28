@@ -13,7 +13,7 @@ import {
   Upload, Send, Loader2, Film, Palette, Camera, Aperture, Rocket, ChevronLeft, ChevronRight, Wand2, ImageIcon
 } from "lucide-react";
 
-/* ── AI 風格作品集 ── */
+/* ── AI 风格作品集 ── */
 const AI_GALLERY_ITEMS: {
   id: string;
   title: string;
@@ -27,103 +27,103 @@ const AI_GALLERY_ITEMS: {
   // Kling 生成
   {
     id: "kling-cinematic",
-    title: "暴風雨天台的孤獨身影",
-    style: "電影感",
+    title: "暴风雨天台的孤独身影",
+    style: "电影感",
     engine: "Kling V1.5",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OfYyGiJYGGEyyyaO.jpg",
-    desc: "金色夕陽穿透烏雲，青橙色調，王家衛風格電影分鏡",
+    desc: "金色夕阳穿透乌云，青橙色调，王家卫风格电影分镜",
     icon: Film,
   },
   {
     id: "kling-anime",
-    title: "櫻花花瓣中的少女",
-    style: "動漫風",
+    title: "樱花花瓣中的少女",
+    style: "动漫风",
     engine: "Kling V1.5",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wJFLERjbQmHglxpX.jpg",
-    desc: "粉色長髮少女被櫻花環繞，霓虹色彩，新海誠美學",
+    desc: "粉色长发少女被樱花环绕，霓虹色彩，新海诚美学",
     icon: Sparkles,
   },
   {
     id: "kling-documentary",
-    title: "非洲大草原角馬遷徙",
-    style: "紀錄片",
+    title: "非洲大草原角马迁徙",
+    style: "纪录片",
     engine: "Kling V1.5",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/kqzgxoltqOaoIBeB.jpg",
-    desc: "BBC 地球脈動級別航拍，金色陽光下塵霧瀰漫",
+    desc: "BBC 地球脉动级别航拍，金色阳光下尘雾弥漫",
     icon: Camera,
   },
   {
     id: "kling-realistic",
     title: "上海夜市霓虹街景",
-    style: "寫實片",
+    style: "写实片",
     engine: "Kling V1.5",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/HgZpAMNOnPhuOARA.jpg",
-    desc: "年輕女性走過夜市，霓虹燈倒映濕路面，街頭攝影風格",
+    desc: "年轻女性走过夜市，霓虹灯倒映湿路面，街头摄影风格",
     icon: Aperture,
   },
   {
     id: "kling-scifi",
-    title: "外星獨石與宇航員",
+    title: "外星独石与宇航员",
     style: "科幻片",
     engine: "Kling V1.5",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/UuptArvXiNFSMyPj.jpg",
-    desc: "外星獨石漂浮荒涼地表，全息數據流，宇航員檢查文物",
+    desc: "外星独石漂浮荒凉地表，全息数据流，宇航员检查文物",
     icon: Rocket,
   },
   // Nano Banana Pro 生成
   {
     id: "nbp-cinematic",
-    title: "電影感分鏡 — 孤獨旅者",
-    style: "電影感",
+    title: "电影感分镜 — 孤独旅者",
+    style: "电影感",
     engine: "Nano Banana Pro",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wBlJrGcAenmdOJzN.jpg",
-    desc: "戲劇性光影對比，寬銀幕構圖，電影級色彩分級",
+    desc: "戏剧性光影对比，宽银幕构图，电影级色彩分级",
     icon: Film,
   },
   {
     id: "nbp-anime",
-    title: "動漫風分鏡 — 魔法少女",
-    style: "動漫風",
+    title: "动漫风分镜 — 魔法少女",
+    style: "动漫风",
     engine: "Nano Banana Pro",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OJCxsguWVlqtYkGp.jpg",
-    desc: "日系動漫視覺語言，鮮艷色彩，光效粒子",
+    desc: "日系动漫视觉语言，鲜艳色彩，光效粒子",
     icon: Sparkles,
   },
   {
     id: "nbp-documentary",
-    title: "紀錄片分鏡 — 手工匠人",
-    style: "紀錄片",
+    title: "纪录片分镜 — 手工匠人",
+    style: "纪录片",
     engine: "Nano Banana Pro",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/IlVwTeXIjLZQlCcB.jpg",
-    desc: "自然窗光，真實紋理，國家地理風格",
+    desc: "自然窗光，真实纹理，国家地理风格",
     icon: Camera,
   },
   {
     id: "nbp-realistic",
-    title: "寫實片分鏡 — 城市街景",
-    style: "寫實片",
+    title: "写实片分镜 — 城市街景",
+    style: "写实片",
     engine: "Nano Banana Pro",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hOAAujvqBydDLPwF.jpg",
-    desc: "極度真人攝影品質，自然光線，街頭紀實",
+    desc: "极度真人摄影品质，自然光线，街头纪实",
     icon: Aperture,
   },
   {
     id: "nbp-scifi",
-    title: "科幻片分鏡 — 未來世界",
+    title: "科幻片分镜 — 未来世界",
     style: "科幻片",
     engine: "Nano Banana Pro",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/cvkgbYFVBTswkjqa.jpg",
-    desc: "賽博朋克光效，全息界面，未來科技感",
+    desc: "赛博朋克光效，全息界面，未来科技感",
     icon: Rocket,
   },
 ];
@@ -374,8 +374,8 @@ function AIGallerySection() {
             <Wand2 size={20} className="text-white" />
           </div>
           <div>
-            <h2 className="text-xl font-bold">AI 風格作品集</h2>
-            <p className="text-sm text-muted-foreground">Kling V1.5 + Nano Banana Pro 引擎生成的分鏡風格展示</p>
+            <h2 className="text-xl font-bold">AI 风格作品集</h2>
+            <p className="text-sm text-muted-foreground">Kling V1.5 + Nano Banana Pro 引擎生成的分镜风格展示</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -394,10 +394,10 @@ function AIGallerySection() {
           { id: "all", label: "全部", icon: ImageIcon },
           { id: "kling", label: "Kling V1.5", icon: Wand2 },
           { id: "nbp", label: "Nano Banana Pro", icon: Palette },
-          { id: "電影感", label: "電影感", icon: Film },
-          { id: "動漫風", label: "動漫風", icon: Sparkles },
-          { id: "紀錄片", label: "紀錄片", icon: Camera },
-          { id: "寫實片", label: "寫實片", icon: Aperture },
+          { id: "电影感", label: "电影感", icon: Film },
+          { id: "动漫风", label: "动漫风", icon: Sparkles },
+          { id: "纪录片", label: "纪录片", icon: Camera },
+          { id: "写实片", label: "写实片", icon: Aperture },
           { id: "科幻片", label: "科幻片", icon: Rocket },
         ].map((tab) => {
           const TabIcon = tab.icon;
@@ -460,13 +460,13 @@ function AIGallerySection() {
                       onClick={(e) => { e.stopPropagation(); navigate(`/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Wand2 size={10} /> 用此風格生成分鏡
+                      <Wand2 size={10} /> 用此风格生成分镜
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); navigate(`/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-purple-500/90 hover:bg-purple-500 text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Video size={10} /> 做同款視頻
+                      <Video size={10} /> 做同款视频
                     </button>
                   </div>
                 </div>
@@ -518,13 +518,13 @@ function AIGallerySection() {
                   onClick={() => { setSelectedItem(null); navigate(`/storyboard?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-primary/20"
                 >
-                  <Wand2 size={16} /> 用此風格生成分鏡
+                  <Wand2 size={16} /> 用此风格生成分镜
                 </button>
                 <button
                   onClick={() => { setSelectedItem(null); navigate(`/vfx?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-600/20"
                 >
-                  <Video size={16} /> 做同款視頻
+                  <Video size={16} /> 做同款视频
                 </button>
               </div>
             </div>
