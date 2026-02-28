@@ -2,8 +2,7 @@
   "buildCommand": "pnpm build",
   "outputDirectory": "client/dist",
   "routes": [
-    { "src": "^/api/(.*)$", "dest": "/api/$1" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/client/dist/index.html" }
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
