@@ -7,7 +7,7 @@ import { trpc } from "@/lib/trpc";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob, type JobType, type JobStatus } from "@/lib/jobs";
 import {
   Sparkles, Footprints, Mic2, Layers, Coins, RefreshCw,
-  CheckCircle, Download, Upload, Loader2, Trash2, Play,
+  CheckCircle, Upload, Loader2, Trash2, Play, Copy,
   Image as ImageIcon, Video, Plus, X, Info, ChevronDown, Clock, Heart, Star,
 } from "lucide-react";
 import { ExpiryWarningBanner, CreationHistoryPanel, FavoriteButton } from "@/components/CreationManager";
@@ -195,7 +195,22 @@ function TaskStatusCard({ task, onPoll, onRetry }: { task: TaskInfo; onPoll: () 
   };
   const messageIndex = Math.floor((Date.now() - task.createdAt) / 2200) % JOB_PROGRESS_MESSAGES[task.jobType].length;
   const progressMessage = JOB_PROGRESS_MESSAGES[task.jobType][messageIndex];
-  const videoUrl = task.output?.videoUrl as string | undefined;
+  const shortUrl =
+    (task.output?.shortUrl as string | undefined) ??
+    (typeof task.output?.taskId === "string" && task.output.taskId.trim()
+      ? `/v/${encodeURIComponent(task.output.taskId.trim())}`
+      : undefined);
+  const playableVideoUrl = typeof shortUrl === "string" && shortUrl.trim() ? shortUrl : undefined;
+  const handleCopyLink = useCallback(async () => {
+    if (!playableVideoUrl) return;
+    const absoluteUrl = `${window.location.origin}${playableVideoUrl}`;
+    try {
+      await navigator.clipboard.writeText(absoluteUrl);
+      toast.success("链接已复制");
+    } catch {
+      toast.error("复制失败，请手动复制");
+    }
+  }, [playableVideoUrl]);
   const imageUrls = Array.isArray(task.output?.images)
     ? (task.output?.images as string[])
     : typeof task.output?.imageUrl === "string"
@@ -224,13 +239,13 @@ function TaskStatusCard({ task, onPoll, onRetry }: { task: TaskInfo; onPoll: () 
       {(task.status === "running" || task.status === "queued") && (
         <p className="mt-2 text-xs text-gray-400">{progressMessage}</p>
       )}
-      {task.status === "succeeded" && videoUrl && (
+      {task.status === "succeeded" && playableVideoUrl && (
         <div className="mt-3 space-y-2">
-          <video src={videoUrl} controls className="w-full rounded-md max-h-48" />
-          <a href={videoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-700 transition-colors">
-            <Download className="h-4 w-4" />
-            <span>下载视频</span>
-          </a>
+          <video src={playableVideoUrl} controls className="w-full rounded-md max-h-48" />
+          <button onClick={handleCopyLink} className="w-full flex items-center justify-center space-x-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-md text-sm hover:bg-blue-700 transition-colors">
+            <Copy className="h-4 w-4" />
+            <span>复制链接</span>
+          </button>
         </div>
       )}
       {task.status === "succeeded" && imageUrls.length > 0 && (

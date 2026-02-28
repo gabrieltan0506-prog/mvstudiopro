@@ -69,3 +69,4 @@ export * from "./schema-sessions";
 export * from "./schema-video-signatures";
 export * from "./schema-jobs";
 export * from "./schema-workflow";
+export * from "./schema-video-short-links";

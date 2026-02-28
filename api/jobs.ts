@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
+import { saveVideoShortLink } from "../server/services/video-short-links";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = typeof req.body === "string"
@@ -56,7 +57,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         parsed = { raw: text.slice(0, 1000) };
       }
 
-      return res.status(upstream.status).json(parsed);
+      const status = parsed?.data?.task_status ?? parsed?.task_status;
+      const videoUrl =
+        parsed?.data?.task_result?.videos?.[0]?.url ??
+        parsed?.task_result?.videos?.[0]?.url ??
+        null;
+
+      if (status === "succeed" && typeof videoUrl === "string" && videoUrl.trim()) {
+        await saveVideoShortLink(taskId, videoUrl);
+        return res.status(200).json({
+          ok: true,
+          taskId,
+          status,
+          videoUrl,
+          shortUrl: `/v/${encodeURIComponent(taskId)}`,
+          raw: parsed,
+        });
+      }
+
+      return res.status(200).json({
+        ok: upstream.ok,
+        taskId,
+        status: status ?? "unknown",
+        raw: parsed,
+      });
     } catch (error: any) {
       return res.status(502).json({ ok: false, error: error?.message || "Upstream request failed" });
     }
