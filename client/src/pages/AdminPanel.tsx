@@ -8,10 +8,14 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useEffect, useState } from "react";
 
 export default function AdminPanel() {
   const { user, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [verifications, setVerifications] = useState<any[]>([]);
+  const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
   // Redirect non-admin
   if (isAuthenticated && user?.role !== "admin") {
@@ -42,6 +46,43 @@ export default function AdminPanel() {
     onSuccess: () => { toast.success("审核完成"); refetchBeta(); },
     onError: () => toast.error("操作失败"),
   });
+
+  const fetchVerifications = async () => {
+    if (!isAuthenticated || user?.role !== "admin") return;
+    setVerificationLoading(true);
+    try {
+      const res = await fetch("/api/admin/verifications", { method: "GET", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "获取失败");
+      setVerifications(Array.isArray(data.items) ? data.items : []);
+    } catch (error: any) {
+      toast.error(error?.message || "获取认证申请失败");
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+
+  const reviewVerification = async (userId: number, action: "approve" | "reject") => {
+    setVerificationActingUserId(userId);
+    try {
+      const res = await fetch(`/api/admin/verifications/${userId}/${action}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "操作失败");
+      toast.success(action === "approve" ? "已通过并发放 +20 积分" : "已拒绝");
+      await fetchVerifications();
+    } catch (error: any) {
+      toast.error(error?.message || "操作失败");
+    } finally {
+      setVerificationActingUserId(null);
+    }
+  };
+
+  useEffect(() => {
+    void fetchVerifications();
+  }, [isAuthenticated, user?.role]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -81,6 +122,7 @@ export default function AdminPanel() {
             <TabsTrigger value="finance">财务监控</TabsTrigger>
             <TabsTrigger value="teams">团队统计</TabsTrigger>
             <TabsTrigger value="beta">Beta 审核</TabsTrigger>
+            <TabsTrigger value="verifications">身份认证</TabsTrigger>
           </TabsList>
 
           {/* Payments Tab */}
@@ -218,6 +260,57 @@ export default function AdminPanel() {
                             </Button>
                           </div>
                         )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Identity Verification Tab */}
+          <TabsContent value="verifications">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader><CardTitle>待确认身份认证</CardTitle></CardHeader>
+              <CardContent>
+                {verificationLoading ? (
+                  <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+                ) : verifications.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">暂无待确认认证</div>
+                ) : (
+                  <div className="space-y-3">
+                    {verifications.map((item: any) => (
+                      <div key={item.id} className="flex items-center justify-between p-4 rounded-lg bg-background/30">
+                        <div>
+                          <div className="text-sm font-medium">
+                            用户 #{item.id} · {item.email || "无邮箱"} · {item.roleTag}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            微信：{item.contactWechat || "-"} · 电话：{item.contactPhone || "-"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            当前积分：{item.credits}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700 gap-1"
+                            disabled={verificationActingUserId === item.id}
+                            onClick={() => reviewVerification(item.id, "approve")}
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" /> 通过
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-400 border-red-400/30 hover:bg-red-400/10 gap-1"
+                            disabled={verificationActingUserId === item.id}
+                            onClick={() => reviewVerification(item.id, "reject")}
+                          >
+                            <XCircle className="h-3.5 w-3.5" /> 拒绝
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>

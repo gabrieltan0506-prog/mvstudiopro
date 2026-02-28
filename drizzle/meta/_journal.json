@@ -64,6 +64,13 @@
       "when": 1772269200000,
       "tag": "0008_video_short_links",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1772505600000,
+      "tag": "0010_signup_bonus_verification",
+      "breakpoints": true
     }
   ]
 }

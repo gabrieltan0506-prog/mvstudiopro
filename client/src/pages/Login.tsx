@@ -9,6 +9,15 @@ type CaptchaResponse = {
   captchaId: string;
 };
 
+type RoleTag = "normal" | "student" | "teacher" | "military_police";
+
+type SignupResponse = {
+  ok: boolean;
+  credits: number;
+  verifyStatus: "none" | "pending" | "approved" | "rejected";
+  error?: string;
+};
+
 export default function Login() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
@@ -22,6 +31,10 @@ export default function Login() {
   const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [roleTag, setRoleTag] = useState<RoleTag>("normal");
+  const [contactWechat, setContactWechat] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [signupResult, setSignupResult] = useState<{ credits: number; verifyStatus: SignupResponse["verifyStatus"] } | null>(null);
 
   useEffect(() => {
     void refreshCaptcha();
@@ -99,9 +112,10 @@ export default function Login() {
     }
   }, [captchaId, captchaText, email, isValidEmail, refreshCaptcha]);
 
-  const handleVerifyOtp = useCallback(async () => {
+  const handleSignup = useCallback(async () => {
     setError("");
     setSuccess("");
+    setSignupResult(null);
 
     if (!isValidEmail) {
       setError("请输入有效的邮箱地址");
@@ -114,34 +128,77 @@ export default function Login() {
 
     setVerifying(true);
     try {
-      const response = await fetch("/api/auth/verify-otp", {
+      if (roleTag !== "normal" && !contactWechat.trim() && !contactPhone.trim()) {
+        setError("学生/教师/军警身份需至少填写微信或电话");
+        return;
+      }
+
+      const response = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+        body: JSON.stringify({
+          email: email.trim(),
+          otp: otp.trim(),
+          roleTag,
+          contactWechat: contactWechat.trim() || undefined,
+          contactPhone: contactPhone.trim() || undefined,
+        }),
       });
 
-      const data = (await response.json()) as { ok?: boolean; error?: string };
+      const data = (await response.json()) as SignupResponse;
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || "登录失败，请稍后重试");
+        throw new Error(data.error || "注册失败，请稍后重试");
       }
 
-      setSuccess("登录成功，正在跳转...");
-      window.setTimeout(() => {
-        setLocation("/dashboard");
-      }, 600);
+      setSuccess("注册成功");
+      setSignupResult({
+        credits: data.credits,
+        verifyStatus: data.verifyStatus,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败，请稍后重试");
+      setError(err instanceof Error ? err.message : "注册失败，请稍后重试");
     } finally {
       setVerifying(false);
     }
-  }, [email, isValidEmail, otp, setLocation]);
+  }, [contactPhone, contactWechat, email, isValidEmail, otp, roleTag]);
+
+  const verifyStatusLabel = signupResult?.verifyStatus === "approved"
+    ? "已通过（已加赠20）"
+    : signupResult?.verifyStatus === "pending"
+    ? "待确认（通过后+20）"
+    : signupResult?.verifyStatus === "rejected"
+    ? "已拒绝"
+    : "未认证";
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 px-4 py-10">
       <div className="max-w-md mx-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-xl">
-        <h1 className="text-2xl font-semibold mb-1">邮箱 + 图形验证码登录</h1>
-        <p className="text-sm text-slate-400 mb-6">一次性会话登录，关闭浏览器后需重新登录</p>
+        <h1 className="text-2xl font-semibold mb-1">注册并领取积分</h1>
+        <p className="text-sm text-slate-400 mb-6">注册即送 100 积分，认证通过再加 20</p>
+
+        <label className="block text-sm mb-2">身份</label>
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {[
+            { value: "normal", label: "普通用户" },
+            { value: "student", label: "学生" },
+            { value: "teacher", label: "教师" },
+            { value: "military_police", label: "军警" },
+          ].map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => setRoleTag(item.value as RoleTag)}
+              className={`rounded-lg border px-3 py-2 text-sm ${
+                roleTag === item.value
+                  ? "border-sky-500 bg-sky-500/15 text-sky-200"
+                  : "border-slate-700 hover:bg-slate-800"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
 
         <label className="block text-sm mb-2">邮箱</label>
         <input
@@ -151,6 +208,24 @@ export default function Login() {
           onChange={e => setEmail(e.target.value)}
           type="email"
         />
+
+        {roleTag !== "normal" && (
+          <>
+            <label className="block text-sm mb-2">联系方式（微信/电话至少填一项）</label>
+            <input
+              className="w-full mb-3 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-600"
+              placeholder="微信号（可选）"
+              value={contactWechat}
+              onChange={e => setContactWechat(e.target.value)}
+            />
+            <input
+              className="w-full mb-4 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-600"
+              placeholder="手机号（可选）"
+              value={contactPhone}
+              onChange={e => setContactPhone(e.target.value)}
+            />
+          </>
+        )}
 
         <label className="block text-sm mb-2">图形验证码</label>
         <div className="flex items-center gap-3 mb-3">
@@ -212,15 +287,31 @@ export default function Login() {
 
         {error && <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-300">{error}</div>}
         {success && <div className="mb-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2 text-sm text-emerald-300">{success}</div>}
+        {signupResult && (
+          <div className="mb-3 rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-sm text-sky-100 space-y-1">
+            <div>当前积分：{signupResult.credits}</div>
+            <div>认证状态：{verifyStatusLabel}</div>
+            <div className="text-sky-200/80">提示：学生/教师/军警认证通过后可额外 +20。</div>
+          </div>
+        )}
 
         <button
           type="button"
-          onClick={() => void handleVerifyOtp()}
+          onClick={() => void handleSignup()}
           disabled={verifying}
           className="w-full rounded-lg bg-emerald-600 px-3 py-2 font-medium hover:bg-emerald-500 disabled:opacity-60"
         >
-          {verifying ? "登录中..." : "登录"}
+          {verifying ? "提交中..." : "注册 / 登录"}
         </button>
+        {signupResult && (
+          <button
+            type="button"
+            onClick={() => setLocation("/dashboard")}
+            className="w-full mt-3 rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800"
+          >
+            进入个人中心
+          </button>
+        )}
       </div>
     </div>
   );

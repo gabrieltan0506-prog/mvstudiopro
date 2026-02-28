@@ -2,12 +2,14 @@ import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Loader2, ArrowLeft, Plus, BarChart, User, Film, Video } from "lucide-react";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 type TabType = "transactions" | "usage";
 
 export default function LayoutDashboard() {
   const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState<TabType>("transactions");
+  const { user } = useAuth();
 
   const { data: subData, isLoading: subLoading } = trpc.stripe.getSubscription.useQuery(undefined, {
     retry: false,
@@ -25,6 +27,14 @@ export default function LayoutDashboard() {
 
   const credits = subData?.credits ?? { balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 };
   const planConfig = subData?.planConfig;
+  const verifyStatusLabel =
+    user?.verifyStatus === "approved"
+      ? "已通过"
+      : user?.verifyStatus === "pending"
+      ? "待确认"
+      : user?.verifyStatus === "rejected"
+      ? "已拒绝"
+      : "未认证";
 
   return (
     <div className="min-h-screen bg-[#0A0A0C] text-[#F7F4EF]">
@@ -42,7 +52,7 @@ export default function LayoutDashboard() {
           <div className="flex justify-between items-center">
             <div className="flex flex-col">
               <span className="text-sm text-gray-400">可用 Credits</span>
-              <span className="text-4xl font-bold">{credits.balance}</span>
+              <span className="text-4xl font-bold">{typeof user?.credits === "number" ? user.credits : credits.balance}</span>
             </div>
             <button
               onClick={() => navigate("/pricing")}
@@ -67,6 +77,10 @@ export default function LayoutDashboard() {
               <span className="text-lg font-semibold">
                 {planConfig?.nameCn ?? "入门版"}
               </span>
+            </div>
+            <div className="flex flex-col col-span-2">
+              <span className="text-sm text-gray-400">认证状态</span>
+              <span className="text-lg font-semibold">{verifyStatusLabel}</span>
             </div>
           </div>
         </div>

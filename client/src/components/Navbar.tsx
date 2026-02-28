@@ -27,6 +27,14 @@ export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const verifyStatusLabel =
+    user?.verifyStatus === "approved"
+      ? "已通过"
+      : user?.verifyStatus === "pending"
+      ? "待确认"
+      : user?.verifyStatus === "rejected"
+      ? "已拒绝"
+      : "未认证";
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
@@ -65,6 +73,12 @@ export default function Navbar() {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="gap-2">
                   <User className="h-4 w-4" />
+                  <span className="text-xs px-2 py-0.5 rounded bg-primary/15 text-primary">
+                    积分 {typeof user.credits === "number" ? user.credits : 0}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-muted-foreground">
+                    {verifyStatusLabel}
+                  </span>
                   <span className="max-w-[140px] truncate">{user.email || user.name || "用户"}</span>
                   <ChevronDown className="h-3 w-3 opacity-50" />
                 </Button>

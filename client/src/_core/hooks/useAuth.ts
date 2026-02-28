@@ -33,8 +33,14 @@ export function useAuth(options?: UseAuthOptions) {
       }
 
       return (await res.json()) as {
-        email: string;
-        googleId: string;
+        id: number;
+        email: string | null;
+        role: string;
+        credits: number;
+        verifyStatus: "none" | "pending" | "approved" | "rejected";
+        roleTag: "normal" | "student" | "teacher" | "military_police";
+        contactWechat?: string | null;
+        contactPhone?: string | null;
       };
     },
     retry: false,
@@ -77,14 +83,24 @@ export function useAuth(options?: UseAuthOptions) {
   }, [logoutMutation, queryClient, utils]);
 
   const state = useMemo(() => {
+    const trpcUser = meQuery.data ?? null;
     const apiMeUser = apiMeQuery.data
       ? {
           ...apiMeQuery.data,
-          name: apiMeQuery.data.email,
-          role: "user" as const,
+          openId: trpcUser?.openId ?? `email_${apiMeQuery.data.email ?? "user"}`,
+          name: trpcUser?.name ?? apiMeQuery.data.email ?? "用户",
+          loginMethod: trpcUser?.loginMethod ?? "email_otp",
+          createdAt: trpcUser?.createdAt ?? new Date(),
+          updatedAt: trpcUser?.updatedAt ?? new Date(),
+          lastSignedIn: trpcUser?.lastSignedIn ?? new Date(),
         }
       : null;
-    const user = meQuery.data ?? apiMeUser ?? null;
+    const user = trpcUser
+      ? {
+          ...trpcUser,
+          ...(apiMeQuery.data ?? {}),
+        }
+      : apiMeUser;
 
     localStorage.setItem(
       "manus-runtime-user-info",

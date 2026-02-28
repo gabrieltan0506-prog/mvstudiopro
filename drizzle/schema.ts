@@ -17,6 +17,11 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "free", "beta", "paid", "supervisor"]).default("free").notNull(),
+  credits: int("credits").default(0).notNull(),
+  roleTag: mysqlEnum("roleTag", ["normal", "student", "teacher", "military_police"]).default("normal").notNull(),
+  contactWechat: varchar("contactWechat", { length: 120 }),
+  contactPhone: varchar("contactPhone", { length: 30 }),
+  verifyStatus: mysqlEnum("verifyStatus", ["none", "pending", "approved", "rejected"]).default("none").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -24,6 +29,17 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+export const creditLedger = mysqlTable("credit_ledger", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  delta: int("delta").notNull(),
+  reason: varchar("reason", { length: 64 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type CreditLedger = typeof creditLedger.$inferSelect;
+export type InsertCreditLedger = typeof creditLedger.$inferInsert;
 
 // Visitor guestbook / contact inquiry messages
 export const guestbookMessages = mysqlTable("guestbook_messages", {
