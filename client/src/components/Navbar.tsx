@@ -27,6 +27,10 @@ export default function Navbar() {
   const { user, isAuthenticated, logout } = useAuth();
   const [location, navigate] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const showTestLab = import.meta.env.DEV || user?.role === "admin";
+  const navItems = showTestLab
+    ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
+    : NAV_ITEMS;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
@@ -43,7 +47,7 @@ export default function Navbar() {
 
         {/* Desktop Nav */}
         <div className="hidden lg:flex items-center gap-0.5">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -124,7 +128,7 @@ export default function Navbar() {
             >
               首页
             </Link>
-            {NAV_ITEMS.map((item) => (
+            {navItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
