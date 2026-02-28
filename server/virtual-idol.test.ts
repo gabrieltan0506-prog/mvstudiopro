@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock generateImage (built-in free tier)
-vi.mock("./_core/imageGeneration", () => ({
-  generateImage: vi.fn().mockResolvedValue({ url: "https://s3.example.com/free-idol.png" }),
-}));
-
-// Mock gemini-image (2K/4K tier)
+// Mock gemini-image (free 1K + 2K/4K tiers)
 vi.mock("./gemini-image", () => ({
-  generateGeminiImage: vi.fn().mockResolvedValue({ imageUrl: "https://s3.example.com/2k-idol.png", quality: "2k" }),
+  generateGeminiImage: vi.fn().mockImplementation(async (args: { quality: "1k" | "2k" | "4k" }) => ({
+    imageUrl: `https://s3.example.com/${args.quality}-idol.png`,
+    quality: args.quality,
+  })),
   isGeminiImageAvailable: vi.fn().mockReturnValue(true),
 }));
 
@@ -17,7 +15,6 @@ vi.mock("./storage", () => ({
 }));
 
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
-import { generateImage } from "./_core/imageGeneration";
 import { CREDIT_COSTS } from "../shared/plans";
 
 describe("Virtual Idol - Three Tier Generation", () => {
@@ -35,10 +32,10 @@ describe("Virtual Idol - Three Tier Generation", () => {
     expect(isGeminiImageAvailable()).toBe(true);
   });
 
-  it("should call built-in generateImage for free tier", async () => {
-    const result = await (generateImage as any)({ prompt: "test idol" });
-    expect(result).toEqual({ url: "https://s3.example.com/free-idol.png" });
-    expect(generateImage).toHaveBeenCalledWith({ prompt: "test idol" });
+  it("should call generateGeminiImage for free 1K tier", async () => {
+    const result = await (generateGeminiImage as any)({ prompt: "test idol", quality: "1k" });
+    expect(result).toEqual({ imageUrl: "https://s3.example.com/1k-idol.png", quality: "1k" });
+    expect(generateGeminiImage).toHaveBeenCalledWith({ prompt: "test idol", quality: "1k" });
   });
 
   it("should call generateGeminiImage for 2K tier", async () => {
@@ -66,13 +63,15 @@ describe("Virtual Idol - Three Tier Generation", () => {
   });
 
   it("should support reference image in free tier", async () => {
-    await (generateImage as any)({
+    await (generateGeminiImage as any)({
       prompt: "test idol with ref",
-      originalImages: [{ url: "https://example.com/ref.jpg", mimeType: "image/jpeg" }],
+      quality: "1k",
+      referenceImageUrl: "https://example.com/ref.jpg",
     });
-    expect(generateImage).toHaveBeenCalledWith({
+    expect(generateGeminiImage).toHaveBeenCalledWith({
       prompt: "test idol with ref",
-      originalImages: [{ url: "https://example.com/ref.jpg", mimeType: "image/jpeg" }],
+      quality: "1k",
+      referenceImageUrl: "https://example.com/ref.jpg",
     });
   });
 

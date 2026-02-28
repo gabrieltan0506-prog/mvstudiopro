@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { deductCredits, getCredits } from "../credits";
 import { invokeLLM } from "../_core/llm";
-import { generateImage } from "../_core/imageGeneration";
+import { generateGeminiImage } from "../gemini-image";
 
 // ─── 情緒分類 ───────────────────────────────────
 export const STICKER_EMOTIONS = {
@@ -100,17 +100,18 @@ export const wechatStickerRouter = router({
       const imagePrompt = typeof promptResult === "string" ? promptResult : (promptResult as any)?.text || "";
 
       // 生成圖片
-      const imageResult = await generateImage({
+      const imageResult = await generateGeminiImage({
         prompt: imagePrompt.trim() + ", square 240x240 pixels, white background, sticker style",
+        quality: "1k",
       });
 
-      if (!imageResult?.url) {
+      if (!imageResult?.imageUrl) {
         throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "表情包图片生成失败" });
       }
 
       return {
         success: true,
-        imageUrl: imageResult.url,
+        imageUrl: imageResult.imageUrl,
         emotion: emotionLabel,
         phrase: displayText,
         style: input.style,

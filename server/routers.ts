@@ -6,7 +6,6 @@ import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import { invokeLLM } from "./_core/llm";
-import { generateImage } from "./_core/imageGeneration";
 import { storagePut, storageGet } from "./storage";
 import { usageRouter, incrementUsageCount } from "./routers/usage";
 import { phoneRouter } from "./routers/phone";
@@ -473,20 +472,23 @@ export const appRouter = router({
           }
         }
 
-        // ─── FREE tier: use built-in Forge AI ───────────────
+        // ─── FREE tier: use nano-banana-flash (1K) ───────────────
         if (input.quality === "free") {
-          const originalImages = input.referenceImageUrl
-            ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
-            : undefined;
           const imageProviderChain = getTierProviderChain(userTier, "image");
           const imageResult = await executeProviderFallback<{ imageUrl: string }>({
             apiName: "virtualIdol.generate.image",
             providers: imageProviderChain,
             execute: async (provider) => {
-              if (provider === "forge" || provider === "fal.ai") {
-                const { url } = await generateImage({ prompt, originalImages });
-                if (!url) throw new Error("Image generation failed - no URL returned");
-                return { data: { imageUrl: url } };
+              if (provider === "nano-banana-flash") {
+                if (!isGeminiImageAvailable()) {
+                  throw new Error("Nano Banana Flash unavailable: GEMINI_API_KEY is not configured");
+                }
+                const result = await generateGeminiImage({
+                  prompt: `high resolution 1K, ${prompt}`,
+                  quality: "1k",
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl: result.imageUrl } };
               }
 
               if (provider === "nano-banana-pro") {
@@ -658,19 +660,6 @@ export const appRouter = router({
           }
         }
 
-        // Check if Gemini is available
-        if (!isGeminiImageAvailable()) {
-          // Refund credits if Gemini not available (admin doesn't need refund)
-          console.warn("[VirtualIdol] Gemini API not configured, falling back to Forge");
-          const originalImages = input.referenceImageUrl
-            ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
-            : undefined;
-          const { url } = await generateImage({ prompt, originalImages });
-          if (!url) throw new Error("Image generation failed - no URL returned");
-          await incrementUsageCount(userId, "avatar");
-          return { success: true, imageUrl: url, quality: "free" as const, fallback: true };
-        }
-
         try {
           const qualityHint = input.quality === "4k" ? "ultra high resolution 4K 4096x4096, extremely detailed" : "high resolution 2K 2048x2048, detailed";
           const paidImageProviderChain = getTierProviderChain(userTier, "image");
@@ -686,13 +675,16 @@ export const appRouter = router({
                 });
                 return { data: { imageUrl: result.imageUrl } };
               }
-              if (provider === "forge" || provider === "fal.ai") {
-                const originalImages = input.referenceImageUrl
-                  ? [{ url: input.referenceImageUrl, mimeType: "image/jpeg" }]
-                  : undefined;
-                const { url } = await generateImage({ prompt, originalImages });
-                if (!url) throw new Error("Image generation failed - no URL returned");
-                return { data: { imageUrl: url } };
+              if (provider === "nano-banana-flash") {
+                if (!isGeminiImageAvailable()) {
+                  throw new Error("Nano Banana Flash unavailable: GEMINI_API_KEY is not configured");
+                }
+                const result = await generateGeminiImage({
+                  prompt: `high resolution 1K, ${prompt}`,
+                  quality: "1k",
+                  referenceImageUrl: input.referenceImageUrl,
+                });
+                return { data: { imageUrl: result.imageUrl } };
               }
               if (provider === "kling_image") {
                 const imageUrl = await generateKlingFallbackImage({
@@ -773,17 +765,17 @@ export const appRouter = router({
         // 检查 fal.ai 是否已配置
         const { isFalConfigured, imageToThreeD } = await import("./fal-3d");
         if (!isFalConfigured()) {
-          // 回退到 LLM 图片生成仿真
+          // 回退到 2D 图像风格化仿真
           const prompt = `Convert this 2D character image into a high-quality 3D render. Pixar 3D animation style, smooth subsurface scattering skin, big expressive eyes, stylized proportions, Disney quality rendering, volumetric lighting, 3D character render, three-quarter view portrait, dynamic angle, maintain the original character's identity and outfit details, professional 3D modeling quality, octane render, depth of field`;
-          const { url } = await generateImage({
+          const imageResult = await generateGeminiImage({
             prompt,
-            originalImages: [{ url: input.imageUrl, mimeType: "image/jpeg" }],
+            quality: "2k",
+            referenceImageUrl: input.imageUrl,
           });
-          if (!url) throw new Error("3D 转换失败，请稍后再试");
           return {
             success: true,
             mode: "fallback" as const,
-            imageUrl3D: url,
+            imageUrl3D: imageResult.imageUrl,
             glbUrl: null,
             objUrl: null,
             textureUrl: null,
@@ -1087,14 +1079,14 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           const imagePrompt = `${styleNote} ${scene.description}. ${scene.visualElements.join(", ")}. ${scene.mood} mood.${characterLock ? ` IMPORTANT - Main character consistency: ${characterLock}. The main character MUST look exactly the same across all scenes.` : ""}${refStyleNote} High quality, detailed, 16:9 aspect ratio.`;
           
           try {
-            const { url } = await generateImage({ prompt: imagePrompt });
+            const imageResult = await generateGeminiImage({ prompt: imagePrompt, quality: "1k" });
             // 免費生圖添加水印（管理員跳過）
-            let finalUrl = url;
-            if (shouldApplyWatermarkForTier(userTier) && url) {
+            let finalUrl = imageResult.imageUrl;
+            if (shouldApplyWatermarkForTier(userTier) && imageResult.imageUrl) {
               try {
                 const { addWatermarkToUrl } = await import("./watermark");
                 const { storagePut } = await import("./storage");
-                const wmBuf = await addWatermarkToUrl(url, "bottom-right");
+                const wmBuf = await addWatermarkToUrl(imageResult.imageUrl, "bottom-right");
                 const wmKey = `watermarked/${userId}/${Date.now()}-scene-${scene.sceneNumber}.png`;
                 const wmUp = await storagePut(wmKey, wmBuf, "image/png");
                 finalUrl = wmUp.url;
@@ -2047,14 +2039,15 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       const parsed = JSON.parse(storyboardData);
       const id = await createStoryboard({ userId: ctx.user.id, lyrics: input.lyrics || "（音频分析生成）", sceneCount: input.sceneCount, storyboard: storyboardData });
 
-      // Auto-generate storyboard images for each scene using Forge (free)
+      // Auto-generate storyboard images for each scene using nano-banana-flash (1K)
       const scenesWithImages = await Promise.all(
         (parsed.scenes || []).map(async (scene: any) => {
           try {
-            const { url } = await generateImage({
+            const imageResult = await generateGeminiImage({
               prompt: `Cinematic MV storyboard frame: ${scene.imagePrompt}. Professional film quality, 16:9 aspect ratio, detailed lighting.`,
+              quality: "1k",
             });
-            return { ...scene, generatedImageUrl: url };
+            return { ...scene, generatedImageUrl: imageResult.imageUrl };
           } catch {
             return { ...scene, generatedImageUrl: null };
           }

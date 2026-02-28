@@ -17,7 +17,7 @@ function getClient() {
   return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 }
 
-export type ImageQuality = "2k" | "4k";
+export type ImageQuality = "1k" | "2k" | "4k";
 
 export interface GeminiImageOptions {
   /** Text prompt describing the image to generate */
@@ -78,12 +78,20 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
   }
 
   // Try Gemini 3 series models first, then fall back to older versions
-  const modelNames = [
-    "gemini-3-pro-image-preview",
-    "nano-banana-pro-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-flash-preview-image-generation",
-  ];
+  const modelNames =
+    opts.quality === "1k"
+      ? [
+          "nano-banana-flash-preview",
+          "gemini-3-flash-preview",
+          "gemini-2.5-flash-preview-image-generation",
+          "nano-banana-pro-preview",
+        ]
+      : [
+          "gemini-3-pro-image-preview",
+          "nano-banana-pro-preview",
+          "gemini-3-flash-preview",
+          "gemini-2.5-flash-preview-image-generation",
+        ];
 
   let response: any = null;
   let lastError: any = null;

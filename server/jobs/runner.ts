@@ -27,7 +27,6 @@ import {
   type FalKlingEndpoint,
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
-import { generateImage } from "../_core/imageGeneration";
 import { appRouter } from "../routers";
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
@@ -417,27 +416,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       };
     }
 
-    const fallback = await withTimeout(
-      generateImage({
-        prompt,
-        originalImages: referenceImageUrl
-          ? [{ url: referenceImageUrl, mimeType: "image/jpeg" }]
-          : undefined,
-      }),
-      timeoutMs,
-      `Image job timed out after ${timeoutMs}ms`
-    );
-    if (!fallback.url) {
-      throw new Error("Nano fallback image generation failed");
-    }
-    return {
-      provider: "nano",
-      output: {
-        imageUrl: fallback.url,
-        quality,
-        fallback: true,
-      },
-    };
+    throw new Error("Nano image generation unavailable: GEMINI_API_KEY is not configured");
   }
 
   if (input.action === "virtual_idol") {
@@ -471,7 +450,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
 
     const quality = String((params as any).quality || "free");
     return {
-      provider: quality.startsWith("kling") ? "kling-cn" : quality === "free" ? "forge" : "nano",
+      provider: quality.startsWith("kling") ? "kling-cn" : quality === "free" ? "nano-banana-flash" : "nano",
       output: result as any,
     };
   }

@@ -69,9 +69,9 @@ function resolveKlingCnState(): { state: ProviderDiagState; error: string | null
 }
 
 function buildProviders(): ProviderDiagItem[] {
-  const forgeState = hasValue(process.env.PLAYGROUND_API_KEY)
+  const nanoFlashState = hasValue(process.env.GEMINI_API_KEY)
     ? { state: "reachable" as const, error: null }
-    : { state: "unconfigured" as const, error: "PLAYGROUND_API_KEY missing" };
+    : { state: "unconfigured" as const, error: "GEMINI_API_KEY missing" };
 
   const nanoState = hasValue(process.env.GEMINI_API_KEY)
     ? { state: "reachable" as const, error: null }
@@ -107,13 +107,13 @@ function buildProviders(): ProviderDiagItem[] {
 
   return [
     {
-      name: "playground-v2.5-1024px-aesthetic",
+      name: "nano-banana-flash",
       type: "image",
       role: "free",
       paidOnly: false,
-      state: forgeState.state,
+      state: nanoFlashState.state,
       latencyMs: 0,
-      error: forgeState.error,
+      error: nanoFlashState.error,
     },
     {
       name: "nano-banana-pro",
@@ -264,22 +264,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (isDiagProviders) {
       const routingMap = {
         free: {
-          image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
+          image: ["nano-banana-flash", "nano-banana-pro", "kling_image"],
           video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
           text: ["basic_model", "gemini_3_flash", "gemini_3_pro", "gpt_5_1"],
         },
         beta: {
-          image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
+          image: ["nano-banana-flash", "nano-banana-pro", "kling_image"],
           video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
           text: ["gemini_3_flash", "basic_model", "gemini_3_pro", "gpt_5_1"],
         },
         paid: {
-          image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
+          image: ["nano-banana-pro", "nano-banana-flash", "kling_image"],
           video: ["veo_3_1", "fal_kling_video", "kling_beijing", "cometapi"],
           text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
         },
         supervisor: {
-          image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
+          image: ["nano-banana-pro", "nano-banana-flash", "kling_image"],
           video: ["veo_3_1", "kling_beijing", "fal_kling_video", "cometapi"],
           text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
         },

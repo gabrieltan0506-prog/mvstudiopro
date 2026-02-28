@@ -1,8 +1,8 @@
 export type GenerationProvider =
   | "fal.ai"
+  | "nano-banana-flash"
   | "nano-banana-pro"
   | "veo3.1-pro"
-  | "forge"
   | "kling_beijing"
   | "veo_3_1"
   | "fal_kling_video"

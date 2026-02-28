@@ -2,7 +2,7 @@
  * NBP 引擎选择器组件
  * 
  * 用于分镜页面和虚拟偶像页面，让用户选择图像生成引擎：
- * - Forge（Forge AI，含水印）— 基础引擎
+ * - Nano Banana Flash 1K（含水印）— 基础引擎
  * - NBP 2K（5 Credits/张）
  * - NBP 4K（9 Credits/张）
  * - Kling 1K（8 Credits/张）
@@ -13,7 +13,7 @@
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
 
-export type EngineOption = "forge" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
+export type EngineOption = "nano_flash" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
 
 interface EngineInfo {
   id: EngineOption;
@@ -51,9 +51,9 @@ export function NbpEngineSelector({
   const effectiveCredits = isAdmin ? 99999 : creditsAvailable;
   const engines: EngineInfo[] = [
     {
-      id: "forge",
-      label: "Forge",
-      desc: "基础画质，含浮水印",
+      id: "nano_flash",
+      label: "Nano Flash 1K",
+      desc: "基础画质，含水印",
       cost: "3 Cr",
       icon: Sparkles,
       color: "#30D158",

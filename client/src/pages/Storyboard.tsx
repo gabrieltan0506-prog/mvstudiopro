@@ -138,7 +138,7 @@ export default function StoryboardPage() {
   const [storyboard, setStoryboard] = useState<StoryboardResult | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<number | null>(null);
   const [editedScene, setEditedScene] = useState<StoryboardScene | null>(null);
-  const [imageEngine, setImageEngine] = useState<EngineOption>("forge");
+  const [imageEngine, setImageEngine] = useState<EngineOption>("nano_flash");
   const [showInspirationModal, setShowInspirationModal] = useState(false);
   const [inspirationInput, setInspirationInput] = useState("");
   const [isGeneratingInspiration, setIsGeneratingInspiration] = useState(false);

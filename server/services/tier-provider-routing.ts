@@ -11,22 +11,22 @@ export type ProviderSurface = "image" | "video" | "text";
 
 const PROVIDER_CHAINS: Record<UserTier, Record<ProviderSurface, GenerationProvider[]>> = {
   supervisor: {
-    image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
+    image: ["nano-banana-pro", "nano-banana-flash", "kling_image"],
     video: ["veo_3_1", "kling_beijing", "fal_kling_video", "cometapi"],
     text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
   },
   free: {
-    image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
+    image: ["nano-banana-flash", "nano-banana-pro", "kling_image"],
     video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
     text: ["basic_model", "gemini_3_flash", "gemini_3_pro"],
   },
   beta: {
-    image: ["playground-v2.5-1024px-aesthetic", "nano-banana-pro", "kling_image"],
+    image: ["nano-banana-flash", "nano-banana-pro", "kling_image"],
     video: ["kling_beijing", "fal_kling_video", "veo_3_1", "cometapi"],
     text: ["gemini_3_flash", "basic_model", "gemini_3_pro"],
   },
   paid: {
-    image: ["nano-banana-pro", "playground-v2.5-1024px-aesthetic", "kling_image"],
+    image: ["nano-banana-pro", "nano-banana-flash", "kling_image"],
     video: ["veo_3_1", "fal_kling_video", "kling_beijing", "cometapi"],
     text: ["gemini_3_pro", "gpt_5_1", "gemini_3_flash", "basic_model"],
   },

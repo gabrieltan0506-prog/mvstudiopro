@@ -5,13 +5,13 @@
  * - 分镜图生成（单张/批量）
  * - 虚拟偶像 2K/4K 生成
  * - 水印逻辑（免费/初级有水印，高级无水印）
- * - Credits 不足自动降级到 Forge AI
+ * - Credits 不足自动降级到 Nano Banana Flash (1K)
  * - 会员层级限制（免费 10 张、初级 30 张、高级 70 张）
  */
 
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { generateImage } from "../_core/imageGeneration";
+import { generateGeminiImage } from "../gemini-image";
 import { storagePut } from "../storage";
 import { deductNbpCredits, checkNbpCapacity, getUserPlan, deductCredits } from "../credits";
 import { PLANS, CREDIT_COSTS } from "../plans";
@@ -154,7 +154,7 @@ export const nanoBananaRouter = router({
   /**
    * 生成单张分镜图
    * - 有 NBP API Key + Credits → NBP 生成
-   * - 无 Key 或 Credits 不足 → Forge AI 降级（有水印）
+   * - 无 Key 或 Credits 不足 → Nano Banana Flash 1K 降级（有水印）
    */
   generateStoryboardImage: protectedProcedure
     .input(z.object({
@@ -195,7 +195,7 @@ export const nanoBananaRouter = router({
       const fullPrompt = `Professional video storyboard frame. Scene ${input.sceneIndex + 1} of ${input.totalScenes}. ${styleMap[input.style]}. ${input.sceneDescription}. Aspect ratio 16:9, high quality, detailed.`;
 
       let imageUrl: string;
-      let engine: "nbp" | "forge" = "forge";
+      let engine: "nbp" | "flash" = "flash";
       let resolution = input.resolution;
 
       // 尝试 NBP 生成
@@ -240,17 +240,17 @@ export const nanoBananaRouter = router({
         }
       }
 
-      // Forge AI 降级生成（免费，有水印）
-      const forgeResult = await generateImage({ prompt: fullPrompt });
-      if (forgeResult?.url) {
+      // Nano Banana Flash 1K 降级生成（免费，有水印）
+      const flashResult = await generateGeminiImage({ prompt: fullPrompt, quality: "1k" });
+      if (flashResult?.imageUrl) {
         try {
-          const resp = await fetch(forgeResult.url);
+          const resp = await fetch(flashResult.imageUrl);
           const buffer = Buffer.from(await resp.arrayBuffer());
           const watermarked = await addWatermark(buffer, "image/png");
-          const filename = `storyboard/forge_scene_${input.sceneIndex + 1}_${Date.now()}.png`;
+          const filename = `storyboard/flash_scene_${input.sceneIndex + 1}_${Date.now()}.png`;
           imageUrl = await uploadImage(watermarked, filename, "image/png");
         } catch {
-          imageUrl = forgeResult.url;
+          imageUrl = flashResult.imageUrl;
         }
       } else {
         return {
@@ -264,20 +264,20 @@ export const nanoBananaRouter = router({
       return {
         success: true,
         imageUrl,
-        engine: "forge" as const,
+        engine: "flash" as const,
         resolution: "standard",
         watermark: true,
         showUpgradeHint,
         creditsRemaining: 0,
         fallbackMessage: planConfig.nbp.enabled
-          ? "Credits 不足，已自動切換至 Forge 引擎（0 Credits，含浮水印）。充值即可恢復高清體驗。"
+          ? "Credits 不足，已自动切换至 Nano Banana Flash（1K，含水印）。充值即可恢复高清体验。"
           : undefined,
       };
     }),
 
   /**
    * 批量生成分镜图
-   * NBP 生成到 Credits 用完为止，剩余用 Forge 降级
+   * NBP 生成到 Credits 用完为止，剩余用 Nano Banana Flash 1K 降级
    */
   batchGenerateStoryboardImages: protectedProcedure
     .input(z.object({
@@ -301,7 +301,7 @@ export const nanoBananaRouter = router({
       const results: Array<{
         index: number;
         imageUrl: string;
-        engine: "nbp" | "forge";
+        engine: "nbp" | "flash";
         success: boolean;
         error?: string;
       }> = [];
@@ -353,27 +353,27 @@ export const nanoBananaRouter = router({
             nbpRemaining = 0;
           }
 
-          // Forge 降级
-          const forgeResult = await generateImage({ prompt: fullPrompt });
-          if (forgeResult?.url) {
+          // Nano Banana Flash 1K 降级
+          const flashResult = await generateGeminiImage({ prompt: fullPrompt, quality: "1k" });
+          if (flashResult?.imageUrl) {
             try {
-              const resp = await fetch(forgeResult.url);
+              const resp = await fetch(flashResult.imageUrl);
               const buffer = Buffer.from(await resp.arrayBuffer());
               const watermarked = await addWatermark(buffer, "image/png");
-              const filename = `storyboard/forge_batch_${scene.index + 1}_${Date.now()}.png`;
+              const filename = `storyboard/flash_batch_${scene.index + 1}_${Date.now()}.png`;
               const imageUrl = await uploadImage(watermarked, filename, "image/png");
-              results.push({ index: scene.index, imageUrl, engine: "forge", success: true });
+              results.push({ index: scene.index, imageUrl, engine: "flash", success: true });
             } catch {
-              results.push({ index: scene.index, imageUrl: forgeResult.url, engine: "forge", success: true });
+              results.push({ index: scene.index, imageUrl: flashResult.imageUrl, engine: "flash", success: true });
             }
           } else {
-            results.push({ index: scene.index, imageUrl: "", engine: "forge", success: false, error: "生成失败" });
+            results.push({ index: scene.index, imageUrl: "", engine: "flash", success: false, error: "生成失败" });
           }
         } catch (error) {
           results.push({
             index: scene.index,
             imageUrl: "",
-            engine: "forge",
+            engine: "flash",
             success: false,
             error: error instanceof Error ? error.message : "未知错误",
           });
@@ -381,7 +381,7 @@ export const nanoBananaRouter = router({
       }
 
       const nbpCount = results.filter(r => r.engine === "nbp").length;
-      const forgeCount = results.filter(r => r.engine === "forge").length;
+      const flashCount = results.filter(r => r.engine === "flash").length;
       const failCount = results.filter(r => !r.success).length;
 
       return {
@@ -389,7 +389,7 @@ export const nanoBananaRouter = router({
         summary: {
           total: results.length,
           nbpGenerated: nbpCount,
-          forgeGenerated: forgeCount,
+          flashGenerated: flashCount,
           failed: failCount,
           truncated: input.scenes.length > maxScenes,
           truncatedCount: Math.max(0, input.scenes.length - maxScenes),
@@ -421,7 +421,7 @@ export const nanoBananaRouter = router({
       if (!planConfig.nbp.enabled) {
         return {
           success: false,
-          error: "您的方案不支持 NBP 生成，請升級到初級會員或使用 Forge AI（0 Credits）",
+          error: "您的方案不支持 NBP 生成，请升级到初级会员或使用 Nano Banana Flash（1K）",
           needUpgrade: true,
         };
       }
@@ -435,7 +435,7 @@ export const nanoBananaRouter = router({
       if (!deductResult.success) {
         return {
           success: false,
-          error: "Credits 不足，請充值後重試。或使用 Forge AI 生成（0 Credits，含浮水印）。",
+          error: "Credits 不足，请充值后重试。或使用 Nano Banana Flash（1K，含水印）。",
           needUpgrade: false,
           creditsNeeded: CREDIT_COSTS[resolution === "4k" ? "nbpImage4K" : "nbpImage2K"],
           creditsAvailable: deductResult.remainingBalance,

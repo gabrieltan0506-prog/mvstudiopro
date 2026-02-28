@@ -2,7 +2,7 @@ import { getTierProviderChain, type UserTier } from "./tier-provider-routing";
 import { getCometApiBaseUrl, getCometApiKey } from "./cometapi";
 
 type ProviderType = "video" | "music" | "image" | "text";
-type ProviderName = "veo" | "kling" | "kling_beijing" | "fal" | "comet" | "gemini" | "nano" | "playground-v2.5-1024px-aesthetic" | "suno";
+type ProviderName = "veo" | "kling" | "kling_beijing" | "fal" | "comet" | "gemini" | "nano" | "nano-banana-flash" | "suno";
 type ProviderState = "ok" | "not_configured" | "timeout" | "error";
 type EffectiveTier = UserTier | "unknown";
 type RoutingMap = Record<UserTier, Record<"image" | "video" | "text", string[]>>;
@@ -86,8 +86,9 @@ async function checkGeminiApi(timeoutMs: number): Promise<CheckResult> {
   if (!hasValue(geminiApiKey)) {
     return { ok: false, error: "GEMINI_API_KEY missing" };
   }
+  const apiKey = geminiApiKey.trim();
   return await pingUrl(
-    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(geminiApiKey)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
     timeoutMs
   );
 }
@@ -131,18 +132,6 @@ async function checkKlingImageApi(timeoutMs: number): Promise<CheckResult> {
 
 async function checkKlingBeijingVideoApi(timeoutMs: number): Promise<CheckResult> {
   return await checkKlingImageApi(timeoutMs);
-}
-
-async function checkForgeApi(timeoutMs: number): Promise<CheckResult> {
-  const forgeApiKey = process.env.PLAYGROUND_API_KEY;
-  if (!hasValue(forgeApiKey)) {
-    return { ok: false, error: "PLAYGROUND_API_KEY missing" };
-  }
-  const forgeBase = process.env.BUILT_IN_FORGE_API_URL || "https://forge.manus.im";
-  const url = `${forgeBase.replace(/\/$/, "")}/v1/models`;
-  return await pingUrl(url, timeoutMs, {
-    Authorization: `Bearer ${forgeApiKey}`,
-  });
 }
 
 async function checkCometApi(timeoutMs: number): Promise<CheckResult> {
@@ -240,20 +229,12 @@ async function runCheck(config: ProviderSpec): Promise<ProviderDiagItem> {
 
 function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
   let geminiPingPromise: Promise<CheckResult> | null = null;
-  let forgePingPromise: Promise<CheckResult> | null = null;
 
   const geminiPing = () => {
     if (!geminiPingPromise) {
       geminiPingPromise = checkGeminiApi(timeoutMs);
     }
     return geminiPingPromise;
-  };
-
-  const forgePing = () => {
-    if (!forgePingPromise) {
-      forgePingPromise = checkForgeApi(timeoutMs);
-    }
-    return forgePingPromise;
   };
 
   return [
@@ -306,11 +287,11 @@ function buildProviderSpecs(timeoutMs: number): ProviderSpec[] {
       check: async () => await geminiPing(),
     },
     {
-      name: "playground-v2.5-1024px-aesthetic",
+      name: "nano-banana-flash",
       type: "image",
-      role: "primary",
+      role: "free",
       paidOnly: false,
-      check: async () => await forgePing(),
+      check: async () => await geminiPing(),
     },
     {
       name: "suno",

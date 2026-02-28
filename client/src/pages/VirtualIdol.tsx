@@ -51,7 +51,7 @@ export default function VirtualIdol() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<{ imageUrl: string; style: string; gender: string }>>([]);
 
-  const [imageEngine, setImageEngine] = useState<EngineOption>("forge");
+  const [imageEngine, setImageEngine] = useState<EngineOption>("nano_flash");
 
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null);
@@ -191,7 +191,7 @@ export default function VirtualIdol() {
     setShow3DPanel(false);
     setImage3D(null);
     const qualityMap: Record<string, "free" | "2k" | "4k" | "kling_1k" | "kling_2k"> = {
-      forge: "free", nbp_2k: "2k", nbp_4k: "4k", kling_1k: "kling_1k", kling_2k: "kling_2k",
+      nano_flash: "free", nbp_2k: "2k", nbp_4k: "4k", kling_1k: "kling_1k", kling_2k: "kling_2k",
     };
     const quality = qualityMap[imageEngine] || "free";
     try {
