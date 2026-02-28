@@ -363,11 +363,11 @@ export default function TeamManagementPage() {
                                 <Button variant="outline" size="sm">操作 <ChevronsUpDown className="ml-2 h-4 w-4" /></Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="bg-[#1A1A1C] border-gray-700 text-white">
-                                <DropdownMenuItem onClick={() => changeRoleMut.mutate({ teamId: team.team.id, teamId: team.id, newRole: member.role === 'admin' ? 'member' : 'admin' })}>
+                                <DropdownMenuItem onClick={() => changeRoleMut.mutate({ teamId: team.team.id, memberId: member.id, newRole: member.role === 'admin' ? 'member' : 'admin' })}>
                                   <GitCommitHorizontal className="mr-2 h-4 w-4 text-purple-500" />
                                   <span>{member.role === 'admin' ? '降为成员' : '升为管理员'}</span>
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => removeMemberMut.mutate({ teamId: team.team.id, teamId: team.id })} className="text-red-500 focus:bg-red-500/10 focus:text-red-500">
+                                <DropdownMenuItem onClick={() => removeMemberMut.mutate({ teamId: team.team.id, memberId: member.id })} className="text-red-500 focus:bg-red-500/10 focus:text-red-500">
                                   <UserMinus className="mr-2 h-4 w-4" />
                                   <span>移除</span>
                                 </DropdownMenuItem>
@@ -389,7 +389,7 @@ export default function TeamManagementPage() {
                             <Button 
                               onClick={() => {
                                 const amt = parseInt(allocateAmount);
-                                if (amt > 0) allocateCreditsMut.mutate({ teamId: team.team.id, teamId: team.id, amount: amt });
+                                if (amt > 0) allocateCreditsMut.mutate({ teamId: team.team.id, memberId: member.id, amount: amt });
                               }}
                               disabled={!allocateAmount || allocateCreditsMut.isPending}
                             >
