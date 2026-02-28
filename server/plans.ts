@@ -207,6 +207,8 @@ export const CREDIT_COSTS = {
   sunoMusicV4: 12,            // Suno V4 音乐生成消耗 12 credits（API 成本 $0.06/2首，利润率 ~73%）
   sunoMusicV5: 22,            // Suno V5 音乐生成消耗 22 credits（最新模型，更高音质，利润率 ~85%）
   sunoLyrics: 3,              // Suno 歌词生成消耗 3 credits（Gemini 转换脚本→歌词）
+  audioSinglePurchase: 8,     // 音乐单次购买：每次生成 8 credits
+  audioPackageGeneration: 1,  // 音乐套餐：每次生成 1 credit
 
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,             // Kling 视频生成消耗 80 credits（API 成本高）

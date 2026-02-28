@@ -12,12 +12,14 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { recordCreation } from "./creations";
 import { invokeLLM } from "../_core/llm";
-import { deductCredits, getCredits } from "../credits";
+import { deductCredits, getCredits, getUserPlan } from "../credits";
 import { CREDIT_COSTS } from "../plans";
-
-// Suno API 配置（通过 sunoapi.org 或 kie.ai 第三方代理）
-const SUNO_API_BASE = process.env.SUNO_API_BASE || "https://api.sunoapi.org";
-const SUNO_API_KEY = process.env.SUNO_API_KEY || "";
+import {
+  createProducerTask,
+  getProducerTaskStatus,
+  type ProducerModel,
+  type ProducerQuality,
+} from "../services/aimusic-producer";
 
 // BGM 风格缺省选项
 export const BGM_STYLE_PRESETS = [
@@ -38,67 +40,25 @@ export const BGM_STYLE_PRESETS = [
   { id: "custom", label: "自定义风格", labelEn: "Custom Style", style: "" },
 ] as const;
 
-// 模型版本映射
-const MODEL_MAP = {
-  V4: "V4",
-  V5: "V5",
-} as const;
+type AudioBillingPolicy = "free" | "single_purchase" | "package";
 
-type SunoModel = keyof typeof MODEL_MAP;
-
-// ─── Suno API 调用 ───────────────────────────────
-
-async function callSunoAPI(endpoint: string, body: Record<string, unknown>) {
-  if (!SUNO_API_KEY) {
-    throw new Error("Suno API Key 未配置，请联系管理员");
-  }
-
-  const response = await fetch(`${SUNO_API_BASE}/api/v1/${endpoint}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${SUNO_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Suno API 错误 (${response.status}): ${errorText}`);
-  }
-
-  const result = await response.json();
-  if (result.code !== 200) {
-    throw new Error(`Suno API 返回错误: ${result.msg}`);
-  }
-
-  return result.data;
+function mapInputModelToProducer(inputModel: "V4" | "V5" | "suno" | "udio"): ProducerModel {
+  if (inputModel === "suno" || inputModel === "udio") return inputModel;
+  return inputModel === "V5" ? "udio" : "suno";
 }
 
-async function getSunoTaskStatus(taskId: string) {
-  if (!SUNO_API_KEY) {
-    throw new Error("Suno API Key 未配置");
-  }
+function normalizeProducerStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" {
+  if (status.includes("FAIL")) return "FAILED";
+  if (status.includes("SUCCESS") || status.includes("DONE") || status.includes("COMPLETED")) return "SUCCESS";
+  return "PENDING";
+}
 
-  const response = await fetch(
-    `${SUNO_API_BASE}/api/v1/generate/record-info?taskId=${taskId}`,
-    {
-      headers: {
-        "Authorization": `Bearer ${SUNO_API_KEY}`,
-      },
-    }
-  );
+function getRetentionDays(policy: AudioBillingPolicy): number {
+  return policy === "package" ? 30 : 3;
+}
 
-  if (!response.ok) {
-    throw new Error(`查找任务状态失败 (${response.status})`);
-  }
-
-  const result = await response.json();
-  if (result.code !== 200) {
-    throw new Error(`查找失败: ${result.msg}`);
-  }
-
-  return result.data;
+function getPolicyFromPlan(plan: string): AudioBillingPolicy {
+  return plan === "pro" || plan === "enterprise" ? "package" : "free";
 }
 
 // ─── Gemini 歌词生成 ────────────────────────────
@@ -185,7 +145,7 @@ export const sunoRouter = router({
   generateMusic: protectedProcedure
     .input(z.object({
       mode: z.enum(["theme_song", "bgm"]),
-      model: z.enum(["V4", "V5"]),
+      model: z.enum(["V4", "V5", "suno", "udio"]).default("suno"),
       // 主题曲模式需要
       lyrics: z.string().max(5000).optional(),
       // BGM 模式需要
@@ -194,6 +154,7 @@ export const sunoRouter = router({
       // 共用参数
       title: z.string().min(1).max(80),
       mood: z.string().max(200).optional(),
+      duration: z.number().int().min(30).max(600).optional(),
       // 回调 URL（可选，前端可以轮询）
       callbackUrl: z.string().url().optional(),
     }))
@@ -201,118 +162,93 @@ export const sunoRouter = router({
       const userId = ctx.user.id;
       const isAdmin = ctx.user.role === "admin";
 
-      // 根据模型版本确定 Credits 消耗
-      const creditCost = input.model === "V5" ? CREDIT_COSTS.sunoMusicV5 : CREDIT_COSTS.sunoMusicV4;
+      const plan = isAdmin ? "enterprise" : await getUserPlan(userId);
+      let billingPolicy: AudioBillingPolicy = getPolicyFromPlan(plan);
 
-      // 扣除 Credits（管理员免扣）
-      if (!isAdmin) {
+      const duration = input.duration ?? (input.mode === "bgm" ? 60 : 120);
+      const isFreeEligible = input.mode === "bgm" && duration <= 120;
+      if (billingPolicy === "free" && !isFreeEligible) {
+        billingPolicy = "single_purchase";
+      }
+
+      const quality: ProducerQuality = billingPolicy === "package" ? "high" : "normal";
+      const creditCost =
+        billingPolicy === "free"
+          ? 0
+          : billingPolicy === "single_purchase"
+          ? CREDIT_COSTS.audioSinglePurchase
+          : CREDIT_COSTS.audioPackageGeneration;
+
+      if (!isAdmin && creditCost > 0) {
         const creditsInfo = await getCredits(userId);
         if (creditsInfo.totalAvailable < creditCost) {
-          throw new Error(`Credits 不足，${input.model} 音乐生成需要 ${creditCost} Credits`);
+          throw new Error(`Credits 不足，本次音乐生成需要 ${creditCost} Credits`);
         }
-        await deductCredits(userId, input.model === "V5" ? "sunoMusicV5" : "sunoMusicV4");
+        await deductCredits(
+          userId,
+          billingPolicy === "single_purchase" ? "audioSinglePurchase" : "audioPackageGeneration",
+          billingPolicy === "single_purchase" ? "音乐单次购买生成" : "音乐套餐生成"
+        );
       }
 
-      // 构建 Suno API 请求
-      const sunoModel = MODEL_MAP[input.model];
-
+      let prompt = "";
       if (input.mode === "theme_song") {
-        // 主题曲模式：customMode + 带歌词
-        if (!input.lyrics) {
-          throw new Error("主题曲模式需要提供歌词");
-        }
-
-        // 确定风格
-        let style = input.mood || "Pop, Emotional, Modern";
-
-        const data = await callSunoAPI("generate", {
-          customMode: true,
-          instrumental: false,
-          model: sunoModel,
-          prompt: input.lyrics,
-          style,
-          title: input.title,
-          callBackUrl: input.callbackUrl || "",
-        });
-
-        // Auto-record creation
-        try {
-          const { getUserPlan } = await import("../credits");
-          const plan = await getUserPlan(userId);
-          await recordCreation({
-            userId,
-            type: "music",
-            title: input.title || "主題曲",
-            metadata: { mode: "theme_song", model: input.model, taskId: data.taskId },
-            quality: input.model,
-            creditsUsed: creditCost,
-            plan,
-            status: "pending",
-          });
-        } catch (e) { console.error("[Suno] recordCreation failed:", e); }
-
-        return {
-          taskId: data.taskId,
-          mode: "theme_song" as const,
-          model: input.model,
-          creditCost,
-        };
+        if (!input.lyrics) throw new Error("主题曲模式需要提供歌词");
+        prompt = input.lyrics.trim();
       } else {
-        // BGM 模式：customMode + instrumental
         let style = "";
-
         if (input.stylePresetId && input.stylePresetId !== "custom") {
-          const preset = BGM_STYLE_PRESETS.find(p => p.id === input.stylePresetId);
-          if (preset) {
-            style = preset.style;
-          }
+          const preset = BGM_STYLE_PRESETS.find((p) => p.id === input.stylePresetId);
+          if (preset) style = preset.style;
         }
-
-        if (input.customStyle) {
-          style = input.customStyle;
-        }
-
-        if (!style) {
-          style = "Cinematic, Emotional, Instrumental";
-        }
-
-        // 如果有 mood 描述，附加到 style
-        if (input.mood) {
-          style = `${style}, ${input.mood}`;
-        }
-
-        const data = await callSunoAPI("generate", {
-          customMode: true,
-          instrumental: true,
-          model: sunoModel,
-          style,
-          title: input.title,
-          callBackUrl: input.callbackUrl || "",
-        });
-
-        // Auto-record creation
-        try {
-          const { getUserPlan } = await import("../credits");
-          const plan = await getUserPlan(userId);
-          await recordCreation({
-            userId,
-            type: "music",
-            title: input.title || "BGM",
-            metadata: { mode: "bgm", model: input.model, taskId: data.taskId },
-            quality: input.model,
-            creditsUsed: creditCost,
-            plan,
-            status: "pending",
-          });
-        } catch (e) { console.error("[Suno] recordCreation failed:", e); }
-
-        return {
-          taskId: data.taskId,
-          mode: "bgm" as const,
-          model: input.model,
-          creditCost,
-        };
+        if (input.customStyle) style = input.customStyle;
+        if (!style) style = "Cinematic, Emotional, Instrumental";
+        if (input.mood) style = `${style}, ${input.mood}`;
+        prompt = style;
       }
+
+      const producerModel = mapInputModelToProducer(input.model);
+      const created = await createProducerTask({
+        model: producerModel,
+        prompt,
+        duration,
+        quality,
+      });
+
+      try {
+        const retentionDays = getRetentionDays(billingPolicy);
+        await recordCreation({
+          userId,
+          type: "music",
+          title: input.title || (input.mode === "bgm" ? "BGM" : "主题曲"),
+          metadata: {
+            mode: input.mode,
+            model: producerModel,
+            taskId: created.taskId,
+            billingPolicy,
+            retentionDays,
+            allowDownload: billingPolicy !== "free",
+          },
+          quality,
+          creditsUsed: creditCost,
+          plan,
+          status: "pending",
+          expiresAt: new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000),
+        });
+      } catch (e) {
+        console.error("[AIMusic] recordCreation failed:", e);
+      }
+
+      return {
+        taskId: created.taskId,
+        mode: input.mode,
+        model: producerModel,
+        quality,
+        creditCost,
+        retentionDays: getRetentionDays(billingPolicy),
+        allowDownload: billingPolicy !== "free",
+        billingPolicy,
+      };
     }),
 
   // 查找音乐生成状态
@@ -320,22 +256,26 @@ export const sunoRouter = router({
     .input(z.object({
       taskId: z.string().min(1),
     }))
-    .query(async ({ input }) => {
-      const data = await getSunoTaskStatus(input.taskId);
+    .query(async ({ input, ctx }) => {
+      const status = await getProducerTaskStatus(input.taskId);
+      const plan = ctx.user.role === "admin" ? "enterprise" : await getUserPlan(ctx.user.id);
+      const billingPolicy = getPolicyFromPlan(plan);
+      const allowDownload = billingPolicy !== "free";
 
       return {
-        taskId: data.taskId,
-        status: data.status as "PENDING" | "TEXT_SUCCESS" | "FIRST_SUCCESS" | "SUCCESS" | "FAILED",
-        songs: data.response?.data?.map((song: any) => ({
+        taskId: input.taskId,
+        status: normalizeProducerStatus(status.status),
+        songs: status.songs.map((song) => ({
           id: song.id,
-          audioUrl: song.audio_url || song.stream_audio_url,
-          streamUrl: song.stream_audio_url,
-          imageUrl: song.image_url,
+          audioUrl: allowDownload ? song.audioUrl ?? song.downloadUrl ?? song.streamUrl : undefined,
+          streamUrl: song.streamUrl ?? song.audioUrl,
+          imageUrl: song.imageUrl,
           title: song.title,
           tags: song.tags,
           duration: song.duration,
-        })) || [],
-        errorMessage: data.errorMessage,
+        })),
+        errorMessage: status.errorMessage,
+        allowDownload,
       };
     }),
 
@@ -359,8 +299,12 @@ export const sunoRouter = router({
   // 获取 Credits 消耗信息
   getCreditCosts: protectedProcedure.query(() => {
     return {
-      v4: CREDIT_COSTS.sunoMusicV4,
-      v5: CREDIT_COSTS.sunoMusicV5,
+      free: 0,
+      singlePurchase: CREDIT_COSTS.audioSinglePurchase,
+      package: CREDIT_COSTS.audioPackageGeneration,
+      // Backward compatibility for existing UI labels
+      v4: CREDIT_COSTS.audioSinglePurchase,
+      v5: CREDIT_COSTS.audioPackageGeneration,
       lyrics: CREDIT_COSTS.sunoLyrics,
     };
   }),

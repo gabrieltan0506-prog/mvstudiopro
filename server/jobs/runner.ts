@@ -32,6 +32,14 @@ import { appRouter } from "../routers";
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { deductCredits, getCredits, getUserPlan } from "../credits";
+import { CREDIT_COSTS } from "../plans";
+import {
+  createProducerTask,
+  getProducerTaskStatus,
+  type ProducerModel,
+  type ProducerQuality,
+} from "../services/aimusic-producer";
 import {
   claimNextQueuedJob,
   markJobFailed,
@@ -47,9 +55,6 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 };
 
 const POLL_INTERVAL_MS = 2_000;
-
-const SUNO_API_BASE = process.env.SUNO_API_BASE || "https://api.sunoapi.org";
-const SUNO_API_KEY = process.env.SUNO_API_KEY || "";
 
 let klingInitialized = false;
 let workerStarted = false;
@@ -474,150 +479,140 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
   throw new Error(`Unsupported image action: ${input.action}`);
 }
 
-async function callSunoAPI(endpoint: string, body: Record<string, unknown>) {
-  if (!SUNO_API_KEY) {
-    throw new Error("Suno API key not configured");
-  }
+type AudioBillingPolicy = "free" | "single_purchase" | "package";
 
-  const response = await fetch(`${SUNO_API_BASE}/api/v1/${endpoint}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SUNO_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Suno API error (${response.status})${detail ? `: ${detail}` : ""}`);
-  }
-
-  const json = (await response.json()) as {
-    code?: number;
-    msg?: string;
-    data?: Record<string, unknown>;
-  };
-  if (json.code !== 200 || !json.data) {
-    throw new Error(`Suno API returned error: ${json.msg || "unknown error"}`);
-  }
-  return json.data;
+function mapAudioModel(model: unknown): ProducerModel {
+  if (model === "udio" || model === "V5") return "udio";
+  return "suno";
 }
 
-async function getSunoTaskStatus(taskId: string) {
-  if (!SUNO_API_KEY) {
-    throw new Error("Suno API key not configured");
-  }
-
-  const response = await fetch(
-    `${SUNO_API_BASE}/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${SUNO_API_KEY}`,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Suno status error (${response.status})`);
-  }
-
-  const json = (await response.json()) as {
-    code?: number;
-    msg?: string;
-    data?: Record<string, any>;
-  };
-  if (json.code !== 200 || !json.data) {
-    throw new Error(`Suno status failed: ${json.msg || "unknown error"}`);
-  }
-  return json.data;
+function getAudioPolicy(plan: string, mode: "bgm" | "theme_song", duration: number): AudioBillingPolicy {
+  if (plan === "pro" || plan === "enterprise") return "package";
+  if (mode === "bgm" && duration <= 120) return "free";
+  return "single_purchase";
 }
 
-async function processAudioJob(input: JobEnvelope, timeoutMs: number): Promise<{ output: unknown; provider?: string }> {
+function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" {
+  const s = status.toUpperCase();
+  if (s.includes("FAIL")) return "FAILED";
+  if (s.includes("SUCCESS") || s.includes("DONE") || s.includes("COMPLETED")) return "SUCCESS";
+  return "PENDING";
+}
+
+async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   if (input.action !== "suno_music") {
     throw new Error(`Unsupported audio action: ${input.action}`);
   }
 
   const params = input.params ?? {};
   const mode = params.mode === "bgm" ? "bgm" : "theme_song";
-  const model = params.model === "V5" ? "V5" : "V4";
+  const producerModel = mapAudioModel(params.model);
   const title = String(params.title ?? "AI Generated Song");
   const lyrics = typeof params.lyrics === "string" ? params.lyrics : undefined;
   const customStyle = typeof params.customStyle === "string" ? params.customStyle : undefined;
   const mood = typeof params.mood === "string" ? params.mood : undefined;
-  const callbackUrl = typeof params.callbackUrl === "string" ? params.callbackUrl : "";
+  const duration =
+    typeof params.duration === "number" && Number.isFinite(params.duration)
+      ? Math.max(30, Math.min(600, Math.floor(params.duration)))
+      : mode === "bgm"
+      ? 60
+      : 120;
 
-  const submitPayload: Record<string, unknown> = {
-    customMode: true,
-    model,
-    title,
-    callBackUrl: callbackUrl,
-  };
+  const numericUserId = Number(userId);
+  const plan = Number.isFinite(numericUserId) ? await getUserPlan(numericUserId) : "free";
+  const billingPolicy = getAudioPolicy(plan, mode, duration);
+  const quality: ProducerQuality = billingPolicy === "package" ? "high" : "normal";
+  const retentionDays = billingPolicy === "package" ? 30 : 3;
+  const allowDownload = billingPolicy !== "free";
 
+  const creditCost =
+    billingPolicy === "free"
+      ? 0
+      : billingPolicy === "single_purchase"
+      ? CREDIT_COSTS.audioSinglePurchase
+      : CREDIT_COSTS.audioPackageGeneration;
+
+  if (creditCost > 0 && Number.isFinite(numericUserId)) {
+    const credits = await getCredits(numericUserId);
+    if (credits.totalAvailable < creditCost) {
+      throw new Error(`Credits 不足，本次音乐生成需要 ${creditCost} Credits`);
+    }
+    await deductCredits(
+      numericUserId,
+      billingPolicy === "single_purchase" ? "audioSinglePurchase" : "audioPackageGeneration",
+      billingPolicy === "single_purchase" ? "音乐单次购买生成" : "音乐套餐生成"
+    );
+  }
+
+  let prompt = "";
   if (mode === "theme_song") {
     if (!lyrics || lyrics.length === 0) {
       throw new Error("Theme song mode requires lyrics");
     }
-    submitPayload.instrumental = false;
-    submitPayload.prompt = lyrics;
-    submitPayload.style = mood || "Pop, Emotional, Modern";
+    prompt = lyrics;
   } else {
-    submitPayload.instrumental = true;
-    submitPayload.style = customStyle || mood || "Cinematic, Emotional, Instrumental";
+    prompt = customStyle || mood || "Cinematic, Emotional, Instrumental";
   }
 
-  const created = await callSunoAPI("generate", submitPayload);
-  const taskId = String(created.taskId ?? "");
-  if (!taskId) throw new Error("Suno API did not return taskId");
+  const created = await createProducerTask({
+    model: producerModel,
+    prompt,
+    duration,
+    quality,
+  });
+
+  const taskId = created.taskId;
 
   const startedAt = Date.now();
-  let lastStatus: Record<string, any> | null = null;
+  let lastStatus: Awaited<ReturnType<typeof getProducerTaskStatus>> | null = null;
   while (Date.now() - startedAt < timeoutMs) {
-    const status = await getSunoTaskStatus(taskId);
+    const status = await getProducerTaskStatus(taskId);
     lastStatus = status;
-    const state = String(status.status ?? "");
-    if (state === "SUCCESS" || state === "FIRST_SUCCESS") {
-      const songs = Array.isArray(status.response?.data)
-        ? status.response.data.map((song: Record<string, any>) => ({
-            id: song.id,
-            audioUrl: song.audio_url || song.stream_audio_url,
-            streamUrl: song.stream_audio_url,
-            imageUrl: song.image_url,
-            title: song.title,
-            tags: song.tags,
-            duration: song.duration,
-          }))
-        : [];
+    const state = normalizeAudioStatus(status.status);
+    if (state === "SUCCESS") {
+      const songs = status.songs.map((song) => ({
+        id: song.id,
+        audioUrl: allowDownload ? song.downloadUrl ?? song.audioUrl ?? song.streamUrl : undefined,
+        streamUrl: song.streamUrl ?? song.audioUrl,
+        imageUrl: song.imageUrl,
+        title: song.title,
+        tags: song.tags,
+        duration: song.duration,
+      }));
 
       return {
-        provider: "suno",
+        provider: "aimusicapi",
         output: {
           taskId,
-          status: state,
+          status: "SUCCESS",
           songs,
-          model,
+          model: producerModel,
           mode,
-          creditCost: model === "V5" ? 22 : 12,
+          quality,
+          creditCost,
+          retentionDays,
+          allowDownload,
+          billingPolicy,
         },
       };
     }
-    if (state === "FAILED") {
-      throw new Error(String(status.errorMessage || "Suno generation failed"));
+    if (state === "FAILED" || status.errorMessage) {
+      throw new Error(String(status.errorMessage || "Music generation failed"));
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
-  if (lastStatus && String(lastStatus.status) === "SUCCESS") {
-    return { provider: "suno", output: lastStatus };
+  if (lastStatus && normalizeAudioStatus(lastStatus.status) === "SUCCESS") {
+    return { provider: "aimusicapi", output: lastStatus };
   }
-  throw new Error("Suno generation timeout");
+  throw new Error("Music generation timeout");
 }
 
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
-  return processAudioJob(input, timeoutMs);
+  return processAudioJob(input, timeoutMs, userId);
 }
 
 async function processOneJob() {

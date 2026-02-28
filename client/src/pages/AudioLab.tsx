@@ -45,8 +45,9 @@ type GenerationStatus = "idle" | "generating" | "polling" | "success" | "error";
 
 interface GeneratedSong {
   id: string;
-  audioUrl: string;
+  audioUrl?: string;
   streamUrl?: string;
+  downloadUrl?: string;
   imageUrl?: string;
   title: string;
   tags?: string;
@@ -622,9 +623,9 @@ export default function AudioLabPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                  {song.audioUrl && (
+                  {(song.streamUrl || song.audioUrl) && (
                     <button
-                      onClick={() => handlePlayWithWatermark(song.audioUrl)}
+                      onClick={() => handlePlayWithWatermark(song.streamUrl || song.audioUrl || "")}
                       className="flex items-center gap-1.5 px-3 py-2 bg-white/10 rounded-md hover:bg-white/20 transition-colors cursor-pointer"
                     >
                       <Play size={16} />

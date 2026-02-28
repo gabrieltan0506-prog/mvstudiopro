@@ -67,8 +67,9 @@ export async function recordCreation(params: {
   creditsUsed?: number;
   plan?: string;
   status?: "pending" | "completed" | "failed";
+  expiresAt?: Date;
 }): Promise<number> {
-  const expiresAt = getExpiryDate(params.plan ?? "free");
+  const expiresAt = params.expiresAt ?? getExpiryDate(params.plan ?? "free");
   const database = await db();
   const [result] = await database.insert(userCreations).values({
     userId: params.userId,
