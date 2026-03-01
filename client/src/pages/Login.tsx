@@ -6,7 +6,6 @@ const OTP_SECONDS = 60;
 
 type CaptchaResponse = {
   imageBase64: string;
-  captchaId: string;
 };
 
 type RoleTag = "normal" | "student" | "teacher" | "military_police";
@@ -21,7 +20,6 @@ type SignupResponse = {
 export default function Login() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
-  const [captchaId, setCaptchaId] = useState("");
   const [captchaImg, setCaptchaImg] = useState("");
   const [captchaText, setCaptchaText] = useState("");
   const [otp, setOtp] = useState("");
@@ -61,7 +59,7 @@ export default function Login() {
     } catch {
       data = null;
     }
-    if (!response.ok || !data?.captchaId || !data?.imageBase64) {
+    if (!response.ok || !data?.imageBase64) {
       throw new Error("获取图形验证码失败，请重试");
     }
     return data;
@@ -74,7 +72,6 @@ export default function Login() {
     setCaptchaText("");
     try {
       const nextCaptcha = await fetchCaptcha();
-      setCaptchaId(nextCaptcha.captchaId);
       setCaptchaImg(nextCaptcha.imageBase64);
     } catch (err) {
       setError(err instanceof Error ? err.message : "获取图形验证码失败，请重试");
