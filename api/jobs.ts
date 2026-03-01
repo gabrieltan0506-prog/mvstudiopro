@@ -10,6 +10,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (type === "image") {
       
     const prompt = (body?.input?.prompt ?? body?.prompt ?? "").toString();
+    // IMAGE_GEN_TRY_CATCH
+    try {
     const out = await generateGeminiImage({
       prompt,
       quality: "1k",
@@ -31,6 +33,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       raw: out,
       debug: { receivedProvider: body?.provider ?? req.query?.provider ?? null }
     });
+
+    } catch (e: any) {
+      return res.status(200).json({
+        ok: false,
+        provider,
+        error: "image_generation_failed",
+        detail: String(e?.message || e),
+        stack: (e?.stack ? String(e.stack).slice(0, 2000) : undefined),
+        hint: "Check Vercel Function Logs and required Google/Gemini env vars"
+      });
+    }
 }
 
     // 视频保持原逻辑（kling_beijing）
