@@ -130,6 +130,34 @@ async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec
   return { ok: true, raw: j || text };
 }
 
+async function aimusicStatus(taskId: string) {
+  const base = mustEnv("AIMUSIC_BASE_URL");
+  const key = mustEnv("AIMUSIC_API_KEY");
+  const statusPath = process.env.AIMUSIC_STATUS_PATH || "/producer/status";
+  const b = base.endsWith("/") ? base.slice(0, -1) : base;
+  const path = statusPath.startsWith("/") ? statusPath : `/${statusPath}`;
+
+  let r = await fetch(`${b}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ taskId }),
+  });
+
+  if (!r.ok) {
+    r = await fetch(`${b}${path}?taskId=${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${key}` },
+    });
+  }
+
+  const ct = r.headers.get("content-type") || "";
+  const text = await r.text();
+  let j: any = null;
+  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
+  return { ok: true, raw: j || text };
+}
+
 
 async function handleKlingImage(req, res) {
   const prompt = req.query.prompt || req.body?.prompt
@@ -191,6 +219,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const prompt = (body.prompt || req.query?.prompt || "").toString().trim();
       const provider = (body.provider || req.query?.provider || "suno").toString();
       const duration = Number(body.duration || req.query?.duration || 60);
+      const taskId = (body.taskId || req.query?.taskId || "").toString().trim();
+      if (taskId) {
+        const out = await aimusicStatus(taskId);
+        return json(res, { ok: true, type: "audio", provider, taskId, ...out });
+      }
       if (!prompt) return json(res, { ok: false, type: "audio", error: "missing_prompt" }, 400);
       const out = await aimusicCreate(provider === "udio" ? "udio" : "suno", prompt, duration);
       return json(res, { ok: true, type: "audio", provider, ...out });

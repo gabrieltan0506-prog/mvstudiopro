@@ -1,7 +1,3 @@
-const PRODUCER_API_BASE =
-  process.env.AIMUSIC_API_BASE || "https://api.aimusicapi.ai/api/v1/producer";
-const PRODUCER_API_KEY = process.env.AIMUSIC_API_KEY || "";
-
 export type ProducerModel = "suno" | "udio";
 export type ProducerQuality = "normal" | "high";
 
@@ -16,14 +12,9 @@ type ProducerSong = {
   duration?: number;
 };
 
-function getHeaders() {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (PRODUCER_API_KEY) {
-    headers.Authorization = `Bearer ${PRODUCER_API_KEY}`;
-  }
-  return headers;
+function getJobsApiBase(): string {
+  const base = process.env.JOBS_API_BASE_URL || process.env.FRONTEND_URL || "http://127.0.0.1:3000";
+  return base.endsWith("/") ? base.slice(0, -1) : base;
 }
 
 function asObject(value: unknown): Record<string, any> {
@@ -41,6 +32,10 @@ function parseTaskId(payload: Record<string, any>): string {
     payload?.data?.task_id,
     payload?.result?.taskId,
     payload?.result?.task_id,
+    payload?.raw?.taskId,
+    payload?.raw?.task_id,
+    payload?.raw?.data?.taskId,
+    payload?.raw?.data?.task_id,
   ];
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
@@ -49,14 +44,15 @@ function parseTaskId(payload: Record<string, any>): string {
 }
 
 function normalizeSongs(statusPayload: Record<string, any>): ProducerSong[] {
+  const root = asObject(statusPayload.raw ?? statusPayload);
   const list =
-    statusPayload.songs ||
-    statusPayload.tracks ||
-    statusPayload.items ||
-    statusPayload?.data?.songs ||
-    statusPayload?.data?.tracks ||
-    statusPayload?.result?.songs ||
-    statusPayload?.result?.tracks ||
+    root.songs ||
+    root.tracks ||
+    root.items ||
+    root?.data?.songs ||
+    root?.data?.tracks ||
+    root?.result?.songs ||
+    root?.result?.tracks ||
     [];
 
   if (!Array.isArray(list)) return [];
@@ -102,23 +98,32 @@ export async function createProducerTask(input: {
   duration: number;
   quality: ProducerQuality;
 }): Promise<{ taskId: string; raw: Record<string, any> }> {
-  const response = await fetch(`${PRODUCER_API_BASE}/create`, {
+  const response = await fetch(`${getJobsApiBase()}/api/jobs`, {
     method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify(input),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "audio",
+      provider: input.model,
+      prompt: input.prompt,
+      duration: input.duration,
+      quality: input.quality,
+    }),
   });
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`Producer create failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw new Error(`Audio proxy create failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const payload = asObject(await response.json());
-  const taskId = parseTaskId(payload);
-  if (!taskId) {
-    throw new Error("Producer create did not return taskId");
+  if (payload.ok === false) {
+    throw new Error(String(payload.error || "Audio create failed"));
   }
 
+  const taskId = parseTaskId(payload);
+  if (!taskId) {
+    throw new Error("Audio create did not return taskId");
+  }
   return { taskId, raw: payload };
 }
 
@@ -128,41 +133,35 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
   errorMessage?: string;
   raw: Record<string, any>;
 }> {
-  let response = await fetch(`${PRODUCER_API_BASE}/status`, {
-    method: "POST",
-    headers: getHeaders(),
-    body: JSON.stringify({ taskId }),
-  });
-
-  if (!response.ok) {
-    response = await fetch(`${PRODUCER_API_BASE}/status?taskId=${encodeURIComponent(taskId)}`, {
-      headers: getHeaders(),
-    });
-  }
+  const response = await fetch(
+    `${getJobsApiBase()}/api/jobs?type=audio&taskId=${encodeURIComponent(taskId)}`,
+    { method: "GET" }
+  );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`Producer status failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw new Error(`Audio proxy status failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
   const payload = asObject(await response.json());
+  const root = asObject(payload.raw ?? payload);
   const statusRaw =
-    payload.status ??
-    payload.state ??
-    payload.taskStatus ??
-    payload.task_status ??
-    payload?.data?.status ??
-    payload?.data?.state ??
-    payload?.result?.status ??
+    root.status ??
+    root.state ??
+    root.taskStatus ??
+    root.task_status ??
+    root?.data?.status ??
+    root?.data?.state ??
+    root?.result?.status ??
     "PENDING";
 
   const errorMessage =
-    typeof payload.errorMessage === "string"
-      ? payload.errorMessage
-      : typeof payload.error === "string"
-      ? payload.error
-      : typeof payload?.data?.errorMessage === "string"
-      ? payload.data.errorMessage
+    typeof root.errorMessage === "string"
+      ? root.errorMessage
+      : typeof root.error === "string"
+      ? root.error
+      : typeof root?.data?.errorMessage === "string"
+      ? root.data.errorMessage
       : undefined;
 
   return {
