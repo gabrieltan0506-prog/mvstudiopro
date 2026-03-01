@@ -17,23 +17,15 @@ function statusClass(status: VideoTaskState) {
   return "text-gray-400";
 }
 
-export default function TestLab()
-{
-
-  if (authOk === null) {
-    return <div className="p-6">加载中…</div>;
-  }
-  if (!authOk) {
-    return <div className="p-6 text-red-600">请先登录</div>;
-  }
+export default function TestLab() {
   const [authOk, setAuthOk] = useState<boolean | null>(null);
   useEffect(() => {
-    fetch('/api/me', { credentials: 'include' })
-      .then(r => r.json())
-      .then(d => setAuthOk(!!d?.ok))
+    fetch("/api/me", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => setAuthOk(!!d?.ok))
       .catch(() => setAuthOk(false));
   }, []);
- {
+
   const { user, isAuthenticated, loading } = useAuth();
   const [imagePrompt, setImagePrompt] = useState("一位未来感女性角色，电影级布光，细节清晰");
   const [imageEngine, setImageEngine] = useState<ImageEngine>("free");
@@ -46,6 +38,13 @@ export default function TestLab()
   const [videoStatus, setVideoStatus] = useState<VideoTaskState>("idle");
   const [videoError, setVideoError] = useState<string>("");
   const videoPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  if (authOk === null) {
+    return <div className="p-6">加载中…</div>;
+  }
+  if (!authOk) {
+    return <div className="p-6 text-red-600">请先登录</div>;
+  }
 
   const videoShortUrl = useMemo(() => {
     if (!videoTaskId) return "";
@@ -338,4 +337,3 @@ export default function TestLab()
     </div>
   );
 }
-
