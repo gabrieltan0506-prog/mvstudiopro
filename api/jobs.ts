@@ -52,12 +52,14 @@ async function getAccessTokenFromServiceAccount(scope: string) {
   return { ok: true, accessToken: j.access_token as string };
 }
 
-async function vertexGenerateImage(prompt: string) {
+async function vertexGenerateImage(prompt: string, tier: "flash" | "pro") {
   const projectId = mustEnv("VERTEX_PROJECT_ID");
   const baseLocations = (process.env.VERTEX_LOCATIONS || process.env.VERTEX_LOCATION || "").toString().trim();
   if (!baseLocations) throw new Error("Missing env: VERTEX_LOCATION (or VERTEX_LOCATIONS)");
   const locations = baseLocations.split(",").map(s => s.trim()).filter(Boolean);
-  const model = (process.env.VERTEX_IMAGE_MODEL || "gemini-2.5-flash-image").toString().trim();
+  const flashModel = (process.env.VERTEX_IMAGEN_FLASH_MODEL || "imagen-3.0-fast-generate-001").toString().trim();
+  const proModel = (process.env.VERTEX_IMAGEN_PRO_MODEL || "imagen-4.0-generate-001").toString().trim();
+  const model = tier === "pro" ? proModel : flashModel;
 
   const tok = await getAccessTokenFromServiceAccount("https://www.googleapis.com/auth/cloud-platform");
   if (!tok.ok) return { ok: false, stage: "oauth", detail: tok };
@@ -65,9 +67,17 @@ async function vertexGenerateImage(prompt: string) {
   for (const location of locations) {
     const url =
       `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
-      `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+      `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:predict`;
 
-    const body = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+    const body = {
+      instances: [{ prompt }],
+      parameters: {
+        sampleCount: 1,
+        aspectRatio: "1:1",
+        addWatermark: true,
+        enhancePrompt: false,
+      },
+    };
 
     const r = await fetch(url, {
       method: "POST",
@@ -83,20 +93,20 @@ async function vertexGenerateImage(prompt: string) {
     if (!r.ok) {
       // 404 继续尝试下一个 region；其它错误直接返回
       if (r.status === 404) continue;
-      return { ok: false, stage: "vertex", status: r.status, raw: j || text, location, model };
+      return { ok: false, stage: "imagen", status: r.status, raw: j || text, location, model };
     }
 
-    const parts = j?.candidates?.[0]?.content?.parts || [];
-    const inline = parts.find((p: any) => p?.inlineData?.data);
-    if (inline?.inlineData?.data) {
-      const mime = inline.inlineData.mimeType || "image/png";
-      return { ok: true, imageUrl: `data:${mime};base64,${inline.inlineData.data}`, location, model };
+    const pred = j?.predictions?.[0];
+    const b64 = pred?.bytesBase64Encoded;
+    const mime = pred?.mimeType || "image/png";
+    if (b64) {
+      return { ok: true, imageUrl: `data:${mime};base64,${b64}`, location, model };
     }
 
-    return { ok: false, stage: "vertex", error: "no_image_in_response", raw: j, location, model };
+    return { ok: false, stage: "imagen", error: "no_image_in_response", raw: j, location, model };
   }
 
-  return { ok: false, stage: "vertex", error: "model_not_found_in_all_regions", locations, model };
+  return { ok: false, stage: "imagen", error: "model_not_found_in_all_regions", locations, model };
 }
 
 async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec: number) {
@@ -130,7 +140,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const resolvedProvider = provider || "nano-banana-flash";
       const prompt = (body.prompt || req.query?.prompt || "").toString().trim();
       if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" }, 400);
-      const out = await vertexGenerateImage(prompt);
+      const tier: "flash" | "pro" = resolvedProvider === "nano-banana-pro" ? "pro" : "flash";
+      const out = await vertexGenerateImage(prompt, tier);
       if (out.ok) return json(res, { ok: true, type: "image", provider: resolvedProvider, imageUrl: out.imageUrl, debug: { location: out.location, model: out.model } });
       return json(res, { ok: false, type: "image", provider: resolvedProvider, error: "image_generation_failed", detail: out }, 500);
     }
