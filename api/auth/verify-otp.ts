@@ -19,6 +19,10 @@ import {
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
+export const config = {
+  runtime: "nodejs",
+};
+
 function createEmailOpenId(email: string): string {
   const digest = createHash("sha256").update(email).digest("hex").slice(0, 24);
   return `emailotp_${digest}`;

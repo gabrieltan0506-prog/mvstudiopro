@@ -1,4 +1,3 @@
-import { randomInt } from "crypto";
 import type { VercelRequest } from "@vercel/node";
 
 type CaptchaRecord = {
@@ -89,13 +88,9 @@ export function generateCaptchaText(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let value = "";
   for (let i = 0; i < 5; i++) {
-    value += chars[randomInt(0, chars.length)];
+    value += chars[Math.floor(Math.random() * chars.length)];
   }
   return value;
-}
-
-function svgToBase64(svg: string): string {
-  return Buffer.from(svg, "utf8").toString("base64");
 }
 
 export function generateCaptchaImage(text: string): string {
@@ -103,18 +98,18 @@ export function generateCaptchaImage(text: string): string {
     .split("")
     .map((char, i) => {
       const x = 20 + i * 24;
-      const y = 34 + randomInt(-4, 5);
-      const rotate = randomInt(-25, 26);
+      const y = 34 + Math.floor(Math.random() * 9) - 4;
+      const rotate = Math.floor(Math.random() * 51) - 25;
       return `<text x=\"${x}\" y=\"${y}\" transform=\"rotate(${rotate} ${x} ${y})\" font-size=\"24\" fill=\"#1f2937\" font-family=\"Verdana\" font-weight=\"700\">${char}</text>`;
     })
     .join("");
 
   const lines = Array.from({ length: 6 })
     .map(() => {
-      const x1 = randomInt(0, 160);
-      const y1 = randomInt(0, 50);
-      const x2 = randomInt(0, 160);
-      const y2 = randomInt(0, 50);
+      const x1 = Math.floor(Math.random() * 160);
+      const y1 = Math.floor(Math.random() * 50);
+      const x2 = Math.floor(Math.random() * 160);
+      const y2 = Math.floor(Math.random() * 50);
       const opacity = (Math.random() * 0.4 + 0.2).toFixed(2);
       return `<line x1=\"${x1}\" y1=\"${y1}\" x2=\"${x2}\" y2=\"${y2}\" stroke=\"#6b7280\" stroke-width=\"1\" opacity=\"${opacity}\" />`;
     })
@@ -122,20 +117,20 @@ export function generateCaptchaImage(text: string): string {
 
   const dots = Array.from({ length: 20 })
     .map(() => {
-      const x = randomInt(0, 160);
-      const y = randomInt(0, 50);
-      const r = randomInt(1, 3);
+      const x = Math.floor(Math.random() * 160);
+      const y = Math.floor(Math.random() * 50);
+      const r = 1 + Math.floor(Math.random() * 2);
       const opacity = (Math.random() * 0.35 + 0.15).toFixed(2);
       return `<circle cx=\"${x}\" cy=\"${y}\" r=\"${r}\" fill=\"#9ca3af\" opacity=\"${opacity}\" />`;
     })
     .join("");
 
   const svg = `<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"50\" viewBox=\"0 0 160 50\"><rect width=\"160\" height=\"50\" fill=\"#f9fafb\"/>${lines}${dots}${chars}</svg>`;
-  return `data:image/svg+xml;base64,${svgToBase64(svg)}`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
 export function generateOtp(): string {
-  return String(randomInt(100000, 1000000));
+  return String(Math.floor(100000 + Math.random() * 900000));
 }
 
 export function readBody(req: VercelRequest): Record<string, unknown> {

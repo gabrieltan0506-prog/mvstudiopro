@@ -1,5 +1,4 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { randomUUID } from "crypto";
 import {
   CAPTCHA_TTL_MS,
   captchaStore,
@@ -8,13 +7,17 @@ import {
   pruneExpired,
 } from "./_state";
 
+export const config = {
+  runtime: "nodejs",
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   pruneExpired();
-  const captchaId = randomUUID();
+  const captchaId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const text = generateCaptchaText();
 
   captchaStore.set(captchaId, {
