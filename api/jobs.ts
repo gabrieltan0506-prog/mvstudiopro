@@ -1,6 +1,52 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
 
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+function joinUrl(base: string, path: string) {
+  const b = base.replace(/\/+$, "");
+  const p = (path || "").startsWith("/") ? path : `/${path}`;
+  return `${b}${p}`;
+}
+
+async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec: number) {
+  const base = mustEnv("AIMUSIC_BASE_URL");
+  const key = mustEnv("AIMUSIC_API_KEY");
+  const createPath = process.env.AIMUSIC_CREATE_PATH || "/producer/create";
+  const url = joinUrl(base, createPath);
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, prompt, duration: durationSec }),
+  });
+  const ct = r.headers.get("content-type") || "";
+  const text = await r.text();
+  let j: any = null;
+  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
+  return { ok: true, raw: j || text };
+}
+
+async function aimusicStatus(taskId: string) {
+  const base = mustEnv("AIMUSIC_BASE_URL");
+  const key = mustEnv("AIMUSIC_API_KEY");
+  const statusPath = process.env.AIMUSIC_STATUS_PATH || "/producer/status";
+  const url = statusPath.includes("{taskId}")
+    ? joinUrl(base, statusPath.replace("{taskId}", encodeURIComponent(taskId)))
+    : joinUrl(base, `${statusPath}?taskId=${encodeURIComponent(taskId)}`);
+  const r = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${key}` } });
+  const ct = r.headers.get("content-type") || "";
+  const text = await r.text();
+  let j: any = null;
+  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
+  return { ok: true, raw: j || text };
+}
+
 function json(res: VercelResponse, body: any) {
   res.status(200);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -135,11 +181,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     
   if (type === "audio") {
-    const { aimusicCreate } = await import("../server/services/aimusic-unified.js");
+    
     const prompt = body.prompt || req.query?.prompt;
     const provider = body.provider || req.query?.provider || "suno";
     const duration = Number(body.duration || req.query?.duration || 60);
-    const r = await aimusicCreate({ model: provider, prompt, durationSec: duration });
+    const r = await aimusicCreate((provider === "udio" ? "udio" : "suno"), String(prompt||""), duration);
     return res.json(r);
   }
 
