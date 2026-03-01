@@ -142,8 +142,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" }, 400);
       const tier: "flash" | "pro" = resolvedProvider === "nano-banana-pro" ? "pro" : "flash";
       const out = await vertexGenerateImage(prompt, tier);
-      if (out.ok) return json(res, { ok: true, type: "image", provider: resolvedProvider, imageUrl: out.imageUrl, debug: { location: out.location, model: out.model } });
-      return json(res, { ok: false, type: "image", provider: resolvedProvider, error: "image_generation_failed", detail: out }, 500);
+      if (out.ok) return json(res, { ok: true, type: "image", provider: resolvedProvider, imageUrl: out.imageUrl, debugPromptEcho: prompt, debug: { location: out.location, model: out.model } });
+      return json(res, { ok: false, type: "image", provider: resolvedProvider, error: "image_generation_failed", detail: out, debugPromptEcho: prompt }, 500);
     }
 
     if (type === "audio") {
