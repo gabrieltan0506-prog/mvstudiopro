@@ -1,70 +1,77 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateGeminiImage } from "../server/gemini-image.js";
+
+function json(res: VercelResponse, body: any) {
+  res.status(200);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.end(JSON.stringify(body));
+}
+
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+async function genImageWithApiKey(prompt: string) {
+  const apiKey = mustEnv("GOOGLE_API_KEY");
+  const model = process.env.GEMINI_IMAGE_MODEL || "gemini-2.0-flash-image-generation";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const body = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.8 }
+  };
+
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const ct = r.headers.get("content-type") || "";
+  const text = await r.text();
+  let j: any = null;
+  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
+
+  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
+
+  const parts = j?.candidates?.[0]?.content?.parts || [];
+  const inline = parts.find((p: any) => p?.inlineData?.data);
+  if (inline?.inlineData?.data) {
+    const mime = inline.inlineData.mimeType || "image/png";
+    return { ok: true, imageUrl: `data:${mime};base64,${inline.inlineData.data}`, raw: j };
+  }
+  return { ok: false, status: 200, raw: j, error: "no_image_data_in_response" };
+}
+
+function normalizeProvider(x: any): string {
+  const raw = (x ?? "").toString().trim();
+  const map: Record<string, string> = {
+    "nano_flash": "nano-banana-flash",
+    "nano-banana-flash": "nano-banana-flash",
+    "nano-banana-pro": "nano-banana-pro",
+    "kling_image": "kling_image",
+    "kling_beijing": "kling_beijing",
+    "kling": "kling_beijing",
+  };
+  return map[raw] || raw;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const body = req.body || {};
-    const type = body.type || req.query?.type;
+    const body: any = req.body || {};
+    const type = (body.type || req.query?.type || body.input?.type || "").toString();
+    const provider = normalizeProvider(req.query?.provider ?? body.provider ?? body.input?.provider ?? body.job?.provider ?? body.payload?.provider);
 
-    // 强制 image 默认走 nano-banana-flash
     if (type === "image") {
-      
-    const prompt = (body?.input?.prompt ?? body?.prompt ?? "").toString();
-    // IMAGE_GEN_TRY_CATCH
-    try {
-    const out = await generateGeminiImage({
-      prompt,
-      quality: "1k",
-      // 兼容：后端内部会用你配置的 Vertex/Gemini key
-    } as any);
+      const resolvedProvider = provider || "nano-banana-flash";
+      const prompt = (body.input?.prompt ?? body.prompt ?? req.query?.prompt ?? "").toString().trim();
+      if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" });
 
-    // 兼容多种返回结构
-    const imageUrl =
-      (out as any)?.imageUrl ||
-      (out as any)?.url ||
-      (out as any)?.images?.[0]?.url ||
-      (out as any)?.data?.[0]?.url ||
-      null;
+      const out = await genImageWithApiKey(prompt);
+      if (out.ok) return json(res, { ok: true, type: "image", provider: resolvedProvider, imageUrl: out.imageUrl });
 
-    return res.status(200).json({
-      ok: true,
-      provider,
-      imageUrl,
-      raw: out,
-      debug: { receivedProvider: body?.provider ?? req.query?.provider ?? null }
-    });
-
-    } catch (e: any) {
-      return res.status(200).json({
-        ok: false,
-        provider,
-        error: "image_generation_failed",
-        detail: String(e?.message || e),
-        stack: (e?.stack ? String(e.stack).slice(0, 2000) : undefined),
-        hint: "Check Vercel Function Logs and required Google/Gemini env vars"
-      });
-    }
-}
-
-    // 视频保持原逻辑（kling_beijing）
-    if (type === "video") {
-      return res.status(200).json({
-        ok: true,
-        provider: "kling_beijing",
-        message: "video provider ok"
-      });
+      return json(res, { ok: false, type: "image", provider: resolvedProvider, error: "image_generation_failed", detail: out });
     }
 
-    return res.status(400).json({
-      ok: false,
-      error: "Invalid type"
-    });
-
+    // 其他类型保持原系统，不在此 hotfix 里改
+    return json(res, { ok: false, error: "unsupported_type_in_hotfix", type, provider });
   } catch (e: any) {
-    return res.status(500).json({
-      ok: false,
-      error: "Server error",
-      detail: e?.message || "unknown"
-    });
+    return json(res, { ok: false, error: "server_error", detail: String(e?.message || e) });
   }
 }
