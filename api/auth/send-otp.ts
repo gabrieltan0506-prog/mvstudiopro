@@ -15,7 +15,7 @@ import {
   pruneExpired,
   readBody,
   validateEmail,
-} from "./_state";
+} from "./state.js";
 
 export const config = {
   runtime: "nodejs",

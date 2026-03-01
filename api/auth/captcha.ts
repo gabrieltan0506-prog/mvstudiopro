@@ -5,7 +5,7 @@ import {
   generateCaptchaImage,
   generateCaptchaText,
   pruneExpired,
-} from "./_state";
+} from "./state.js";
 
 export const config = {
   runtime: "nodejs",
