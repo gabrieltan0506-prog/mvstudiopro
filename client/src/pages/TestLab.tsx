@@ -90,7 +90,7 @@ export default function TestLab() {
       return;
     }
     if (!isAuthenticated || !user?.id) {
-      toast.error("请先登录后再测试");
+      toast.error("请先通过右上角登录（Dev Admin）后再测试");
       return;
     }
 
