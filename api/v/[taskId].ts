@@ -9,7 +9,7 @@ type LinkMap = Map<string, { videoUrl: string; expiresAt: number }>;
 function getMemoryStore(): LinkMap {
   const bag = globalThis as typeof globalThis & { [memoryKey]?: LinkMap };
   if (!bag[memoryKey]) {
-    bag[memoryKey] = new Map<string, { videoUrl: string; expiresAt: number }>();
+    bag[memoryKey] = new Map();
   }
   return bag[memoryKey] as LinkMap;
 }
@@ -51,7 +51,7 @@ async function getShortLink(taskId: string): Promise<string | null> {
   const kv = await getKv();
   if (kv) {
     try {
-      const value = await kv.get<string>(`shortlink:${cleanTaskId}`);
+      const value = await kv.get(`shortlink:${cleanTaskId}`);
       if (typeof value === "string" && value.trim()) {
         const store = getMemoryStore();
         const safeTtl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS;
