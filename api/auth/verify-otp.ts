@@ -9,6 +9,17 @@ import { getDb } from "../../server/db.js";
 import * as sessionDb from "../../server/sessionDb.js";
 import { COOKIE_NAME } from "../../shared/const.js";
 import {
+
+const __AUTH_STATE__ = (globalThis as any).__AUTH_STATE__ || ((globalThis as any).__AUTH_STATE__ = {
+  captchas: new Map<string, { text: string; exp: number }>(),
+  otps: new Map<string, { code: string; exp: number }>(),
+});
+
+function nowMs() { return Date.now(); }
+function sweep(map: Map<string, { exp: number }>) {
+  const n = nowMs();
+  for (const [k, v] of map.entries()) if (v.exp <= n) map.delete(k);
+}
   OTP_MAX_ATTEMPTS,
   normalizeEmail,
   otpStore,

@@ -51,8 +51,7 @@ async function getShortLink(taskId: string): Promise<string | null> {
   const kv = await getKv();
   if (kv) {
     try {
-      const value = await kv.get(`shortlink:${cleanTaskId}`);
-      if (typeof value === "string" && value.trim()) {
+      const value = await if (typeof value === "string" && value.trim()) {
         const store = getMemoryStore();
         const safeTtl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS;
         store.set(cleanTaskId, { videoUrl: value, expiresAt: Date.now() + safeTtl });

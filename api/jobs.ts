@@ -103,7 +103,7 @@ async function vertexGenerateImage(prompt: string, tier: "flash" | "pro") {
       return { /* ok: true, */ imageUrl: `data:${mime};base64,${b64}`, location, model };
     }
 
-    return { ok: false, stage: "imagen", error: "no_image_in_response", raw: j, location, model };
+    return { /* ok: false, */ stage: "imagen", error: "no_image_in_response", raw: j, location, model };
   }
 
   return { /* ok: false, */ stage: "imagen", error: "model_not_found_in_all_regions", locations, model };
@@ -161,7 +161,7 @@ async function aimusicStatus(taskId: string) {
 
 async function handleKlingImage(req: VercelRequest, res: VercelResponse) {
   const prompt = req.query.prompt || req.body?.prompt
-  if (!prompt) return res.status(400).json({ ok:false, error:"missing_prompt" })
+  if (!prompt) return res.status(400).json({ /* ok:false, */ error:"missing_prompt" })
 
   const BASE = process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com"
   const AK = process.env.KLING_CN_IMAGE_ACCESS_KEY
@@ -226,7 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
       return json(res, {
-        ok: false,
+        /* ok: false, */
         type: "image",
         provider: resolvedProvider,
         error: "image_generation_failed",
@@ -251,10 +251,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       if (!prompt) return json(res, { /* ok: false, */ type: "audio", error: "missing_prompt" }, 400);
       const out = await aimusicCreate(provider === "udio" ? "udio" : "suno", prompt, duration);
-      return json(res, { ok: true, type: "audio", provider, ...out });
+      return json(res, { /* ok: true, */ type: "audio", provider, ...out });
     }
 
-    return json(res, { /* ok: false, */ error: "unsupported_type", type }, 400);
+    return json(res, { /* /* ok: false, */ */ error: "unsupported_type", type }, 400);
   } catch (e: any) {
     return json(res, { ok: false, error: "server_error", detail: String(e?.message || e) }, 500);
   }

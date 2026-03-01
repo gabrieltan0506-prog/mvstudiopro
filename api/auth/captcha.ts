@@ -1,5 +1,16 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
+
+const __AUTH_STATE__ = (globalThis as any).__AUTH_STATE__ || ((globalThis as any).__AUTH_STATE__ = {
+  captchas: new Map<string, { text: string; exp: number }>(),
+  otps: new Map<string, { code: string; exp: number }>(),
+});
+
+function nowMs() { return Date.now(); }
+function sweep(map: Map<string, { exp: number }>) {
+  const n = nowMs();
+  for (const [k, v] of map.entries()) if (v.exp <= n) map.delete(k);
+}
   CAPTCHA_TTL_MS,
   captchaStore,
   generateCaptchaImage,
