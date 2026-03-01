@@ -1,6 +1,4 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { sendOtpMail } from "../../server/services/smtp-mailer";
-import { hasTencentSesConfig, sendTencentSesOtpEmail } from "../tencentSes";
 import {
   EMAIL_RATE_LIMIT_MAX,
   IP_RATE_LIMIT_MAX,
@@ -30,10 +28,77 @@ function hasSmtpConfig(): boolean {
   });
 }
 
+function hasTencentSesConfig(): boolean {
+  return Boolean(
+    process.env.TENCENT_SECRET_ID &&
+      process.env.TENCENT_SECRET_KEY &&
+      process.env.TENCENT_SES_REGION &&
+      process.env.TENCENT_SES_FROM_EMAIL
+  );
+}
+
 function truncateErrorMessage(error: unknown, maxLen: number = 180): string {
   const message = error instanceof Error ? error.message : String(error ?? "unknown error");
   const compact = message.replace(/\s+/g, " ").trim();
   return compact.length > maxLen ? `${compact.slice(0, maxLen)}...` : compact;
+}
+
+async function sendBySmtp(email: string, otp: string): Promise<void> {
+  const host = process.env.SMTP_HOST?.trim();
+  const port = Number(process.env.SMTP_PORT);
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const from = process.env.SMTP_FROM?.trim();
+  if (!host || !Number.isFinite(port) || !user || !pass || !from) {
+    throw new Error("SMTP 配置缺失");
+  }
+
+  const nodemailer = await import("nodemailer");
+  const transporter = nodemailer.default.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  await transporter.sendMail({
+    from,
+    to: email,
+    subject: "MVStudioPro 登录验证码",
+    text: `您的登录验证码是：${otp}。验证码 10 分钟内有效。`,
+    html: `<p>您的登录验证码是：<b style=\"font-size:20px\">${otp}</b></p><p>验证码 10 分钟内有效，请勿泄露给他人。</p>`,
+  });
+}
+
+async function sendByTencentSes(email: string, otp: string): Promise<void> {
+  const secretId = process.env.TENCENT_SECRET_ID?.trim();
+  const secretKey = process.env.TENCENT_SECRET_KEY?.trim();
+  const region = process.env.TENCENT_SES_REGION?.trim();
+  const fromEmail = process.env.TENCENT_SES_FROM_EMAIL?.trim();
+  if (!secretId || !secretKey || !region || !fromEmail) {
+    throw new Error("Tencent SES 配置缺失");
+  }
+
+  const tencentcloud = await import("tencentcloud-sdk-nodejs");
+  const SesClient = tencentcloud.default.ses.v20201002.Client;
+  const client = new SesClient({
+    credential: { secretId, secretKey },
+    region,
+    profile: { httpProfile: { endpoint: "ses.tencentcloudapi.com" } },
+  });
+
+  const text = `您的登录验证码是：${otp}。验证码 10 分钟内有效。`;
+  const html = `<p>您的登录验证码是：<b style=\"font-size:20px\">${otp}</b></p><p>验证码 10 分钟内有效，请勿泄露给他人。</p>`;
+  const params = {
+    FromEmailAddress: fromEmail,
+    Destination: [email],
+    Subject: "MVStudioPro 登录验证码",
+    Simple: {
+      Html: Buffer.from(html, "utf8").toString("base64"),
+      Text: Buffer.from(text, "utf8").toString("base64"),
+    },
+  };
+  await client.SendEmail(params);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -98,11 +163,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!tencentReady) {
           return res.status(500).json({ ok: false, error: "邮件服务未配置" });
         }
-        await sendTencentSesOtpEmail(email, otp);
+        await sendByTencentSes(email, otp);
       } else if (smtpReady) {
-        await sendOtpMail(email, otp);
+        await sendBySmtp(email, otp);
       } else if (tencentReady) {
-        await sendTencentSesOtpEmail(email, otp);
+        await sendByTencentSes(email, otp);
       } else {
         return res.status(500).json({ ok: false, error: "邮件服务未配置" });
       }
