@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { generateGeminiImage } from "../server/gemini-image.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -7,15 +8,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 强制 image 默认走 nano-banana-flash
     if (type === "image") {
-      return res.status(200).json({
-        ok: true,
-        provider: "nano-banana-flash",
-        message: "image provider resolved",
-        debug: {
-          receivedProvider: body.provider || req.query?.provider || null
-        }
-      });
-    }
+      
+    const prompt = (body?.input?.prompt ?? body?.prompt ?? "").toString();
+    const out = await generateGeminiImage({
+      prompt,
+      quality: "1k",
+      // 兼容：后端内部会用你配置的 Vertex/Gemini key
+    } as any);
+
+    // 兼容多种返回结构
+    const imageUrl =
+      (out as any)?.imageUrl ||
+      (out as any)?.url ||
+      (out as any)?.images?.[0]?.url ||
+      (out as any)?.data?.[0]?.url ||
+      null;
+
+    return res.status(200).json({
+      ok: true,
+      provider,
+      imageUrl,
+      raw: out,
+      debug: { receivedProvider: body?.provider ?? req.query?.provider ?? null }
+    });
+}
 
     // 视频保持原逻辑（kling_beijing）
     if (type === "video") {

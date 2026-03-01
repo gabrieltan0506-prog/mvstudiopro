@@ -108,7 +108,9 @@ export default function TestLab() {
         </button>
       </div>
 
-      <pre style={{ marginTop: 20, whiteSpace: "pre-wrap" }}>
+      {result?.imageUrl ? (<div style={{marginTop:16}}><img src={result.imageUrl} style={{maxWidth:'100%',borderRadius:12}} /></div>) : null}
+
+<pre style={{ marginTop: 20, whiteSpace: "pre-wrap" }}>
         {JSON.stringify(result, null, 2)}
       </pre>
     </div>
