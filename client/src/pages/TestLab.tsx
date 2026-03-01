@@ -1,339 +1,317 @@
-import Navbar from "@/components/Navbar";
-import { createJob, getJob, type JobStatus } from "@/lib/jobs";
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Loader2, Download, Image as ImageIcon, Video, PlayCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import React, { useEffect, useMemo, useState } from "react";
+import { Link } from "wouter";
 
-type ImageEngine = "free" | "pro" | "kling_image";
-type VideoProvider = "kling_beijing" | "veo_3_1" | "seedance";
-type VideoTaskState = "idle" | "queued" | "submitted" | "processing" | "succeed" | "failed";
+type MeResp =
+  | { ok: true; user?: { id: string; email?: string; role?: string }; credits?: number; verifyStatus?: string }
+  | { ok: false; error?: string };
 
-function statusClass(status: VideoTaskState) {
-  if (status === "succeed") return "text-green-400";
-  if (status === "failed") return "text-red-400";
-  if (status === "processing" || status === "submitted") return "text-blue-400";
-  if (status === "queued") return "text-yellow-400";
-  return "text-gray-400";
+async function fetchMe(): Promise<MeResp> {
+  const r = await fetch("/api/me", {
+    method: "GET",
+    credentials: "include",
+    headers: { "Accept": "application/json" },
+  });
+  // 有些错配会返回 HTML，这里兜底
+  const ct = r.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    return { ok: false, error: "non-json response" };
+  }
+  return (await r.json()) as MeResp;
 }
 
 export default function TestLab() {
-  const [authOk, setAuthOk] = useState<boolean | null>(null);
+  const [me, setMe] = useState<MeResp | null>(null);
+  const [meLoading, setMeLoading] = useState(true);
+
+  // Image test
+  const [imgPrompt, setImgPrompt] = useState("生成一张 1K 的未来感女偶像电影人像，细节丰富，灯光高级，背景简洁。");
+  const [imgProvider, setImgProvider] = useState<"nano-banana-flash" | "nano-banana-pro" | "kling_image">("nano-banana-flash");
+  const [imgStatus, setImgStatus] = useState<string>("");
+  const [imgUrls, setImgUrls] = useState<string[]>([]);
+
+  // Video test (Kling)
+  const [vidPrompt, setVidPrompt] = useState("未来感女偶像在霓虹城市街头回眸，电影级光影，镜头缓慢推进，质感高级。");
+  const [vidProvider, setVidProvider] = useState<string>("kling_beijing");
+  const [vidStatus, setVidStatus] = useState<string>("");
+  const [vidTaskId, setVidTaskId] = useState<string>("");
+  const [vidShortUrl, setVidShortUrl] = useState<string>("");
+
+  const authed = useMemo(() => !!me && (me as any).ok === true, [me]);
+
   useEffect(() => {
-    fetch("/api/me", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => setAuthOk(!!d?.ok))
-      .catch(() => setAuthOk(false));
-  }, []);
-
-  const { user, isAuthenticated, loading } = useAuth();
-  const [imagePrompt, setImagePrompt] = useState("一位未来感女性角色，电影级布光，细节清晰");
-  const [imageEngine, setImageEngine] = useState<ImageEngine>("free");
-  const [imageLoading, setImageLoading] = useState(false);
-  const [imageUrls, setImageUrls] = useState<string[]>([]);
-
-  const [videoPrompt, setVideoPrompt] = useState("城市夜景中，角色缓慢走近镜头，电影质感");
-  const [videoProvider, setVideoProvider] = useState<VideoProvider>("kling_beijing");
-  const [videoTaskId, setVideoTaskId] = useState<string>("");
-  const [videoStatus, setVideoStatus] = useState<VideoTaskState>("idle");
-  const [videoError, setVideoError] = useState<string>("");
-  const videoPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  if (authOk === null) {
-    return <div className="p-6">加载中…</div>;
-  }
-  if (!authOk) {
-    return <div className="p-6 text-red-600">请先登录</div>;
-  }
-
-  const videoShortUrl = useMemo(() => {
-    if (!videoTaskId) return "";
-    return `/api/v/${encodeURIComponent(videoTaskId)}`;
-  }, [videoTaskId]);
-
-  const stopPolling = useCallback(() => {
-    if (videoPollRef.current) {
-      clearInterval(videoPollRef.current);
-      videoPollRef.current = null;
-    }
-  }, []);
-
-  const startVideoPolling = useCallback((taskId: string) => {
-    stopPolling();
-    videoPollRef.current = setInterval(async () => {
+    let alive = true;
+    (async () => {
+      setMeLoading(true);
       try {
-        const response = await fetch(`/api/jobs?task_id=${encodeURIComponent(taskId)}`, {
-          method: "GET",
-          credentials: "include",
-        });
-        const data = (await response.json().catch(() => ({}))) as any;
-        const status = String(data?.status || data?.task_status || "");
-
-        if (status === "succeed") {
-          setVideoStatus("succeed");
-          stopPolling();
-          return;
-        }
-        if (status === "failed") {
-          setVideoStatus("failed");
-          setVideoError(String(data?.error || data?.task_status_msg || "任务失败"));
-          stopPolling();
-          return;
-        }
-        if (status === "processing") {
-          setVideoStatus("processing");
-          return;
-        }
-        if (status === "submitted") {
-          setVideoStatus("submitted");
-          return;
-        }
-        setVideoStatus("queued");
-      } catch (error: any) {
-        setVideoStatus("failed");
-        setVideoError(error?.message || "轮询失败");
-        stopPolling();
+        const data = await fetchMe();
+        if (!alive) return;
+        setMe(data);
+      } catch (e: any) {
+        if (!alive) return;
+        setMe({ ok: false, error: e?.message || "fetch /api/me failed" });
+      } finally {
+        if (!alive) return;
+        setMeLoading(false);
       }
-    }, 2500);
-  }, [stopPolling]);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
-
-  const handleGenerateImage = useCallback(async () => {
-    if (!imagePrompt.trim()) {
-      toast.error("请输入图像提示词");
-      return;
-    }
-    if (!isAuthenticated || !user?.id) {
-      toast.error("请先通过右上角登录（Dev Admin）后再测试");
-      return;
-    }
-
-    setImageLoading(true);
-    setImageUrls([]);
+  async function refreshMe() {
+    setMeLoading(true);
     try {
-      const input =
-        imageEngine === "kling_image"
-          ? {
-              action: "kling_image",
-              params: {
-                prompt: imagePrompt.trim(),
-                model: "kling-v2-1",
-                resolution: "1k",
-                aspectRatio: "1:1",
-                count: 1,
-              },
-            }
-          : {
-              action: "virtual_idol",
-              params: {
-                style: "realistic",
-                gender: "neutral",
-                description: imagePrompt.trim(),
-                quality: imageEngine === "free" ? "free" : "2k",
-              },
-            };
-
-      const { jobId } = await createJob({
-        type: "image",
-        userId: String(user.id),
-        input,
-      } as any);
-
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 120000) {
-        const job = await getJob(jobId);
-        const status = String(job.status || "") as JobStatus;
-        if (status === "succeeded") {
-          const urls = Array.isArray((job.output as any)?.images)
-            ? ((job.output as any).images as string[])
-            : typeof (job.output as any)?.imageUrl === "string"
-            ? [String((job.output as any).imageUrl)]
-            : [];
-          setImageUrls(urls);
-          setImageLoading(false);
-          return;
-        }
-        if (status === "failed") {
-          throw new Error(String(job.error || "图像生成失败"));
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-      throw new Error("图像任务超时");
-    } catch (error: any) {
-      setImageLoading(false);
-      toast.error(error?.message || "图像生成失败");
+      const data = await fetchMe();
+      setMe(data);
+    } catch (e: any) {
+      setMe({ ok: false, error: e?.message || "fetch /api/me failed" });
+    } finally {
+      setMeLoading(false);
     }
-  }, [imageEngine, imagePrompt, isAuthenticated, user?.id]);
+  }
 
-  const handleGenerateVideo = useCallback(async () => {
-    if (!videoPrompt.trim()) {
-      toast.error("请输入视频提示词");
-      return;
-    }
-
-    setVideoStatus("queued");
-    setVideoError("");
-    setVideoTaskId("");
-    stopPolling();
-
+  async function runImageTest() {
+    setImgStatus("提交中…");
+    setImgUrls([]);
     try {
-      const response = await fetch(`/api/jobs?provider=${encodeURIComponent(videoProvider)}`, {
+      // 兼容：如果你们已有图片 job API，这里尽量走 /api/jobs（若后端没支持图片，会返回 JSON error）
+      const r = await fetch(`/api/jobs?provider=${encodeURIComponent(imgProvider)}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         credentials: "include",
-        body: JSON.stringify({
-          prompt: videoPrompt.trim(),
-          duration: "10",
-          aspectRatio: "21:9",
-          mode: "pro",
-          resolution: "1080p",
-        }),
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ prompt: imgPrompt, type: "image", size: "1024" }),
       });
-      const data = (await response.json().catch(() => ({}))) as any;
-      if (!response.ok) {
-        throw new Error(String(data?.error || `请求失败 (${response.status})`));
+
+      const ct = r.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        setImgStatus(`失败：non-json response (${r.status})`);
+        return;
       }
-      const taskId = String(data?.task_id || data?.taskId || "").trim();
-      if (!taskId) {
-        throw new Error("未返回 task_id");
+      const j = await r.json();
+
+      // 兼容多种返回：
+      // 1) { ok:true, images:[{url}] }
+      // 2) { ok:true, imageUrl:"..." }
+      // 3) { ok:false, error:"..." }
+      if (j?.ok !== true) {
+        setImgStatus(`失败：${j?.error || "unknown error"}`);
+        return;
       }
 
-      setVideoTaskId(taskId);
-      setVideoStatus("submitted");
-      startVideoPolling(taskId);
-    } catch (error: any) {
-      setVideoStatus("failed");
-      setVideoError(error?.message || "视频任务提交失败");
+      const urls: string[] = [];
+      if (Array.isArray(j?.images)) {
+        for (const it of j.images) if (it?.url) urls.push(it.url);
+      }
+      if (typeof j?.imageUrl === "string") urls.push(j.imageUrl);
+      if (typeof j?.url === "string") urls.push(j.url);
+
+      setImgUrls(urls);
+      setImgStatus(urls.length ? "成功" : "成功（但未返回图片 URL，检查后端返回字段）");
+    } catch (e: any) {
+      setImgStatus(`失败：${e?.message || "unknown error"}`);
     }
-  }, [videoPrompt, videoProvider, startVideoPolling, stopPolling]);
+  }
+
+  async function runVideoTest() {
+    setVidStatus("提交中…");
+    setVidTaskId("");
+    setVidShortUrl("");
+    try {
+      const r = await fetch(`/api/jobs?provider=${encodeURIComponent(vidProvider)}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ prompt: vidPrompt }),
+      });
+
+      const ct = r.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        setVidStatus(`失败：non-json response (${r.status})`);
+        return;
+      }
+      const j = await r.json();
+
+      if (j?.ok !== true) {
+        setVidStatus(`失败：${j?.error || "unknown error"}`);
+        return;
+      }
+
+      const taskId = j?.taskId || j?.task_id || j?.raw?.data?.task_id;
+      if (!taskId) {
+        setVidStatus("成功（但未解析到 taskId，检查后端返回字段）");
+        return;
+      }
+      setVidTaskId(String(taskId));
+
+      // 你们短链是 /api/v/:taskId
+      const shortUrl = `/api/v/${encodeURIComponent(String(taskId))}`;
+      setVidShortUrl(shortUrl);
+      setVidStatus("已提交（生成中/可轮询）");
+    } catch (e: any) {
+      setVidStatus(`失败：${e?.message || "unknown error"}`);
+    }
+  }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      <Navbar />
-      <main className="container mx-auto px-4 pt-24 pb-12 space-y-8">
-        <section>
-          <h1 className="text-3xl font-bold">一键测试台</h1>
-          <p className="text-sm text-gray-400 mt-2">用于快速验收图像与视频生成链路，不影响核心业务逻辑。</p>
-          {!loading && !isAuthenticated && (
-            <p className="mt-3 text-sm text-amber-400">当前未登录，图像测试需要登录后才能提交任务。</p>
-          )}
-        </section>
-
-        <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2 text-lg font-semibold">
-              <ImageIcon className="h-5 w-5 text-cyan-400" />
-              <span>图像测试（nano-banana-flash 1K）</span>
-            </div>
-            <textarea
-              value={imagePrompt}
-              onChange={(e) => setImagePrompt(e.target.value)}
-              rows={4}
-              className="w-full rounded-md bg-gray-950 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-cyan-500"
-              placeholder="输入图像提示词"
-            />
-            <div className="flex items-center gap-3">
-              <select
-                value={imageEngine}
-                onChange={(e) => setImageEngine(e.target.value as ImageEngine)}
-                className="rounded-md bg-gray-950 border border-gray-700 px-3 py-2 text-sm"
-              >
-                <option value="free">免费（nano-banana-flash）</option>
-                <option value="pro">付费（nano-banana-pro）</option>
-                <option value="kling_image">付费（kling_image）</option>
-              </select>
-              <button
-                onClick={handleGenerateImage}
-                disabled={imageLoading}
-                className="inline-flex items-center gap-2 rounded-md bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 px-4 py-2 text-sm font-medium"
-              >
-                {imageLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                生成图像
-              </button>
-            </div>
-            {imageEngine === "free" && (
-              <p className="text-xs text-amber-300">免费模式可能带浮水印（用于验收流程）。</p>
-            )}
-
-            <div className="space-y-2">
-              <p className="text-sm text-gray-300">结果</p>
-              {imageUrls.length === 0 ? (
-                <div className="rounded-md border border-dashed border-gray-700 p-4 text-sm text-gray-500">暂无结果</div>
-              ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  {imageUrls.map((url) => (
-                    <div key={url} className="rounded-md border border-gray-800 overflow-hidden bg-black">
-                      <img src={url} alt="生成结果" className="w-full h-36 object-cover" />
-                      <a
-                        href={url}
-                        download
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center justify-center gap-1 text-xs py-2 border-t border-gray-800 hover:bg-gray-800"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        下载
-                      </a>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+      <div className="mx-auto max-w-4xl px-4 py-8">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">测试台</h1>
+          <div className="flex items-center gap-2">
+            <Link href="/" className="text-sm text-slate-600 hover:underline dark:text-slate-300">
+              返回首页
+            </Link>
+            <button
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              onClick={refreshMe}
+              disabled={meLoading}
+            >
+              刷新登录状态
+            </button>
           </div>
+        </div>
 
-          <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-5 space-y-4">
-            <div className="flex items-center gap-2 text-lg font-semibold">
-              <Video className="h-5 w-5 text-fuchsia-400" />
-              <span>视频测试（Kling / Veo / Seedance）</span>
-            </div>
-            <textarea
-              value={videoPrompt}
-              onChange={(e) => setVideoPrompt(e.target.value)}
-              rows={4}
-              className="w-full rounded-md bg-gray-950 border border-gray-700 px-3 py-2 text-sm focus:outline-none focus:border-fuchsia-500"
-              placeholder="输入视频提示词"
-            />
-            <div className="flex items-center gap-3 flex-wrap">
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-medium text-slate-700 dark:text-slate-200">登录状态：</span>
+            {meLoading ? (
+              <span className="text-slate-500 dark:text-slate-400">检查中…</span>
+            ) : authed ? (
+              <span className="text-emerald-600 dark:text-emerald-400">
+                已登录（{(me as any)?.user?.role || "user"} / {(me as any)?.user?.email || (me as any)?.user?.id || "unknown"}）
+              </span>
+            ) : (
+              <span className="text-rose-600 dark:text-rose-400">
+                未登录（{(me as any)?.error || "no session"}）—{" "}
+                <Link href="/login" className="underline">
+                  去登录
+                </Link>
+              </span>
+            )}
+            {authed && typeof (me as any)?.credits === "number" ? (
+              <span className="ml-auto text-slate-600 dark:text-slate-300">Credits：{(me as any).credits}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">图像生成（1K）</h2>
+            <div className="mt-3">
+              <label className="block text-sm text-slate-700 dark:text-slate-200">模型</label>
               <select
-                value={videoProvider}
-                onChange={(e) => setVideoProvider(e.target.value as VideoProvider)}
-                className="rounded-md bg-gray-950 border border-gray-700 px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                value={imgProvider}
+                onChange={(e) => setImgProvider(e.target.value as any)}
+                disabled={!authed}
               >
-                <option value="kling_beijing">Kling</option>
-                <option value="veo_3_1">Veo3.1（若已接）</option>
-                <option value="seedance">Seedance（若已接）</option>
+                <option value="nano-banana-flash">nano-banana-flash（免费/低配）</option>
+                <option value="nano-banana-pro">nano-banana-pro（付费/高配）</option>
+                <option value="kling_image">kling_image（付费/备用）</option>
               </select>
-              <span className="text-xs text-gray-400">默认：21:9 / 10秒 / 1080p</span>
+            </div>
+            <div className="mt-3">
+              <label className="block text-sm text-slate-700 dark:text-slate-200">Prompt</label>
+              <textarea
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                rows={5}
+                value={imgPrompt}
+                onChange={(e) => setImgPrompt(e.target.value)}
+                disabled={!authed}
+              />
+            </div>
+            <div className="mt-3 flex items-center gap-2">
               <button
-                onClick={handleGenerateVideo}
-                className="inline-flex items-center gap-2 rounded-md bg-fuchsia-600 hover:bg-fuchsia-500 px-4 py-2 text-sm font-medium"
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+                onClick={runImageTest}
+                disabled={!authed}
               >
-                <PlayCircle className="h-4 w-4" />
-                生成视频
+                生成图片
               </button>
+              <span className="text-sm text-slate-600 dark:text-slate-300">{imgStatus}</span>
             </div>
 
-            <div className="rounded-md border border-gray-800 bg-gray-950/60 p-3 space-y-1">
-              <p className="text-sm">
-                状态：
-                <span className={`ml-2 font-semibold ${statusClass(videoStatus)}`}>{videoStatus}</span>
-              </p>
-              {videoTaskId && <p className="text-xs text-gray-500 font-mono">task_id: {videoTaskId}</p>}
-              {videoError && <p className="text-xs text-red-400">{videoError}</p>}
-            </div>
-
-            {videoStatus === "succeed" && videoShortUrl && (
-              <div className="space-y-2">
-                <p className="text-sm text-gray-300">播放（短链）</p>
-                <video controls src={videoShortUrl} className="w-full rounded-md border border-gray-800 bg-black max-h-72" />
+            {imgUrls.length > 0 ? (
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {imgUrls.map((u) => (
+                  <a key={u} href={u} target="_blank" rel="noreferrer" className="block">
+                    <img src={u} className="h-48 w-full rounded-lg object-cover" />
+                  </a>
+                ))}
               </div>
-            )}
+            ) : null}
           </div>
-        </section>
-      </main>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">视频生成（Kling）</h2>
+            <div className="mt-3">
+              <label className="block text-sm text-slate-700 dark:text-slate-200">Provider</label>
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                value={vidProvider}
+                onChange={(e) => setVidProvider(e.target.value)}
+                disabled={!authed}
+              >
+                <option value="kling_beijing">kling_beijing</option>
+              </select>
+            </div>
+
+            <div className="mt-3">
+              <label className="block text-sm text-slate-700 dark:text-slate-200">Prompt</label>
+              <textarea
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                rows={5}
+                value={vidPrompt}
+                onChange={(e) => setVidPrompt(e.target.value)}
+                disabled={!authed}
+              />
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+                onClick={runVideoTest}
+                disabled={!authed}
+              >
+                提交生成
+              </button>
+              <span className="text-sm text-slate-600 dark:text-slate-300">{vidStatus}</span>
+            </div>
+
+            {vidTaskId ? (
+              <div className="mt-4 space-y-2 text-sm text-slate-700 dark:text-slate-200">
+                <div>TaskId：{vidTaskId}</div>
+                {vidShortUrl ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a className="underline" href={vidShortUrl} target="_blank" rel="noreferrer">
+                      打开短链（/api/v/{vidTaskId}）
+                    </a>
+                    <button
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+                      onClick={() => navigator.clipboard.writeText(window.location.origin + vidShortUrl)}
+                    >
+                      复制链接
+                    </button>
+                  </div>
+                ) : null}
+                {vidShortUrl ? (
+                  <video className="mt-2 w-full rounded-lg" controls src={vidShortUrl} />
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300">
+          <div className="font-medium text-slate-700 dark:text-slate-200">说明</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>此页只依赖 <code>/api/me</code> 判断登录，不再用任何“前端猜测/硬编码”规则。</li>
+            <li>如果你已用 dev_admin 登录，但仍提示未登录：点击“刷新登录状态”。</li>
+            <li>若图片/视频返回成功但没 URL：属于后端返回字段不一致，页面会提示“未返回 URL”。</li>
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
