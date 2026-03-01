@@ -130,10 +130,51 @@ async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec
   return { ok: true, raw: j || text };
 }
 
+
+async function handleKlingImage(req, res) {
+  const prompt = req.query.prompt || req.body?.prompt
+  if (!prompt) return res.status(400).json({ ok:false, error:"missing_prompt" })
+
+  const BASE = process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com"
+  const AK = process.env.KLING_CN_IMAGE_ACCESS_KEY
+  const SK = process.env.KLING_CN_IMAGE_SECRET_KEY
+  if (!AK || !SK) return res.status(500).json({ ok:false, error:"missing_kling_env" })
+
+  const jwt = require("jsonwebtoken")
+  const token = jwt.sign(
+    { iss: AK, exp: Math.floor(Date.now()/1000)+1800 },
+    SK,
+    { algorithm:"HS256" }
+  )
+
+  const r = await fetch(BASE + "/v1/images/generations", {
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+token,
+      "Content-Type":"application/json"
+    },
+    body: JSON.stringify({
+      model:"kling-2.6",
+      prompt,
+      resolution:"1024x1024"
+    })
+  })
+
+  const j = await r.json()
+  return res.status(200).json(j)
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const body: any = req.body || {};
-    const type = (body.type || req.query?.type || "").toString();
+    
+  const type = req.query.type || req.body?.type
+
+  if (type === "kling_image") {
+    return handleKlingImage(req, res)
+  }
+
+ (body.type || req.query?.type || "").toString();
     const provider = (body.provider || req.query?.provider || "").toString().trim();
 
     if (type === "image") {
