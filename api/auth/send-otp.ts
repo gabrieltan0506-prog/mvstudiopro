@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { sendOtpMail } from "../../server/services/smtp-mailer";
+import { hasTencentSesConfig, sendTencentSesOtpEmail } from "../tencentSes";
 import {
   EMAIL_RATE_LIMIT_MAX,
   IP_RATE_LIMIT_MAX,
@@ -21,9 +22,23 @@ export const config = {
   runtime: "nodejs",
 };
 
+function hasSmtpConfig(): boolean {
+  const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"] as const;
+  return required.every((key) => {
+    const value = process.env[key];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+}
+
+function truncateErrorMessage(error: unknown, maxLen: number = 180): string {
+  const message = error instanceof Error ? error.message : String(error ?? "unknown error");
+  const compact = message.replace(/\s+/g, " ").trim();
+  return compact.length > maxLen ? `${compact.slice(0, maxLen)}...` : compact;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
   try {
@@ -70,12 +85,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       attempts: 0,
     });
 
-    await sendOtpMail(email, otp);
+    const mailProvider = (process.env.MAIL_PROVIDER ?? "").trim().toLowerCase();
+    const smtpReady = hasSmtpConfig();
+    const tencentReady = hasTencentSesConfig();
+
+    if (!smtpReady && !tencentReady) {
+      return res.status(500).json({ ok: false, error: "邮件服务未配置" });
+    }
+
+    try {
+      if (mailProvider === "tencent") {
+        if (!tencentReady) {
+          return res.status(500).json({ ok: false, error: "邮件服务未配置" });
+        }
+        await sendTencentSesOtpEmail(email, otp);
+      } else if (smtpReady) {
+        await sendOtpMail(email, otp);
+      } else if (tencentReady) {
+        await sendTencentSesOtpEmail(email, otp);
+      } else {
+        return res.status(500).json({ ok: false, error: "邮件服务未配置" });
+      }
+    } catch (sendError) {
+      console.error("[Auth API] send-otp 发送失败:", sendError);
+      return res.status(500).json({
+        ok: false,
+        error: "发送失败",
+        detail: truncateErrorMessage(sendError),
+      });
+    }
 
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error("[Auth API] send-otp 失败:", error);
-    const message = error instanceof Error ? error.message : "发送验证码失败，请稍后重试";
-    return res.status(500).json({ error: message });
+    return res.status(500).json({
+      ok: false,
+      error: "发送失败",
+      detail: truncateErrorMessage(error),
+    });
   }
 }
