@@ -22,7 +22,7 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
   const [captchaId, setCaptchaId] = useState("");
-  const [captchaImage, setCaptchaImage] = useState("");
+  const [captchaImg, setCaptchaImg] = useState("");
   const [captchaText, setCaptchaText] = useState("");
   const [otp, setOtp] = useState("");
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -50,24 +50,38 @@ export default function Login() {
 
   const isValidEmail = useMemo(() => /[^\s@]+@[^\s@]+\.[^\s@]+/.test(email.trim()), [email]);
 
+  const fetchCaptcha = useCallback(async (): Promise<CaptchaResponse> => {
+    const response = await fetch("/api/auth/captcha", {
+      method: "GET",
+      credentials: "include",
+    });
+    let data: CaptchaResponse | null = null;
+    try {
+      data = (await response.json()) as CaptchaResponse;
+    } catch {
+      data = null;
+    }
+    if (!response.ok || !data?.captchaId || !data?.imageBase64) {
+      throw new Error("获取图形验证码失败，请重试");
+    }
+    return data;
+  }, []);
+
   const refreshCaptcha = useCallback(async () => {
     setLoadingCaptcha(true);
     setError("");
+    // On every refresh, clear text first then sync id/image from the same payload.
+    setCaptchaText("");
     try {
-      const response = await fetch("/api/auth/captcha", { method: "GET", credentials: "include" });
-      const data = (await response.json()) as CaptchaResponse;
-      if (!response.ok) {
-        throw new Error("获取图形验证码失败，请重试");
-      }
-      setCaptchaId(data.captchaId);
-      setCaptchaImage(data.imageBase64);
-      setCaptchaText("");
+      const nextCaptcha = await fetchCaptcha();
+      setCaptchaId(nextCaptcha.captchaId);
+      setCaptchaImg(nextCaptcha.imageBase64);
     } catch (err) {
       setError(err instanceof Error ? err.message : "获取图形验证码失败，请重试");
     } finally {
       setLoadingCaptcha(false);
     }
-  }, []);
+  }, [fetchCaptcha]);
 
   const handleSendOtp = useCallback(async () => {
     setError("");
@@ -77,7 +91,8 @@ export default function Login() {
       setError("请输入有效的邮箱地址");
       return;
     }
-    if (!captchaId || !captchaText.trim()) {
+    const captchaTextValue = captchaText.trim();
+    if (!captchaId || !captchaTextValue) {
       setError("请输入图形验证码");
       return;
     }
@@ -91,7 +106,7 @@ export default function Login() {
         body: JSON.stringify({
           email: email.trim(),
           captchaId,
-          captchaText: captchaText.trim(),
+          captchaText: captchaTextValue,
         }),
       });
 
@@ -240,8 +255,8 @@ export default function Login() {
               <div className="flex h-full items-center justify-center text-slate-500">
                 <Loader2 className="h-5 w-5 animate-spin" />
               </div>
-            ) : captchaImage ? (
-              <img src={captchaImage} alt="验证码" className="h-full w-full object-cover" />
+            ) : captchaImg ? (
+              <img src={captchaImg} alt="验证码" className="h-full w-full object-cover" />
             ) : (
               <span className="text-slate-500 text-xs">加载失败</span>
             )}
