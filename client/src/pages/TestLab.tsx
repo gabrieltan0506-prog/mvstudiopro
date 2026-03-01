@@ -14,7 +14,10 @@ export default function TestLab() {
   const [me, setMe] = useState<AnyObj | null>(null);
   const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
   const [mode, setMode] = useState<"image" | "video" | "audio">("image");
-  const [imageProvider, setImageProvider] = useState<"nano-banana-flash" | "nano-banana-pro">("nano-banana-flash");
+  const [imageProvider, setImageProvider] = useState<"nano-banana-flash" | "nano-banana-pro" | "kling_image">("nano-banana-flash");
+  const [klingRoute, setKlingRoute] = useState<"auto" | "beijing" | "singapore">("auto");
+  const [klingModelName, setKlingModelName] = useState("kling-v2-1");
+
   const [videoProvider, setVideoProvider] = useState<"kling_beijing">("kling_beijing");
   const [audioProvider, setAudioProvider] = useState<"suno" | "udio">("udio");
   const [duration, setDuration] = useState(60);
@@ -51,7 +54,34 @@ export default function TestLab() {
     setAudioUrl("");
     try {
       if (mode === "image") {
-        const body = { type: "image", provider: imageProvider, prompt };
+        const body = { type: "image", provider: imageProvider, prompt } as any;
+        if (imageProvider === "kling_image") {
+          const kr = await jfetch("/api/kling/image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt, model_name: klingModelName, route: klingRoute, n: 1 }),
+          });
+          setRaw(kr.json ?? kr.text);
+          if (!kr.ok || !kr.json?.ok || !kr.json?.taskId) {
+            setStatus(`失败（${kr.status}）`);
+            return;
+          }
+          const taskId = kr.json.taskId as string;
+          setStatus("可灵生图生成中…（轮询）");
+          for (let i = 0; i < 60; i++) {
+            await new Promise((res) => setTimeout(res, 2000));
+            const st = await jfetch(`/api/kling/image-status?taskId=${encodeURIComponent(taskId)}&route=${encodeURIComponent(klingRoute)}`);
+            if (st.json) setRaw(st.json);
+            const url = st.json?.imageUrl;
+            if (url) {
+              setImageUrl(url);
+              setStatus("完成");
+              return;
+            }
+          }
+          setStatus("超时：未拿到图片地址");
+          return;
+        }
         const r = await jfetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -150,6 +180,31 @@ export default function TestLab() {
             <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="audio"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("audio")}>音乐</button>
           </div>
 
+          
+          {mode === "image" && imageProvider === "kling_image" && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-white/70">线路</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={klingRoute}
+                onChange={(e) => setKlingRoute(e.target.value as any)}
+              >
+                <option value="auto">自动优选（新加坡/北京）</option>
+                <option value="singapore">新加坡</option>
+                <option value="beijing">北京</option>
+              </select>
+
+              <span className="text-white/70 ml-2">模型</span>
+              <input
+                className="bg-black border border-white/10 rounded-lg px-3 py-2 w-56"
+                value={klingModelName}
+                onChange={(e) => setKlingModelName(e.target.value)}
+                placeholder="kling-v2-1"
+              />
+              <span className="text-white/50">示例：kling-v2-1</span>
+            </div>
+          )}
+
           {mode === "image" && (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="text-white/70">引擎</span>
@@ -159,6 +214,7 @@ export default function TestLab() {
               >
                 <option value="nano-banana-flash">Nano Banana Flash（免费/默认）</option>
                 <option value="nano-banana-pro">Nano Banana Pro（付费）</option>
+                <option value="kling_image">Kling Image（可灵文生图）</option>
               </select>
             </div>
           )}
