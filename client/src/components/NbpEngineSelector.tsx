@@ -2,7 +2,11 @@
  * NBP 引擎选择器组件
  * 
  * 用于分镜页面和虚拟偶像页面，让用户选择图像生成引擎：
+<<<<<<< HEAD
  * - Nano Banana Flash 1K（含水印）— 基础引擎
+=======
+ * - Forge（Forge AI，含水印）— 基础引擎
+>>>>>>> thread-b
  * - NBP 2K（5 Credits/张）
  * - NBP 4K（9 Credits/张）
  * - Kling 1K（8 Credits/张）
@@ -51,9 +55,15 @@ export function NbpEngineSelector({
   const effectiveCredits = isAdmin ? 99999 : creditsAvailable;
   const engines: EngineInfo[] = [
     {
+<<<<<<< HEAD
       id: "nano_flash",
       label: "Nano Flash 1K",
       desc: "基础画质，含水印",
+=======
+      id: "forge",
+      label: "Forge",
+      desc: "基础画质，含浮水印",
+>>>>>>> thread-b
       cost: "3 Cr",
       icon: Sparkles,
       color: "#30D158",

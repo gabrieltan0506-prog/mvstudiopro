@@ -1,9 +1,13 @@
 {
   "buildCommand": "pnpm build",
+<<<<<<< HEAD
   "outputDirectory": "client/dist",
   "routes": [
     { "src": "^/api/(.*)$", "dest": "/api/$1" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
+=======
+  "outputDirectory": "client/dist"
+>>>>>>> thread-b
 }
