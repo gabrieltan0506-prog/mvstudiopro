@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
-import { setShortLink } from "./_core/shortlink-store";
+import { setShortLink } from "./_core/shortlink-store.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const body = typeof req.body === "string"

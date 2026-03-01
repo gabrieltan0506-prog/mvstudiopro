@@ -2,12 +2,12 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHash } from "crypto";
 import { eq } from "drizzle-orm";
 import { serialize } from "cookie";
-import { users } from "../../drizzle/schema";
-import { getSessionCookieOptions } from "../../server/_core/cookies";
-import { sdk } from "../../server/_core/sdk";
-import { getDb } from "../../server/db";
-import * as sessionDb from "../../server/sessionDb";
-import { COOKIE_NAME } from "../../shared/const";
+import { users } from "../../drizzle/schema.js";
+import { getSessionCookieOptions } from "../../server/_core/cookies.js";
+import { sdk } from "../../server/_core/sdk.js";
+import { getDb } from "../../server/db.js";
+import * as sessionDb from "../../server/sessionDb.js";
+import { COOKIE_NAME } from "../../shared/const.js";
 import {
   OTP_MAX_ATTEMPTS,
   normalizeEmail,
