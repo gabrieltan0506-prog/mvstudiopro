@@ -133,7 +133,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       req.query?.provider ?? body.provider ?? body.input?.provider ?? body.job?.provider ?? body.payload?.provider
     );
 
-    if (type === "image") {
+    
+  if (type === "audio") {
+    const { aimusicCreate } = await import("../server/services/aimusic-unified.js");
+    const prompt = body.prompt || req.query?.prompt;
+    const provider = body.provider || req.query?.provider || "suno";
+    const duration = Number(body.duration || req.query?.duration || 60);
+    const r = await aimusicCreate({ model: provider, prompt, durationSec: duration });
+    return res.json(r);
+  }
+
+  if (type === "image") {
       const resolvedProvider = provider || "nano-banana-flash";
       const prompt = (body.input?.prompt ?? body.prompt ?? req.query?.prompt ?? "").toString().trim();
       if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" });
