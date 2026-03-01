@@ -91,12 +91,6 @@ export default function Login() {
       setError("请输入有效的邮箱地址");
       return;
     }
-    const captchaTextValue = captchaText.trim();
-    if (!captchaId || !captchaTextValue) {
-      setError("请输入图形验证码");
-      return;
-    }
-
     setSendingOtp(true);
     try {
       const response = await fetch("/api/auth/send-otp", {
@@ -105,8 +99,6 @@ export default function Login() {
         credentials: "include",
         body: JSON.stringify({
           email: email.trim(),
-          captchaId,
-          captchaText: captchaTextValue,
         }),
       });
 
@@ -125,7 +117,7 @@ export default function Login() {
     } finally {
       setSendingOtp(false);
     }
-  }, [captchaId, captchaText, email, isValidEmail, refreshCaptcha]);
+  }, [email, isValidEmail, refreshCaptcha]);
 
   const handleSignup = useCallback(async () => {
     setError("");
