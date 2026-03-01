@@ -303,6 +303,13 @@ export default function TestLab() {
 
         {/* 调试区（可折叠，默认显示，避免你看不到返回） */}
         <div className="rounded-xl border border-white/10 p-4 bg-white/5">
+          {raw?.debug ? (
+            <div className="mb-3 rounded-lg border border-emerald-500/40 bg-black/60 p-3 text-xs text-emerald-300">
+              <div>Provider: {String(raw.debug.provider ?? "-")}</div>
+              <div>Model: {String(raw.debug.model ?? "-")}</div>
+              <div>Location: {String(raw.debug.location ?? "-")}</div>
+            </div>
+          ) : null}
           <div className="text-sm text-white/70 mb-2">返回数据（调试）</div>
           <pre className="whitespace-pre-wrap text-xs text-white/80">{raw ? JSON.stringify(raw, null, 2) : "（暂无）"}</pre>
         </div>
