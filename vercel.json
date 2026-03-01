@@ -1,13 +1,9 @@
 {
+  "version": 2,
   "buildCommand": "pnpm build",
-<<<<<<< HEAD
   "outputDirectory": "client/dist",
-  "routes": [
-    { "src": "^/api/(.*)$", "dest": "/api/$1" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
-=======
-  "outputDirectory": "client/dist"
->>>>>>> thread-b
 }
