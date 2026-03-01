@@ -47,7 +47,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ).toString();
   const jobType = String((body as any)?.type ?? input?.type ?? "");
   const normalizedProvider = normalizeProvider(providerRaw);
-  const provider = normalizedProvider || (jobType === "image" ? "nano-banana-flash" : "");
+  const provider = normalizeProvider(
+      req.query?.provider ||
+      req.body?.provider ||
+      req.body?.input?.provider ||
+      req.body?.job?.provider ||
+      req.body?.payload?.provider
+    );
+
+    console.log("DEBUG_PROVIDER_LOG:", {
+      rawQuery: req.query?.provider,
+      rawBody: req.body?.provider,
+      rawInput: req.body?.input?.provider,
+      normalized: provider
+    });
   const taskIdQuery = req.query.task_id;
   const taskId = (Array.isArray(taskIdQuery) ? taskIdQuery[0] : taskIdQuery ?? "").toString().trim();
 
