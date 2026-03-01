@@ -10,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({
         ok: true,
         provider: "nano-banana-flash",
-        message: "image provider forced to nano-banana-flash",
+        message: "image provider resolved",
         debug: {
           receivedProvider: body.provider || req.query?.provider || null
         }
