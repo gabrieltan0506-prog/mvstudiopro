@@ -13,7 +13,7 @@ export default function TestLab() {
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, prompt, model })
+      body: JSON.stringify({ type, prompt, model, provider: model })
     });
     const json = await res.json();
     setResult(json);
@@ -56,9 +56,32 @@ export default function TestLab() {
       </button>
 
       {result && (
-        <pre style={{marginTop:20,background:"#111",color:"#0f0",padding:20}}>
-          {JSON.stringify(result,null,2)}
-        </pre>
+        <>
+          {result?.imageUrl ? (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ marginBottom: 8 }}>图片预览</div>
+              <img src={result.imageUrl} alt="generated" style={{ maxWidth: "100%", borderRadius: 8 }} />
+            </div>
+          ) : Array.isArray(result?.images) && result.images.length ? (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ marginBottom: 8 }}>图片预览</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+                {result.images.map((u: string, i: number) => (
+                  <img key={i} src={u} alt={`generated-${i}`} style={{ width: "100%", borderRadius: 8 }} />
+                ))}
+              </div>
+            </div>
+          ) : result?.videoUrl ? (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ marginBottom: 8 }}>视频预览</div>
+              <video src={result.videoUrl} controls style={{ maxWidth: "100%", borderRadius: 8 }} />
+            </div>
+          ) : null}
+
+          <pre style={{marginTop:20,background:"#111",color:"#0f0",padding:20}}>
+            {JSON.stringify(result,null,2)}
+          </pre>
+        </>
       )}
     </div>
   );
