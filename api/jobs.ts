@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
-import { setShortLink } from "./_core/shortlink-store";
+import { setShortLink } from "./_core/shortlink-store.js";
 
 function asString(v: any): string {
   if (v == null) return "";
