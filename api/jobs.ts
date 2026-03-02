@@ -214,17 +214,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (debug) out.debug = { location, model };
       return res.status(200).json(out);
     }
-
     if (type === "video") {
-      const geminiKey = asString(process.env.GEMINI_API_KEY).trim();
-      if (!geminiKey) {
-        return res.status(500).json({ ok: false, type: "video", provider, error: "missing_env", detail: "Missing GEMINI_API_KEY" });
+      // Veo 3.1: image-to-video only (no text-only)
+      // Accept both GET (status) and POST (create)
+
+      const projectId = asString(process.env.VERTEX_PROJECT_ID).trim();
+      if (!projectId) {
+        return res.status(500).json({ ok: false, type: "video", provider, error: "missing_env", detail: "Missing VERTEX_PROJECT_ID" });
       }
 
+      const location = asString(process.env.VERTEX_LOCATION || "global").trim() || "global";
+      const baseUrl =
+        location === "global"
+          ? "https://aiplatform.googleapis.com"
+          : `https://${location}-aiplatform.googleapis.com`;
+
+      const proModel = asString(process.env.VERTEX_VEO_MODEL_PRO).trim();
+      const rapidModel = asString(process.env.VERTEX_VEO_MODEL_RAPID).trim();
+      if (!proModel && !rapidModel) {
+        return res.status(500).json({
+          ok: false,
+          type: "video",
+          provider,
+          error: "missing_env",
+          detail: "Missing VERTEX_VEO_MODEL_PRO / VERTEX_VEO_MODEL_RAPID"
+        });
+      }
+
+      // status polling: GET/POST with taskId
       if (taskId) {
         const operationName = normalizeOperationName(taskId);
-        const statusUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${encodeURIComponent(geminiKey)}`;
-        const upstream = await fetch(statusUrl, { method: "GET" });
+        const statusUrl = `${baseUrl}/v1/${operationName}`;
+        const token = await getVertexAccessToken();
+
+        const upstream = await fetch(statusUrl, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
         const json: any = await upstream.json().catch(() => ({}));
         if (!upstream.ok) {
           return res.status(500).json({
@@ -233,7 +260,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             provider,
             taskId,
             error: "video_status_failed",
-            detail: { status: upstream.status, raw: json }
+            detail: { status: upstream.status, raw: json, location }
           });
         }
 
@@ -255,39 +282,81 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           videoUrl: videoUrl || undefined,
           shortUrl: videoUrl ? `/api/v/${encodeURIComponent(taskId)}` : undefined,
           error: failed ? json?.error : undefined,
-          raw: json
+          raw: json,
+          debug: debug ? { location, proModel, rapidModel } : undefined
         });
       }
 
-      if (!prompt) {
-        return res.status(400).json({ ok: false, type: "video", provider, error: "missing_prompt" });
+      // create: image-to-video only
+      const imgVal = pickFirst(
+        b.image,
+        b?.input?.image,
+        b.imageDataUrl,
+        b?.input?.imageDataUrl,
+        q.image,
+        q.imageDataUrl
+      );
+
+      if (!imgVal) {
+        return res.status(400).json({
+          ok: false,
+          type: "video",
+          provider,
+          error: "missing_image",
+          detail: "Please upload a reference image (image-to-video only)"
+        });
       }
 
-      const quality = pickFirst(b.quality, q.quality);
+      // Accept data URL or raw base64
+      const imgStr = asString(imgVal).trim();
+      let mimeType = "image/png";
+      let imageB64 = imgStr;
+
+      const m = imgStr.match(/^data:([^;]+);base64,(.+)$/);
+      if (m) {
+        mimeType = m[1] || mimeType;
+        imageB64 = m[2] || "";
+      }
+
+      if (!imageB64) {
+        return res.status(400).json({ ok: false, type: "video", provider, error: "invalid_image" });
+      }
+
+      // model select: pro vs rapid (no "standard" wording)
+      const quality = pickFirst(b.quality, q.quality).toLowerCase();
+      const p = provider.toLowerCase();
+      const isRapid = p.includes("fast") || p.includes("rapid") || quality === "rapid" || quality === "fast";
+      const model = (isRapid ? rapidModel : proModel) || proModel || rapidModel;
+
       const aspectRatio = pickFirst(b.aspect_ratio, b.aspectRatio, q.aspect_ratio, q.aspectRatio) || "16:9";
       const resolution = pickFirst(b.resolution, q.resolution) || "720p";
       const negativePrompt = pickFirst(b.negativePrompt, b.negative_prompt, q.negativePrompt, q.negative_prompt);
-      const model = toVideoModel(provider, quality);
+      const promptVideo = asString(prompt).trim(); // can be empty, used as steering
 
-      const createUrl =
-        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateVideos` +
-        `?key=${encodeURIComponent(geminiKey)}`;
+      const createUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${encodeURIComponent(model)}:generateVideos`;
+
+      const token = await getVertexAccessToken();
 
       const createBody: any = {
-        prompt,
+        prompt: promptVideo,
+        image: {
+          imageBytes: imageB64,
+          mimeType
+        },
         config: {
           numberOfVideos: 1,
           aspectRatio,
-          resolution,
+          resolution
         }
       };
-      if (negativePrompt) {
-        createBody.config.negativePrompt = negativePrompt;
-      }
+      if (negativePrompt) createBody.config.negativePrompt = negativePrompt;
 
       const upstream = await fetch(createUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify(createBody)
       });
 
@@ -298,21 +367,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           type: "video",
           provider,
           error: "video_create_failed",
-          detail: { status: upstream.status, raw: json, model }
+          detail: { status: upstream.status, raw: json, location, model }
         });
       }
 
-      const operationName = asString(json?.name);
-      const createdTaskId = toTaskId(operationName);
-      if (!createdTaskId) {
+      const operationName = asString(json?.name).trim();
+      if (!operationName) {
         return res.status(500).json({
           ok: false,
           type: "video",
           provider,
           error: "missing_task_id",
-          detail: { raw: json, model }
+          detail: { raw: json, location, model }
         });
       }
+
+      const createdTaskId = toTaskId(operationName);
 
       const out: any = {
         ok: true,
@@ -322,8 +392,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: "running",
         raw: json
       };
-      if (debug) out.debug = { model };
+      if (debug) out.debug = { location, model, proModel, rapidModel };
+
       return res.status(200).json(out);
+    }
     }
 
     return res.status(400).json({ ok: false, error: "unsupported_type", type });

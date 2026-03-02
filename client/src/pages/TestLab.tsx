@@ -11,6 +11,15 @@ async function jfetch(url: string, init?: RequestInit) {
 }
 
 export default function TestLab() {
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("file_read_failed"));
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.readAsDataURL(file);
+    });
+  }
+
   const [me, setMe] = useState<AnyObj | null>(null);
   const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
   const [mode, setMode] = useState<"image" | "video" | "audio">("image");
