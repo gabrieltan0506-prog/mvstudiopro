@@ -171,7 +171,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE"] }
+          generationConfig: {
+          response_modalities: ["IMAGE"],
+          temperature: 0.8
+        }
         })
       });
 
