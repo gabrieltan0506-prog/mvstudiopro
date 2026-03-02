@@ -1,6 +1,18 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
 
+
+// --- BEGIN ENV-DRIVEN IMAGE MODEL CONFIG ---
+const getImageModel = (provider: string) => {
+  if (provider === "nano-banana-flash") {
+    return process.env.VERTEX_IMAGE_MODEL_FLASH || process.env.VERTEX_IMAGE_MODEL || "gemini-3.0-flash-image-preview";
+  }
+  if (provider === "nano-banana-pro") {
+    return process.env.VERTEX_IMAGE_MODEL_PRO || process.env.VERTEX_IMAGE_MODEL || "gemini-3.0-pro-image";
+  }
+  return process.env.VERTEX_IMAGE_MODEL || "";
+};
+// --- END ENV-DRIVEN IMAGE MODEL CONFIG ---
 function json(res: VercelResponse, body: any, status = 200) {
   res.status(status);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
