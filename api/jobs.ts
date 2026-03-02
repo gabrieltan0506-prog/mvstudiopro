@@ -122,12 +122,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? getReqBody(req) : {};
 
+    const hasImage = Boolean(
+      b.image || (b.input && b.input.image) || b.imageDataUrl || (b.input && b.input.imageDataUrl) ||
+      q.image || q.imageDataUrl
+    );
+
     const typeRaw = asString(b.type || q.type);
     const taskIdRaw = asString(b.taskId || q.taskId);
     const providerRaw = asString(b.provider || (b.input && b.input.provider) || q.provider);
     const prompt = asString(b.prompt || (b.input && b.input.prompt) || q.prompt);
     const debug = asString(b.debug || q.debug) === "1";
-    const inferredType = taskIdRaw ? "video" : (isVideoProvider(providerRaw) && prompt ? "video" : (prompt ? "image" : ""));
+    const inferredType = taskIdRaw ? "video" : (isVideoProvider(providerRaw) && (hasImage || prompt) ? "video" : (prompt ? "image" : ""));
     const type = typeRaw || inferredType;
     const provider = providerRaw || (type === "video" ? "veo_3_1" : "nano-banana-flash");
     const taskId = toTaskId(taskIdRaw);
