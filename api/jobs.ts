@@ -1,6 +1,119 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
 
+import crypto from "crypto";
+
+type VertexTokenCache = { token: string; expMs: number };
+const __VERTEX_TOKEN_CACHE__ = (globalThis as any).__VERTEX_TOKEN_CACHE__ as VertexTokenCache | undefined;
+
+function getServiceAccountJson() {
+  const raw = (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+  if (!raw) throw new Error("Missing env: GOOGLE_APPLICATION_CREDENTIALS_JSON");
+  return JSON.parse(raw);
+}
+
+async function getVertexAccessToken(): Promise<string> {
+  const now = Date.now();
+  const cache = (globalThis as any).__VERTEX_TOKEN_CACHE__ as VertexTokenCache | undefined;
+  if (cache && cache.token && cache.expMs - 60_000 > now) return cache.token;
+
+  const sa = getServiceAccountJson();
+  const iss = sa.client_email;
+  const aud = "https://oauth2.googleapis.com/token";
+  const iat = Math.floor(now / 1000);
+  const exp = iat + 3600;
+
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({
+    iss,
+    scope: "https://www.googleapis.com/auth/cloud-platform",
+    aud,
+    iat,
+    exp
+  })).toString("base64url");
+
+  const unsigned = `${header}.${payload}`;
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(unsigned);
+  signer.end();
+  const key = crypto.createPrivateKey(sa.private_key);
+  const sig = signer.sign(key).toString("base64url");
+  const assertion = `${unsigned}.${sig}`;
+
+  const r = await fetch(aud, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion
+    }).toString()
+  });
+
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(`vertex_token_failed: ${r.status} ${JSON.stringify(j)}`);
+  }
+  const token = j.access_token;
+  const expMs = now + (j.expires_in ? (Number(j.expires_in) * 1000) : 3600_000);
+  (globalThis as any).__VERTEX_TOKEN_CACHE__ = { token, expMs };
+  return token;
+}
+
+function vertexBase(location: string) {
+  // global 用无 region 前缀；其他用 {loc}-aiplatform
+  if (location === "global") return "https://aiplatform.googleapis.com";
+  return `https://${location}-aiplatform.googleapis.com`;
+}
+
+function isGeminiModel(model: string) { return typeof model === 'string' && model.startsWith('gemini-'); }
+
+async function vertexGeminiGenerateImage(args: {
+  projectId: string;
+  location: string;
+  model: string;
+  prompt: string;
+}) {
+  const token = await getVertexAccessToken();
+  const base = vertexBase(args.location);
+  const url = `${base}/v1/projects/${args.projectId}/locations/${args.location}/publishers/google/models/${args.model}:generateContent`;
+
+  const body = {
+    contents: [
+      { role: "user", parts: [{ text: args.prompt }] }
+    ],
+    generationConfig: {
+      responseMimeType: "image/png"
+    }
+  };
+
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const raw = await r.json().catch(async () => ({ rawText: await r.text().catch(() => "") }));
+  if (!r.ok) {
+    return { ok: false, status: r.status, raw };
+  }
+
+  // 解析 inlineData/base64
+  const parts = raw?.candidates?.[0]?.content?.parts || [];
+  for (const p of parts) {
+    const inline = p?.inlineData || p?.inline_data;
+    const b64 = inline?.data;
+    const mt = inline?.mimeType || inline?.mime_type || "image/png";
+    if (b64) {
+      return { ok: true, imageUrl: `data:${mt};base64,${b64}`, raw };
+    }
+  }
+
+  return { ok: false, status: 200, raw, error: "no_image_in_response" };
+}
+
 
 // --- BEGIN ENV-DRIVEN IMAGE MODEL CONFIG ---
 const getImageModel = (provider: string) => {
@@ -114,7 +227,38 @@ async function vertexGenerateImage(prompt: string, provider: string) {
 
     if (!r.ok) {
       if (r.status === 404) continue;
-      return { ok: false as const, stage: "imagen", status: r.status, raw: j || text, location, model };
+      return { ok: false as const, 
+// --- GEMINI IMAGE ROUTE (avoid IMAGEN stage) ---
+if (isGeminiModel(vertexModel || "")) {
+  const projectId = (process.env.VERTEX_PROJECT_ID || "").trim() || (process.env.GCLOUD_PROJECT || "").trim();
+  const location = ((process.env.VERTEX_LOCATION || "").trim() || "global");
+  const out = await vertexGeminiGenerateImage({
+    projectId,
+    location,
+    model: vertexModel,
+    prompt: String(prompt || "")
+  });
+
+  if (!out.ok) {
+    return res.status(500).json({
+      ok: false,
+      type: "image",
+      provider,
+      error: "image_generation_failed",
+      detail: { ok: false, stage: "vertex_gemini", ...out, location, model: vertexModel }
+    });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    type: "image",
+    provider,
+    imageUrl: out.imageUrl,
+    debug: { provider, model: vertexModel, location, stage: "vertex_gemini" }
+  });
+}
+// --- END GEMINI IMAGE ROUTE ---
+stage: "imagen", status: r.status, raw: j || text, location, model };
     }
 
     const pred = j?.predictions?.[0];
