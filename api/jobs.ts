@@ -396,7 +396,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json(out);
     }
-    }
 
     return res.status(400).json({ ok: false, error: "unsupported_type", type });
   } catch (e: any) {
