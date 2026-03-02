@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getVertexAccessToken } from "./vertex";
+import { getVertexAccessToken } from "./vertex.js";
 
 /**
  * 圖片生成 endpoint，只支持 type=image
