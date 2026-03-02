@@ -1,403 +1,103 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import crypto from "crypto";
 
-import crypto from "crypto";
-
-type VertexTokenCache = { token: string; expMs: number };
-const __VERTEX_TOKEN_CACHE__ = (globalThis as any).__VERTEX_TOKEN_CACHE__ as VertexTokenCache | undefined;
-
-function getServiceAccountJson() {
-  const raw = (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  if (!raw) throw new Error("Missing env: GOOGLE_APPLICATION_CREDENTIALS_JSON");
-  return JSON.parse(raw);
-}
-
-async function getVertexAccessToken(): Promise<string> {
-  const now = Date.now();
-  const cache = (globalThis as any).__VERTEX_TOKEN_CACHE__ as VertexTokenCache | undefined;
-  if (cache && cache.token && cache.expMs - 60_000 > now) return cache.token;
-
-  const sa = getServiceAccountJson();
-  const iss = sa.client_email;
-  const aud = "https://oauth2.googleapis.com/token";
-  const iat = Math.floor(now / 1000);
-  const exp = iat + 3600;
-
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-  const payload = Buffer.from(JSON.stringify({
-    iss,
-    scope: "https://www.googleapis.com/auth/cloud-platform",
-    aud,
-    iat,
-    exp
-  })).toString("base64url");
-
-  const unsigned = `${header}.${payload}`;
-  const signer = crypto.createSign("RSA-SHA256");
-  signer.update(unsigned);
-  signer.end();
-  const key = crypto.createPrivateKey(sa.private_key);
-  const sig = signer.sign(key).toString("base64url");
-  const assertion = `${unsigned}.${sig}`;
-
-  const r = await fetch(aud, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion
-    }).toString()
-  });
-
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    throw new Error(`vertex_token_failed: ${r.status} ${JSON.stringify(j)}`);
+export default function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === "GET") {
+    return res.status(200).json({
+      status: "ok",
+      message: "jobs endpoint reachable"
+    });
   }
-  const token = j.access_token;
-  const expMs = now + (j.expires_in ? (Number(j.expires_in) * 1000) : 3600_000);
-  (globalThis as any).__VERTEX_TOKEN_CACHE__ = { token, expMs };
-  return token;
+
+  return res.status(405).json({ error: "Method not allowed" });
 }
 
-function vertexBase(location: string) {
-  // global 用无 region 前缀；其他用 {loc}-aiplatform
-  if (location === "global") return "https://aiplatform.googleapis.com";
-  return `https://${location}-aiplatform.googleapis.com`;
-}
-
-function isGeminiModel(model: string) { return typeof model === 'string' && model.startsWith('gemini-'); }
-
-async function vertexGeminiGenerateImage(args: {
-  projectId: string;
-  location: string;
-  model: string;
-  prompt: string;
-}) {
-  const token = await getVertexAccessToken();
-  const base = vertexBase(args.location);
-  const url = `${base}/v1/projects/${args.projectId}/locations/${args.location}/publishers/google/models/${args.model}:generateContent`;
-
-  const body = {
-    contents: [
-      { role: "user", parts: [{ text: args.prompt }] }
-    ],
-    generationConfig: {
-      responseMimeType: "image/png"
+// === GEMINI IMAGE GENERATION BRANCH ===
+if (req.method === "GET" && (req.query?.type === "image" || req.query?.prompt)) {
+  try {
+    const prompt = String(req.query?.prompt || req.body?.prompt || "");
+    if (!prompt) {
+      return res.status(400).json({ ok: false, error: "missing_prompt" });
     }
-  };
 
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
+    const model =
+      provider === "nano-banana-pro"
+        ? process.env.VERTEX_IMAGE_MODEL_PRO
+        : process.env.VERTEX_IMAGE_MODEL_FLASH;
 
-  const raw = await r.json().catch(async () => ({ rawText: await r.text().catch(() => "") }));
-  if (!r.ok) {
-    return { ok: false, status: r.status, raw };
-  }
+    const projectId = String(process.env.VERTEX_PROJECT_ID || "");
+    const location  = String(process.env.VERTEX_LOCATION || "");
 
-  // 解析 inlineData/base64
-  const parts = raw?.candidates?.[0]?.content?.parts || [];
-  for (const p of parts) {
-    const inline = p?.inlineData || p?.inline_data;
-    const b64 = inline?.data;
-    const mt = inline?.mimeType || inline?.mime_type || "image/png";
-    if (b64) {
-      return { ok: true, imageUrl: `data:${mt};base64,${b64}`, raw };
-    }
-  }
+    // Vertex Gemini Image generateContent
+    const token = await getVertexAccessToken();
+    const baseUrl = location === "global"
+      ? "https://aiplatform.googleapis.com"
+      : `https://${location}-aiplatform.googleapis.com`;
 
-  return { ok: false, status: 200, raw, error: "no_image_in_response" };
-}
+    const url = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
-
-// --- BEGIN ENV-DRIVEN IMAGE MODEL CONFIG ---
-const getImageModel = (provider: string) => {
-  if (provider === "nano-banana-flash") {
-    return process.env.VERTEX_IMAGE_MODEL_FLASH || process.env.VERTEX_IMAGE_MODEL || "gemini-3.0-flash-image-preview";
-  }
-  if (provider === "nano-banana-pro") {
-    return process.env.VERTEX_IMAGE_MODEL_PRO || process.env.VERTEX_IMAGE_MODEL || "gemini-3.0-pro-image";
-  }
-  return process.env.VERTEX_IMAGE_MODEL || "";
-};
-// --- END ENV-DRIVEN IMAGE MODEL CONFIG ---
-function json(res: VercelResponse, body: any, status = 200) {
-  res.status(status);
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.end(JSON.stringify(body));
-}
-
-function queryStr(value: string | string[] | undefined): string {
-  if (Array.isArray(value)) return value[0] || "";
-  return value || "";
-}
-
-function mustEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
-
-function base64url(input: Buffer | string) {
-  const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
-  return b.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-}
-
-function buildHmacJwt(ak: string, sk: string): string {
-  const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const now = Math.floor(Date.now() / 1000);
-  const payload = base64url(JSON.stringify({ iss: ak, exp: now + 1800, nbf: now - 5 }));
-  const msg = `${header}.${payload}`;
-  const sig = crypto.createHmac("sha256", sk).update(msg).digest("base64url");
-  return `${msg}.${sig}`;
-}
-
-async function getAccessTokenFromServiceAccount(scope: string) {
-  const sa = JSON.parse(mustEnv("GOOGLE_APPLICATION_CREDENTIALS_JSON"));
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "RS256", typ: "JWT" };
-  const payload = {
-    iss: sa.client_email,
-    scope,
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-  };
-  const unsigned = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
-  const sign = crypto.createSign("RSA-SHA256");
-  sign.update(unsigned);
-  sign.end();
-  const signature = sign.sign(sa.private_key);
-  const assertion = `${unsigned}.${base64url(signature)}`;
-
-  const form = new URLSearchParams();
-  form.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
-  form.set("assertion", assertion);
-
-  const r = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form.toString(),
-  });
-  const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch {}
-  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
-  return { ok: true as const, accessToken: j.access_token as string };
-}
-
-async function vertexGenerateImage(prompt: string, provider: string) {
-  const projectId = mustEnv("VERTEX_PROJECT_ID");
-  const baseLocations = (process.env.VERTEX_LOCATIONS || process.env.VERTEX_LOCATION || "").toString().trim();
-  if (!baseLocations) throw new Error("Missing env: VERTEX_LOCATION (or VERTEX_LOCATIONS)");
-  const locations = baseLocations.split(",").map((s) => s.trim()).filter(Boolean);
-  const model = (
-    getImageModel(provider) ||
-    process.env.VERTEX_IMAGE_MODEL ||
-    process.env.VERTEX_IMAGEN_FLASH_MODEL ||
-    "gemini-3.0-flash-image-preview"
-  ).toString().trim();
-
-  const tok = await getAccessTokenFromServiceAccount("https://www.googleapis.com/auth/cloud-platform");
-  if (!tok.ok) return { ok: false as const, stage: "oauth", detail: tok };
-
-  for (const location of locations) {
-    const url =
-      `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
-      `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:predict`;
+    const body = {
+      contents: [
+        { role: "user", parts: [{ text: prompt }] }
+      ],
+      generationConfig: {
+        responseMimeType: "image/png"
+      }
+    };
 
     const r = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok.accessToken}` },
-      body: JSON.stringify({
-        instances: [{ prompt }],
-        parameters: { sampleCount: 1, aspectRatio: "1:1", addWatermark: true, enhancePrompt: false },
-      }),
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
     });
 
-    const ct = r.headers.get("content-type") || "";
-    const text = await r.text();
-    let j: any = null;
-    try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
-
+    const json = await r.json().catch(() => ({}));
     if (!r.ok) {
-      if (r.status === 404) continue;
-      return { ok: false as const, 
-// --- GEMINI IMAGE ROUTE (avoid IMAGEN stage) ---
-if (isGeminiModel(vertexModel || "")) {
-  const projectId = (process.env.VERTEX_PROJECT_ID || "").trim() || (process.env.GCLOUD_PROJECT || "").trim();
-  const location = ((process.env.VERTEX_LOCATION || "").trim() || "global");
-  const out = await vertexGeminiGenerateImage({
-    projectId,
-    location,
-    model: vertexModel,
-    prompt: String(prompt || "")
-  });
-
-  if (!out.ok) {
-    return res.status(500).json({
-      ok: false,
-      type: "image",
-      provider,
-      error: "image_generation_failed",
-      detail: { ok: false, stage: "vertex_gemini", ...out, location, model: vertexModel }
-    });
-  }
-
-  return res.status(200).json({
-    ok: true,
-    type: "image",
-    provider,
-    imageUrl: out.imageUrl,
-    debug: { provider, model: vertexModel, location, stage: "vertex_gemini" }
-  });
-}
-// --- END GEMINI IMAGE ROUTE ---
-stage: "imagen", status: r.status, raw: j || text, location, model };
-    }
-
-    const pred = j?.predictions?.[0];
-    const b64 = pred?.bytesBase64Encoded;
-    const mime = pred?.mimeType || "image/png";
-    if (b64) return { ok: true as const, imageUrl: `data:${mime};base64,${b64}`, location, model };
-    return { ok: false as const, stage: "imagen", error: "no_image_in_response", raw: j, location, model };
-  }
-
-  return { ok: false as const, stage: "imagen", error: "model_not_found_in_all_regions", locations, model };
-}
-
-async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec: number) {
-  const base = mustEnv("AIMUSIC_BASE_URL");
-  const key = mustEnv("AIMUSIC_API_KEY");
-  const createPath = process.env.AIMUSIC_CREATE_PATH || "/producer/create";
-  const b = base.endsWith("/") ? base.slice(0, -1) : base;
-  const path = createPath.startsWith("/") ? createPath : `/${createPath}`;
-
-  const r = await fetch(`${b}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model, prompt, duration: durationSec }),
-  });
-
-  const ct = r.headers.get("content-type") || "";
-  const text = await r.text();
-  let j: any = null;
-  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
-  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
-  return { ok: true as const, raw: j || text };
-}
-
-async function aimusicStatus(taskId: string) {
-  const base = mustEnv("AIMUSIC_BASE_URL");
-  const key = mustEnv("AIMUSIC_API_KEY");
-  const statusPath = process.env.AIMUSIC_STATUS_PATH || "/producer/status";
-  const b = base.endsWith("/") ? base.slice(0, -1) : base;
-  const path = statusPath.startsWith("/") ? statusPath : `/${statusPath}`;
-
-  let r = await fetch(`${b}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ taskId }),
-  });
-
-  if (!r.ok) {
-    r = await fetch(`${b}${path}?taskId=${encodeURIComponent(taskId)}`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${key}` },
-    });
-  }
-
-  const ct = r.headers.get("content-type") || "";
-  const text = await r.text();
-  let j: any = null;
-  try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
-  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
-  return { ok: true as const, raw: j || text };
-}
-
-async function klingImageCreate(prompt: string) {
-  const base = process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com";
-  const ak = process.env.KLING_CN_IMAGE_ACCESS_KEY || process.env.KLING_CN_VIDEO_ACCESS_KEY || "";
-  const sk = process.env.KLING_CN_IMAGE_SECRET_KEY || process.env.KLING_CN_VIDEO_SECRET_KEY || "";
-  if (!ak || !sk) throw new Error("Missing env: KLING_CN_IMAGE_ACCESS_KEY / KLING_CN_IMAGE_SECRET_KEY");
-
-  const token = buildHmacJwt(ak, sk);
-  const r = await fetch(`${base}/v1/images/generations`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "kling-2.6", prompt, resolution: "1024x1024" }),
-  });
-  const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch { j = { raw: text }; }
-  if (!r.ok) return { ok: false as const, status: r.status, raw: j };
-  return { ok: true as const, raw: j };
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  try {
-    const body: any = req.body || {};
-    const type = (body.type || queryStr(req.query?.type as any) || "").toString().trim();
-    const provider = (body.provider || queryStr(req.query?.provider as any) || "").toString().trim();
-
-    if (type === "kling_image" || (type === "image" && provider === "kling_image")) {
-      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
-      if (!prompt) return json(res, { ok: false, error: "missing_prompt", type: "kling_image" }, 400);
-      const out = await klingImageCreate(prompt);
-      return json(res, { ok: out.ok, type: "kling_image", provider: "kling_image", ...out }, out.ok ? 200 : 502);
-    }
-
-    if (type === "image") {
-      const resolvedProvider = provider || "nano-banana-flash";
-      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
-      if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" }, 400);
-      const out = await vertexGenerateImage(prompt, resolvedProvider);
-      if (out.ok) {
-        return json(res, {
-          ok: true,
-          type: "image",
-          provider: resolvedProvider,
-          imageUrl: out.imageUrl,
-          debugPromptEcho: prompt,
-          debug: { provider: resolvedProvider, model: out.model, location: out.location || process.env.VERTEX_LOCATION || null },
-        });
-      }
-      return json(res, {
+      return res.status(500).json({
         ok: false,
         type: "image",
-        provider: resolvedProvider,
+        provider,
         error: "image_generation_failed",
-        detail: out,
-        debugPromptEcho: prompt,
-        debug: {
-          provider: resolvedProvider,
-          model: (out as any)?.model || null,
-          location: (out as any)?.location || process.env.VERTEX_LOCATION || null,
-        },
-      }, 500);
+        detail: json
+      });
     }
 
-    if (type === "audio") {
-      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
-      const audioProvider = (provider || "suno").toString();
-      const duration = Number(body.duration || queryStr(req.query?.duration as any) || 60);
-      const taskId = (body.taskId || queryStr(req.query?.taskId as any) || "").toString().trim();
-      if (taskId) {
-        const out = await aimusicStatus(taskId);
-        return json(res, { ok: true, type: "audio", provider: audioProvider, taskId, ...out });
+    const parts =
+      json?.candidates?.[0]?.content?.parts || [];
+    let base64img = null;
+    for (const p of parts) {
+      if (p?.inlineData?.data) {
+        base64img = p.inlineData.data;
+        break;
       }
-      if (!prompt) return json(res, { ok: false, type: "audio", error: "missing_prompt" }, 400);
-      const out = await aimusicCreate(audioProvider === "udio" ? "udio" : "suno", prompt, duration);
-      return json(res, { ok: true, type: "audio", provider: audioProvider, ...out });
+    }
+    if (!base64img) {
+      return res.status(500).json({
+        ok: false,
+        type: "image",
+        provider,
+        error: "no_image_in_response",
+        detail: json
+      });
     }
 
-    return json(res, { ok: false, error: "unsupported_type", type }, 400);
-  } catch (e: any) {
-    return json(res, { ok: false, error: "server_error", detail: String(e?.message || e) }, 500);
+    return res.status(200).json({
+      ok: true,
+      type: "image",
+      provider,
+      imageUrl: `data:image/png;base64,${base64img}`,
+      debug: { provider, model, location, stage: "vertex_gemini" }
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: "server_error",
+      message: e?.message || String(e),
+      stack: e?.stack || null
+    });
   }
 }
+// === END GEMINI IMAGE GENERATION BRANCH ===
+
