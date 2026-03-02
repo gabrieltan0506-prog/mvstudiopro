@@ -32,37 +32,15 @@ function readMemory(taskId: string): string | null {
   return item.videoUrl;
 }
 
-async function getKv() {
-  const hasKv =
-    Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) ||
-    Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
-  if (!hasKv) return null;
-  try {
-    return await import("@vercel/kv");
-  } catch {
-    return null;
-  }
-}
-
-async function getShortLink(taskId: string): Promise<string | null> {
-  const cleanTaskId = taskId.trim();
-  if (!cleanTaskId) return null;
-
-  const kv = await getKv();
-  if (kv) {
-    try {
-      const value = await if (typeof value === "string" && value.trim()) {
-        const store = getMemoryStore();
-        const safeTtl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS;
-        store.set(cleanTaskId, { videoUrl: value, expiresAt: Date.now() + safeTtl });
-        return value;
-      }
-    } catch {
-      // fallback to memory
-    }
-  }
-
-  return readMemory(cleanTaskId);
+// Optional helper for other handlers to save short links in the same runtime.
+export function setShortLink(taskId: string, videoUrl: string): void {
+  const id = taskId.trim();
+  const url = videoUrl.trim();
+  if (!id || !url) return;
+  const safeTtl = Number.isFinite(ttlMs) && ttlMs > 0 ? ttlMs : DEFAULT_TTL_MS;
+  const store = getMemoryStore();
+  pruneExpired(store);
+  store.set(id, { videoUrl: url, expiresAt: Date.now() + safeTtl });
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -72,11 +50,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(404).json({ ok: false, error: "not found" });
   }
 
-  const videoUrl = await getShortLink(taskId);
+  const videoUrl = readMemory(taskId);
   if (!videoUrl) {
     return res.status(404).json({ ok: false, error: "not found" });
   }
 
   res.status(302).setHeader("Location", videoUrl).end();
 }
-

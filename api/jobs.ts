@@ -7,6 +7,11 @@ function json(res: VercelResponse, body: any, status = 200) {
   res.end(JSON.stringify(body));
 }
 
+function queryStr(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] || "";
+  return value || "";
+}
+
 function mustEnv(name: string) {
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
@@ -16,6 +21,15 @@ function mustEnv(name: string) {
 function base64url(input: Buffer | string) {
   const b = Buffer.isBuffer(input) ? input : Buffer.from(input);
   return b.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function buildHmacJwt(ak: string, sk: string): string {
+  const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const now = Math.floor(Date.now() / 1000);
+  const payload = base64url(JSON.stringify({ iss: ak, exp: now + 1800, nbf: now - 5 }));
+  const msg = `${header}.${payload}`;
+  const sig = crypto.createHmac("sha256", sk).update(msg).digest("base64url");
+  return `${msg}.${sig}`;
 }
 
 async function getAccessTokenFromServiceAccount(scope: string) {
@@ -48,41 +62,34 @@ async function getAccessTokenFromServiceAccount(scope: string) {
   const text = await r.text();
   let j: any = null;
   try { j = JSON.parse(text); } catch {}
-  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
-  return { /* ok: true, */ accessToken: j.access_token as string };
+  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
+  return { ok: true as const, accessToken: j.access_token as string };
 }
 
 async function vertexGenerateImage(prompt: string, tier: "flash" | "pro") {
   const projectId = mustEnv("VERTEX_PROJECT_ID");
   const baseLocations = (process.env.VERTEX_LOCATIONS || process.env.VERTEX_LOCATION || "").toString().trim();
   if (!baseLocations) throw new Error("Missing env: VERTEX_LOCATION (or VERTEX_LOCATIONS)");
-  const locations = baseLocations.split(",").map(s => s.trim()).filter(Boolean);
+  const locations = baseLocations.split(",").map((s) => s.trim()).filter(Boolean);
   const flashModel = (process.env.VERTEX_IMAGEN_FLASH_MODEL || "imagen-3.0-fast-generate-001").toString().trim();
   const proModel = (process.env.VERTEX_IMAGEN_PRO_MODEL || "imagen-4.0-generate-001").toString().trim();
   const model = tier === "pro" ? proModel : flashModel;
 
   const tok = await getAccessTokenFromServiceAccount("https://www.googleapis.com/auth/cloud-platform");
-  if (!tok.ok) return { ok: false, stage: "oauth", detail: tok };
+  if (!tok.ok) return { ok: false as const, stage: "oauth", detail: tok };
 
   for (const location of locations) {
     const url =
       `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}` +
       `/locations/${encodeURIComponent(location)}/publishers/google/models/${encodeURIComponent(model)}:predict`;
 
-    const body = {
-      instances: [{ prompt }],
-      parameters: {
-        sampleCount: 1,
-        aspectRatio: "1:1",
-        addWatermark: true,
-        enhancePrompt: false,
-      },
-    };
-
     const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok.accessToken}` },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        instances: [{ prompt }],
+        parameters: { sampleCount: 1, aspectRatio: "1:1", addWatermark: true, enhancePrompt: false },
+      }),
     });
 
     const ct = r.headers.get("content-type") || "";
@@ -91,22 +98,18 @@ async function vertexGenerateImage(prompt: string, tier: "flash" | "pro") {
     try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
 
     if (!r.ok) {
-      // 404 继续尝试下一个 region；其它错误直接返回
       if (r.status === 404) continue;
-      return { ok: false, stage: "imagen", status: r.status, raw: j || text, location, model };
+      return { ok: false as const, stage: "imagen", status: r.status, raw: j || text, location, model };
     }
 
     const pred = j?.predictions?.[0];
     const b64 = pred?.bytesBase64Encoded;
     const mime = pred?.mimeType || "image/png";
-    if (b64) {
-      return { /* ok: true, */ imageUrl: `data:${mime};base64,${b64}`, location, model };
-    }
-
-    return { /* ok: false, */ stage: "imagen", error: "no_image_in_response", raw: j, location, model };
+    if (b64) return { ok: true as const, imageUrl: `data:${mime};base64,${b64}`, location, model };
+    return { ok: false as const, stage: "imagen", error: "no_image_in_response", raw: j, location, model };
   }
 
-  return { /* ok: false, */ stage: "imagen", error: "model_not_found_in_all_regions", locations, model };
+  return { ok: false as const, stage: "imagen", error: "model_not_found_in_all_regions", locations, model };
 }
 
 async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec: number) {
@@ -114,9 +117,9 @@ async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec
   const key = mustEnv("AIMUSIC_API_KEY");
   const createPath = process.env.AIMUSIC_CREATE_PATH || "/producer/create";
   const b = base.endsWith("/") ? base.slice(0, -1) : base;
-  const url = `${b}${createPath.startsWith("/") ? createPath : `/${createPath}`}`;
+  const path = createPath.startsWith("/") ? createPath : `/${createPath}`;
 
-  const r = await fetch(url, {
+  const r = await fetch(`${b}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({ model, prompt, duration: durationSec }),
@@ -126,8 +129,8 @@ async function aimusicCreate(model: "suno" | "udio", prompt: string, durationSec
   const text = await r.text();
   let j: any = null;
   try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
-  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
-  return { /* ok: true, */ raw: j || text };
+  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
+  return { ok: true as const, raw: j || text };
 }
 
 async function aimusicStatus(taskId: string) {
@@ -154,79 +157,60 @@ async function aimusicStatus(taskId: string) {
   const text = await r.text();
   let j: any = null;
   try { j = ct.includes("application/json") ? JSON.parse(text) : null; } catch {}
-  if (!r.ok) return { ok: false, status: r.status, raw: j || text };
-  return { /* ok: true, */ raw: j || text };
+  if (!r.ok) return { ok: false as const, status: r.status, raw: j || text };
+  return { ok: true as const, raw: j || text };
 }
 
+async function klingImageCreate(prompt: string) {
+  const base = process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com";
+  const ak = process.env.KLING_CN_IMAGE_ACCESS_KEY || process.env.KLING_CN_VIDEO_ACCESS_KEY || "";
+  const sk = process.env.KLING_CN_IMAGE_SECRET_KEY || process.env.KLING_CN_VIDEO_SECRET_KEY || "";
+  if (!ak || !sk) throw new Error("Missing env: KLING_CN_IMAGE_ACCESS_KEY / KLING_CN_IMAGE_SECRET_KEY");
 
-async function handleKlingImage(req: VercelRequest, res: VercelResponse) {
-  const prompt = req.query.prompt || req.body?.prompt
-  if (!prompt) return res.status(400).json({ /* ok:false, */ error:"missing_prompt" })
-
-  const BASE = process.env.KLING_CN_BASE_URL || "https://api-beijing.klingai.com"
-  const AK = process.env.KLING_CN_IMAGE_ACCESS_KEY
-  const SK = process.env.KLING_CN_IMAGE_SECRET_KEY
-  if (!AK || !SK) return res.status(500).json({ /* ok:false, */ error:"missing_kling_env" })
-
-  const jwt = require("jsonwebtoken")
-  const token = jwt.sign(
-    { iss: AK, exp: Math.floor(Date.now()/1000)+1800 },
-    SK,
-    { algorithm:"HS256" }
-  )
-
-  const r = await fetch(BASE + "/v1/images/generations", {
-    method:"POST",
-    headers:{
-      "Authorization":"Bearer "+token,
-      "Content-Type":"application/json"
-    },
-    body: JSON.stringify({
-      model:"kling-2.6",
-      prompt,
-      resolution:"1024x1024"
-    })
-  })
-
-  const j = await r.json()
-  return res.status(200).json(j)
+  const token = buildHmacJwt(ak, sk);
+  const r = await fetch(`${base}/v1/images/generations`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "kling-2.6", prompt, resolution: "1024x1024" }),
+  });
+  const text = await r.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch { j = { raw: text }; }
+  if (!r.ok) return { ok: false as const, status: r.status, raw: j };
+  return { ok: true as const, raw: j };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const body: any = req.body || {};
-    
-  const type = req.query.type || req.body?.type
+    const type = (body.type || queryStr(req.query?.type as any) || "").toString().trim();
+    const provider = (body.provider || queryStr(req.query?.provider as any) || "").toString().trim();
 
-  if (type === "kling_image") {
-    return handleKlingImage(req, res)
-  }
-
- (body.type || req.query?.type || "").toString();
-    const provider = (body.provider || req.query?.provider || "").toString().trim();
+    if (type === "kling_image" || (type === "image" && provider === "kling_image")) {
+      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
+      if (!prompt) return json(res, { ok: false, error: "missing_prompt", type: "kling_image" }, 400);
+      const out = await klingImageCreate(prompt);
+      return json(res, { ok: out.ok, type: "kling_image", provider: "kling_image", ...out }, out.ok ? 200 : 502);
+    }
 
     if (type === "image") {
       const resolvedProvider = provider || "nano-banana-flash";
-      const prompt = (body.prompt || req.query?.prompt || "").toString().trim();
+      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
       if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" }, 400);
       const tier: "flash" | "pro" = resolvedProvider === "nano-banana-pro" ? "pro" : "flash";
       const out = await vertexGenerateImage(prompt, tier);
       if (out.ok) {
         return json(res, {
-          /* ok: true, */
+          ok: true,
           type: "image",
           provider: resolvedProvider,
           imageUrl: out.imageUrl,
           debugPromptEcho: prompt,
-          debug: {
-            provider: resolvedProvider,
-            model: out.model,
-            location: out.location || process.env.VERTEX_LOCATION || null,
-          },
+          debug: { provider: resolvedProvider, model: out.model, location: out.location || process.env.VERTEX_LOCATION || null },
         });
       }
       return json(res, {
-        /* ok: false, */
+        ok: false,
         type: "image",
         provider: resolvedProvider,
         error: "image_generation_failed",
@@ -241,20 +225,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (type === "audio") {
-      const prompt = (body.prompt || req.query?.prompt || "").toString().trim();
-      const provider = (body.provider || req.query?.provider || "suno").toString();
-      const duration = Number(body.duration || req.query?.duration || 60);
-      const taskId = (body.taskId || req.query?.taskId || "").toString().trim();
+      const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
+      const audioProvider = (provider || "suno").toString();
+      const duration = Number(body.duration || queryStr(req.query?.duration as any) || 60);
+      const taskId = (body.taskId || queryStr(req.query?.taskId as any) || "").toString().trim();
       if (taskId) {
         const out = await aimusicStatus(taskId);
-        return json(res, { ok: true, type: "audio", provider, taskId, ...out });
+        return json(res, { ok: true, type: "audio", provider: audioProvider, taskId, ...out });
       }
-      if (!prompt) return json(res, { /* ok: false, */ type: "audio", error: "missing_prompt" }, 400);
-      const out = await aimusicCreate(provider === "udio" ? "udio" : "suno", prompt, duration);
-      return json(res, { /* ok: true, */ type: "audio", provider, ...out });
+      if (!prompt) return json(res, { ok: false, type: "audio", error: "missing_prompt" }, 400);
+      const out = await aimusicCreate(audioProvider === "udio" ? "udio" : "suno", prompt, duration);
+      return json(res, { ok: true, type: "audio", provider: audioProvider, ...out });
     }
 
-    return json(res, { /* /* ok: false, */ */ error: "unsupported_type", type }, 400);
+    return json(res, { ok: false, error: "unsupported_type", type }, 400);
   } catch (e: any) {
     return json(res, { ok: false, error: "server_error", detail: String(e?.message || e) }, 500);
   }
