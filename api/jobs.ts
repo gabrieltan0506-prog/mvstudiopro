@@ -78,14 +78,17 @@ async function getAccessTokenFromServiceAccount(scope: string) {
   return { ok: true as const, accessToken: j.access_token as string };
 }
 
-async function vertexGenerateImage(prompt: string, tier: "flash" | "pro") {
+async function vertexGenerateImage(prompt: string, provider: string) {
   const projectId = mustEnv("VERTEX_PROJECT_ID");
   const baseLocations = (process.env.VERTEX_LOCATIONS || process.env.VERTEX_LOCATION || "").toString().trim();
   if (!baseLocations) throw new Error("Missing env: VERTEX_LOCATION (or VERTEX_LOCATIONS)");
   const locations = baseLocations.split(",").map((s) => s.trim()).filter(Boolean);
-  const flashModel = (process.env.VERTEX_IMAGEN_FLASH_MODEL || "imagen-3.0-fast-generate-001").toString().trim();
-  const proModel = (process.env.VERTEX_IMAGEN_PRO_MODEL || "imagen-4.0-generate-001").toString().trim();
-  const model = tier === "pro" ? proModel : flashModel;
+  const model = (
+    getImageModel(provider) ||
+    process.env.VERTEX_IMAGE_MODEL ||
+    process.env.VERTEX_IMAGEN_FLASH_MODEL ||
+    "gemini-3.0-flash-image-preview"
+  ).toString().trim();
 
   const tok = await getAccessTokenFromServiceAccount("https://www.googleapis.com/auth/cloud-platform");
   if (!tok.ok) return { ok: false as const, stage: "oauth", detail: tok };
@@ -209,8 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const resolvedProvider = provider || "nano-banana-flash";
       const prompt = (body.prompt || queryStr(req.query?.prompt as any) || "").toString().trim();
       if (!prompt) return json(res, { ok: false, type: "image", error: "missing_prompt" }, 400);
-      const tier: "flash" | "pro" = resolvedProvider === "nano-banana-pro" ? "pro" : "flash";
-      const out = await vertexGenerateImage(prompt, tier);
+      const out = await vertexGenerateImage(prompt, resolvedProvider);
       if (out.ok) {
         return json(res, {
           ok: true,
