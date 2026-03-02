@@ -18,7 +18,7 @@ export default function TestLab() {
   const [klingRoute, setKlingRoute] = useState<"auto" | "beijing" | "singapore">("auto");
   const [klingModelName, setKlingModelName] = useState("kling-v2-1");
 
-  const [videoProvider, setVideoProvider] = useState<"kling_beijing">("kling_beijing");
+  const [videoProvider, setVideoProvider] = useState<"veo_3_1" | "veo_3_1_fast">("veo_3_1");
   const [audioProvider, setAudioProvider] = useState<"suno" | "udio">("udio");
   const [duration, setDuration] = useState(60);
 
@@ -98,9 +98,11 @@ export default function TestLab() {
       }
 
       if (mode === "video") {
-        const body = { type: "video", provider: videoProvider, prompt, duration: 8, aspect_ratio: "16:9" };
-        const r = await jfetch(`/api/jobs?provider=${encodeURIComponent(videoProvider)}&prompt=${encodeURIComponent(prompt)}`, {
-          method: "GET",
+        const body = { type: "video", provider: videoProvider, prompt, aspect_ratio: "16:9", resolution: "720p" };
+        const r = await jfetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
         });
         setRaw(r.json ?? r.text);
         if (!r.ok || !r.json?.ok || !r.json?.taskId) {
@@ -113,13 +115,16 @@ export default function TestLab() {
         // 轮询（最多 60 次）
         for (let i = 0; i < 60; i++) {
           await new Promise(res => setTimeout(res, 3000));
-          const st = await jfetch(`/api/jobs?provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
+          const st = await jfetch(`/api/jobs?type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
           if (st.json) setRaw(st.json);
-          const vids = st.json?.raw?.data?.[0]?.task_result?.videos || st.json?.raw?.data?.task_result?.videos;
-          const url = vids?.[0]?.url;
+          const url = st.json?.videoUrl || "";
           if (url) {
             setVideoUrl(url);
             setStatus("完成");
+            return;
+          }
+          if (st.json?.status === "failed") {
+            setStatus("失败（生成失败）");
             return;
           }
         }
@@ -226,7 +231,8 @@ export default function TestLab() {
                 value={videoProvider}
                 onChange={(e)=>setVideoProvider(e.target.value as any)}
               >
-                <option value="kling_beijing">可灵（北京）</option>
+                <option value="veo_3_1">Veo 3.1 Standard</option>
+                <option value="veo_3_1_fast">Veo 3.1 Fast</option>
               </select>
             </div>
           )}
