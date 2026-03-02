@@ -33,11 +33,13 @@ function isVideoProvider(provider: string): boolean {
   return p.includes("veo") || p === "video";
 }
 
-function toVideoModel(provider: string, quality: string): "veo-3.1-fast-generate-preview" | "veo-3.1-generate-preview" {
+function toVideoModel(provider: string, quality: string): string {
   const p = provider.trim().toLowerCase();
   const q = quality.trim().toLowerCase();
-  if (p.includes("fast") || q === "fast") return "veo-3.1-fast-generate-preview";
-  return "veo-3.1-generate-preview";
+  const proModel = asString(process.env.VERTEX_VEO_MODEL_PRO).trim() || "veo-3.1-generate-preview";
+  const rapidModel = asString(process.env.VERTEX_VEO_MODEL_RAPID).trim() || "veo-3.1-fast-generate-preview";
+  if (p.includes("fast") || q === "fast") return rapidModel;
+  return proModel;
 }
 
 function normalizeOperationName(taskId: string): string {
