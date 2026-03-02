@@ -115,7 +115,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "image/png" }
+        generationConfig: { responseModalities: ["IMAGE"] }
       })
     });
 
