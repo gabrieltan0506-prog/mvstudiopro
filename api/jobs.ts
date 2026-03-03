@@ -22,6 +22,92 @@ function getBody(req: VercelRequest): any {
   return b;
 }
 
+function normalizeVideoProvider(provider: string): "rapid" | "pro" {
+  const p = provider.trim().toLowerCase();
+  if (p.includes("fast") || p.includes("rapid")) return "rapid";
+  return "pro";
+}
+
+function extractVideoUrl(raw: any): string {
+  const candidates = [
+    raw?.response?.generatedVideos?.[0]?.video?.uri,
+    raw?.response?.generatedVideos?.[0]?.video?.url,
+    raw?.response?.videos?.[0]?.uri,
+    raw?.response?.videos?.[0]?.url,
+    raw?.generatedVideos?.[0]?.video?.uri,
+    raw?.generatedVideos?.[0]?.video?.url,
+    raw?.videoUrl,
+    raw?.url,
+  ];
+  for (const item of candidates) {
+    const v = asString(item).trim();
+    if (v) return v;
+  }
+  return "";
+}
+
+function readPngSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 24) return null;
+  const pngSig = "89504e470d0a1a0a";
+  if (buf.subarray(0, 8).toString("hex") !== pngSig) return null;
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  if (!width || !height) return null;
+  return { width, height };
+}
+
+function readJpegSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) {
+      i += 1;
+      continue;
+    }
+    const marker = buf[i + 1];
+    const len = buf.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > buf.length) break;
+    const isSof =
+      marker === 0xc0 ||
+      marker === 0xc1 ||
+      marker === 0xc2 ||
+      marker === 0xc3 ||
+      marker === 0xc5 ||
+      marker === 0xc6 ||
+      marker === 0xc7 ||
+      marker === 0xc9 ||
+      marker === 0xca ||
+      marker === 0xcb ||
+      marker === 0xcd ||
+      marker === 0xce ||
+      marker === 0xcf;
+    if (isSof) {
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      if (!width || !height) return null;
+      return { width, height };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+function getImageSizeFromBase64(base64Data: string): { width: number; height: number } | null {
+  try {
+    const buf = Buffer.from(base64Data, "base64");
+    return readPngSize(buf) || readJpegSize(buf);
+  } catch {
+    return null;
+  }
+}
+
+async function parseUpstream(resp: Response): Promise<{ raw: any; rawText: string; bodyEmpty: boolean }> {
+  const text = await resp.text();
+  const rawText = text.slice(0, 4000);
+  const raw = safeJsonParse(text);
+  return { raw, rawText, bodyEmpty: text.length === 0 };
+}
+
 async function getVertexAccessToken(): Promise<string> {
   const raw = asString(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim();
   if (!raw) throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON");
@@ -58,8 +144,31 @@ async function getVertexAccessToken(): Promise<string> {
   });
 
   const json: any = await tokenRes.json().catch(() => ({}));
-  if (!tokenRes.ok || !json?.access_token) throw new Error("Vertex token failed");
+  if (!tokenRes.ok || !json?.access_token) throw new Error(`Vertex token failed: ${JSON.stringify(json)}`);
   return json.access_token;
+}
+
+async function thirdPartyRapidFallback(input: {
+  prompt: string;
+  imageUrl: string;
+  aspectRatio: string;
+  resolution: string;
+}): Promise<{ ok: boolean; data?: any; error?: any }> {
+  const endpoint = asString(process.env.THIRDPARTY_VIDEO_FALLBACK_URL).trim();
+  if (!endpoint) return { ok: false, error: "fallback_not_configured" };
+
+  try {
+    const r = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const { raw, rawText } = await parseUpstream(r);
+    if (!r.ok) return { ok: false, error: { status: r.status, raw, rawText } };
+    return { ok: true, data: raw ?? { rawText } };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -87,15 +196,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
 
       const imageProvider = provider || "nano-banana-flash";
-      const aspectRatio = asString(b.aspectRatio || q.aspectRatio || "16:9");
-      const model =
-        imageProvider === "nano-banana-pro"
-          ? "gemini-3-pro-image-preview"
-          : "gemini-3.1-flash-image-preview";
+      const requestedSize = asString(b.imageSize || q.imageSize || "1K").toUpperCase();
+      const requestedAspectRatio = asString(b.aspectRatio || q.aspectRatio || "16:9");
 
-      const location = asString(process.env.VERTEX_IMAGE_LOCATION || "global");
+      const allowedSizes = new Set(["1K", "2K", "4K"]);
+      const allowedRatios = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]);
+      const isPro = imageProvider === "nano-banana-pro";
+
+      if (!allowedSizes.has(requestedSize)) {
+        return res.status(400).json({ ok: false, error: "invalid_image_size", detail: requestedSize });
+      }
+      if (!allowedRatios.has(requestedAspectRatio)) {
+        return res.status(400).json({ ok: false, error: "invalid_aspect_ratio", detail: requestedAspectRatio });
+      }
+
+      // Paid policy: free only 1K + 16:9
+      if (!isPro && (requestedSize !== "1K" || requestedAspectRatio !== "16:9")) {
+        return res.status(403).json({
+          ok: false,
+          error: "paid_required",
+          detail: "2K/4K and custom aspect ratio are available for Pro only",
+        });
+      }
+
+      const model = isPro
+        ? asString(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
+        : asString(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-2.5-flash-image");
+
+      // Pro image should run on global by default; flash can be configured independently.
+      const location = isPro
+        ? asString(process.env.VERTEX_IMAGE_LOCATION_PRO || "global")
+        : asString(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION || "global");
       const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
-      const url = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+      // Use v1beta1 for image generation controls (imageConfig.imageSize/aspectRatio)
+      // to avoid silent downgrades to default 1K on incompatible endpoint versions.
+      const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+      const imageConfig: Record<string, any> = {
+        aspectRatio: isPro ? requestedAspectRatio : "16:9",
+      };
+      if (isPro) {
+        // Important: imageSize must be in generationConfig.imageConfig
+        imageConfig.imageSize = requestedSize;
+      }
 
       const upstream = await fetch(url, {
         method: "POST",
@@ -107,23 +250,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
             responseModalities: ["IMAGE"],
-            imageConfig: {
-              aspectRatio: imageProvider === "nano-banana-pro" ? aspectRatio : "16:9",
-            },
+            imageConfig,
           },
         }),
       });
 
-      const json: any = await upstream.json().catch(() => ({}));
+      const { raw, rawText, bodyEmpty } = await parseUpstream(upstream);
       if (!upstream.ok) {
         return res.status(500).json({
           ok: false,
           error: "image_generation_failed",
-          detail: { status: upstream.status, raw: json, model, location },
+          detail: {
+            status: upstream.status,
+            model,
+            location,
+            endpoint: url,
+            bodyEmpty,
+            raw: raw ?? undefined,
+            rawText,
+          },
         });
       }
 
-      const parts = json?.candidates?.[0]?.content?.parts || [];
+      const parts = raw?.candidates?.[0]?.content?.parts || [];
       let base64img: string | null = null;
       for (const p of parts) {
         if (p?.inlineData?.data) {
@@ -136,7 +285,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({
           ok: false,
           error: "no_image_in_response",
-          detail: { model, location },
+          detail: { model, location, raw: raw ?? undefined, rawText },
+        });
+      }
+
+      const actual = getImageSizeFromBase64(base64img);
+      const maxEdge = actual ? Math.max(actual.width, actual.height) : 0;
+      const sizeMismatch =
+        isPro &&
+        ((requestedSize === "2K" && maxEdge > 0 && maxEdge < 1900) ||
+          (requestedSize === "4K" && maxEdge > 0 && maxEdge < 3800));
+
+      if (sizeMismatch) {
+        return res.status(500).json({
+          ok: false,
+          error: "image_size_not_honored",
+          detail: {
+            requestedSize,
+            actualSize: actual,
+            model,
+            location,
+            requestImageConfig: imageConfig,
+          },
         });
       }
 
@@ -145,85 +315,202 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         provider: imageProvider,
         model,
         location,
+        imageSize: isPro ? requestedSize : "1K",
+        aspectRatio: isPro ? requestedAspectRatio : "16:9",
+        requestImageConfig: imageConfig,
+        actualSize: actual,
         imageUrl: `data:image/png;base64,${base64img}`,
       });
     }
 
     if (type === "video") {
-      const isRapid = provider === "veo-3.1-fast-generate-001" || provider === "veo_3_1_fast";
-      const model = isRapid
-        ? asString(process.env.VERTEX_VEO_MODEL_RAPID).trim()
-        : asString(process.env.VERTEX_VEO_MODEL_PRO).trim();
+      const mode = normalizeVideoProvider(provider);
+      const model =
+        mode === "rapid"
+          ? asString(process.env.VERTEX_VEO_MODEL_RAPID || "veo-3.1-fast-generate-001")
+          : asString(process.env.VERTEX_VEO_MODEL_PRO || "veo-3.1-generate-001");
 
-      if (!model) {
-        return res.status(500).json({
-          ok: false,
-          error: "missing_env",
-          detail: isRapid ? "Missing VERTEX_VEO_MODEL_RAPID" : "Missing VERTEX_VEO_MODEL_PRO",
-        });
-      }
+      const location =
+        mode === "rapid"
+          ? asString(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
+          : asString(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
 
-      const location = isRapid ? asString(process.env.VERTEX_VIDEO_LOCATION || "us-central1") : "global";
       const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 
       if (taskId) {
-        const statusTaskId = taskId.replace(/^operations\//, "");
-        const url = `${baseUrl}/v1/operations/${statusTaskId}`;
-        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        const j: any = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          return res.status(500).json({ ok: false, error: "video_status_failed", location, model, detail: j });
-        }
-        return res.status(200).json({ ok: true, taskId: statusTaskId, location, model, raw: j });
+        const operationName = taskId.startsWith("projects/")
+          ? taskId
+          : taskId.startsWith("operations/")
+            ? `projects/${projectId}/locations/${location}/${taskId}`
+            : `projects/${projectId}/locations/${location}/operations/${taskId}`;
+
+        const statusUrl = `${baseUrl}/v1/${operationName}`;
+        const statusResp = await fetch(statusUrl, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+      const { raw, rawText, bodyEmpty } = await parseUpstream(statusResp);
+      if (!statusResp.ok) {
+        return res.status(500).json({
+          ok: false,
+          error: "video_status_failed",
+          location,
+          model,
+          detail: {
+            status: statusResp.status,
+            endpoint: statusUrl,
+            bodyEmpty,
+            raw: raw ?? undefined,
+            rawText,
+          },
+        });
       }
 
-      const image = asString(b.imageDataUrl || b.image || q.imageDataUrl || q.image);
-      if (!image) {
-        return res.status(400).json({ ok: false, error: "missing_image" });
+        const videoUrl = extractVideoUrl(raw);
+        const done = Boolean(raw?.done);
+        const failed = done && !!raw?.error;
+        const status = failed ? "failed" : done ? "succeeded" : "running";
+
+        return res.status(200).json({
+          ok: true,
+          taskId: operationName,
+          location,
+          model,
+          status,
+          videoUrl: videoUrl || undefined,
+          raw,
+        });
       }
 
-      const imgMatch = image.match(/^data:(.+);base64,(.+)$/);
-      if (!imgMatch) {
-        return res.status(400).json({ ok: false, error: "invalid_image" });
+      const imageUrl = asString(b.imageUrl || q.imageUrl);
+      if (!imageUrl) {
+        return res.status(400).json({ ok: false, error: "missing_image_url" });
       }
-      const imageB64 = imgMatch[2];
 
-      const url = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateVideos`;
-      const r = await fetch(url, {
+      const imgResp = await fetch(imageUrl);
+      if (!imgResp.ok) {
+        return res.status(400).json({
+          ok: false,
+          error: "invalid_image_url",
+          detail: { status: imgResp.status, imageUrl },
+        });
+      }
+
+      const mimeType = asString(imgResp.headers.get("content-type") || "image/png") || "image/png";
+      const imageBuffer = Buffer.from(await imgResp.arrayBuffer());
+      if (imageBuffer.length === 0) {
+        return res.status(400).json({ ok: false, error: "empty_image" });
+      }
+      if (imageBuffer.length > 8 * 1024 * 1024) {
+        return res.status(400).json({ ok: false, error: "image_too_large", detail: "Image must be <= 8MB" });
+      }
+
+      const imageB64 = imageBuffer.toString("base64");
+      const aspectRatio = asString(b.aspect_ratio || b.aspectRatio || q.aspect_ratio || q.aspectRatio || "16:9");
+      const resolution = asString(b.resolution || q.resolution || "720p");
+      const durationSeconds = Number(b.durationSeconds || b.duration || q.durationSeconds || q.duration || 8) || 8;
+      const upscale = Boolean(b.upscale || q.upscale);
+
+      const createUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
+      const createPayload = {
+        instances: [
+          {
+            prompt,
+            image: {
+              bytesBase64Encoded: imageB64,
+              mimeType,
+            },
+          },
+        ],
+        parameters: {
+          aspectRatio,
+          resolution,
+          durationSeconds,
+          generateAudio: false,
+          upscale,
+        },
+      };
+
+      const createResp = await fetch(createUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt,
-          image: { imageBytes: imageB64, mimeType: "image/png" },
-          config: {
-            durationSeconds: 8,
-            generateAudio: false,
-            aspectRatio: asString(b.aspect_ratio || b.aspectRatio || q.aspect_ratio || q.aspectRatio || "16:9"),
-            resolution: asString(b.resolution || q.resolution || "720p"),
-          },
-        }),
+        body: JSON.stringify(createPayload),
       });
 
-      const j: any = await r.json().catch(() => ({}));
-      if (!r.ok) {
+      const { raw, rawText, bodyEmpty } = await parseUpstream(createResp);
+      if (!createResp.ok) {
+        if (mode === "rapid") {
+          const fallback = await thirdPartyRapidFallback({ prompt, imageUrl, aspectRatio, resolution });
+          if (fallback.ok) {
+            return res.status(200).json({
+              ok: true,
+              provider: "third_party_fallback",
+              location,
+              model,
+              status: "submitted",
+              fallback: true,
+              raw: fallback.data,
+            });
+          }
+
+          return res.status(500).json({
+            ok: false,
+            error: "video_create_failed",
+            location,
+            model,
+            detail: {
+              status: createResp.status,
+              endpoint: createUrl,
+              bodyEmpty,
+              request: {
+                aspectRatio,
+                resolution,
+                durationSeconds,
+                upscale,
+              },
+              raw: raw ?? undefined,
+              rawText,
+            },
+            fallbackError: fallback.error,
+            hint: "Rapid failed. You can retry with Pro(global).",
+          });
+        }
+
         return res.status(500).json({
           ok: false,
           error: "video_create_failed",
           location,
           model,
-          detail: j,
+          detail: {
+            status: createResp.status,
+            endpoint: createUrl,
+            bodyEmpty,
+            request: {
+              aspectRatio,
+              resolution,
+              durationSeconds,
+              upscale,
+            },
+            raw: raw ?? undefined,
+            rawText,
+          },
         });
       }
 
-      const operation = asString(j?.name).replace(/^operations\//, "");
+      const operationName = asString(raw?.name);
+      const operationId = operationName.split("/").pop() || "";
+
       return res.status(200).json({
         ok: true,
-        taskId: operation,
+        taskId: operationName || operationId,
+        operationId,
         location,
         model,
+        status: "running",
       });
     }
 
