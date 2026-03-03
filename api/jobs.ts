@@ -33,14 +33,6 @@ function isVideoProvider(provider: string): boolean {
   return p.includes("veo") || p === "video";
 }
 
-function toVideoModel(provider: string, quality: string): string {
-  const p = provider.trim().toLowerCase();
-  const q = quality.trim().toLowerCase();
-  const proModel = asString(process.env.VERTEX_VEO_MODEL_PRO).trim() || "veo-3.1-generate-preview";
-  const rapidModel = asString(process.env.VERTEX_VEO_MODEL_RAPID).trim() || "veo-3.1-fast-generate-preview";
-  if (p.includes("fast") || q === "fast") return rapidModel;
-  return proModel;
-}
 
 function normalizeOperationName(taskId: string): string {
   const id = taskId.trim();
@@ -145,10 +137,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ ok: false, error: "missing_prompt" });
       }
 
-      const model =
-        provider === "nano-banana-pro"
-          ? asString(process.env.VERTEX_IMAGE_MODEL_PRO)
-          : asString(process.env.VERTEX_IMAGE_MODEL_FLASH);
+      const imageSizeRaw = pickFirst(b.imageSize, b.image_size, q.imageSize, q.image_size).toUpperCase();
+      const imageSize = (imageSizeRaw === "2K" || imageSizeRaw === "4K" ? imageSizeRaw : "1K");
+      const model = "gemini-3-pro-image-preview";
 
       if (!model) {
         return res.status(500).json({ ok: false, error: "missing_env", detail: "Missing VERTEX_IMAGE_MODEL_FLASH/PRO" });
@@ -175,8 +166,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          imageSize,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE"] }
+          generationConfig: { responseModalities: ["IMAGE"], imageConfig: { imageSize } }
         })
       });
 
@@ -330,7 +322,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // model select: pro vs rapid (no "standard" wording)
       const quality = pickFirst(b.quality, q.quality).toLowerCase();
       const p = provider.toLowerCase();
-      const isRapid = p.includes("fast") || p.includes("rapid") || quality === "rapid" || quality === "fast";
+      const isFastModel = p === "veo-3.1-fast-generate-001";
+      const model = isFastModel ? "veo-3.1-fast-generate-001" : "veo-3.1-generate-001";
       const model = (isRapid ? rapidModel : proModel) || proModel || rapidModel;
 
       const aspectRatio = pickFirst(b.aspect_ratio, b.aspectRatio, q.aspect_ratio, q.aspectRatio) || "16:9";
@@ -344,11 +337,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const createBody: any = {
         prompt: promptVideo,
-        image: {
-          imageBytes: imageB64,
-          mimeType
-        },
-        config: {
+        referenceImage: { bytesBase64Encoded: imageB64.replace(/^data:image\/\w+;base64,/, "") },
+        config: { numberOfVideos: 1, durationSeconds: 8, generateAudio: false,
           numberOfVideos: 1,
           aspectRatio,
           resolution

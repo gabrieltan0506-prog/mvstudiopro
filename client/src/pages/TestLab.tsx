@@ -1,334 +1,180 @@
 import { useEffect, useMemo, useState } from "react";
 
-type AnyObj = Record<string, any>;
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("file_read_failed"));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
 
 async function jfetch(url: string, init?: RequestInit) {
   const r = await fetch(url, init);
   const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch {}
-  return { ok: r.ok, status: r.status, json: j, text };
+  try { return { ok: r.ok, status: r.status, json: JSON.parse(text) }; }
+  catch { return { ok: r.ok, status: r.status, json: null, text }; }
 }
 
 export default function TestLab() {
-  function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("file_read_failed"));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsDataURL(file);
-    });
-  }
+  const [mode, setMode] = useState<"image" | "video">("image");
+  const [prompt, setPrompt] = useState("");
 
-  const [me, setMe] = useState<AnyObj | null>(null);
-  const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
-  const [mode, setMode] = useState<"image" | "video" | "audio">("image");
-  const [imageProvider, setImageProvider] = useState<"nano-banana-flash" | "nano-banana-pro" | "kling_image">("nano-banana-flash");
-  const [klingRoute, setKlingRoute] = useState<"auto" | "beijing" | "singapore">("auto");
-  const [klingModelName, setKlingModelName] = useState("kling-v2-1");
+  const [imageProvider] = useState("gemini-3-pro-image-preview");
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
 
-  const [videoProvider, setVideoProvider] = useState<"veo_3_1" | "veo_3_1_fast">("veo_3_1");
-  const [audioProvider, setAudioProvider] = useState<"suno" | "udio">("udio");
-  const [duration, setDuration] = useState(60);
+  const [videoProvider, setVideoProvider] = useState<"veo-3.1-generate-001" | "veo-3.1-fast-generate-001">("veo-3.1-generate-001");
+  const [videoAspectRatio, setVideoAspectRatio] = useState<"16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "21:9">("16:9");
+  const [videoResolution, setVideoResolution] = useState<"720p" | "1080p">("720p");
+  const [videoImageDataUrl, setVideoImageDataUrl] = useState("");
+  const [videoImageName, setVideoImageName] = useState("");
 
-  const [status, setStatus] = useState<string>("");
+  const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const [imageUrl, setImageUrl] = useState<string>("");
-  const [videoUrl, setVideoUrl] = useState<string>("");
-  const [audioUrl, setAudioUrl] = useState<string>("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [rawJson, setRawJson] = useState<any>(null);
 
-  const [raw, setRaw] = useState<any>(null);
-
-  const title = useMemo(() => {
-    if (mode === "image") return "生图测试";
-    if (mode === "video") return "视频测试";
-    return "音乐测试";
-  }, [mode]);
-
-  async function loadMe() {
-    const r = await jfetch("/api/me");
-    if (r.ok && r.json?.ok) setMe(r.json);
-    else setMe(null);
-  }
-
-  useEffect(() => { loadMe(); }, []);
+  const title = useMemo(() => (mode === "image" ? "图像生成" : "视频生成"), [mode]);
 
   async function run() {
     setBusy(true);
-    setStatus("生成中…");
-    setRaw(null);
+    setStatus("生成中...");
+    setRawJson(null);
     setImageUrl("");
     setVideoUrl("");
-    setAudioUrl("");
+
     try {
+      const body: any = { type: mode, prompt };
+
       if (mode === "image") {
-        const body = { type: "image", provider: imageProvider, prompt } as any;
-        if (imageProvider === "kling_image") {
-          const kr = await jfetch("/api/kling/image", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt, model_name: klingModelName, route: klingRoute, n: 1 }),
-          });
-          setRaw(kr.json ?? kr.text);
-          if (!kr.ok || !kr.json?.ok || !kr.json?.taskId) {
-            setStatus(`失败（${kr.status}）`);
-            return;
-          }
-          const taskId = kr.json.taskId as string;
-          setStatus("可灵生图生成中…（轮询）");
-          for (let i = 0; i < 60; i++) {
-            await new Promise((res) => setTimeout(res, 2000));
-            const st = await jfetch(`/api/kling/image-status?taskId=${encodeURIComponent(taskId)}&route=${encodeURIComponent(klingRoute)}`);
-            if (st.json) setRaw(st.json);
-            const url = st.json?.imageUrl;
-            if (url) {
-              setImageUrl(url);
-              setStatus("完成");
-              return;
-            }
-          }
-          setStatus("超时：未拿到图片地址");
-          return;
-        }
-        const r = await jfetch("/api/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        setRaw(r.json ?? r.text);
-        if (!r.ok || !r.json?.ok || !r.json?.imageUrl) {
-          setStatus(`失败（${r.status}）`);
-          return;
-        }
-        setImageUrl(r.json.imageUrl);
-        setStatus("完成");
-        return;
+        body.provider = imageProvider;
+        body.imageSize = imageSize;
       }
 
       if (mode === "video") {
-        const body = { type: "video", provider: videoProvider, prompt, aspect_ratio: "16:9", resolution: "720p" };
-        const r = await jfetch("/api/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        setRaw(r.json ?? r.text);
-        if (!r.ok || !r.json?.ok || !r.json?.taskId) {
-          setStatus(`失败（${r.status}）`);
+        if (!videoImageDataUrl) {
+          setStatus("失败（请先上传参考图）");
           return;
         }
-        const taskId = r.json.taskId as string;
-        setStatus("视频生成中…（轮询）");
-
-        // 轮询（最多 60 次）
-        for (let i = 0; i < 60; i++) {
-          await new Promise(res => setTimeout(res, 3000));
-          const st = await jfetch(`/api/jobs?type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
-          if (st.json) setRaw(st.json);
-          const url = st.json?.videoUrl || "";
-          if (url) {
-            setVideoUrl(url);
-            setStatus("完成");
-            return;
-          }
-          if (st.json?.status === "failed") {
-            setStatus("失败（生成失败）");
-            return;
-          }
-        }
-        setStatus("超时：未拿到视频地址");
-        return;
+        body.provider = videoProvider;
+        body.imageDataUrl = videoImageDataUrl;
+        body.aspect_ratio = videoAspectRatio;
+        body.resolution = videoResolution;
+        body.duration = 8;
+        body.generateAudio = false;
       }
 
-      // audio
-      {
-        const body = { type: "audio", provider: audioProvider, prompt, duration };
-        const r = await jfetch("/api/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        setRaw(r.json ?? r.text);
-        if (!r.ok || !r.json?.ok) {
-          setStatus(`失败（${r.status}）`);
-          return;
-        }
-        // 尽量从返回里找可播放链接（不同供应商字段可能不同）
-        const raw = r.json?.raw;
-        const url =
-          raw?.data?.audio_url ||
-          raw?.data?.streamUrl ||
-          raw?.data?.url ||
-          raw?.audio_url ||
-          raw?.streamUrl ||
-          raw?.url ||
-          "";
-        if (url) {
-          setAudioUrl(url);
-          setStatus("完成");
-        } else {
-          setStatus("已提交（未返回音频链接，需接入 status 轮询时再补）");
-        }
-        return;
-      }
+      const r = await jfetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setRawJson(r.json);
+
+      if (mode === "image" && r.json?.imageUrl) setImageUrl(r.json.imageUrl);
+      if (mode === "video" && r.json?.taskId) setStatus("已提交，轮询中...");
     } finally {
       setBusy(false);
     }
   }
 
+  useEffect(() => {
+    if (!rawJson?.taskId) return;
+    const tid = rawJson.taskId;
+    const interval = setInterval(async () => {
+      const r = await jfetch(`/api/jobs?type=video&taskId=${encodeURIComponent(tid)}&provider=${encodeURIComponent(videoProvider)}`);
+      setRawJson(r.json);
+      if (r.json?.videoUrl) {
+        setVideoUrl(r.json.videoUrl);
+        setStatus("完成");
+        clearInterval(interval);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [rawJson, videoProvider]);
+
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="max-w-5xl mx-auto p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xl font-semibold">{title}</div>
-          <div className="text-sm text-white/70">
-            {me?.ok ? `已登录：${me.user?.email || me.user?.id || "dev_admin"}` : "未登录（如需权限请先登录）"}
-          </div>
-        </div>
+    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
+      <h2>{title}</h2>
 
-        <div className="rounded-xl border border-white/10 p-4 space-y-3 bg-white/5">
-          <div className="flex flex-wrap gap-2">
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="image"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("image")}>图像</button>
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="video"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("video")}>视频</button>
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="audio"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("audio")}>音乐</button>
-          </div>
-
-          
-          {mode === "image" && imageProvider === "kling_image" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">线路</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={klingRoute}
-                onChange={(e) => setKlingRoute(e.target.value as any)}
-              >
-                <option value="auto">自动优选（新加坡/北京）</option>
-                <option value="singapore">新加坡</option>
-                <option value="beijing">北京</option>
-              </select>
-
-              <span className="text-white/70 ml-2">模型</span>
-              <input
-                className="bg-black border border-white/10 rounded-lg px-3 py-2 w-56"
-                value={klingModelName}
-                onChange={(e) => setKlingModelName(e.target.value)}
-                placeholder="kling-v2-1"
-              />
-              <span className="text-white/50">示例：kling-v2-1</span>
-            </div>
-          )}
-
-          {mode === "image" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">引擎</span>
-              <select className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={imageProvider}
-                onChange={(e)=>setImageProvider(e.target.value as any)}
-              >
-                <option value="nano-banana-flash">Nano Banana Flash（免费/默认）</option>
-                <option value="nano-banana-pro">Nano Banana Pro（付费）</option>
-                <option value="kling_image">Kling Image（可灵文生图）</option>
-              </select>
-            </div>
-          )}
-
-          {mode === "video" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">引擎</span>
-              <select className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={videoProvider}
-                onChange={(e)=>setVideoProvider(e.target.value as any)}
-              >
-                <option value="veo_3_1">Veo 3.1 Standard</option>
-                <option value="veo_3_1_fast">Veo 3.1 Fast</option>
-              </select>
-            </div>
-          )}
-
-          {mode === "audio" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">引擎</span>
-              <select className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={audioProvider}
-                onChange={(e)=>setAudioProvider(e.target.value as any)}
-              >
-                <option value="udio">Udio</option>
-                <option value="suno">Suno</option>
-              </select>
-              <span className="text-white/70 ml-2">时长（秒）</span>
-              <input
-                className="w-24 bg-black border border-white/10 rounded-lg px-3 py-2"
-                type="number"
-                value={duration}
-                onChange={(e)=>setDuration(Number(e.target.value||60))}
-                min={10}
-                max={240}
-              />
-            </div>
-          )}
-
-          <textarea
-            className="w-full min-h-[120px] bg-black border border-white/10 rounded-lg px-3 py-2"
-            value={prompt}
-            onChange={(e)=>setPrompt(e.target.value)}
-            placeholder="输入提示词…"
-          />
-
-          <div className="flex items-center gap-3">
-            <button
-              className="px-4 py-2 rounded-lg bg-white text-black font-semibold disabled:opacity-50"
-              disabled={busy || !prompt.trim()}
-              onClick={run}
-            >
-              {busy ? "生成中…" : "开始生成"}
-            </button>
-            <button
-              className="px-4 py-2 rounded-lg border border-white/10 text-white/80"
-              onClick={loadMe}
-              disabled={busy}
-            >
-              刷新登录态
-            </button>
-            <div className="text-sm text-white/70">{status}</div>
-          </div>
-        </div>
-
-        {/* 结果区：直接展示，不再只给 JSON */}
-        {imageUrl && (
-          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-            <div className="text-sm text-white/70 mb-2">图片结果</div>
-            <img src={imageUrl} className="max-w-full rounded-lg border border-white/10" />
-          </div>
-        )}
-
-        {videoUrl && (
-          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-            <div className="text-sm text-white/70 mb-2">视频结果</div>
-            <video src={videoUrl} controls className="max-w-full rounded-lg border border-white/10" />
-          </div>
-        )}
-
-        {audioUrl && (
-          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-            <div className="text-sm text-white/70 mb-2">音频结果</div>
-            <audio src={audioUrl} controls className="w-full" />
-          </div>
-        )}
-
-        {/* 调试区（可折叠，默认显示，避免你看不到返回） */}
-        <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-          {raw?.debug ? (
-            <div className="mb-3 rounded-lg border border-emerald-500/40 bg-black/60 p-3 text-xs text-emerald-300">
-              <div>Provider: {String(raw.debug.provider ?? "-")}</div>
-              <div>Model: {String(raw.debug.model ?? "-")}</div>
-              <div>Location: {String(raw.debug.location ?? "-")}</div>
-            </div>
-          ) : null}
-          <div className="text-sm text-white/70 mb-2">返回数据（调试）</div>
-          <pre className="whitespace-pre-wrap text-xs text-white/80">{raw ? JSON.stringify(raw, null, 2) : "（暂无）"}</pre>
-        </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button onClick={() => setMode("image")}>图像</button>
+        <button onClick={() => setMode("video")}>视频</button>
       </div>
+
+      {mode === "image" && (
+        <div>
+          <label>尺寸:
+            <select value={imageSize} onChange={e => setImageSize(e.target.value as any)}>
+              <option value="1K">1K</option>
+              <option value="2K">2K</option>
+              <option value="4K">4K</option>
+            </select>
+          </label>
+        </div>
+      )}
+
+      {mode === "video" && (
+        <div>
+          <label>模型:
+            <select value={videoProvider} onChange={e => setVideoProvider(e.target.value as any)}>
+              <option value="veo-3.1-generate-001">Veo 3.1 Pro</option>
+              <option value="veo-3.1-fast-generate-001">Veo 3.1 Rapid</option>
+            </select>
+          </label>
+
+          <label>分辨率:
+            <select value={videoResolution} onChange={e => setVideoResolution(e.target.value as any)}>
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+            </select>
+          </label>
+
+          <label>比例:
+            <select value={videoAspectRatio} onChange={e => setVideoAspectRatio(e.target.value as any)}>
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="1:1">1:1</option>
+              <option value="4:3">4:3</option>
+              <option value="3:4">3:4</option>
+              <option value="21:9">21:9</option>
+            </select>
+          </label>
+
+          <div>
+            <label>
+              上传参考图:
+              <input type="file" accept="image/*" onChange={async e => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const d = await fileToDataUrl(f);
+                setVideoImageDataUrl(d);
+                setVideoImageName(f.name);
+              }} />
+            </label>
+            {videoImageName && <span>{videoImageName}</span>}
+          </div>
+        </div>
+      )}
+
+      <textarea
+        rows={4}
+        value={prompt}
+        onChange={e => setPrompt(e.target.value)}
+        placeholder="输入提示词…"
+      />
+
+      <button disabled={busy} onClick={run}>
+        {busy ? "生成中…" : "开始生成"}
+      </button>
+
+      <div>{status}</div>
+      {imageUrl && <div><img src={imageUrl} style={{ maxWidth: "100%" }} /></div>}
+      {videoUrl && <div><video src={videoUrl} controls style={{ maxWidth: "100%" }} /></div>}
+
+      <pre style={{ fontSize: 12, marginTop: 12 }}>{JSON.stringify(rawJson, null, 2)}</pre>
     </div>
   );
 }
