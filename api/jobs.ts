@@ -168,7 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (taskId) {
         const statusTaskId = taskId.replace(/^operations\//, "");
-        const url = `${baseUrl}/v1/${j?.name || `operations/${statusTaskId}`}`;
+        const url = `${baseUrl}/v1/operations/${statusTaskId}`;
         const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const j: any = await r.json().catch(() => ({}));
         if (!r.ok) {
