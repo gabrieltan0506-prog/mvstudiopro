@@ -71,6 +71,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(200).json({ ok: true, url: blob.url, pathname: blob.pathname, contentType: parsed.mimeType });
   } catch (e: any) {
-    return res.status(500).json({ ok: false, error: "upload_failed", message: e?.message || String(e) });
+    return res.status(500).json({
+      ok: false,
+      error: "upload_failed",
+      message: e?.message || String(e),
+      detail: {
+        hasBlobToken: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+      },
+    });
   }
 }

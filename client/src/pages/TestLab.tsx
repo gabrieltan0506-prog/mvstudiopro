@@ -85,7 +85,8 @@ async function uploadToBlob(file: File): Promise<string> {
   });
 
   if (!r.ok || !r.json?.ok || !r.json?.url) {
-    throw new Error(r.json?.error || `upload_failed_${r.status}`);
+    const reason = [r.json?.error, r.json?.message].filter(Boolean).join(": ");
+    throw new Error(reason || `upload_failed_${r.status}`);
   }
 
   return String(r.json.url);
