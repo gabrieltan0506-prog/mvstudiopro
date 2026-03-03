@@ -150,7 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ ok: false, error: "missing_env", detail: "Missing VERTEX_PROJECT_ID" });
       }
 
-      const location = asString(process.env.VERTEX_LOCATION || "global");
+      const location = asString(process.env.VERTEX_IMAGE_LOCATION || "global");
       const baseUrl =
         location === "global"
           ? "https://aiplatform.googleapis.com"
@@ -217,11 +217,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Accept both GET (status) and POST (create)
 
       const projectId = asString(process.env.VERTEX_PROJECT_ID).trim();
-      if (!projectId) {
-        return res.status(500).json({ ok: false, type: "video", provider, error: "missing_env", detail: "Missing VERTEX_PROJECT_ID" });
-      }
-
-      const location = asString(process.env.VERTEX_LOCATION || "global").trim() || "global";
+const location = asString(process.env.VERTEX_VIDEO_LOCATION || "us-central1");
       const baseUrl =
         location === "global"
           ? "https://aiplatform.googleapis.com"
