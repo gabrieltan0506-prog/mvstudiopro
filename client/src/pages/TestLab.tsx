@@ -43,6 +43,7 @@ export default function TestLab() {
 
   // VIDEO (I2V only)
   const [videoProvider, setVideoProvider] = useState<"veo-3.1-generate-001" | "veo-3.1-fast-generate-001">("veo-3.1-generate-001");
+  const [enableUpscale, setEnableUpscale] = useState(false);
   const [videoResolution, setVideoResolution] = useState<"720p" | "1080p">("720p");
   const [videoAspectRatio, setVideoAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
   const [videoImageDataUrl, setVideoImageDataUrl] = useState("");
@@ -122,6 +123,7 @@ export default function TestLab() {
           resolution: videoResolution,
           duration: 8,
           generateAudio: false,
+          upscale: enableUpscale,
         };
 
         const r = await jfetch("/api/jobs", {
@@ -278,6 +280,15 @@ export default function TestLab() {
                   清除参考图
                 </button>
               ) : null}
+
+              <label className="ml-2 inline-flex items-center gap-2 text-white/80">
+                <input
+                  type="checkbox"
+                  checked={enableUpscale}
+                  onChange={(e)=>setEnableUpscale(e.target.checked)}
+                />
+                高画质增强（额外积分）
+              </label>
             </div>
           )}
 

@@ -208,6 +208,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageUrl: `data:image/png;base64,${base64img}`
       };
       if (debug) out.debug = { location, model };
+      
+
       return res.status(200).json(out);
     }
     if (type === "video") {
@@ -392,6 +394,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         raw: json
       };
       if (debug) out.debug = { location, model, proModel, rapidModel };
+
+      
+
+      // ====== VIDEO UPSCALE ======
+      if (b.upscale === true && json?.response?.generatedVideos?.[0]?.video?.uri) {
+        const originalUrl = json.response.generatedVideos[0].video.uri;
+        const upscaleUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:upscaleVideo`;
+
+        const upRes = await fetch(upscaleUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            video: { uri: originalUrl },
+            config: { targetResolution: "1080p" }
+          })
+        });
+
+        const upJson = await upRes.json().catch(() => ({}));
+
+        if (upRes.ok && upJson?.response?.video?.uri) {
+          return res.status(200).json({
+            ok: true,
+            type: "video",
+            provider,
+            videoUrl: upJson.response.video.uri,
+            upscale: true
+          });
+        }
+      }
+      // ====== END UPSCALE ======
 
       return res.status(200).json(out);
     }
