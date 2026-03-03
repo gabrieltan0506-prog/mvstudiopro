@@ -166,7 +166,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          imageSize,
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { responseModalities: ["IMAGE"], imageConfig: { imageSize } }
         })
@@ -337,14 +336,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const createBody: any = {
         prompt: promptVideo,
-        referenceImage: { bytesBase64Encoded: imageB64 },
+        image: {
+          imageBytes: imageB64,
+          mimeType,
+        },
         config: {
           numberOfVideos: 1,
+          aspectRatio,
+          resolution,
           durationSeconds: 8,
           generateAudio: false,
-          aspectRatio,
-          resolution
-        }
+        },
       };
       if (negativePrompt) createBody.config.negativePrompt = negativePrompt;
 

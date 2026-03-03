@@ -1,5 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 
+type AnyObj = Record<string, any>;
+
+const UI_VERSION = "20260303-1";
+
+async function jfetch(url: string, init?: RequestInit) {
+  const r = await fetch(url, init);
+  const text = await r.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch {}
+  return { ok: r.ok, status: r.status, json: j, text };
+}
+
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -9,172 +21,320 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-async function jfetch(url: string, init?: RequestInit) {
-  const r = await fetch(url, init);
-  const text = await r.text();
-  try { return { ok: r.ok, status: r.status, json: JSON.parse(text) }; }
-  catch { return { ok: r.ok, status: r.status, json: null, text }; }
-}
+const ASPECTS = [
+  { v: "16:9", label: "16:9（横屏标准）" },
+  { v: "9:16", label: "9:16（竖屏短视频）" },
+  { v: "1:1", label: "1:1（方形）" },
+  { v: "4:3", label: "4:3（传统横屏）" },
+  { v: "3:4", label: "3:4（传统竖屏）" },
+  { v: "21:9", label: "21:9（电影宽屏）" },
+] as const;
 
 export default function TestLab() {
-  const [mode, setMode] = useState<"image" | "video">("image");
-  const [prompt, setPrompt] = useState("");
+  const [me, setMe] = useState<AnyObj | null>(null);
 
-  const [imageProvider] = useState("gemini-3-pro-image-preview");
+  const [mode, setMode] = useState<"image" | "video" | "audio">("image");
+  const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
+
+  // IMAGE
+  const [imageProvider, setImageProvider] = useState<"nano-banana-flash" | "nano-banana-pro">("nano-banana-flash");
   const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
+  const [imageAspectRatio, setImageAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
 
+  // VIDEO (I2V only)
   const [videoProvider, setVideoProvider] = useState<"veo-3.1-generate-001" | "veo-3.1-fast-generate-001">("veo-3.1-generate-001");
-  const [videoAspectRatio, setVideoAspectRatio] = useState<"16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "21:9">("16:9");
   const [videoResolution, setVideoResolution] = useState<"720p" | "1080p">("720p");
+  const [videoAspectRatio, setVideoAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
   const [videoImageDataUrl, setVideoImageDataUrl] = useState("");
   const [videoImageName, setVideoImageName] = useState("");
 
-  const [status, setStatus] = useState("");
+  // RESULTS
   const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+  const [raw, setRaw] = useState<any>(null);
+  const [imageUrl, setImageUrl] = useState<string>("");
+  const [videoUrl, setVideoUrl] = useState<string>("");
 
-  const [imageUrl, setImageUrl] = useState("");
-  const [videoUrl, setVideoUrl] = useState("");
-  const [rawJson, setRawJson] = useState<any>(null);
+  const title = useMemo(() => {
+    if (mode === "image") return "图像生成";
+    if (mode === "video") return "视频生成（图生视频 / 8秒 / 无音频）";
+    return "音乐（暂未启用）";
+  }, [mode]);
 
-  const title = useMemo(() => (mode === "image" ? "图像生成" : "视频生成"), [mode]);
+  async function loadMe() {
+    const r = await jfetch("/api/me");
+    if (r.ok && r.json?.ok) setMe(r.json);
+    else setMe(null);
+  }
+
+  useEffect(() => { loadMe(); }, []);
 
   async function run() {
     setBusy(true);
-    setStatus("生成中...");
-    setRawJson(null);
+    setStatus("生成中…");
+    setRaw(null);
     setImageUrl("");
     setVideoUrl("");
 
     try {
-      const body: any = { type: mode, prompt };
-
       if (mode === "image") {
-        body.provider = imageProvider;
-        body.imageSize = imageSize;
+        const isPro = imageProvider === "nano-banana-pro";
+        const body: any = {
+          type: "image",
+          provider: imageProvider,
+          prompt,
+        };
+        // UI: show 1K/2K/4K always, only pro actually sends size+aspect
+        if (isPro) {
+          body.imageSize = imageSize;
+          body.aspectRatio = imageAspectRatio;
+        }
+
+        const r = await jfetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        setRaw(r.json ?? r.text);
+        if (!r.ok || !r.json?.ok || !r.json?.imageUrl) {
+          setStatus(`失败（${r.status}）`);
+          return;
+        }
+        setImageUrl(r.json.imageUrl);
+        setStatus("完成");
+        return;
       }
 
       if (mode === "video") {
         if (!videoImageDataUrl) {
+          setRaw({ ok: false, type: "video", provider: videoProvider, error: "missing_image", detail: "Please upload a reference image (image-to-video only)" });
           setStatus("失败（请先上传参考图）");
           return;
         }
-        body.provider = videoProvider;
-        body.imageDataUrl = videoImageDataUrl;
-        body.aspect_ratio = videoAspectRatio;
-        body.resolution = videoResolution;
-        body.duration = 8;
-        body.generateAudio = false;
+
+        const body: any = {
+          type: "video",
+          provider: videoProvider,
+          prompt,
+          imageDataUrl: videoImageDataUrl,
+          aspect_ratio: videoAspectRatio,
+          resolution: videoResolution,
+          duration: 8,
+          generateAudio: false,
+        };
+
+        const r = await jfetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        setRaw(r.json ?? r.text);
+        if (!r.ok || !r.json?.ok || !r.json?.taskId) {
+          setStatus(`失败（${r.status}）`);
+          return;
+        }
+
+        const taskId = String(r.json.taskId);
+        setStatus("已提交（轮询中…）");
+
+        for (let i = 0; i < 80; i++) {
+          await new Promise((res) => setTimeout(res, 3000));
+          const st = await jfetch(`/api/jobs?type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
+          setRaw(st.json ?? st.text);
+          const url = st.json?.videoUrl;
+          if (url) {
+            setVideoUrl(url);
+            setStatus("完成");
+            return;
+          }
+          if (st.json?.status === "failed") {
+            setStatus("失败（生成失败）");
+            return;
+          }
+        }
+        setStatus("超时：未拿到视频地址");
+        return;
       }
 
-      const r = await jfetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      setRawJson(r.json);
-
-      if (mode === "image" && r.json?.imageUrl) setImageUrl(r.json.imageUrl);
-      if (mode === "video" && r.json?.taskId) setStatus("已提交，轮询中...");
+      setStatus("音乐暂未启用");
     } finally {
       setBusy(false);
     }
   }
 
-  useEffect(() => {
-    if (!rawJson?.taskId) return;
-    const tid = rawJson.taskId;
-    const interval = setInterval(async () => {
-      const r = await jfetch(`/api/jobs?type=video&taskId=${encodeURIComponent(tid)}&provider=${encodeURIComponent(videoProvider)}`);
-      setRawJson(r.json);
-      if (r.json?.videoUrl) {
-        setVideoUrl(r.json.videoUrl);
-        setStatus("完成");
-        clearInterval(interval);
-      }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [rawJson, videoProvider]);
-
   return (
-    <div style={{ padding: 24, fontFamily: "sans-serif" }}>
-      <h2>{title}</h2>
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setMode("image")}>图像</button>
-        <button onClick={() => setMode("video")}>视频</button>
-      </div>
-
-      {mode === "image" && (
-        <div>
-          <label>尺寸:
-            <select value={imageSize} onChange={e => setImageSize(e.target.value as any)}>
-              <option value="1K">1K</option>
-              <option value="2K">2K</option>
-              <option value="4K">4K</option>
-            </select>
-          </label>
-        </div>
-      )}
-
-      {mode === "video" && (
-        <div>
-          <label>模型:
-            <select value={videoProvider} onChange={e => setVideoProvider(e.target.value as any)}>
-              <option value="veo-3.1-generate-001">Veo 3.1 Pro</option>
-              <option value="veo-3.1-fast-generate-001">Veo 3.1 Rapid</option>
-            </select>
-          </label>
-
-          <label>分辨率:
-            <select value={videoResolution} onChange={e => setVideoResolution(e.target.value as any)}>
-              <option value="720p">720p</option>
-              <option value="1080p">1080p</option>
-            </select>
-          </label>
-
-          <label>比例:
-            <select value={videoAspectRatio} onChange={e => setVideoAspectRatio(e.target.value as any)}>
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-              <option value="1:1">1:1</option>
-              <option value="4:3">4:3</option>
-              <option value="3:4">3:4</option>
-              <option value="21:9">21:9</option>
-            </select>
-          </label>
-
-          <div>
-            <label>
-              上传参考图:
-              <input type="file" accept="image/*" onChange={async e => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const d = await fileToDataUrl(f);
-                setVideoImageDataUrl(d);
-                setVideoImageName(f.name);
-              }} />
-            </label>
-            {videoImageName && <span>{videoImageName}</span>}
+    <div className="min-h-screen bg-black text-white">
+      <div className="max-w-5xl mx-auto p-6 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-xl font-semibold">{title}</div>
+          <div className="text-xs text-white/60">
+            UI: {UI_VERSION} · {me?.ok ? `已登录：${me.user?.email || me.user?.id || "dev_admin"}` : "未登录"}
           </div>
         </div>
-      )}
 
-      <textarea
-        rows={4}
-        value={prompt}
-        onChange={e => setPrompt(e.target.value)}
-        placeholder="输入提示词…"
-      />
+        <div className="rounded-xl border border-white/10 p-4 space-y-3 bg-white/5">
+          <div className="flex flex-wrap gap-2">
+            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="image"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("image")}>图像</button>
+            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="video"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("video")}>视频</button>
+            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="audio"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("audio")}>音乐</button>
+          </div>
 
-      <button disabled={busy} onClick={run}>
-        {busy ? "生成中…" : "开始生成"}
-      </button>
+          {mode === "image" && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-white/70">引擎</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={imageProvider}
+                onChange={(e)=>setImageProvider(e.target.value as any)}
+              >
+                <option value="nano-banana-flash">Nano Banana Flash（免费）</option>
+                <option value="nano-banana-pro">Nano Banana Pro（付费）</option>
+              </select>
 
-      <div>{status}</div>
-      {imageUrl && <div><img src={imageUrl} style={{ maxWidth: "100%" }} /></div>}
-      {videoUrl && <div><video src={videoUrl} controls style={{ maxWidth: "100%" }} /></div>}
+              <span className="text-white/70 ml-2">尺寸</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={imageSize}
+                onChange={(e)=>setImageSize(e.target.value as any)}
+                disabled={imageProvider !== "nano-banana-pro"}
+                title={imageProvider !== "nano-banana-pro" ? "付费版可用" : ""}
+              >
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
 
-      <pre style={{ fontSize: 12, marginTop: 12 }}>{JSON.stringify(rawJson, null, 2)}</pre>
+              <span className="text-white/70 ml-2">比例</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={imageAspectRatio}
+                onChange={(e)=>setImageAspectRatio(e.target.value as any)}
+                disabled={imageProvider !== "nano-banana-pro"}
+                title={imageProvider !== "nano-banana-pro" ? "付费版可用" : ""}
+              >
+                {ASPECTS.map(a => <option key={a.v} value={a.v}>{a.label}</option>)}
+              </select>
+            </div>
+          )}
+
+          {mode === "video" && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-white/70">模型</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={videoProvider}
+                onChange={(e)=>setVideoProvider(e.target.value as any)}
+              >
+                <option value="veo-3.1-generate-001">Veo 3.1 Pro</option>
+                <option value="veo-3.1-fast-generate-001">Veo 3.1 Rapid</option>
+              </select>
+
+              <span className="text-white/70 ml-2">分辨率</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={videoResolution}
+                onChange={(e)=>setVideoResolution(e.target.value as any)}
+              >
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+              </select>
+
+              <span className="text-white/70 ml-2">比例</span>
+              <select
+                className="bg-black border border-white/10 rounded-lg px-3 py-2"
+                value={videoAspectRatio}
+                onChange={(e)=>setVideoAspectRatio(e.target.value as any)}
+              >
+                {ASPECTS.map(a => <option key={a.v} value={a.v}>{a.label}</option>)}
+              </select>
+
+              <label className="ml-2 px-3 py-2 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10">
+                上传参考图
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const dataUrl = await fileToDataUrl(file);
+                    setVideoImageDataUrl(dataUrl);
+                    setVideoImageName(file.name);
+                  }}
+                />
+              </label>
+
+              {videoImageName ? (
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-lg border border-white/10 text-white/80"
+                  onClick={() => {
+                    setVideoImageDataUrl("");
+                    setVideoImageName("");
+                  }}
+                >
+                  清除参考图
+                </button>
+              ) : null}
+            </div>
+          )}
+
+          {mode === "video" && (
+            <div className="text-xs text-white/70">
+              <div>{videoImageName ? `已选择：${videoImageName}` : "请先上传参考图（图生视频）。"}</div>
+              {videoImageDataUrl ? (
+                <img src={videoImageDataUrl} alt="reference" className="mt-2 max-h-44 rounded-lg border border-white/10" />
+              ) : null}
+            </div>
+          )}
+
+          <textarea
+            className="w-full min-h-[120px] bg-black border border-white/10 rounded-lg px-3 py-2"
+            value={prompt}
+            onChange={(e)=>setPrompt(e.target.value)}
+            placeholder="输入提示词…"
+          />
+
+          <div className="flex items-center gap-3">
+            <button
+              className="px-4 py-2 rounded-lg bg-white text-black font-semibold disabled:opacity-50"
+              disabled={busy || (mode === "video" ? !videoImageDataUrl : !prompt.trim())}
+              onClick={run}
+            >
+              {busy ? "生成中…" : "开始生成"}
+            </button>
+            <button
+              className="px-4 py-2 rounded-lg border border-white/10 text-white/80"
+              onClick={loadMe}
+              disabled={busy}
+            >
+              刷新登录态
+            </button>
+            <div className="text-sm text-white/70">{status}</div>
+          </div>
+        </div>
+
+        {imageUrl && (
+          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
+            <div className="text-sm text-white/70 mb-2">图片结果</div>
+            <img src={imageUrl} className="max-w-full rounded-lg border border-white/10" />
+          </div>
+        )}
+
+        {videoUrl && (
+          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
+            <div className="text-sm text-white/70 mb-2">视频结果</div>
+            <video src={videoUrl} controls className="max-w-full rounded-lg border border-white/10" />
+          </div>
+        )}
+
+        <div className="rounded-xl border border-white/10 p-4 bg-white/5">
+          <div className="text-sm text-white/70 mb-2">返回数据（调试）</div>
+          <pre className="whitespace-pre-wrap text-xs text-white/80">{raw ? JSON.stringify(raw, null, 2) : "（暂无）"}</pre>
+        </div>
+      </div>
     </div>
   );
 }
