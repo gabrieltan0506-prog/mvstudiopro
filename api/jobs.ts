@@ -168,7 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (taskId) {
         const statusTaskId = taskId.replace(/^operations\//, "");
-        const url = `${baseUrl}/v1/operations/${statusTaskId}`;
+        const url = `${baseUrl}/v1/${j?.name || `operations/${statusTaskId}`}`;
         const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const j: any = await r.json().catch(() => ({}));
         if (!r.ok) {
@@ -197,7 +197,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
         body: JSON.stringify({
           prompt,
-          referenceImage: { bytesBase64Encoded: imageB64 },
+          image: { imageBytes: imageB64, mimeType: "image/png" },
           config: {
             durationSeconds: 8,
             generateAudio: false,
