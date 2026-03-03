@@ -320,11 +320,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // model select: pro vs rapid (no "standard" wording)
-      const quality = pickFirst(b.quality, q.quality).toLowerCase();
-      const p = provider.toLowerCase();
-      const isFastModel = p === "veo-3.1-fast-generate-001";
-      const model = isFastModel ? "veo-3.1-fast-generate-001" : "veo-3.1-generate-001";
-      const model = (isRapid ? rapidModel : proModel) || proModel || rapidModel;
+      const pLower = provider.toLowerCase();
+      const isFastModel = pLower === "veo-3.1-fast-generate-001";
+      const model = isFastModel
+        ? (rapidModel || "veo-3.1-fast-generate-001")
+        : (proModel || "veo-3.1-generate-001");
 
       const aspectRatio = pickFirst(b.aspect_ratio, b.aspectRatio, q.aspect_ratio, q.aspectRatio) || "16:9";
       const resolution = pickFirst(b.resolution, q.resolution) || "720p";
@@ -337,9 +337,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const createBody: any = {
         prompt: promptVideo,
-        referenceImage: { bytesBase64Encoded: imageB64.replace(/^data:image\/\w+;base64,/, "") },
-        config: { numberOfVideos: 1, durationSeconds: 8, generateAudio: false,
+        referenceImage: { bytesBase64Encoded: imageB64 },
+        config: {
           numberOfVideos: 1,
+          durationSeconds: 8,
+          generateAudio: false,
           aspectRatio,
           resolution
         }
