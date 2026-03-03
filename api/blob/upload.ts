@@ -64,12 +64,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pathname = `veo-input/${Date.now()}-${fileName}.${extension}`;
 
     const blob = await put(pathname, parsed.bytes, {
-      access: "public",
+      access: "private",
       contentType: parsed.mimeType,
       addRandomSuffix: true,
     });
 
-    return res.status(200).json({ ok: true, url: blob.url, pathname: blob.pathname, contentType: parsed.mimeType });
+    return res.status(200).json({
+      ok: true,
+      url: blob.url,
+      downloadUrl: (blob as any).downloadUrl || null,
+      pathname: blob.pathname,
+      contentType: parsed.mimeType,
+    });
   } catch (e: any) {
     return res.status(500).json({
       ok: false,

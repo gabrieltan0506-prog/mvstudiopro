@@ -84,12 +84,12 @@ async function uploadToBlob(file: File): Promise<string> {
     }),
   });
 
-  if (!r.ok || !r.json?.ok || !r.json?.url) {
+  if (!r.ok || !r.json?.ok || !(r.json?.downloadUrl || r.json?.url)) {
     const reason = [r.json?.error, r.json?.message].filter(Boolean).join(": ");
     throw new Error(reason || `upload_failed_${r.status}`);
   }
 
-  return String(r.json.url);
+  return String(r.json.downloadUrl || r.json.url);
 }
 
 export default function TestLab() {

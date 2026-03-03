@@ -388,7 +388,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ ok: false, error: "missing_image_url" });
       }
 
-      const imgResp = await fetch(imageUrl);
+      const imageFetchHeaders: Record<string, string> = {};
+      if (imageUrl.includes(".blob.vercel-storage.com") && process.env.BLOB_READ_WRITE_TOKEN) {
+        imageFetchHeaders.Authorization = `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`;
+      }
+
+      const imgResp = await fetch(imageUrl, {
+        headers: imageFetchHeaders,
+      });
       if (!imgResp.ok) {
         return res.status(400).json({
           ok: false,
