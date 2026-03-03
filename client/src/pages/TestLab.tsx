@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type AnyObj = Record<string, any>;
 
-const UI_VERSION = "20260303-1";
+const UI_VERSION = "20260304-1";
 
 async function jfetch(url: string, init?: RequestInit) {
   const r = await fetch(url, init);
@@ -10,15 +10,6 @@ async function jfetch(url: string, init?: RequestInit) {
   let j: any = null;
   try { j = JSON.parse(text); } catch {}
   return { ok: r.ok, status: r.status, json: j, text };
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("file_read_failed"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
 }
 
 const ASPECTS = [
@@ -29,6 +20,76 @@ const ASPECTS = [
   { v: "3:4", label: "3:4（传统竖屏）" },
   { v: "21:9", label: "21:9（电影宽屏）" },
 ] as const;
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("file_read_failed"));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function optimizeImageForUpload(file: File): Promise<{ dataUrl: string; contentType: string }> {
+  // Respect EXIF orientation from mobile photos to avoid upside-down I2V results.
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  let width = bitmap.width;
+  let height = bitmap.height;
+
+  const maxSide = 1600;
+  if (Math.max(width, height) > maxSide) {
+    const ratio = maxSide / Math.max(width, height);
+    width = Math.max(1, Math.round(width * ratio));
+    height = Math.max(1, Math.round(height * ratio));
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas_ctx_failed");
+
+  ctx.drawImage(bitmap, 0, 0, width, height);
+
+  let mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+  let quality = 0.88;
+  let dataUrl = canvas.toDataURL(mime, quality);
+
+  // Keep payload small to avoid hitting serverless body limits.
+  while (dataUrl.length > 900_000 && quality > 0.45) {
+    mime = "image/jpeg";
+    quality = Number((quality - 0.08).toFixed(2));
+    dataUrl = canvas.toDataURL(mime, quality);
+  }
+
+  if (dataUrl.length > 1_400_000) {
+    throw new Error("image_too_large_after_optimization");
+  }
+
+  return { dataUrl, contentType: mime };
+}
+
+async function uploadToBlob(file: File): Promise<string> {
+  const optimized = await optimizeImageForUpload(file);
+  const ext = optimized.contentType === "image/png" ? "png" : "jpg";
+
+  const r = await jfetch("/api/blob/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fileName: (file.name || "reference").replace(/\.[a-zA-Z0-9]+$/, ""),
+      contentType: optimized.contentType,
+      dataUrl: optimized.dataUrl,
+      ext,
+    }),
+  });
+
+  if (!r.ok || !r.json?.ok || !r.json?.url) {
+    throw new Error(r.json?.error || `upload_failed_${r.status}`);
+  }
+
+  return String(r.json.url);
+}
 
 export default function TestLab() {
   const [me, setMe] = useState<AnyObj | null>(null);
@@ -46,7 +107,8 @@ export default function TestLab() {
   const [enableUpscale, setEnableUpscale] = useState(false);
   const [videoResolution, setVideoResolution] = useState<"720p" | "1080p">("720p");
   const [videoAspectRatio, setVideoAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
-  const [videoImageDataUrl, setVideoImageDataUrl] = useState("");
+  const [videoImageUrl, setVideoImageUrl] = useState("");
+  const [videoImagePreview, setVideoImagePreview] = useState("");
   const [videoImageName, setVideoImageName] = useState("");
 
   // RESULTS
@@ -70,6 +132,26 @@ export default function TestLab() {
 
   useEffect(() => { loadMe(); }, []);
 
+  async function onPickVideoReference(file: File) {
+    setStatus("准备素材中…");
+    setBusy(true);
+    try {
+      const preview = await readFileAsDataUrl(file);
+      const uploadedUrl = await uploadToBlob(file);
+      setVideoImagePreview(preview);
+      setVideoImageUrl(uploadedUrl);
+      setVideoImageName(file.name);
+      setStatus("参考图已就绪");
+    } catch (e: any) {
+      setVideoImagePreview("");
+      setVideoImageUrl("");
+      setVideoImageName("");
+      setStatus(`参考图处理失败：${e?.message || "unknown"}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function run() {
     setBusy(true);
     setStatus("生成中…");
@@ -85,7 +167,6 @@ export default function TestLab() {
           provider: imageProvider,
           prompt,
         };
-        // UI: show 1K/2K/4K always, only pro actually sends size+aspect
         if (isPro) {
           body.imageSize = imageSize;
           body.aspectRatio = imageAspectRatio;
@@ -108,8 +189,8 @@ export default function TestLab() {
       }
 
       if (mode === "video") {
-        if (!videoImageDataUrl) {
-          setRaw({ ok: false, type: "video", provider: videoProvider, error: "missing_image", detail: "Please upload a reference image (image-to-video only)" });
+        if (!videoImageUrl) {
+          setRaw({ ok: false, type: "video", provider: videoProvider, error: "missing_image_url", detail: "请先上传参考图" });
           setStatus("失败（请先上传参考图）");
           return;
         }
@@ -118,10 +199,10 @@ export default function TestLab() {
           type: "video",
           provider: videoProvider,
           prompt,
-          imageDataUrl: videoImageDataUrl,
+          imageUrl: videoImageUrl,
           aspect_ratio: videoAspectRatio,
           resolution: videoResolution,
-          duration: 8,
+          durationSeconds: 8,
           generateAudio: false,
           upscale: enableUpscale,
         };
@@ -141,7 +222,7 @@ export default function TestLab() {
         const taskId = String(r.json.taskId);
         setStatus("已提交（轮询中…）");
 
-        for (let i = 0; i < 80; i++) {
+        for (let i = 0; i < 90; i++) {
           await new Promise((res) => setTimeout(res, 3000));
           const st = await jfetch(`/api/jobs?type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
           setRaw(st.json ?? st.text);
@@ -151,7 +232,7 @@ export default function TestLab() {
             setStatus("完成");
             return;
           }
-          if (st.json?.status === "failed") {
+          if (st.json?.status === "failed" || st.json?.ok === false) {
             setStatus("失败（生成失败）");
             return;
           }
@@ -261,9 +342,7 @@ export default function TestLab() {
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    const dataUrl = await fileToDataUrl(file);
-                    setVideoImageDataUrl(dataUrl);
-                    setVideoImageName(file.name);
+                    await onPickVideoReference(file);
                   }}
                 />
               </label>
@@ -273,8 +352,9 @@ export default function TestLab() {
                   type="button"
                   className="px-3 py-2 rounded-lg border border-white/10 text-white/80"
                   onClick={() => {
-                    setVideoImageDataUrl("");
                     setVideoImageName("");
+                    setVideoImagePreview("");
+                    setVideoImageUrl("");
                   }}
                 >
                   清除参考图
@@ -295,8 +375,36 @@ export default function TestLab() {
           {mode === "video" && (
             <div className="text-xs text-white/70">
               <div>{videoImageName ? `已选择：${videoImageName}` : "请先上传参考图（图生视频）。"}</div>
-              {videoImageDataUrl ? (
-                <img src={videoImageDataUrl} alt="reference" className="mt-2 max-h-44 rounded-lg border border-white/10" />
+              {videoImageUrl ? (
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span>素材地址：</span>
+                  <a
+                    href={videoImageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline break-all"
+                    title={videoImageUrl}
+                  >
+                    {videoImageUrl}
+                  </a>
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded border border-white/20 text-white/80 hover:bg-white/10"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(videoImageUrl);
+                        setStatus("素材地址已复制");
+                      } catch {
+                        setStatus("复制失败，请手动复制");
+                      }
+                    }}
+                  >
+                    复制URL
+                  </button>
+                </div>
+              ) : null}
+              {videoImagePreview ? (
+                <img src={videoImagePreview} alt="reference" className="mt-2 max-h-44 rounded-lg border border-white/10" />
               ) : null}
             </div>
           )}
@@ -311,7 +419,7 @@ export default function TestLab() {
           <div className="flex items-center gap-3">
             <button
               className="px-4 py-2 rounded-lg bg-white text-black font-semibold disabled:opacity-50"
-              disabled={busy || (mode === "video" ? !videoImageDataUrl : !prompt.trim())}
+              disabled={busy || (mode === "video" ? !videoImageUrl : !prompt.trim())}
               onClick={run}
             >
               {busy ? "生成中…" : "开始生成"}
