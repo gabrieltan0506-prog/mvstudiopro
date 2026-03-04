@@ -9,6 +9,8 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense } from "react";
 import { Loader2 } from "lucide-react";
 
+import UiVersionBadge from "./components/UiVersionBadge";
+
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
 const Showcase = lazy(() => import("./pages/Showcase"));
@@ -31,7 +33,9 @@ const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
 function PageLoader() {
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
+    
+      <UiVersionBadge />
+<div className="min-h-screen bg-background flex items-center justify-center">
       <Loader2 className="h-8 w-8 text-primary animate-spin" />
     </div>
   );
