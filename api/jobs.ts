@@ -1,11 +1,10 @@
-  import { newRunId, now } from "./_core/workflow/utils.js";
-  import { createWorkflow } from "./_core/workflow/engine.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 
 import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 import { createRunState } from "./_core/workflow/engine.js";
 import { newRunId, nowIso } from "./_core/workflow/store.js";
+import { klingCnFetch } from "./_core/kling_cn.js";
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -229,40 +228,35 @@ async function thirdPartyRapidFallback(input: {
 
 
 
-/* WORKFLOW_ENGINE */
-
-if (req.query.op === "wfCreate") {
-
-  const body =
-    typeof req.body === "string"
-      ? JSON.parse(req.body)
-      : req.body || {};
-
-  const type = body.type;
-
-  const id = newRunId();
-
-  const state = createWorkflow(type, body);
-
-  const run = {
-    id,
-    type,
-    status: "running",
-    input: body,
-    state,
-    outputs: {},
-    createdAt: now(),
-    updatedAt: now()
-  };
-
-  return res.json({
-    ok: true,
-    run
-  });
-
-}
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  /* KLING_CN_IN_JOBS */
+  // Kling CN (video) routed via /api/jobs to avoid Vercel Hobby function limit.
+  if (__op === "klingCreate") {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    // Minimal payload: prompt (文生视频). Extend later for image2video / motion control.
+    const payload = {
+      prompt: String(body.prompt || ""),
+      duration: body.duration || 8
+    };
+    // Endpoint path may differ; start with /api/v1/video/create (adjust after first response)
+    const r = await klingCnFetch("/api/v1/video/create", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
+  if (__op === "klingTask") {
+    const taskId = String((req.query as any)?.taskId || "");
+    if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
+    // Endpoint path may differ; start with /api/v1/video/task/{taskId}
+    const r = await klingCnFetch(`/api/v1/video/task/${encodeURIComponent(taskId)}`, {
+      method: "GET"
+    });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
+  const __wfOp = String((req.query as any)?.op || "");
   /* WORKFLOW_ENGINE_V1 */
   // Workflow engine v1 (DB persistence to be added next iteration)
   if (__wfOp === "wfCreate") {
@@ -294,11 +288,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(501).json({ ok: false, error: "wfStep not implemented (connect providers pending)" });
   }
 
-  const __wfOp = String((req.query as any)?.op || "");
-
 
   /* AIMUSICAPI_PROXY_IN_JOBS */
   const __op = String((req.query as any)?.op || "");
+
+  // Kling aliases on /api/jobs, routed to existing video pipeline
+  if (__op === "klingCreate") {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const provider = String(body.provider || body.mode || (req.query as any)?.provider || (req.query as any)?.mode || "rapid");
+    req.body = {
+      ...body,
+      type: "video",
+      provider,
+      prompt: body.prompt || body.text || "",
+      imageUrl: body.imageUrl || body.image_url || body.firstFrameImageUrl || body.first_frame_image_url || "",
+      aspectRatio: body.aspectRatio || body.aspect_ratio || "16:9",
+      resolution: body.resolution || "720p",
+      durationSeconds: body.durationSeconds || body.duration || 8,
+    } as any;
+    (req.query as any).type = "video";
+    (req.query as any).provider = provider;
+  }
+
+  if (__op === "klingTask") {
+    const provider = String((req.query as any)?.provider || (req.query as any)?.mode || "rapid");
+    (req.query as any).type = "video";
+    (req.query as any).provider = provider;
+    (req.query as any).taskId = String((req.query as any)?.taskId || "");
+  }
 
   // AIMusicAPI (Suno/Udio via AIMusicAPI) - keep within existing /api/jobs to avoid Vercel Hobby function limit.
   if (__op === "aimusicCredits") {

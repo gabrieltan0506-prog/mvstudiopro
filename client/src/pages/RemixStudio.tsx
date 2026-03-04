@@ -1374,6 +1374,125 @@ function ImageGenPanel({ enqueueTask }: { enqueueTask: (input: { jobType: JobTyp
   );
 }
 
+
+/* KLING_TEST_PANEL_V2 */
+function __klingSleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function KlingBackendTestPanel() {
+  const [prompt, setPrompt] = useState("电影级动作预告片，夜景城市，强对比灯光，稳定镜头");
+  const [imageUrl, setImageUrl] = useState("");
+  const [mode, setMode] = useState<"rapid" | "pro">("rapid");
+  const [busy, setBusy] = useState(false);
+  const [taskId, setTaskId] = useState("");
+  const [debug, setDebug] = useState<any>(null);
+  const stopRef = useRef(false);
+
+  useEffect(() => {
+    stopRef.current = false;
+    return () => {
+      stopRef.current = true;
+    };
+  }, []);
+
+  async function start() {
+    if (busy) return;
+    setBusy(true);
+    setTaskId("");
+    setDebug(null);
+    try {
+      const cr = await fetch("/api/jobs?op=klingCreate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          imageUrl,
+          mode,
+          provider: mode,
+          aspectRatio: "16:9",
+          resolution: "720p",
+          durationSeconds: 8,
+        }),
+      });
+      const cj = await cr.json();
+      setDebug(cj);
+
+      const tid = cj?.taskId || cj?.json?.taskId || cj?.task_id || cj?.json?.task_id;
+      if (!tid) return;
+      setTaskId(String(tid));
+
+      const startAt = Date.now();
+      while (!stopRef.current) {
+        if (Date.now() - startAt > 10 * 60 * 1000) throw new Error("轮询超时（10分钟）");
+        const pr = await fetch(`/api/jobs?op=klingTask&mode=${mode}&taskId=${encodeURIComponent(String(tid))}`);
+        const pj = await pr.json();
+        setDebug(pj);
+
+        const status = String(pj?.status || pj?.json?.status || "").toLowerCase();
+        const videoUrl = pj?.videoUrl || pj?.json?.videoUrl || pj?.video_url || pj?.json?.video_url;
+        if (videoUrl || ["succeeded", "success", "done", "completed"].includes(status)) return;
+        if (["failed", "error"].includes(status)) throw new Error("任务失败：" + JSON.stringify(pj));
+
+        await __klingSleep(2500);
+      }
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-5 rounded-xl border border-white/15 bg-black/30 p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-base font-semibold">Kling 后端测试</div>
+        <div className="text-xs text-gray-400">ops: klingCreate / klingTask</div>
+      </div>
+
+      <div className="grid gap-2">
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          rows={3}
+          className="w-full rounded-lg border border-white/15 bg-black/30 p-2 text-sm"
+          placeholder="视频提示词"
+        />
+        <input
+          value={imageUrl}
+          onChange={(e) => setImageUrl(e.target.value)}
+          className="w-full rounded-lg border border-white/15 bg-black/30 p-2 text-sm"
+          placeholder="首帧图 URL（必填）"
+        />
+      </div>
+
+      <div className="mt-2 flex items-center gap-2">
+        <select
+          value={mode}
+          onChange={(e) => setMode((e.target.value as "rapid" | "pro") || "rapid")}
+          className="rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm"
+        >
+          <option value="rapid">rapid</option>
+          <option value="pro">pro</option>
+        </select>
+        <button
+          onClick={start}
+          disabled={busy || !prompt.trim() || !imageUrl.trim()}
+          className="rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "生成中..." : "开始测试"}
+        </button>
+        {taskId ? <div className="text-xs text-gray-300">taskId: <code>{taskId}</code></div> : null}
+      </div>
+
+      <details className="mt-3">
+        <summary className="cursor-pointer text-sm font-medium">调试输出</summary>
+        <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-black/35 p-3 text-xs">{JSON.stringify(debug, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════
 // Main Page Component
 // ═══════════════════════════════════════════════════════
@@ -1541,6 +1660,7 @@ export default function RemixStudioPage() {
             )}
 
             {/* Panel content */}
+            {activeTab === "omniVideo" ? <KlingBackendTestPanel /> : null}
             {renderPanel()}
           </div>
 
