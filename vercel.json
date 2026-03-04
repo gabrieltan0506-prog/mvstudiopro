@@ -1,14 +1,6 @@
 {
   "buildCommand": "cd client && pnpm build",
   "outputDirectory": "client/dist",
-  "redirects": [
-    {
-      "source": "/(.*)",
-      "has": [{ "type": "host", "value": "www.mvstudiopro.com" }],
-      "destination": "https://mvstudiopro.com/$1",
-      "permanent": true
-    }
-  ],
   "headers": [
     {
       "source": "/",
