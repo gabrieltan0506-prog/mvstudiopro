@@ -1,7 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
-
-import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 import { createRunState } from "./_core/workflow/engine.js";
 import { newRunId, nowIso } from "./_core/workflow/store.js";
 import { signUpgradeToken, verifyUpgradeToken, todayYYYYMMDD } from "./_core/upgrade_token.js";
@@ -466,14 +464,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // AIMusicAPI (Suno/Udio via AIMusicAPI) - keep within existing /api/jobs to avoid Vercel Hobby function limit.
   if (__op === "aimusicCredits") {
     const key = getAimusicKey();
-    const r = await aimusicFetch("/api/v1/get-credits", { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
+    const r = await aimusicRequest("/api/v1/get-credits", { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
     return res.status(r.ok ? 200 : 502).json(({ ...r, issuedAt: Date.now() }) );
   }
 
   if (__op === "aimusicSunoCreate") {
     const key = getAimusicKey();
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-    const r = await aimusicFetch("/api/v1/sonic/create", {
+    const r = await aimusicRequest("/api/v1/sonic/create", {
       method: "POST",
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify(body),
@@ -519,7 +517,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const key = getAimusicKey();
     const taskId = String((req.query as any)?.taskId || "");
     if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
-    const r = await aimusicFetch(`/api/v1/sonic/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
+    const r = await aimusicRequest(`/api/v1/sonic/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
     return res.status(r.ok ? 200 : 502).json(r);
   }
 
@@ -541,7 +539,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       webhook_url: body.webhook_url,
       webhook_secret: body.webhook_secret,
     };
-    const r = await aimusicFetch("/api/v1/producer/create", {
+    const r = await aimusicRequest("/api/v1/producer/create", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${key}`,
@@ -557,7 +555,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const key = getAimusicKey();
     const taskId = String((req.query as any)?.taskId || "");
     if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
-    const r = await aimusicFetch(`/api/v1/producer/task/${encodeURIComponent(taskId)}`, {
+    const r = await aimusicRequest(`/api/v1/producer/task/${encodeURIComponent(taskId)}`, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${key}`,
