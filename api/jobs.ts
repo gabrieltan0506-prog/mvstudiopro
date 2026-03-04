@@ -21,6 +21,26 @@ function safeJsonParse(s: string): any {
   }
 }
 
+function getAimusicBaseUrl(): string {
+  return (asString(process.env.AIMUSIC_BASE_URL).trim() || "https://api.aimusicapi.ai").replace(/\/+$/, "");
+}
+function getAimusicKey(): string {
+  const k = asString(process.env.AIMUSIC_API_KEY || process.env.AIMUSICAPI_KEY).trim();
+  if (!k) throw new Error("Missing AIMUSIC_API_KEY");
+  return k;
+}
+async function aimusicRequest(path: string, init: RequestInit): Promise<{ ok: boolean; status: number; url: string; json?: any; rawText?: string }> {
+  const base = getAimusicBaseUrl();
+  const url = `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+  const resp = await fetch(url, init);
+  const text = await resp.text();
+  const rawText = text.slice(0, 4000);
+  const raw = safeJsonParse(text);
+  if (!raw) return { ok: false, status: resp.status, url, rawText };
+  return { ok: resp.ok, status: resp.status, url, json: raw };
+}
+
+
 function getBody(req: VercelRequest): any {
   const b: any = req.body;
   if (!b) return {};
@@ -231,6 +251,90 @@ async function thirdPartyRapidFallback(input: {
 
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  /* OP_ROUTER_V1 */
+  const op = asString((req.query as any)?.op || "");
+  if (op) {
+    try {
+      const body: any = req.method === "POST" ? getBody(req) : {};
+      // 1) Upload image to Vercel Blob
+      if (op === "blobPutImage") {
+        const dataUrl = asString(body.dataUrl);
+        const filename = asString(body.filename || "ref.png") || "ref.png";
+        if (!dataUrl.startsWith("data:")) return res.status(400).json({ ok: false, error: "missing_data_url" });
+
+        const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!m) return res.status(400).json({ ok: false, error: "invalid_data_url" });
+
+        const mime = m[1];
+        const b64 = m[2];
+        const buf = Buffer.from(b64, "base64");
+        if (!buf.length) return res.status(400).json({ ok: false, error: "empty_file" });
+        if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large" });
+
+        const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "public", contentType: mime });
+        return res.status(200).json({ ok: true, imageUrl: blob.url, blob });
+      }
+
+      // 2) AIMusicAPI ops
+      const key = getAimusicKey();
+      const authHeaders: any = { "Authorization": `Bearer ${key}`, "Accept": "application/json" };
+
+      if (op === "aimusicCredits") {
+        const r = await aimusicRequest("/api/v1/get-credits", { method: "GET", headers: authHeaders });
+        return res.status(r.ok ? 200 : 502).json(r);
+      }
+
+      if (op === "aimusicSunoCreate") {
+        const payload = {
+          task_type: "create_music",
+          custom_mode: false,
+          mv: "sonic-v4-5",
+          gpt_description_prompt: asString(body.gpt_description_prompt || body.prompt || "")
+        };
+        const r = await aimusicRequest("/api/v1/sonic/create", {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        return res.status(r.ok ? 200 : 502).json(r);
+      }
+
+      if (op === "aimusicSunoTask") {
+        const taskId = asString((req.query as any)?.taskId || "");
+        if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
+        const r = await aimusicRequest(`/api/v1/sonic/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: authHeaders });
+        return res.status(r.ok ? 200 : 502).json(r);
+      }
+
+      // Udio mapped to Producer endpoints (AIMusic docs)
+      if (op === "aimusicUdioCreate") {
+        const payload = {
+          task_type: "create_music",
+          sound: asString(body.sound || body.prompt || ""),
+          make_instrumental: body.make_instrumental ?? true,
+          mv: asString(body.mv || "FUZZ-2.0")
+        };
+        const r = await aimusicRequest("/api/v1/producer/create", {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        return res.status(r.ok ? 200 : 502).json(r);
+      }
+
+      if (op === "aimusicUdioTask") {
+        const taskId = asString((req.query as any)?.taskId || "");
+        if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
+        const r = await aimusicRequest(`/api/v1/producer/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: authHeaders });
+        return res.status(r.ok ? 200 : 502).json(r);
+      }
+
+      return res.status(400).json({ ok: false, error: "unknown_op", op });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: "op_router_error", message: e?.message || String(e), op });
+    }
+  }
+
   function __getCookie(name: string) {
     const raw = String((req.headers as any)?.cookie || "");
     const m = raw.match(new RegExp("(?:^|; )" + name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&") + "=([^;]*)"));
