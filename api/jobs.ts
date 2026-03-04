@@ -122,6 +122,27 @@ function normalizeOperationName(taskIdOrName: string, projectId: string, locatio
   return `projects/${projectId}/locations/${location}/operations/${input}`;
 }
 
+function normalizePredictOperationName(taskIdOrName: string, projectId: string, location: string, model: string): string {
+  const input = asString(taskIdOrName).trim();
+  if (!input) return "";
+
+  // Already full publisher-scoped predict operation name.
+  if (
+    input.startsWith(`projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/`)
+  ) {
+    return input;
+  }
+
+  // If includes an operations path anywhere, extract the operation id and rebuild.
+  const m = input.match(/operations\/([^/?\s]+)/);
+  if (m?.[1]) {
+    return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${m[1]}`;
+  }
+
+  // Raw operation id.
+  return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${input}`;
+}
+
 async function parseUpstream(resp: Response): Promise<{ raw: any; rawText: string; bodyEmpty: boolean }> {
   const text = await resp.text();
   const rawText = text.slice(0, 4000);
@@ -359,12 +380,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 
       if (taskId) {
-        const operationName = normalizeOperationName(taskId, projectId, location);
-
-        const statusUrl = `${baseUrl}/v1/${operationName}`;
+        const operationName = normalizePredictOperationName(taskId, projectId, location, model);
+        const statusUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
         const statusResp = await fetch(statusUrl, {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ operationName }),
         });
 
       const { raw, rawText, bodyEmpty } = await parseUpstream(statusResp);
@@ -530,7 +551,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       return res.status(200).json({
         ok: true,
-        taskId: operationName,
+        taskId: normalizePredictOperationName(asString(raw?.name), projectId, location, model),
         operationId,
         location,
         model,
