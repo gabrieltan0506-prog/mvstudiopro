@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 
+import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -223,6 +224,34 @@ async function thirdPartyRapidFallback(input: {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+
+  /* AIMUSICAPI_PROXY_IN_JOBS */
+  // AIMusicAPI (Suno/Udio via AIMusicAPI) - keep within existing /api/jobs to avoid Vercel Hobby function limit.
+  if (op === "aimusicCredits") {
+    const key = getAimusicKey();
+    const r = await aimusicFetch("/api/v1/get-credits", { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
+  if (op === "aimusicSunoCreate") {
+    const key = getAimusicKey();
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const r = await aimusicFetch("/api/v1/sonic/create", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
+  if (op === "aimusicSunoTask") {
+    const key = getAimusicKey();
+    const taskId = String((req.query as any)?.taskId || "");
+    if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
+    const r = await aimusicFetch(`/api/v1/sonic/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
   try {
     if (req.method !== "POST" && req.method !== "GET") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });
