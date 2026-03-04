@@ -177,7 +177,7 @@ export default function TestLab() {
   const title = useMemo(() => {
     if (mode === "image") return "图像生成";
     if (mode === "video") return "视频生成（图生视频 / 8秒 / 无音频）";
-    return "音乐（暂未启用）";
+    return "音乐";
   }, [mode]);
 
   async function loadMe() {

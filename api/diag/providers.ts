@@ -23,7 +23,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
       veoModel: s(process.env.VERTEX_VEO_MODEL_PRO) ?? s(process.env.VERTEX_VEO_MODEL),
       location: videoLocation,
     },
-    music: { provider: "aimusicapi", sunoCreateOp: "aimusicSunoCreate", sunoTaskOp: "aimusicSunoTask", creditsOp: "aimusicCredits" },
+    music: { enabled: true, provider: "aimusicapi", sunoCreateOp: "aimusicSunoCreate", sunoTaskOp: "aimusicSunoTask", creditsOp: "aimusicCredits" },
     kling: {
       baseUrl: klingBaseUrl,
     },
