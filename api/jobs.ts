@@ -316,9 +316,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const parts = raw?.candidates?.[0]?.content?.parts || [];
       let base64img: string | null = null;
+      let imageMimeType = "image/png";
       for (const p of parts) {
         if (p?.inlineData?.data) {
           base64img = p.inlineData.data;
+          imageMimeType = asString(p?.inlineData?.mimeType || "image/png") || "image/png";
           break;
         }
       }
@@ -361,7 +363,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         aspectRatio: isPro ? requestedAspectRatio : "16:9",
         requestImageConfig: imageConfig,
         actualSize: actual,
-        imageUrl: `data:image/png;base64,${base64img}`,
+        imageMimeType,
+        imageUrl: `data:${imageMimeType};base64,${base64img}`,
       });
     }
 
