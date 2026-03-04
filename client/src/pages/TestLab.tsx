@@ -95,6 +95,39 @@ async function uploadToBlob(file: File): Promise<string> {
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 export default function TestLab() {
+  /* TESTLAB_START_CLICK_V1 */
+  async function handleStartClick() {
+    try {
+      setDebug("clicked: " + activeTab);
+      setBusy(true);
+
+      if (activeTab === "music") {
+        await runMusic(prompt);
+        return;
+      }
+
+      // fallback to existing handler if present
+      if (typeof (handleGenerate as any) === "function") {
+        await (handleGenerate as any)();
+        return;
+      }
+      if (typeof (startGenerate as any) === "function") {
+        await (startGenerate as any)();
+        return;
+      }
+      if (typeof (onGenerate as any) === "function") {
+        await (onGenerate as any)();
+        return;
+      }
+
+      setDebug("clicked but no handler found for tab=" + activeTab);
+    } catch (e: any) {
+      setDebug("ERROR: " + (e?.message || String(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /* TESTLAB_MUSIC_WIRE_V3 */
   function __sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -469,7 +502,7 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
 
         <div className="rounded-xl border border-white/10 p-4 space-y-3 bg-white/5">
           <div className="flex flex-wrap gap-2">
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="image"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("image")}>图像</button>
+            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="image"?"bg-white/15":"bg-transparent"}`} onClick={handleStartClick}>图像</button>
             <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="video"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("video")}>视频</button>
             <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="audio"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("audio")}>音乐</button>
           </div>
