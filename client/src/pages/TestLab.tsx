@@ -92,7 +92,57 @@ async function uploadToBlob(file: File): Promise<string> {
   return String(r.json.downloadUrl || r.json.url);
 }
 
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
 export default function TestLab() {
+  /* AIMUSIC_UI_WIRE */
+  async function runAimusic(prompt: string) {
+    setMusicResult(null);
+    setMusicTaskId("");
+    setDebug("AIMusic: creating task...");
+    const createResp = await fetch("/api/jobs?op=aimusicSunoCreate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task_type: "create_music",
+        custom_mode: false,
+        mv: "sonic-v4-5",
+        gpt_description_prompt: prompt,
+      }),
+    });
+    const createJson = await createResp.json();
+    setDebug(JSON.stringify(createJson, null, 2));
+
+    const taskId = createJson?.json?.task_id || createJson?.task_id;
+    if (!taskId) throw new Error("AIMusic: missing task_id");
+
+    setMusicTaskId(String(taskId));
+    setDebug("AIMusic: polling task " + taskId);
+
+    const start = Date.now();
+    while (true) {
+      if (Date.now() - start > 8 * 60 * 1000) throw new Error("AIMusic: timeout");
+      const pollResp = await fetch(`/api/jobs?op=aimusicSunoTask&taskId=${encodeURIComponent(String(taskId))}`);
+      const pollJson = await pollResp.json();
+      setDebug(JSON.stringify(pollJson, null, 2));
+
+      const upstream = pollJson?.json ?? pollJson;
+      const data = upstream?.data;
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        if (item?.audio_url || item?.video_url) {
+          setMusicResult(item);
+          return;
+        }
+      }
+      const status = upstream?.status || upstream?.state || upstream?.task_status;
+      if (status && String(status).toLowerCase() === "failed") {
+        throw new Error("AIMusic: failed " + JSON.stringify(upstream));
+      }
+      await sleep(2500);
+    }
+  }
+
   const [me, setMe] = useState<AnyObj | null>(null);
 
   const [mode, setMode] = useState<"image" | "video" | "audio">("image");
