@@ -2,6 +2,8 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 
 import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
+import { createRunState } from "./_core/workflow/engine.js";
+import { newRunId, nowIso } from "./_core/workflow/store.js";
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -224,6 +226,39 @@ async function thirdPartyRapidFallback(input: {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  /* WORKFLOW_ENGINE_V1 */
+  // Workflow engine v1 (DB persistence to be added next iteration)
+  if (__wfOp === "wfCreate") {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    const type = String(body.type || "storyboardToVideo");
+    const runId = newRunId();
+    const now = nowIso();
+    const state = createRunState(type as any, body.input || body);
+    const run = {
+      id: runId,
+      userId: "dev-admin", // TODO: bind real user
+      type,
+      status: "running",
+      inputJson: body.input || body,
+      stateJson: state,
+      outputsJson: {},
+      createdAt: now,
+      updatedAt: now,
+    };
+    return res.status(200).json({ ok: true, run });
+  }
+
+  if (__wfOp === "wfGet") {
+    // v1: stateless demo. In next iteration, fetch from DB by runId.
+    return res.status(501).json({ ok: false, error: "wfGet not implemented (DB pending)" });
+  }
+
+  if (__wfOp === "wfStep") {
+    return res.status(501).json({ ok: false, error: "wfStep not implemented (connect providers pending)" });
+  }
+
+  const __wfOp = String((req.query as any)?.op || "");
+
 
   /* AIMUSICAPI_PROXY_IN_JOBS */
   const __op = String((req.query as any)?.op || "");

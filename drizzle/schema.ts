@@ -86,3 +86,15 @@ export * from "./schema-video-signatures";
 export * from "./schema-jobs";
 export * from "./schema-workflow";
 export * from "./schema-video-short-links";
+
+export const workflowRuns = pgTable("workflow_runs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  type: text("type").notNull(),
+  status: text("status").notNull(),
+  inputJson: jsonb("input_json").notNull(),
+  stateJson: jsonb("state_json").notNull(),
+  outputsJson: jsonb("outputs_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+});
