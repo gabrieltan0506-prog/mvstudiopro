@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import MusicGenerator from "../components/MusicGenerator";
+
 type AnyObj = Record<string, any>;
 
 const UI_VERSION = "20260304-1";
@@ -719,3 +721,7 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
     </div>
   );
 }
+
+
+/* injected fallback */
+export const __MusicGeneratorFallback = () => <MusicGenerator />;
