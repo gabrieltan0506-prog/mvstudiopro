@@ -1,13 +1,37 @@
 import { generateStoryboard } from "./storyboard.js";
 
-export function createRunState(type: "storyboardToVideo", inputJson: any) {
+export function createWorkflow(type, input) {
+
   if (type === "storyboardToVideo") {
-    const sb = generateStoryboard({ text: String(inputJson?.text || "") });
+
+    const storyboard = generateStoryboard(input.text || "");
+
     return {
-      step: "storyboard.ready",
-      storyboard: sb,
-      cursor: 0,
+      step: "storyboard",
+      storyboard,
+      cursor: 0
     };
+
   }
-  throw new Error("unknown workflow type");
+
+  if (type === "musicVideo") {
+
+    return {
+      step: "music",
+      prompt: input.prompt
+    };
+
+  }
+
+  if (type === "viralAnalysis") {
+
+    return {
+      step: "analysis",
+      videoUrl: input.videoUrl
+    };
+
+  }
+
+  throw new Error("Unknown workflow type");
+
 }

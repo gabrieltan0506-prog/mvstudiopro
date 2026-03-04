@@ -1,15 +1,21 @@
-export type WorkflowType = "storyboardToVideo";
+export type WorkflowType =
+  | "storyboardToVideo"
+  | "musicVideo"
+  | "viralAnalysis";
 
-export type WorkflowStatus = "queued" | "running" | "succeeded" | "failed";
+export type WorkflowStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
 
 export type WorkflowRun = {
   id: string;
-  userId: string;
   type: WorkflowType;
   status: WorkflowStatus;
-  inputJson: any;
-  stateJson: any;
-  outputsJson: any;
+  input: any;
+  state: any;
+  outputs: any;
   createdAt: string;
   updatedAt: string;
 };

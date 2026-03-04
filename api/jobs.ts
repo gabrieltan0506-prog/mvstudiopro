@@ -1,3 +1,5 @@
+  import { newRunId, now } from "./_core/workflow/utils.js";
+  import { createWorkflow } from "./_core/workflow/engine.js";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 
@@ -223,6 +225,41 @@ async function thirdPartyRapidFallback(input: {
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
   }
+}
+
+
+
+/* WORKFLOW_ENGINE */
+
+if (req.query.op === "wfCreate") {
+
+  const body =
+    typeof req.body === "string"
+      ? JSON.parse(req.body)
+      : req.body || {};
+
+  const type = body.type;
+
+  const id = newRunId();
+
+  const state = createWorkflow(type, body);
+
+  const run = {
+    id,
+    type,
+    status: "running",
+    input: body,
+    state,
+    outputs: {},
+    createdAt: now(),
+    updatedAt: now()
+  };
+
+  return res.json({
+    ok: true,
+    run
+  });
+
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
