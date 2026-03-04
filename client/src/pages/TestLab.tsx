@@ -242,7 +242,7 @@ export default function TestLab() {
         return;
       }
 
-      setStatus("音乐暂未启用");
+      setStatus("音乐");
     } finally {
       setBusy(false);
     }
