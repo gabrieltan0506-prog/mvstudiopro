@@ -296,7 +296,9 @@ export default function TestLab() {
 
   const [me, setMe] = useState<AnyObj | null>(null);
 
-  const [mode, setMode] = useState<"image" | "video" | "audio">("image");
+  
+  const [musicProvider, setMusicProvider] = useState<"suno"|"udio">("suno");
+const [mode, setMode] = useState<"image" | "video" | "audio">("image");
   const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
 
   // IMAGE
