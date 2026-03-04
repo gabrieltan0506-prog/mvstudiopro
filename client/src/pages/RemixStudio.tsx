@@ -1,6 +1,26 @@
 import React, { useEffect, useRef, useState } from "react";
 import BuildBadge from "../components/BuildBadge";
 
+
+async function fetchJsonish(url: string, init?: RequestInit) {
+  const resp = await fetch(url, init);
+  const rawText = await resp.text();
+  const contentType = resp.headers.get("content-type") || "";
+  try {
+    const json = JSON.parse(rawText);
+    return { ok: resp.ok, status: resp.status, url, contentType, json };
+  } catch (e: any) {
+    return {
+      ok: false,
+      status: resp.status,
+      url,
+      contentType,
+      parseError: e?.message || String(e),
+      rawText: rawText.slice(0, 4000),
+    };
+  }
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -26,12 +46,11 @@ function KlingTestPanel() {
     setDebug({ ok: true, message: "clicked: kling create" });
 
     try {
-      const cr = await fetch("/api/jobs?op=klingCreate", {
+      const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, duration: 8 }),
       });
-      const cj = await cr.json();
       setDebug(cj);
 
       const tid =
@@ -51,8 +70,7 @@ function KlingTestPanel() {
       while (!stopRef.current) {
         if (Date.now() - startAt > 10 * 60 * 1000) throw new Error("轮询超时（10分钟）");
 
-        const pr = await fetch(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(String(tid))}`);
-        const pj = await pr.json();
+        const pj = await fetchJsonish(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(String(tid))}`);
         setDebug(pj);
 
         const status = pj?.json?.status || pj?.status || pj?.json?.state || pj?.state;
@@ -149,12 +167,11 @@ function MusicGeneratorPanel() {
           ? { task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }
           : { prompt, task_type: "create_music", make_instrumental: true, mv: "FUZZ-2.0" };
 
-      const cr = await fetch(`/api/jobs?op=${createOp}`, {
+      const cj = await fetchJsonish(`/api/jobs?op=${createOp}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const cj = await cr.json();
       setDebug(cj);
 
       const tid = cj?.json?.task_id || cj?.task_id;
@@ -165,8 +182,7 @@ function MusicGeneratorPanel() {
       while (!stopRef.current) {
         if (Date.now() - startAt > 10 * 60 * 1000) throw new Error("timeout (10m)");
 
-        const pr = await fetch(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(tid))}`);
-        const pj = await pr.json();
+        const pj = await fetchJsonish(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(tid))}`);
         setDebug(pj);
 
         const upstream = pj?.json ?? pj;
