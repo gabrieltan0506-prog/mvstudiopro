@@ -20,3 +20,13 @@ export async function aimusicFetch(path: string, body?: any) {
     return { ok:false, status:resp.status, raw };
   }
 }
+
+export function getAimusicKey(): string {
+  const k =
+    process.env.AIMUSIC_API_KEY ||
+    process.env.AIMUSICAPI_KEY ||
+    process.env.AIMUSIC_API_TOKEN ||
+    "";
+  if (!k) throw new Error("Missing AIMUSIC_API_KEY");
+  return k;
+}
