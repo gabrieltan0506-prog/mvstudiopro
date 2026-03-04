@@ -29,6 +29,12 @@ function normalizeVideoProvider(provider: string): "rapid" | "pro" {
 }
 
 function extractVideoUrl(raw: any): string {
+
+  if (raw?.response?.videos?.[0]?.bytesBase64Encoded) {
+    const base64 = raw.response.videos[0].bytesBase64Encoded;
+    return `data:video/mp4;base64,${base64}`;
+  }
+
   const candidates = [
     raw?.response?.generatedVideos?.[0]?.video?.uri,
     raw?.response?.generatedVideos?.[0]?.video?.url,
@@ -39,10 +45,13 @@ function extractVideoUrl(raw: any): string {
     raw?.videoUrl,
     raw?.url,
   ];
+
   for (const item of candidates) {
-    const v = asString(item).trim();
+    if (!item) continue;
+    const v = String(item).trim();
     if (v) return v;
   }
+
   return "";
 }
 
