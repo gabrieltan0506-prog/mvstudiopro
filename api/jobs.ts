@@ -226,14 +226,16 @@ async function thirdPartyRapidFallback(input: {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   /* AIMUSICAPI_PROXY_IN_JOBS */
+  const __op = String((req.query as any)?.op || "");
+
   // AIMusicAPI (Suno/Udio via AIMusicAPI) - keep within existing /api/jobs to avoid Vercel Hobby function limit.
-  if (op === "aimusicCredits") {
+  if (__op === "aimusicCredits") {
     const key = getAimusicKey();
     const r = await aimusicFetch("/api/v1/get-credits", { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
     return res.status(r.ok ? 200 : 502).json(r);
   }
 
-  if (op === "aimusicSunoCreate") {
+  if (__op === "aimusicSunoCreate") {
     const key = getAimusicKey();
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
     const r = await aimusicFetch("/api/v1/sonic/create", {
@@ -244,7 +246,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(r.ok ? 200 : 502).json(r);
   }
 
-  if (op === "aimusicSunoTask") {
+  if (__op === "aimusicSunoTask") {
     const key = getAimusicKey();
     const taskId = String((req.query as any)?.taskId || "");
     if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
