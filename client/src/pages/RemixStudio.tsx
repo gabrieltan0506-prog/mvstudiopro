@@ -31,6 +31,7 @@ function KlingTestPanel() {
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [debug, setDebug] = useState<any>(null);
+  const [lastCreate, setLastCreate] = useState<any>(null);
   const stopRef = useRef(false);
 
   useEffect(() => {
@@ -40,7 +41,31 @@ function KlingTestPanel() {
     };
   }, []);
 
-  async function start() {
+  
+
+  async function uploadRefImage(file: File) {
+    const ab = await file.arrayBuffer();
+    const bytes = new Uint8Array(ab);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const b64 = btoa(binary);
+    const mime = file.type || "image/png";
+    const dataUrl = `data:${mime};base64,${b64}`;
+
+    const r = await fetch("/api/jobs?op=blobPutImage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" })
+    });
+
+    const j = await r.json();
+    setDebug(j);
+
+    if (!j?.ok || !j?.imageUrl) throw new Error("upload failed");
+    setImageUrl(j.imageUrl);
+    return j.imageUrl as string;
+  }
+async function start() {
     if (busy) return;
     setBusy(true);
     setTaskId("");
@@ -53,6 +78,7 @@ function KlingTestPanel() {
         body: JSON.stringify({ type:"video", imageUrl, prompt, provider:"rapid", duration:8 }),
       });
       setDebug(cj);
+      setLastCreate(cj);
 
       const tid =
         cj?.json?.taskId ||
@@ -83,7 +109,7 @@ function KlingTestPanel() {
         await sleep(2500);
       }
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug({ ok: false, error: e?.message || String(e), lastCreate });
     } finally {
       setBusy(false);
     }
@@ -107,6 +133,21 @@ function KlingTestPanel() {
         onChange={(e)=>setImageUrl(e.target.value)}
         placeholder="reference image url"
       />
+
+      <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try { await uploadRefImage(f); } catch (err:any) { setDebug({ ok:false, error: err?.message || String(err) }); }
+          }}
+        />
+        <div style={{ fontSize: 12, opacity: 0.85 }}>
+          {imageUrl ? <>已上传：<code>{imageUrl}</code></> : "未上传参考图"}
+        </div>
+      </div>
 
       <textarea
         value={prompt}
@@ -242,6 +283,21 @@ function MusicGeneratorPanel() {
         onChange={(e)=>setImageUrl(e.target.value)}
         placeholder="reference image url"
       />
+
+      <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try { await uploadRefImage(f); } catch (err:any) { setDebug({ ok:false, error: err?.message || String(err) }); }
+          }}
+        />
+        <div style={{ fontSize: 12, opacity: 0.85 }}>
+          {imageUrl ? <>已上传：<code>{imageUrl}</code></> : "未上传参考图"}
+        </div>
+      </div>
 
       <textarea
         value={prompt}

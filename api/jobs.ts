@@ -5,6 +5,8 @@ import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 import { createRunState } from "./_core/workflow/engine.js";
 import { newRunId, nowIso } from "./_core/workflow/store.js";
 import { signUpgradeToken, verifyUpgradeToken, todayYYYYMMDD } from "./_core/upgrade_token.js";
+import { put } from "@vercel/blob";
+
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -237,6 +239,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const __op = String((req.query as any)?.op || "");
 
+
+  // Upload image to Vercel Blob and return a stable imageUrl
+  if (__op === "blobPutImage") {
+    const body = typeof req.body === "string" ? (safeJsonParse(req.body) || {}) : (req.body || {});
+    const dataUrl = String(body.dataUrl || "");
+    const filename = String(body.filename || "ref.png");
+
+    if (!dataUrl.startsWith("data:")) {
+      return res.status(400).json({ ok: false, error: "missing_data_url" });
+    }
+
+    const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!m) return res.status(400).json({ ok: false, error: "invalid_data_url" });
+
+    const mime = m[1];
+    const b64 = m[2];
+    const buf = Buffer.from(b64, "base64");
+
+    if (buf.length === 0) return res.status(400).json({ ok: false, error: "empty_file" });
+    if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large", detail: "max 8MB" });
+
+    // Requires BLOB_READ_WRITE_TOKEN to be set in Vercel env
+    const blob = await put(`refs/${Date.now()}-${filename}` , buf, {
+      access: "public",
+      contentType: mime
+    });
+
+    return res.status(200).json({ ok: true, imageUrl: blob.url, blob });
+  }
   if (__op === "redeemVeoProUpgrade") {
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
