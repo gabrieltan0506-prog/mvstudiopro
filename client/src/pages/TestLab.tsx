@@ -1,3 +1,4 @@
+import { UI_VERSION } from "../version"
 import { useEffect, useMemo, useState } from "react";
 
 import MusicGenerator from "../components/MusicGenerator";
