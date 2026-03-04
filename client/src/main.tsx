@@ -8,6 +8,46 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import "./index.css";
 
+
+// CHUNK_LOAD_FAIL_GUARD
+(function () {
+  const KEY = "mv_chunk_reload_once";
+  const shouldReloadOnce = () => {
+    try { return !sessionStorage.getItem(KEY); } catch { return true; }
+  };
+  const markReloaded = () => {
+    try { sessionStorage.setItem(KEY, "1"); } catch {}
+  };
+
+  const isChunkError = (msg) =>
+    typeof msg === "string" &&
+    (msg.includes("Failed to fetch dynamically imported module") ||
+     msg.includes("Importing a module script failed") ||
+     msg.includes("Loading chunk") ||
+     msg.includes("ChunkLoadError"));
+
+  window.addEventListener("error", (e) => {
+    const msg = (e && (e.message || (e.error && e.error.message))) || "";
+    if (isChunkError(msg) && shouldReloadOnce()) {
+      markReloaded();
+      const u = new URL(window.location.href);
+      u.searchParams.set("__reload", String(Date.now()));
+      window.location.replace(u.toString());
+    }
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    const reason = e && e.reason;
+    const msg = (reason && (reason.message || String(reason))) || "";
+    if (isChunkError(msg) && shouldReloadOnce()) {
+      markReloaded();
+      const u = new URL(window.location.href);
+      u.searchParams.set("__reload", String(Date.now()));
+      window.location.replace(u.toString());
+    }
+  });
+})();
+
 const queryClient = new QueryClient();
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
