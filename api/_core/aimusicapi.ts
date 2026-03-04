@@ -1,24 +1,42 @@
-export async function aimusicFetch(path: string, body?: any) {
-  const base = process.env.AIMUSIC_BASE_URL || "https://api.aimusicapi.ai";
-  const key = process.env.AIMUSIC_API_KEY;
-  if (!key) throw new Error("AIMUSIC_API_KEY missing");
+type JsonValue = any;
 
-  const resp = await fetch(base + path, {
-    method: body ? "POST" : "GET",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json",
-      "Accept": "application/json"
-    },
-    body: body ? JSON.stringify(body) : undefined
-  });
-
-  const raw = await resp.text();
+function safeJsonParse(raw: string): { ok: true; json: JsonValue } | { ok: false; error: string } {
   try {
-    return JSON.parse(raw);
-  } catch {
-    return { ok:false, status:resp.status, raw };
+    return { ok: true, json: JSON.parse(raw) };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
   }
+}
+
+/**
+ * AIMusicAPI fetch helper.
+ * - baseUrl MUST be host-only, e.g. https://api.aimusicapi.ai
+ * - path should be full API path, e.g. /api/v1/get-credits
+ */
+export async function aimusicFetch(path: string, init: RequestInit) {
+  const baseUrl = (process.env.AIMUSIC_BASE_URL || "https://api.aimusicapi.ai").replace(/\/+$/, "");
+  const url = `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const resp = await fetch(url, init);
+  const rawText = await resp.text();
+
+  const parsed = safeJsonParse(rawText);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      status: resp.status,
+      url,
+      contentType: resp.headers.get("content-type") || "",
+      rawText: rawText.slice(0, 4000),
+      parseError: parsed.error,
+    };
+  }
+
+  if (!resp.ok) {
+    return { ok: false, status: resp.status, url, json: parsed.json };
+  }
+
+  return { ok: true, status: resp.status, url, json: parsed.json };
 }
 
 export function getAimusicKey(): string {
