@@ -6,6 +6,8 @@ function sleep(ms: number) {
 
 function KlingTestPanel() {
   const [prompt, setPrompt] = useState("电影级动作预告片风格，夜景城市，强对比灯光，稳定镜头");
+
+  const [upgradeMsg, setUpgradeMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [debug, setDebug] = useState<any>(null);
@@ -63,6 +65,20 @@ function KlingTestPanel() {
 
         await sleep(2500);
       }
+
+  async function redeemUpgrade(upgradeToken: string) {
+    setUpgradeMsg("领取中...");
+    const r = await fetch("/api/jobs?op=redeemVeoProUpgrade", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-User-Tier": "paid"
+      },
+      body: JSON.stringify({ upgradeToken })
+    });
+    const j = await r.json();
+    setUpgradeMsg(j?.message || j?.error || JSON.stringify(j));
+  }
     } catch (e: any) {
       setDebug({ ok: false, error: e?.message || String(e) });
     } finally {
@@ -130,6 +146,38 @@ function KlingTestPanel() {
           <a href={videoUrl} target="_blank" rel="noreferrer">
             打开 / 下载
           </a>
+        </div>
+      ) : null}
+
+      
+      {debug?.upgradeEligible ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Kling 排队过长（>90秒）</div>
+          <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+            仅限付费用户：我们送你一次 Veo 3.1 Pro 免费升级（当天最多一次）。
+          </div>
+          <button
+            onClick={() => redeemUpgrade(debug?.upgradeToken)}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.18)",
+              background: "rgba(255,255,255,0.10)",
+              color: "white",
+              fontWeight: 800,
+              cursor: "pointer"
+            }}
+          >
+            领取免费升级
+          </button>
+          {upgradeMsg ? (
+            <div style={{ marginTop: 10, fontSize: 12, opacity: 0.9 }}>
+              {upgradeMsg}
+            </div>
+          ) : null}
+          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+            领取后：请去 Veo 3.1 Pro 的生成入口发起一次生成（我们下一步把“免扣费”接到 Veo Pro）。
+          </div>
         </div>
       ) : null}
 

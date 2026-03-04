@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 import { createRunState } from "./_core/workflow/engine.js";
 import { newRunId, nowIso } from "./_core/workflow/store.js";
+import { signUpgradeToken, verifyUpgradeToken, todayYYYYMMDD } from "./_core/upgrade_token.js";
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -228,6 +229,46 @@ async function thirdPartyRapidFallback(input: {
 
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  function __getCookie(name: string) {
+    const raw = String((req.headers as any)?.cookie || "");
+    const m = raw.match(new RegExp("(?:^|; )" + name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&") + "=([^;]*)"));
+    return m ? decodeURIComponent(m[1]) : "";
+  }
+
+  const __op = String((req.query as any)?.op || "");
+
+  if (__op === "redeemVeoProUpgrade") {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+      const token = String(body.upgradeToken || "");
+      const secret = process.env.JWT_SECRET || process.env.WORKFLOW_SECRET || "";
+      if (!secret) return res.status(500).json({ ok: false, error: "missing JWT_SECRET" });
+
+      const payload = verifyUpgradeToken(token, secret);
+      if (!payload) return res.status(400).json({ ok: false, error: "invalid token" });
+
+      const day = todayYYYYMMDD();
+      if (payload.day !== day) return res.status(400).json({ ok: false, error: "token expired" });
+
+      // Paid user gate (same MVP rule)
+      const tier = String((req.headers as any)["x-user-tier"] || "").toLowerCase();
+      const isPaidUser = tier === "paid" || tier === "pro";
+      if (!isPaidUser) return res.status(403).json({ ok: false, error: "paid users only" });
+
+      const usedCookie = __getCookie("veo_pro_upgrade_used_day");
+      if (usedCookie === day) return res.status(429).json({ ok: false, error: "already used today" });
+
+      // Set HttpOnly cookie, valid for 2 days just in case timezone drift; we check exact day value.
+      res.setHeader("Set-Cookie", [
+        `veo_pro_upgrade_used_day=${encodeURIComponent(day)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${2*24*60*60}`
+      ]);
+
+      return res.status(200).json({ ok: true, day, message: "升级券已领取：可去 Veo 3.1 Pro 生成一次（当天一次）" });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e?.message || String(e) });
+    }
+  }
+
   const __wfOp = String((req.query as any)?.op || "");
   /* WORKFLOW_ENGINE_V1 */
   // Workflow engine v1 (DB persistence to be added next iteration)
@@ -293,7 +334,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (__op === "aimusicCredits") {
     const key = getAimusicKey();
     const r = await aimusicFetch("/api/v1/get-credits", { method: "GET", headers: { "Authorization": `Bearer ${key}`, "Accept": "application/json" } });
-    return res.status(r.ok ? 200 : 502).json(r);
+    return res.status(r.ok ? 200 : 502).json(({ ...r, issuedAt: Date.now() }) );
   }
 
   if (__op === "aimusicSunoCreate") {
@@ -304,6 +345,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify(body),
     });
+    
+    const issuedAt = Number((req.query as any)?.issuedAt || 0);
+    const elapsedMs = issuedAt ? Math.max(0, Date.now() - issuedAt) : 0;
+
+    // Paid user gate: front-end must send X-User-Tier=paid|pro. (MVP; replace with server-verified plan later.)
+    const tier = String((req.headers as any)["x-user-tier"] || "").toLowerCase();
+    const isPaidUser = tier === "paid" || tier === "pro";
+
+    const day = todayYYYYMMDD();
+    const usedCookie = __getCookie("veo_pro_upgrade_used_day");
+    const alreadyUsedToday = usedCookie === day;
+
+    const queueTooLong = elapsedMs >= 90_000;
+
+    let upgradeEligible = false;
+    let upgradeToken: string | null = null;
+
+    if (isPaidUser && queueTooLong && !alreadyUsedToday) {
+      const secret = process.env.JWT_SECRET || process.env.WORKFLOW_SECRET || "";
+      if (secret) {
+        upgradeEligible = true;
+        // sub is not strongly verified in MVP; we bind to tier only. Replace with real user id when auth is wired.
+        upgradeToken = signUpgradeToken({ sub: "paid-user", day, reason: "kling_queue" }, secret);
+      }
+    }
+
+    // Attach observability
+    if (r && typeof r === "object") {
+      (r as any).elapsedMs = elapsedMs;
+      (r as any).queueTooLong = queueTooLong;
+      (r as any).upgradeEligible = upgradeEligible;
+      (r as any).upgradeToken = upgradeToken;
+    }
+
     return res.status(r.ok ? 200 : 502).json(r);
   }
 
