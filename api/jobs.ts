@@ -101,6 +101,27 @@ function getImageSizeFromBase64(base64Data: string): { width: number; height: nu
   }
 }
 
+function normalizeOperationName(taskIdOrName: string, projectId: string, location: string): string {
+  const input = asString(taskIdOrName).trim();
+  if (!input) return "";
+
+  // Always extract the operation id if the string contains an operations path.
+  // This avoids invalid polling URLs like:
+  // projects/.../publishers/google/models/.../operations/{id}
+  const m = input.match(/operations\/([^/?\s]+)/);
+  if (m?.[1]) {
+    return `projects/${projectId}/locations/${location}/operations/${m[1]}`;
+  }
+
+  // If it's already a full canonical operation path, keep as-is.
+  if (input.startsWith(`projects/${projectId}/locations/${location}/operations/`)) {
+    return input;
+  }
+
+  // Fallback: treat as a raw operation id.
+  return `projects/${projectId}/locations/${location}/operations/${input}`;
+}
+
 async function parseUpstream(resp: Response): Promise<{ raw: any; rawText: string; bodyEmpty: boolean }> {
   const text = await resp.text();
   const rawText = text.slice(0, 4000);
@@ -338,11 +359,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 
       if (taskId) {
-        const operationName = taskId.startsWith("projects/")
-          ? taskId
-          : taskId.startsWith("operations/")
-            ? `projects/${projectId}/locations/${location}/${taskId}`
-            : `projects/${projectId}/locations/${location}/operations/${taskId}`;
+        const operationName = normalizeOperationName(taskId, projectId, location);
 
         const statusUrl = `${baseUrl}/v1/${operationName}`;
         const statusResp = await fetch(statusUrl, {
@@ -508,12 +525,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      const operationName = asString(raw?.name);
+      const operationName = normalizeOperationName(asString(raw?.name), projectId, location);
       const operationId = operationName.split("/").pop() || "";
 
       return res.status(200).json({
         ok: true,
-        taskId: operationName || operationId,
+        taskId: operationName,
         operationId,
         location,
         model,
