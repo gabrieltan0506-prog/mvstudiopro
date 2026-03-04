@@ -156,7 +156,7 @@ function KlingTestPanel() {
       
       {debug?.upgradeEligible ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>Kling 排队过长（>90秒）</div>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Kling 排队过长（超过90秒）</div>
           <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
             仅限付费用户：我们送你一次 Veo 3.1 Pro 免费升级（当天最多一次）。
           </div>
