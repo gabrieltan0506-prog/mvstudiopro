@@ -1,3 +1,80 @@
+
+
+function KlingTestPanel(){
+  const [prompt,setPrompt]=React.useState("电影级动作预告片，夜景城市，高对比灯光")
+  const [task,setTask]=React.useState("")
+  const [debug,setDebug]=React.useState(null)
+  const [busy,setBusy]=React.useState(false)
+
+  async function start(){
+    if(busy) return
+    setBusy(true)
+
+    const r = await fetch("/api/jobs?op=klingCreate",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json"},
+      body:JSON.stringify({prompt})
+    })
+
+    const j = await r.json()
+    setDebug(j)
+
+    const id =
+      j?.taskId ||
+      j?.task_id ||
+      j?.json?.taskId ||
+      j?.json?.task_id
+
+    if(id){
+      setTask(id)
+
+      const poll = setInterval(async ()=>{
+        const r2 = await fetch(`/api/jobs?op=klingTask&taskId=${id}`)
+        const j2 = await r2.json()
+        setDebug(j2)
+
+        if(j2?.videoUrl || j2?.json?.videoUrl){
+          clearInterval(poll)
+        }
+
+      },2500)
+    }
+
+    setBusy(false)
+  }
+
+  return (
+<KlingTestPanel />
+
+    <div style={{
+      marginTop:20,
+      padding:16,
+      border:"1px solid rgba(255,255,255,.1)",
+      borderRadius:12
+    }}>
+      <h3>Kling Backend Test</h3>
+
+      <textarea
+        value={prompt}
+        onChange={e=>setPrompt(e.target.value)}
+        rows={3}
+        style={{width:"100%"}}
+      />
+
+      <button
+        onClick={start}
+        style={{marginTop:10}}
+      >
+        开始生成
+      </button>
+
+      <pre style={{marginTop:10}}>
+        {JSON.stringify(debug,null,2)}
+      </pre>
+    </div>
+  )
+}
+
 // @ts-nocheck
 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from "react";
