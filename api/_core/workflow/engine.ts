@@ -35,3 +35,25 @@ export function createWorkflow(type, input) {
   throw new Error("Unknown workflow type");
 
 }
+
+// Back-compat export for /api/jobs.ts
+export function createRunState(type: any, inputJson: any) {
+  // Prefer createWorkflow if present
+  // @ts-ignore
+  if (typeof (createWorkflow as any) === "function") {
+    // @ts-ignore
+    return (createWorkflow as any)(type, inputJson);
+  }
+  // Otherwise fall back to internal logic
+  if (type === "storyboardToVideo") {
+    // @ts-ignore
+    const { generateStoryboard } = require("./storyboard.js");
+    return {
+      step: "storyboard.ready",
+      storyboard: generateStoryboard({ text: String(inputJson?.text || inputJson?.input?.text || "") }),
+      cursor: 0
+    };
+  }
+  throw new Error("createRunState: unsupported workflow type");
+}
+
