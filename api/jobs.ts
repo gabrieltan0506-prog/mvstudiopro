@@ -254,6 +254,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(r.ok ? 200 : 502).json(r);
   }
 
+
+  // Udio (implemented via Producer API endpoints in AIMusicAPI docs)
+  if (__op === "aimusicUdioCreate") {
+    const key = getAimusicKey();
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
+    // Map a simple UI payload { prompt } into Producer schema
+    const prompt = String(body.prompt || body.sound || body.gpt_description_prompt || "");
+    const payload = {
+      task_type: body.task_type || "create_music",
+      sound: body.sound || prompt,
+      lyrics: body.lyrics,
+      make_instrumental: body.make_instrumental ?? true,
+      mv: body.mv || "FUZZ-2.0",
+      title: body.title,
+      seed: body.seed,
+      webhook_url: body.webhook_url,
+      webhook_secret: body.webhook_secret,
+    };
+    const r = await aimusicFetch("/api/v1/producer/create", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
+
+  if (__op === "aimusicUdioTask") {
+    const key = getAimusicKey();
+    const taskId = String((req.query as any)?.taskId || "");
+    if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
+    const r = await aimusicFetch(`/api/v1/producer/task/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Accept": "application/json",
+      },
+    });
+    return res.status(r.ok ? 200 : 502).json(r);
+  }
   try {
     if (req.method !== "POST" && req.method !== "GET") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });

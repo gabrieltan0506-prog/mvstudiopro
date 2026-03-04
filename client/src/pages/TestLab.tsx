@@ -100,7 +100,7 @@ export default function TestLab() {
     setMusicResult(null);
     setMusicTaskId("");
     setDebug("AIMusic: creating task...");
-    const createResp = await fetch("/api/jobs?op=aimusicSunoCreate", {
+    const createResp = await fetch(musicProvider === "suno" ? "/api/jobs?op=aimusicSunoCreate" : "/api/jobs?op=aimusicUdioCreate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -122,7 +122,7 @@ export default function TestLab() {
     const start = Date.now();
     while (true) {
       if (Date.now() - start > 8 * 60 * 1000) throw new Error("AIMusic: timeout");
-      const pollResp = await fetch(`/api/jobs?op=aimusicSunoTask&taskId=${encodeURIComponent(String(taskId))}`);
+      const pollResp = await fetch(`/api/jobs?op=${musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask"}&taskId=${encodeURIComponent(String(taskId))}`);
       const pollJson = await pollResp.json();
       setDebug(JSON.stringify(pollJson, null, 2));
 
@@ -134,6 +134,11 @@ export default function TestLab() {
           setMusicResult(item);
           return;
         }
+      }
+      // Producer API may return a single object
+      if (data && (data.audio_url || data.video_url)) {
+        setMusicResult(data);
+        return;
       }
       const status = upstream?.status || upstream?.state || upstream?.task_status;
       if (status && String(status).toLowerCase() === "failed") {
