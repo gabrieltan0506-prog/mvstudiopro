@@ -4,7 +4,6 @@ import crypto from "node:crypto";
 import { aimusicFetch, getAimusicKey } from "./_core/aimusicapi.js";
 import { createRunState } from "./_core/workflow/engine.js";
 import { newRunId, nowIso } from "./_core/workflow/store.js";
-import { klingCnFetch } from "./_core/kling_cn.js";
 function asString(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return String(v[0] ?? "");
@@ -229,33 +228,6 @@ async function thirdPartyRapidFallback(input: {
 
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  /* KLING_CN_IN_JOBS */
-  // Kling CN (video) routed via /api/jobs to avoid Vercel Hobby function limit.
-  if (__op === "klingCreate") {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
-    // Minimal payload: prompt (文生视频). Extend later for image2video / motion control.
-    const payload = {
-      prompt: String(body.prompt || ""),
-      duration: body.duration || 8
-    };
-    // Endpoint path may differ; start with /api/v1/video/create (adjust after first response)
-    const r = await klingCnFetch("/api/v1/video/create", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-    return res.status(r.ok ? 200 : 502).json(r);
-  }
-
-  if (__op === "klingTask") {
-    const taskId = String((req.query as any)?.taskId || "");
-    if (!taskId) return res.status(400).json({ ok: false, error: "missing taskId" });
-    // Endpoint path may differ; start with /api/v1/video/task/{taskId}
-    const r = await klingCnFetch(`/api/v1/video/task/${encodeURIComponent(taskId)}`, {
-      method: "GET"
-    });
-    return res.status(r.ok ? 200 : 502).json(r);
-  }
-
   const __wfOp = String((req.query as any)?.op || "");
   /* WORKFLOW_ENGINE_V1 */
   // Workflow engine v1 (DB persistence to be added next iteration)
