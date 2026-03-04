@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 
+import MusicGeneratorPanel from "../components/MusicGeneratorPanel";
+import BuildBadge from "../components/BuildBadge";
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -15,7 +17,9 @@ function KlingTestPanel() {
 
   useEffect(() => {
     stopRef.current = false;
-    return () => {
+    return (
+      <>
+        <BuildBadge />) => {
       stopRef.current = true;
     };
   }, []);
@@ -197,6 +201,7 @@ export default function RemixStudio() {
         先跑通 Kling 后端链路：create → task → videoUrl。UI 后续再美化。
       </div>
       <KlingTestPanel />
+        <MusicGeneratorPanel />
     </div>
   );
 }
