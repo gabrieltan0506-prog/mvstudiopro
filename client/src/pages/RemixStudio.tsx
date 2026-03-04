@@ -44,6 +44,8 @@ function KlingTestPanel(){
   }
 
   return (
+
+    <>
 <KlingTestPanel />
 
     <div style={{
@@ -1771,5 +1773,7 @@ export default function RemixStudioPage() {
         </div>
       </div>
     </div>
-  );
+  
+    </>
+);
 }
