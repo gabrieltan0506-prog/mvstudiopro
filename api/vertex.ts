@@ -1,5 +1,3 @@
-import fetch from "node-fetch";
-
 /**
  * 取得 Vertex AI OAuth2 Access Token
  * 使用 GOOGLE_APPLICATION_CREDENTIALS_JSON
