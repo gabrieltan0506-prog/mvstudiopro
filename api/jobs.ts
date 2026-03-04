@@ -303,8 +303,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 
   /* AIMUSICAPI_PROXY_IN_JOBS */
-  const __op = String((req.query as any)?.op || "");
-
   // Kling aliases on /api/jobs, routed to existing video pipeline
   if (__op === "klingCreate") {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : (req.body || {});
