@@ -34,7 +34,9 @@ const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 function PageLoader() {
   return (
     
-      <UiVersionBadge />
+      
+    <>
+<UiVersionBadge />
 <div className="min-h-screen bg-background flex items-center justify-center">
       <Loader2 className="h-8 w-8 text-primary animate-spin" />
     </div>
@@ -80,7 +82,8 @@ function App() {
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
-  );
+      </>
+);
 }
 
 export default App;
