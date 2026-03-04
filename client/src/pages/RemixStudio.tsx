@@ -26,6 +26,7 @@ function sleep(ms: number) {
 }
 
 function KlingTestPanel() {
+  const [imageUrl, setImageUrl] = useState("");
   const [prompt, setPrompt] = useState("电影级动作预告片风格，夜景城市，强对比灯光，稳定镜头");
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
@@ -49,7 +50,7 @@ function KlingTestPanel() {
       const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, duration: 8 }),
+        body: JSON.stringify({ type:"video", imageUrl, prompt, provider:"rapid", duration:8 }),
       });
       setDebug(cj);
 
@@ -102,6 +103,12 @@ function KlingTestPanel() {
       </div>
 
       <textarea
+        value={imageUrl}
+        onChange={(e)=>setImageUrl(e.target.value)}
+        placeholder="reference image url"
+      />
+
+      <textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         rows={4}
@@ -137,6 +144,7 @@ type MusicProvider = "suno" | "udio";
 
 function MusicGeneratorPanel() {
   const [provider, setProvider] = useState<MusicProvider>("suno");
+  const [imageUrl, setImageUrl] = useState("");
   const [prompt, setPrompt] = useState("电影感史诗配乐，适合动作预告片，鼓点强烈，旋律上头");
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
@@ -228,6 +236,12 @@ function MusicGeneratorPanel() {
           </select>
         </div>
       </div>
+
+      <textarea
+        value={imageUrl}
+        onChange={(e)=>setImageUrl(e.target.value)}
+        placeholder="reference image url"
+      />
 
       <textarea
         value={prompt}
