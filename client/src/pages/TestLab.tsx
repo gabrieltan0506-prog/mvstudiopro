@@ -95,6 +95,78 @@ async function uploadToBlob(file: File): Promise<string> {
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 export default function TestLab() {
+  /* TESTLAB_MUSIC_WIRE_V2 */
+  function __sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
+  async function runMusic(promptText: string) {
+    const prompt = String(promptText || "").trim();
+    setMusicResult(null);
+    setMusicTaskId("");
+    setDebug("音乐：创建任务中...");
+
+    const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
+    const taskOp = musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
+
+    const body =
+      musicProvider === "suno"
+        ? {
+            task_type: "create_music",
+            custom_mode: false,
+            mv: "sonic-v4-5",
+            gpt_description_prompt: prompt,
+          }
+        : {
+            // Udio via Producer API mapping in backend
+            prompt,
+            task_type: "create_music",
+            make_instrumental: true,
+            mv: "FUZZ-2.0",
+          };
+
+    const cr = await fetch(`/api/jobs?op=${createOp}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const cj = await cr.json();
+    setDebug(JSON.stringify(cj, null, 2));
+
+    const taskId = cj?.json?.task_id || cj?.task_id;
+    if (!taskId) throw new Error("音乐：缺少 task_id（请看调试返回）");
+    setMusicTaskId(String(taskId));
+
+    const start = Date.now();
+    while (true) {
+      if (Date.now() - start > 10 * 60 * 1000) throw new Error("音乐：等待超时");
+      const pr = await fetch(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(taskId))}`);
+      const pj = await pr.json();
+      setDebug(JSON.stringify(pj, null, 2));
+
+      const upstream = pj?.json ?? pj;
+      const data = upstream?.data;
+
+      // Suno: data is array; Producer: may be object
+      if (Array.isArray(data) && data.length > 0) {
+        const item = data[0];
+        if (item?.audio_url || item?.video_url) {
+          setMusicResult(item);
+          return;
+        }
+      }
+      if (data && (data.audio_url || data.video_url)) {
+        setMusicResult(data);
+        return;
+      }
+
+      const status = upstream?.status || upstream?.state || upstream?.task_status;
+      if (status && String(status).toLowerCase() === "failed") {
+        throw new Error("音乐：任务失败 " + JSON.stringify(upstream));
+      }
+
+      await __sleep(2500);
+    }
+  }
+
   /* AIMUSIC_UI_WIRE */
   async function runAimusic(prompt: string) {
     setMusicResult(null);
@@ -181,6 +253,12 @@ export default function TestLab() {
   }, [mode]);
 
   async function loadMe() {
+    // music branch (wired to AIMusicAPI)
+    if (mode === "music") {
+      await runMusic(prompt);
+      return;
+    }
+
     const r = await jfetch("/api/me");
     if (r.ok && r.json?.ok) setMe(r.json);
     else setMe(null);
