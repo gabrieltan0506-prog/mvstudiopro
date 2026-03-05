@@ -28,6 +28,41 @@ async function fetchJson(url:string, init:RequestInit){
 }
 
 
+function readPngSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 24) return null;
+  const pngSig = "89504e470d0a1a0a";
+  if (buf.subarray(0, 8).toString("hex") !== pngSig) return null;
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  if (!width || !height) return null;
+  return { width, height };
+}
+
+function readJpegSize(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) { i += 1; continue; }
+    const marker = buf[i + 1];
+    const len = buf.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > buf.length) break;
+    const isSof =
+      marker === 0xc0 || marker === 0xc1 || marker === 0xc2 || marker === 0xc3 ||
+      marker === 0xc5 || marker === 0xc6 || marker === 0xc7 ||
+      marker === 0xc9 || marker === 0xca || marker === 0xcb ||
+      marker === 0xcd || marker === 0xce || marker === 0xcf;
+    if (isSof) {
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      if (!width || !height) return null;
+      return { width, height };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+
 async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; mime: string; bytes: number }> {
   const url = String(imageUrl || "").trim();
   if (!url) throw new Error("missing_image_url");
@@ -62,6 +97,10 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; mime
     const buf = Buffer.from(ab);
 
     if (!buf.length) throw new Error("empty_image");
+    const size = readPngSize(buf) || readJpegSize(buf);
+    if (!size) throw new Error("unsupported_image_format");
+    const minEdge = Math.min(size.width, size.height);
+    if (minEdge < 64) throw new Error(`image_too_small:${size.width}x${size.height}`);
     if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
 
     return { b64: buf.toString("base64"), mime, bytes: buf.length };
