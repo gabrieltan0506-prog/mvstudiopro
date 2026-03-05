@@ -1,491 +1,129 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import crypto from "node:crypto";
-import { put } from "@vercel/blob";
 
-function asString(v: any): string {
-  if (v == null) return "";
-  if (Array.isArray(v)) return String(v[0] ?? "");
-  return String(v);
-}
+function s(v:any){ if(v==null) return ""; if(Array.isArray(v)) return String(v[0]); return String(v) }
 
-function safeJsonParse(s: string): any {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
+function body(req:VercelRequest){
+  if(!req.body) return {}
+  if(typeof req.body==="string"){
+    try{return JSON.parse(req.body)}catch{return {}}
   }
+  return req.body
 }
 
-function getBody(req: VercelRequest): any {
-  const b: any = req.body;
-  if (!b) return {};
-  if (typeof b === "string") return safeJsonParse(b) ?? {};
-  return b;
+export default async function handler(req:VercelRequest,res:VercelResponse){
+try{
+
+const q=req.query||{}
+const b=req.method==="POST"?body(req):{}
+
+const op=s(q.op||b.op)
+
+if(!op){
+return res.status(400).json({ok:false,error:"missing op"})
 }
 
-function normalizeVideoProvider(provider: string): "rapid" | "pro" {
-  const p = provider.trim().toLowerCase();
-  if (p.includes("fast") || p.includes("rapid")) return "rapid";
-  return "pro";
+const KLING_BASE=s(process.env.KLING_CN_BASE_URL||"https://api-beijing.klingai.com")
+const ACCESS=s(process.env.KLING_CN_VIDEO_ACCESS_KEY)
+const SECRET=s(process.env.KLING_CN_VIDEO_SECRET_KEY)
+
+if(!ACCESS||!SECRET){
+return res.status(500).json({ok:false,error:"missing kling env"})
 }
 
-function extractVideoUrl(raw: any): string {
-  const candidates = [
-    raw?.response?.generatedVideos?.[0]?.video?.uri,
-    raw?.response?.generatedVideos?.[0]?.video?.url,
-    raw?.response?.videos?.[0]?.uri,
-    raw?.response?.videos?.[0]?.url,
-    raw?.generatedVideos?.[0]?.video?.uri,
-    raw?.generatedVideos?.[0]?.video?.url,
-    raw?.videoUrl,
-    raw?.url,
-  ];
-  for (const item of candidates) {
-    const v = asString(item).trim();
-    if (v) return v;
-  }
-  return "";
+if(op==="klingCreate"){
+
+const prompt=s(b.prompt||q.prompt)
+const imageUrl=s(b.imageUrl||q.imageUrl)
+
+if(!imageUrl){
+return res.status(400).json({ok:false,error:"missing_image_url"})
 }
 
-function readPngSize(buf: Buffer): { width: number; height: number } | null {
-  if (buf.length < 24) return null;
-  const pngSig = "89504e470d0a1a0a";
-  if (buf.subarray(0, 8).toString("hex") !== pngSig) return null;
-  const width = buf.readUInt32BE(16);
-  const height = buf.readUInt32BE(20);
-  if (!width || !height) return null;
-  return { width, height };
+const resp=await fetch(imageUrl)
+if(!resp.ok){
+return res.status(400).json({ok:false,error:"image_fetch_failed"})
 }
 
-function readJpegSize(buf: Buffer): { width: number; height: number } | null {
-  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
-  let i = 2;
-  while (i + 9 < buf.length) {
-    if (buf[i] !== 0xff) {
-      i += 1;
-      continue;
-    }
-    const marker = buf[i + 1];
-    const len = buf.readUInt16BE(i + 2);
-    if (len < 2 || i + 2 + len > buf.length) break;
-    const isSof =
-      marker === 0xc0 ||
-      marker === 0xc1 ||
-      marker === 0xc2 ||
-      marker === 0xc3 ||
-      marker === 0xc5 ||
-      marker === 0xc6 ||
-      marker === 0xc7 ||
-      marker === 0xc9 ||
-      marker === 0xca ||
-      marker === 0xcb ||
-      marker === 0xcd ||
-      marker === 0xce ||
-      marker === 0xcf;
-    if (isSof) {
-      const height = buf.readUInt16BE(i + 5);
-      const width = buf.readUInt16BE(i + 7);
-      if (!width || !height) return null;
-      return { width, height };
-    }
-    i += 2 + len;
-  }
-  return null;
+const buf=Buffer.from(await resp.arrayBuffer())
+const base64=buf.toString("base64")
+
+const r=await fetch(KLING_BASE+"/v1/videos/image2video",{
+method:"POST",
+headers:{
+"Content-Type":"application/json",
+"Authorization":"Bearer "+ACCESS
+},
+body:JSON.stringify({
+image:base64,
+prompt,
+duration:8
+})
+})
+
+const txt=await r.text()
+
+let json:any
+try{json=JSON.parse(txt)}catch{
+return res.status(500).json({ok:false,error:"kling_invalid_json",raw:txt})
 }
 
-function getImageSizeFromBase64(base64Data: string): { width: number; height: number } | null {
-  try {
-    const buf = Buffer.from(base64Data, "base64");
-    return readPngSize(buf) || readJpegSize(buf);
-  } catch {
-    return null;
-  }
+if(!json?.data?.task_id){
+return res.status(500).json({ok:false,error:"no_task_id",raw:json})
 }
 
-function normalizeOperationName(taskIdOrName: string, projectId: string, location: string): string {
-  const input = asString(taskIdOrName).trim();
-  if (!input) return "";
-  const m = input.match(/operations\/([^/?\s]+)/);
-  if (m?.[1]) {
-    return `projects/${projectId}/locations/${location}/operations/${m[1]}`;
-  }
-  if (input.startsWith(`projects/${projectId}/locations/${location}/operations/`)) {
-    return input;
-  }
-  return `projects/${projectId}/locations/${location}/operations/${input}`;
+return res.json({
+ok:true,
+taskId:json.data.task_id,
+status:"submitted"
+})
 }
 
-function normalizePredictOperationName(taskIdOrName: string, projectId: string, location: string, model: string): string {
-  const input = asString(taskIdOrName).trim();
-  if (!input) return "";
-  if (input.startsWith(`projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/`)) {
-    return input;
-  }
-  const m = input.match(/operations\/([^/?\s]+)/);
-  if (m?.[1]) {
-    return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${m[1]}`;
-  }
-  return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${input}`;
+if(op==="klingTask"){
+
+const taskId=s(q.taskId||b.taskId)
+if(!taskId){
+return res.status(400).json({ok:false,error:"missing_task_id"})
 }
 
-async function parseUpstream(resp: Response): Promise<{ raw: any; rawText: string; bodyEmpty: boolean }> {
-  const text = await resp.text();
-  const rawText = text.slice(0, 4000);
-  const raw = safeJsonParse(text);
-  return { raw, rawText, bodyEmpty: text.length === 0 };
+const r=await fetch(KLING_BASE+"/v1/videos/task?task_id="+taskId,{
+headers:{
+"Authorization":"Bearer "+ACCESS
+}
+})
+
+const txt=await r.text()
+
+let json:any
+try{json=JSON.parse(txt)}catch{
+return res.status(500).json({ok:false,error:"invalid_json",raw:txt})
 }
 
-async function getVertexAccessToken(): Promise<string> {
-  const raw = asString(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim();
-  if (!raw) throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON");
+const status=s(json?.data?.task_status)
 
-  const sa = safeJsonParse(raw);
-  if (!sa?.client_email || !sa?.private_key) throw new Error("Invalid SA JSON");
-
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(
-    JSON.stringify({
-      iss: sa.client_email,
-      scope: "https://www.googleapis.com/auth/cloud-platform",
-      aud: "https://oauth2.googleapis.com/token",
-      iat: now,
-      exp: now + 3600,
-    }),
-  ).toString("base64url");
-
-  const unsigned = `${header}.${payload}`;
-  const sign = crypto.createSign("RSA-SHA256");
-  sign.update(unsigned);
-  sign.end();
-  const signature = sign.sign(sa.private_key).toString("base64url");
-  const assertion = `${unsigned}.${signature}`;
-
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }).toString(),
-  });
-
-  const json: any = await tokenRes.json().catch(() => ({}));
-  if (!tokenRes.ok || !json?.access_token) throw new Error(`Vertex token failed: ${JSON.stringify(json)}`);
-  return json.access_token;
+if(status==="succeed"){
+return res.json({
+ok:true,
+status:"succeeded",
+videoUrl:json?.data?.task_result?.videos?.[0]?.url||null,
+raw:json
+})
 }
 
-/** ---------- AIMusic helpers (no external imports) ---------- */
-function getAimusicBaseUrl(): string {
-  return (asString(process.env.AIMUSIC_BASE_URL).trim() || "https://api.aimusicapi.ai").replace(/\/+$/, "");
-}
-function getAimusicKey(): string {
-  const k = asString(process.env.AIMUSIC_API_KEY || process.env.AIMUSICAPI_KEY).trim();
-  if (!k) throw new Error("Missing AIMUSIC_API_KEY");
-  return k;
-}
-async function aimusicRequest(path: string, init: RequestInit): Promise<{ ok: boolean; status: number; url: string; json?: any; rawText?: string }> {
-  const base = getAimusicBaseUrl();
-  const url = `${base}${path.startsWith("/") ? "" : "/"}${path}`;
-  const resp = await fetch(url, init);
-  const text = await resp.text();
-  const rawText = text.slice(0, 4000);
-  const raw = safeJsonParse(text);
-  if (!raw) return { ok: false, status: resp.status, url, rawText };
-  return { ok: resp.ok, status: resp.status, url, json: raw };
+if(status==="failed"){
+return res.json({ok:false,status:"failed",raw:json})
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  try {
-    if (req.method !== "POST" && req.method !== "GET") {
-      return res.status(405).json({ ok: false, error: "Method not allowed" });
-    }
+return res.json({
+ok:true,
+status:"running",
+taskId
+})
 
-    const q: any = req.query || {};
-    const b: any = req.method === "POST" ? getBody(req) : {};
+}
 
-    /** ---------------- OP ROUTER (upload + aimusic) ---------------- */
-    const op = asString(q.op || b.op || "");
-    if (op) {
-      // 1) Upload reference image to Vercel Blob
-      if (op === "blobPutImage") {
-        const dataUrl = asString(b.dataUrl);
-        const filename = asString(b.filename || "ref.png") || "ref.png";
-        if (!dataUrl.startsWith("data:")) return res.status(400).json({ ok: false, error: "missing_data_url" });
+return res.status(400).json({ok:false,error:"unknown_op"})
 
-        const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (!m) return res.status(400).json({ ok: false, error: "invalid_data_url" });
-
-        const mime = m[1];
-        const b64 = m[2];
-        const buf = Buffer.from(b64, "base64");
-        if (!buf.length) return res.status(400).json({ ok: false, error: "empty_file" });
-        if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large", detail: "max 8MB" });
-
-        const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "public", contentType: mime });
-        return res.status(200).json({ ok: true, imageUrl: blob.url, blob });
-      }
-
-      // 2) AIMusicAPI
-      const key = getAimusicKey();
-      const authHeaders: any = { Authorization: `Bearer ${key}`, Accept: "application/json" };
-
-      if (op === "aimusicCredits") {
-        const r = await aimusicRequest("/api/v1/get-credits", { method: "GET", headers: authHeaders });
-        return res.status(r.ok ? 200 : 502).json(r);
-      }
-
-      if (op === "aimusicSunoCreate") {
-        const payload = {
-          task_type: "create_music",
-          custom_mode: false,
-          mv: "sonic-v4-5",
-          gpt_description_prompt: asString(b.gpt_description_prompt || b.prompt || ""),
-        };
-        const r = await aimusicRequest("/api/v1/sonic/create", {
-          method: "POST",
-          headers: { ...authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        return res.status(r.ok ? 200 : 502).json(r);
-      }
-
-      if (op === "aimusicSunoTask") {
-        const taskId = asString(q.taskId || b.taskId);
-        if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
-        const r = await aimusicRequest(`/api/v1/sonic/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: authHeaders });
-        return res.status(r.ok ? 200 : 502).json(r);
-      }
-
-      if (op === "aimusicUdioCreate") {
-        const payload = {
-          task_type: "create_music",
-          sound: asString(b.sound || b.prompt || ""),
-          make_instrumental: b.make_instrumental ?? true,
-          mv: asString(b.mv || "FUZZ-2.0"),
-        };
-        const r = await aimusicRequest("/api/v1/producer/create", {
-          method: "POST",
-          headers: { ...authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        return res.status(r.ok ? 200 : 502).json(r);
-      }
-
-      if (op === "aimusicUdioTask") {
-        const taskId = asString(q.taskId || b.taskId);
-        if (!taskId) return res.status(400).json({ ok: false, error: "missing_taskId" });
-        const r = await aimusicRequest(`/api/v1/producer/task/${encodeURIComponent(taskId)}`, { method: "GET", headers: authHeaders });
-        return res.status(r.ok ? 200 : 502).json(r);
-      }
-
-      return res.status(400).json({ ok: false, error: "unknown_op", op });
-    }
-
-    /** ---------------- ORIGINAL TYPE FLOW (Vertex image/video) ---------------- */
-    const type = asString(b.type || q.type);
-    const provider = asString(b.provider || q.provider || "");
-    const taskId = asString(b.taskId || q.taskId || "");
-    const prompt = asString(b.prompt || q.prompt || "");
-
-    const projectId = asString(process.env.VERTEX_PROJECT_ID).trim();
-    if (!projectId) {
-      return res.status(500).json({ ok: false, error: "missing_env", detail: "Missing VERTEX_PROJECT_ID" });
-    }
-
-    const token = await getVertexAccessToken();
-
-    if (type === "image") {
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
-
-      const imageProvider = provider || "nano-banana-flash";
-      const requestedSize = asString(b.imageSize || q.imageSize || "1K").toUpperCase();
-      const requestedAspectRatio = asString(b.aspectRatio || q.aspectRatio || "16:9");
-
-      const allowedSizes = new Set(["1K", "2K", "4K"]);
-      const allowedRatios = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]);
-      const isPro = imageProvider === "nano-banana-pro";
-
-      if (!allowedSizes.has(requestedSize)) {
-        return res.status(400).json({ ok: false, error: "invalid_image_size", detail: requestedSize });
-      }
-      if (!allowedRatios.has(requestedAspectRatio)) {
-        return res.status(400).json({ ok: false, error: "invalid_aspect_ratio", detail: requestedAspectRatio });
-      }
-
-      if (!isPro && (requestedSize !== "1K" || requestedAspectRatio !== "16:9")) {
-        return res.status(403).json({
-          ok: false,
-          error: "paid_required",
-          detail: "2K/4K and custom aspect ratio are available for Pro only",
-        });
-      }
-
-      const model = isPro
-        ? asString(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-        : asString(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-2.5-flash-image");
-
-      const location = isPro
-        ? asString(process.env.VERTEX_IMAGE_LOCATION_PRO || "global")
-        : asString(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION || "global");
-      const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
-      const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-
-      const imageConfig: Record<string, any> = { aspectRatio: isPro ? requestedAspectRatio : "16:9" };
-      if (isPro) imageConfig.imageSize = requestedSize;
-
-      const upstream = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { responseModalities: ["IMAGE"], imageConfig },
-        }),
-      });
-
-      const { raw, rawText, bodyEmpty } = await parseUpstream(upstream);
-      if (!upstream.ok) {
-        return res.status(500).json({
-          ok: false,
-          error: "image_generation_failed",
-          detail: { status: upstream.status, model, location, endpoint: url, bodyEmpty, raw: raw ?? undefined, rawText },
-        });
-      }
-
-      const parts = raw?.candidates?.[0]?.content?.parts || [];
-      let base64img: string | null = null;
-      let imageMimeType = "image/png";
-      for (const p of parts) {
-        if (p?.inlineData?.data) {
-          base64img = p.inlineData.data;
-          imageMimeType = asString(p?.inlineData?.mimeType || "image/png") || "image/png";
-          break;
-        }
-      }
-
-      if (!base64img) {
-        return res.status(500).json({ ok: false, error: "no_image_in_response", detail: { model, location, raw: raw ?? undefined, rawText } });
-      }
-
-      const actual = getImageSizeFromBase64(base64img);
-      return res.status(200).json({
-        ok: true,
-        provider: imageProvider,
-        model,
-        location,
-        imageSize: isPro ? requestedSize : "1K",
-        aspectRatio: isPro ? requestedAspectRatio : "16:9",
-        requestImageConfig: imageConfig,
-        actualSize: actual,
-        imageMimeType,
-        imageUrl: `data:${imageMimeType};base64,${base64img}`,
-      });
-    }
-
-    if (type === "video") {
-      const mode = normalizeVideoProvider(provider);
-      const model =
-        mode === "rapid"
-          ? asString(process.env.VERTEX_VEO_MODEL_RAPID || "veo-3.1-fast-generate-001")
-          : asString(process.env.VERTEX_VEO_MODEL_PRO || "veo-3.1-generate-001");
-
-      const location =
-        mode === "rapid"
-          ? asString(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-          : asString(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
-
-      const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
-
-      if (taskId) {
-        const operationName = normalizePredictOperationName(taskId, projectId, location, model);
-        const statusUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
-        const statusResp = await fetch(statusUrl, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ operationName }),
-        });
-
-        const { raw, rawText, bodyEmpty } = await parseUpstream(statusResp);
-        if (!statusResp.ok) {
-          return res.status(500).json({
-            ok: false,
-            error: "video_status_failed",
-            location,
-            model,
-            detail: { status: statusResp.status, endpoint: statusUrl, bodyEmpty, raw: raw ?? undefined, rawText },
-          });
-        }
-
-        const videoUrl = extractVideoUrl(raw);
-        const done = Boolean(raw?.done);
-        const failed = done && !!raw?.error;
-        const status = failed ? "failed" : done ? "succeeded" : "running";
-
-        return res.status(200).json({ ok: true, taskId: operationName, location, model, status, videoUrl: videoUrl || undefined, raw });
-      }
-
-      const imageUrl = asString(b.imageUrl || q.imageUrl);
-      if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
-
-      const imageFetchHeaders: Record<string, string> = {};
-      if (imageUrl.includes(".blob.vercel-storage.com") && process.env.BLOB_READ_WRITE_TOKEN) {
-        imageFetchHeaders.Authorization = `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`;
-      }
-
-      const imgResp = await fetch(imageUrl, { headers: imageFetchHeaders });
-      if (!imgResp.ok) {
-        return res.status(400).json({ ok: false, error: "invalid_image_url", detail: { status: imgResp.status, imageUrl } });
-      }
-
-      const mimeType = asString(imgResp.headers.get("content-type") || "image/png") || "image/png";
-      const imageBuffer = Buffer.from(await imgResp.arrayBuffer());
-      if (!imageBuffer.length) return res.status(400).json({ ok: false, error: "empty_image" });
-      if (imageBuffer.length > 8 * 1024 * 1024) return res.status(400).json({ ok: false, error: "image_too_large", detail: "Image must be <= 8MB" });
-
-      const imageB64 = imageBuffer.toString("base64");
-      const aspectRatio = asString(b.aspect_ratio || b.aspectRatio || q.aspect_ratio || q.aspectRatio || "16:9");
-      const resolution = asString(b.resolution || q.resolution || "720p");
-      const durationSeconds = Number(b.durationSeconds || b.duration || q.durationSeconds || q.duration || 8) || 8;
-      const upscale = Boolean(b.upscale || q.upscale);
-
-      const createUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
-      const createPayload = {
-        instances: [{ prompt, image: { bytesBase64Encoded: imageB64, mimeType } }],
-        parameters: { aspectRatio, resolution, durationSeconds, generateAudio: false, upscale },
-      };
-
-      const createResp = await fetch(createUrl, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify(createPayload),
-      });
-
-      const { raw, rawText, bodyEmpty } = await parseUpstream(createResp);
-      if (!createResp.ok) {
-        return res.status(500).json({
-          ok: false,
-          error: "video_create_failed",
-          location,
-          model,
-          detail: { status: createResp.status, endpoint: createUrl, bodyEmpty, raw: raw ?? undefined, rawText },
-        });
-      }
-
-      const operationName = normalizeOperationName(asString(raw?.name), projectId, location);
-      const operationId = operationName.split("/").pop() || "";
-
-      return res.status(200).json({
-        ok: true,
-        taskId: normalizePredictOperationName(asString(raw?.name), projectId, location, model),
-        operationId,
-        location,
-        model,
-        status: "running",
-      });
-    }
-
-    return res.status(400).json({ ok: false, error: "unsupported_type" });
-  } catch (e: any) {
-    return res.status(500).json({ ok: false, error: "server_error", message: e?.message || String(e) });
-  }
+}catch(e:any){
+return res.status(500).json({ok:false,error:"server_error",message:e?.message||String(e)})
+}
 }
