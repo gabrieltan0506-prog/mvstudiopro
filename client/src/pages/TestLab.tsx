@@ -533,7 +533,7 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
           upscale: enableUpscale,
         };
 
-        const r = await jfetch("/api/jobs", {
+        const r = await jfetch("/api/google?op=nanoImage", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
