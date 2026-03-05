@@ -2,6 +2,27 @@ import { UI_VERSION } from "../version"
 import { useEffect, useMemo, useState } from "react";
 
 
+async function googleNanoImage(input: {
+  prompt: string;
+  tier: "flash" | "pro";
+  imageSize?: string;
+  aspectRatio?: string;
+}) {
+  const r = await fetch(`/api/google?op=nanoImage&tier=${encodeURIComponent(input.tier)}&imageSize=${encodeURIComponent(input.imageSize||"1K")}&aspectRatio=${encodeURIComponent(input.aspectRatio||"16:9")}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: input.prompt, tier: input.tier, imageSize: input.imageSize || "1K", aspectRatio: input.aspectRatio || "16:9" })
+  });
+  const text = await r.text();
+  let j:any = null;
+  try { j = JSON.parse(text); } catch { j = null; }
+  if (!r.ok) {
+    throw new Error(`google_image_failed_${r.status}:` + text.slice(0,200));
+  }
+  return j ?? { rawText: text };
+}
+
+
 async function uploadRefImage(file: File): Promise<string> {
   const dataUrl: string = await new Promise((resolve, reject) => {
     const fr = new FileReader();
