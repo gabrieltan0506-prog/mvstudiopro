@@ -12,11 +12,10 @@ async function fetchJsonish(url: string, init?: RequestInit) {
     return { ok: false, status: resp.status, url, contentType, parseError: e?.message || String(e), rawText: rawText.slice(0, 4000) };
   }
 }
-
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 function KlingPanel() {
-  const [prompt, setPrompt] = useState("电影级动作预告片风格，夜景城市，强对比灯光，稳定镜头");
+  const [prompt, setPrompt] = useState("电影级场景，稳定镜头，高细节，人物一致性强");
   const [imageUrl, setImageUrl] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
@@ -37,14 +36,14 @@ function KlingPanel() {
 
   async function upload(file: File) {
     const dataUrl = await toDataUrl(file);
-    const j = await fetchJsonish("/api/jobs?op=blobPutImage", {
+    // 统一走独立上传口（避免 /api/jobs 不稳定时上传挂）
+    const j = await fetchJsonish("/api/blob-put-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dataUrl, filename: file.name }),
     });
     setDebug(j);
-
-    const url = j?.json?.imageUrl || j?.imageUrl || j?.json?.json?.imageUrl || j?.json?.blobUrl || j?.json?.blob?.url;
+    const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
     if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
     setImageUrl(String(url));
     return String(url);
@@ -56,39 +55,28 @@ function KlingPanel() {
     setTaskId("");
     setVideoUrl("");
     setDebug({ ok: true, message: "clicked: klingCreate" });
-
     try {
-      if (!imageUrl) throw new Error("请先上传参考图");
-
+      if (!imageUrl) throw new Error("请先上传参考图（图生视频）。");
       const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageUrl, prompt, duration: "10" }),
       });
       setDebug(cj);
-
-      const tid =
-        cj?.json?.taskId || cj?.json?.task_id ||
-        cj?.taskId || cj?.task_id ||
-        cj?.json?.json?.taskId || cj?.json?.json?.task_id;
-
+      const tid = (cj as any)?.json?.taskId || (cj as any)?.json?.task_id;
       if (!tid) throw new Error("missing taskId. resp=" + JSON.stringify(cj));
       setTaskId(String(tid));
 
       for (let i = 0; i < 120 && !stopRef.current; i++) {
         const pj = await fetchJsonish(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(String(tid))}`);
         setDebug(pj);
-
-        const raw = pj?.json?.raw || pj?.json || {};
-        const status = pj?.json?.taskStatus || raw?.data?.task_status || "";
+        const raw = (pj as any)?.json?.raw || (pj as any)?.json || {};
+        const status = (pj as any)?.json?.taskStatus || raw?.data?.task_status || "";
         const msg = raw?.data?.task_status_msg || "";
-        const vu =
-          pj?.json?.videoUrl ||
-          raw?.data?.task_result?.videos?.[0]?.url ||
-          null;
+        const vu = (pj as any)?.json?.videoUrl || raw?.data?.task_result?.videos?.[0]?.url || null;
 
         if (vu) { setVideoUrl(String(vu)); return; }
-        if (String(status).toLowerCase() == "failed") throw new Error("kling failed: " + msg);
+        if (String(status).toLowerCase() === "failed") throw new Error("kling failed: " + msg);
         await sleep(2500);
       }
     } catch (e: any) {
@@ -103,11 +91,9 @@ function KlingPanel() {
       <div style={{ fontSize: 18, fontWeight: 900 }}>可灵后端测试（Kling CN）</div>
 
       <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center" }}>
-        <input
-          type="file"
-          accept="image/*"
+        <input type="file" accept="image/*"
           onChange={async (e) => {
-            const f = e.target.files?.[0];
+            const f = (e.target as any).files?.[0];
             if (!f) return;
             try { await upload(f); } catch (err: any) { setDebug({ ok: false, error: err?.message || String(err) }); }
           }}
@@ -117,18 +103,11 @@ function KlingPanel() {
         </div>
       </div>
 
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        rows={4}
-        style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }}
-      />
+      <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
+        style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
 
-      <button
-        onClick={start}
-        disabled={busy}
-        style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
-      >
+      <button onClick={start} disabled={busy}
+        style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
         {busy ? "生成中…" : "开始生成（10秒）"}
       </button>
 
@@ -139,13 +118,8 @@ function KlingPanel() {
           <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（视频）</div>
           <video controls src={videoUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
           <div style={{ marginTop: 8 }}>
-            <a
-              href={videoUrl}
-              download
-              target="_blank"
-              rel="noreferrer"
-              style={{ display: "inline-block", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900, textDecoration: "none" }}
-            >
+            <a href={videoUrl} download target="_blank" rel="noreferrer"
+              style={{ display: "inline-block", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900, textDecoration: "none" }}>
               下载 MP4
             </a>
           </div>
@@ -168,11 +142,12 @@ function MusicPanel() {
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
   const [debug, setDebug] = useState<any>(null);
-  const [selected, setSelected] = useState<any>(null);
-  
-  const [clipsState, setClipsState] = useState<any[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");const stopRef = useRef(false);
 
+  // 核心：固定列表，不再依赖 debug 渲染
+  const [clipsState, setClipsState] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+
+  const stopRef = useRef(false);
   useEffect(() => { stopRef.current = false; return () => { stopRef.current = true; }; }, []);
 
   function clipsFrom(d: any) {
@@ -181,18 +156,20 @@ function MusicPanel() {
     return Array.isArray(data) ? data : [];
   }
 
+  const clips = clipsState.length ? clipsState : clipsFrom(debug);
+  const selected = clips.find((c: any) => selectedId && c?.clip_id && String(c.clip_id) === selectedId) || (clips[0] || null);
+
   async function start() {
     if (busy) return;
     setBusy(true);
     setTaskId("");
-    setSelected(null);
-    setSelectedId("");
-    setClipsState([]);
     setDebug({ ok: true, message: "clicked: music create" });
+    setClipsState([]);
+    setSelectedId("");
 
     try {
       const createOp = provider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
-      const taskOp = provider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
+      const taskOp   = provider === "suno" ? "aimusicSunoTask"   : "aimusicUdioTask";
 
       const cj = await fetchJsonish(`/api/jobs?op=${createOp}`, {
         method: "POST",
@@ -201,28 +178,22 @@ function MusicPanel() {
       });
       setDebug(cj);
 
-      const raw = cj?.json?.raw || cj?.raw || cj?.json || {};
-      const tid = raw?.task_id || raw?.data?.task_id || cj?.json?.taskId || null;
+      const raw = (cj as any)?.json?.raw || (cj as any)?.raw || (cj as any)?.json || {};
+      const tid = raw?.task_id || raw?.data?.task_id || null;
       if (!tid) throw new Error("missing task_id. resp=" + JSON.stringify(cj));
       setTaskId(String(tid));
 
       for (let i = 0; i < 120 && !stopRef.current; i++) {
         const pj = await fetchJsonish(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(tid))}`);
         setDebug(pj);
-
-        const clips = clipsFrom(pj);
-        if (Array.isArray(clips) && clips.length) {
-          setClipsState(clips);
-          if (!selectedId) {
-            const first = (clips.find((c:any)=>c?.audio_url) || clips[0]);
-            if (first?.clip_id) setSelectedId(String(first.clip_id));
-            if (!selected) setSelected(first);
-          }
+        const list = clipsFrom(pj);
+        if (Array.isArray(list) && list.length) {
+          setClipsState(list);
+          const first = list.find((c:any)=>c?.audio_url) || list[0];
+          if (first?.clip_id && !selectedId) setSelectedId(String(first.clip_id));
         }
-        const firstOk = clips.find((c: any) => c?.audio_url);
-        if (firstOk && !selected) setSelected(firstOk);
-
-        if (firstOk?.audio_url) return;
+        const okItem = list.find((c:any)=>c?.audio_url && String(c?.state||"").toLowerCase()==="succeeded");
+        if (okItem) return;
         await sleep(2500);
       }
     } catch (e: any) {
@@ -232,7 +203,7 @@ function MusicPanel() {
     }
   }
 
-  const clips = (clipsState.length ? clipsState : clipsFrom(debug));return (
+  return (
     <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>音乐生成（测试）</div>
@@ -256,36 +227,43 @@ function MusicPanel() {
       {Array.isArray(clips) && clips.length ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（歌曲列表）</div>
+
           <div style={{ display: "grid", gap: 8 }}>
-            {clips.map((c: any) => (
-              <button
-                key={String(c?.clip_id || Math.random())}
-                onClick={() => { if (!c?.audio_url) return; setSelected(c); if (c?.clip_id) setSelectedId(String(c.clip_id)); }}
-                disabled={!c?.audio_url}
-                style={{
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: (selected?.clip_id && c?.clip_id && selected.clip_id === c.clip_id) ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
-                  color: "white",
-                  cursor: c?.audio_url ? "pointer" : "not-allowed",
-                  opacity: c?.audio_url ? 1 : 0.6,
-                  fontWeight: 800,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10
-                }}
-              >
-                {c?.image_url ? <img src={c.image_url} alt="cover" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }} /> : <div style={{ width: 44, height: 44, borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />}
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                    <span>{c?.title || "未命名"}</span>
-                    <span style={{ fontSize: 12, opacity: 0.75 }}>{c?.state || ""}</span>
+            {clips.map((c: any) => {
+              const active = selectedId && c?.clip_id && selectedId === String(c.clip_id);
+              return (
+                <button key={String(c?.clip_id || Math.random())}
+                  onClick={() => { if (!c?.audio_url) return; if (c?.clip_id) setSelectedId(String(c.clip_id)); }}
+                  disabled={!c?.audio_url}
+                  style={{
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    color: "white",
+                    cursor: c?.audio_url ? "pointer" : "not-allowed",
+                    opacity: c?.audio_url ? 1 : 0.6,
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10
+                  }}
+                >
+                  {c?.image_url ? (
+                    <img src={c.image_url} alt="cover" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }} />
+                  ) : (
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />
+                  )}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <span>{c?.title || "未命名"}</span>
+                      <span style={{ fontSize: 12, opacity: 0.75 }}>{c?.state || ""}</span>
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
 
           {selected?.audio_url ? (
@@ -293,7 +271,11 @@ function MusicPanel() {
               <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>正在播放：<b>{selected?.title || "未命名"}</b></div>
               {selected?.image_url ? <img src={selected.image_url} alt="cover" style={{ width: 220, borderRadius: 12, objectFit: "cover", marginBottom: 10 }} /> : null}
               <audio controls autoPlay src={selected.audio_url} style={{ width: "100%" }} />
-              <div style={{ marginTop: 6 }}><a href={selected.audio_url} target="_blank" rel="noreferrer">下载 MP3</a></div>
+              <div style={{ marginTop: 6 }}>
+                {String(selected?.state || "").toLowerCase() === "succeeded"
+                  ? <a href={selected.audio_url} target="_blank" rel="noreferrer">下载 MP3</a>
+                  : <span style={{ fontSize: 12, opacity: 0.8 }}>生成中…（完成后可下载）</span>}
+              </div>
             </div>
           ) : null}
         </div>
@@ -313,9 +295,8 @@ export default function RemixStudio() {
       <BuildBadge />
       <h1 style={{ color: "white", fontSize: 22, fontWeight: 900, margin: 0 }}>可灵工作室（测试模式）</h1>
       <div style={{ color: "rgba(255,255,255,0.75)", marginTop: 6, fontSize: 13 }}>
-        Kling（北京官方 image2video）与 Suno（AIMusicAPI）回归测试页。
+        Kling（北京官方 image2video）与 Suno/Udio（AIMusicAPI）回归测试页。
       </div>
-
       <KlingPanel />
       <MusicPanel />
     </div>
