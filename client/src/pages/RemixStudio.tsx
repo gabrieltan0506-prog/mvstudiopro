@@ -169,7 +169,9 @@ function MusicPanel() {
   const [taskId, setTaskId] = useState<string>("");
   const [debug, setDebug] = useState<any>(null);
   const [selected, setSelected] = useState<any>(null);
-  const stopRef = useRef(false);
+  
+  const [clipsState, setClipsState] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");const stopRef = useRef(false);
 
   useEffect(() => { stopRef.current = false; return () => { stopRef.current = true; }; }, []);
 
@@ -184,6 +186,8 @@ function MusicPanel() {
     setBusy(true);
     setTaskId("");
     setSelected(null);
+    setSelectedId("");
+    setClipsState([]);
     setDebug({ ok: true, message: "clicked: music create" });
 
     try {
@@ -207,6 +211,14 @@ function MusicPanel() {
         setDebug(pj);
 
         const clips = clipsFrom(pj);
+        if (Array.isArray(clips) && clips.length) {
+          setClipsState(clips);
+          if (!selectedId) {
+            const first = (clips.find((c:any)=>c?.audio_url) || clips[0]);
+            if (first?.clip_id) setSelectedId(String(first.clip_id));
+            if (!selected) setSelected(first);
+          }
+        }
         const firstOk = clips.find((c: any) => c?.audio_url);
         if (firstOk && !selected) setSelected(firstOk);
 
@@ -220,9 +232,7 @@ function MusicPanel() {
     }
   }
 
-  const clips = clipsFrom(debug);
-
-  return (
+  const clips = (clipsState.length ? clipsState : clipsFrom(debug));return (
     <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>音乐生成（测试）</div>
@@ -250,7 +260,7 @@ function MusicPanel() {
             {clips.map((c: any) => (
               <button
                 key={String(c?.clip_id || Math.random())}
-                onClick={() => c?.audio_url && setSelected(c)}
+                onClick={() => { if (!c?.audio_url) return; setSelected(c); if (c?.clip_id) setSelectedId(String(c.clip_id)); }}
                 disabled={!c?.audio_url}
                 style={{
                   textAlign: "left",
