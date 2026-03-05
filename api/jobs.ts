@@ -186,7 +186,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(200).json({ ok: true, status, taskId: operationName, videoUrl: videoUrl || undefined, raw });
         }
 
-        if (req.method !== "POST" && req.method !== "GET") return res.status(405).json({ ok: false, error: "Method not allowed" });const imageUrl = s(q.imageUrl || b.imageUrl);
+        if (req.method !== "POST" && req.method !== "GET") return res.status(405).json({ ok: false, error: "Method not allowed" });
+        const imageUrl = s(q.imageUrl || b.imageUrl);
         if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
 
         // server fetch image (supports private blob with token)
