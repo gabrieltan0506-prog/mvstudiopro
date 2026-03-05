@@ -15,7 +15,7 @@ function b64url(buf: Buffer){
 function jwtHS256(iss: string, secret: string){
   const header = b64url(Buffer.from(JSON.stringify({alg:"HS256",typ:"JWT"}),"utf-8"));
   const now = Math.floor(Date.now()/1000);
-  const payload = b64url(Buffer.from(JSON.stringify({iss, iat: now, exp: now+3600}),"utf-8"));
+  const payload = b64url(Buffer.from(JSON.stringify({ iss, iat: now, nbf: now, exp: now + 3600 }),"utf-8"));
   const unsigned = `${header}.${payload}`;
   const sig = crypto.createHmac("sha256", secret).update(unsigned).digest();
   return `${unsigned}.${b64url(sig)}`;
