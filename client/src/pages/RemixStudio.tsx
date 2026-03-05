@@ -34,6 +34,7 @@ function KlingPanel() {
   const [debug, setDebug] = useState<any>(null);
   const [lastCreate, setLastCreate] = useState<any>(null);
   const stopRef = useRef(false);
+  const clips = (debug?.json?.raw?.data || debug?.raw?.data || []);
 
   useEffect(() => {
     stopRef.current = false;
@@ -149,6 +150,56 @@ function KlingPanel() {
         <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div>
       ) : null}
 
+      
+      {Array.isArray(clips) && clips.length ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（歌曲列表）</div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            {clips.map((c: any) => {
+              const title = c?.title || "未命名";
+              const audio = c?.audio_url || "";
+              const active = selectedClip?.clip_id && c?.clip_id && selectedClip.clip_id === c.clip_id;
+              return (
+                <button
+                  key={String(c?.clip_id || Math.random())}
+                  onClick={() => audio && setSelectedClip(c)}
+                  disabled={!audio}
+                  style={{
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    color: "white",
+                    cursor: audio ? "pointer" : "not-allowed",
+                    opacity: audio ? 1 : 0.6,
+                    fontWeight: 800,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span>{title}</span>
+                    <span style={{ fontSize: 12, opacity: 0.8 }}>{c?.state || ""}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedClip?.audio_url ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
+                正在播放：<b>{selectedClip?.title || "未命名"}</b>
+              </div>
+              <audio controls autoPlay src={selectedClip.audio_url} style={{ width: "100%" }} />
+              <div style={{ marginTop: 6 }}>
+                <a href={selectedClip.audio_url} target="_blank" rel="noreferrer">下载 / 打开 audio_url</a>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <details style={{ marginTop: 10 }}>
         <summary style={{ cursor: "pointer", fontWeight: 800 }}>调试输出（JSON）</summary>
         <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{JSON.stringify(debug, null, 2)}</pre>
@@ -160,6 +211,7 @@ function KlingPanel() {
 type MusicProvider = "suno" | "udio";
 
 function MusicPanel() {
+  const [selectedClip, setSelectedClip] = useState<any>(null);
   const [provider, setProvider] = useState<MusicProvider>("suno");
   const [prompt, setPrompt] = useState("电影感史诗配乐，适合动作预告片，鼓点强烈，旋律上头");
   const [busy, setBusy] = useState(false);
@@ -230,9 +282,15 @@ function MusicPanel() {
 
         if (Array.isArray(data) && data.length > 0) {
           const item = data[0];
-          if (item?.audio_url || item?.video_url) { setResult(item); return; }
+          if (item?.audio_url || item?.video_url) { setResult(item);
+          // AUTO_SELECT_FIRST_SUNO_CLIP
+          if (!selectedClip) setSelectedClip(item);
+          return; }
         }
-        if (data && (data.audio_url || data.video_url)) { setResult(data); return; }
+        if (data && (data.audio_url || data.video_url)) { setResult(data);
+        // AUTO_SELECT_FIRST_SUNO_CLIP
+        if (!selectedClip) setSelectedClip(data);
+        return; }
 
         const status = upstream?.status || upstream?.state || upstream?.task_status;
         if (status && String(status).toLowerCase() === "failed") throw new Error("task failed");
