@@ -1,6 +1,30 @@
 import { UI_VERSION } from "../version"
 import { useEffect, useMemo, useState } from "react";
 
+
+async function uploadRefImageToJobs(file: File): Promise<string> {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("read file failed"));
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.readAsDataURL(file);
+  });
+
+  const r = await fetch("/api/jobs?op=blobPutImage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" })
+  });
+
+  const j = await r.json().catch(() => ({}));
+  const imageUrl = j?.imageUrl || j?.json?.imageUrl;
+
+  if (!r.ok || !imageUrl) {
+    throw new Error("upload_failed_" + String(r.status) + ": " + JSON.stringify(j).slice(0, 300));
+  }
+  return String(imageUrl);
+}
+
 import MusicGenerator from "../components/MusicGenerator";
 
 type AnyObj = Record<string, any>;
@@ -76,7 +100,7 @@ async function uploadToBlob(file: File): Promise<string> {
   const optimized = await optimizeImageForUpload(file);
   const ext = optimized.contentType === "image/png" ? "png" : "jpg";
 
-  const r = await jfetch("/api/blob/upload", {
+  const r = await jfetch("/api/jobs?op=blobPutImage", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -333,6 +357,7 @@ export default function TestLab() {
   const [me, setMe] = useState<AnyObj | null>(null);
 
   
+  const [debug, setDebug] = useState<any>(null);
   const [musicProvider, setMusicProvider] = useState<"suno"|"udio">("suno");
 const [mode, setMode] = useState<"image" | "video" | "audio">("image");
   const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
