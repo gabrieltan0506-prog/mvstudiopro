@@ -140,7 +140,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const img = await fetchImageAsBase64(imageUrl);
 
       const payload = {
-        model_name: s(b.model_name || "kling-v2-6"),
+        model_name: s(b.model_name || "kling-v3"),
         image: img.b64,
         prompt,
         duration,
