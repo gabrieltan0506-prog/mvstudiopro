@@ -69,7 +69,9 @@ function KlingPanel() {
     setTaskId("");
     setDebug({ ok: true, message: "clicked: klingCreate" });
 
-    try {
+    
+      setVideoUrl("");
+try {
       if (!imageUrl) throw new Error("请先上传参考图");
 
       const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
@@ -103,8 +105,8 @@ function KlingPanel() {
         setDebug(pj);
 
         const status = pj?.json?.status || pj?.json?.state || pj?.json?.json?.status || pj?.json?.json?.state;
-        const videoUrl = pj?.json?.videoUrl || pj?.json?.video_url || pj?.json?.json?.videoUrl || pj?.json?.json?.video_url;
-if (videoUrl) return;
+        const vu = pj?.json?.videoUrl || pj?.json?.video_url || pj?.json?.json?.videoUrl || pj?.json?.json?.video_url || pj?.raw?.data?.task_result?.videos?.[0]?.url || null;
+if (vu) { setVideoUrl(String(vu)); return; }
         if (status && String(status).toLowerCase() === "failed") throw new Error("任务失败");
         await sleep(2500);
       }
