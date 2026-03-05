@@ -42,6 +42,27 @@ async function fetchJson(url:string, init:RequestInit){
 }
 
 
+async function resolveSunoAudioUrl(url: string): Promise<string> {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (!u.includes("audiopipe.suno.ai")) return u;
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 10000);
+  try {
+    const resp = await fetch(u, { redirect: "follow", signal: controller.signal });
+    // final URL after redirects
+    const finalUrl = String(resp.url || "").trim();
+    if (finalUrl) return finalUrl;
+    return u;
+  } catch {
+    return u;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+
 function readPngSize(buf: Buffer): { width: number; height: number } | null {
   if (buf.length < 24) return null;
   const pngSig = "89504e470d0a1a0a";
@@ -245,7 +266,17 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     if(op==="aimusicSunoTask"){
       const taskId = s(q.taskId||b.taskId).trim();
-      if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
+      if(!taskId) // resolve audiopipe -> final mp3 url if possible
+      try {
+        const raw = (r as any)?.json?.raw || (r as any)?.raw || (r as any)?.json || null;
+        const data = raw?.data;
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (item?.audio_url) item.audio_url = await resolveSunoAudioUrl(String(item.audio_url));
+          }
+        }
+      } catch {}
+      return res.status(400).json({ok:false,error:"missing_task_id"});
       const r = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`,{
         method:"GET",
         headers:{
