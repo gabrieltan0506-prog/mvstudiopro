@@ -36,6 +36,10 @@ function KlingPanel() {
   const stopRef = useRef(false);
   const clips = (debug?.json?.raw?.data || debug?.raw?.data || []);
 
+  // AUTO_SELECT_SUNO_CLIP
+  useEffect(() => {
+    if (!selectedClip && Array.isArray(clips) && clips.length) setSelectedClip(clips[0]);
+  }, [debug]);
   useEffect(() => {
     stopRef.current = false;
     return () => { stopRef.current = true; };
@@ -194,6 +198,70 @@ function KlingPanel() {
               <audio controls autoPlay src={selectedClip.audio_url} style={{ width: "100%" }} />
               <div style={{ marginTop: 6 }}>
                 <a href={selectedClip.audio_url} target="_blank" rel="noreferrer">下载 / 打开 audio_url</a>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      
+      {Array.isArray(clips) && clips.length ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（封面+播放器）</div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            {clips.map((c: any) => {
+              const active = selectedClip?.clip_id && c?.clip_id && selectedClip.clip_id === c.clip_id;
+              return (
+                <button
+                  key={String(c?.clip_id || Math.random())}
+                  onClick={() => c?.audio_url && setSelectedClip(c)}
+                  disabled={!c?.audio_url}
+                  style={{
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                    color: "white",
+                    cursor: c?.audio_url ? "pointer" : "not-allowed",
+                    opacity: c?.audio_url ? 1 : 0.6,
+                    fontWeight: 800,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10
+                  }}
+                >
+                  {c?.image_url ? (
+                    <img src={c.image_url} alt="cover" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }} />
+                  ) : (
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />
+                  )}
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                      <span>{c?.title || "未命名"}</span>
+                      <span style={{ fontSize: 12, opacity: 0.75 }}>{c?.state || ""}</span>
+                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                      {c?.duration ? `${c.duration}s` : ""}{c?.lyrics ? ` · ${c.lyrics}` : ""}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedClip?.audio_url ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
+                正在播放：<b>{selectedClip?.title || "未命名"}</b>
+              </div>
+              {selectedClip?.image_url ? (
+                <img src={selectedClip.image_url} alt="cover" style={{ width: 220, borderRadius: 12, objectFit: "cover", marginBottom: 10 }} />
+              ) : null}
+              <audio controls autoPlay src={selectedClip.audio_url} style={{ width: "100%" }} />
+              <div style={{ marginTop: 6 }}>
+                <a href={selectedClip.audio_url} target="_blank" rel="noreferrer">下载 MP3</a>
               </div>
             </div>
           ) : null}
