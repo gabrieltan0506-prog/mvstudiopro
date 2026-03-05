@@ -32,6 +32,7 @@ function KlingPanel() {
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState("");
   const [debug, setDebug] = useState<any>(null);
+  const [lastCreate, setLastCreate] = useState<any>(null);
   const stopRef = useRef(false);
 
   useEffect(() => {
@@ -78,6 +79,7 @@ function KlingPanel() {
         }),
       });
       setDebug(cj);
+      setLastCreate(cj);
 
       const tid =
         cj?.json?.taskId || cj?.json?.task_id ||
@@ -171,14 +173,16 @@ function MusicPanel() {
     return () => { stopRef.current = true; };
   }, []);
 
-  function extractTaskId(anyResp: any): string {
-    const j = anyResp?.json ?? anyResp;
+  function extractTaskId(resp: any): string {
+    const cj = resp || {};
+    const raw = cj.raw || cj?.json?.raw || cj?.json || cj;
     const cands = [
-      j?.task_id, j?.taskId,
-      j?.json?.task_id, j?.json?.taskId,
-      j?.data?.task_id, j?.data?.taskId,
-      j?.json?.data?.task_id, j?.json?.data?.taskId,
-      j?.result?.task_id, j?.result?.taskId
+      raw?.task_id, raw?.taskId,
+      raw?.data?.task_id, raw?.data?.taskId,
+      cj?.task_id, cj?.taskId,
+      cj?.json?.task_id, cj?.json?.taskId,
+      cj?.json?.data?.task_id, cj?.json?.data?.taskId,
+      cj?.raw?.task_id, cj?.raw?.taskId,
     ];
     for (const x of cands) {
       const v = String(x || "").trim();
@@ -211,7 +215,7 @@ function MusicPanel() {
       setDebug(cj);
 
       const tid = extractTaskId(cj);
-      if (!tid) throw new Error("missing task_id (see debug)");
+      if (!tid) throw new Error("missing task_id (see debug). create=" + JSON.stringify(cj));
       setTaskId(tid);
 
       const startAt = Date.now();
@@ -236,7 +240,7 @@ function MusicPanel() {
         await sleep(2500);
       }
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e), last: debug });
+      setDebug({ ok: false, error: e?.message || String(e), last: lastCreate });
     } finally {
       setBusy(false);
     }
