@@ -50,8 +50,9 @@ function KlingPanel() {
     const url = j?.imageUrl || j?.json?.imageUrl;
     if(url) setImageUrl(url);
     setDebug(j);
-    const url = j?.json?.imageUrl;
-    if (!url) throw new Error("upload failed: no imageUrl");
+    const url = j?.imageUrl || j?.json?.imageUrl || j?.blob?.url || j?.json?.blob?.url;
+    if (url) setImageUrl(String(url));
+    if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
     setImageUrl(url);
     return url as string;
   }
