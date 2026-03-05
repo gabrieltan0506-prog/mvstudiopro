@@ -289,7 +289,13 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     if(op==="aimusicUdioTask"){
       const taskId = s(q.taskId || q.task_id || q.taskID || b.taskId || b.task_id || b.taskID).trim();
-      if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
+      if(!taskId){
+        return res.status(400).json({
+          ok:false,
+          error:"missing_task_id",
+          got:{ taskId: q.taskId, task_id: q.task_id, taskID: q.taskID }
+        });
+      }
       const r = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`,{
         method:"GET",
         headers:{
@@ -299,18 +305,29 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
     }
+      });
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+    }
 
     if(op==="aimusicSunoTask"){
       const taskId = s(q.taskId || q.task_id || q.taskID || b.taskId || b.task_id || b.taskID).trim();
-      if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
-      if(!taskId) // resolve audiopipe -> final mp3 url if possible
-      try {
-        const raw = (r as any)?.json?.raw || (r as any)?.raw || (r as any)?.json || null;
-        const data = raw?.data;
-        if (Array.isArray(data)) {
-          for (const item of data) {
-            if (item?.audio_url) item.audio_url = await resolveSunoAudioUrl(String(item.audio_url));
-          }
+      if(!taskId){
+        return res.status(400).json({
+          ok:false,
+          error:"missing_task_id",
+          // minimal debug (no secrets)
+          got:{ taskId: q.taskId, task_id: q.task_id, taskID: q.taskID }
+        });
+      }
+      const r = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`,{
+        method:"GET",
+        headers:{
+          "Authorization":"Bearer "+AIM_KEY,
+          "Accept":"application/json"
+        }
+      });
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+    }
         }
       } catch {}
       return res.status(400).json({ok:false,error:"missing_task_id"});
