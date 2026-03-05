@@ -17,7 +17,7 @@ async function uploadRefImageToJobs(file: File): Promise<string> {
   });
 
   const j = await r.json().catch(() => ({}));
-  const imageUrl = j?.imageUrl || j?.json?.imageUrl;
+  const imageUrl = j?.imageUrl || j?.imageUrl || j?.json?.imageUrl;
 
   if (!r.ok || !imageUrl) {
     throw new Error("upload_failed_" + String(r.status) + ": " + JSON.stringify(j).slice(0, 300));
