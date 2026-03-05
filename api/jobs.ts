@@ -29,14 +29,45 @@ async function fetchJson(url:string, init:RequestInit){
 
 
 async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; mime: string; bytes: number }> {
-  const resp = await fetch(imageUrl, { redirect: "follow" });
-  if (!resp.ok) throw new Error(`image_fetch_failed:${resp.status}`);
-  const mime = String(resp.headers.get("content-type") || "image/png");
-  const ab = await resp.arrayBuffer();
-  const buf = Buffer.from(ab);
-  if (!buf.length) throw new Error("empty_image");
-  if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
-  return { b64: buf.toString("base64"), mime, bytes: buf.length };
+  const url = String(imageUrl || "").trim();
+  if (!url) throw new Error("missing_image_url");
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 20000);
+
+  const token = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
+
+  async function doFetch(withAuth: boolean) {
+    const headers: Record<string,string> = {};
+    // Private Vercel Blob needs Authorization header for server-side fetch
+    if (withAuth && token) headers["Authorization"] = `Bearer ${token}`;
+
+    const resp = await fetch(url, { redirect: "follow", signal: controller.signal, headers });
+    return resp;
+  }
+
+  try {
+    // First try without auth
+    let resp = await doFetch(false);
+
+    // If forbidden and we have token, retry with Authorization
+    if (resp.status == 403 && token) {
+      resp = await doFetch(true);
+    }
+
+    if (!resp.ok) throw new Error(`image_fetch_failed:${resp.status}`);
+
+    const mime = String(resp.headers.get("content-type") || "image/png");
+    const ab = await resp.arrayBuffer();
+    const buf = Buffer.from(ab);
+
+    if (!buf.length) throw new Error("empty_image");
+    if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
+
+    return { b64: buf.toString("base64"), mime, bytes: buf.length };
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
