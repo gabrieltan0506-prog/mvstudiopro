@@ -264,6 +264,41 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
     }
 
+    if(op==="aimusicUdioCreate"){
+      // Udio mapped via AIMusic Producer API
+      const payload = {
+        task_type: "create_music",
+        sound: s(b.sound||b.prompt||q.prompt||""),
+        make_instrumental: (b.make_instrumental !== undefined) ? b.make_instrumental : true,
+        mv: s(b.mv||"FUZZ-2.0")
+      };
+
+      const r = await fetchJson(`${AIM_BASE}/api/v1/producer/create`,{
+        method:"POST",
+        headers:{
+          "Authorization":"Bearer "+AIM_KEY,
+          "Content-Type":"application/json",
+          "Accept":"application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+    }
+
+    if(op==="aimusicUdioTask"){
+      const taskId = s(q.taskId||b.taskId).trim();
+      if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
+      const r = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`,{
+        method:"GET",
+        headers:{
+          "Authorization":"Bearer "+AIM_KEY,
+          "Accept":"application/json"
+        }
+      });
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+    }
+
     if(op==="aimusicSunoTask"){
       const taskId = s(q.taskId||b.taskId).trim();
       if(!taskId) // resolve audiopipe -> final mp3 url if possible
