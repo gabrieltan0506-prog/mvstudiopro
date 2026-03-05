@@ -21,10 +21,24 @@ function jwtHS256(iss: string, secret: string){
   return `${unsigned}.${b64url(sig)}`;
 }
 async function fetchJson(url:string, init:RequestInit){
-  const r = await fetch(url, init);
-  const text = await r.text();
-  const json = jparse(text);
-  return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0,4000) };
+  try{
+    const r = await fetch(url, init);
+    const text = await r.text();
+    const json = jparse(text);
+    return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0,4000) };
+  }catch(e:any){
+    // undici/network errors show as "fetch failed" with cause.code
+    return {
+      ok:false,
+      status: 0,
+      url,
+      error: "fetch_exception",
+      message: e?.message || String(e),
+      code: e?.code || e?.cause?.code || null,
+      cause: e?.cause ? { name: e.cause.name, code: e.cause.code, message: e.cause.message } : null,
+      stack: String(e?.stack||"").split("\\n").slice(0,8).join("\\n")
+    };
+  }
 }
 
 
