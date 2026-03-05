@@ -12,6 +12,7 @@ function getBody(req: VercelRequest): any {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
     const b = getBody(req);
     const dataUrl = String(b.dataUrl || "");
     const filename = String(b.filename || "ref.png") || "ref.png";
@@ -26,6 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!buf.length) return res.status(400).json({ ok: false, error: "empty_file" });
     if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large" });
 
+    // Your store is private; keep it private.
     const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "private", contentType: mime });
     return res.status(200).json({ ok: true, imageUrl: `${blob.url}?download=1`, blobUrl: blob.url });
   } catch (e: any) {
