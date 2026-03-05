@@ -104,9 +104,6 @@ function KlingPanel() {
 
         const status = pj?.json?.status || pj?.json?.state || pj?.json?.json?.status || pj?.json?.json?.state;
         const videoUrl = pj?.json?.videoUrl || pj?.json?.video_url || pj?.json?.json?.videoUrl || pj?.json?.json?.video_url;
-
-        
-        const videoUrl = videoUrl;
 if (videoUrl) return;
         if (status && String(status).toLowerCase() === "failed") throw new Error("任务失败");
         await sleep(2500);
