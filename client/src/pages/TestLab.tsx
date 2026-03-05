@@ -2,6 +2,40 @@ import { UI_VERSION } from "../version"
 import { useEffect, useMemo, useState } from "react";
 
 
+async function uploadRefImage(file: File): Promise<string> {
+  const dataUrl: string = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error("read_file_failed"));
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.readAsDataURL(file);
+  });
+
+  const r = await fetch("/api/blob-put-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" }),
+  });
+
+  const text = await r.text();
+  let j: any = null;
+  try { j = JSON.parse(text); } catch { j = null; }
+
+  const imageUrl = j?.imageUrl || j?.json?.imageUrl || j?.url || null;
+
+  // If HTTP not ok, always fail with body snippet
+  if (!r.ok) {
+    throw new Error(`upload_failed_${r.status}:` + (text.slice(0, 200)));
+  }
+
+  // HTTP 200 but missing imageUrl => treat as failure (this is your current bug)
+  if (!imageUrl) {
+    throw new Error(`upload_failed_200_missing_imageUrl:` + (text.slice(0, 200)));
+  }
+
+  return String(imageUrl);
+}
+
+
 async function uploadRefImageToJobs(file: File): Promise<string> {
   const dataUrl: string = await new Promise((resolve, reject) => {
     const fr = new FileReader();
