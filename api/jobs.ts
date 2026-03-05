@@ -235,7 +235,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // NOTE: if op exists, continue with op-router below
-    const b: any = req.method === "POST" ? body(req) : {};
     if (!op) return res.status(400).json({ ok: false, error: "missing op" });
 
     // ---------- blobPutImage (private store) ----------
