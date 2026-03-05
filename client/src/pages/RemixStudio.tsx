@@ -268,6 +268,34 @@ function KlingPanel() {
         </div>
       ) : null}
 
+      
+      {videoUrl ? (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（视频）</div>
+          <video controls src={videoUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
+          <div style={{ marginTop: 8 }}>
+            <a
+              href={videoUrl}
+              download
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: "inline-block",
+                padding: "10px 14px",
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.18)",
+                background: "rgba(255,255,255,0.10)",
+                color: "white",
+                fontWeight: 900,
+                textDecoration: "none"
+              }}
+            >
+              下载 MP4
+            </a>
+          </div>
+        </div>
+      ) : null}
+
       <details style={{ marginTop: 10 }}>
         <summary style={{ cursor: "pointer", fontWeight: 800 }}>调试输出（JSON）</summary>
         <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{JSON.stringify(debug, null, 2)}</pre>
