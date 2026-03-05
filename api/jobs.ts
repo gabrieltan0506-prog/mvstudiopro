@@ -93,7 +93,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
 
       const taskId = r.json?.data?.task_id || null;
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, taskId, raw:r.json ?? r.rawText });
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, taskId, imageInputMode:"base64", imageBytes: (typeof img==="object" && img.bytes)? img.bytes : null, raw:r.json ?? r.rawText });
     }
 
     if(op==="klingTask"){
