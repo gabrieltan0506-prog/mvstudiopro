@@ -303,7 +303,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     if(op==="aimusicSunoTask"){
       const taskId = s(q.taskId || q.task_id || q.taskID || b.taskId || b.task_id || b.taskID).trim();
       if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
-      const taskId = s(q.taskId||b.taskId).trim();
       if(!taskId) // resolve audiopipe -> final mp3 url if possible
       try {
         const raw = (r as any)?.json?.raw || (r as any)?.raw || (r as any)?.json || null;
