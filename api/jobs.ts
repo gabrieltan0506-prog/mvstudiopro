@@ -9,6 +9,15 @@ function body(req: VercelRequest): any {
   if (typeof req.body === "string") return jparse(req.body) ?? {};
   return req.body;
 }
+
+function safeJsonParse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
+function getBody(req: VercelRequest): any {
+  const b: any = (req as any).body;
+  if (!b) return {};
+  if (typeof b === "string") return safeJsonParse(b) ?? {};
+  return b;
+}
+
 function b64url(buf: Buffer) {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -51,8 +60,184 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; byte
   return { b64: buf.toString("base64"), bytes: buf.length, mime };
 }
 
+
+async function getVertexAccessToken(): Promise<string> {
+  const raw = s(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim();
+  if (!raw) throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON");
+
+  const sa: any = safeJsonParse(raw);
+  if (!sa?.client_email || !sa?.private_key) throw new Error("Invalid SA JSON");
+
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    iss: sa.client_email,
+    scope: "https://www.googleapis.com/auth/cloud-platform",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  })).toString("base64url");
+
+  const unsigned = `${header}.${payload}`;
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(unsigned);
+  sign.end();
+  const signature = sign.sign(sa.private_key).toString("base64url");
+  const assertion = `${unsigned}.${signature}`;
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion,
+    }).toString(),
+  });
+
+  const json: any = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !json?.access_token) throw new Error(`Vertex token failed: ${JSON.stringify(json)}`);
+  return json.access_token;
+}
+
+function normalizePredictOperationName(taskIdOrName: string, projectId: string, location: string, model: string): string {
+  const input = String(taskIdOrName || "").trim();
+  if (!input) return "";
+  if (input.startsWith(`projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/`)) return input;
+  const m = input.match(/operations\/([^/?\s]+)/);
+  if (m?.[1]) return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${m[1]}`;
+  return `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/${input}`;
+}
+
+function extractVideoUrl(raw: any): string {
+  const candidates = [
+    raw?.response?.generatedVideos?.[0]?.video?.uri,
+    raw?.response?.generatedVideos?.[0]?.video?.url,
+    raw?.response?.videos?.[0]?.uri,
+    raw?.response?.videos?.[0]?.url,
+    raw?.generatedVideos?.[0]?.video?.uri,
+    raw?.generatedVideos?.[0]?.video?.url,
+    raw?.videoUrl,
+    raw?.url,
+  ];
+  for (const item of candidates) {
+    const v = String(item || "").trim();
+    if (v) return v;
+  }
+  return "";
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
+    // ------------------------------------------------------------------
+    // COMPAT: Legacy Vertex/Veo API for TestLab (type=image|video)
+    // If op is not provided, we keep supporting the old interface.
+    // ------------------------------------------------------------------
+    const q: any = req.query || {};
+    const b: any = req.method === "POST" ? getBody(req) : {};
+    const op = s(q.op || b.op).trim();
+
+    if (!op) {
+      const type = s(q.type || b.type).trim();
+
+      if (type === "video") {
+        // Supports:
+        // - POST: create (requires imageUrl + prompt)
+        // - GET:  status (requires taskId + provider)
+        const provider = s(q.provider || b.provider || "pro").toLowerCase(); // rapid|pro
+        const prompt = s(q.prompt || b.prompt || "");
+        const taskId = s(q.taskId || b.taskId || "");
+
+        const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
+        if (!projectId) return res.status(500).json({ ok: false, error: "missing_env", detail: "Missing VERTEX_PROJECT_ID" });
+
+        const token = await getVertexAccessToken();
+
+        const mode = provider.includes("rapid") || provider.includes("fast") ? "rapid" : "pro";
+        const model = mode === "rapid"
+          ? s(process.env.VERTEX_VEO_MODEL_RAPID || "veo-3.1-fast-generate-001")
+          : s(process.env.VERTEX_VEO_MODEL_PRO || "veo-3.1-generate-001");
+
+        const location = mode === "rapid"
+          ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
+          : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
+
+        const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
+
+        if (req.method === "GET" && taskId) {
+          const operationName = normalizePredictOperationName(taskId, projectId, location, model);
+          const statusUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
+          const statusResp = await fetch(statusUrl, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ operationName }),
+          });
+
+          const text = await statusResp.text();
+          const raw = safeJsonParse(text);
+          if (!statusResp.ok) {
+            return res.status(502).json({ ok: false, error: "video_status_failed", status: statusResp.status, raw: raw ?? text.slice(0, 800) });
+          }
+
+          const videoUrl = extractVideoUrl(raw);
+          const done = Boolean(raw?.done);
+          const failed = done && !!raw?.error;
+          const status = failed ? "failed" : done ? "succeeded" : "running";
+
+          return res.status(200).json({ ok: true, status, taskId: operationName, videoUrl: videoUrl || undefined, raw });
+        }
+
+        if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+
+        const imageUrl = s(q.imageUrl || b.imageUrl);
+        if (!imageUrl) return res.status(400).json({ ok: false, error: "missing_image_url" });
+
+        // server fetch image (supports private blob with token)
+        const blobToken = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
+        const headers: any = { "User-Agent": "mvstudiopro/1.0 (+veo-fetch)" };
+        let imgResp = await fetch(imageUrl, { redirect: "follow", headers });
+        if (imgResp.status === 403 && blobToken) {
+          headers["Authorization"] = `Bearer ${blobToken}`;
+          imgResp = await fetch(imageUrl, { redirect: "follow", headers });
+        }
+        if (!imgResp.ok) return res.status(400).json({ ok: false, error: "invalid_image_url", status: imgResp.status });
+
+        const mimeType = String(imgResp.headers.get("content-type") || "image/png");
+        const buf = Buffer.from(await imgResp.arrayBuffer());
+        if (!buf.length) return res.status(400).json({ ok: false, error: "empty_image" });
+        if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ ok: false, error: "image_too_large" });
+
+        const imageB64 = buf.toString("base64");
+
+        const durationSeconds = Number(q.durationSeconds || b.durationSeconds || q.duration || b.duration || 8) || 8;
+        const aspectRatio = s(q.aspectRatio || b.aspectRatio || "16:9");
+        const resolution = s(q.resolution || b.resolution || "720p");
+
+        const createUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
+        const createResp = await fetch(createUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instances: [{ prompt, image: { bytesBase64Encoded: imageB64, mimeType } }],
+            parameters: { aspectRatio, resolution, durationSeconds, generateAudio: false, upscale: false },
+          }),
+        });
+
+        const text = await createResp.text();
+        const raw = safeJsonParse(text);
+        if (!createResp.ok) {
+          return res.status(502).json({ ok: false, error: "video_create_failed", status: createResp.status, raw: raw ?? text.slice(0, 800) });
+        }
+
+        const name = String(raw?.name || "");
+        return res.status(200).json({ ok: true, status: "running", taskId: name, raw });
+      }
+
+      // Unknown legacy type
+      return res.status(400).json({ ok: false, error: "unsupported_type", type });
+    }
+
+    // NOTE: if op exists, continue with op-router below
+
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? body(req) : {};
     const op = s(q.op || b.op).trim();
