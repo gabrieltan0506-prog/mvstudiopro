@@ -36,7 +36,6 @@ function KlingPanel() {
 
   async function upload(file: File) {
     const dataUrl = await toDataUrl(file);
-    // 统一走独立上传口（避免 /api/jobs 不稳定时上传挂）
     const j = await fetchJsonish("/api/blob-put-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -46,7 +45,6 @@ function KlingPanel() {
     const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
     if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
     setImageUrl(String(url));
-    return String(url);
   }
 
   async function start() {
@@ -88,7 +86,7 @@ function KlingPanel() {
 
   return (
     <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
-      <div style={{ fontSize: 18, fontWeight: 900 }}>可灵后端测试（Kling CN）</div>
+      <div style={{ fontSize: 18, fontWeight: 900 }}>可灵视频（Kling CN）</div>
 
       <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center" }}>
         <input type="file" accept="image/*"
@@ -143,7 +141,7 @@ function MusicPanel() {
   const [taskId, setTaskId] = useState<string>("");
   const [debug, setDebug] = useState<any>(null);
 
-  // 核心：固定列表，不再依赖 debug 渲染
+  // 关键：固定列表（不依赖 debug 渲染）
   const [clipsState, setClipsState] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
 
@@ -189,11 +187,12 @@ function MusicPanel() {
         const list = clipsFrom(pj);
         if (Array.isArray(list) && list.length) {
           setClipsState(list);
-          const first = list.find((c:any)=>c?.audio_url) || list[0];
-          if (first?.clip_id && !selectedId) setSelectedId(String(first.clip_id));
+          const firstPlayable = list.find((c:any)=>c?.audio_url) || list[0];
+          if (!selectedId && firstPlayable?.clip_id) setSelectedId(String(firstPlayable.clip_id));
+          // 成功即停（至少一首 succeeded）
+          const okItem = list.find((c:any)=>c?.audio_url && String(c?.state||"").toLowerCase()==="succeeded");
+          if (okItem) return;
         }
-        const okItem = list.find((c:any)=>c?.audio_url && String(c?.state||"").toLowerCase()==="succeeded");
-        if (okItem) return;
         await sleep(2500);
       }
     } catch (e: any) {
@@ -206,7 +205,7 @@ function MusicPanel() {
   return (
     <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <div style={{ fontSize: 18, fontWeight: 900 }}>音乐生成（测试）</div>
+        <div style={{ fontSize: 18, fontWeight: 900 }}>音乐生成</div>
         <select value={provider} onChange={(e) => setProvider(e.target.value as MusicProvider)}
           style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.25)", color: "white", fontWeight: 900 }}>
           <option value="suno">Suno（高质量）</option>
@@ -226,7 +225,7 @@ function MusicPanel() {
 
       {Array.isArray(clips) && clips.length ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
-          <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（歌曲列表）</div>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（两首歌）</div>
 
           <div style={{ display: "grid", gap: 8 }}>
             {clips.map((c: any) => {
@@ -293,9 +292,9 @@ export default function RemixStudio() {
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", padding: 20 }}>
       <BuildBadge />
-      <h1 style={{ color: "white", fontSize: 22, fontWeight: 900, margin: 0 }}>可灵工作室（测试模式）</h1>
+      <h1 style={{ color: "white", fontSize: 22, fontWeight: 900, margin: 0 }}>Remix Studio</h1>
       <div style={{ color: "rgba(255,255,255,0.75)", marginTop: 6, fontSize: 13 }}>
-        Kling（北京官方 image2video）与 Suno/Udio（AIMusicAPI）回归测试页。
+        视频：Kling（后端）｜音乐：Suno/Udio（AIMusicAPI）。上传统一走 /api/blob-put-image。
       </div>
       <KlingPanel />
       <MusicPanel />
