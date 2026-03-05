@@ -68,42 +68,48 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; mime
   if (!url) throw new Error("missing_image_url");
 
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 20000);
+  const t = setTimeout(() => controller.abort(), 25000);
 
   const token = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
 
   async function doFetch(withAuth: boolean) {
-    const headers: Record<string,string> = {};
-    // Private Vercel Blob needs Authorization header for server-side fetch
+    const headers: Record<string,string> = {
+      "User-Agent": "mvstudiopro/1.0 (+image-fetch)"
+    };
     if (withAuth && token) headers["Authorization"] = `Bearer ${token}`;
-
     const resp = await fetch(url, { redirect: "follow", signal: controller.signal, headers });
     return resp;
   }
 
-  try {
-    // First try without auth
-    let resp = await doFetch(false);
+  async function sleep(ms:number){ return new Promise(r=>setTimeout(r,ms)); }
 
-    // If forbidden and we have token, retry with Authorization
-    if (resp.status == 403 && token) {
-      resp = await doFetch(true);
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      // try without auth then auth (for private blob)
+      let resp = await doFetch(false);
+      if (resp.status === 403 && token) resp = await doFetch(true);
+
+      if (resp.ok) {
+        const mime = String(resp.headers.get("content-type") || "image/png");
+        const ab = await resp.arrayBuffer();
+        const buf = Buffer.from(ab);
+        if (!buf.length) throw new Error("empty_image");
+        if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
+        return { b64: buf.toString("base64"), mime, bytes: buf.length };
+      }
+
+      // retry on rate limit / transient
+      const retryable = resp.status === 429 || resp.status === 502 || resp.status === 503 || resp.status === 504
+      if (retryable && attempt < 3) {
+        const backoff = [800, 1600, 3200][attempt] || 3200
+        await sleep(backoff)
+        continue
+      }
+
+      throw new Error(`image_fetch_failed:${resp.status}`);
     }
 
-    if (!resp.ok) throw new Error(`image_fetch_failed:${resp.status}`);
-
-    const mime = String(resp.headers.get("content-type") || "image/png");
-    const ab = await resp.arrayBuffer();
-    const buf = Buffer.from(ab);
-
-    if (!buf.length) throw new Error("empty_image");
-    const size = readPngSize(buf) || readJpegSize(buf);
-    if (!size) throw new Error("unsupported_image_format");
-    const minEdge = Math.min(size.width, size.height);
-    if (minEdge < 64) throw new Error(`image_too_small:${size.width}x${size.height}`);
-    if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
-
-    return { b64: buf.toString("base64"), mime, bytes: buf.length };
+    throw new Error("image_fetch_failed:unknown");
   } finally {
     clearTimeout(t);
   }
