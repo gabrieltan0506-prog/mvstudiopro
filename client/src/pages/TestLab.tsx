@@ -443,7 +443,7 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
           body.aspectRatio = imageAspectRatio;
         }
 
-        const r = await jfetch("/api/jobs", {
+        const r = await jfetch("/api/google?op=veoCreate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -495,7 +495,7 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
 
         for (let i = 0; i < 90; i++) {
           await new Promise((res) => setTimeout(res, 3000));
-          const st = await jfetch(`/api/jobs?type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
+          const st = await jfetch(`/api/google?op=veoTask&type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
           setRaw(st.json ?? st.text);
           const url = st.json?.videoUrl;
           if (url) {
