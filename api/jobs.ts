@@ -27,6 +27,18 @@ async function fetchJson(url:string, init:RequestInit){
   return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0,4000) };
 }
 
+
+async function fetchImageAsBase64(imageUrl: string): Promise<{ b64: string; mime: string; bytes: number }> {
+  const resp = await fetch(imageUrl, { redirect: "follow" });
+  if (!resp.ok) throw new Error(`image_fetch_failed:${resp.status}`);
+  const mime = String(resp.headers.get("content-type") || "image/png");
+  const ab = await resp.arrayBuffer();
+  const buf = Buffer.from(ab);
+  if (!buf.length) throw new Error("empty_image");
+  if (buf.length > 8 * 1024 * 1024) throw new Error("image_too_large");
+  return { b64: buf.toString("base64"), mime, bytes: buf.length };
+}
+
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
     const q:any=req.query||{};
@@ -64,6 +76,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     if(op==="klingCreate"){
       const imageUrl = s(b.imageUrl||b.image||q.imageUrl||q.image).trim();
       if(!imageUrl) return res.status(400).json({ok:false,error:"missing_image_url"});
+      const img = await fetchImageAsBase64(imageUrl);
+
       const prompt = s(b.prompt||q.prompt||"");
       const duration = s(b.duration||"10"); // doc enum "5"/"10"
       if(duration!=="5" && duration!=="10"){
@@ -71,7 +85,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
       const payload = {
         model_name: s(b.model_name||"kling-v2-6"),
-        image: imageUrl,            // URL allowed in doc  [oai_citation:5‡Kling imagetoVideo.docx](sediment://file_0000000045fc71fd815421cc15312ce5)
+        image: img.b64,            // URL allowed in doc  [oai_citation:5‡Kling imagetoVideo.docx](sediment://file_0000000045fc71fd815421cc15312ce5)
         image_tail: s(b.image_tail||""),
         prompt,
         negative_prompt: s(b.negative_prompt||""),
