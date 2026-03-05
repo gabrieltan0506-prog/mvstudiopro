@@ -13,8 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "GET") return res.status(405).send("Method Not Allowed");
 
     const key = String((req.query as any)?.key || "");
-    const secret =
-      String(process.env.ADMIN_DEV_LOGIN_KEY || process.env.ADMIN_SECRET || process.env.ADMIN_KEY || "");
+    const secret = String(process.env.DEV_ADMIN_SECRET || process.env.ADMIN_DEV_LOGIN_KEY || process.env.ADMIN_SECRET || process.env.ADMIN_KEY || "");
 
     if (!secret) return res.status(500).send("Missing ADMIN_DEV_LOGIN_KEY (or ADMIN_SECRET)");
     if (!key || !safeEq(key, secret)) return res.status(401).send("Unauthorized");
