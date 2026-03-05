@@ -10,7 +10,7 @@ async function uploadRefImageToJobs(file: File): Promise<string> {
     fr.readAsDataURL(file);
   });
 
-  const r = await fetch("/api/jobs?op=blobPutImage", {
+  const r = await fetch("/api/blob-put-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" })
@@ -100,7 +100,7 @@ async function uploadToBlob(file: File): Promise<string> {
   const optimized = await optimizeImageForUpload(file);
   const ext = optimized.contentType === "image/png" ? "png" : "jpg";
 
-  const r = await jfetch("/api/jobs?op=blobPutImage", {
+  const r = await jfetch("/api/blob-put-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
