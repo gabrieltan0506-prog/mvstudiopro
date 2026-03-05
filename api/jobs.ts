@@ -81,14 +81,26 @@ async function buildFirstFrameJpeg(input: Buffer, prompt: string, klingBase: str
   const hasAlpha = Boolean(meta.hasAlpha);
 
   if (hasAlpha) {
-    const bgPrompt = `${prompt}\n\nbackground scene only, no people, no characters`;
+    // Compose first frame:
+    // 1) generate a background scene via Kling Image (no people)
+    // 2) composite transparent PNG foreground onto the scene
+    const bgPrompt = `${prompt}\n\nbackground scene only, no people, no characters, no person, no human, no face`;
     const bgBuf = await klingGenerateSceneBackground(klingBase, imageToken, bgPrompt);
-    const bg = await sharp(bgBuf).resize(w, h, { fit: "cover" }).toBuffer();
+
+    const bg = await sharp(bgBuf, { failOnError: false })
+      .resize(w, h, { fit: "cover" })
+      .toBuffer();
+
     const fg = await sharp(input, { failOnError: false })
       .resize(w, h, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 }, withoutEnlargement: true })
       .png()
       .toBuffer();
-    const jpeg = await sharp(bg).composite([{ input: fg }]).jpeg({ quality: 90, mozjpeg: true }).toBuffer();
+
+    const jpeg = await sharp(bg, { failOnError: false })
+      .composite([{ input: fg }])
+      .jpeg({ quality: 92, mozjpeg: true })
+      .toBuffer();
+
     return { jpeg, bytes: jpeg.length };
   }
 
