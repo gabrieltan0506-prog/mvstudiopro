@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { put, getDownloadUrl } from "@vercel/blob";
+import sharp from "sharp";
 
 function s(v:any){ if(v==null) return ""; if(Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t:string){ try{return JSON.parse(t)}catch{return null} }
@@ -326,4 +327,81 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
   }catch(e:any){
     return res.status(500).json({ok:false,error:"server_error",message:e?.message||String(e)});
   }
+}
+
+
+async function klingGenerateScene(prompt){
+  const BASE=(s(process.env.KLING_CN_BASE_URL)||"https://api-beijing.klingai.com").replace(/\/+$/,"");
+  const AK=s(process.env.KLING_CN_IMAGE_ACCESS_KEY).trim();
+  const SK=s(process.env.KLING_CN_IMAGE_SECRET_KEY).trim();
+  if(!AK||!SK) throw new Error("missing kling image key");
+
+  const TOKEN=jwtHS256(AK,SK);
+
+  const r=await fetch(BASE+"/v1/images/generations",{
+    method:"POST",
+    headers:{
+      "Authorization":"Bearer "+TOKEN,
+      "Content-Type":"application/json",
+      "Accept":"application/json"
+    },
+    body: JSON.stringify({
+      prompt,
+      image_size:"1024x576",
+      n:1
+    })
+  });
+
+  const t=await r.text();
+  const j=jparse(t);
+  if(!r.ok||!j?.data?.[0]?.url) throw new Error("kling_image_generation_failed");
+
+  const img=await fetch(j.data[0].url);
+  if(!img.ok) throw new Error("scene_download_failed");
+
+  const buf=Buffer.from(await img.arrayBuffer());
+  return buf;
+}
+
+async function normalizeKlingImage(buf,prompt){
+  const meta=await sharp(buf,{failOnError:false}).metadata();
+  const w0=meta.width||0;
+  const h0=meta.height||0;
+  if(!w0||!h0) throw new Error("invalid_image_metadata");
+
+  if(w0<300||h0<300) throw new Error(`image_too_small:${w0}x${h0}`);
+
+  const maxEdge=Math.max(w0,h0);
+  const scale=maxEdge<=1280?1:1280/maxEdge;
+  const w=Math.max(1,Math.round(w0*scale));
+  const h=Math.max(1,Math.round(h0*scale));
+
+  const hasAlpha=Boolean(meta.hasAlpha);
+
+  if(hasAlpha){
+    const bgPrompt=`${prompt}\n\nbackground scene only, no people, cinematic lighting`;
+    const bg=await klingGenerateScene(bgPrompt);
+
+    const scene=await sharp(bg).resize(w,h,{fit:"cover"}).toBuffer();
+
+    const fg=await sharp(buf,{failOnError:false})
+      .resize(w,h,{fit:"inside",withoutEnlargement:true})
+      .png()
+      .toBuffer();
+
+    const composed=await sharp(scene)
+      .composite([{input:fg,left:0,top:0}])
+      .jpeg({quality:90})
+      .toBuffer();
+
+    return {jpeg:composed,width:w,height:h,bytes:composed.length};
+  }
+
+  const out=await sharp(buf,{failOnError:false})
+    .resize({width:1280,height:1280,fit:"inside",withoutEnlargement:true})
+    .jpeg({quality:90})
+    .toBuffer();
+
+  const om=await sharp(out).metadata();
+  return {jpeg:out,width:om.width||0,height:om.height||0,bytes:out.length};
 }
