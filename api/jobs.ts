@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
-import { put } from "@vercel/blob";
+import { put, getDownloadUrl } from "@vercel/blob";
 
 function s(v:any){ if(v==null) return ""; if(Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t:string){ try{return JSON.parse(t)}catch{return null} }
@@ -46,8 +46,9 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const buf = Buffer.from(b64,"base64");
       if(!buf.length) return res.status(400).json({ok:false,error:"empty_file"});
       if(buf.length>10*1024*1024) return res.status(400).json({ok:false,error:"file_too_large",detail:"max 10MB"});
-      const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access:"public", contentType:mime });
-      return res.status(200).json({ ok:true, imageUrl: blob.url, blob });
+      const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access:"private", contentType:mime });
+      const downloadUrl = await getDownloadUrl(blob.url);
+      return res.status(200).json({ ok:true, imageUrl: downloadUrl, blobUrl: blob.url, blob });
     }
 
     // ---------- Kling (CN Beijing) ----------
