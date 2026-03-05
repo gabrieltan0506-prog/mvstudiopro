@@ -288,7 +288,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     }
 
     if(op==="aimusicUdioTask"){
-      const taskId = s(q.taskId||b.taskId).trim();
+      const taskId = s(q.taskId || q.task_id || q.taskID || b.taskId || b.task_id || b.taskID).trim();
       if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
       const r = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`,{
         method:"GET",
@@ -301,6 +301,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     }
 
     if(op==="aimusicSunoTask"){
+      const taskId = s(q.taskId || q.task_id || q.taskID || b.taskId || b.task_id || b.taskID).trim();
+      if(!taskId) return res.status(400).json({ok:false,error:"missing_task_id"});
       const taskId = s(q.taskId||b.taskId).trim();
       if(!taskId) // resolve audiopipe -> final mp3 url if possible
       try {
