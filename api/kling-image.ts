@@ -39,7 +39,29 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok:true, httpStatus:r.status, bodyPreview:t.slice(0,500) });
     }
 
-    if(req.method!=="POST") return res.status(405).json({ok:false,error:"Method not allowed"});
+    
+    // GET task polling: /api/kling-image?taskId=...
+    const taskId = s((req.query as any)?.taskId || "");
+    if (req.method === "GET" && taskId) {
+      const r = await fetch(`${BASE}/v1/images/generations/${encodeURIComponent(taskId)}`,{
+        method:"GET",
+        headers:{
+          "Authorization":"Bearer "+token,
+          "Accept":"application/json"
+        }
+      });
+      const t = await r.text();
+      const j = jparse(t);
+      const imageUrl =
+        j?.data?.task_result?.images?.[0]?.url ||
+        j?.data?.images?.[0]?.url ||
+        j?.data?.url ||
+        null;
+      const task_status = j?.data?.task_status || null;
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, taskId, task_status, imageUrl, raw: j ?? t.slice(0,2000) });
+    }
+
+if (req.method !== "POST" && req.method !== "GET") return res.status(405).json({ok:false,error:"Method not allowed"});
 
     const b:any = (typeof (req as any).body==="string") ? (jparse((req as any).body)||{}) : ((req as any).body||{});
     const prompt=s(b.prompt||"");
