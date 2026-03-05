@@ -41,20 +41,20 @@ function KlingPanel() {
 
   async function upload(file: File) {
     const dataUrl = await toDataUrl(file);
+
     const j = await fetchJsonish("/api/jobs?op=blobPutImage", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({dataUrl,filename:file.name})
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl, filename: file.name }),
     });
 
-    const url = j?.imageUrl || j?.json?.imageUrl;
-    if(url) setImageUrl(url);
     setDebug(j);
+
     const url = j?.imageUrl || j?.json?.imageUrl || j?.blob?.url || j?.json?.blob?.url;
-    if (url) setImageUrl(String(url));
     if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
-    setImageUrl(url);
-    return url as string;
+
+    setImageUrl(String(url));
+    return String(url);
   }
 
   async function start() {
