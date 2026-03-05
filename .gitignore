@@ -109,3 +109,4 @@ temp/
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
 scripts/kling_probe.mjs
+scripts/poll_tasks.mjs
