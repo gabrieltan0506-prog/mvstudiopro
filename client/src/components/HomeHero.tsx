@@ -1,4 +1,5 @@
 import React from "react";
+import FloatingVideoWatermark from "./FloatingVideoWatermark";
 
 const thumbs = [
   "太空站观景台",
@@ -30,10 +31,11 @@ export default function HomeHero() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.28fr 0.72fr",
+            gridTemplateColumns: "minmax(0,1.28fr) minmax(320px,0.72fr)",
             gap: 24,
             alignItems: "stretch",
           }}
+          className="home-hero-grid"
         >
           <div>
             <div
@@ -47,6 +49,8 @@ export default function HomeHero() {
                 overflow: "hidden",
               }}
             >
+              <FloatingVideoWatermark enabled text="Powered by mvstudiopro.com" />
+
               <div
                 style={{
                   position: "absolute",
@@ -110,17 +114,19 @@ export default function HomeHero() {
                   justifyContent: "space-between",
                   alignItems: "end",
                   gap: 16,
+                  flexWrap: "wrap",
                 }}
               >
                 <div style={{ color: "white" }}>
                   <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>本周推荐作品</div>
                   <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>太空站观景台</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84 }}>
-                    先看结果，再一键重新创作
+                    先看结果，再进入重新创作工作流
                   </div>
                 </div>
 
-                <button
+                <a
+                  href="/remix"
                   style={{
                     padding: "12px 18px",
                     borderRadius: 14,
@@ -130,10 +136,11 @@ export default function HomeHero() {
                     fontWeight: 900,
                     cursor: "pointer",
                     whiteSpace: "nowrap",
+                    textDecoration: "none",
                   }}
                 >
                   重新创作
-                </button>
+                </a>
               </div>
             </div>
 
@@ -198,7 +205,7 @@ export default function HomeHero() {
                 {[
                   "可灵工作室：图像 / 视频 / Motion Control / Lip Sync",
                   "虚拟艺人工坊：人物上传 → 场景 → 视频",
-                  "爆款分析师：免费试用，付费解锁优化方案",
+                  "爆款分析师：免费试用每日 3 次，付费解锁优化方案",
                 ].map((line) => (
                   <div
                     key={line}
@@ -215,10 +222,26 @@ export default function HomeHero() {
                   </div>
                 ))}
               </div>
+
+              <div
+                style={{
+                  marginTop: 16,
+                  padding: "12px 14px",
+                  borderRadius: 14,
+                  background: "rgba(255,79,179,0.08)",
+                  border: "1px solid rgba(255,79,179,0.16)",
+                  color: "rgba(255,255,255,0.86)",
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                }}
+              >
+                免费试用内容默认带水印。付费用户可去水印，并解锁完整优化方案与更多高级能力。
+              </div>
             </div>
 
             <div style={{ display: "flex", gap: 12, marginTop: 22, flexWrap: "wrap" }}>
-              <button
+              <a
+                href="/remix"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -227,11 +250,13 @@ export default function HomeHero() {
                   color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
+                  textDecoration: "none",
                 }}
               >
                 开始创作
-              </button>
-              <button
+              </a>
+              <a
+                href="/showcase"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -240,14 +265,23 @@ export default function HomeHero() {
                   color: "white",
                   fontWeight: 900,
                   cursor: "pointer",
+                  textDecoration: "none",
                 }}
               >
-                浏览作品
-              </button>
+                爆款案例
+              </a>
             </div>
           </div>
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 980px) {
+          .home-hero-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </section>
   );
 }
