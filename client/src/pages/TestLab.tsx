@@ -41,7 +41,7 @@ async function uploadRefImage(file: File): Promise<string> {
   let j: any = null;
   try { j = JSON.parse(text); } catch { j = null; }
 
-  const imageUrl = j?.imageUrl || j?.json?.imageUrl || j?.url || null;
+  const imageUrl = j?.imageUrl || j?.imageUrl || j?.json?.imageUrl || j?.url || null;
 
   // If HTTP not ok, always fail with body snippet
   if (!r.ok) {
@@ -72,7 +72,7 @@ async function uploadRefImageToJobs(file: File): Promise<string> {
   });
 
   const j = await r.json().catch(() => ({}));
-  const imageUrl = j?.imageUrl || j?.imageUrl || j?.json?.imageUrl;
+  const imageUrl = j?.imageUrl || j?.imageUrl || j?.imageUrl || j?.json?.imageUrl;
 
   if (!r.ok || !imageUrl) {
     throw new Error("upload_failed_" + String(r.status) + ": " + JSON.stringify(j).slice(0, 300));
@@ -666,10 +666,17 @@ const [mode, setMode] = useState<"image" | "video" | "audio">("image");
                   accept="image/png,image/jpeg,image/webp"
                   className="hidden"
                   onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    await onPickVideoReference(file);
-                  }}
+  const f = (e.target as any).files?.[0];
+  if (!f) return;
+  try {
+    const url = await uploadRefImage(f);
+    try { setImageUrl(url); } catch {}
+    try { setDebug({ ok: true, upload: true, imageUrl: url }); } catch {}
+  } catch (err: any) {
+    try { setDebug({ ok: false, upload: false, error: err?.message || String(err) }); } catch {}
+    throw err;
+  }
+}}
                 />
               </label>
 
