@@ -28,13 +28,13 @@ export default function HomeCreatorEco() {
       </div>
 
       <div
+        className="home-creator-layout"
         style={{
           marginTop: 24,
           display: "grid",
           gridTemplateColumns: "1.1fr 1fr",
           gap: 18,
         }}
-        className="home-creator-layout"
       >
         <div
           style={{
@@ -88,12 +88,7 @@ export default function HomeCreatorEco() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gap: 18,
-          }}
-        >
+        <div style={{ display: "grid", gap: 18 }}>
           {[
             ["我的创作", "集中管理任务、作品、历史记录，后续接入登录与积分体系。"],
             ["Recreate 同款", "浏览作品后一键进入工作流，自动带入模型、prompt 与主要参数。"],
