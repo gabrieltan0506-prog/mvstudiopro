@@ -15,43 +15,30 @@ function b64url(b:Buffer){
 }
 
 function jwtHS256(iss:string, secret:string){
-  const header=b64url(Buffer.from(JSON.stringify({alg:"HS256",typ:"JWT"})));
-  const now=Math.floor(Date.now()/1000);
-
-  const payload=b64url(Buffer.from(JSON.stringify({
+  const header = b64url(Buffer.from(JSON.stringify({ alg:"HS256", typ:"JWT" })));
+  const now = Math.floor(Date.now()/1000);
+  const payload = b64url(Buffer.from(JSON.stringify({
     iss,
-    iat:now,
-    nbf:now,
-    exp:now+3600
+    iat: now,
+    nbf: now,
+    exp: now + 3600
   })));
-
-  const unsigned=`${header}.${payload}`;
-
-  const sig=b64url(
-    crypto.createHmac("sha256", secret)
-      .update(unsigned)
-      .digest()
-  );
-
+  const unsigned = `${header}.${payload}`;
+  const sig = b64url(crypto.createHmac("sha256", secret).update(unsigned).digest());
   return `${unsigned}.${sig}`;
 }
 
 function tryParse(t:string){
-  try{
-    return JSON.parse(t);
-  }catch{
-    return null;
-  }
+  try { return JSON.parse(t); } catch { return null; }
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
   try{
+    const AK = s(process.env.KLING_CN_IMAGE_ACCESS_KEY).trim();
+    const SK = s(process.env.KLING_CN_IMAGE_SECRET_KEY).trim();
+    const BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/,"");
 
-    const AK=s(process.env.KLING_CN_IMAGE_ACCESS_KEY);
-    const SK=s(process.env.KLING_CN_IMAGE_SECRET_KEY);
-    const BASE=(s(process.env.KLING_CN_BASE_URL)||"https://api-beijing.klingai.com").replace(/\/+$/,"");
-
-    if(!AK||!SK){
+    if(!AK || !SK){
       return res.status(500).json({
         ok:false,
         error:"missing_env",
@@ -59,27 +46,25 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
     }
 
-    const token=jwtHS256(AK,SK);
+    const token = jwtHS256(AK, SK);
+    const op = s((req.query as any)?.op || "");
 
-    const op=s((req.query as any)?.op);
-
-    if(op==="probe"){
-
-      const resp=await fetch(`${BASE}/v1/images/generations`,{
+    if(op === "probe"){
+      const resp = await fetch(`${BASE}/v1/images/generations`, {
         method:"POST",
         headers:{
-          Authorization:"Bearer "+token,
+          Authorization:`Bearer ${token}`,
           "Content-Type":"application/json",
           Accept:"application/json"
         },
-        body:JSON.stringify({
-          prompt:"cinematic cyberpunk city background",
+        body: JSON.stringify({
+          prompt:"cinematic city background, no characters",
           n:1,
           image_size:"1024x576"
         })
       });
 
-      const bodyText=await resp.text();
+      const bodyText = await resp.text();
 
       return res.status(200).json({
         ok:true,
@@ -88,65 +73,55 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
     }
 
-    if(req.method!=="POST"){
-      return res.status(405).json({
-        ok:false,
-        error:"Method not allowed"
-      });
+    if(req.method !== "POST"){
+      return res.status(405).json({ ok:false, error:"Method not allowed" });
     }
 
-    const bodyData=
-      typeof req.body==="string"
-      ? tryParse(req.body)||{}
-      : req.body||{};
+    const bodyData =
+      typeof req.body === "string"
+        ? (tryParse(req.body) || {})
+        : (req.body || {});
 
-    const prompt=s(bodyData.prompt);
-    const size=s(bodyData.image_size||"1024x576");
-    const n=Number(bodyData.n||1);
+    const prompt = s((bodyData as any).prompt);
+    const image_size = s((bodyData as any).image_size || (bodyData as any).size || "1024x576");
+    const n = Number((bodyData as any).n || 1) || 1;
 
     if(!prompt){
-      return res.status(400).json({
-        ok:false,
-        error:"missing_prompt"
-      });
+      return res.status(400).json({ ok:false, error:"missing_prompt" });
     }
 
-    const resp=await fetch(`${BASE}/v1/images/generations`,{
+    const resp = await fetch(`${BASE}/v1/images/generations`, {
       method:"POST",
       headers:{
-        Authorization:"Bearer "+token,
+        Authorization:`Bearer ${token}`,
         "Content-Type":"application/json",
         Accept:"application/json"
       },
-      body:JSON.stringify({
-        prompt,
-        n,
-        image_size:size
-      })
+      body: JSON.stringify({ prompt, n, image_size })
     });
 
-    const respText=await resp.text();
-    const respJson=tryParse(respText);
+    const respText = await resp.text();
+    const respJson = tryParse(respText);
 
-    const imageUrl=
+    const imageUrl =
       respJson?.data?.[0]?.url ||
       respJson?.data?.url ||
+      respJson?.data?.task_result?.images?.[0]?.url ||
       null;
 
-    return res.status(resp.ok?200:502).json({
-      ok:resp.ok,
-      status:resp.status,
+    return res.status(resp.ok ? 200 : 502).json({
+      ok: resp.ok,
+      status: resp.status,
+      endpoint: `${BASE}/v1/images/generations`,
       imageUrl,
-      raw:respJson ?? respText.slice(0,2000)
+      raw: respJson ?? respText.slice(0,2000)
     });
 
   }catch(e:any){
-
     return res.status(500).json({
       ok:false,
       error:"server_error",
       message:e?.message||String(e)
     });
-
   }
 }
