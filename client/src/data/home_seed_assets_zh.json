@@ -30,12 +30,42 @@
     }
   ],
   "showcaseImages": [
-    "机甲守护者，电影级角色海报，深蓝与紫色主调，超高细节",
-    "未来城市追逐，赛博朋克街头，速度感与霓虹反光，电影级构图",
-    "雷电网球，职业女选手击球瞬间带电弧，爆发力极强，商业海报风格",
-    "深海女王，神秘海洋女王角色，蓝绿色光影，高级感",
-    "森林秘境，奇幻森林场景与角色，体积光，史诗感",
-    "霓虹歌手，舞台表演，高级时尚灯光，未来感"
+    {
+      "prompt": "机甲守护者，电影级角色海报，深蓝与紫色主调，超高细节",
+      "imageUrl": "https://fal.media/files/koala/banana1.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    },
+    {
+      "prompt": "未来城市追逐，赛博朋克街头，速度感与霓虹反光，电影级构图",
+      "imageUrl": "https://fal.media/files/koala/banana2.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    },
+    {
+      "prompt": "雷电网球，职业女选手击球瞬间带电弧，爆发力极强，商业海报风格",
+      "imageUrl": "https://fal.media/files/koala/banana3.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    },
+    {
+      "prompt": "深海女王，神秘海洋女王角色，蓝绿色光影，高级感",
+      "imageUrl": "https://fal.media/files/koala/banana4.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    },
+    {
+      "prompt": "森林秘境，奇幻森林场景与角色，体积光，史诗感",
+      "imageUrl": "https://fal.media/files/koala/banana5.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    },
+    {
+      "prompt": "霓虹歌手，舞台表演，高级时尚灯光，未来感",
+      "imageUrl": "https://fal.media/files/koala/banana6.png",
+      "model": "Nano Banana Pro",
+      "source": "fal.ai demo"
+    }
   ],
   "creatorActors": [
     "未来女特工，角色设定图，黑紫科技战衣，稳定人脸，正面半身",
