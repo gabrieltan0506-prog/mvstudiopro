@@ -5,7 +5,11 @@ async function safeFetch(url: string, init: any = {}, timeoutMs = 30000) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await safeFetch(url, { ...init, signal: controller.signal });
+ hotfix/fix-kling-safeFetch-response
     const text = res.text || "";
+
+    const text = await res.text();
+ main
     let json: any = null;
     try { json = JSON.parse(text); } catch {}
     return {

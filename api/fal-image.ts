@@ -16,10 +16,35 @@ if(!prompt){
 return res.status(400).json({ok:false,error:"missing_prompt"})
 }
 
+hotfix/fix-kling-safeFetch-response
+
+ feat/kling-showcase-generator
+
+ feat/fal-batch-showcase
+
+ feat/fal-showcase-generator
+ main
+ main
+ main
 const key = process.env.FAL_API_KEY || process.env.FAL_KEY
 
 if(!key){
 return res.status(500).json({ok:false,error:"missing FAL_API_KEY"})
+ hotfix/fix-kling-safeFetch-response
+
+ feat/kling-showcase-generator
+
+ feat/fal-batch-showcase
+
+
+const key = process.env.FAL_KEY
+
+if(!key){
+return res.status(500).json({ok:false,error:"missing FAL_KEY"})
+main
+ main
+ main
+ main
 }
 
 const r = await fetch("https://fal.run/fal-ai/nano-banana",{
