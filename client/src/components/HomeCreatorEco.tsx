@@ -1,17 +1,20 @@
 import React from "react";
+import seed from "../data/home_seed_assets_zh.json";
 
-const actors = [
-  ["虚拟艺人 A", "用户角色"],
-  ["虚拟艺人 B", "系统角色"],
-  ["机甲守护者", "可复用角色"],
-  ["都市女主", "用户角色"],
-  ["未来特工", "角色模板"],
-  ["森林精灵", "角色模板"],
-  ["电竞主播", "用户角色"],
-  ["科幻舰长", "可复用角色"],
+const gradients = [
+  "linear-gradient(135deg,#4338ca,#db2777)",
+  "linear-gradient(135deg,#0f766e,#8b5cf6)",
+  "linear-gradient(135deg,#1d4ed8,#7c3aed)",
+  "linear-gradient(135deg,#7c2d12,#db2777)",
+  "linear-gradient(135deg,#164e63,#9333ea)",
+  "linear-gradient(135deg,#0f766e,#2563eb)",
+  "linear-gradient(135deg,#7c3aed,#ec4899)",
+  "linear-gradient(135deg,#1e3a8a,#9333ea)",
 ];
 
 export default function HomeCreatorEco() {
+  const actors = Array.isArray((seed as any)?.creatorActors) ? (seed as any).creatorActors : [];
+
   return (
     <section style={{ maxWidth: 1240, margin: "0 auto", padding: "48px 20px 0" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "end", flexWrap: "wrap" }}>
@@ -31,6 +34,7 @@ export default function HomeCreatorEco() {
           gridTemplateColumns: "1.1fr 1fr",
           gap: 18,
         }}
+        className="home-creator-layout"
       >
         <div
           style={{
@@ -46,6 +50,7 @@ export default function HomeCreatorEco() {
           </div>
 
           <div
+            className="home-actors-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(4,minmax(0,1fr))",
@@ -53,31 +58,33 @@ export default function HomeCreatorEco() {
               marginTop: 18,
             }}
           >
-            {actors.map(([name, type], i) => (
-              <div
-                key={name}
-                style={{
-                  borderRadius: 18,
-                  overflow: "hidden",
-                  background: "rgba(255,255,255,0.04)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                }}
-              >
+            {actors.map((prompt: string, i: number) => {
+              const name = prompt.split("，")[0] || `角色 ${i + 1}`;
+              return (
                 <div
+                  key={name + i}
                   style={{
-                    aspectRatio: "3 / 4",
-                    background:
-                      i % 2 === 0
-                        ? "linear-gradient(135deg,#4338ca,#db2777)"
-                        : "linear-gradient(135deg,#0f766e,#8b5cf6)",
+                    borderRadius: 18,
+                    overflow: "hidden",
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
                   }}
-                />
-                <div style={{ padding: 12 }}>
-                  <div style={{ color: "white", fontWeight: 900, fontSize: 14 }}>{name}</div>
-                  <div style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 12 }}>{type}</div>
+                >
+                  <div
+                    style={{
+                      aspectRatio: "3 / 4",
+                      background: gradients[i % gradients.length],
+                    }}
+                  />
+                  <div style={{ padding: 12 }}>
+                    <div style={{ color: "white", fontWeight: 900, fontSize: 14 }}>{name}</div>
+                    <div style={{ marginTop: 6, color: "rgba(255,255,255,0.60)", fontSize: 12, lineHeight: 1.6 }}>
+                      {prompt}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -107,6 +114,17 @@ export default function HomeCreatorEco() {
           ))}
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 980px) {
+          .home-creator-layout {
+            grid-template-columns: 1fr !important;
+          }
+          .home-actors-grid {
+            grid-template-columns: repeat(2,minmax(0,1fr)) !important;
+          }
+        }
+      `}</style>
     </section>
   );
 }
