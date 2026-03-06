@@ -1,815 +1,777 @@
-import { UI_VERSION } from "../version"
-import { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
+type TabKey = "script" | "image" | "video" | "music";
+type GoogleImageTier = "flash" | "pro";
+type VeoMode = "rapid" | "pro";
+type KlingVideoMode = "rapid" | "pro";
+type MusicProvider = "suno" | "udio";
 
-async function googleNanoImage(input: {
-  prompt: string;
-  tier: "flash" | "pro";
-  imageSize?: string;
-  aspectRatio?: string;
-}) {
-  const r = await fetch(`/api/google?op=nanoImage&tier=${encodeURIComponent(input.tier)}&imageSize=${encodeURIComponent(input.imageSize||"1K")}&aspectRatio=${encodeURIComponent(input.aspectRatio||"16:9")}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: input.prompt, tier: input.tier, imageSize: input.imageSize || "1K", aspectRatio: input.aspectRatio || "16:9" })
-  });
-  const text = await r.text();
-  let j:any = null;
-  try { j = JSON.parse(text); } catch { j = null; }
-  if (!r.ok) {
-    throw new Error(`google_image_failed_${r.status}:` + text.slice(0,200));
-  }
-  return j ?? { rawText: text };
+async function fetchJsonish(url: string, init?: RequestInit) {
+  const resp = await fetch(url, init);
+  const text = await resp.text();
+  const contentType = resp.headers.get("content-type") || "";
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    url,
+    contentType,
+    json,
+    rawText: text,
+  };
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-async function uploadRefImage(file: File): Promise<string> {
-  const dataUrl: string = await new Promise((resolve, reject) => {
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = () => reject(new Error("read_file_failed"));
     fr.onload = () => resolve(String(fr.result || ""));
     fr.readAsDataURL(file);
   });
-
-  const r = await fetch("/api/blob-put-image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" }),
-  });
-
-  const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch { j = null; }
-
-  const imageUrl = j?.imageUrl || j?.imageUrl || j?.json?.imageUrl || j?.url || null;
-
-  // If HTTP not ok, always fail with body snippet
-  if (!r.ok) {
-    throw new Error(`upload_failed_${r.status}:` + (text.slice(0, 200)));
-  }
-
-  // HTTP 200 but missing imageUrl => treat as failure (this is your current bug)
-  if (!imageUrl) {
-    throw new Error(`upload_failed_200_missing_imageUrl:` + (text.slice(0, 200)));
-  }
-
-  return String(imageUrl);
 }
 
-
-async function uploadRefImageToJobs(file: File): Promise<string> {
-  const dataUrl: string = await new Promise((resolve, reject) => {
-    const fr = new FileReader();
-    fr.onerror = () => reject(new Error("read file failed"));
-    fr.onload = () => resolve(String(fr.result || ""));
-    fr.readAsDataURL(file);
-  });
-
-  const r = await fetch("/api/blob-put-image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" })
-  });
-
-  const j = await r.json().catch(() => ({}));
-  const imageUrl = j?.imageUrl || j?.imageUrl || j?.imageUrl || j?.json?.imageUrl;
-
-  if (!r.ok || !imageUrl) {
-    throw new Error("upload_failed_" + String(r.status) + ": " + JSON.stringify(j).slice(0, 300));
-  }
-  return String(imageUrl);
-}
-
-import MusicGenerator from "../components/MusicGenerator";
-
-type AnyObj = Record<string, any>;
-
-const UI_VERSION = "20260304-1";
-
-async function jfetch(url: string, init?: RequestInit) {
-  const r = await fetch(url, init);
-  const text = await r.text();
-  let j: any = null;
-  try { j = JSON.parse(text); } catch {}
-  return { ok: r.ok, status: r.status, json: j, text };
-}
-
-const ASPECTS = [
-  { v: "16:9", label: "16:9（横屏标准）" },
-  { v: "9:16", label: "9:16（竖屏短视频）" },
-  { v: "1:1", label: "1:1（方形）" },
-  { v: "4:3", label: "4:3（传统横屏）" },
-  { v: "3:4", label: "3:4（传统竖屏）" },
-  { v: "21:9", label: "21:9（电影宽屏）" },
-] as const;
-
-async function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("file_read_failed"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-}
-
-async function optimizeImageForUpload(file: File): Promise<{ dataUrl: string; contentType: string }> {
-  // Respect EXIF orientation from mobile photos to avoid upside-down I2V results.
-  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-  let width = bitmap.width;
-  let height = bitmap.height;
-
-  const maxSide = 1600;
-  if (Math.max(width, height) > maxSide) {
-    const ratio = maxSide / Math.max(width, height);
-    width = Math.max(1, Math.round(width * ratio));
-    height = Math.max(1, Math.round(height * ratio));
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("canvas_ctx_failed");
-
-  ctx.drawImage(bitmap, 0, 0, width, height);
-
-  let mime = file.type === "image/png" ? "image/png" : "image/jpeg";
-  let quality = 0.88;
-  let dataUrl = canvas.toDataURL(mime, quality);
-
-  // Keep payload small to avoid hitting serverless body limits.
-  while (dataUrl.length > 900_000 && quality > 0.45) {
-    mime = "image/jpeg";
-    quality = Number((quality - 0.08).toFixed(2));
-    dataUrl = canvas.toDataURL(mime, quality);
-  }
-
-  if (dataUrl.length > 1_400_000) {
-    throw new Error("image_too_large_after_optimization");
-  }
-
-  return { dataUrl, contentType: mime };
-}
-
-async function uploadToBlob(file: File): Promise<string> {
-  const optimized = await optimizeImageForUpload(file);
-  const ext = optimized.contentType === "image/png" ? "png" : "jpg";
-
-  const r = await jfetch("/api/blob-put-image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      fileName: (file.name || "reference").replace(/\.[a-zA-Z0-9]+$/, ""),
-      contentType: optimized.contentType,
-      dataUrl: optimized.dataUrl,
-      ext,
-    }),
-  });
-
-  if (!r.ok || !r.json?.ok || !(r.json?.downloadUrl || r.json?.url)) {
-    const reason = [r.json?.error, r.json?.message].filter(Boolean).join(": ");
-    throw new Error(reason || `upload_failed_${r.status}`);
-  }
-
-  return String(r.json.downloadUrl || r.json.url);
-}
-
-function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-export default function TestLab() {
-  /* TESTLAB_START_CLICK_V1 */
-  async function handleStartClick() {
-    try {
-      setDebug("clicked: " + activeTab);
-      setBusy(true);
-
-      if (activeTab === "music") {
-        await runMusic(prompt);
-        return;
-      }
-
-      // fallback to existing handler if present
-      if (typeof (handleGenerate as any) === "function") {
-        await (handleGenerate as any)();
-        return;
-      }
-      if (typeof (startGenerate as any) === "function") {
-        await (startGenerate as any)();
-        return;
-      }
-      if (typeof (onGenerate as any) === "function") {
-        await (onGenerate as any)();
-        return;
-      }
-
-      setDebug("clicked but no handler found for tab=" + activeTab);
-    } catch (e: any) {
-      setDebug("ERROR: " + (e?.message || String(e)));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /* TESTLAB_MUSIC_WIRE_V3 */
-  function __sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-  async function runMusic(promptText: string) {
-    const prompt = String(promptText || "").trim();
-    setMusicResult(null);
-    setMusicTaskId("");
-    setDebug("音乐：创建任务中...");
-
-    const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
-    const taskOp = musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
-
-    const body =
-      musicProvider === "suno"
-        ? {
-            task_type: "create_music",
-            custom_mode: false,
-            mv: "sonic-v4-5",
-            gpt_description_prompt: prompt,
-          }
-        : {
-            // Udio via Producer mapping in backend
-            prompt,
-            task_type: "create_music",
-            make_instrumental: true,
-            mv: "FUZZ-2.0",
-          };
-
-    const cr = await fetch(`/api/jobs?op=${createOp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    const cj = await cr.json();
-    setDebug(JSON.stringify(cj, null, 2));
-
-    const taskId = cj?.json?.task_id || cj?.task_id;
-    if (!taskId) throw new Error("音乐：缺少 task_id（请看调试返回）");
-    setMusicTaskId(String(taskId));
-
-    const start = Date.now();
-    while (true) {
-      if (Date.now() - start > 10 * 60 * 1000) throw new Error("音乐：等待超时");
-
-      const pr = await fetch(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(taskId))}`);
-      const pj = await pr.json();
-      setDebug(JSON.stringify(pj, null, 2));
-
-      const upstream = pj?.json ?? pj;
-      const data = upstream?.data;
-
-      // Suno: data is array; Producer: may be object
-      if (Array.isArray(data) && data.length > 0) {
-        const item = data[0];
-        if (item?.audio_url || item?.video_url) {
-          setMusicResult(item);
-          return;
-        }
-      }
-      if (data && (data.audio_url || data.video_url)) {
-        setMusicResult(data);
-        return;
-      }
-
-      const status = upstream?.status || upstream?.state || upstream?.task_status;
-      if (status && String(status).toLowerCase() === "failed") {
-        throw new Error("音乐：任务失败 " + JSON.stringify(upstream));
-      }
-
-      await __sleep(2500);
-    }
-  }
-
-  /* TESTLAB_MUSIC_WIRE_V2 */
-  function __sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
-
-  async function runMusic(promptText: string) {
-    const prompt = String(promptText || "").trim();
-    setMusicResult(null);
-    setMusicTaskId("");
-    setDebug("音乐：创建任务中...");
-
-    const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
-    const taskOp = musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
-
-    const body =
-      musicProvider === "suno"
-        ? {
-            task_type: "create_music",
-            custom_mode: false,
-            mv: "sonic-v4-5",
-            gpt_description_prompt: prompt,
-          }
-        : {
-            // Udio via Producer API mapping in backend
-            prompt,
-            task_type: "create_music",
-            make_instrumental: true,
-            mv: "FUZZ-2.0",
-          };
-
-    const cr = await fetch(`/api/jobs?op=${createOp}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const cj = await cr.json();
-    setDebug(JSON.stringify(cj, null, 2));
-
-    const taskId = cj?.json?.task_id || cj?.task_id;
-    if (!taskId) throw new Error("音乐：缺少 task_id（请看调试返回）");
-    setMusicTaskId(String(taskId));
-
-    const start = Date.now();
-    while (true) {
-      if (Date.now() - start > 10 * 60 * 1000) throw new Error("音乐：等待超时");
-      const pr = await fetch(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(taskId))}`);
-      const pj = await pr.json();
-      setDebug(JSON.stringify(pj, null, 2));
-
-      const upstream = pj?.json ?? pj;
-      const data = upstream?.data;
-
-      // Suno: data is array; Producer: may be object
-      if (Array.isArray(data) && data.length > 0) {
-        const item = data[0];
-        if (item?.audio_url || item?.video_url) {
-          setMusicResult(item);
-          return;
-        }
-      }
-      if (data && (data.audio_url || data.video_url)) {
-        setMusicResult(data);
-        return;
-      }
-
-      const status = upstream?.status || upstream?.state || upstream?.task_status;
-      if (status && String(status).toLowerCase() === "failed") {
-        throw new Error("音乐：任务失败 " + JSON.stringify(upstream));
-      }
-
-      await __sleep(2500);
-    }
-  }
-
-  /* AIMUSIC_UI_WIRE */
-  async function runAimusic(prompt: string) {
-    setMusicResult(null);
-    setMusicTaskId("");
-    setDebug("AIMusic: creating task...");
-    const createResp = await fetch(musicProvider === "suno" ? "/api/jobs?op=aimusicSunoCreate" : "/api/jobs?op=aimusicUdioCreate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        task_type: "create_music",
-        custom_mode: false,
-        mv: "sonic-v4-5",
-        gpt_description_prompt: prompt,
-      }),
-    });
-    const createJson = await createResp.json();
-    setDebug(JSON.stringify(createJson, null, 2));
-
-    const taskId = createJson?.json?.task_id || createJson?.task_id;
-    if (!taskId) throw new Error("AIMusic: missing task_id");
-
-    setMusicTaskId(String(taskId));
-    setDebug("AIMusic: polling task " + taskId);
-
-    const start = Date.now();
-    while (true) {
-      if (Date.now() - start > 8 * 60 * 1000) throw new Error("AIMusic: timeout");
-      const pollResp = await fetch(`/api/jobs?op=${musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask"}&taskId=${encodeURIComponent(String(taskId))}`);
-      const pollJson = await pollResp.json();
-      setDebug(JSON.stringify(pollJson, null, 2));
-
-      const upstream = pollJson?.json ?? pollJson;
-      const data = upstream?.data;
-      if (Array.isArray(data) && data.length > 0) {
-        const item = data[0];
-        if (item?.audio_url || item?.video_url) {
-          setMusicResult(item);
-          return;
-        }
-      }
-      // Producer API may return a single object
-      if (data && (data.audio_url || data.video_url)) {
-        setMusicResult(data);
-        return;
-      }
-      const status = upstream?.status || upstream?.state || upstream?.task_status;
-      if (status && String(status).toLowerCase() === "failed") {
-        throw new Error("AIMusic: failed " + JSON.stringify(upstream));
-      }
-      await sleep(2500);
-    }
-  }
-
-  const [me, setMe] = useState<AnyObj | null>(null);
-
-  
-  const [debug, setDebug] = useState<any>(null);
-  const [musicProvider, setMusicProvider] = useState<"suno"|"udio">("suno");
-const [mode, setMode] = useState<"image" | "video" | "audio">("image");
-  const [prompt, setPrompt] = useState("1K 赛博风格女偶像，电影级光影，超精细");
-
-  // IMAGE
-  const [imageProvider, setImageProvider] = useState<"nano-banana-flash" | "nano-banana-pro">("nano-banana-flash");
-  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
-  const [imageAspectRatio, setImageAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
-
-  // VIDEO (I2V only)
-  const [videoProvider, setVideoProvider] = useState<"veo-3.1-generate-001" | "veo-3.1-fast-generate-001">("veo-3.1-generate-001");
-  const [enableUpscale, setEnableUpscale] = useState(false);
-  const [videoResolution, setVideoResolution] = useState<"720p" | "1080p">("720p");
-  const [videoAspectRatio, setVideoAspectRatio] = useState<(typeof ASPECTS)[number]["v"]>("16:9");
-  const [videoImageUrl, setVideoImageUrl] = useState("");
-  const [videoImagePreview, setVideoImagePreview] = useState("");
-  const [videoImageName, setVideoImageName] = useState("");
-
-  // RESULTS
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
-  const [raw, setRaw] = useState<any>(null);
-  const [imageUrl, setImageUrl] = useState<string>("");
-  const [videoUrl, setVideoUrl] = useState<string>("");
-
-  const title = useMemo(() => {
-    if (mode === "image") return "图像生成";
-    if (mode === "video") return "视频生成（图生视频 / 8秒 / 无音频）";
-    return "音乐";
-  }, [mode]);
-
-  async function loadMe() {
-    // music branch (wired to AIMusicAPI)
-    if (mode === "music") {
-      await runMusic(prompt);
-      return;
-    }
-
-    const r = await jfetch("/api/me");
-    if (r.ok && r.json?.ok) setMe(r.json);
-    else setMe(null);
-  }
-
-  useEffect(() => { loadMe(); }, []);
-
-  async function onPickVideoReference(file: File) {
-    setStatus("准备素材中…");
-    setBusy(true);
-    try {
-      const preview = await readFileAsDataUrl(file);
-      const uploadedUrl = await uploadToBlob(file);
-      setVideoImagePreview(preview);
-      setVideoImageUrl(uploadedUrl);
-      setVideoImageName(file.name);
-      setStatus("参考图已就绪");
-    } catch (e: any) {
-      setVideoImagePreview("");
-      setVideoImageUrl("");
-      setVideoImageName("");
-      setStatus(`参考图处理失败：${e?.message || "unknown"}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function run() {
-    setBusy(true);
-    setStatus("生成中…");
-    setRaw(null);
-    setImageUrl("");
-    setVideoUrl("");
-
-    try {
-      if (mode === "image") {
-        const isPro = imageProvider === "nano-banana-pro";
-        const body: any = {
-          type: "image",
-          provider: imageProvider,
-          prompt,
-        };
-        if (isPro) {
-          body.imageSize = imageSize;
-          body.aspectRatio = imageAspectRatio;
-        }
-
-        const r = await jfetch("/api/google?op=veoCreate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-
-        setRaw(r.json ?? r.text);
-        if (!r.ok || !r.json?.ok || !r.json?.imageUrl) {
-          setStatus(`失败（${r.status}）`);
-          return;
-        }
-        setImageUrl(r.json.imageUrl);
-        setStatus("完成");
-        return;
-      }
-
-      if (mode === "video") {
-        if (!videoImageUrl) {
-          setRaw({ ok: false, type: "video", provider: videoProvider, error: "missing_image_url", detail: "请先上传参考图" });
-          setStatus("失败（请先上传参考图）");
-          return;
-        }
-
-        const body: any = {
-          type: "video",
-          provider: videoProvider,
-          prompt,
-          imageUrl: videoImageUrl,
-          aspect_ratio: videoAspectRatio,
-          resolution: videoResolution,
-          durationSeconds: 8,
-          generateAudio: false,
-          upscale: enableUpscale,
-        };
-
-        const r = await jfetch("/api/google?op=nanoImage", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-
-        setRaw(r.json ?? r.text);
-        if (!r.ok || !r.json?.ok || !r.json?.taskId) {
-          setStatus(`失败（${r.status}）`);
-          return;
-        }
-
-        const taskId = String(r.json.taskId);
-        setStatus("已提交（轮询中…）");
-
-        for (let i = 0; i < 90; i++) {
-          await new Promise((res) => setTimeout(res, 3000));
-          const st = await jfetch(`/api/google?op=veoTask&type=video&provider=${encodeURIComponent(videoProvider)}&taskId=${encodeURIComponent(taskId)}`);
-          setRaw(st.json ?? st.text);
-          const url = st.json?.videoUrl;
-          if (url) {
-            setVideoUrl(url);
-            setStatus("完成");
-            return;
-          }
-          if (st.json?.status === "failed" || st.json?.ok === false) {
-            setStatus("失败（生成失败）");
-            return;
-          }
-        }
-        setStatus("超时：未拿到视频地址");
-        return;
-      }
-
-      setStatus("音乐");
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function getScriptText(j: any): string {
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="max-w-5xl mx-auto p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-xl font-semibold">{title}</div>
-          <div className="text-xs text-white/60">
-            UI: {UI_VERSION} · {me?.ok ? `已登录：${me.user?.email || me.user?.id || "dev_admin"}` : "未登录"}
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-white/10 p-4 space-y-3 bg-white/5">
-          <div className="flex flex-wrap gap-2">
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="image"?"bg-white/15":"bg-transparent"}`} onClick={handleStartClick}>图像</button>
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="video"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("video")}>视频</button>
-            <button className={`px-3 py-2 rounded-lg border border-white/10 ${mode==="audio"?"bg-white/15":"bg-transparent"}`} onClick={()=>setMode("audio")}>音乐</button>
-          </div>
-
-          {mode === "image" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">引擎</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={imageProvider}
-                onChange={(e)=>setImageProvider(e.target.value as any)}
-              >
-                <option value="nano-banana-flash">Nano Banana Flash（免费）</option>
-                <option value="nano-banana-pro">Nano Banana Pro（付费）</option>
-              </select>
-
-              <span className="text-white/70 ml-2">尺寸</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={imageSize}
-                onChange={(e)=>setImageSize(e.target.value as any)}
-                disabled={imageProvider !== "nano-banana-pro"}
-                title={imageProvider !== "nano-banana-pro" ? "付费版可用" : ""}
-              >
-                <option value="1K">1K</option>
-                <option value="2K">2K</option>
-                <option value="4K">4K</option>
-              </select>
-
-              <span className="text-white/70 ml-2">比例</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={imageAspectRatio}
-                onChange={(e)=>setImageAspectRatio(e.target.value as any)}
-                disabled={imageProvider !== "nano-banana-pro"}
-                title={imageProvider !== "nano-banana-pro" ? "付费版可用" : ""}
-              >
-                {ASPECTS.map(a => <option key={a.v} value={a.v}>{a.label}</option>)}
-              </select>
-            </div>
-          )}
-
-          {mode === "video" && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-white/70">模型</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={videoProvider}
-                onChange={(e)=>setVideoProvider(e.target.value as any)}
-              >
-                <option value="veo-3.1-generate-001">Veo 3.1 Pro</option>
-                <option value="veo-3.1-fast-generate-001">Veo 3.1 Rapid</option>
-              </select>
-
-              <span className="text-white/70 ml-2">分辨率</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={videoResolution}
-                onChange={(e)=>setVideoResolution(e.target.value as any)}
-              >
-                <option value="720p">720p</option>
-                <option value="1080p">1080p</option>
-              </select>
-
-              <span className="text-white/70 ml-2">比例</span>
-              <select
-                className="bg-black border border-white/10 rounded-lg px-3 py-2"
-                value={videoAspectRatio}
-                onChange={(e)=>setVideoAspectRatio(e.target.value as any)}
-              >
-                {ASPECTS.map(a => <option key={a.v} value={a.v}>{a.label}</option>)}
-              </select>
-
-              <label className="ml-2 px-3 py-2 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10">
-                上传参考图
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={async (e) => {
-  const f = (e.target as any).files?.[0];
-  if (!f) return;
-  try {
-    const url = await uploadRefImage(f);
-    try { setImageUrl(url); } catch {}
-    try { setDebug({ ok: true, upload: true, imageUrl: url }); } catch {}
-  } catch (err: any) {
-    try { setDebug({ ok: false, upload: false, error: err?.message || String(err) }); } catch {}
-    throw err;
-  }
-}}
-                />
-              </label>
-
-              {videoImageName ? (
-                <button
-                  type="button"
-                  className="px-3 py-2 rounded-lg border border-white/10 text-white/80"
-                  onClick={() => {
-                    setVideoImageName("");
-                    setVideoImagePreview("");
-                    setVideoImageUrl("");
-                  }}
-                >
-                  清除参考图
-                </button>
-              ) : null}
-
-              <label className="ml-2 inline-flex items-center gap-2 text-white/80">
-                <input
-                  type="checkbox"
-                  checked={enableUpscale}
-                  onChange={(e)=>setEnableUpscale(e.target.checked)}
-                />
-                高画质增强（额外积分）
-              </label>
-            </div>
-          )}
-
-          {mode === "video" && (
-            <div className="text-xs text-white/70">
-              <div>{videoImageName ? `已选择：${videoImageName}` : "请先上传参考图（图生视频）。"}</div>
-              {videoImageUrl ? (
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <span>素材地址：</span>
-                  <a
-                    href={videoImageUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline break-all"
-                    title={videoImageUrl}
-                  >
-                    {videoImageUrl}
-                  </a>
-                  <button
-                    type="button"
-                    className="px-2 py-1 rounded border border-white/20 text-white/80 hover:bg-white/10"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(videoImageUrl);
-                        setStatus("素材地址已复制");
-                      } catch {
-                        setStatus("复制失败，请手动复制");
-                      }
-                    }}
-                  >
-                    复制URL
-                  </button>
-                </div>
-              ) : null}
-              {videoImagePreview ? (
-                <img src={videoImagePreview} alt="reference" className="mt-2 max-h-44 rounded-lg border border-white/10" />
-              ) : null}
-            </div>
-          )}
-
-          <textarea
-            className="w-full min-h-[120px] bg-black border border-white/10 rounded-lg px-3 py-2"
-            value={prompt}
-            onChange={(e)=>setPrompt(e.target.value)}
-            placeholder="输入提示词…"
-          />
-
-          <div className="flex items-center gap-3">
-            <button
-              className="px-4 py-2 rounded-lg bg-white text-black font-semibold disabled:opacity-50"
-              disabled={busy || (mode === "video" ? !videoImageUrl : !prompt.trim())}
-              onClick={async () => { if (activeTab === "music") { await runMusic(prompt); return; } await run(); } }
-            >
-              {busy ? "生成中…" : "开始生成"}
-            </button>
-<div style={{ display: "inline-flex", gap: 8, alignItems: "center", marginLeft: 12 }}>
-  <span style={{ fontSize: 13, opacity: 0.85 }}>音乐模型</span>
-  <select
-    value={musicProvider}
-    onChange={(e) => setMusicProvider(e.target.value as any)}
-    style={{
-      padding: "6px 10px",
-      borderRadius: 10,
-      border: "1px solid rgba(255,255,255,0.18)",
-      background: "rgba(0,0,0,0.25)",
-      color: "white",
-      fontWeight: 700,
-    }}
-  >
-    <option value="suno">Suno（高质量）</option>
-    <option value="udio">Udio（更便宜）</option>
-  </select>
-</div>
-
-            <button
-              className="px-4 py-2 rounded-lg border border-white/10 text-white/80"
-              onClick={loadMe}
-              disabled={busy}
-            >
-              刷新登录态
-            </button>
-            <div className="text-sm text-white/70">{status}</div>
-          </div>
-        </div>
-
-        {imageUrl && (
-          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-            <div className="text-sm text-white/70 mb-2">图片结果</div>
-            <img src={imageUrl} className="max-w-full rounded-lg border border-white/10" />
-          </div>
-        )}
-
-        {videoUrl && (
-          <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-            <div className="text-sm text-white/70 mb-2">视频结果</div>
-            <video src={videoUrl} controls className="max-w-full rounded-lg border border-white/10" />
-          </div>
-        )}
-
-        <div className="rounded-xl border border-white/10 p-4 bg-white/5">
-          <div className="text-sm text-white/70 mb-2">返回数据（调试）</div>
-          <pre className="whitespace-pre-wrap text-xs text-white/80">{raw ? JSON.stringify(raw, null, 2) : "（暂无）"}</pre>
-        </div>
-      </div>
-    </div>
+    j?.raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("\n") ||
+    j?.json?.raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("\n") ||
+    ""
   );
 }
 
+function getMusicTaskId(j: any): string {
+  return String(
+    j?.raw?.task_id ||
+    j?.raw?.data?.task_id ||
+    j?.json?.raw?.task_id ||
+    j?.json?.raw?.data?.task_id ||
+    ""
+  );
+}
 
-/* injected fallback */
-export const __MusicGeneratorFallback = () => <MusicGenerator />;
+function getMusicClips(j: any): any[] {
+  const raw = j?.raw || j?.json?.raw || j?.json || {};
+  const data = raw?.data;
+  return Array.isArray(data) ? data : [];
+}
+
+export default function TestLab() {
+  const [tab, setTab] = useState<TabKey>("image");
+
+  // Shared input
+  const [prompt, setPrompt] = useState("a cinematic tennis stadium at sunset, dramatic lighting, ultra detailed");
+  const [negativePrompt, setNegativePrompt] = useState("blurry, low quality, duplicate person, extra fingers");
+  const [aspectRatio, setAspectRatio] = useState("16:9");
+
+  // Upload / reference image
+  const [refImageUrl, setRefImageUrl] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  // Script
+  const [scriptBusy, setScriptBusy] = useState(false);
+  const [scriptText, setScriptText] = useState("");
+
+  // Image
+  const [googleTier, setGoogleTier] = useState<GoogleImageTier>("flash");
+  const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
+  const [imageProvider, setImageProvider] = useState<"google" | "kling">("google");
+  const [imageResolution, setImageResolution] = useState("1k");
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageTaskId, setImageTaskId] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+
+  // Video
+  const [videoProvider, setVideoProvider] = useState<"google" | "kling">("google");
+  const [veoMode, setVeoMode] = useState<VeoMode>("pro");
+  const [veoResolution, setVeoResolution] = useState("720p");
+  const [klingVideoMode, setKlingVideoMode] = useState<KlingVideoMode>("pro");
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [videoTaskId, setVideoTaskId] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+
+  // Music
+  const [musicProvider, setMusicProvider] = useState<MusicProvider>("suno");
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [musicTaskId, setMusicTaskId] = useState("");
+  const [musicClips, setMusicClips] = useState<any[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState("");
+
+  const [debug, setDebug] = useState<any>(null);
+
+  const stopRef = useRef(false);
+
+  const selectedClip = useMemo(() => {
+    if (!musicClips.length) return null;
+    return musicClips.find((c) => String(c?.clip_id || "") === selectedClipId) || musicClips[0];
+  }, [musicClips, selectedClipId]);
+
+  async function uploadRefImage(file: File) {
+    setUploading(true);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const r = await fetchJsonish("/api/blob-put-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" }),
+      });
+      setDebug(r);
+      const url =
+        r?.json?.imageUrl ||
+        r?.json?.json?.imageUrl ||
+        r?.json?.url ||
+        "";
+      if (!r.ok || !url) {
+        throw new Error("upload_failed");
+      }
+      setRefImageUrl(String(url));
+
+      // reset downstream outputs when ref image changes
+      setImageTaskId("");
+      setImageUrl("");
+      setVideoTaskId("");
+      setVideoUrl("");
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+      throw e;
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function runGeminiScript() {
+    setScriptBusy(true);
+    setScriptText("");
+    setDebug({ ok: true, action: "geminiScript:start" });
+    try {
+      const r = await fetchJsonish("/api/google?op=geminiScript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      setDebug(r);
+      if (!r.ok) throw new Error("gemini_script_failed");
+      const txt = getScriptText(r.json);
+      setScriptText(txt || JSON.stringify(r.json, null, 2));
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setScriptBusy(false);
+    }
+  }
+
+  async function runImage() {
+    setImageBusy(true);
+    setImageTaskId("");
+    setImageUrl("");
+    setDebug({ ok: true, action: "image:start" });
+
+    try {
+      if (imageProvider === "google") {
+        const tier = googleTier;
+        const r = await fetchJsonish(
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt,
+              tier,
+              imageSize: imageResolution,
+              aspectRatio,
+            }),
+          }
+        );
+        setDebug(r);
+        if (!r.ok) throw new Error("google_image_failed");
+
+        // Google image currently returns inlineData in raw
+        const parts =
+          r?.json?.raw?.candidates?.[0]?.content?.parts ||
+          [];
+        const inline = parts.find((p: any) => p?.inlineData?.data);
+        if (!inline?.inlineData?.data) {
+          throw new Error("google_image_missing_inlineData");
+        }
+        const mime = inline.inlineData.mimeType || "image/png";
+        const dataUrl = `data:${mime};base64,${inline.inlineData.data}`;
+        setImageUrl(dataUrl);
+        return;
+      }
+
+      // Kling image
+      const create = await fetchJsonish("/api/kling-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model_name: klingImageModel,
+          prompt,
+          negative_prompt: negativePrompt,
+          resolution: imageResolution,
+          aspect_ratio: aspectRatio,
+        }),
+      });
+      setDebug(create);
+
+      const taskId = String(create?.json?.taskId || "");
+      if (!create.ok || !taskId) throw new Error("kling_image_create_failed");
+
+      setImageTaskId(taskId);
+
+      for (let i = 0; i < 90 && !stopRef.current; i++) {
+        const poll = await fetchJsonish(`/api/kling-image?taskId=${encodeURIComponent(taskId)}`);
+        setDebug(poll);
+
+        const status = String(poll?.json?.task_status || "");
+        const url = String(poll?.json?.imageUrl || "");
+
+        if (url) {
+          setImageUrl(url);
+          return;
+        }
+        if (status.toLowerCase() === "failed") {
+          throw new Error("kling_image_failed");
+        }
+        await sleep(2000);
+      }
+
+      throw new Error("kling_image_timeout");
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function runVideo() {
+    setVideoBusy(true);
+    setVideoTaskId("");
+    setVideoUrl("");
+    setDebug({ ok: true, action: "video:start" });
+
+    try {
+      const inputImage = imageUrl || refImageUrl;
+      if (!inputImage) throw new Error("missing_reference_image");
+
+      if (videoProvider === "google") {
+        const provider = veoMode === "rapid" ? "rapid" : "pro";
+        const create = await fetchJsonish("/api/google?op=veoCreate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt,
+            imageUrl: inputImage,
+            provider,
+            durationSeconds: 8,
+            aspectRatio,
+            resolution: veoResolution,
+          }),
+        });
+        setDebug(create);
+
+        const taskId = String(create?.json?.taskId || "");
+        if (!create.ok || !taskId) throw new Error("veo_create_failed");
+
+        setVideoTaskId(taskId);
+
+        for (let i = 0; i < 120 && !stopRef.current; i++) {
+          const poll = await fetchJsonish(
+            `/api/google?op=veoTask&provider=${encodeURIComponent(provider)}&taskId=${encodeURIComponent(taskId)}`
+          );
+          setDebug(poll);
+
+          const status = String(poll?.json?.status || "");
+          const url = String(poll?.json?.videoUrl || "");
+
+          if (url) {
+            setVideoUrl(url);
+            return;
+          }
+          if (status.toLowerCase() === "failed") throw new Error("veo_task_failed");
+          await sleep(2500);
+        }
+
+        throw new Error("veo_timeout");
+      }
+
+      // Kling video
+      const create = await fetchJsonish("/api/jobs?op=klingCreate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: inputImage,
+          prompt,
+          duration: "10",
+          mode: klingVideoMode,
+          model_name: "kling-v2-6",
+        }),
+      });
+      setDebug(create);
+
+      const taskId = String(create?.json?.taskId || create?.json?.task_id || "");
+      if (!create.ok || !taskId) throw new Error("kling_video_create_failed");
+
+      setVideoTaskId(taskId);
+
+      for (let i = 0; i < 120 && !stopRef.current; i++) {
+        const poll = await fetchJsonish(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(taskId)}`);
+        setDebug(poll);
+
+        const status =
+          String(poll?.json?.taskStatus || poll?.json?.raw?.data?.task_status || "");
+        const url =
+          String(poll?.json?.videoUrl || poll?.json?.raw?.data?.task_result?.videos?.[0]?.url || "");
+
+        if (url) {
+          setVideoUrl(url);
+          return;
+        }
+        if (status.toLowerCase() === "failed") throw new Error("kling_video_failed");
+        await sleep(2500);
+      }
+
+      throw new Error("kling_video_timeout");
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setVideoBusy(false);
+    }
+  }
+
+  async function runMusic() {
+    setMusicBusy(true);
+    setMusicTaskId("");
+    setMusicClips([]);
+    setSelectedClipId("");
+    setDebug({ ok: true, action: "music:start" });
+
+    try {
+      const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
+      const taskOp = musicProvider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
+
+      const create = await fetchJsonish(`/api/jobs?op=${createOp}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      setDebug(create);
+
+      const taskId = getMusicTaskId(create.json);
+      if (!create.ok || !taskId) throw new Error("music_create_failed");
+
+      setMusicTaskId(taskId);
+
+      for (let i = 0; i < 120 && !stopRef.current; i++) {
+        const poll = await fetchJsonish(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(taskId)}`);
+        setDebug(poll);
+
+        const clips = getMusicClips(poll.json);
+        if (clips.length) {
+          setMusicClips(clips);
+          if (!selectedClipId) {
+            const first = clips.find((c: any) => c?.audio_url) || clips[0];
+            if (first?.clip_id) setSelectedClipId(String(first.clip_id));
+          }
+          const okItem = clips.find((c: any) => c?.audio_url && String(c?.state || "").toLowerCase() === "succeeded");
+          if (okItem) return;
+        }
+
+        await sleep(2500);
+      }
+
+      throw new Error("music_timeout");
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setMusicBusy(false);
+    }
+  }
+
+  const tabButton = (key: TabKey, label: string) => (
+    <button
+      onClick={() => setTab(key)}
+      style={{
+        padding: "10px 14px",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.14)",
+        background: tab === key ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.06)",
+        color: "white",
+        fontWeight: 900,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div style={{ maxWidth: 1080, margin: "0 auto", padding: 20, color: "white" }}>
+      <h1 style={{ fontSize: 28, margin: 0, fontWeight: 900 }}>AI Studio TestLab</h1>
+      <div style={{ marginTop: 8, opacity: 0.78 }}>
+        统一测试：Google / Kling / Music。这里只做功能验证，不是最终用户页面。
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+        {tabButton("script", "脚本")}
+        {tabButton("image", "图像")}
+        {tabButton("video", "视频")}
+        {tabButton("music", "音乐")}
+      </div>
+
+      <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+        <div style={{ fontWeight: 900, marginBottom: 10 }}>公共输入</div>
+        <textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          rows={4}
+          style={{
+            width: "100%",
+            padding: 12,
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.15)",
+            background: "rgba(0,0,0,0.25)",
+            color: "white",
+          }}
+        />
+
+        <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>比例</div>
+            <select
+              value={aspectRatio}
+              onChange={(e) => setAspectRatio(e.target.value)}
+              style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+            >
+              <option value="16:9">16:9（横屏标准）</option>
+              <option value="9:16">9:16（竖屏短视频）</option>
+              <option value="1:1">1:1（方形）</option>
+              <option value="4:3">4:3</option>
+              <option value="3:4">3:4</option>
+              <option value="21:9">21:9</option>
+            </select>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>上传参考图</div>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={async (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0];
+                if (!file) return;
+                try {
+                  await uploadRefImage(file);
+                } catch {}
+              }}
+            />
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.85 }}>
+            {uploading ? "上传中…" : refImageUrl ? <>已上传：<code>{refImageUrl}</code></> : "未上传参考图"}
+          </div>
+        </div>
+      </div>
+
+      {tab === "script" && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>Google · Gemini Script</div>
+          <div style={{ marginTop: 8, opacity: 0.8 }}>智能生成脚本 / 分镜草案</div>
+          <button
+            onClick={runGeminiScript}
+            disabled={scriptBusy}
+            style={{ marginTop: 12, padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+          >
+            {scriptBusy ? "生成中…" : "生成脚本"}
+          </button>
+
+          {scriptText ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>结果</div>
+              <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.6 }}>{scriptText}</pre>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {tab === "image" && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>图像生成</div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>引擎</div>
+              <select
+                value={imageProvider}
+                onChange={(e) => setImageProvider(e.target.value as any)}
+                style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+              >
+                <option value="google">Google</option>
+                <option value="kling">Kling</option>
+              </select>
+            </div>
+
+            {imageProvider === "google" ? (
+              <div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+                <select
+                  value={googleTier}
+                  onChange={(e) => setGoogleTier(e.target.value as GoogleImageTier)}
+                  style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                >
+                  <option value="flash">Nano Banana Flash（当前俗称 Nano Banana 2）</option>
+                  <option value="pro">Nano Banana Pro</option>
+                </select>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+                <select
+                  value={klingImageModel}
+                  onChange={(e) => setKlingImageModel(e.target.value)}
+                  style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                >
+                  <option value="kling-v2">Kling 2.6（教育）</option>
+                  <option value="kling-v2-1">Kling 3.0</option>
+                </select>
+              </div>
+            )}
+
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>分辨率</div>
+              <select
+                value={imageResolution}
+                onChange={(e) => setImageResolution(e.target.value)}
+                style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+              >
+                <option value="1k">1K</option>
+                <option value="2k">2K</option>
+              </select>
+            </div>
+          </div>
+
+          {imageProvider === "kling" ? (
+            <textarea
+              value={negativePrompt}
+              onChange={(e) => setNegativePrompt(e.target.value)}
+              rows={2}
+              placeholder="Negative prompt"
+              style={{
+                width: "100%",
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.15)",
+                background: "rgba(0,0,0,0.25)",
+                color: "white",
+              }}
+            />
+          ) : null}
+
+          <button
+            onClick={runImage}
+            disabled={imageBusy}
+            style={{ marginTop: 12, padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+          >
+            {imageBusy ? "生成中…" : "开始生成图片"}
+          </button>
+
+          {imageTaskId ? <div style={{ marginTop: 8, opacity: 0.8 }}>任务：<code>{imageTaskId}</code></div> : null}
+
+          {imageUrl ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>结果图片</div>
+              <img src={imageUrl} style={{ width: "100%", borderRadius: 14, background: "black" }} />
+              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <a href={imageUrl} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开图片</a>
+                <button
+                  onClick={() => setRefImageUrl(imageUrl)}
+                  style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+                >
+                  设为参考图
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {tab === "video" && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>视频生成</div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>引擎</div>
+              <select
+                value={videoProvider}
+                onChange={(e) => setVideoProvider(e.target.value as any)}
+                style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+              >
+                <option value="google">Google Veo</option>
+                <option value="kling">Kling Video</option>
+              </select>
+            </div>
+
+            {videoProvider === "google" ? (
+              <>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+                  <select
+                    value={veoMode}
+                    onChange={(e) => setVeoMode(e.target.value as VeoMode)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="pro">Veo 3.1 Pro</option>
+                    <option value="rapid">Veo 3.1 Rapid</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>分辨率</div>
+                  <select
+                    value={veoResolution}
+                    onChange={(e) => setVeoResolution(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                  </select>
+                </div>
+              </>
+            ) : (
+              <div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模式</div>
+                <select
+                  value={klingVideoMode}
+                  onChange={(e) => setKlingVideoMode(e.target.value as KlingVideoMode)}
+                  style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                >
+                  <option value="pro">Kling Pro</option>
+                  <option value="rapid">Kling Rapid</option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 12, opacity: 0.8 }}>
+            当前参考图：{refImageUrl ? <code>{refImageUrl}</code> : "未上传，也未从图像生成结果中设置"}
+          </div>
+
+          <button
+            onClick={runVideo}
+            disabled={videoBusy}
+            style={{ marginTop: 12, padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+          >
+            {videoBusy ? "生成中…" : "开始生成视频"}
+          </button>
+
+          {videoTaskId ? <div style={{ marginTop: 8, opacity: 0.8 }}>任务：<code>{videoTaskId}</code></div> : null}
+
+          {videoUrl ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>结果视频</div>
+              <video controls src={videoUrl} style={{ width: "100%", borderRadius: 14, background: "black" }} />
+              <div style={{ marginTop: 10 }}>
+                <a href={videoUrl} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开 / 下载视频</a>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {tab === "music" && (
+        <div style={{ marginTop: 20, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>音乐生成</div>
+
+          <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+              <select
+                value={musicProvider}
+                onChange={(e) => setMusicProvider(e.target.value as MusicProvider)}
+                style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+              >
+                <option value="suno">Suno</option>
+                <option value="udio">Udio</option>
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={runMusic}
+            disabled={musicBusy}
+            style={{ marginTop: 12, padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+          >
+            {musicBusy ? "生成中…" : "开始生成音乐"}
+          </button>
+
+          {musicTaskId ? <div style={{ marginTop: 8, opacity: 0.8 }}>任务：<code>{musicTaskId}</code></div> : null}
+
+          {musicClips.length ? (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>结果（歌曲列表）</div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {musicClips.map((clip: any) => {
+                  const active = String(clip?.clip_id || "") === selectedClipId;
+                  return (
+                    <button
+                      key={String(clip?.clip_id || Math.random())}
+                      onClick={() => setSelectedClipId(String(clip?.clip_id || ""))}
+                      style={{
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "center",
+                        padding: 10,
+                        borderRadius: 12,
+                        border: "1px solid rgba(255,255,255,0.14)",
+                        background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
+                        color: "white",
+                        textAlign: "left",
+                        cursor: "pointer"
+                      }}
+                    >
+                      {clip?.image_url ? (
+                        <img src={clip.image_url} alt="cover" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }} />
+                      ) : (
+                        <div style={{ width: 44, height: 44, borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 900 }}>{clip?.title || "未命名"}</div>
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>{clip?.state || ""}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedClip?.audio_url ? (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>播放</div>
+                  {selectedClip?.image_url ? (
+                    <img src={selectedClip.image_url} alt="cover" style={{ width: 220, borderRadius: 14, objectFit: "cover", marginBottom: 10 }} />
+                  ) : null}
+                  <audio controls autoPlay src={selectedClip.audio_url} style={{ width: "100%" }} />
+                  <div style={{ marginTop: 10 }}>
+                    <a href={selectedClip.audio_url} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开 / 下载 MP3</a>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <details style={{ marginTop: 20 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 900 }}>返回数据（调试）</summary>
+        <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.5, marginTop: 12 }}>
+          {debug ? JSON.stringify(debug, null, 2) : "（暂无）"}
+        </pre>
+      </details>
+    </div>
+  );
+}
