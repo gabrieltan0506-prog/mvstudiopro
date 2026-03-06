@@ -105,7 +105,6 @@ export default function HomeShowcase() {
                       background: "rgba(255,138,91,0.12)",
                       color: "white",
                       fontWeight: 900,
-                      cursor: "pointer",
                       textDecoration: "none",
                     }}
                   >
@@ -120,7 +119,6 @@ export default function HomeShowcase() {
                       background: "rgba(255,255,255,0.04)",
                       color: "white",
                       fontWeight: 900,
-                      cursor: "pointer",
                       textDecoration: "none",
                     }}
                   >
