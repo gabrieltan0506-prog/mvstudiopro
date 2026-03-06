@@ -1,8 +1,11 @@
 import fs from "fs";
 
+hotfix/redeploy-kling-image
+
  hotfix/restore-kling-image-known-good
 
  hotfix/fix-kling-safeFetch-response
+ main
  main
 const BASE = "https://mvstudiopro.com/api/kling-image";
 const path = "client/src/data/home_seed_assets_zh.json";
@@ -94,6 +97,8 @@ run().catch((e) => {
   console.error(e);
   process.exit(1);
 });
+ hotfix/redeploy-kling-image
+
  hotfix/restore-kling-image-known-good
 
 
@@ -160,5 +165,6 @@ item.model="Kling Image 3.0";
 fs.writeFileSync(path,JSON.stringify(data,null,2));
 
 console.log("kling images generated");
+main
 main
 main

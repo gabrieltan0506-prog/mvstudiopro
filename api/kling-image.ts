@@ -58,6 +58,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     const token=jwtHS256(AK,SK);
 
+ hotfix/redeploy-kling-image
+    const op=s((req.query as any)?.op || "");
+    if(op==="probe"){
+      const r=await fetch(`${BASE}/v1/images/generations`,{
+        
     hotfix/restore-kling-image-known-good
     const op=s((req.query as any)?.op || "");
     if(op==="probe"){
@@ -96,6 +101,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     if(req.method==="GET" && op==="probe"){
       const r=await safeFetch(`${BASE}/v1/images/generations`,{
         main
+main 
         method:"POST",
         headers:{
           "Authorization":"Bearer "+token,
@@ -107,9 +113,12 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
  hotfix/restore-kling-image-known-good
       const t=await r.text();
       return res.status(200).json({ ok:true, httpStatus:r.status, bodyPreview:t.slice(0,500) });
+hotfix/redeploy-kling-image
+
 
       const t = r.text || "";
       return res.status(200).json({ ok:true, httpStatus:r.status, bodyPreview:t.slice(0,800) });
+    main
     main
     }
 
@@ -121,11 +130,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     const n=Number(b.n||1)||1;
 
     if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
+ hotfix/redeploy-kling-image
+
+    const r=await fetch(`${BASE}/v1/images/generations`,{
+
 
 hotfix/restore-kling-image-known-good
     const r=await fetch(`${BASE}/v1/images/generations`,{
 
     const r = await safeFetch(`${BASE}/v1/images/generations`,{
+ main
  main
       method:"POST",
       headers:{
@@ -135,6 +149,11 @@ hotfix/restore-kling-image-known-good
       },
       body: JSON.stringify({ prompt, n, image_size })
     });
+
+ hotfix/redeploy-kling-image
+    const t=await r.text();
+    const j=jparse(t);
+    const imageUrl = j?.data?.[0]?.url || j?.data?.url || j?.data?.task_result?.images?.[0]?.url || null;
 
 hotfix/restore-kling-image-known-good
     const t=await r.text();
@@ -151,6 +170,7 @@ hotfix/restore-kling-image-known-good
       j?.data?.images?.[0]?.url ||
       j?.data?.url ||
       null;
+ main
  main
 
     return res.status(r.ok?200:502).json({
