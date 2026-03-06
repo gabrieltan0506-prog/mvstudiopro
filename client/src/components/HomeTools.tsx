@@ -1,12 +1,12 @@
 import React from "react";
 
 const cards = [
-  ["可灵工作室", "Kling Studio", "图像 / 视频 / Motion Control / Lip Sync", "10 积分起", false],
-  ["虚拟艺人工坊", "Actor Studio", "上传人物图，生成场景与视频", "15 积分起", false],
-  ["分镜工作流", "Storyboard Workflow", "脚本 → 分镜 → 图像 → 视频", "20 积分起", false],
-  ["AI 音乐工坊", "AI Music Studio", "Suno / Udio 配乐生成", "5 积分起", false],
-  ["爆款分析师", "Viral Analyst", "免费试用每日 3 次，付费解锁优化方案", "Pro 功能", true],
-  ["我的创作", "My Creations", "作品、任务、历史记录统一管理", "免费", false],
+  ["可灵工作室", "Kling Studio", "图像 / 视频 / Motion Control / Lip Sync", "10 积分起", false, "/remix"],
+  ["虚拟艺人工坊", "Actor Studio", "上传人物图，生成场景与视频", "15 积分起", false, "/actor"],
+  ["分镜工作流", "Storyboard Workflow", "脚本 → 分镜 → 图像 → 视频", "20 积分起", false, "/workflow"],
+  ["AI 音乐工坊", "AI Music Studio", "Suno / Udio 配乐生成", "5 积分起", false, "/remix"],
+  ["爆款分析师", "Viral Analyst", "免费试用每日 3 次，付费解锁优化方案", "Pro 功能", true, "/viral"],
+  ["我的创作", "My Creations", "作品、任务、历史记录统一管理", "免费", false, "/my"],
 ];
 
 export default function HomeTools() {
@@ -16,6 +16,7 @@ export default function HomeTools() {
       <div style={{ marginTop: 8, color: "rgba(255,255,255,0.68)" }}>围绕真实创作工作流设计的核心模块</div>
 
       <div
+        className="home-tools-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3,minmax(0,1fr))",
@@ -23,9 +24,10 @@ export default function HomeTools() {
           marginTop: 22,
         }}
       >
-        {cards.map(([zh, en, desc, price, pro], idx) => (
-          <div
+        {cards.map(([zh, en, desc, price, pro, href], idx) => (
+          <a
             key={zh}
+            href={href}
             style={{
               padding: 22,
               borderRadius: 24,
@@ -43,6 +45,7 @@ export default function HomeTools() {
                   : "1px solid rgba(255,255,255,0.08)",
               boxShadow: pro ? "0 14px 40px rgba(236,72,153,0.10)" : "none",
               position: "relative",
+              textDecoration: "none",
             }}
           >
             {pro ? (
@@ -82,9 +85,17 @@ export default function HomeTools() {
             >
               {price}
             </div>
-          </div>
+          </a>
         ))}
       </div>
+
+      <style>{`
+        @media (max-width: 980px) {
+          .home-tools-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </section>
   );
 }

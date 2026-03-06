@@ -1,15 +1,15 @@
 import React from "react";
 
-export default function HomeNavbar() {
-  const nav = [
-    ["可灵工作室", "Kling Studio"],
-    ["虚拟艺人工坊", "Actor Studio"],
-    ["分镜工作流", "Storyboard Workflow"],
-    ["作品展示", "Showcase"],
-    ["我的创作", "My Creations"],
-    ["套餐中心", "Plans"],
-  ];
+const nav = [
+  ["首页", "Home", "/"],
+  ["创作", "Create", "/remix"],
+  ["工作流", "Workflow", "/workflow"],
+  ["爆款案例", "Showcase", "/showcase"],
+  ["创作者", "Creators", "/actor"],
+  ["套餐", "Plans", "/pricing"],
+];
 
+export default function HomeNavbar() {
   return (
     <header
       style={{
@@ -17,7 +17,7 @@ export default function HomeNavbar() {
         top: 0,
         zIndex: 50,
         backdropFilter: "blur(16px)",
-        background: "rgba(10,8,20,0.72)",
+        background: "rgba(10,8,20,0.70)",
         borderBottom: "1px solid rgba(255,255,255,0.08)",
       }}
     >
@@ -29,16 +29,29 @@ export default function HomeNavbar() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 20,
+          gap: 18,
+          flexWrap: "wrap",
         }}
       >
-        <div style={{ fontSize: 26, fontWeight: 900, color: "white" }}>MV Studio <span style={{ color: "#ff8a5b" }}>Pro</span></div>
+        <a href="/" style={{ textDecoration: "none" }}>
+          <div style={{ fontSize: 26, fontWeight: 900, color: "white" }}>
+            MV Studio <span style={{ color: "#ff8a5b" }}>Pro</span>
+          </div>
+        </a>
 
-        <nav style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
-          {nav.map(([zh, en]) => (
+        <nav
+          style={{
+            display: "flex",
+            gap: 18,
+            alignItems: "center",
+            flexWrap: "wrap",
+            justifyContent: "center",
+          }}
+        >
+          {nav.map(([zh, en, href]) => (
             <a
               key={zh}
-              href="#"
+              href={href}
               style={{
                 color: "white",
                 textDecoration: "none",
@@ -47,6 +60,7 @@ export default function HomeNavbar() {
                 opacity: 0.92,
                 display: "grid",
                 lineHeight: 1.2,
+                textAlign: "center",
               }}
             >
               <span>{zh}</span>
@@ -55,19 +69,23 @@ export default function HomeNavbar() {
           ))}
         </nav>
 
-        <button
-          style={{
-            padding: "10px 16px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
-            color: "white",
-            fontWeight: 900,
-            cursor: "pointer",
-          }}
-        >
-          登录
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <a
+            href="/login"
+            style={{
+              padding: "10px 16px",
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "linear-gradient(135deg,#ff8a5b,#ff4fb3)",
+              color: "white",
+              fontWeight: 900,
+              cursor: "pointer",
+              textDecoration: "none",
+            }}
+          >
+            登录
+          </a>
+        </div>
       </div>
     </header>
   );

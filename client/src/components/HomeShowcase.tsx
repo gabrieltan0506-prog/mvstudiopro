@@ -12,7 +12,7 @@ const items = [
 export default function HomeShowcase() {
   return (
     <section style={{ maxWidth: 1240, margin: "0 auto", padding: "44px 20px 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "end" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "end", flexWrap: "wrap" }}>
         <div>
           <div style={{ color: "white", fontSize: 34, fontWeight: 900 }}>精选作品</div>
           <div style={{ marginTop: 8, color: "rgba(255,255,255,0.68)" }}>
@@ -23,6 +23,7 @@ export default function HomeShowcase() {
       </div>
 
       <div
+        className="home-showcase-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3,minmax(0,1fr))",
@@ -81,7 +82,7 @@ export default function HomeShowcase() {
                   fontWeight: 800,
                 }}
               >
-                动态水印 / 图片双水印
+                Powered by mvstudiopro.com
               </div>
             </div>
 
@@ -89,7 +90,8 @@ export default function HomeShowcase() {
               <div style={{ color: "white", fontSize: 20, fontWeight: 900 }}>{title}</div>
               <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)" }}>{model}</div>
               <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                <button
+                <a
+                  href="/remix"
                   style={{
                     padding: "10px 14px",
                     borderRadius: 12,
@@ -98,11 +100,13 @@ export default function HomeShowcase() {
                     color: "white",
                     fontWeight: 900,
                     cursor: "pointer",
+                    textDecoration: "none",
                   }}
                 >
                   重新创作
-                </button>
-                <button
+                </a>
+                <a
+                  href="/workflow"
                   style={{
                     padding: "10px 14px",
                     borderRadius: 12,
@@ -111,15 +115,24 @@ export default function HomeShowcase() {
                     color: "white",
                     fontWeight: 900,
                     cursor: "pointer",
+                    textDecoration: "none",
                   }}
                 >
                   查看工作流
-                </button>
+                </a>
               </div>
             </div>
           </div>
         ))}
       </div>
+
+      <style>{`
+        @media (max-width: 980px) {
+          .home-showcase-grid {
+            grid-template-columns: 1fr !important;
+          }
+        }
+      `}</style>
     </section>
   );
 }
