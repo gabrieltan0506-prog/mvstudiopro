@@ -3,26 +3,26 @@ import FloatingVideoWatermark from "./FloatingVideoWatermark";
 
 const slides = [
   {
-    title: "Sakura Rain",
-    subtitle: "Cyberpunk City",
+    title: "太空站观景台",
+    subtitle: "AI 生成视频展示",
     videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/KxgbvnPXycXGYxkr.mp4",
     model: "Veo 3.1 Pro"
   },
   {
-    title: "赛博朋克城市",
-    subtitle: "Cyberpunk City",
+    title: "赛博都市追逐",
+    subtitle: "AI 生成视频展示",
     videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/JzowPpiMoOMqoUaO.mp4",
     model: "Kling Video"
   },
   {
     title: "海洋女神",
-    subtitle: "Ocean Goddess",
+    subtitle: "AI 生成视频展示",
     videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NOqeglqrzndzEDEF.mp4",
     model: "Kling Video"
   },
   {
     title: "神秘古庙",
-    subtitle: "Ancient Temple",
+    subtitle: "AI 生成视频展示",
     videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NtTJsNzFknFQEWrK.mp4",
     model: "Veo 3.1 Rapid"
   }
