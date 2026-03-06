@@ -1,15 +1,43 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
 
-const thumbs = [
-  "太空站观景台",
-  "未来机甲",
-  "雷电网球",
-  "霓虹都市",
-  "森林秘境",
+const slides = [
+  {
+    title: "太空站观景台",
+    subtitle: "本周推荐作品",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/KxgbvnPXycXGYxkr.mp4",
+    model: "Veo 3.1 Pro"
+  },
+  {
+    title: "雷电网球",
+    subtitle: "精选轮播",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/JzowPpiMoOMqoUaO.mp4",
+    model: "Kling Video"
+  },
+  {
+    title: "霓虹都市追逐",
+    subtitle: "精选轮播",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NOqeglqrzndzEDEF.mp4",
+    model: "Kling Video"
+  },
+  {
+    title: "森林秘境",
+    subtitle: "精选轮播",
+    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NtTJsNzFknFQEWrK.mp4",
+    model: "Veo 3.1 Rapid"
+  }
 ];
 
 export default function HomeHero() {
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setIdx((v) => (v + 1) % slides.length), 5500);
+    return () => clearInterval(t);
+  }, []);
+
+  const slide = slides[idx];
+
   return (
     <section
       style={{
@@ -29,26 +57,40 @@ export default function HomeHero() {
         }}
       >
         <div
+          className="home-hero-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0,1.28fr) minmax(320px,0.72fr)",
             gap: 24,
             alignItems: "stretch",
           }}
-          className="home-hero-grid"
         >
           <div>
             <div
               style={{
                 aspectRatio: "16 / 9",
                 borderRadius: 26,
-                background:
-                  "linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.32)), url('https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=1600&auto=format&fit=crop') center/cover",
                 border: "1px solid rgba(255,255,255,0.10)",
                 position: "relative",
                 overflow: "hidden",
+                background: "#090909",
               }}
             >
+              <video
+                key={slide.videoUrl}
+                src={slide.videoUrl}
+                autoPlay
+                muted
+                loop
+                playsInline
+                controls={false}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
               <FloatingVideoWatermark enabled text="Powered by mvstudiopro.com" />
 
               <div
@@ -56,7 +98,7 @@ export default function HomeHero() {
                   position: "absolute",
                   inset: 0,
                   background:
-                    "radial-gradient(circle at center, rgba(255,255,255,0.02), transparent 30%), linear-gradient(180deg, rgba(0,0,0,0.06), rgba(0,0,0,0.34))",
+                    "linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.34))",
                 }}
               />
 
@@ -101,7 +143,7 @@ export default function HomeHero() {
                   fontWeight: 800,
                 }}
               >
-                精选轮播
+                {slide.model}
               </div>
 
               <div
@@ -118,8 +160,8 @@ export default function HomeHero() {
                 }}
               >
                 <div style={{ color: "white" }}>
-                  <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>本周推荐作品</div>
-                  <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>太空站观景台</div>
+                  <div style={{ fontSize: 13, color: "#ff9b75", fontWeight: 800 }}>{slide.subtitle}</div>
+                  <div style={{ fontSize: 34, fontWeight: 900, marginTop: 6 }}>{slide.title}</div>
                   <div style={{ marginTop: 8, fontSize: 14, opacity: 0.84 }}>
                     先看结果，再进入重新创作工作流
                   </div>
@@ -145,22 +187,24 @@ export default function HomeHero() {
             </div>
 
             <div style={{ display: "flex", gap: 10, marginTop: 14, overflowX: "auto", paddingBottom: 2 }}>
-              {thumbs.map((t, i) => (
-                <div
-                  key={t}
+              {slides.map((s, i) => (
+                <button
+                  key={s.title}
+                  onClick={() => setIdx(i)}
                   style={{
                     minWidth: 136,
                     padding: 10,
                     borderRadius: 14,
-                    background: i === 0 ? "rgba(255,138,91,0.18)" : "rgba(255,255,255,0.05)",
-                    border: i === 0 ? "1px solid rgba(255,138,91,0.55)" : "1px solid rgba(255,255,255,0.08)",
+                    background: i === idx ? "rgba(255,138,91,0.18)" : "rgba(255,255,255,0.05)",
+                    border: i === idx ? "1px solid rgba(255,138,91,0.55)" : "1px solid rgba(255,255,255,0.08)",
                     color: "white",
                     fontSize: 12,
                     fontWeight: 700,
+                    cursor: "pointer",
                   }}
                 >
-                  {t}
-                </div>
+                  {s.title}
+                </button>
               ))}
             </div>
           </div>
