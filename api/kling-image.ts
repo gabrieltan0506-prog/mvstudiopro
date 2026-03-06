@@ -1,4 +1,34 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+async function safeFetch(url: string, init: any = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await safeFetch(url, { ...init, signal: controller.signal });
+    const text = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch {}
+    return {
+      ok: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      text,
+      json,
+    };
+  } catch (e: any) {
+    return {
+      ok: false,
+      status: 0,
+      statusText: "FETCH_FAILED",
+      text: "",
+      json: null,
+      fetchError: e?.message || String(e),
+      fetchName: e?.name || "",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 import crypto from "node:crypto";
 
 function s(v:any){ if(v==null) return ""; if(Array.isArray(v)) return String(v[0]??""); return String(v); }
@@ -33,7 +63,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     // task polling
     const taskId = s(q.taskId || b.taskId).trim();
     if(req.method==="GET" && taskId){
-      const r = await fetch(`${BASE}/v1/images/generations/${encodeURIComponent(taskId)}`,{
+      const r = await safeFetch(`${BASE}/v1/images/generations/${encodeURIComponent(taskId)}`,{
         method:"GET",
         headers:{
           "Authorization":"Bearer "+token,
@@ -61,7 +91,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     // probe
     const op=s(q.op || b.op).trim();
     if(req.method==="GET" && op==="probe"){
-      const r=await fetch(`${BASE}/v1/images/generations`,{
+      const r=await safeFetch(`${BASE}/v1/images/generations`,{
         method:"POST",
         headers:{
           "Authorization":"Bearer "+token,
@@ -99,7 +129,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     if (s(b.callback_url)) payload.callback_url = s(b.callback_url);
     if (s(b.external_task_id)) payload.external_task_id = s(b.external_task_id);
 
-    const r = await fetch(`${BASE}/v1/images/generations`,{
+    const r = await safeFetch(`${BASE}/v1/images/generations`,{
       method:"POST",
       headers:{
         "Authorization":"Bearer "+token,
@@ -129,6 +159,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       raw: j ?? t.slice(0,2000)
     });
   }catch(e:any){
-    return res.status(500).json({ok:false,error:"server_error",message:e?.message||String(e)});
+    return res.status(500).json({ok:false,error:"server_error",message:e?.message||String(e),stack:String(e?.stack||"").slice(0,1200)});
   }
 }
