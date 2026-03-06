@@ -1,15 +1,18 @@
 import React from "react";
+import seed from "../data/home_seed_assets_zh.json";
 
-const items = [
-  ["机甲守护者", "Kling 3.0", "免费试用带水印"],
-  ["未来城市追逐", "Veo 3.1", "免费试用带水印"],
-  ["雷电网球", "Nano Banana Pro", "免费试用带水印"],
-  ["深海女王", "Kling 3.0", "免费试用带水印"],
-  ["森林秘境", "Kling 2.6", "免费试用带水印"],
-  ["霓虹歌手", "Veo 3.1", "免费试用带水印"],
+const gradients = [
+  "linear-gradient(135deg,#1d4ed8,#7c3aed)",
+  "linear-gradient(135deg,#7c2d12,#db2777)",
+  "linear-gradient(135deg,#164e63,#9333ea)",
+  "linear-gradient(135deg,#0f766e,#2563eb)",
+  "linear-gradient(135deg,#7c3aed,#ec4899)",
+  "linear-gradient(135deg,#1e3a8a,#9333ea)",
 ];
 
 export default function HomeShowcase() {
+  const items = Array.isArray((seed as any)?.showcaseImages) ? (seed as any).showcaseImages : [];
+
   return (
     <section style={{ maxWidth: 1240, margin: "0 auto", padding: "44px 20px 0" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "end", flexWrap: "wrap" }}>
@@ -31,99 +34,103 @@ export default function HomeShowcase() {
           marginTop: 22,
         }}
       >
-        {items.map(([title, model, tag], i) => (
-          <div
-            key={title}
-            style={{
-              borderRadius: 22,
-              overflow: "hidden",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              position: "relative",
-            }}
-          >
+        {items.map((prompt: string, i: number) => {
+          const title = prompt.split("，")[0] || `作品 ${i + 1}`;
+          return (
             <div
+              key={title + i}
               style={{
-                aspectRatio: "16 / 10",
-                background:
-                  i % 3 === 0
-                    ? "linear-gradient(135deg,#1d4ed8,#7c3aed)"
-                    : i % 3 === 1
-                    ? "linear-gradient(135deg,#7c2d12,#db2777)"
-                    : "linear-gradient(135deg,#164e63,#9333ea)",
+                borderRadius: 22,
+                overflow: "hidden",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
                 position: "relative",
               }}
             >
               <div
                 style={{
-                  position: "absolute",
-                  left: 14,
-                  top: 14,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "rgba(8,8,16,0.48)",
-                  color: "white",
-                  fontSize: 11,
-                  fontWeight: 800,
+                  aspectRatio: "16 / 10",
+                  background: gradients[i % gradients.length],
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "end",
+                  justifyContent: "start",
+                  padding: 16,
                 }}
               >
-                {tag}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: 14,
+                    top: 14,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: "rgba(8,8,16,0.48)",
+                    color: "white",
+                    fontSize: 11,
+                    fontWeight: 800,
+                  }}
+                >
+                  免费试用带水印
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    right: 12,
+                    bottom: 12,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background: "rgba(8,8,16,0.48)",
+                    color: "white",
+                    fontSize: 11,
+                    fontWeight: 800,
+                  }}
+                >
+                  Powered by mvstudiopro.com
+                </div>
               </div>
-              <div
-                style={{
-                  position: "absolute",
-                  right: 12,
-                  bottom: 12,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  background: "rgba(8,8,16,0.48)",
-                  color: "white",
-                  fontSize: 11,
-                  fontWeight: 800,
-                }}
-              >
-                Powered by mvstudiopro.com
-              </div>
-            </div>
 
-            <div style={{ padding: 16 }}>
-              <div style={{ color: "white", fontSize: 20, fontWeight: 900 }}>{title}</div>
-              <div style={{ marginTop: 6, color: "rgba(255,255,255,0.65)" }}>{model}</div>
-              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                <a
-                  href="/remix"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,138,91,0.40)",
-                    background: "rgba(255,138,91,0.12)",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    textDecoration: "none",
-                  }}
-                >
-                  重新创作
-                </a>
-                <a
-                  href="/workflow"
-                  style={{
-                    padding: "10px 14px",
-                    borderRadius: 12,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background: "rgba(255,255,255,0.04)",
-                    color: "white",
-                    fontWeight: 900,
-                    cursor: "pointer",
-                    textDecoration: "none",
-                  }}
-                >
-                  查看工作流
-                </a>
+              <div style={{ padding: 16 }}>
+                <div style={{ color: "white", fontSize: 20, fontWeight: 900 }}>{title}</div>
+                <div style={{ marginTop: 8, color: "rgba(255,255,255,0.72)", lineHeight: 1.7, fontSize: 14 }}>
+                  {prompt}
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                  <a
+                    href="/remix"
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(255,138,91,0.40)",
+                      background: "rgba(255,138,91,0.12)",
+                      color: "white",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      textDecoration: "none",
+                    }}
+                  >
+                    重新创作
+                  </a>
+                  <a
+                    href="/workflow"
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      background: "rgba(255,255,255,0.04)",
+                      color: "white",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                      textDecoration: "none",
+                    }}
+                  >
+                    查看工作流
+                  </a>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <style>{`
