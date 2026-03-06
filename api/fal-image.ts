@@ -16,10 +16,17 @@ if(!prompt){
 return res.status(400).json({ok:false,error:"missing_prompt"})
 }
 
+ feat/fal-showcase-generator
 const key = process.env.FAL_API_KEY || process.env.FAL_KEY
 
 if(!key){
 return res.status(500).json({ok:false,error:"missing FAL_API_KEY"})
+
+const key = process.env.FAL_KEY
+
+if(!key){
+return res.status(500).json({ok:false,error:"missing FAL_KEY"})
+main
 }
 
 const r = await fetch("https://fal.run/fal-ai/nano-banana",{
