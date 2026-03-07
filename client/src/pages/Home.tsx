@@ -17,13 +17,17 @@ export default function HomePage() {
       }}
     >
       <HomeNavbar />
+
       <HomeHero />
-<HomeShowcase />
-<HomeCreatorEco />
+
       <HomeTools />
+
       <HomeShowcase />
+
       <HomeWorkflow />
+
       <HomeCreatorEco />
+
       <HomePlans />
     </div>
   );
