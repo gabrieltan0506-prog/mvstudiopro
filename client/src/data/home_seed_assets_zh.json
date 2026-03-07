@@ -1,138 +1,56 @@
-{
-  "heroVideos": [
-    {
-      "title": "太空站观景台",
-      "type": "video",
-      "modelHint": "Veo 3.1 Pro",
-      "aspectRatio": "16:9",
-      "prompt": "电影级科幻太空站内部观景大厅，巨大弧形舷窗外可见银河与极光，一艘飞船缓慢掠过窗外，镜头缓慢推进，超高细节，体积光，未来感，沉浸式，8秒"
-    },
-    {
-      "title": "雷电网球",
-      "type": "video",
-      "modelHint": "Kling Video",
-      "aspectRatio": "16:9",
-      "prompt": "职业女子网球比赛，击球瞬间带有雷电轨迹与能量残影，观众席沸腾，电影级慢动作与速度变化结合，阳光球场，超高细节，8秒"
-    },
-    {
-      "title": "霓虹都市追逐",
-      "type": "video",
-      "modelHint": "Kling Video",
-      "aspectRatio": "16:9",
-      "prompt": "赛博朋克城市夜晚，霓虹灯雨夜街道，未来特工高速穿梭追逐，镜头动态跟拍，反射地面，电影级光影，8秒"
-    },
-    {
-      "title": "森林秘境",
-      "type": "video",
-      "modelHint": "Veo 3.1 Rapid",
-      "aspectRatio": "16:9",
-      "prompt": "神秘森林秘境，发光植物与薄雾，精灵角色缓慢走入画面，阳光穿透树林，梦幻感，电影级镜头，8秒"
-    }
-  ],
-  "showcaseImages": [
-    {
-      "title": "雷电网球",
-      "imageUrl": "/showcase/tennis1.jpg",
-      "model": "Kling Image 3.0",
-      "prompt": "职业女子网球选手击球瞬间，电弧能量轨迹，电影级构图"
-    },
-    {
-      "title": "能量网球",
-      "imageUrl": "/showcase/tennis2.jpg",
-      "model": "Kling Image 3.0",
-      "prompt": "高速网球击球瞬间，能量残影，体育广告级画面"
-    },
-    {
-      "title": "机甲守护者",
-      "imageUrl": "/showcase/mecha.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "机甲战士角色海报，深蓝紫色调，电影级光影"
-    },
-    {
-      "title": "深海女王",
-      "imageUrl": "/showcase/ocean.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "神秘海洋女王角色，高级蓝绿光影"
-    },
-    {
-      "title": "森林精灵",
-      "imageUrl": "/showcase/elf.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "奇幻森林精灵角色，体积光，梦幻风格"
-    },
-    {
-      "title": "电竞主播",
-      "imageUrl": "/showcase/gamer.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "电竞主播角色，霓虹直播间背景"
-    },
-    {
-      "title": "商业顾问",
-      "imageUrl": "/showcase/business.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "精英商业顾问角色，干净商务风"
-    },
-    {
-      "title": "虚拟艺人",
-      "imageUrl": "/showcase/idol.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "未来虚拟艺人舞台角色"
-    },
-    {
-      "title": "科幻舰员",
-      "imageUrl": "/showcase/crew.jpg",
-      "model": "Nano Banana Pro",
-      "prompt": "科幻飞船舰员角色设定图"
-    }
-  ],
-  "creatorActors": [
-    {
-      "prompt": "未来女特工，角色设定图，黑紫科技战衣，稳定人脸，正面半身",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/CBC0EfvQvNce8v_FwNdT2WYjg3o4rGDUjbJ3Cd07KGyFXpaQEIpX6csZW5lKTcntcgC5HJCrYJ0VYXaJrcl9lMPY-H7f2PORG36h9BpQsH_Kx_skGE6-CkkPWWMbDdPwsMI6SAxxpKlelIIHzzaPqZswBwyi1gXNb6xxRqDl0kMABRETPfvxzVa_02xf0-Xhs1iqklTS_Z_ZLahVqhUhAg.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAFjZsHl69rwdytBSgpiDIwcu2II6T_IM7etQKENKLaWMmbFtqjflR7iNpPmt8k35H4dkJTo4XZNLGv4C7Bk1v2_yoUzOxLsVwdsZOuLDHk2kjxW51xkyHnfY2M1_UZJxmr9m4ndlS1--OwDmObvraClkJNBQz80-8c58DSztJLbmIFd7TPqGq0ZGziTle_EhuYS77PY0qBJNhWmbw5CLEY3m2R4rh3BUm-EXgPQ1gSX6BoSMiIwzDkRLkXJDo0Gm30rVg5KIiBw6_Ww9TFN53FkRnRsIsmMPIIz4vO1ybLorDSr3nryXSgFMAE&x-kcdn-pid=112757&pkey=AAVlyqeAU0l9KmLK47IrPP8iUWpBojTOqaPYdCRif77x0XwpOlHQYahw1mBArM-aNV5sQio58zEMhlIwdYWXNowIo8s91CPNu148S9gmcGxCpnqJCxcCaOdOGszzOJ23bcs",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:23:41.895Z"
-    },
-    {
-      "prompt": "机甲舰长，成熟男性角色，深色制服，电影角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/V5MoGH6eJuJzexSqCEQM0FLruuyxlF30L_KupSlIcAaij5JVnfYPb3xJu2G_dOprWTHzqFRisTIf2Nc6Z2PmFL5a1f_gfdiN7pk1DEhh2XCIAjc7AEQV4dPu_VL_xgV4wT1z5H-CDay4WawrgIkFPXYwKQUdXcKOdHa254UI5MPejy80DCuDaWU1dCEoLAG9vVDdZYgutK5S1TNX1xnzxA.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAFKJzidX79QH5mmBEE_zud1LMGwz-RdQtWu6pAaeofXcmPQF68vQN6avWWEBRB_d4H4ZY07Gf6XoIisyKUrSGB77YNBI0Aa4K_CnLItB-1wcr3P5PIZS7_tbymhg9yftFt8x1p0Qd3r02PJUEhKYulhGXAycspOza3Tbb5Sa9KNTG6JnVs39qO3k4-VW_GJWoFeOqnBMmQzvYgIvsa5Z4K5z3OZJPubEPZrdM_bK7xhmxoSyfxirU_pcpSwYh-JFVmDEt6gIiB9-vlno5Jyz4UlZphoPrsus-2CJ3e1WAmwV-qBRGgkIygFMAE&x-kcdn-pid=112757&pkey=AAV6CCMdd-dV635QSeMyOkvwh5AA5iKKWaQv--xEw6G1uSSgGDr9RklCxRXRuyN1mVRPzQgt3kbv5j3A_VKPSNBed18lrB9c3ND3AZctNd5l_7NlWurgHjwUYUh1ZM4E-us",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:23:55.700Z"
-    },
-    {
-      "prompt": "都市女主，现代感强，时尚短发，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/M6mGjJP7eootdeGWrSxqE_cL0Rl9jsLQx-9M8P7DMvhBElNULq0-cx5OEaz_rCHwxPY2ZPt2re2WfY0lFsZwM7lnu0cO3MTHCe2mqIVmp7_RBRQVmnm31Fb3N5v_GHlKfI58sgT1I6gdmwKI4Pvogtx_PzXg4Mthljl46_eWgk4ZuwbTh11utHWyNAZA14ImSxbi3UHqkWtAIYfy9IRudA.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAFwkmX-sP6FbhKvmdy8bVYkqkC6XYnT8gYnceHuvsU5PIX-KK55BSPwdEkaWujHBBOgdF77LbEFSZxYvFQR2ngp5zXCFlWb-lmFd9QtBJFcht0HVrZZzZPUtCM_bnNg2GWGwVORD4nVqbCk2SfrD_u4WNDZ3BE_6rBBrvymdIdXhZea-FJ4-arKUd_SDERmiibxlhCSCs_B2x0poxnAbBXQFimAqki888HFWc9ZDZCfbBoSi9mNAwk6ykvhH5T-Qr88Ouz0IiDf9OUFsM9im95B_4hphbtZrFsYChZ8SEO7XJCsO9sKdSgFMAE&x-kcdn-pid=112757&pkey=AAU1nQrq65_MwVu3tTuybvGeWwJcCiFLnWdrS96h5Y46D4vHnP9sUxJZLL8XZM1RFolUVmMBOVbAraWZr4Y-8t6eVA0WzjClEJ9jdvEfG5zepurLEmVS2MutwLJGOxzGcdI",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:24:10.131Z"
-    },
-    {
-      "prompt": "森林精灵，奇幻女性角色，绿色与金色元素，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/lLGfqvQdDFMvyr25-hMIgKyyp-NDPLnVdmWHhInWVh2iXRJqyHg8yZQh63xdY2ASmBXHjURb9ue-8p0wqRxBrglB3L3yBUzED4UD3MAtwKLBVY9XKsNBUW50NbChMmZu6mHr8DKCJ2lSuN9layHgpRomZi4evM_U1WBPwXE-7B2GS5sn8bHVUFM8-_heW0psqbVVf-TRyruXsrzbHpYzxg.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAF20BH_dVrQepIc5vuxMCyjOCa24a2RHhhnQnH5k_SJAhm1Q8mlrN5wo-eQldS8UTa_SUp8qVLP4pCjtbw9SKqxFcRv7rE5ZzFVMskb7vk1uIdDHeNLC-xRBQ1CUz7wZe6EUaWzdU03BfBLxq3umy8J5HvU7d8TEJPycUDc4Q4f7IPs43TPDolwPshuvFDQfM4nzHMmUe8DKtIzz9z9foNJ56mpEGtn6uvesvZdTfZT3xoSS2Y9drB8Z4ednHxTIh7XZcnaIiDb9zXEuOU5PDEgmgS_7WpfMID951I1togSp1XPuhwhcCgFMAE&x-kcdn-pid=112757&pkey=AAX--8L7c6q4Ai5gJ1tEpdSvvH7ObXk-9UURuyCzchmMsqjB8ZI_1Zd3ork_oDJ0tzf7BRMh1UqQchZYay36_5efprAvh9QAxWpXxrXuVePZ55KutAYAkUy29KRavWqU6LE",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:24:28.011Z"
-    },
-    {
-      "prompt": "电竞主播，年轻男性角色，霓虹直播间背景，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/56wyXuHDdhSEexjZtrXTaKSLVncdLL1yq4RzdRQ04U4fcAfNyj-5AyfyyFiCvnqfbfYCS1FsOAP0nuYfIAhYrp_WFaIkxmnwxp2esItteIft95hVVWU3757katOrCKDbE54gObucjVJTQ2udezY_lnk-juQjtmL5klxH_bAVqDTDTv48ESJoFV7k-KM9HgFAy-XkXH8bKUif8IyNda8_iw.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAEfj2JXTLMrGIw9_Ak7kLVnnV-1qU0H7A7jqnWq88MgtcJBFhhaJQIfv1u_NBFyE9ta1GGo6cC-_CaLMTHUOHWyM-NaCWwEaRTL66I4VSh82-aYngFW9SjsgDYKrdB5E9Ciu4Dox8_Ls63YyxNv5ONwjd0_g-n3WG7P8ehDRekncwCBBYG0QUG9ZzeY8gWlA-6nZ_at4Cg7q97P0YpS6tfbdXtRR9HBIbH9KZoQBVXwuxoS09j_LL38Qv8Yv5Zh0thEYW8BIiBQ-Emx_gzSQ9Pp6Z91MD58vOWKtYIa_hsec4Xlgt_nMSgFMAE&x-kcdn-pid=112757&pkey=AAXJ2N_whIgX2B3zF3-66NRp3LVPO77z1OH5pa2GSQccsJA8tncxnYbPSY2FopChG-nX9wC_PhwQ3wR1zgQa3CE5gdT3e1fj1HJUVmkEg32rIYBkpOzTKw0cXdbsvAvztuk",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:24:42.076Z"
-    },
-    {
-      "prompt": "科幻舰员，白银色制服，冷静感，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/bz-sjA_wI3df4Z1a01IvIea6HjX1NU3H7U44wgPZwamNKLe8ORKzIjSJbi6G1QNqEldsgkBMnT8iOKAighMtHY4riFrq8JcRQ7JhNgYFUPrsiRuwO4uT1HUvYXXherRxWP8Bmj4matqUCEkaFsn4jWi2e0zRirv3R7jAV1b3vCgiTSxNp9cGyVVfIPKIkcP033ylC3zG1_pPjzsytcN33w.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAEB-ULECX_-50ymF-e6vMrYhjvayk_eLZW5Ct1EbGOenZpB4zkhCkm38dLMndxtGEgX8Q7up8gy6kNPtQL_-o86E1hFXTKvVNPOHw8lggIpt_UGYs9CkuYdxWnhXNcf_Tb85TupU3PxKCvI3uAX05tRwRTGhzWeFRZGu9Gnzb8fQ_6w8Rrcr6HARkqPqR--ofAIJM1W82T2CkeeZHOwlSdjoexQKXMHRu3C4fWH5DOTJRoSv3Uc89R3_xETrF65D8P8-8MOIiA2Rv3lw49Q2-Rq2QFFnTutvEhh6k_oR--qC5XG1X15qygFMAE&x-kcdn-pid=112757&pkey=AAWdXExZ8jRlcywU11gMB8Nxr9YgdXXai4xs1yJBh-pCXDFdIQfe52OsPdXjfK3JpbU-LmDApM-AI_Cwt627RjRHNyMlcYWq2GDpFSPYReHQcP9u2zVoJE9cDL05ELsy0Jk",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:25:01.004Z"
-    },
-    {
-      "prompt": "虚拟艺人A，舞台型角色，未来偶像风格，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/sXb09lLslMmWdqndfDagwF5ebKjn8jyU9WsjmfmLi6rSSNRmettqW00jQ73wIuGASwawyNdyRXmqk4Na5sTy6vi_DqMFs_GXobIqb1ML4Ze-JEfsiL-DHgEA4dQV7-gK4Yu7g3oSVfEKun8DZXxJTgZ-iO35DcM4KICXunIad_PcBVDhBnfWBNCEU7LHQwI9TIF1Nz2WISF3WkL7NyaBzw.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAG6swgarzWra9YsHFFEjggtoCJJLYiDu86IsFZSo79f6nWsZOYyAZXbES_dwis7gEZ1GnpQLMvMidkbXi74nh9v70MresFFuzWWskdcZ_P8bpyk2hda3ohgz6nsb-r0RBfFhAHpvIsrO030vZ06nClforHz3ub-0mBFK3bcIgFLTowD3m7jVotUNVbTesVlCgCqeDW8f_f6pr6k9tf5whXYuiaXOKfWtWCzXKtSWgEEjBoSiLisQ3JW5QwpPz64VCCZ6-c0IiAL0IsDiO-LjcRaihAOkM5mZ8E6lsa-r9f8o7hZiq_3kygFMAE&x-kcdn-pid=112757&pkey=AAUbLwSG76uaPnadfwWh2jjvUW0qbzpqyvgQup_36iwwHo_8810QgJEjA96SlEFuAALc8WrrCjlkPRuxgtgsMhq2T5si22MXs68Nfm-M_5USqb0t8gVvd_rWVCUuLFCJxRg",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:25:15.761Z"
-    },
-    {
-      "prompt": "商业顾问型角色，精英感，干净背景，角色设定图",
-      "imageUrl": "https://p1-fdl.klingai.com/ksc2/SiFMgIe7kMtrEmrpj_ulwFNdv3F5xgZVlu7ofN2opdj2chIYgtutzyUUahwKkxMN5rknFjFzX_t4HzRjtcAg2u7d_Hzo3_lKf0o-L1uRJtloizlkE3NyptLEagMF5JVmim6U873EiqV5chDUbaK9A7-YCoGUndiA1gjtxvqb0XRvFdWojTYpiyK5-qLq7-HHBM-e8DA8us5LWi4AejQVcw.png?cacheKey=ChtzZWN1cml0eS5rbGluZy5tZXRhX2VuY3J5cHQSsAHjqAx9nK7SDSN8zrBcdRbh15ZDW-kRVD0Gy2GxjfaPtVF9-VC8D29FrE4uLtIqgvgg7WK6YQExdpDgnOLfOyANoAylzYuajtLXqC4L5BAHD7c78X8ajt0S2cVHVS1qfCM8PIQ5jILWFmDZ76OJ58wZpjYXysiv9ynEIq9G3IV27mGSJuuKveUNmzbVgeEdom0fd7YC3YrgrNaSkSAaq8E-CWMdNjdJ6aVjSCuq1oQ4MBoSk8Q9wF5iLa3FHD-a4yQLv8RpIiDsDV30PD_4ecCeZW3JbWX2ab5dXcgmsxhSDRjHWlHVqCgFMAE&x-kcdn-pid=112757&pkey=AAWEqSStEG0aMC5J4uqvjwSVqRdeWCq1zDIyp4VKX6FXWCC3G2coA8xlESmhT3VuIMq0iGO-099UMcami7bejP7Rl0b9JdNgCQMIK3uhngAJhhG8lx_e5l30aObv9gHhBp8",
-      "model": "Kling Image 3.0",
-      "generatedAt": "2026-03-07T00:25:32.715Z"
-    }
-  ]
-}
+"showcaseImages": [
+  {
+    "title": "重庆洪崖洞火锅夜景",
+    "imageUrl": "/showcase/hotpot.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "重庆洪崖洞夜景火锅餐厅，热气腾腾的铜锅火锅，红油翻滚，桌上摆满毛肚牛肉蔬菜和啤酒，年轻朋友围桌聊天，江景夜色映在玻璃窗上，城市烟火气十足，电影级灯光，商业摄影构图"
+  },
+  {
+    "title": "上海迪士尼乐园",
+    "imageUrl": "/showcase/disney.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "上海迪士尼乐园城堡前游客拍照场景，年轻情侣和朋友自拍，彩色气球和童话城堡背景，阳光明亮，欢乐旅游氛围，真实摄影风格，商业海报级画面"
+  },
+  {
+    "title": "北京故宫博物院",
+    "imageUrl": "/showcase/forbiddencity.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "北京故宫博物院展厅，古代青铜器与瓷器在玻璃展柜中展示，暖色博物馆灯光，游客安静参观，红色宫廷建筑背景，文化氛围庄重典雅，纪录片摄影风格"
+  },
+  {
+    "title": "深圳无人机烟花秀",
+    "imageUrl": "/showcase/shenzhen.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "深圳华润大厦夜景，无人机灯光秀与烟花同时升空，天空形成科技图案，城市高楼灯光璀璨，人群在广场观看并拍照，现代都市科技氛围，电影级夜景摄影"
+  },
+  {
+    "title": "女团演唱会舞台",
+    "imageUrl": "/showcase/concert.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "大型流行音乐演唱会舞台，年轻女团歌手在舞台中央演唱，聚光灯和烟雾灯光效果，观众挥舞荧光棒，舞台灯光绚丽，流行音乐氛围，电影级舞台摄影"
+  },
+  {
+    "title": "咖啡馆下午茶",
+    "imageUrl": "/showcase/cafe.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "城市精品咖啡馆下午茶场景，三位职场女性在窗边聊天，桌上摆着咖啡甜点和鲜花，阳光透过落地窗照在桌面，温馨时尚生活方式摄影风格"
+  },
+  {
+    "title": "宠物泳池抓球",
+    "imageUrl": "/showcase/dog.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "黑色拉布拉多在泳池游泳叼着网球，画面半水面半水下，阳光照射水面产生折射光影，水花飞溅，宠物运动瞬间抓拍，高速摄影风格"
+  },
+  {
+    "title": "拳击训练对抗",
+    "imageUrl": "/showcase/boxing.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "拳击训练馆内，两名拳手戴拳套对练，聚光灯照亮拳击台，汗水飞溅，紧张对抗氛围，体育纪实摄影风格"
+  },
+  {
+    "title": "钢琴演奏现场",
+    "imageUrl": "/showcase/piano.jpg",
+    "model": "Nano Banana Pro",
+    "prompt": "音乐厅舞台，一位年轻女钢琴家坐在三角钢琴前演奏，舞台灯光柔和，旁边摆放鲜花，观众席虚化背景，古典音乐氛围浓厚"
+  }
+]
