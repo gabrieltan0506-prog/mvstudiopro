@@ -10,6 +10,27 @@ const gradients = [
   "linear-gradient(135deg,#1e3a8a,#9333ea)",
 ];
 
+function normalizeItem(item: any) {
+  if (typeof item === "string") {
+    return {
+      prompt: item,
+      imageUrl: "",
+      model: "",
+      source: "",
+    };
+  }
+  return {
+    prompt: item?.prompt || "",
+    imageUrl: item?.imageUrl || "",
+    model: item?.model || "",
+    source: item?.source || "",
+  };
+}
+
+function getTitle(prompt: string, index: number) {
+  return (prompt || "").split("，")[0] || `作品 ${index + 1}`;
+}
+
 export default function HomeShowcase() {
   const items = Array.isArray((seed as any)?.showcaseImages) ? (seed as any).showcaseImages : [];
 
@@ -34,8 +55,10 @@ export default function HomeShowcase() {
           marginTop: 22,
         }}
       >
-        {items.map((prompt: string, i: number) => {
-          const title = prompt.split("，")[0] || `作品 ${i + 1}`;
+        {items.map((raw: any, i: number) => {
+          const item = normalizeItem(raw);
+          const title = getTitle(item.prompt, i);
+
           return (
             <div
               key={title + i}
@@ -50,7 +73,7 @@ export default function HomeShowcase() {
               <div
                 style={{
                   aspectRatio: "16 / 10",
-                  background: gradients[i % gradients.length],
+                  background: item.imageUrl ? `url(${item.imageUrl}) center/cover no-repeat` : gradients[i % gradients.length],
                   position: "relative",
                   display: "flex",
                   alignItems: "end",
@@ -73,6 +96,25 @@ export default function HomeShowcase() {
                 >
                   免费试用带水印
                 </div>
+
+                {item.model ? (
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 12,
+                      top: 12,
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      background: "rgba(8,8,16,0.48)",
+                      color: "white",
+                      fontSize: 11,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {item.model}
+                  </div>
+                ) : null}
+
                 <div
                   style={{
                     position: "absolute",
@@ -93,7 +135,7 @@ export default function HomeShowcase() {
               <div style={{ padding: 16 }}>
                 <div style={{ color: "white", fontSize: 20, fontWeight: 900 }}>{title}</div>
                 <div style={{ marginTop: 8, color: "rgba(255,255,255,0.72)", lineHeight: 1.7, fontSize: 14 }}>
-                  {prompt}
+                  {item.prompt}
                 </div>
                 <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
                   <a

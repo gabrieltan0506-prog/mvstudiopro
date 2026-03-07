@@ -12,6 +12,25 @@ const gradients = [
   "linear-gradient(135deg,#1e3a8a,#9333ea)",
 ];
 
+function normalizeItem(item: any) {
+  if (typeof item === "string") {
+    return {
+      prompt: item,
+      imageUrl: "",
+      model: "",
+    };
+  }
+  return {
+    prompt: item?.prompt || "",
+    imageUrl: item?.imageUrl || "",
+    model: item?.model || "",
+  };
+}
+
+function getName(prompt: string, index: number) {
+  return (prompt || "").split("，")[0] || `角色 ${index + 1}`;
+}
+
 export default function HomeCreatorEco() {
   const actors = Array.isArray((seed as any)?.creatorActors) ? (seed as any).creatorActors : [];
 
@@ -58,8 +77,10 @@ export default function HomeCreatorEco() {
               marginTop: 18,
             }}
           >
-            {actors.map((prompt: string, i: number) => {
-              const name = prompt.split("，")[0] || `角色 ${i + 1}`;
+            {actors.map((raw: any, i: number) => {
+              const item = normalizeItem(raw);
+              const name = getName(item.prompt, i);
+
               return (
                 <div
                   key={name + i}
@@ -73,14 +94,20 @@ export default function HomeCreatorEco() {
                   <div
                     style={{
                       aspectRatio: "3 / 4",
-                      background: gradients[i % gradients.length],
+                      background: item.imageUrl ? `url(${item.imageUrl}) center/cover no-repeat` : gradients[i % gradients.length],
+                      position: "relative",
                     }}
                   />
                   <div style={{ padding: 12 }}>
                     <div style={{ color: "white", fontWeight: 900, fontSize: 14 }}>{name}</div>
                     <div style={{ marginTop: 6, color: "rgba(255,255,255,0.60)", fontSize: 12, lineHeight: 1.6 }}>
-                      {prompt}
+                      {item.prompt}
                     </div>
+                    {item.model ? (
+                      <div style={{ marginTop: 8, color: "#ff9b75", fontSize: 12, fontWeight: 800 }}>
+                        {item.model}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               );
