@@ -31,46 +31,58 @@
   ],
   "showcaseImages": [
     {
-      "prompt": "机甲守护者，电影级角色海报，深蓝与紫色主调，超高细节",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128f8/LaaxLqHLOpbYvAEr3X_aT_whPfzbmR.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:21:27.200Z"
+      "title": "雷电网球",
+      "imageUrl": "/showcase/tennis1.jpg",
+      "model": "Kling Image 3.0",
+      "prompt": "职业女子网球选手击球瞬间，电弧能量轨迹，电影级构图"
     },
     {
-      "prompt": "未来城市追逐，赛博朋克街头，速度感与霓虹反光，电影级构图",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128f8/7Lb4dEooEoWCjZnXYauJd_8BtamL8C.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:21:34.361Z"
+      "title": "能量网球",
+      "imageUrl": "/showcase/tennis2.jpg",
+      "model": "Kling Image 3.0",
+      "prompt": "高速网球击球瞬间，能量残影，体育广告级画面"
     },
     {
-      "prompt": "雷电网球，职业女选手击球瞬间带电弧，爆发力极强，商业海报风格",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128f9/tnOSWlTdhJzHfK5Qdmg2N_tDYrcK2Y.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:21:47.790Z"
+      "title": "机甲守护者",
+      "imageUrl": "/showcase/mecha.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "机甲战士角色海报，深蓝紫色调，电影级光影"
     },
     {
-      "prompt": "深海女王，神秘海洋女王角色，蓝绿色光影，高级感",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128fa/1uxbCU27UtaYvdp_F9Ci4_C9w9CXQf.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:22:04.686Z"
+      "title": "深海女王",
+      "imageUrl": "/showcase/ocean.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "神秘海洋女王角色，高级蓝绿光影"
     },
     {
-      "prompt": "森林秘境，奇幻森林场景与角色，体积光，史诗感",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128fc/4FZXrUNsRKRKqa620iUd5_O5D7HUTf.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:22:14.139Z"
+      "title": "森林精灵",
+      "imageUrl": "/showcase/elf.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "奇幻森林精灵角色，体积光，梦幻风格"
     },
     {
-      "prompt": "霓虹歌手，舞台表演，高级时尚灯光，未来感",
-      "imageUrl": "https://v3b.fal.media/files/b/0a9128fd/o7hEfXCGuHjxTal9vRkEQ_3W3O12h1.png",
-      "model": "Nano Banana Pro (fal.ai)",
-      "source": "fal.ai",
-      "generatedAt": "2026-03-07T03:22:23.118Z"
+      "title": "电竞主播",
+      "imageUrl": "/showcase/gamer.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "电竞主播角色，霓虹直播间背景"
+    },
+    {
+      "title": "商业顾问",
+      "imageUrl": "/showcase/business.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "精英商业顾问角色，干净商务风"
+    },
+    {
+      "title": "虚拟艺人",
+      "imageUrl": "/showcase/idol.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "未来虚拟艺人舞台角色"
+    },
+    {
+      "title": "科幻舰员",
+      "imageUrl": "/showcase/crew.jpg",
+      "model": "Nano Banana Pro",
+      "prompt": "科幻飞船舰员角色设定图"
     }
   ],
   "creatorActors": [
