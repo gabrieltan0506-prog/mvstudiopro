@@ -18,10 +18,7 @@ function jwtHS256(iss:string, secret:string){
   const header = b64url(Buffer.from(JSON.stringify({ alg:"HS256", typ:"JWT" })));
   const now = Math.floor(Date.now()/1000);
   const payload = b64url(Buffer.from(JSON.stringify({
-    iss,
-    iat: now,
-    nbf: now,
-    exp: now + 3600
+    iss, iat: now, nbf: now, exp: now + 3600
   })));
   const unsigned = `${header}.${payload}`;
   const sig = b64url(crypto.createHmac("sha256", secret).update(unsigned).digest());
@@ -47,16 +44,19 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     }
 
     const token = jwtHS256(AK, SK);
+    const headers = {
+      Authorization:`Bearer ${token}`,
+      "Content-Type":"application/json",
+      Accept:"application/json"
+    };
+
     const op = s((req.query as any)?.op || "");
+    const taskId = s((req.query as any)?.taskId || (req.query as any)?.task_id || "");
 
     if(op === "probe"){
       const resp = await fetch(`${BASE}/v1/images/generations`, {
         method:"POST",
-        headers:{
-          Authorization:`Bearer ${token}`,
-          "Content-Type":"application/json",
-          Accept:"application/json"
-        },
+        headers,
         body: JSON.stringify({
           prompt:"cinematic city background, no characters",
           n:1,
@@ -70,6 +70,35 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         ok:true,
         httpStatus:resp.status,
         bodyPreview:bodyText.slice(0,500)
+      });
+    }
+
+    if(req.method === "GET"){
+      if(!taskId){
+        return res.status(400).json({ ok:false, error:"missing_taskId" });
+      }
+
+      const resp = await fetch(`${BASE}/v1/images/generations/${encodeURIComponent(taskId)}`, {
+        method:"GET",
+        headers
+      });
+
+      const respText = await resp.text();
+      const respJson = tryParse(respText);
+
+      const imageUrl =
+        respJson?.data?.task_result?.images?.[0]?.url ||
+        respJson?.data?.images?.[0]?.url ||
+        respJson?.data?.[0]?.url ||
+        null;
+
+      return res.status(resp.ok ? 200 : 502).json({
+        ok: resp.ok,
+        status: resp.status,
+        taskId,
+        task_status: respJson?.data?.task_status || null,
+        imageUrl,
+        raw: respJson ?? respText.slice(0,2000)
       });
     }
 
@@ -92,27 +121,29 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     const resp = await fetch(`${BASE}/v1/images/generations`, {
       method:"POST",
-      headers:{
-        Authorization:`Bearer ${token}`,
-        "Content-Type":"application/json",
-        Accept:"application/json"
-      },
+      headers,
       body: JSON.stringify({ prompt, n, image_size })
     });
 
     const respText = await resp.text();
     const respJson = tryParse(respText);
 
+    const createTaskId =
+      respJson?.data?.task_id ||
+      respJson?.data?.id ||
+      null;
+
     const imageUrl =
-      respJson?.data?.[0]?.url ||
-      respJson?.data?.url ||
       respJson?.data?.task_result?.images?.[0]?.url ||
+      respJson?.data?.images?.[0]?.url ||
+      respJson?.data?.[0]?.url ||
       null;
 
     return res.status(resp.ok ? 200 : 502).json({
       ok: resp.ok,
       status: resp.status,
-      endpoint: `${BASE}/v1/images/generations`,
+      taskId: createTaskId,
+      task_status: respJson?.data?.task_status || null,
       imageUrl,
       raw: respJson ?? respText.slice(0,2000)
     });
