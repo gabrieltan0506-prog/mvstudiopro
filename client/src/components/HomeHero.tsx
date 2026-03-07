@@ -3,28 +3,36 @@ import FloatingVideoWatermark from "./FloatingVideoWatermark";
 
 const slides = [
   {
-    title: "太空站观景台",
-    subtitle: "AI 生成视频展示",
-    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/KxgbvnPXycXGYxkr.mp4",
-    model: "Veo 3.1 Pro"
-  },
-  {
-    title: "赛博都市追逐",
-    subtitle: "AI 生成视频展示",
-    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/JzowPpiMoOMqoUaO.mp4",
-    model: "Kling Video"
+    title: "雷电网球",
+    subtitle: "职业女子网球比赛的关键瞬间",
+    model: "Kling 3.0",
+    videoUrl: "/migrated/home/video1.mp4",
+    poster: "/migrated/home/poster1.jpg",
+    prompt: "职业女子网球比赛的关键瞬间，网球选手腾空击球，球拍与网球接触时爆发蓝色电弧能量轨迹，观众席沸腾欢呼，夕阳逆光照射球场，强烈动感与速度感，电影级体育广告画面，超高细节，动态运动模糊，8K cinematic lighting"
   },
   {
     title: "海洋女神",
-    subtitle: "AI 生成视频展示",
-    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NOqeglqrzndzEDEF.mp4",
-    model: "Kling Video"
+    subtitle: "史诗奇幻海洋场景",
+    model: "Veo 3.1 Pro",
+    videoUrl: "/migrated/home/video2.mp4",
+    poster: "/migrated/home/poster2.jpg",
+    prompt: "神秘海洋女神从海浪中升起，巨大的海浪在她身后形成弧形水幕，身体由水与光构成，蓝绿色能量粒子在周围漂浮，夕阳穿透海浪形成神圣光束，史诗奇幻风格，电影级光影，超高细节，幻想史诗场景"
   },
   {
-    title: "神秘古庙",
-    subtitle: "AI 生成视频展示",
-    videoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/NtTJsNzFknFQEWrK.mp4",
-    model: "Veo 3.1 Rapid"
+    title: "秘境森林",
+    subtitle: "古代森林神庙遗迹",
+    model: "Veo 3.1 Pro",
+    videoUrl: "/migrated/home/video3.mp4",
+    poster: "/migrated/home/poster3.jpg",
+    prompt: "被遗忘的古代森林神庙遗迹，巨大的石柱与藤蔓缠绕的神殿入口，发光的蓝绿色植物沿着石柱延伸，清晨阳光穿透森林形成体积光，神秘而宁静的奇幻氛围，电影级构图，超高细节，史诗探险场景"
+  },
+  {
+    title: "太空站观景台",
+    subtitle: "未来太空站内部观景大厅",
+    model: "Veo 3.1 Pro",
+    videoUrl: "/migrated/home/video4.mp4",
+    poster: "/migrated/home/poster4.jpg",
+    prompt: "未来太空站内部观景大厅，巨大弧形全景玻璃窗俯瞰地球与银河，极光在地球上空闪耀，一艘宇宙飞船从窗外掠过，空间站内部有植物与高科技控制台，温暖金色灯光与深空背景形成强烈对比，电影级科幻场景，超高细节"
   }
 ];
 
@@ -79,6 +87,7 @@ export default function HomeHero() {
               <video
                 key={slide.videoUrl}
                 src={slide.videoUrl}
+                poster={slide.poster}
                 autoPlay
                 muted
                 loop
