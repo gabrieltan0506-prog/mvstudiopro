@@ -136,6 +136,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void }) {
 function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: string) => void }) {
   const [prompt, setPrompt] = useState("电影级场景，稳定镜头，高细节，人物一致性强");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
   const [workflowId, setWorkflowId] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
@@ -177,20 +178,29 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
   }, [workflowId]);
 
   async function upload(file: File) {
-    const dataUrl = await toDataUrl(file);
-    const j = await fetchJsonish("/api/blob-put-image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl, filename: file.name }),
-    });
-    setDebug(j);
-    const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
-    if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
-    props.onRefImageUrlChange(String(url));
+    setUploading(true);
+    try {
+      const dataUrl = await toDataUrl(file);
+      const j = await fetchJsonish("/api/blob-put-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: file.name }),
+      });
+      setDebug(j);
+      const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
+      if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
+      props.onRefImageUrlChange(String(url));
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function start() {
     if (busy) return;
+    if (uploading) {
+      setDebug({ ok: false, error: "图片上传中，请稍后再试" });
+      return;
+    }
     setBusy(true);
     setTaskId("");
     setWorkflowId("");
@@ -200,9 +210,13 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
 
     try {
       const workflowInputType = props.refImageUrl ? "image" : "script";
+      const trimmedPrompt = prompt.trim();
       const workflowPayload = props.refImageUrl
-        ? { imageUrl: props.refImageUrl }
-        : { prompt };
+        ? {
+            imageUrl: props.refImageUrl,
+            ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+          }
+        : { prompt: trimmedPrompt };
 
       const wf = await fetchJsonish("/api/jobs", {
         method: "POST",
@@ -278,9 +292,9 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
         style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
 
-      <button onClick={start} disabled={busy}
+      <button onClick={start} disabled={busy || uploading}
         style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
-        {busy ? "生成中…" : "开始生成（10秒）"}
+        {busy ? "生成中…" : uploading ? "上传中…" : "开始生成（10秒）"}
       </button>
 
       {taskId ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div> : null}
