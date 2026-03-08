@@ -138,6 +138,7 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
   const [busy, setBusy] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
+  const [workflowResult, setWorkflowResult] = useState<any>(null);
   const [debug, setDebug] = useState<any>(null);
   const stopRef = useRef(false);
 
@@ -161,9 +162,35 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
     setBusy(true);
     setTaskId("");
     setVideoUrl("");
+    setWorkflowResult(null);
     setDebug({ ok: true, message: "clicked: klingCreate" });
 
     try {
+      const workflowInputType = props.refImageUrl ? "image" : "script";
+      const workflowPayload = props.refImageUrl
+        ? { imageUrl: props.refImageUrl }
+        : { prompt };
+
+      const wf = await fetchJsonish("/api/workflow-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceType: "remix",
+          inputType: workflowInputType,
+          payload: workflowPayload,
+        }),
+      });
+      setDebug(wf);
+
+      const workflow = (wf as any)?.json?.workflow;
+      if ((wf as any)?.ok && workflow) {
+        setWorkflowResult(workflow);
+        setTaskId(String(workflow.workflowId || ""));
+        const wfVideoUrl = workflow?.outputs?.videoUrl;
+        if (wfVideoUrl) setVideoUrl(String(wfVideoUrl));
+        return;
+      }
+
       if (!props.refImageUrl) throw new Error("请先上传参考图（或用上面生图设为参考图）。");
       const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
         method: "POST",
@@ -219,6 +246,16 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
       </button>
 
       {taskId ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div> : null}
+      {workflowResult ? (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+          <div>workflowId: <code>{workflowResult.workflowId}</code></div>
+          <div>status: <code>{workflowResult.status}</code> / step: <code>{workflowResult.currentStep}</code></div>
+          {workflowResult?.outputs?.script ? <div>script: <code>{workflowResult.outputs.script}</code></div> : null}
+          {Array.isArray(workflowResult?.outputs?.storyboard) ? (
+            <div>storyboard: <code>{workflowResult.outputs.storyboard.length}</code></div>
+          ) : null}
+        </div>
+      ) : null}
 
       {videoUrl ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>

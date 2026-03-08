@@ -350,6 +350,7 @@ function AIGallerySection() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<typeof AI_GALLERY_ITEMS[0] | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("all");
+  const [recreateLoadingId, setRecreateLoadingId] = useState<string>("");
 
   const filteredItems = activeFilter === "all"
     ? AI_GALLERY_ITEMS
@@ -364,6 +365,67 @@ function AIGallerySection() {
     const amount = 320;
     scrollRef.current.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
   };
+
+  async function handleRecreate(item: (typeof AI_GALLERY_ITEMS)[0], mode: "storyboard" | "video", closeModal = false) {
+    const fallbackPath =
+      mode === "storyboard"
+        ? `/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`
+        : `/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`;
+
+    try {
+      setRecreateLoadingId(`${item.id}:${mode}`);
+      const inputType = mode === "storyboard" ? "script" : "image";
+      const workflowType = mode === "storyboard" ? "showcase-script-workflow" : "showcase-image-workflow";
+      const modelPreference = item.engine.includes("Kling") ? "kling-v1.5" : "nano-banana-pro";
+
+      const payload: Record<string, any> = {
+        prompt: item.desc || item.title,
+        workflowType,
+        modelPreference,
+        actorId: undefined,
+        musicStyle: undefined,
+      };
+      if (inputType === "image") payload.imageUrl = item.imageUrl;
+
+      const resp = await fetch("/api/workflow-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceType: "showcase",
+          inputType,
+          payload,
+        }),
+      });
+
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.workflow) {
+        throw new Error(data?.error || `workflow_request_failed_${resp.status}`);
+      }
+
+      const workflow = data.workflow;
+      const qs = new URLSearchParams({
+        style: item.style,
+        engine: item.engine,
+        workflowId: String(workflow.workflowId || ""),
+        workflowStatus: String(workflow.status || ""),
+        workflowStep: String(workflow.currentStep || ""),
+        workflowVideoUrl: String(workflow?.outputs?.videoUrl || ""),
+        workflowScript: String(workflow?.outputs?.script || ""),
+        workflowStoryboard: JSON.stringify(workflow?.outputs?.storyboard || []),
+      });
+
+      if (closeModal) setSelectedItem(null);
+      navigate(`${mode === "storyboard" ? "/storyboard" : "/vfx"}?${qs.toString()}`);
+      toast.success("已创建 Showcase Workflow");
+    } catch (error: any) {
+      if (closeModal) setSelectedItem(null);
+      toast.error("Workflow 接入失败，已回退原流程");
+      navigate(fallbackPath);
+      console.error("showcase recreate workflow failed:", error);
+    } finally {
+      setRecreateLoadingId("");
+    }
+  }
 
   return (
     <section className="mb-12">
@@ -457,16 +519,22 @@ function AIGallerySection() {
                   <p className="text-xs text-white/90 line-clamp-1 mb-1">{item.desc}</p>
                   <div className="flex gap-1.5">
                     <button
-                      onClick={(e) => { e.stopPropagation(); navigate(`/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRecreate(item, "storyboard");
+                      }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Wand2 size={10} /> 用此风格生成分镜
+                      <Wand2 size={10} /> {recreateLoadingId === `${item.id}:storyboard` ? "接入中..." : "用此风格生成分镜"}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); navigate(`/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRecreate(item, "video");
+                      }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-purple-500/90 hover:bg-purple-500 text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Video size={10} /> 做同款视频
+                      <Video size={10} /> {recreateLoadingId === `${item.id}:video` ? "接入中..." : "做同款视频"}
                     </button>
                   </div>
                 </div>
@@ -515,16 +583,20 @@ function AIGallerySection() {
               <p className="text-sm text-muted-foreground mb-4">{selectedItem.desc}</p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => { setSelectedItem(null); navigate(`/storyboard?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  onClick={() => {
+                    void handleRecreate(selectedItem, "storyboard", true);
+                  }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-primary/20"
                 >
-                  <Wand2 size={16} /> 用此风格生成分镜
+                  <Wand2 size={16} /> {recreateLoadingId === `${selectedItem.id}:storyboard` ? "接入中..." : "用此风格生成分镜"}
                 </button>
                 <button
-                  onClick={() => { setSelectedItem(null); navigate(`/vfx?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  onClick={() => {
+                    void handleRecreate(selectedItem, "video", true);
+                  }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-600/20"
                 >
-                  <Video size={16} /> 做同款视频
+                  <Video size={16} /> {recreateLoadingId === `${selectedItem.id}:video` ? "接入中..." : "做同款视频"}
                 </button>
               </div>
             </div>
