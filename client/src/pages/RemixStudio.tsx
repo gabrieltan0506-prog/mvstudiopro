@@ -152,7 +152,7 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
 
     const poll = async () => {
       if (stopped) return;
-      const resp = await fetchJsonish(`/api/workflow-status?id=${encodeURIComponent(workflowId)}`);
+      const resp = await fetchJsonish(`/api/jobs?op=workflowStatus&id=${encodeURIComponent(workflowId)}`);
       setDebug(resp);
 
       const workflow = (resp as any)?.json?.workflow;
@@ -204,10 +204,11 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
         ? { imageUrl: props.refImageUrl }
         : { prompt };
 
-      const wf = await fetchJsonish("/api/workflow-test", {
+      const wf = await fetchJsonish("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          op: "workflowTest",
           sourceType: "remix",
           inputType: workflowInputType,
           payload: workflowPayload,

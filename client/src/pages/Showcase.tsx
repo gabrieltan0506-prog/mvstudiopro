@@ -391,10 +391,11 @@ function AIGallerySection() {
       };
       if (inputType === "image") payload.imageUrl = item.imageUrl;
 
-      const resp = await fetch("/api/workflow-test", {
+      const resp = await fetch("/api/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          op: "workflowTest",
           sourceType: "showcase",
           inputType,
           payload,
@@ -420,7 +421,7 @@ function AIGallerySection() {
       if (workflowId) {
         for (let i = 0; i < 120; i++) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
-          const statusResp = await fetch(`/api/workflow-status?id=${encodeURIComponent(workflowId)}`);
+          const statusResp = await fetch(`/api/jobs?op=workflowStatus&id=${encodeURIComponent(workflowId)}`);
           const statusData = await statusResp.json().catch(() => null);
           if (statusResp.ok && statusData?.workflow) {
             latestWorkflow = statusData.workflow;

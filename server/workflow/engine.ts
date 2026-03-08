@@ -272,7 +272,7 @@ function buildFallbackScript(prompt: string): string {
 }
 
 async function callWorkflowModelApi(payload: Record<string, any>) {
-  const mod = await import("../../api/workflow-model");
+  const mod = await import("../../api/jobs");
   const handler = mod.default;
 
   const req: any = {
