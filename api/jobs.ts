@@ -171,8 +171,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const inputType = b.inputType;
       const payload = b.payload ?? {};
 
-      if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase") {
-        return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase" });
+      if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase" && sourceType !== "workflow") {
+        return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase/workflow" });
       }
       if (inputType !== "script" && inputType !== "image") {
         return res.status(400).json({ ok: false, error: "inputType must be script or image" });

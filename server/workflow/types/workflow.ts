@@ -47,7 +47,7 @@ export interface WorkflowOutputs {
 
 export interface WorkflowTask {
   workflowId: string;
-  sourceType: "remix" | "showcase" | "direct";
+  sourceType: "remix" | "showcase" | "direct" | "workflow";
   inputType: "script" | "image";
   currentStep: WorkflowStep;
   status: WorkflowStatus;
