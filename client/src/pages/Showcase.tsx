@@ -502,13 +502,13 @@ function AIGallerySection() {
     const parts = [
       `status:${status}`,
       `step:${step}`,
-      `script ${scriptProvider}/${scriptModel} fallback:${scriptFallback}${scriptError ? ` error:${scriptError}` : \"\"}`,
-      `image ${imageProvider}/${imageModel} fallback:${imageFallback}${imageError ? ` error:${imageError}` : \"\"}`,
-      `video ${videoProvider}/${videoModel} fallback:${videoFallback}${videoError ? ` error:${videoError}` : \"\"}`,
-      `render ${renderProvider} fallback:${renderFallback}${renderError ? ` error:${renderError}` : \"\"}`,
+      `script ${scriptProvider}/${scriptModel} fallback:${scriptFallback}${scriptError ? ` error:${scriptError}` : ""}`,
+      `image ${imageProvider}/${imageModel} fallback:${imageFallback}${imageError ? ` error:${imageError}` : ""}`,
+      `video ${videoProvider}/${videoModel} fallback:${videoFallback}${videoError ? ` error:${videoError}` : ""}`,
+      `render ${renderProvider} fallback:${renderFallback}${renderError ? ` error:${renderError}` : ""}`,
     ];
 
-    return parts.join(\" | \");
+    return parts.join(" | ");
   }
 
   return (
