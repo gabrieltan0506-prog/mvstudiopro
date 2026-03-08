@@ -2,19 +2,9 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { env, getEnvStatus } from "../server/config/env";
-import { startWorkflow } from "../server/workflow/engine";
-import { getWorkflow } from "../server/workflow/store/workflowStore";
-import type { WorkflowTask } from "../server/workflow/types/workflow";
-import { generateImageWithBanana } from "../server/models/banana";
-import {
-  buildI2VRequest,
-  buildT2VRequest,
-  configureKlingClient,
-  createOmniVideoTask,
-  getOmniVideoTask,
-  parseKeysFromEnv,
-} from "../server/kling";
+import { env, getEnvStatus } from "./_core/env.js";
+import { startWorkflow, getWorkflow, type WorkflowTask } from "./_core/workflow.js";
+import { generateImageWithBanana } from "./_core/banana.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -123,6 +113,91 @@ async function buildFirstFrameJpeg(input: Buffer, prompt: string, klingBase: str
     .jpeg({ quality: 90, mozjpeg: true })
     .toBuffer();
   return { jpeg, bytes: jpeg.length };
+}
+
+async function createKlingI2VTask(
+  klingBase: string,
+  videoToken: string,
+  imageToken: string,
+  imageUrl: string,
+  prompt: string,
+  model: string
+) {
+  const buf = await fetchImageBuffer(imageUrl);
+  const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
+  const r = await fetchJson(`${klingBase}/v1/videos/image2video`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      model_name: model || "kling-v2-6",
+      image: first.jpeg.toString("base64"),
+      prompt,
+      duration: "5",
+      mode: "pro",
+      sound: "off",
+    }),
+  });
+  return { taskId: r.json?.data?.task_id || null, raw: r };
+}
+
+async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const r = await fetchJson(`${klingBase}/v1/videos/image2video/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+    });
+    const taskStatus = s(r.json?.data?.task_status || "");
+    if (taskStatus === "succeed") {
+      const videoUrl = r.json?.data?.task_result?.videos?.[0]?.url || null;
+      if (videoUrl) return { ok: true, videoUrl };
+      return { ok: false, error: "kling succeeded without video url" };
+    }
+    if (taskStatus === "failed") {
+      return { ok: false, error: s(r.json?.data?.task_status_msg || "kling generation failed") };
+    }
+  }
+  return { ok: false, error: "kling generation timeout" };
+}
+
+async function createKlingT2VTask(klingBase: string, videoToken: string, prompt: string, model: string) {
+  const r = await fetchJson(`${klingBase}/v1/videos/text2video`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      model_name: model || "kling-v2-6",
+      prompt,
+      duration: "5",
+      mode: "pro",
+      aspect_ratio: "16:9",
+      sound: "off",
+    }),
+  });
+  return { taskId: r.json?.data?.task_id || null, raw: r };
+}
+
+async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const r = await fetchJson(`${klingBase}/v1/videos/text2video/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+    });
+    const taskStatus = s(r.json?.data?.task_status || "");
+    if (taskStatus === "succeed") {
+      const videoUrl = r.json?.data?.task_result?.videos?.[0]?.url || null;
+      if (videoUrl) return { ok: true, videoUrl };
+      return { ok: false, error: "kling succeeded without video url" };
+    }
+    if (taskStatus === "failed") {
+      return { ok: false, error: s(r.json?.data?.task_status_msg || "kling generation failed") };
+    }
+  }
+  return { ok: false, error: "kling generation timeout" };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -264,28 +339,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const model = s(b.model || "kling-video").trim();
       const prompt = s(b.prompt).trim();
 
-      const keys = parseKeysFromEnv();
-      if (!keys.length) {
+      if (!VAK || !VSK) {
         return res.status(500).json({ ok: false, error: "KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
       }
-      configureKlingClient(keys, "cn");
-
-      const request =
-        op === "klingI2V"
-          ? buildI2VRequest({
-              prompt: prompt || "Cinematic motion shot with stable camera and rich detail.",
-              imageUrl: s(b.imageUrl).trim(),
-              imageType: "first_frame",
-              aspectRatio: "16:9",
-              mode: "pro",
-              duration: "5",
-            })
-          : buildT2VRequest({
-              prompt,
-              aspectRatio: "16:9",
-              mode: "pro",
-              duration: "5",
-            });
+      const videoToken = jwtHS256(VAK, VSK);
 
       if (op === "klingI2V" && !s(b.imageUrl).trim()) {
         return res.status(400).json({ ok: false, error: "missing imageUrl" });
@@ -294,36 +351,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ ok: false, error: "missing prompt" });
       }
 
-      request.model_name = (model as any) || request.model_name;
-      const created = await createOmniVideoTask(request, "cn");
-      if (!created.task_id) {
-        return res.status(502).json({ ok: false, error: "kling task creation failed" });
+      if (op === "klingI2V") {
+        if (!IAK || !ISK) {
+          return res.status(500).json({ ok: false, error: "KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY is not configured" });
+        }
+        const imageToken = jwtHS256(IAK, ISK);
+        const created = await createKlingI2VTask(
+          KLING_BASE,
+          videoToken,
+          imageToken,
+          s(b.imageUrl).trim(),
+          prompt || "Cinematic motion shot with stable camera and rich detail.",
+          model
+        );
+        if (!created.taskId) return res.status(502).json({ ok: false, error: "kling i2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+        const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
+        if (!polled.ok) return res.status(502).json({ ok: false, error: polled.error });
+        return res.status(200).json({ ok: true, videoUrl: polled.videoUrl, provider: "kling", model });
       }
 
-      const timeoutMs = 90_000;
-      const pollMs = 5_000;
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
-        await new Promise((resolve) => setTimeout(resolve, pollMs));
-        const task = await getOmniVideoTask(created.task_id, "cn");
-        if (task.task_status === "succeed") {
-          const videoUrl = task.task_result?.videos?.[0]?.url;
-          if (!videoUrl) {
-            return res.status(502).json({ ok: false, error: "kling succeeded without video url" });
-          }
-          return res.status(200).json({
-            ok: true,
-            videoUrl,
-            provider: "kling",
-            model,
-          });
-        }
-        if (task.task_status === "failed") {
-          return res.status(502).json({ ok: false, error: task.task_status_msg || "kling generation failed" });
-        }
+      const created = await createKlingT2VTask(KLING_BASE, videoToken, prompt, model);
+      if (!created.taskId) {
+        return res.status(502).json({ ok: false, error: "kling t2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
       }
-
-      return res.status(504).json({ ok: false, error: "kling generation timeout" });
+      const polled = await pollKlingT2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) {
+        return res.status(502).json({ ok: false, error: polled.error });
+      }
+      return res.status(200).json({
+        ok: true,
+        videoUrl: polled.videoUrl,
+        provider: "kling",
+        model,
+      });
     }
 
     if (op === "aimusicSunoCreate") {
