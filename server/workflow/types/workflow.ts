@@ -17,6 +17,10 @@ export type WorkflowStatus =
 
 export interface WorkflowOutputs {
   script?: string;
+  scriptProvider?: string;
+  scriptModel?: string;
+  scriptIsFallback?: boolean;
+  scriptErrorMessage?: string;
   storyboard?: Array<{
     sceneIndex: number;
     scenePrompt: string;
@@ -25,8 +29,20 @@ export interface WorkflowOutputs {
     mood: string;
   }>;
   imageUrls?: string[];
+  imageProvider?: string;
+  imageModel?: string;
+  imageIsFallback?: boolean;
+  imageErrorMessage?: string;
   videoUrl?: string;
+  videoProvider?: string;
+  videoModel?: string;
+  videoIsFallback?: boolean;
+  videoErrorMessage?: string;
+  renderProvider?: string;
+  renderIsFallback?: boolean;
+  renderErrorMessage?: string;
   musicUrl?: string;
+  finalVideoUrl?: string;
 }
 
 export interface WorkflowTask {
