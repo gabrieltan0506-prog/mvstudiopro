@@ -73,6 +73,17 @@ async function runScriptWorkflow(workflowId: string) {
     },
   });
 
+  const storyboardImages = await generateStoryboardImages(storyboard);
+  const afterStoryboard = getWorkflow(workflowId);
+  if (!afterStoryboard) throw new Error("workflow not found");
+  updateWorkflow(workflowId, {
+    currentStep: "storyboardImages",
+    outputs: {
+      ...afterStoryboard.outputs,
+      storyboardImages,
+    },
+  });
+
   const videoRoute = routeModel("video");
   let videoUrl = `mock://${videoRoute.provider}/${videoRoute.model}`;
   let videoIsFallback = true;
@@ -269,6 +280,45 @@ function buildFallbackScript(prompt: string): string {
     "中段：角色在高压环境中推进目标，镜头切换强调速度与张力。",
     "结尾：冲突爆发后出现反转，留下可延展的情绪尾音。",
   ].join("\n");
+}
+
+async function generateStoryboardImages(
+  storyboard: Array<{ sceneIndex: number; scenePrompt: string }>
+): Promise<Array<{ sceneIndex: number; images: string[] }>> {
+  const results: Array<{ sceneIndex: number; images: string[] }> = [];
+
+  for (const scene of storyboard) {
+    const sceneIndex = Number(scene?.sceneIndex || 0);
+    const scenePrompt = String(scene?.scenePrompt || "").trim();
+    if (!sceneIndex || !scenePrompt) continue;
+
+    try {
+      const imageResp = await callWorkflowModelApi({
+        op: "bananaGenerate",
+        prompt: scenePrompt,
+        numImages: 2,
+        aspectRatio: "16:9",
+      });
+      const images = Array.isArray(imageResp?.imageUrls)
+        ? imageResp.imageUrls
+            .map((url: any) => String(url))
+            .filter(Boolean)
+            .slice(0, 2)
+        : [];
+
+      results.push({
+        sceneIndex,
+        images,
+      });
+    } catch {
+      results.push({
+        sceneIndex,
+        images: [],
+      });
+    }
+  }
+
+  return results;
 }
 
 async function callWorkflowModelApi(payload: Record<string, any>) {

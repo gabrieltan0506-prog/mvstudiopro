@@ -1,13 +1,11 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 
 export default function WorkflowStoryboardToVideo() {
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
   const [workflowId, setWorkflowId] = useState("");
   const [workflow, setWorkflow] = useState<any>(null);
-  const [storyboardImageMap, setStoryboardImageMap] = useState<Record<number, string[]>>({});
   const [debug, setDebug] = useState<any>(null);
   const [busy, setBusy] = useState(false);
-  const generatingScenesRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!workflowId) return;
@@ -37,44 +35,7 @@ export default function WorkflowStoryboardToVideo() {
 
   const outputs = workflow?.outputs || {};
   const storyboard = Array.isArray(outputs?.storyboard) ? outputs.storyboard : [];
-
-  useEffect(() => {
-    if (!storyboard.length) return;
-    let cancelled = false;
-    const run = async () => {
-      for (const scene of storyboard) {
-        const sceneIndex = Number(scene?.sceneIndex);
-        const scenePrompt = String(scene?.scenePrompt || "").trim();
-        if (!sceneIndex || !scenePrompt) continue;
-        if (storyboardImageMap[sceneIndex]?.length) continue;
-        if (generatingScenesRef.current.has(sceneIndex)) continue;
-        generatingScenesRef.current.add(sceneIndex);
-        try {
-          const r = await fetch("/api/jobs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              op: "bananaGenerate",
-              prompt: scenePrompt,
-              numImages: 2,
-              aspectRatio: "16:9",
-            }),
-          });
-          const j = await r.json().catch(() => null);
-          const urls = Array.isArray(j?.imageUrls) ? j.imageUrls.filter((u: any) => typeof u === "string") : [];
-          if (!cancelled) {
-            setStoryboardImageMap((prev) => ({ ...prev, [sceneIndex]: urls.slice(0, 2) }));
-          }
-        } finally {
-          generatingScenesRef.current.delete(sceneIndex);
-        }
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [storyboard, storyboardImageMap]);
+  const storyboardImages = Array.isArray(outputs?.storyboardImages) ? outputs.storyboardImages : [];
 
   async function start() {
     if (busy) return;
@@ -87,7 +48,6 @@ export default function WorkflowStoryboardToVideo() {
     setDebug(null);
     setWorkflow(null);
     setWorkflowId("");
-    setStoryboardImageMap({});
     try {
       const r = await fetch("/api/jobs", {
         method: "POST",
@@ -149,7 +109,8 @@ export default function WorkflowStoryboardToVideo() {
               {storyboard.map((scene: any) => {
                 const sceneIndex = Number(scene?.sceneIndex);
                 const scenePrompt = String(scene?.scenePrompt || "");
-                const images = storyboardImageMap[sceneIndex] || [];
+                const sceneImageEntry = storyboardImages.find((x: any) => Number(x?.sceneIndex) === sceneIndex);
+                const images = Array.isArray(sceneImageEntry?.images) ? sceneImageEntry.images : [];
                 return (
                   <div key={sceneIndex} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.25)" }}>
                     <div>sceneIndex: <code>{sceneIndex}</code></div>
@@ -160,7 +121,7 @@ export default function WorkflowStoryboardToVideo() {
                           <img key={idx} src={images[idx]} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                         ) : (
                           <div key={idx} style={{ minHeight: 140, borderRadius: 8, border: "1px dashed rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.7 }}>
-                            generating...
+                            no image
                           </div>
                         )
                       )}

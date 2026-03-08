@@ -2,6 +2,7 @@ export type WorkflowStep =
   | "input"
   | "script"
   | "storyboard"
+  | "storyboardImages"
   | "image"
   | "video"
   | "music"
@@ -27,6 +28,10 @@ export interface WorkflowOutputs {
     duration: number;
     camera: string;
     mood: string;
+  }>;
+  storyboardImages?: Array<{
+    sceneIndex: number;
+    images: string[];
   }>;
   imageUrls?: string[];
   imageProvider?: string;
