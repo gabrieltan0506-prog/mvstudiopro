@@ -53,6 +53,7 @@ function Router() {
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
         <Route path={"/remix"} component={RemixStudio} />
+        <Route path={"/workflow"} component={WorkflowStoryboardToVideo} />
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />
         <Route path={"/test-lab"} component={TestLab} />
