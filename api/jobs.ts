@@ -10,6 +10,15 @@ import {
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
 } from "./_core/workflow.js";
+import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
+import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
+import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
+import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt.js";
+import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
+import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
+import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
+import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
+import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -292,10 +301,15 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
 
 type WorkflowStoryboardScene = {
   sceneIndex: number;
+  sceneTitle?: string;
   scenePrompt: string;
+  environment?: string;
+  character?: string;
   duration: number;
   camera: string;
   mood: string;
+  lighting?: string;
+  action?: string;
 };
 
 type WorkflowStoryboardImageItem = {
@@ -336,10 +350,15 @@ function saveWorkflowPatch(task: any, patch: { currentStep?: string; status?: st
 function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDuration = 5): WorkflowStoryboardScene {
   return {
     sceneIndex: Number(input?.sceneIndex || fallbackIndex),
+    sceneTitle: s(input?.sceneTitle || `Scene ${fallbackIndex}`).trim(),
     scenePrompt: s(input?.scenePrompt).trim(),
+    environment: s(input?.environment || "cinematic environment").trim(),
+    character: s(input?.character || "same main character identity").trim(),
     duration: Number(input?.duration || 0) || fallbackDuration,
     camera: s(input?.camera || "medium").trim() || "medium",
     mood: s(input?.mood || "cinematic").trim() || "cinematic",
+    lighting: s(input?.lighting || "dramatic lighting").trim() || "dramatic lighting",
+    action: s(input?.action || "character-driven cinematic action").trim() || "character-driven cinematic action",
   };
 }
 
@@ -372,39 +391,6 @@ function buildStoryboardFromScript(input: {
   return out;
 }
 
-async function generateScriptWithGemini(input: { prompt: string; model?: string }) {
-  const prompt = s(input.prompt).trim();
-  const model = s(input.model || "gemini-3.1").trim() || "gemini-3.1";
-  if (!prompt) throw new Error("missing prompt");
-  if (!env.geminiApiKey) throw new Error("GEMINI_API_KEY is not configured");
-
-  const { GoogleGenAI } = await import("@google/genai");
-  const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
-  const response = await ai.models.generateContent({
-    model,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            text:
-              "请把下面创意写成可拍摄的短视频脚本（中文，120-220字，包含场景、动作、镜头和情绪节奏）：" +
-              `\n${prompt}`,
-          },
-        ],
-      },
-    ],
-  });
-
-  const script =
-    response.candidates?.[0]?.content?.parts
-      ?.map((part: any) => part?.text || "")
-      .join("")
-      .trim() || "";
-  if (!script) throw new Error("empty script from gemini");
-  return { script, provider: "google", model };
-}
-
 async function callGoogleGateway(payload: Record<string, any>) {
   const mod = await import("./google.js");
   const handler = mod.default;
@@ -425,7 +411,7 @@ async function callGoogleGateway(payload: Record<string, any>) {
   return { statusCode: res.statusCode, ...(res.body || {}) };
 }
 
-function extractGoogleScriptText(raw: any): string {
+function extractGoogleText(raw: any): string {
   return (
     raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("\n").trim() ||
     ""
@@ -452,30 +438,43 @@ function sanitizeScenePrompt(value: any, sceneIndex: number, topic: string) {
   return cleaned;
 }
 
+function callGeminiScriptGateway(prompt: string) {
+  return callGoogleGateway({ op: "geminiScript", prompt });
+}
+
 function normalizeStructuredStoryboard(input: {
-  rawStoryboard: any;
+  rawScenes: any;
   targetScenes: number;
   sceneDuration: number;
   topic: string;
+  mainCharacter?: any;
 }) {
   const targetScenes = Math.max(1, Math.min(12, Number(input.targetScenes || 0) || 6));
   const sceneDuration = Math.max(1, Number(input.sceneDuration || 0) || 5);
-  const src = Array.isArray(input.rawStoryboard) ? input.rawStoryboard : [];
+  const src = Array.isArray(input.rawScenes) ? input.rawScenes : [];
+  const mainAppearance = s(input.mainCharacter?.appearance).trim();
+  const mainOutfit = s(input.mainCharacter?.outfit).trim();
   const out: WorkflowStoryboardScene[] = [];
   for (let i = 0; i < targetScenes; i += 1) {
     const item = src[i] || {};
+    const character = s(item?.character).trim() || [mainAppearance, mainOutfit].filter(Boolean).join(", ");
     out.push({
       sceneIndex: i + 1,
+      sceneTitle: s(item?.sceneTitle).trim() || `Scene ${i + 1}`,
       scenePrompt: sanitizeScenePrompt(item?.scenePrompt, i + 1, input.topic),
+      environment: s(item?.environment).trim() || "cinematic environment",
+      character: character || "same main character identity",
       duration: sceneDuration,
       camera: s(item?.camera || "medium").trim() || "medium",
       mood: s(item?.mood || "cinematic").trim() || "cinematic",
+      lighting: s(item?.lighting || "dramatic lighting").trim() || "dramatic lighting",
+      action: s(item?.action || "character-driven cinematic action").trim() || "character-driven cinematic action",
     });
   }
   return out;
 }
 
-async function generateScriptViaTestLabChain(input: {
+async function generateScriptViaPromptBuilder(input: {
   prompt: string;
   targetWords?: number;
   targetScenes?: number;
@@ -487,48 +486,58 @@ async function generateScriptViaTestLabChain(input: {
   const sceneDuration = Number(input.sceneDuration || 0) || 5;
   if (!prompt) throw new Error("prompt is required");
 
-  const fullPrompt = [
-    "你是视频分镜编剧。",
-    "请严格只返回 JSON，不要 markdown，不要代码块，不要解释，不要额外文本。",
-    "返回结构必须为：",
-    "{",
-    '  "script": "完整脚本文本",',
-    '  "storyboard": [',
-    "    {",
-    '      "sceneIndex": 1,',
-    '      "scenePrompt": "具体可视化画面描述",',
-    `      "duration": ${sceneDuration},`,
-    '      "camera": "medium",',
-    '      "mood": "cinematic"',
-    "    }",
-    "  ]",
-    "}",
-    `硬性要求：script 字数尽量接近 ${targetWords}（允许约 ±10%），不得写成“开场/中段/结尾”三段摘要。`,
-    `硬性要求：storyboard 必须且仅有 ${targetScenes} 个 scenes，sceneIndex 从 1 到 ${targetScenes} 连续。`,
-    `硬性要求：每个 scene 的 duration 必须是 ${sceneDuration}。`,
-    `主题：${prompt}`,
-  ].join("\n");
-
-  const result = await callGoogleGateway({ op: "geminiScript", prompt: fullPrompt });
-  if (result?.ok !== true) {
-    const err = s(result?.message || result?.error || "gemini_script_failed").trim() || "gemini_script_failed";
-    throw new Error(err);
+  const scriptPrompt = buildScriptPrompt({ prompt, targetWords, targetScenes, sceneDuration });
+  const scriptResult = await callGeminiScriptGateway(scriptPrompt);
+  if (scriptResult?.ok !== true) {
+    throw new Error(s(scriptResult?.message || scriptResult?.error || "gemini_script_failed") || "gemini_script_failed");
   }
-  const text = stripJsonFence(extractGoogleScriptText(result?.raw));
-  if (!text) throw new Error("empty script from geminiScript");
-  const parsed = jparse(text);
-  if (!parsed || typeof parsed !== "object") throw new Error("gemini_invalid_json");
-  const script = s((parsed as any).script).trim();
-  if (!script) throw new Error("gemini_missing_script");
+  const script = stripJsonFence(extractGoogleText(scriptResult?.raw));
+  if (!script) throw new Error("empty_script");
+
+  const storyboardPrompt = buildStoryboardPrompt({
+    prompt,
+    script,
+    targetScenes,
+    sceneDuration,
+  });
+  const storyboardResult = await callGeminiScriptGateway(storyboardPrompt);
+  if (storyboardResult?.ok !== true) {
+    throw new Error(s(storyboardResult?.message || storyboardResult?.error || "gemini_storyboard_failed") || "gemini_storyboard_failed");
+  }
+  const storyboardText = stripJsonFence(extractGoogleText(storyboardResult?.raw));
+  const parsed = jparse(storyboardText);
+  if (!parsed || typeof parsed !== "object") throw new Error("gemini_storyboard_invalid_json");
+
   const storyboard = normalizeStructuredStoryboard({
-    rawStoryboard: (parsed as any).storyboard,
+    rawScenes: (parsed as any).scenes,
     targetScenes,
     sceneDuration,
     topic: prompt,
+    mainCharacter: (parsed as any).mainCharacter,
   });
   return {
     script,
     storyboard,
+    provider: "google-vertex",
+    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
+  };
+}
+
+async function generateScriptOnlyViaPromptBuilder(input: {
+  prompt: string;
+  targetWords?: number;
+  targetScenes?: number;
+  sceneDuration?: number;
+}) {
+  const scriptPrompt = buildScriptPrompt(input);
+  const scriptResult = await callGeminiScriptGateway(scriptPrompt);
+  if (scriptResult?.ok !== true) {
+    throw new Error(s(scriptResult?.message || scriptResult?.error || "gemini_script_failed") || "gemini_script_failed");
+  }
+  const script = stripJsonFence(extractGoogleText(scriptResult?.raw));
+  if (!script) throw new Error("empty_script");
+  return {
+    script,
     provider: "google-vertex",
     model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
   };
@@ -678,7 +687,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
       try {
-        generated = await generateScriptViaTestLabChain({
+        generated = await generateScriptViaPromptBuilder({
           prompt,
           targetWords,
           targetScenes,
@@ -704,6 +713,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           scriptIsFallback,
           scriptErrorMessage,
           storyboard,
+          storyboardStructuredStatus: "structured",
           storyboardConfirmed: false,
           targetWords,
           targetScenes,
@@ -753,11 +763,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
       );
       const results: WorkflowStoryboardImageItem[] = [];
+      const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
       for (const scene of scenes) {
+        const imagePrompt = buildStoryboardImagePrompt({
+          scenePrompt: scene.scenePrompt,
+          environment: scene.environment,
+          character: scene.character,
+          camera: scene.camera,
+          mood: scene.mood,
+          lighting: scene.lighting,
+          action: scene.action,
+          lockedCharacterPrompt: lockedCharacterPrompt || undefined,
+          referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
+        });
         const generated = await generateImageWithBanana({
-          prompt: scene.scenePrompt,
+          prompt: imagePrompt,
           numImages: 2,
           aspectRatio: "16:9",
+          imageSize: "1536x864",
         });
         results.push({
           sceneIndex: scene.sceneIndex,
@@ -788,10 +811,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
+      const imagePrompt = buildStoryboardImagePrompt({
+        scenePrompt: s(targetScene.scenePrompt).trim(),
+        environment: s(targetScene.environment).trim(),
+        character: s(targetScene.character).trim(),
+        camera: s(targetScene.camera).trim(),
+        mood: s(targetScene.mood).trim(),
+        lighting: s(targetScene.lighting).trim(),
+        action: s(targetScene.action).trim(),
+        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
+        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
+      });
       const generated = await generateImageWithBanana({
-        prompt: s(targetScene.scenePrompt).trim(),
+        prompt: imagePrompt,
         numImages: 2,
         aspectRatio: "16:9",
+        imageSize: "1536x864",
       });
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
@@ -811,13 +846,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const locked = Boolean(b.locked);
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+      const lockPrompt = buildCharacterLockPrompt({
+        gender: s(b.gender).trim(),
+        age: s(b.age).trim(),
+        appearance: s(b.appearance || scene.character).trim(),
+        outfit: s(b.outfit).trim(),
+        hair: s(b.hair).trim(),
+        optionalReferenceImage: s(b.optionalReferenceImage).trim(),
+      });
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const sceneImage = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex)?.images?.[0] || "";
+      const lockResult = locked && sceneImage ? await characterLockStep({ sceneImageUrl: sceneImage }) : { referenceCharacterUrl: "" };
       const updated = currentImages.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex ? { ...item, characterLocked: locked } : item,
+        Number(item?.sceneIndex) === sceneIndex
+          ? { ...item, characterLocked: locked, referenceCharacterUrl: lockResult.referenceCharacterUrl || item?.referenceCharacterUrl }
+          : item,
       );
       const next = saveWorkflowPatch(workflow, {
         currentStep: "characterLock",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+        outputs: {
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+          lockedCharacterPrompt: lockPrompt,
+          referenceCharacterUrl: lockResult.referenceCharacterUrl || workflow.outputs?.referenceCharacterUrl || "",
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -835,7 +889,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
       const next = saveWorkflowPatch(workflow, {
         currentStep: "characterLock",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+        outputs: {
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), referenceCharacterUrl])),
+          lockedCharacters: [{ characterId: `scene-${sceneIndex}`, referenceImage: referenceCharacterUrl }],
+          referenceCharacterUrl,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -846,14 +906,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const target = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      const sourceUrl = s(target?.referenceCharacterUrl || target?.images?.[0]).trim();
+      if (!sourceUrl) return res.status(400).json(fail("reference character image is required"));
+      const removed = await backgroundRemoveStep({ imageUrl: sourceUrl });
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
-          ? { ...item, backgroundStatus: item?.referenceCharacterUrl ? "removed" : "no_reference_character" }
+          ? { ...item, backgroundStatus: "removed", characterPngUrl: removed.characterPngUrl }
           : item,
       );
       const next = saveWorkflowPatch(workflow, {
-        currentStep: "characterLock",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+        currentStep: "backgroundRemove",
+        outputs: {
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+          characterPngUrl: removed.characterPngUrl,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -885,11 +953,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured"));
       }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
       const promptFromStoryboard = storyboard
-        .map((scene: any) => s(scene?.scenePrompt).trim())
+        .map((scene: any) =>
+          buildVideoPrompt({
+            scenePrompt: s(scene?.scenePrompt).trim(),
+            character: s(scene?.character).trim(),
+            action: s(scene?.action).trim(),
+            camera: s(scene?.camera).trim(),
+            mood: s(scene?.mood).trim(),
+            lighting: s(scene?.lighting).trim(),
+            sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
+            lockedCharacterPrompt: lockedCharacterPrompt || undefined,
+          }),
+        )
         .filter(Boolean)
-        .join("；");
-      const prompt = promptFromStoryboard || s(workflow.outputs?.script || workflow.payload?.prompt).trim();
+        .join("\n");
+      const prompt = promptFromStoryboard || buildVideoPrompt({
+        scenePrompt: s(workflow.outputs?.script || workflow.payload?.prompt).trim(),
+        sceneDuration: Number(workflow.outputs?.sceneDuration || 0) || 5,
+        lockedCharacterPrompt: lockedCharacterPrompt || undefined,
+      });
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const videoToken = jwtHS256(VAK, VSK);
@@ -916,7 +1000,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const dialogueText = s(b.dialogueText).trim() || s(workflow.outputs?.script).trim();
-      const voicePrompt = s(b.voicePrompt).trim();
+      const voicePrompt = buildVoicePrompt({
+        dialogueText,
+        style: s(b.voicePrompt || workflow.outputs?.voicePrompt).trim(),
+        language: s(b.language || "中文").trim() || "中文",
+      });
       const voice = s(b.voice || "nova").trim() || "nova";
       if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
@@ -945,7 +1033,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const musicDuration = Number(b.musicDuration || 0) || 30;
       const rawPrompt = s(b.musicPrompt).trim() || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
       if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
-      const prompt = `${rawPrompt}. mood: ${musicMood}. bpm: ${musicBpm}. duration: ${musicDuration}s. instrumental.`;
+      const prompt = buildMusicPrompt({
+        genre: rawPrompt,
+        mood: musicMood,
+        pace: s(b.musicPace || "medium-fast").trim() || "medium-fast",
+        duration: musicDuration,
+        hasVocal: Boolean(b.hasVocal),
+        bpm: musicBpm,
+      });
 
       const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
         method: "POST",
@@ -1018,7 +1113,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const dialogueText = s(b.dialogueText).trim();
-      const voicePrompt = s(b.voicePrompt).trim();
+      const voicePrompt = buildVoicePrompt({
+        dialogueText,
+        style: s(b.voicePrompt).trim(),
+        language: s(b.language || "中文").trim() || "中文",
+      });
       const voice = s(b.voice || "nova").trim() || "nova";
       const workflowId = s(b.workflowId).trim();
 
@@ -1058,9 +1157,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const prompt = s(b.prompt).trim();
-      const model = s(b.model || "gemini-3.1").trim();
       if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
-      const generated = await generateScriptWithGemini({ prompt, model });
+      const generated = await generateScriptOnlyViaPromptBuilder({
+        prompt,
+        targetWords: Number(b.targetWords || 0) || undefined,
+        targetScenes: Number(b.targetScenes || 0) || undefined,
+        sceneDuration: Number(b.sceneDuration || 0) || undefined,
+      });
 
       return res.status(200).json({
         ok: true,

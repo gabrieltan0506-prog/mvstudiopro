@@ -34,7 +34,7 @@ export async function generateStoryboardSceneImages(input: {
       input: {
         prompt: scenePrompt,
         num_images: count,
-        aspect_ratio: "16:9",
+        image_size: "1536x864",
       },
       logs: false,
     })) as any;

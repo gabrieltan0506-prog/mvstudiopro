@@ -3,6 +3,7 @@ export type WorkflowStep =
   | "storyboard"
   | "storyboardImages"
   | "characterLock"
+  | "backgroundRemove"
   | "confirmStoryboard"
   | "video"
   | "voice"
@@ -13,10 +14,15 @@ export type WorkflowStep =
 
 export interface StoryboardScene {
   sceneIndex: number;
+  sceneTitle?: string;
   scenePrompt: string;
+  environment?: string;
+  character?: string;
   duration: number;
   camera: string;
   mood: string;
+  lighting?: string;
+  action?: string;
 }
 
 export interface StoryboardImages {
@@ -24,19 +30,28 @@ export interface StoryboardImages {
   images: string[];
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   backgroundStatus?: string;
 }
 
 export interface WorkflowOutputs {
   script?: string;
+  scriptProvider?: string;
+  scriptModel?: string;
+  scriptIsFallback?: boolean;
+  scriptErrorMessage?: string;
   storyboard?: StoryboardScene[];
+  storyboardStructuredStatus?: string;
   storyboardImages?: StoryboardImages[];
   storyboardConfirmed?: boolean;
   storyboardConfirmedAt?: number;
   detectedCharacters?: { characterId: string; label?: string; referenceImage?: string }[];
   lockedCharacters?: { characterId: string; referenceImage: string }[];
+  lockedCharacterPrompt?: string;
   characterLocked?: boolean;
   referenceImages?: string[];
+  referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   videoUrl?: string;
   videoProvider?: string;
   videoModel?: string;

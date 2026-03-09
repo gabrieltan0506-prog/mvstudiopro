@@ -5,6 +5,7 @@ export interface BananaGenerateInput {
   prompt: string;
   numImages?: number;
   aspectRatio?: string;
+  imageSize?: string;
 }
 
 export interface BananaGenerateResult {
@@ -24,11 +25,15 @@ export async function generateImageWithBanana(input: BananaGenerateInput): Promi
   }
 
   fal.config({ credentials: env.falKey });
+  const imageSize = String(input.imageSize || "").trim() || "1536x864";
   const result = (await fal.subscribe("fal-ai/nano-banana-2", {
     input: {
       prompt,
       num_images: input.numImages ?? 1,
       aspect_ratio: input.aspectRatio ?? "auto",
+      // Default storyboard/image generation target for MVStudioPro.
+      // Keep 16:9 quality high while leaving room for future paid upscale.
+      image_size: imageSize,
     },
     logs: false,
   })) as any;

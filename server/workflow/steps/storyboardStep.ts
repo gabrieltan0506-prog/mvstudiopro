@@ -1,4 +1,5 @@
 import type { StoryboardScene } from "../types/workflow";
+import { buildStoryboardPrompt } from "../prompts/storyboardPrompt.js";
 
 export async function storyboardStep(input: {
   script: string;
@@ -7,6 +8,13 @@ export async function storyboardStep(input: {
   const script = String(input.script || "").trim();
   const targetScenes = Math.max(1, Number(input.targetScenes || 6));
   if (!script) return [];
+  const storyboardPromptContext = buildStoryboardPrompt({
+    prompt: script.slice(0, 220),
+    script,
+    targetScenes,
+    sceneDuration: 5,
+  });
+  void storyboardPromptContext;
 
   const sceneRegex = /(?:^|\n)\s*(?:scene|场景)\s*(\d+)\s*[:：]\s*(.+?)(?=\n\s*(?:scene|场景)\s*\d+\s*[:：]|$)/gis;
   const scenes: StoryboardScene[] = [];

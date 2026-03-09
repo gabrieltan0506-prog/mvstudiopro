@@ -13,6 +13,7 @@ type SceneImages = {
   images: string[];
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   backgroundStatus?: string;
 };
 
@@ -305,6 +306,8 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateScript.success ? <div style={statusTextStyle("#84f5a0")}>Script generated successfully.</div> : null}
         {stepStates.generateScript.error ? <div style={statusTextStyle("#ff8080")}>Script Error: {stepStates.generateScript.error}</div> : null}
         {stepStates.generateStoryboard.loading ? <div style={statusTextStyle("#ffdd99")}>Refreshing storyboard...</div> : null}
+        <div style={{ marginTop: 8 }}>scriptProvider: <code>{String(outputs.scriptProvider || "")}</code></div>
+        <div>scriptModel: <code>{String(outputs.scriptModel || "")}</code></div>
       </div>
 
       <div style={sectionStyle()}>
@@ -369,6 +372,7 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateStoryboard.success ? <div style={statusTextStyle("#84f5a0")}>Storyboard generated successfully.</div> : null}
         {stepStates.generateStoryboard.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Error: {stepStates.generateStoryboard.error}</div> : null}
         {stepStates.generateStoryboardImages.loading ? <div style={statusTextStyle("#ffdd99")}>Generating storyboard images...</div> : null}
+        <div style={{ marginTop: 8 }}>storyboard structured status: <code>{String(outputs.storyboardStructuredStatus || "")}</code></div>
       </div>
 
       <div style={sectionStyle()}>
@@ -386,6 +390,12 @@ export default function WorkflowStoryboardToVideo() {
                 </div>
                 <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
                   Background Status: <code>{String(item.backgroundStatus || "not_checked")}</code>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  Reference Character: <code>{String(item.referenceCharacterUrl || outputs.referenceCharacterUrl || "")}</code>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  Transparent Character PNG: <code>{String(item.characterPngUrl || outputs.characterPngUrl || "")}</code>
                 </div>
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
@@ -436,6 +446,7 @@ export default function WorkflowStoryboardToVideo() {
                   </button>
                 </div>
                 {item.referenceCharacterUrl ? <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>Reference: <code>{item.referenceCharacterUrl}</code></div> : null}
+                {item.characterPngUrl ? <img src={item.characterPngUrl} style={{ width: 180, marginTop: 8, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} /> : null}
               </div>
             );
           })}
@@ -563,6 +574,8 @@ export default function WorkflowStoryboardToVideo() {
           <div>workflowId: <code>{String(workflow.workflowId || "")}</code></div>
           <div>currentStep: <code>{String(workflow.currentStep || "-")}</code></div>
           <div>status: <code>{String(workflow.status || "-")}</code></div>
+          <div>lockedCharacters: <code>{JSON.stringify(outputs.lockedCharacters || [])}</code></div>
+          <div>referenceImages: <code>{JSON.stringify(outputs.referenceImages || [])}</code></div>
         </div>
       ) : null}
     </div>
