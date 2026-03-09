@@ -1,48 +1,52 @@
-import { generateVideoWithVeo } from "../../models/veo.js";
-import { veoReferenceVideo } from "../../models/veoReferenceVideo.js";
-import type { StoryboardImages, StoryboardScene } from "../types/workflow";
-import { buildVideoPrompt } from "../prompts/videoPrompt.js";
+import { updateWorkflow, getWorkflow } from "../store/workflowStore"
 
-export async function videoStep(input: {
-  storyboard: StoryboardScene[];
-  storyboardImages: StoryboardImages[];
-  referenceImages: string[];
-  referenceCharacterUrl?: string;
-}) {
-  const firstScene = input.storyboard[0];
-  const firstImages = input.storyboardImages[0]?.images || [];
-  const scenePrompt = buildVideoPrompt({
-    scenePrompt: firstScene?.scenePrompt || "cinematic scene",
-    character: firstScene?.character,
-    action: firstScene?.action,
-    camera: firstScene?.camera,
-    lighting: firstScene?.lighting,
-    mood: firstScene?.mood,
-    sceneDuration: firstScene?.duration,
-    lockedCharacterPrompt: input.referenceCharacterUrl
-      ? `maintain exact same character identity from reference image: ${input.referenceCharacterUrl}`
-      : undefined,
-  });
+export async function runVideoStep(workflowId:string){
 
-  if (input.referenceCharacterUrl) {
-    try {
-      const result = await veoReferenceVideo({
-        prompt: scenePrompt,
-        reference_images: [input.referenceCharacterUrl],
-        duration: Number(firstScene?.duration || 0) || 5,
-        resolution: "720p",
-      });
-      if (result.videoUrl) return result.videoUrl;
-    } catch {
-      // fallback to existing model router
-    }
-  }
+const wf=getWorkflow(workflowId)
+if(!wf) throw new Error("workflow_not_found")
 
-  const result = await generateVideoWithVeo({
-    scenePrompt,
-    referenceImages: input.referenceImages || [],
-    imageUrls: firstImages,
-  });
+const storyboardImages=wf.outputs?.storyboardImages
+if(!storyboardImages?.length) throw new Error("storyboard_images_missing")
 
-  return result.videoUrl;
+const referenceImage=storyboardImages[0]?.images?.[0]
+if(!referenceImage) throw new Error("reference_image_missing")
+
+updateWorkflow(workflowId,{
+status:"running",
+currentStep:"video"
+})
+
+const res=await fetch("https://fal.run/fal-ai/veo3.1/reference-to-video",{
+method:"POST",
+headers:{
+"Authorization":`Key ${process.env.FAL_API_KEY||process.env.FAL_KEY}`,
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+reference_image:referenceImage,
+prompt:wf.payload.prompt,
+duration:8,
+resolution:"720p"
+})
+})
+
+if(!res.ok) throw new Error("veo_reference_video_failed")
+
+const data=await res.json()
+const videoUrl=data?.video?.url||data?.url
+
+if(!videoUrl) throw new Error("video_url_missing")
+
+updateWorkflow(workflowId,{
+status:"done",
+currentStep:"done",
+outputs:{
+...wf.outputs,
+videoProvider:"fal",
+videoModel:"veo3.1-reference",
+finalVideoUrl:videoUrl
+}
+})
+
+return getWorkflow(workflowId)
 }
