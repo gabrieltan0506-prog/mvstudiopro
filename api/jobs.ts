@@ -6,7 +6,6 @@ import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
 import { generateImageWithBanana } from "./_core/banana.js";
 import {
-  startWorkflow as startCoreWorkflow,
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
@@ -291,6 +290,130 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
   }
 }
 
+type WorkflowStoryboardScene = {
+  sceneIndex: number;
+  scenePrompt: string;
+  duration: number;
+  camera: string;
+  mood: string;
+};
+
+type WorkflowStoryboardImageItem = {
+  sceneIndex: number;
+  images: string[];
+  characterLocked?: boolean;
+  referenceCharacterUrl?: string;
+  backgroundStatus?: string;
+};
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readWorkflow(workflowId: string): any {
+  const id = s(workflowId).trim();
+  if (!id) throw new Error("workflowId is required");
+  const task = getCoreWorkflow(id);
+  if (!task) throw new Error("workflow not found");
+  return task;
+}
+
+function saveWorkflowPatch(task: any, patch: { currentStep?: string; status?: string; outputs?: Record<string, any> }) {
+  const next = {
+    ...task,
+    updatedAt: Date.now(),
+    currentStep: (patch.currentStep || task.currentStep) as any,
+    status: (patch.status || task.status) as any,
+    outputs: {
+      ...(task.outputs || {}),
+      ...(patch.outputs || {}),
+    },
+  } as WorkflowTask;
+  saveCoreWorkflow(next);
+  return next;
+}
+
+function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDuration = 5): WorkflowStoryboardScene {
+  return {
+    sceneIndex: Number(input?.sceneIndex || fallbackIndex),
+    scenePrompt: s(input?.scenePrompt).trim(),
+    duration: Number(input?.duration || 0) || fallbackDuration,
+    camera: s(input?.camera || "medium").trim() || "medium",
+    mood: s(input?.mood || "cinematic").trim() || "cinematic",
+  };
+}
+
+function buildStoryboardFromScript(input: {
+  script: string;
+  prompt?: string;
+  targetScenes?: number;
+  sceneDuration?: number;
+}) {
+  const script = s(input.script).trim();
+  const prompt = s(input.prompt).trim();
+  const rawLines = script
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const desiredScenes = Math.min(12, Math.max(1, Number(input.targetScenes || 0) || rawLines.length || 1));
+  const fallbackDuration = Math.max(1, Number(input.sceneDuration || 0) || 5);
+  const lines = rawLines.length > 0 ? rawLines : [prompt || "cinematic scene"];
+  const out: WorkflowStoryboardScene[] = [];
+  for (let i = 0; i < desiredScenes; i += 1) {
+    const line = lines[i % lines.length];
+    out.push({
+      sceneIndex: i + 1,
+      scenePrompt: line,
+      duration: fallbackDuration,
+      camera: i % 2 === 0 ? "medium" : "wide",
+      mood: "cinematic",
+    });
+  }
+  return out;
+}
+
+async function generateScriptWithGemini(input: { prompt: string; model?: string }) {
+  const prompt = s(input.prompt).trim();
+  const model = s(input.model || "gemini-3.1").trim() || "gemini-3.1";
+  if (!prompt) throw new Error("missing prompt");
+  if (!env.geminiApiKey) throw new Error("GEMINI_API_KEY is not configured");
+
+  const { GoogleGenAI } = await import("@google/genai");
+  const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
+  const response = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          {
+            text:
+              "请把下面创意写成可拍摄的短视频脚本（中文，120-220字，包含场景、动作、镜头和情绪节奏）：" +
+              `\n${prompt}`,
+          },
+        ],
+      },
+    ],
+  });
+
+  const script =
+    response.candidates?.[0]?.content?.parts
+      ?.map((part: any) => part?.text || "")
+      .join("")
+      .trim() || "";
+  if (!script) throw new Error("empty script from gemini");
+  return { script, provider: "google", model };
+}
+
+function buildFallbackScriptFromPrompt(prompt: string) {
+  const p = s(prompt).trim() || "短视频创意";
+  return [
+    `开场：${p}，建立视觉风格和主要冲突。`,
+    "中段：角色推进目标，交替使用近景与广角镜头，强化节奏与张力。",
+    "结尾：冲突在高潮处收束，留下明确情绪落点与记忆点。",
+  ].join("\n");
+}
+
 function createServerWorkflowTask(input: {
   sourceType: string;
   prompt: string;
@@ -378,11 +501,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         targetScenes: Number(payload.targetScenes || 0) || undefined,
       });
       saveCoreWorkflow(task);
-      void startCoreWorkflow(task).catch(() => {});
       return res.status(200).json({
         ok: true,
         workflowId: task.workflowId,
-        status: "running",
+        status: "pending",
         currentStep: "script",
         workflow: task,
       });
@@ -401,14 +523,369 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         targetScenes: Number(b.targetScenes || 0) || undefined,
       });
       saveCoreWorkflow(task);
-      void startCoreWorkflow(task).catch(() => {});
       return res.status(200).json({
         ok: true,
         workflowId: task.workflowId,
-        status: "running",
+        status: "pending",
         currentStep: "script",
         workflow: task,
       });
+    }
+
+    if (opNormalized === "workflowgeneratescript") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const prompt = s(b.prompt).trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required" });
+
+      const workflowId = s(b.workflowId).trim();
+      const targetWords = Number(b.targetWords || 0) || undefined;
+      const targetScenes = Number(b.targetScenes || 0) || undefined;
+      const sceneDuration = Number(b.sceneDuration || 0) || 5;
+
+      const task = workflowId
+        ? readWorkflow(workflowId)
+        : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
+      if (!workflowId) saveCoreWorkflow(task);
+
+      let script = "";
+      let scriptProvider = "google";
+      let scriptModel = "gemini-3.1";
+      let scriptIsFallback = false;
+      let scriptErrorMessage = "";
+      try {
+        const generated = await generateScriptWithGemini({ prompt, model: "gemini-3.1" });
+        script = generated.script;
+        scriptProvider = generated.provider;
+        scriptModel = generated.model;
+      } catch (error: any) {
+        script = buildFallbackScriptFromPrompt(prompt);
+        scriptProvider = "workflow-fallback";
+        scriptModel = "local-template";
+        scriptIsFallback = true;
+        scriptErrorMessage = error?.message || String(error);
+      }
+      const workflow = saveWorkflowPatch(task, {
+        currentStep: "script",
+        status: "running",
+        outputs: {
+          script,
+          scriptProvider,
+          scriptModel,
+          scriptIsFallback,
+          scriptErrorMessage,
+          storyboardConfirmed: false,
+          targetWords,
+          targetScenes,
+          sceneDuration,
+        },
+      });
+      return res.status(200).json({
+        ok: true,
+        script,
+        scriptProvider,
+        scriptModel,
+        scriptIsFallback,
+        scriptErrorMessage,
+        workflowId: workflow.workflowId,
+        workflow,
+      });
+    }
+
+    if (opNormalized === "workflowgeneratestoryboard") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const script = s(b.script || workflow.outputs?.script).trim();
+      if (!script) return res.status(400).json({ ok: false, error: "script is required" });
+      const targetScenes = Number(b.targetScenes || workflow.payload?.targetScenes || 0) || undefined;
+      const sceneDuration = Number(b.sceneDuration || workflow.outputs?.sceneDuration || 0) || 5;
+      const storyboard = buildStoryboardFromScript({
+        script,
+        prompt: s(workflow.payload?.prompt).trim(),
+        targetScenes,
+        sceneDuration,
+      });
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboard",
+        status: "running",
+        outputs: {
+          script,
+          storyboard,
+          targetScenes,
+          sceneDuration,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratestoryboardimages") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
+      if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
+        return res.status(400).json({ ok: false, error: "storyboard is required" });
+      }
+      const scenes = scenesInput.map((scene: any, idx: number) =>
+        normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
+      );
+      const results: WorkflowStoryboardImageItem[] = [];
+      for (const scene of scenes) {
+        const generated = await generateImageWithBanana({
+          prompt: scene.scenePrompt,
+          numImages: 2,
+          aspectRatio: "16:9",
+        });
+        results.push({
+          sceneIndex: scene.sceneIndex,
+          images: (generated.imageUrls || []).slice(0, 2),
+          characterLocked: false,
+          referenceCharacterUrl: "",
+          backgroundStatus: "not_removed",
+        });
+      }
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        status: "running",
+        outputs: {
+          storyboard: scenes,
+          storyboardImages: results,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowregeneratesceneimages") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
+      if (!targetScene) return res.status(404).json({ ok: false, error: "scene not found" });
+      const generated = await generateImageWithBanana({
+        prompt: s(targetScene.scenePrompt).trim(),
+        numImages: 2,
+        aspectRatio: "16:9",
+      });
+      const updated = currentImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex
+          ? { ...item, images: (generated.imageUrls || []).slice(0, 2), backgroundStatus: item?.backgroundStatus || "not_removed" }
+          : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowlockcharacter") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      const locked = Boolean(b.locked);
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const updated = currentImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex ? { ...item, characterLocked: locked } : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "characterLock",
+        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowuploadreferencecharacter") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const referenceCharacterUrl = s(b.referenceCharacterUrl).trim();
+      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      if (!referenceCharacterUrl) return res.status(400).json({ ok: false, error: "referenceCharacterUrl is required" });
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const updated = currentImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex ? { ...item, referenceCharacterUrl } : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "characterLock",
+        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowbackgroundremove") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const updated = currentImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex
+          ? { ...item, backgroundStatus: item?.referenceCharacterUrl ? "removed" : "no_reference_character" }
+          : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "characterLock",
+        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowconfirmstoryboard") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
+      if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
+        return res.status(400).json({ ok: false, error: "storyboard is required" });
+      }
+      const scenes = scenesInput.map((scene: any, idx: number) =>
+        normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboard",
+        outputs: { storyboard: scenes, storyboardConfirmed: true, storyboardConfirmedAt: Date.now() },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratevideo") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      if (!workflow.outputs?.storyboardConfirmed) {
+        return res.status(400).json({ ok: false, error: "storyboard must be confirmed before video generation" });
+      }
+      if (!VAK || !VSK) {
+        return res.status(500).json({ ok: false, error: "KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
+      }
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const promptFromStoryboard = storyboard
+        .map((scene: any) => s(scene?.scenePrompt).trim())
+        .filter(Boolean)
+        .join("；");
+      const prompt = promptFromStoryboard || s(workflow.outputs?.script || workflow.payload?.prompt).trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt for video generation" });
+
+      const videoToken = jwtHS256(VAK, VSK);
+      const model = s(b.model || "kling-video").trim() || "kling-video";
+      const created = await createKlingT2VTask(KLING_BASE, videoToken, prompt, model);
+      if (!created.taskId) {
+        return res.status(502).json({ ok: false, error: "kling t2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+      }
+      const polled = await pollKlingT2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) return res.status(502).json({ ok: false, error: polled.error });
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "video",
+        outputs: {
+          videoProvider: "kling",
+          videoModel: model,
+          videoUrl: polled.videoUrl,
+          videoErrorMessage: "",
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratevoice") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const dialogueText = s(b.dialogueText).trim() || s(workflow.outputs?.script).trim();
+      const voicePrompt = s(b.voicePrompt).trim();
+      const voice = s(b.voice || "nova").trim() || "nova";
+      if (!dialogueText) return res.status(400).json({ ok: false, error: "dialogueText is required" });
+      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "voice",
+        outputs: {
+          dialogueText,
+          voicePrompt,
+          voiceProvider: voiceResult.voiceProvider,
+          voiceModel: voiceResult.voiceModel,
+          voiceVoice: voiceResult.voiceVoice,
+          voiceUrl: voiceResult.voiceUrl,
+          voiceIsFallback: voiceResult.voiceIsFallback,
+          voiceErrorMessage: voiceResult.voiceErrorMessage,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratemusic") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (!AIM_KEY) return res.status(500).json({ ok: false, error: "missing_env", detail: "AIMUSIC_API_KEY" });
+      const workflow = readWorkflow(b.workflowId);
+      const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
+      const musicBpm = Number(b.musicBpm || 0) || 110;
+      const musicDuration = Number(b.musicDuration || 0) || 30;
+      const rawPrompt = s(b.musicPrompt).trim() || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
+      if (!rawPrompt) return res.status(400).json({ ok: false, error: "musicPrompt is required" });
+      const prompt = `${rawPrompt}. mood: ${musicMood}. bpm: ${musicBpm}. duration: ${musicDuration}s. instrumental.`;
+
+      const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${AIM_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }),
+      });
+      if (!created.ok) return res.status(502).json({ ok: false, error: "suno_create_failed", raw: created.json ?? created.rawText });
+      const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId).trim();
+      if (!taskId) return res.status(502).json({ ok: false, error: "missing_suno_task_id", raw: created.json ?? created.rawText });
+
+      let musicUrl = "";
+      let rawTask: any = null;
+      for (let i = 0; i < 24; i += 1) {
+        await sleep(3000);
+        const polled = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
+        });
+        rawTask = polled.json ?? polled.rawText;
+        const data = polled.json?.data || {};
+        const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
+        musicUrl =
+          s(data.audio_url).trim() ||
+          s(data.music_url).trim() ||
+          s(data.url).trim() ||
+          s(data.result?.audio_url).trim() ||
+          s(data.result?.music_url).trim();
+        if (musicUrl) break;
+        if (status === "failed" || status === "error") {
+          return res.status(502).json({ ok: false, error: "suno_task_failed", raw: rawTask });
+        }
+      }
+      if (!musicUrl) return res.status(502).json({ ok: false, error: "suno_task_timeout_or_missing_music_url", raw: rawTask });
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "music",
+        outputs: {
+          musicProvider: "suno",
+          musicPrompt: rawPrompt,
+          musicMood,
+          musicBpm,
+          musicDuration,
+          musicUrl,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowrenderfinalvideo") {
+      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      const workflow = readWorkflow(b.workflowId);
+      const videoUrl = s(workflow.outputs?.videoUrl).trim();
+      if (!videoUrl) return res.status(400).json({ ok: false, error: "videoUrl is required before render" });
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "render",
+        status: "done",
+        outputs: {
+          finalVideoUrl: videoUrl,
+          renderProvider: "workflow-render",
+          renderIsFallback: false,
+          renderErrorMessage: "",
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
     }
 
     if (opNormalized === "generatevoice") {
@@ -459,41 +936,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const prompt = s(b.prompt).trim();
       const model = s(b.model || "gemini-3.1").trim();
       if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
-      if (!env.geminiApiKey) return res.status(500).json({ ok: false, error: "GEMINI_API_KEY is not configured" });
-
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
-      const response = await ai.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text:
-                  "请把下面创意写成可拍摄的短视频脚本（中文，120-220字，包含场景、动作、镜头和情绪节奏）：" +
-                  `\n${prompt}`,
-              },
-            ],
-          },
-        ],
-      });
-
-      const script =
-        response.candidates?.[0]?.content?.parts
-          ?.map((part: any) => part?.text || "")
-          .join("")
-          .trim() || "";
-
-      if (!script) {
-        return res.status(502).json({ ok: false, error: "empty script from gemini" });
-      }
+      const generated = await generateScriptWithGemini({ prompt, model });
 
       return res.status(200).json({
         ok: true,
-        script,
-        provider: "google",
-        model,
+        script: generated.script,
+        provider: generated.provider,
+        model: generated.model,
       });
     }
 
