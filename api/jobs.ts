@@ -405,6 +405,15 @@ async function generateScriptWithGemini(input: { prompt: string; model?: string 
   return { script, provider: "google", model };
 }
 
+function buildFallbackScriptFromPrompt(prompt: string) {
+  const p = s(prompt).trim() || "短视频创意";
+  return [
+    `开场：${p}，建立视觉风格和主要冲突。`,
+    "中段：角色推进目标，交替使用近景与广角镜头，强化节奏与张力。",
+    "结尾：冲突在高潮处收束，留下明确情绪落点与记忆点。",
+  ].join("\n");
+}
+
 function createServerWorkflowTask(input: {
   sourceType: string;
   prompt: string;
@@ -538,21 +547,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
       if (!workflowId) saveCoreWorkflow(task);
 
-      const generated = await generateScriptWithGemini({ prompt, model: "gemini-3.1" });
+      let script = "";
+      let scriptProvider = "google";
+      let scriptModel = "gemini-3.1";
+      let scriptIsFallback = false;
+      let scriptErrorMessage = "";
+      try {
+        const generated = await generateScriptWithGemini({ prompt, model: "gemini-3.1" });
+        script = generated.script;
+        scriptProvider = generated.provider;
+        scriptModel = generated.model;
+      } catch (error: any) {
+        script = buildFallbackScriptFromPrompt(prompt);
+        scriptProvider = "workflow-fallback";
+        scriptModel = "local-template";
+        scriptIsFallback = true;
+        scriptErrorMessage = error?.message || String(error);
+      }
       const workflow = saveWorkflowPatch(task, {
         currentStep: "script",
         status: "running",
         outputs: {
-          script: generated.script,
-          scriptProvider: generated.provider,
-          scriptModel: generated.model,
+          script,
+          scriptProvider,
+          scriptModel,
+          scriptIsFallback,
+          scriptErrorMessage,
           storyboardConfirmed: false,
           targetWords,
           targetScenes,
           sceneDuration,
         },
       });
-      return res.status(200).json({ ok: true, workflowId: workflow.workflowId, workflow });
+      return res.status(200).json({
+        ok: true,
+        script,
+        scriptProvider,
+        scriptModel,
+        scriptIsFallback,
+        scriptErrorMessage,
+        workflowId: workflow.workflowId,
+        workflow,
+      });
     }
 
     if (opNormalized === "workflowgeneratestoryboard") {
