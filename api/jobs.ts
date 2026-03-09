@@ -432,6 +432,49 @@ function extractGoogleScriptText(raw: any): string {
   );
 }
 
+function stripJsonFence(text: string) {
+  const src = s(text).trim();
+  if (!src.startsWith("```")) return src;
+  return src
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function sanitizeScenePrompt(value: any, sceneIndex: number, topic: string) {
+  const cleaned = s(value)
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^[-*]\s+/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!cleaned) return `Scene ${sceneIndex}: ${topic}，电影感镜头推进。`;
+  return cleaned;
+}
+
+function normalizeStructuredStoryboard(input: {
+  rawStoryboard: any;
+  targetScenes: number;
+  sceneDuration: number;
+  topic: string;
+}) {
+  const targetScenes = Math.max(1, Math.min(12, Number(input.targetScenes || 0) || 6));
+  const sceneDuration = Math.max(1, Number(input.sceneDuration || 0) || 5);
+  const src = Array.isArray(input.rawStoryboard) ? input.rawStoryboard : [];
+  const out: WorkflowStoryboardScene[] = [];
+  for (let i = 0; i < targetScenes; i += 1) {
+    const item = src[i] || {};
+    out.push({
+      sceneIndex: i + 1,
+      scenePrompt: sanitizeScenePrompt(item?.scenePrompt, i + 1, input.topic),
+      duration: sceneDuration,
+      camera: s(item?.camera || "medium").trim() || "medium",
+      mood: s(item?.mood || "cinematic").trim() || "cinematic",
+    });
+  }
+  return out;
+}
+
 async function generateScriptViaTestLabChain(input: {
   prompt: string;
   targetWords?: number;
@@ -445,9 +488,24 @@ async function generateScriptViaTestLabChain(input: {
   if (!prompt) throw new Error("prompt is required");
 
   const fullPrompt = [
-    `请写一个约 ${targetWords} 字的中文分镜脚本。`,
-    `必须输出 ${targetScenes} 个场景，按“Scene 1: ...”连续编号到“Scene ${targetScenes}: ...”。`,
-    `每个 Scene 标注建议时长（约 ${sceneDuration} 秒），并包含 scenePrompt、镜头(camera)、情绪(mood)。`,
+    "你是视频分镜编剧。",
+    "请严格只返回 JSON，不要 markdown，不要代码块，不要解释，不要额外文本。",
+    "返回结构必须为：",
+    "{",
+    '  "script": "完整脚本文本",',
+    '  "storyboard": [',
+    "    {",
+    '      "sceneIndex": 1,',
+    '      "scenePrompt": "具体可视化画面描述",',
+    `      "duration": ${sceneDuration},`,
+    '      "camera": "medium",',
+    '      "mood": "cinematic"',
+    "    }",
+    "  ]",
+    "}",
+    `硬性要求：script 字数尽量接近 ${targetWords}（允许约 ±10%），不得写成“开场/中段/结尾”三段摘要。`,
+    `硬性要求：storyboard 必须且仅有 ${targetScenes} 个 scenes，sceneIndex 从 1 到 ${targetScenes} 连续。`,
+    `硬性要求：每个 scene 的 duration 必须是 ${sceneDuration}。`,
     `主题：${prompt}`,
   ].join("\n");
 
@@ -456,10 +514,21 @@ async function generateScriptViaTestLabChain(input: {
     const err = s(result?.message || result?.error || "gemini_script_failed").trim() || "gemini_script_failed";
     throw new Error(err);
   }
-  const script = extractGoogleScriptText(result?.raw);
-  if (!script) throw new Error("empty script from geminiScript");
+  const text = stripJsonFence(extractGoogleScriptText(result?.raw));
+  if (!text) throw new Error("empty script from geminiScript");
+  const parsed = jparse(text);
+  if (!parsed || typeof parsed !== "object") throw new Error("gemini_invalid_json");
+  const script = s((parsed as any).script).trim();
+  if (!script) throw new Error("gemini_missing_script");
+  const storyboard = normalizeStructuredStoryboard({
+    rawStoryboard: (parsed as any).storyboard,
+    targetScenes,
+    sceneDuration,
+    topic: prompt,
+  });
   return {
     script,
+    storyboard,
     provider: "google-vertex",
     model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
   };
@@ -607,7 +676,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
       if (!workflowId) saveCoreWorkflow(task);
 
-      let generated: { script: string; provider: string; model: string };
+      let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
       try {
         generated = await generateScriptViaTestLabChain({
           prompt,
@@ -620,6 +689,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(502).json(fail("script_generation_failed", message));
       }
       const script = generated.script;
+      const storyboard = generated.storyboard;
       const scriptProvider = generated.provider;
       const scriptModel = generated.model;
       const scriptIsFallback = false;
@@ -633,6 +703,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           scriptModel,
           scriptIsFallback,
           scriptErrorMessage,
+          storyboard,
           storyboardConfirmed: false,
           targetWords,
           targetScenes,
@@ -642,6 +713,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({
         ok: true,
         script,
+        storyboard,
         scriptProvider,
         scriptModel,
         scriptIsFallback,
@@ -654,24 +726,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratestoryboard") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
-      const script = s(b.script || workflow.outputs?.script).trim();
+      const script = s(workflow.outputs?.script || b.script).trim();
+      const storyboardCurrent = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       if (!script) return res.status(400).json(fail("script is required"));
-      const targetScenes = Number(b.targetScenes || workflow.payload?.targetScenes || 0) || undefined;
-      const sceneDuration = Number(b.sceneDuration || workflow.outputs?.sceneDuration || 0) || 5;
-      const storyboard = buildStoryboardFromScript({
-        script,
-        prompt: s(workflow.payload?.prompt).trim(),
-        targetScenes,
-        sceneDuration,
-      });
+      if (!storyboardCurrent.length) return res.status(400).json(fail("storyboard is required from workflowGenerateScript"));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboard",
         status: "running",
         outputs: {
           script,
-          storyboard,
-          targetScenes,
-          sceneDuration,
+          storyboard: storyboardCurrent,
           storyboardConfirmed: false,
         },
       });

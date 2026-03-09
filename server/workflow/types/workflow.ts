@@ -33,6 +33,8 @@ export interface WorkflowOutputs {
   storyboardImages?: StoryboardImages[];
   storyboardConfirmed?: boolean;
   storyboardConfirmedAt?: number;
+  detectedCharacters?: { characterId: string; label?: string; referenceImage?: string }[];
+  lockedCharacters?: { characterId: string; referenceImage: string }[];
   characterLocked?: boolean;
   referenceImages?: string[];
   videoUrl?: string;

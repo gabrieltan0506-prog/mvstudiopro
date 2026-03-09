@@ -16,6 +16,17 @@ type SceneImages = {
   backgroundStatus?: string;
 };
 
+function normalizeSceneList(input: any[], fallbackDuration = 5): Scene[] {
+  const src = Array.isArray(input) ? input : [];
+  return src.map((item: any, idx: number) => ({
+    sceneIndex: Number(item?.sceneIndex || idx + 1),
+    scenePrompt: String(item?.scenePrompt || "").replace(/\r/g, "").replace(/^---+$/gm, "").trim(),
+    duration: Number(item?.duration || 0) || fallbackDuration,
+    camera: String(item?.camera || "medium").trim() || "medium",
+    mood: String(item?.mood || "cinematic").trim() || "cinematic",
+  }));
+}
+
 type MainStepKey =
   | "generateScript"
   | "generateStoryboard"
@@ -133,7 +144,9 @@ export default function WorkflowStoryboardToVideo() {
     if (!workflow) return;
     const outputs = workflow?.outputs || {};
     if (typeof outputs.script === "string") setScriptText(outputs.script);
-    if (Array.isArray(outputs.storyboard)) setStoryboard(outputs.storyboard);
+    if (Array.isArray(outputs.storyboard)) {
+      setStoryboard(normalizeSceneList(outputs.storyboard, Number(outputs.sceneDuration || 0) || 5));
+    }
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
   }, [workflow]);
@@ -242,6 +255,9 @@ export default function WorkflowStoryboardToVideo() {
               },
               (json) => {
                 if (typeof json?.script === "string") setScriptText(json.script);
+                if (Array.isArray(json?.storyboard)) {
+                  setStoryboard(normalizeSceneList(json.storyboard, Number(sceneDuration || 0) || 5));
+                }
               },
             )
           }
@@ -263,30 +279,30 @@ export default function WorkflowStoryboardToVideo() {
           style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
         />
         <button
-          onClick={() =>
-            runMainStep(
-              "generateStoryboard",
-              "workflowGenerateStoryboard",
-              {
-                workflowId,
-                script: scriptText,
-                targetScenes: Number(targetScenes || 0) || undefined,
-                sceneDuration: Number(sceneDuration || 0) || 5,
-              },
-              (json) => {
-                const nextStoryboard = json?.workflow?.outputs?.storyboard;
-                if (Array.isArray(nextStoryboard)) setStoryboard(nextStoryboard);
-              },
-            )
-          }
-          disabled={anyMainStepLoading || !workflowId || !scriptText.trim()}
+          onClick={() => {
+            const refreshed = normalizeSceneList(
+              Array.isArray(storyboard) ? storyboard : workflow?.outputs?.storyboard || [],
+              Number(sceneDuration || 0) || 5,
+            );
+            if (!refreshed.length) {
+              setStepState("generateStoryboard", {
+                loading: false,
+                success: false,
+                error: "storyboard is empty, run Generate Script first",
+              });
+              return;
+            }
+            setStoryboard(refreshed);
+            setStepState("generateStoryboard", { loading: false, success: true, error: "" });
+          }}
+          disabled={anyMainStepLoading || !workflowId}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
-          {stepStates.generateStoryboard.loading ? "Generating..." : "Generate Storyboard"}
+          {stepStates.generateStoryboard.loading ? "Refreshing..." : "Generate Storyboard"}
         </button>
         {stepStates.generateScript.success ? <div style={statusTextStyle("#84f5a0")}>Script generated successfully.</div> : null}
         {stepStates.generateScript.error ? <div style={statusTextStyle("#ff8080")}>Script Error: {stepStates.generateScript.error}</div> : null}
-        {stepStates.generateStoryboard.loading ? <div style={statusTextStyle("#ffdd99")}>Generating storyboard...</div> : null}
+        {stepStates.generateStoryboard.loading ? <div style={statusTextStyle("#ffdd99")}>Refreshing storyboard...</div> : null}
       </div>
 
       <div style={sectionStyle()}>
