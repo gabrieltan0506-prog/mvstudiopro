@@ -205,6 +205,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? getBody(req) : {};
     const op = s(q.op || b.op).trim();
+    const opNormalized = op.toLowerCase();
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -216,7 +217,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const AIM_BASE = (s(process.env.AIMUSIC_BASE_URL) || "https://api.aimusicapi.ai").replace(/\/+$/, "");
     const AIM_KEY  = s(process.env.AIMUSIC_API_KEY || process.env.AIMUSICAPI_KEY).trim();
 
-    if (op === "envStatus") {
+    if (opNormalized === "envstatus") {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
