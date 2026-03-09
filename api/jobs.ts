@@ -324,12 +324,37 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function readWorkflow(workflowId: string): any {
-  const id = s(workflowId).trim();
+function normalizeWorkflowForResponse(input: any, fallbackId = "") {
+  const workflowId = s(input?.workflowId || fallbackId).trim();
+  return {
+    workflowId,
+    status: s(input?.status).trim() || (workflowId ? "running" : "not_found"),
+    currentStep: s(input?.currentStep).trim() || "input",
+    outputs: input?.outputs && typeof input.outputs === "object" ? input.outputs : {},
+  };
+}
+
+function readWorkflow(workflowId: string, fallbackWorkflow?: any): any {
+  const id = s(workflowId || fallbackWorkflow?.workflowId).trim();
   if (!id) throw new Error("workflowId is required");
   const task = getCoreWorkflow(id);
-  if (!task) throw new Error("workflow not found");
-  return task;
+  if (task) return task;
+
+  if (fallbackWorkflow && typeof fallbackWorkflow === "object") {
+    const rebuilt = {
+      ...fallbackWorkflow,
+      workflowId: id,
+      createdAt: Number(fallbackWorkflow.createdAt || Date.now()),
+      updatedAt: Date.now(),
+      status: s(fallbackWorkflow.status).trim() || "running",
+      currentStep: s(fallbackWorkflow.currentStep).trim() || "input",
+      outputs: fallbackWorkflow.outputs && typeof fallbackWorkflow.outputs === "object" ? fallbackWorkflow.outputs : {},
+    } as WorkflowTask;
+    saveCoreWorkflow(rebuilt);
+    return rebuilt;
+  }
+
+  throw new Error("workflow not found");
 }
 
 function saveWorkflowPatch(task: any, patch: { currentStep?: string; status?: string; outputs?: Record<string, any> }) {
@@ -614,12 +639,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
-      const id = s(q.id || b.id).trim();
-      const workflow = getCoreWorkflow(id);
-      if (!workflow) {
-        return res.status(404).json({ ok: false, error: "workflow not found" });
-      }
-      return res.status(200).json({ ok: true, workflow });
+      const id = s(q.id || q.workflowId || q.workflow_id || b.id || b.workflowId).trim();
+      const workflow = id ? getCoreWorkflow(id) : null;
+      return res.status(200).json({
+        ok: true,
+        workflow: normalizeWorkflowForResponse(workflow, id),
+      });
     }
 
     if (opNormalized === "workflowtest") {
@@ -681,7 +706,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneDuration = Number(b.sceneDuration || 0) || 5;
 
       const task = workflowId
-        ? readWorkflow(workflowId)
+        ? readWorkflow(workflowId, b.workflow)
         : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
       if (!workflowId) saveCoreWorkflow(task);
 
@@ -735,7 +760,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowgeneratestoryboard") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const script = s(workflow.outputs?.script || b.script).trim();
       const storyboardCurrent = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       if (!script) return res.status(400).json(fail("script is required"));
@@ -754,7 +779,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowgeneratestoryboardimages") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
@@ -804,7 +829,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowregeneratesceneimages") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
@@ -842,7 +867,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowlockcharacter") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const locked = Boolean(b.locked);
@@ -878,7 +903,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowuploadreferencecharacter") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       const referenceCharacterUrl = s(b.referenceCharacterUrl).trim();
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
@@ -902,7 +927,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowbackgroundremove") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
@@ -928,7 +953,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowconfirmstoryboard") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
@@ -945,14 +970,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowgeneratevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       if (!workflow.outputs?.storyboardConfirmed) {
         return res.status(400).json(fail("storyboard must be confirmed before video generation"));
       }
-      if (!VAK || !VSK) {
-        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured"));
+      if (!VAK || !VSK || !IAK || !ISK) {
+        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
       }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
       const promptFromStoryboard = storyboard
         .map((scene: any) =>
@@ -976,13 +1002,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
-      const videoToken = jwtHS256(VAK, VSK);
-      const model = s(b.model || "kling-video").trim() || "kling-video";
-      const created = await createKlingT2VTask(KLING_BASE, videoToken, prompt, model);
-      if (!created.taskId) {
-        return res.status(502).json(fail("kling t2v task creation failed", "kling t2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      const uploadedRef = s(b.referenceImageUrl || b.referenceCharacterUrl || "").trim();
+      const refsFromScenes = storyboardImages
+        .map((item: any) =>
+          s(
+            item?.characterPngUrl ||
+            item?.referenceCharacterUrl ||
+            (Array.isArray(item?.images) ? item.images[0] : ""),
+          ).trim(),
+        )
+        .filter(Boolean);
+      const refsFromOutputs = [
+        s(workflow.outputs?.characterPngUrl).trim(),
+        s(workflow.outputs?.referenceCharacterUrl).trim(),
+        ...(Array.isArray(workflow.outputs?.referenceImages) ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()) : []),
+      ].filter(Boolean);
+      const referenceCandidates = Array.from(new Set([uploadedRef, ...refsFromScenes, ...refsFromOutputs].filter(Boolean)));
+      const referenceImageUrl = referenceCandidates[0] || "";
+      if (!referenceImageUrl) {
+        return res.status(400).json(fail("reference image is required before video generation"));
       }
-      const polled = await pollKlingT2VTask(KLING_BASE, videoToken, created.taskId);
+
+      const videoToken = jwtHS256(VAK, VSK);
+      const imageToken = jwtHS256(IAK, ISK);
+      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
+      const created = await createKlingI2VTask(
+        KLING_BASE,
+        videoToken,
+        imageToken,
+        referenceImageUrl,
+        prompt,
+        model
+      );
+      if (!created.taskId) {
+        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      }
+      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
       if (!polled.ok) return res.status(502).json(fail(String(polled.error || "video generation failed")));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
@@ -990,6 +1045,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           videoProvider: "kling",
           videoModel: model,
           videoUrl: polled.videoUrl,
+          referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
+          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), referenceImageUrl])),
           videoErrorMessage: "",
         },
       });
@@ -998,7 +1055,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowgeneratevoice") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const dialogueText = s(b.dialogueText).trim() || s(workflow.outputs?.script).trim();
       const voicePrompt = buildVoicePrompt({
         dialogueText,
@@ -1027,7 +1084,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratemusic") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       if (!AIM_KEY) return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
       const musicBpm = Number(b.musicBpm || 0) || 110;
       const musicDuration = Number(b.musicDuration || 0) || 30;
@@ -1091,7 +1148,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (opNormalized === "workflowrenderfinalvideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId);
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const videoUrl = s(workflow.outputs?.videoUrl).trim();
       if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
       const next = saveWorkflowPatch(workflow, {
