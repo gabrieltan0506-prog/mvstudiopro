@@ -126,9 +126,9 @@ export default function WorkflowStoryboardToVideo() {
 
     const poll = async () => {
       if (cancelled) return;
-      const resp = await fetch(`/api/jobs?op=workflowStatus&id=${encodeURIComponent(workflowId)}`);
+      const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(workflowId)}`);
       const json = await resp.json().catch(() => null);
-      if (!cancelled && resp.ok && json?.workflow) {
+      if (!cancelled && resp.ok && json?.workflow && json.workflow.status !== "not_found") {
         setWorkflow(json.workflow);
       }
       timer = setTimeout(poll, 2000);
@@ -185,7 +185,12 @@ export default function WorkflowStoryboardToVideo() {
   ) {
     setStepState(step, { loading: true, error: "", success: false });
     try {
-      const { httpOk, json } = await postJson(op, body);
+      const payload = {
+        ...body,
+        workflowId: body.workflowId || workflowId || undefined,
+        workflow: workflow || undefined,
+      };
+      const { httpOk, json } = await postJson(op, payload);
       const apiOk = json?.ok === true;
       if (!httpOk || !apiOk) {
         setStepState(step, { loading: false, success: false, error: extractErrorText(json) });
@@ -208,7 +213,12 @@ export default function WorkflowStoryboardToVideo() {
     setAuxBusyKey(stepKey);
     setAuxError("");
     try {
-      const { httpOk, json } = await postJson(op, body);
+      const payload = {
+        ...body,
+        workflowId: body.workflowId || workflowId || undefined,
+        workflow: workflow || undefined,
+      };
+      const { httpOk, json } = await postJson(op, payload);
       if (!httpOk || json?.ok !== true) {
         setAuxError(extractErrorText(json));
         return;
