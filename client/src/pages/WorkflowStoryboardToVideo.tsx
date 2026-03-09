@@ -90,7 +90,7 @@ async function postJson(op: string, body: Record<string, any>) {
 }
 
 export default function WorkflowStoryboardToVideo() {
-  const [workflowId, setWorkflowId] = useState("");
+  const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<any>(null);
   const [stepStates, setStepStates] = useState<Record<MainStepKey, StepState>>(INITIAL_STEP_STATES);
 
@@ -169,9 +169,9 @@ export default function WorkflowStoryboardToVideo() {
   }
 
   function writeBackWorkflow(json: any) {
+    const nextId = String(json?.workflow?.workflowId || json?.workflowId || workflowId || "");
+    if (nextId) setWorkflowId(nextId);
     if (json?.workflow) {
-      const nextId = String(json.workflow.workflowId || workflowId || "");
-      if (nextId) setWorkflowId(nextId);
       setWorkflow(json.workflow);
     }
   }
@@ -254,6 +254,8 @@ export default function WorkflowStoryboardToVideo() {
                 sceneDuration: Number(sceneDuration || 0) || 5,
               },
               (json) => {
+                const nextId = String(json?.workflow?.workflowId || json?.workflowId || "");
+                if (nextId) setWorkflowId(nextId);
                 if (typeof json?.script === "string") setScriptText(json.script);
                 if (Array.isArray(json?.storyboard)) {
                   setStoryboard(normalizeSceneList(json.storyboard, Number(sceneDuration || 0) || 5));
@@ -358,7 +360,7 @@ export default function WorkflowStoryboardToVideo() {
           ))}
         </div>
         <button
-          onClick={() => runMainStep("generateStoryboardImages", "workflowGenerateStoryboardImages", { workflowId, storyboard: scenes })}
+          onClick={() => runMainStep("generateStoryboardImages", "workflowGenerateStoryboardImages", { workflowId })}
           disabled={anyMainStepLoading || !workflowId || scenes.length === 0}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
