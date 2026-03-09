@@ -5,6 +5,12 @@ import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
 import { generateImageWithBanana } from "./_core/banana.js";
+import {
+  startWorkflow as startCoreWorkflow,
+  getWorkflow as getCoreWorkflow,
+  saveWorkflow as saveCoreWorkflow,
+  type WorkflowTask,
+} from "./_core/workflow.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -291,9 +297,8 @@ async function startServerWorkflowTask(input: {
   targetWords?: number;
   targetScenes?: number;
 }) {
-  const mod = await import("../server/workflow/engine.js");
   const now = Date.now();
-  const task: any = {
+  const task: WorkflowTask = {
     workflowId: randomUUID(),
     sourceType: input.sourceType || "workflow",
     inputType: "script",
@@ -305,19 +310,10 @@ async function startServerWorkflowTask(input: {
     currentStep: "script",
     status: "pending",
     outputs: {},
+    createdAt: now,
     updatedAt: now,
-  };
-  return mod.startWorkflow(task);
-}
-
-async function getServerWorkflowById(workflowId: string) {
-  const store = await import("../server/workflow/store/workflowStore.js");
-  return store.getWorkflow(workflowId);
-}
-
-async function saveServerWorkflow(next: any) {
-  const store = await import("../server/workflow/store/workflowStore.js");
-  store.saveWorkflow(next);
+  } as WorkflowTask;
+  return startCoreWorkflow(task as any);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -358,7 +354,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const id = s(q.id || b.id).trim();
-      const workflow = await getServerWorkflowById(id);
+      const workflow = getCoreWorkflow(id);
       if (!workflow) {
         return res.status(404).json({ ok: false, error: "workflow not found" });
       }
@@ -412,7 +408,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
       let workflow: any = undefined;
       if (workflowId) {
-        const current = await getServerWorkflowById(workflowId);
+        const current = getCoreWorkflow(workflowId);
         if (current) {
           workflow = {
             ...current,
@@ -429,7 +425,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               voiceErrorMessage: voiceResult.voiceErrorMessage,
             },
           };
-          await saveServerWorkflow(workflow as any);
+          saveCoreWorkflow(workflow as any);
         }
       }
 
