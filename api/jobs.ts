@@ -204,7 +204,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? getBody(req) : {};
-    const op = s(q.op || b.op).trim();
+    const queryOp =
+      s(q.op).trim() ||
+      s(q.OP).trim() ||
+      s(q.Op).trim() ||
+      s(q.oP).trim();
+    const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
+    const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
