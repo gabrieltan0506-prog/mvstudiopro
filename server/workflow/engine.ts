@@ -3,6 +3,8 @@ import { saveWorkflow, getWorkflow, updateWorkflow } from "./store/workflowStore
 import { scriptStep } from "./steps/scriptStep.js";
 import { storyboardStep } from "./steps/storyboardStep.js";
 import { storyboardImagesStep } from "./steps/storyboardImagesStep.js";
+import { characterLockStep } from "./steps/characterLockStep.js";
+import { backgroundRemoveStep } from "./steps/backgroundRemoveStep.js";
 import { videoStep } from "./steps/videoStep.js";
 import { voiceStep } from "./steps/voiceStep.js";
 import { musicStep } from "./steps/musicStep.js";
@@ -46,16 +48,42 @@ export async function startWorkflow(task: WorkflowTask) {
       currentStep: "characterLock",
     });
     const firstSceneImages = storyboardImages[0]?.images || [];
-    const referenceImages =
+    const sceneImageUrl = firstSceneImages[0] || "";
+    const lockedCharacter = sceneImageUrl
+      ? await characterLockStep({ sceneImageUrl })
+      : { referenceCharacterUrl: "" };
+
+    const referenceImagesBase =
       Array.isArray(task.payload?.referenceImages) && task.payload.referenceImages.length
         ? task.payload.referenceImages
         : firstSceneImages;
+    const referenceImages = lockedCharacter.referenceCharacterUrl
+      ? [lockedCharacter.referenceCharacterUrl, ...referenceImagesBase].filter(Boolean)
+      : referenceImagesBase;
 
     updateWorkflow(task.workflowId, {
       outputs: {
         characterLocked: referenceImages.length > 0,
         referenceImages,
+        referenceCharacterUrl: lockedCharacter.referenceCharacterUrl || undefined,
       },
+    });
+
+    updateWorkflow(task.workflowId, {
+      currentStep: "backgroundRemove",
+    });
+    const removed = lockedCharacter.referenceCharacterUrl
+      ? await backgroundRemoveStep({ imageUrl: lockedCharacter.referenceCharacterUrl })
+      : { characterPngUrl: "" };
+    updateWorkflow(task.workflowId, {
+      outputs: {
+        characterPngUrl: removed.characterPngUrl || undefined,
+      },
+    });
+
+    updateWorkflow(task.workflowId, {
+      currentStep: "confirmStoryboard",
+      outputs: { storyboardConfirmed: true },
     });
 
     updateWorkflow(task.workflowId, {
@@ -65,6 +93,7 @@ export async function startWorkflow(task: WorkflowTask) {
       storyboard,
       storyboardImages,
       referenceImages,
+      referenceCharacterUrl: lockedCharacter.referenceCharacterUrl || undefined,
     });
     updateWorkflow(task.workflowId, {
       outputs: { videoUrl },

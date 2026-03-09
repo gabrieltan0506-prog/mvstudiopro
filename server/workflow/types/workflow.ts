@@ -3,6 +3,7 @@ export type WorkflowStep =
   | "storyboard"
   | "storyboardImages"
   | "characterLock"
+  | "backgroundRemove"
   | "confirmStoryboard"
   | "video"
   | "voice"
@@ -29,6 +30,7 @@ export interface StoryboardImages {
   images: string[];
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   backgroundStatus?: string;
 }
 
@@ -48,6 +50,8 @@ export interface WorkflowOutputs {
   lockedCharacterPrompt?: string;
   characterLocked?: boolean;
   referenceImages?: string[];
+  referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   videoUrl?: string;
   videoProvider?: string;
   videoModel?: string;

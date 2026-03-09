@@ -17,6 +17,8 @@ import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLo
 import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
 import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
+import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
+import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -853,12 +855,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         optionalReferenceImage: s(b.optionalReferenceImage).trim(),
       });
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const sceneImage = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex)?.images?.[0] || "";
+      const lockResult = locked && sceneImage ? await characterLockStep({ sceneImageUrl: sceneImage }) : { referenceCharacterUrl: "" };
       const updated = currentImages.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex ? { ...item, characterLocked: locked } : item,
+        Number(item?.sceneIndex) === sceneIndex
+          ? { ...item, characterLocked: locked, referenceCharacterUrl: lockResult.referenceCharacterUrl || item?.referenceCharacterUrl }
+          : item,
       );
       const next = saveWorkflowPatch(workflow, {
         currentStep: "characterLock",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false, lockedCharacterPrompt: lockPrompt },
+        outputs: {
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+          lockedCharacterPrompt: lockPrompt,
+          referenceCharacterUrl: lockResult.referenceCharacterUrl || workflow.outputs?.referenceCharacterUrl || "",
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -881,6 +892,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           storyboardConfirmed: false,
           referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), referenceCharacterUrl])),
           lockedCharacters: [{ characterId: `scene-${sceneIndex}`, referenceImage: referenceCharacterUrl }],
+          referenceCharacterUrl,
         },
       });
       return res.status(200).json({ ok: true, workflow: next });
@@ -892,14 +904,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const target = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      const sourceUrl = s(target?.referenceCharacterUrl || target?.images?.[0]).trim();
+      if (!sourceUrl) return res.status(400).json(fail("reference character image is required"));
+      const removed = await backgroundRemoveStep({ imageUrl: sourceUrl });
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
-          ? { ...item, backgroundStatus: item?.referenceCharacterUrl ? "removed" : "no_reference_character" }
+          ? { ...item, backgroundStatus: "removed", characterPngUrl: removed.characterPngUrl }
           : item,
       );
       const next = saveWorkflowPatch(workflow, {
-        currentStep: "characterLock",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+        currentStep: "backgroundRemove",
+        outputs: {
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+          characterPngUrl: removed.characterPngUrl,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }

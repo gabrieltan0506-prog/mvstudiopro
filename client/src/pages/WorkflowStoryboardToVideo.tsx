@@ -13,6 +13,7 @@ type SceneImages = {
   images: string[];
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   backgroundStatus?: string;
 };
 
@@ -390,6 +391,12 @@ export default function WorkflowStoryboardToVideo() {
                 <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
                   Background Status: <code>{String(item.backgroundStatus || "not_checked")}</code>
                 </div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  Reference Character: <code>{String(item.referenceCharacterUrl || outputs.referenceCharacterUrl || "")}</code>
+                </div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                  Transparent Character PNG: <code>{String(item.characterPngUrl || outputs.characterPngUrl || "")}</code>
+                </div>
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={() => runAuxStep(`regen-${item.sceneIndex}`, "workflowRegenerateSceneImages", { workflowId, sceneIndex: item.sceneIndex })}
@@ -439,6 +446,7 @@ export default function WorkflowStoryboardToVideo() {
                   </button>
                 </div>
                 {item.referenceCharacterUrl ? <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>Reference: <code>{item.referenceCharacterUrl}</code></div> : null}
+                {item.characterPngUrl ? <img src={item.characterPngUrl} style={{ width: 180, marginTop: 8, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} /> : null}
               </div>
             );
           })}
