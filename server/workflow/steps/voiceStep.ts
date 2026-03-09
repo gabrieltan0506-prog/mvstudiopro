@@ -1,4 +1,4 @@
-import { generateVoiceWithOpenAI } from "../../models/openaiTTS";
+import { generateVoiceWithOpenAI } from "../../models/openaiTTS.js";
 
 export async function voiceStep(input: {
   dialogueText: string;

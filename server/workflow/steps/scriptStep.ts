@@ -1,5 +1,5 @@
 import type { WorkflowTask } from "../types/workflow";
-import { generateScriptWithGemini } from "../../models/gemini";
+import { generateScriptWithGemini } from "../../models/gemini.js";
 
 export async function scriptStep(task: WorkflowTask): Promise<string> {
   const prompt = String(task.payload?.prompt || "").trim();

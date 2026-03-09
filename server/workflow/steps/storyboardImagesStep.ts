@@ -1,5 +1,5 @@
 import type { StoryboardImages, StoryboardScene } from "../types/workflow";
-import { generateStoryboardSceneImages } from "../../models/banana";
+import { generateStoryboardSceneImages } from "../../models/banana.js";
 
 export async function storyboardImagesStep(scenes: StoryboardScene[]): Promise<StoryboardImages[]> {
   const result: StoryboardImages[] = [];

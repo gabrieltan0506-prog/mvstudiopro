@@ -1,4 +1,4 @@
-import { generateVideoWithVeo } from "../../models/veo";
+import { generateVideoWithVeo } from "../../models/veo.js";
 import type { StoryboardImages, StoryboardScene } from "../types/workflow";
 
 export async function videoStep(input: {

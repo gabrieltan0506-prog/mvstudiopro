@@ -1,12 +1,12 @@
 import type { WorkflowTask } from "./types/workflow";
-import { saveWorkflow, getWorkflow, updateWorkflow } from "./store/workflowStore";
-import { scriptStep } from "./steps/scriptStep";
-import { storyboardStep } from "./steps/storyboardStep";
-import { storyboardImagesStep } from "./steps/storyboardImagesStep";
-import { videoStep } from "./steps/videoStep";
-import { voiceStep } from "./steps/voiceStep";
-import { musicStep } from "./steps/musicStep";
-import { renderStep } from "./steps/renderStep";
+import { saveWorkflow, getWorkflow, updateWorkflow } from "./store/workflowStore.js";
+import { scriptStep } from "./steps/scriptStep.js";
+import { storyboardStep } from "./steps/storyboardStep.js";
+import { storyboardImagesStep } from "./steps/storyboardImagesStep.js";
+import { videoStep } from "./steps/videoStep.js";
+import { voiceStep } from "./steps/voiceStep.js";
+import { musicStep } from "./steps/musicStep.js";
+import { renderStep } from "./steps/renderStep.js";
 
 export async function startWorkflow(task: WorkflowTask) {
   saveWorkflow(task);

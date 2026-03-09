@@ -1,4 +1,4 @@
-import { generateMusicWithSuno } from "../../models/suno";
+import { generateMusicWithSuno } from "../../models/suno.js";
 
 export async function musicStep(input: { script: string }) {
   const result = await generateMusicWithSuno({ script: input.script });
