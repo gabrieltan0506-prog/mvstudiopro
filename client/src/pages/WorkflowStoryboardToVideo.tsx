@@ -61,9 +61,17 @@ export default function WorkflowStoryboardToVideo() {
       });
       const json = await resp.json().catch(() => null);
       setDebug(json);
-      if (!resp.ok || !json?.workflow) return;
-      setWorkflow(json.workflow);
-      setWorkflowId(String(json.workflow.workflowId || ""));
+      const nextWorkflowId = String(json?.workflowId || json?.workflow?.workflowId || "");
+      if (!resp.ok || !nextWorkflowId) return;
+      setWorkflowId(nextWorkflowId);
+      setWorkflow(
+        json?.workflow || {
+          workflowId: nextWorkflowId,
+          status: String(json?.status || "running"),
+          currentStep: String(json?.currentStep || "script"),
+          outputs: {},
+        },
+      );
     } finally {
       setBusy(false);
     }

@@ -291,7 +291,7 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
   }
 }
 
-async function startServerWorkflowTask(input: {
+function createServerWorkflowTask(input: {
   sourceType: string;
   prompt: string;
   targetWords?: number;
@@ -313,7 +313,7 @@ async function startServerWorkflowTask(input: {
     createdAt: now,
     updatedAt: now,
   } as WorkflowTask;
-  return startCoreWorkflow(task as any);
+  return task;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -371,13 +371,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase" && sourceType !== "workflow") {
         return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase/workflow" });
       }
-      const workflow = await startServerWorkflowTask({
+      const task = createServerWorkflowTask({
         sourceType,
         prompt: s(payload.prompt).trim(),
         targetWords: Number(payload.targetWords || 0) || undefined,
         targetScenes: Number(payload.targetScenes || 0) || undefined,
       });
-      return res.status(200).json({ ok: true, workflow });
+      saveCoreWorkflow(task);
+      void startCoreWorkflow(task).catch(() => {});
+      return res.status(200).json({
+        ok: true,
+        workflowId: task.workflowId,
+        status: "running",
+        currentStep: "script",
+        workflow: task,
+      });
     }
 
     if (opNormalized === "startworkflow") {
@@ -386,13 +394,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const prompt = s(b.prompt).trim();
       if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required" });
-      const workflow = await startServerWorkflowTask({
+      const task = createServerWorkflowTask({
         sourceType: "workflow",
         prompt,
         targetWords: Number(b.targetWords || 0) || undefined,
         targetScenes: Number(b.targetScenes || 0) || undefined,
       });
-      return res.status(200).json({ ok: true, workflow });
+      saveCoreWorkflow(task);
+      void startCoreWorkflow(task).catch(() => {});
+      return res.status(200).json({
+        ok: true,
+        workflowId: task.workflowId,
+        status: "running",
+        currentStep: "script",
+        workflow: task,
+      });
     }
 
     if (opNormalized === "generatevoice") {
