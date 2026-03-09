@@ -405,13 +405,64 @@ async function generateScriptWithGemini(input: { prompt: string; model?: string 
   return { script, provider: "google", model };
 }
 
-function buildFallbackScriptFromPrompt(prompt: string) {
-  const p = s(prompt).trim() || "短视频创意";
-  return [
-    `开场：${p}，建立视觉风格和主要冲突。`,
-    "中段：角色推进目标，交替使用近景与广角镜头，强化节奏与张力。",
-    "结尾：冲突在高潮处收束，留下明确情绪落点与记忆点。",
+async function callGoogleGateway(payload: Record<string, any>) {
+  const mod = await import("./google.js");
+  const handler = mod.default;
+  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
+  const res: any = {
+    statusCode: 200,
+    body: undefined,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(data: any) {
+      this.body = data;
+      return this;
+    },
+  };
+  await handler(req, res);
+  return { statusCode: res.statusCode, ...(res.body || {}) };
+}
+
+function extractGoogleScriptText(raw: any): string {
+  return (
+    raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("\n").trim() ||
+    ""
+  );
+}
+
+async function generateScriptViaTestLabChain(input: {
+  prompt: string;
+  targetWords?: number;
+  targetScenes?: number;
+  sceneDuration?: number;
+}) {
+  const prompt = s(input.prompt).trim();
+  const targetWords = Number(input.targetWords || 0) || 900;
+  const targetScenes = Number(input.targetScenes || 0) || 6;
+  const sceneDuration = Number(input.sceneDuration || 0) || 5;
+  if (!prompt) throw new Error("prompt is required");
+
+  const fullPrompt = [
+    `请写一个约 ${targetWords} 字的中文分镜脚本。`,
+    `必须输出 ${targetScenes} 个场景，按“Scene 1: ...”连续编号到“Scene ${targetScenes}: ...”。`,
+    `每个 Scene 标注建议时长（约 ${sceneDuration} 秒），并包含 scenePrompt、镜头(camera)、情绪(mood)。`,
+    `主题：${prompt}`,
   ].join("\n");
+
+  const result = await callGoogleGateway({ op: "geminiScript", prompt: fullPrompt });
+  if (result?.ok !== true) {
+    const err = s(result?.message || result?.error || "gemini_script_failed").trim() || "gemini_script_failed";
+    throw new Error(err);
+  }
+  const script = extractGoogleScriptText(result?.raw);
+  if (!script) throw new Error("empty script from geminiScript");
+  return {
+    script,
+    provider: "google-vertex",
+    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
+  };
 }
 
 function createServerWorkflowTask(input: {
@@ -437,6 +488,15 @@ function createServerWorkflowTask(input: {
     updatedAt: now,
   } as WorkflowTask;
   return task;
+}
+
+function fail(error: string, message?: string, extra?: Record<string, any>) {
+  return {
+    ok: false,
+    error,
+    message: message || error,
+    ...(extra || {}),
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -533,9 +593,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratescript") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const prompt = s(b.prompt).trim();
-      if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required" });
+      if (!prompt) return res.status(400).json(fail("prompt is required"));
 
       const workflowId = s(b.workflowId).trim();
       const targetWords = Number(b.targetWords || 0) || undefined;
@@ -547,23 +607,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
       if (!workflowId) saveCoreWorkflow(task);
 
-      let script = "";
-      let scriptProvider = "google";
-      let scriptModel = "gemini-3.1";
-      let scriptIsFallback = false;
-      let scriptErrorMessage = "";
+      let generated: { script: string; provider: string; model: string };
       try {
-        const generated = await generateScriptWithGemini({ prompt, model: "gemini-3.1" });
-        script = generated.script;
-        scriptProvider = generated.provider;
-        scriptModel = generated.model;
+        generated = await generateScriptViaTestLabChain({
+          prompt,
+          targetWords,
+          targetScenes,
+          sceneDuration,
+        });
       } catch (error: any) {
-        script = buildFallbackScriptFromPrompt(prompt);
-        scriptProvider = "workflow-fallback";
-        scriptModel = "local-template";
-        scriptIsFallback = true;
-        scriptErrorMessage = error?.message || String(error);
+        const message = error?.message || String(error) || "script_generation_failed";
+        return res.status(502).json(fail("script_generation_failed", message));
       }
+      const script = generated.script;
+      const scriptProvider = generated.provider;
+      const scriptModel = generated.model;
+      const scriptIsFallback = false;
+      const scriptErrorMessage = "";
       const workflow = saveWorkflowPatch(task, {
         currentStep: "script",
         status: "running",
@@ -592,10 +652,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratestoryboard") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const script = s(b.script || workflow.outputs?.script).trim();
-      if (!script) return res.status(400).json({ ok: false, error: "script is required" });
+      if (!script) return res.status(400).json(fail("script is required"));
       const targetScenes = Number(b.targetScenes || workflow.payload?.targetScenes || 0) || undefined;
       const sceneDuration = Number(b.sceneDuration || workflow.outputs?.sceneDuration || 0) || 5;
       const storyboard = buildStoryboardFromScript({
@@ -619,11 +679,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratestoryboardimages") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
-        return res.status(400).json({ ok: false, error: "storyboard is required" });
+        return res.status(400).json(fail("storyboard is required"));
       }
       const scenes = scenesInput.map((scene: any, idx: number) =>
         normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
@@ -656,14 +716,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowregeneratesceneimages") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const sceneIndex = Number(b.sceneIndex || 0);
-      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
-      if (!targetScene) return res.status(404).json({ ok: false, error: "scene not found" });
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
       const generated = await generateImageWithBanana({
         prompt: s(targetScene.scenePrompt).trim(),
         numImages: 2,
@@ -682,10 +742,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowlockcharacter") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const sceneIndex = Number(b.sceneIndex || 0);
-      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const locked = Boolean(b.locked);
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const updated = currentImages.map((item: any) =>
@@ -699,12 +759,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowuploadreferencecharacter") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const sceneIndex = Number(b.sceneIndex || 0);
       const referenceCharacterUrl = s(b.referenceCharacterUrl).trim();
-      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
-      if (!referenceCharacterUrl) return res.status(400).json({ ok: false, error: "referenceCharacterUrl is required" });
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!referenceCharacterUrl) return res.status(400).json(fail("referenceCharacterUrl is required"));
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex ? { ...item, referenceCharacterUrl } : item,
@@ -717,10 +777,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowbackgroundremove") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const sceneIndex = Number(b.sceneIndex || 0);
-      if (!sceneIndex) return res.status(400).json({ ok: false, error: "sceneIndex is required" });
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
@@ -735,11 +795,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowconfirmstoryboard") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
-        return res.status(400).json({ ok: false, error: "storyboard is required" });
+        return res.status(400).json(fail("storyboard is required"));
       }
       const scenes = scenesInput.map((scene: any, idx: number) =>
         normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
@@ -752,13 +812,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratevideo") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       if (!workflow.outputs?.storyboardConfirmed) {
-        return res.status(400).json({ ok: false, error: "storyboard must be confirmed before video generation" });
+        return res.status(400).json(fail("storyboard must be confirmed before video generation"));
       }
       if (!VAK || !VSK) {
-        return res.status(500).json({ ok: false, error: "KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
+        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured"));
       }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const promptFromStoryboard = storyboard
@@ -766,16 +826,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .filter(Boolean)
         .join("；");
       const prompt = promptFromStoryboard || s(workflow.outputs?.script || workflow.payload?.prompt).trim();
-      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt for video generation" });
+      if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const videoToken = jwtHS256(VAK, VSK);
       const model = s(b.model || "kling-video").trim() || "kling-video";
       const created = await createKlingT2VTask(KLING_BASE, videoToken, prompt, model);
       if (!created.taskId) {
-        return res.status(502).json({ ok: false, error: "kling t2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+        return res.status(502).json(fail("kling t2v task creation failed", "kling t2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
       }
       const polled = await pollKlingT2VTask(KLING_BASE, videoToken, created.taskId);
-      if (!polled.ok) return res.status(502).json({ ok: false, error: polled.error });
+      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "video generation failed")));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
@@ -789,12 +849,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratevoice") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const dialogueText = s(b.dialogueText).trim() || s(workflow.outputs?.script).trim();
       const voicePrompt = s(b.voicePrompt).trim();
       const voice = s(b.voice || "nova").trim() || "nova";
-      if (!dialogueText) return res.status(400).json({ ok: false, error: "dialogueText is required" });
+      if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
       const next = saveWorkflowPatch(workflow, {
         currentStep: "voice",
@@ -813,14 +873,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratemusic") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
-      if (!AIM_KEY) return res.status(500).json({ ok: false, error: "missing_env", detail: "AIMUSIC_API_KEY" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      if (!AIM_KEY) return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
       const workflow = readWorkflow(b.workflowId);
       const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
       const musicBpm = Number(b.musicBpm || 0) || 110;
       const musicDuration = Number(b.musicDuration || 0) || 30;
       const rawPrompt = s(b.musicPrompt).trim() || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
-      if (!rawPrompt) return res.status(400).json({ ok: false, error: "musicPrompt is required" });
+      if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
       const prompt = `${rawPrompt}. mood: ${musicMood}. bpm: ${musicBpm}. duration: ${musicDuration}s. instrumental.`;
 
       const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
@@ -828,9 +888,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         headers: { Authorization: `Bearer ${AIM_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }),
       });
-      if (!created.ok) return res.status(502).json({ ok: false, error: "suno_create_failed", raw: created.json ?? created.rawText });
+      if (!created.ok) return res.status(502).json(fail("suno_create_failed", "Suno create request failed", { raw: created.json ?? created.rawText }));
       const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId).trim();
-      if (!taskId) return res.status(502).json({ ok: false, error: "missing_suno_task_id", raw: created.json ?? created.rawText });
+      if (!taskId) return res.status(502).json(fail("missing_suno_task_id", "Suno task id is missing", { raw: created.json ?? created.rawText }));
 
       let musicUrl = "";
       let rawTask: any = null;
@@ -851,10 +911,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           s(data.result?.music_url).trim();
         if (musicUrl) break;
         if (status === "failed" || status === "error") {
-          return res.status(502).json({ ok: false, error: "suno_task_failed", raw: rawTask });
+          return res.status(502).json(fail("suno_task_failed", "Suno task failed", { raw: rawTask }));
         }
       }
-      if (!musicUrl) return res.status(502).json({ ok: false, error: "suno_task_timeout_or_missing_music_url", raw: rawTask });
+      if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
@@ -871,10 +931,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowrenderfinalvideo") {
-      if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId);
       const videoUrl = s(workflow.outputs?.videoUrl).trim();
-      if (!videoUrl) return res.status(400).json({ ok: false, error: "videoUrl is required before render" });
+      if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
@@ -1102,8 +1162,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, taskStatus, videoUrl, raw:r.json ?? r.rawText });
     }
 
-    return res.status(400).json({ ok:false, error:"unknown_op", op });
+    return res.status(400).json(fail("unknown_op", "unknown_op", { op }));
   } catch (e: any) {
-    return res.status(500).json({ ok:false, error:"server_error", message: e?.message || String(e) });
+    const message = e?.message || String(e) || "server_error";
+    return res.status(500).json(fail("server_error", message));
   }
 }
