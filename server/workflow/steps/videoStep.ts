@@ -11,15 +11,15 @@ if(!storyboardImages?.length) throw new Error("storyboard_images_missing")
 const referenceImage=storyboardImages[0]?.images?.[0]
 if(!referenceImage) throw new Error("reference_image_missing")
 
-updateWorkflow(workflowId,{
-status:"running",
-currentStep:"video"
-})
+updateWorkflow(workflowId,{status:"running",currentStep:"video"})
+
+const key=process.env.FAL_API_KEY||process.env.FAL_KEY
+if(!key) throw new Error("fal_key_missing")
 
 const res=await fetch("https://fal.run/fal-ai/veo3.1/reference-to-video",{
 method:"POST",
 headers:{
-"Authorization":`Key ${process.env.FAL_API_KEY||process.env.FAL_KEY}`,
+"Authorization":`Key ${key}`,
 "Content-Type":"application/json"
 },
 body:JSON.stringify({
@@ -30,11 +30,13 @@ resolution:"720p"
 })
 })
 
-if(!res.ok) throw new Error("veo_reference_video_failed")
+if(!res.ok){
+const t=await res.text()
+throw new Error("veo_reference_failed:"+t)
+}
 
 const data=await res.json()
 const videoUrl=data?.video?.url||data?.url
-
 if(!videoUrl) throw new Error("video_url_missing")
 
 updateWorkflow(workflowId,{
