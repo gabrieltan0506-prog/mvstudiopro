@@ -780,6 +780,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           prompt: imagePrompt,
           numImages: 2,
           aspectRatio: "16:9",
+          imageSize: "1536x864",
         });
         results.push({
           sceneIndex: scene.sceneIndex,
@@ -825,6 +826,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         prompt: imagePrompt,
         numImages: 2,
         aspectRatio: "16:9",
+        imageSize: "1536x864",
       });
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex

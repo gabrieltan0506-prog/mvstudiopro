@@ -3,25 +3,30 @@ export function buildVideoPrompt(input: {
   character?: string;
   action?: string;
   camera?: string;
-  mood?: string;
   lighting?: string;
+  mood?: string;
   sceneDuration?: number;
   lockedCharacterPrompt?: string;
 }) {
   const sceneDuration = Number(input.sceneDuration || 0) || 5;
   const parts = [
     "cinematic video",
-    String(input.scenePrompt || "").trim(),
+    "film-grade lighting",
+    "maintain exact same character identity from reference image",
+    "no identity drift",
+    "motion continuity",
     `duration around ${sceneDuration}s`,
+    `scene: ${String(input.scenePrompt || "").trim()}`,
     `character: ${String(input.character || "").trim()}`,
     `action: ${String(input.action || "").trim()}`,
-    `camera movement: ${String(input.camera || "dynamic medium shot").trim()}`,
-    `mood: ${String(input.mood || "cinematic").trim()}`,
+    `camera movement: ${String(input.camera || "dynamic cinematic shot").trim()}`,
     `lighting: ${String(input.lighting || "dramatic lighting").trim()}`,
-    "action continuity across shots",
-    "same character identity from reference image",
+    `mood: ${String(input.mood || "cinematic").trim()}`,
   ].filter(Boolean);
 
-  if (input.lockedCharacterPrompt) parts.push(String(input.lockedCharacterPrompt).trim());
+  if (input.lockedCharacterPrompt) {
+    parts.push(String(input.lockedCharacterPrompt).trim());
+  }
+
   return parts.join(", ");
 }

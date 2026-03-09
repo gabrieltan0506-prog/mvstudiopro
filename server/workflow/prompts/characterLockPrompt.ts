@@ -13,15 +13,22 @@ export function buildCharacterLockPrompt(input: {
   const hair = String(input.hair || "").trim() || "unspecified";
   const ref = String(input.optionalReferenceImage || "").trim();
 
-  const base = [
-    "Character Lock Profile:",
+  const lines = [
+    "Character Lock Profile",
     `gender: ${gender}`,
     `age: ${age}`,
     `appearance: ${appearance}`,
     `outfit: ${outfit}`,
     `hair: ${hair}`,
-    "Do not change: facial structure, hairstyle, clothing, age, gender.",
+    "Hard constraints for all following generations:",
+    "- keep facial structure unchanged",
+    "- keep hairstyle unchanged",
+    "- keep outfit unchanged",
+    "- keep age unchanged",
+    "- keep gender unchanged",
+    "- no identity drift across scenes",
   ];
-  if (ref) base.push(`reference image: ${ref}`);
-  return base.join(" ");
+
+  if (ref) lines.push(`reference image: ${ref}`);
+  return lines.join("\n");
 }
