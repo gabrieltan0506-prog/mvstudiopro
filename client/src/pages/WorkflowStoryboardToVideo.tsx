@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react";
 
 export default function WorkflowStoryboardToVideo() {
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
+  const [dialogueText, setDialogueText] = useState("");
+  const [voicePrompt, setVoicePrompt] = useState("中文自然播报，电影预告片旁白风格，情绪饱满。");
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceResult, setVoiceResult] = useState<any>(null);
   const [workflowId, setWorkflowId] = useState("");
   const [workflow, setWorkflow] = useState<any>(null);
   const [debug, setDebug] = useState<any>(null);
@@ -19,6 +23,9 @@ export default function WorkflowStoryboardToVideo() {
       setDebug(j);
       if (r.ok && j?.workflow) {
         setWorkflow(j.workflow);
+        if (!dialogueText && j.workflow?.outputs?.script) {
+          setDialogueText(String(j.workflow.outputs.script));
+        }
         const status = String(j.workflow?.status || "");
         if (status === "done" || status === "failed") return;
       }
@@ -47,6 +54,7 @@ export default function WorkflowStoryboardToVideo() {
     setBusy(true);
     setDebug(null);
     setWorkflow(null);
+    setVoiceResult(null);
     setWorkflowId("");
     try {
       const r = await fetch("/api/jobs", {
@@ -69,6 +77,44 @@ export default function WorkflowStoryboardToVideo() {
     }
   }
 
+  async function generateVoice() {
+    if (voiceBusy) return;
+    const text = dialogueText.trim();
+    if (!text) {
+      setDebug({ ok: false, error: "dialogueText is required" });
+      return;
+    }
+    setVoiceBusy(true);
+    try {
+      const r = await fetch("/api/jobs?op=generateVoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dialogueText: text,
+          voicePrompt: voicePrompt.trim(),
+          voice: "nova",
+          workflowId,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      setDebug(j);
+      if (!r.ok || !j) return;
+      setVoiceResult(j);
+      if (j.workflow) setWorkflow(j.workflow);
+    } finally {
+      setVoiceBusy(false);
+    }
+  }
+
+  const voiceProvider = String(outputs.voiceProvider || voiceResult?.voiceProvider || "-");
+  const voiceModel = String(outputs.voiceModel || voiceResult?.voiceModel || "-");
+  const voiceVoice = String(outputs.voiceVoice || voiceResult?.voiceVoice || "-");
+  const voiceUrl = String(outputs.voiceUrl || voiceResult?.voiceUrl || "");
+  const voiceIsFallback = Boolean(
+    outputs.voiceIsFallback !== undefined ? outputs.voiceIsFallback : voiceResult?.voiceIsFallback
+  );
+  const voiceErrorMessage = String(outputs.voiceErrorMessage || voiceResult?.voiceErrorMessage || "");
+
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", padding: 20, color: "white" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800 }}>Workflow</h1>
@@ -90,6 +136,39 @@ export default function WorkflowStoryboardToVideo() {
         >
           {busy ? "启动中..." : "启动 Workflow"}
         </button>
+      </div>
+
+      <div style={{ marginTop: 16, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)" }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Dialogue / Voice Text</div>
+        <textarea
+          value={dialogueText}
+          onChange={(e) => setDialogueText(e.target.value)}
+          rows={4}
+          placeholder="输入要生成语音的中文文本"
+          style={{ width: "100%", padding: 12, borderRadius: 10, background: "rgba(0,0,0,0.35)", color: "white", border: "1px solid rgba(255,255,255,0.15)" }}
+        />
+        <div style={{ fontWeight: 800, margin: "10px 0 8px" }}>Voice Prompt</div>
+        <textarea
+          value={voicePrompt}
+          onChange={(e) => setVoicePrompt(e.target.value)}
+          rows={3}
+          placeholder="语音风格提示词"
+          style={{ width: "100%", padding: 12, borderRadius: 10, background: "rgba(0,0,0,0.35)", color: "white", border: "1px solid rgba(255,255,255,0.15)" }}
+        />
+        <button
+          onClick={generateVoice}
+          disabled={voiceBusy}
+          style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "white", fontWeight: 800 }}
+        >
+          {voiceBusy ? "Generating Voice..." : "Generate Voice"}
+        </button>
+        <div style={{ marginTop: 10 }}>voiceProvider: <code>{voiceProvider}</code></div>
+        <div>voiceModel: <code>{voiceModel}</code></div>
+        <div>voiceVoice: <code>{voiceVoice}</code></div>
+        <div>voiceIsFallback: <code>{String(voiceIsFallback)}</code></div>
+        <div>voiceErrorMessage: <code>{voiceErrorMessage}</code></div>
+        <div>voiceUrl: <code>{voiceUrl}</code></div>
+        {voiceUrl ? <audio controls src={voiceUrl} style={{ marginTop: 8, width: "100%" }} /> : null}
       </div>
 
       {workflow ? (

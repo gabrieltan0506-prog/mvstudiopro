@@ -17,6 +17,14 @@ export type WorkflowStatus =
   | "failed";
 
 export interface WorkflowOutputs {
+  dialogueText?: string;
+  voicePrompt?: string;
+  voiceProvider?: string;
+  voiceModel?: string;
+  voiceVoice?: string;
+  voiceUrl?: string;
+  voiceIsFallback?: boolean;
+  voiceErrorMessage?: string;
   script?: string;
   scriptProvider?: string;
   scriptModel?: string;

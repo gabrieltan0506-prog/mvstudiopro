@@ -2,8 +2,9 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
-import { startWorkflow, getWorkflow, type WorkflowTask } from "./_core/workflow.js";
+import { startWorkflow, getWorkflow, saveWorkflow, type WorkflowTask } from "./_core/workflow.js";
 import { generateImageWithBanana } from "./_core/banana.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
@@ -200,6 +201,91 @@ async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: s
   return { ok: false, error: "kling generation timeout" };
 }
 
+async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: string; voice?: string }) {
+  const dialogueText = s(input.dialogueText).trim();
+  const voicePrompt = s(input.voicePrompt).trim();
+  const voice = s(input.voice || "nova").trim() || "nova";
+  const baseResult = {
+    voiceProvider: "openai" as const,
+    voiceModel: "gpt-4o-mini-tts" as const,
+    voiceVoice: voice,
+  };
+
+  if (!dialogueText) {
+    return {
+      ...baseResult,
+      voiceUrl: "",
+      voiceIsFallback: true,
+      voiceErrorMessage: "dialogueText is required",
+    };
+  }
+  if (!env.openaiApiKey) {
+    return {
+      ...baseResult,
+      voiceUrl: "",
+      voiceIsFallback: true,
+      voiceErrorMessage: "OPENAI_API_KEY is not configured",
+    };
+  }
+
+  try {
+    const body: Record<string, any> = {
+      model: "gpt-4o-mini-tts",
+      voice,
+      input: dialogueText,
+      format: "mp3",
+    };
+    if (voicePrompt) body.instructions = voicePrompt;
+
+    const r = await fetch("https://api.openai.com/v1/audio/speech", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.openaiApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const msg = (await r.text()).slice(0, 600);
+      return {
+        ...baseResult,
+        voiceUrl: "",
+        voiceIsFallback: true,
+        voiceErrorMessage: `openai_tts_failed:${r.status}:${msg}`,
+      };
+    }
+
+    const audioBuffer = Buffer.from(await r.arrayBuffer());
+    if (!audioBuffer.length) {
+      return {
+        ...baseResult,
+        voiceUrl: "",
+        voiceIsFallback: true,
+        voiceErrorMessage: "openai_tts_empty_audio",
+      };
+    }
+
+    const blob = await put(`voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`, audioBuffer, {
+      access: "public",
+      contentType: "audio/mpeg",
+    });
+
+    return {
+      ...baseResult,
+      voiceUrl: blob.url,
+      voiceIsFallback: false,
+      voiceErrorMessage: "",
+    };
+  } catch (error: any) {
+    return {
+      ...baseResult,
+      voiceUrl: "",
+      voiceIsFallback: true,
+      voiceErrorMessage: error?.message || String(error),
+    };
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
@@ -275,6 +361,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const workflow = await startWorkflow(task);
       return res.status(200).json({ ok: true, workflow });
+    }
+
+    if (opNormalized === "generatevoice") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+
+      const dialogueText = s(b.dialogueText).trim();
+      const voicePrompt = s(b.voicePrompt).trim();
+      const voice = s(b.voice || "nova").trim() || "nova";
+      const workflowId = s(b.workflowId).trim();
+
+      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      let workflow: any = undefined;
+      if (workflowId) {
+        const current = getWorkflow(workflowId) as any;
+        if (current) {
+          workflow = {
+            ...current,
+            updatedAt: Date.now(),
+            outputs: {
+              ...(current.outputs || {}),
+              dialogueText,
+              voicePrompt,
+              voiceProvider: voiceResult.voiceProvider,
+              voiceModel: voiceResult.voiceModel,
+              voiceVoice: voiceResult.voiceVoice,
+              voiceUrl: voiceResult.voiceUrl,
+              voiceIsFallback: voiceResult.voiceIsFallback,
+              voiceErrorMessage: voiceResult.voiceErrorMessage,
+            },
+          };
+          saveWorkflow(workflow as any);
+        }
+      }
+
+      return res.status(200).json({
+        ok: true,
+        ...voiceResult,
+        workflow,
+      });
     }
 
     if (op === "scriptGenerate") {
