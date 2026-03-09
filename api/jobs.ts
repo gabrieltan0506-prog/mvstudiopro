@@ -405,13 +405,64 @@ async function generateScriptWithGemini(input: { prompt: string; model?: string 
   return { script, provider: "google", model };
 }
 
-function buildFallbackScriptFromPrompt(prompt: string) {
-  const p = s(prompt).trim() || "短视频创意";
-  return [
-    `开场：${p}，建立视觉风格和主要冲突。`,
-    "中段：角色推进目标，交替使用近景与广角镜头，强化节奏与张力。",
-    "结尾：冲突在高潮处收束，留下明确情绪落点与记忆点。",
+async function callGoogleGateway(payload: Record<string, any>) {
+  const mod = await import("./google.js");
+  const handler = mod.default;
+  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
+  const res: any = {
+    statusCode: 200,
+    body: undefined,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(data: any) {
+      this.body = data;
+      return this;
+    },
+  };
+  await handler(req, res);
+  return { statusCode: res.statusCode, ...(res.body || {}) };
+}
+
+function extractGoogleScriptText(raw: any): string {
+  return (
+    raw?.candidates?.[0]?.content?.parts?.map((p: any) => p?.text || "").join("\n").trim() ||
+    ""
+  );
+}
+
+async function generateScriptViaTestLabChain(input: {
+  prompt: string;
+  targetWords?: number;
+  targetScenes?: number;
+  sceneDuration?: number;
+}) {
+  const prompt = s(input.prompt).trim();
+  const targetWords = Number(input.targetWords || 0) || 900;
+  const targetScenes = Number(input.targetScenes || 0) || 6;
+  const sceneDuration = Number(input.sceneDuration || 0) || 5;
+  if (!prompt) throw new Error("prompt is required");
+
+  const fullPrompt = [
+    `请写一个约 ${targetWords} 字的中文分镜脚本。`,
+    `必须输出 ${targetScenes} 个场景，按“Scene 1: ...”连续编号到“Scene ${targetScenes}: ...”。`,
+    `每个 Scene 标注建议时长（约 ${sceneDuration} 秒），并包含 scenePrompt、镜头(camera)、情绪(mood)。`,
+    `主题：${prompt}`,
   ].join("\n");
+
+  const result = await callGoogleGateway({ op: "geminiScript", prompt: fullPrompt });
+  if (result?.ok !== true) {
+    const err = s(result?.message || result?.error || "gemini_script_failed").trim() || "gemini_script_failed";
+    throw new Error(err);
+  }
+  const script = extractGoogleScriptText(result?.raw);
+  if (!script) throw new Error("empty script from geminiScript");
+  return {
+    script,
+    provider: "google-vertex",
+    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
+  };
 }
 
 function createServerWorkflowTask(input: {
@@ -556,23 +607,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
       if (!workflowId) saveCoreWorkflow(task);
 
-      let script = "";
-      let scriptProvider = "google";
-      let scriptModel = "gemini-3.1";
-      let scriptIsFallback = false;
-      let scriptErrorMessage = "";
+      let generated: { script: string; provider: string; model: string };
       try {
-        const generated = await generateScriptWithGemini({ prompt, model: "gemini-3.1" });
-        script = generated.script;
-        scriptProvider = generated.provider;
-        scriptModel = generated.model;
+        generated = await generateScriptViaTestLabChain({
+          prompt,
+          targetWords,
+          targetScenes,
+          sceneDuration,
+        });
       } catch (error: any) {
-        script = buildFallbackScriptFromPrompt(prompt);
-        scriptProvider = "workflow-fallback";
-        scriptModel = "local-template";
-        scriptIsFallback = true;
-        scriptErrorMessage = error?.message || String(error);
+        const message = error?.message || String(error) || "script_generation_failed";
+        return res.status(502).json(fail("script_generation_failed", message));
       }
+      const script = generated.script;
+      const scriptProvider = generated.provider;
+      const scriptModel = generated.model;
+      const scriptIsFallback = false;
+      const scriptErrorMessage = "";
       const workflow = saveWorkflowPatch(task, {
         currentStep: "script",
         status: "running",
