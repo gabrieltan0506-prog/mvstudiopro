@@ -1,63 +1,66 @@
 import { fal } from "@fal-ai/client";
-import { env } from "../config/env";
 
-export interface BananaGenerateInput {
-  prompt: string;
-  numImages?: number;
-  aspectRatio?: string;
-}
+export async function generateStoryboardSceneImages(input: {
+  scenePrompt: string;
+  count?: number;
+}) {
+  const key = String(process.env.FAL_API_KEY || process.env.FAL_KEY || "").trim();
+  const scenePrompt = String(input.scenePrompt || "").trim();
+  const count = Number(input.count || 2);
 
-export interface BananaGenerateResult {
-  imageUrls: string[];
-  provider: "fal";
-  model: "fal-ai/nano-banana-2";
-}
-
-export async function generateImageWithBanana(input: BananaGenerateInput): Promise<BananaGenerateResult> {
-  const key = env.falKey;
-  if (!key) {
-    throw new Error("FAL_KEY or FAL_API_KEY is not configured");
+  if (!scenePrompt) {
+    return {
+      imageUrls: [] as string[],
+      provider: "fal",
+      model: "fal-ai/nano-banana-2",
+      isFallback: true,
+      errorMessage: "scenePrompt is required",
+    };
   }
 
-  const prompt = String(input.prompt || "").trim();
-  if (!prompt) {
-    throw new Error("prompt is required");
+  if (!key) {
+    return {
+      imageUrls: [] as string[],
+      provider: "fal",
+      model: "fal-ai/nano-banana-2",
+      isFallback: true,
+      errorMessage: "FAL_API_KEY/FAL_KEY is not configured",
+    };
   }
 
   fal.config({ credentials: key });
+  try {
+    const result = (await fal.subscribe("fal-ai/nano-banana-2", {
+      input: {
+        prompt: scenePrompt,
+        num_images: count,
+        aspect_ratio: "16:9",
+      },
+      logs: false,
+    })) as any;
 
-  // Keep a single validated mode: fal.subscribe (submit + polling).
-  const result = (await fal.subscribe("fal-ai/nano-banana-2", {
-    input: {
-      prompt,
-      num_images: input.numImages ?? 1,
-      aspect_ratio: input.aspectRatio ?? "auto",
-    },
-    logs: false,
-  })) as any;
+    const images = result?.data?.images || result?.images || [];
+    const urls = Array.isArray(images)
+      ? images
+          .map((item: any) => String(item?.url || "").trim())
+          .filter(Boolean)
+          .slice(0, count)
+      : [];
 
-  const urls: string[] = [];
-  const images = result?.data?.images || result?.images || [];
-  if (Array.isArray(images)) {
-    for (const item of images) {
-      const url = typeof item?.url === "string" ? item.url : "";
-      if (url) urls.push(url);
-    }
+    return {
+      imageUrls: urls,
+      provider: "fal",
+      model: "fal-ai/nano-banana-2",
+      isFallback: urls.length < count,
+      errorMessage: urls.length < count ? "banana returned insufficient images" : "",
+    };
+  } catch (error: any) {
+    return {
+      imageUrls: [] as string[],
+      provider: "fal",
+      model: "fal-ai/nano-banana-2",
+      isFallback: true,
+      errorMessage: error?.message || String(error),
+    };
   }
-
-  const singleUrl =
-    (typeof result?.data?.image?.url === "string" && result.data.image.url) ||
-    (typeof result?.image?.url === "string" && result.image.url) ||
-    "";
-  if (singleUrl) urls.push(singleUrl);
-
-  if (!urls.length) {
-    throw new Error("fal nano banana returned no image urls");
-  }
-
-  return {
-    imageUrls: urls,
-    provider: "fal",
-    model: "fal-ai/nano-banana-2",
-  };
 }

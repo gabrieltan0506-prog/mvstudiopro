@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
-import { startWorkflow, getWorkflow, saveWorkflow, type WorkflowTask } from "./_core/workflow.js";
 import { generateImageWithBanana } from "./_core/banana.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
@@ -286,6 +285,41 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
   }
 }
 
+async function startServerWorkflowTask(input: {
+  sourceType: string;
+  prompt: string;
+  targetWords?: number;
+  targetScenes?: number;
+}) {
+  const mod = await import("../server/workflow/engine.js");
+  const now = Date.now();
+  const task: any = {
+    workflowId: randomUUID(),
+    sourceType: input.sourceType || "workflow",
+    inputType: "script",
+    payload: {
+      prompt: input.prompt,
+      targetWords: input.targetWords,
+      targetScenes: input.targetScenes,
+    },
+    currentStep: "script",
+    status: "pending",
+    outputs: {},
+    updatedAt: now,
+  };
+  return mod.startWorkflow(task);
+}
+
+async function getServerWorkflowById(workflowId: string) {
+  const store = await import("../server/workflow/store/workflowStore.js");
+  return store.getWorkflow(workflowId);
+}
+
+async function saveServerWorkflow(next: any) {
+  const store = await import("../server/workflow/store/workflowStore.js");
+  store.saveWorkflow(next);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
@@ -319,47 +353,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    if (op === "workflowStatus") {
+    if (opNormalized === "workflowstatus") {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const id = s(q.id || b.id).trim();
-      const workflow = getWorkflow(id);
+      const workflow = await getServerWorkflowById(id);
       if (!workflow) {
         return res.status(404).json({ ok: false, error: "workflow not found" });
       }
       return res.status(200).json({ ok: true, workflow });
     }
 
-    if (op === "workflowTest") {
+    if (opNormalized === "workflowtest") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const sourceType = b.sourceType;
-      const inputType = b.inputType;
       const payload = b.payload ?? {};
 
       if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase" && sourceType !== "workflow") {
         return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase/workflow" });
       }
-      if (inputType !== "script" && inputType !== "image") {
-        return res.status(400).json({ ok: false, error: "inputType must be script or image" });
-      }
-
-      const now = Date.now();
-      const task: WorkflowTask = {
-        workflowId: randomUUID(),
+      const workflow = await startServerWorkflowTask({
         sourceType,
-        inputType,
-        currentStep: "input",
-        status: "pending",
-        payload,
-        outputs: {},
-        createdAt: now,
-        updatedAt: now,
-      };
+        prompt: s(payload.prompt).trim(),
+        targetWords: Number(payload.targetWords || 0) || undefined,
+        targetScenes: Number(payload.targetScenes || 0) || undefined,
+      });
+      return res.status(200).json({ ok: true, workflow });
+    }
 
-      const workflow = await startWorkflow(task);
+    if (opNormalized === "startworkflow") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt = s(b.prompt).trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "prompt is required" });
+      const workflow = await startServerWorkflowTask({
+        sourceType: "workflow",
+        prompt,
+        targetWords: Number(b.targetWords || 0) || undefined,
+        targetScenes: Number(b.targetScenes || 0) || undefined,
+      });
       return res.status(200).json({ ok: true, workflow });
     }
 
@@ -376,7 +412,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
       let workflow: any = undefined;
       if (workflowId) {
-        const current = getWorkflow(workflowId) as any;
+        const current = await getServerWorkflowById(workflowId);
         if (current) {
           workflow = {
             ...current,
@@ -393,7 +429,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               voiceErrorMessage: voiceResult.voiceErrorMessage,
             },
           };
-          saveWorkflow(workflow as any);
+          await saveServerWorkflow(workflow as any);
         }
       }
 

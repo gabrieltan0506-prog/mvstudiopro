@@ -1,71 +1,52 @@
 export type WorkflowStep =
-  | "input"
   | "script"
   | "storyboard"
   | "storyboardImages"
-  | "image"
+  | "characterLock"
   | "video"
+  | "voice"
   | "music"
   | "render"
   | "done"
   | "error";
 
-export type WorkflowStatus =
-  | "pending"
-  | "running"
-  | "done"
-  | "failed";
+export interface StoryboardScene {
+  sceneIndex: number;
+  scenePrompt: string;
+  duration: number;
+  camera: string;
+  mood: string;
+}
+
+export interface StoryboardImages {
+  sceneIndex: number;
+  images: string[];
+}
 
 export interface WorkflowOutputs {
-  dialogueText?: string;
-  voicePrompt?: string;
-  voiceProvider?: string;
-  voiceModel?: string;
-  voiceVoice?: string;
-  voiceUrl?: string;
-  voiceIsFallback?: boolean;
-  voiceErrorMessage?: string;
   script?: string;
-  scriptProvider?: string;
-  scriptModel?: string;
-  scriptIsFallback?: boolean;
-  scriptErrorMessage?: string;
-  storyboard?: Array<{
-    sceneIndex: number;
-    scenePrompt: string;
-    duration: number;
-    camera: string;
-    mood: string;
-  }>;
-  storyboardImages?: Array<{
-    sceneIndex: number;
-    images: string[];
-  }>;
-  imageUrls?: string[];
-  imageProvider?: string;
-  imageModel?: string;
-  imageIsFallback?: boolean;
-  imageErrorMessage?: string;
+  storyboard?: StoryboardScene[];
+  storyboardImages?: StoryboardImages[];
+  characterLocked?: boolean;
+  referenceImages?: string[];
   videoUrl?: string;
-  videoProvider?: string;
-  videoModel?: string;
-  videoIsFallback?: boolean;
-  videoErrorMessage?: string;
-  renderProvider?: string;
-  renderIsFallback?: boolean;
-  renderErrorMessage?: string;
-  musicUrl?: string;
   finalVideoUrl?: string;
+  voiceUrl?: string;
+  musicUrl?: string;
 }
 
 export interface WorkflowTask {
   workflowId: string;
-  sourceType: "remix" | "showcase" | "direct" | "workflow";
-  inputType: "script" | "image";
+  sourceType: string;
+  inputType: "script";
+  payload: {
+    prompt: string;
+    targetWords?: number;
+    targetScenes?: number;
+    referenceImages?: string[];
+  };
   currentStep: WorkflowStep;
-  status: WorkflowStatus;
-  payload: Record<string, any>;
+  status: "pending" | "running" | "done" | "failed";
   outputs: WorkflowOutputs;
-  createdAt: number;
-  updatedAt: number;
+  updatedAt?: number;
 }

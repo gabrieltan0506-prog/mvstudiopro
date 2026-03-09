@@ -1,38 +1,13 @@
-import type { WorkflowTask } from "../types/workflow";
+import { generateVoiceWithOpenAI } from "../../models/openaiTTS";
 
-export interface VoiceStepInput {
+export async function voiceStep(input: {
   dialogueText: string;
   voicePrompt?: string;
-  voice?: string;
-}
-
-export interface VoiceStepResult {
-  voiceProvider: "openai";
-  voiceModel: "gpt-4o-mini-tts";
-  voiceVoice: string;
-  voiceUrl: string;
-  voiceIsFallback: boolean;
-  voiceErrorMessage?: string;
-}
-
-export function applyVoiceResult(
-  task: WorkflowTask,
-  input: VoiceStepInput,
-  result: VoiceStepResult
-): WorkflowTask {
-  return {
-    ...task,
-    outputs: {
-      ...task.outputs,
-      dialogueText: input.dialogueText,
-      voicePrompt: input.voicePrompt || "",
-      voiceProvider: result.voiceProvider,
-      voiceModel: result.voiceModel,
-      voiceVoice: result.voiceVoice,
-      voiceUrl: result.voiceUrl,
-      voiceIsFallback: result.voiceIsFallback,
-      voiceErrorMessage: result.voiceErrorMessage,
-    },
-    updatedAt: Date.now(),
-  };
+}) {
+  const result = await generateVoiceWithOpenAI({
+    dialogueText: input.dialogueText,
+    voicePrompt: input.voicePrompt,
+    voice: "nova",
+  });
+  return result.voiceUrl;
 }
