@@ -136,34 +136,110 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void }) {
 function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: string) => void }) {
   const [prompt, setPrompt] = useState("电影级场景，稳定镜头，高细节，人物一致性强");
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [taskId, setTaskId] = useState<string>("");
+  const [workflowId, setWorkflowId] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string>("");
+  const [workflowResult, setWorkflowResult] = useState<any>(null);
   const [debug, setDebug] = useState<any>(null);
   const stopRef = useRef(false);
 
   useEffect(() => { stopRef.current = false; return () => { stopRef.current = true; }; }, []);
 
+  useEffect(() => {
+    if (!workflowId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = async () => {
+      if (stopped) return;
+      const resp = await fetchJsonish(`/api/jobs?op=workflowStatus&id=${encodeURIComponent(workflowId)}`);
+      setDebug(resp);
+
+      const workflow = (resp as any)?.json?.workflow;
+      if ((resp as any)?.ok && workflow) {
+        setWorkflowResult(workflow);
+        const nextVideoUrl = workflow?.outputs?.finalVideoUrl || workflow?.outputs?.videoUrl;
+        if (nextVideoUrl) setVideoUrl(String(nextVideoUrl));
+
+        const status = String(workflow?.status || "");
+        if (status === "done" || status === "failed") return;
+      }
+
+      timer = setTimeout(poll, 2000);
+    };
+
+    void poll();
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [workflowId]);
+
   async function upload(file: File) {
-    const dataUrl = await toDataUrl(file);
-    const j = await fetchJsonish("/api/blob-put-image", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dataUrl, filename: file.name }),
-    });
-    setDebug(j);
-    const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
-    if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
-    props.onRefImageUrlChange(String(url));
+    setUploading(true);
+    try {
+      const dataUrl = await toDataUrl(file);
+      const j = await fetchJsonish("/api/blob-put-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: file.name }),
+      });
+      setDebug(j);
+      const url = (j as any)?.json?.imageUrl || (j as any)?.imageUrl;
+      if (!url) throw new Error("upload failed: no imageUrl. resp=" + JSON.stringify(j));
+      props.onRefImageUrlChange(String(url));
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function start() {
     if (busy) return;
+    if (uploading) {
+      setDebug({ ok: false, error: "图片上传中，请稍后再试" });
+      return;
+    }
     setBusy(true);
     setTaskId("");
+    setWorkflowId("");
     setVideoUrl("");
+    setWorkflowResult(null);
     setDebug({ ok: true, message: "clicked: klingCreate" });
 
     try {
+      const workflowInputType = props.refImageUrl ? "image" : "script";
+      const trimmedPrompt = prompt.trim();
+      const workflowPayload = props.refImageUrl
+        ? {
+            imageUrl: props.refImageUrl,
+            ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
+          }
+        : { prompt: trimmedPrompt };
+
+      const wf = await fetchJsonish("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          op: "workflowTest",
+          sourceType: "remix",
+          inputType: workflowInputType,
+          payload: workflowPayload,
+        }),
+      });
+      setDebug(wf);
+
+      const workflow = (wf as any)?.json?.workflow;
+      if ((wf as any)?.ok && workflow) {
+        setWorkflowResult(workflow);
+        setTaskId(String(workflow.workflowId || ""));
+        setWorkflowId(String(workflow.workflowId || ""));
+        const wfVideoUrl = workflow?.outputs?.finalVideoUrl || workflow?.outputs?.videoUrl;
+        if (wfVideoUrl) setVideoUrl(String(wfVideoUrl));
+        return;
+      }
+
       if (!props.refImageUrl) throw new Error("请先上传参考图（或用上面生图设为参考图）。");
       const cj = await fetchJsonish("/api/jobs?op=klingCreate", {
         method: "POST",
@@ -194,6 +270,9 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
     }
   }
 
+  const workflowVideoUrl = workflowResult?.outputs?.finalVideoUrl || workflowResult?.outputs?.videoUrl;
+  const displayVideoUrl = workflowVideoUrl || videoUrl;
+
   return (
     <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
       <div style={{ fontSize: 18, fontWeight: 900 }}>可灵视频（Kling CN）</div>
@@ -213,19 +292,75 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
         style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
 
-      <button onClick={start} disabled={busy}
+      <button onClick={start} disabled={busy || uploading}
         style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
-        {busy ? "生成中…" : "开始生成（10秒）"}
+        {busy ? "生成中…" : uploading ? "上传中…" : "开始生成（10秒）"}
       </button>
 
       {taskId ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div> : null}
+      {workflowResult ? (
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
+          <div>workflowId: <code>{workflowResult.workflowId}</code></div>
+          <div>status: <code>{workflowResult.status}</code> / step: <code>{workflowResult.currentStep}</code></div>
+          <div>
+            script engine:
+            <code>{String(workflowResult?.outputs?.scriptProvider || "-")}</code>
+            /
+            <code>{String(workflowResult?.outputs?.scriptModel || "-")}</code>
+            {" "}fallback:
+            <code>{String(Boolean(workflowResult?.outputs?.scriptIsFallback))}</code>
+          </div>
+          {workflowResult?.outputs?.scriptErrorMessage ? (
+            <div>script error: <code>{workflowResult.outputs.scriptErrorMessage}</code></div>
+          ) : null}
+          <div>
+            video engine:
+            <code>{String(workflowResult?.outputs?.videoProvider || "-")}</code>
+            /
+            <code>{String(workflowResult?.outputs?.videoModel || "-")}</code>
+            {" "}fallback:
+            <code>{String(Boolean(workflowResult?.outputs?.videoIsFallback))}</code>
+          </div>
+          {workflowResult?.outputs?.videoErrorMessage ? (
+            <div>video error: <code>{workflowResult.outputs.videoErrorMessage}</code></div>
+          ) : null}
+          <div>
+            image engine:
+            <code>{String(workflowResult?.outputs?.imageProvider || "-")}</code>
+            /
+            <code>{String(workflowResult?.outputs?.imageModel || "-")}</code>
+            {" "}fallback:
+            <code>{String(Boolean(workflowResult?.outputs?.imageIsFallback))}</code>
+          </div>
+          {workflowResult?.outputs?.imageErrorMessage ? (
+            <div>image error: <code>{workflowResult.outputs.imageErrorMessage}</code></div>
+          ) : null}
+          <div>
+            render engine:
+            <code>{String(workflowResult?.outputs?.renderProvider || "-")}</code>
+            {" "}fallback:
+            <code>{String(Boolean(workflowResult?.outputs?.renderIsFallback))}</code>
+          </div>
+          {workflowResult?.outputs?.renderErrorMessage ? (
+            <div>render error: <code>{workflowResult.outputs.renderErrorMessage}</code></div>
+          ) : null}
+          {workflowResult?.outputs?.script ? <div>script: <code>{workflowResult.outputs.script}</code></div> : null}
+          {Array.isArray(workflowResult?.outputs?.storyboard) ? (
+            <div>storyboard: <code>{workflowResult.outputs.storyboard.length}</code></div>
+          ) : null}
+          {Array.isArray(workflowResult?.outputs?.imageUrls) ? (
+            <div>imageUrls: <code>{workflowResult.outputs.imageUrls.length}</code></div>
+          ) : null}
+          {workflowResult?.outputs?.finalVideoUrl ? <div>finalVideoUrl: <code>{workflowResult.outputs.finalVideoUrl}</code></div> : null}
+        </div>
+      ) : null}
 
-      {videoUrl ? (
+      {displayVideoUrl ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（视频）</div>
-          <video controls src={videoUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
+          <video controls src={displayVideoUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
           <div style={{ marginTop: 8 }}>
-            <a href={videoUrl} download target="_blank" rel="noreferrer"
+            <a href={displayVideoUrl} download target="_blank" rel="noreferrer"
               style={{ display: "inline-block", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900, textDecoration: "none" }}>
               下载 MP4
             </a>

@@ -350,6 +350,9 @@ function AIGallerySection() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [selectedItem, setSelectedItem] = useState<typeof AI_GALLERY_ITEMS[0] | null>(null);
   const [activeFilter, setActiveFilter] = useState<string>("all");
+  const [recreateLoadingId, setRecreateLoadingId] = useState<string>("");
+  const [recreateStepMap, setRecreateStepMap] = useState<Record<string, string>>({});
+  const [recreateResultMap, setRecreateResultMap] = useState<Record<string, string>>({});
 
   const filteredItems = activeFilter === "all"
     ? AI_GALLERY_ITEMS
@@ -364,6 +367,150 @@ function AIGallerySection() {
     const amount = 320;
     scrollRef.current.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
   };
+
+  async function handleRecreate(item: (typeof AI_GALLERY_ITEMS)[0], mode: "storyboard" | "video", closeModal = false) {
+    const recreateKey = `${item.id}:${mode}`;
+    const fallbackPath =
+      mode === "storyboard"
+        ? `/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`
+        : `/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`;
+
+    try {
+      setRecreateLoadingId(recreateKey);
+      setRecreateStepMap((prev) => ({ ...prev, [recreateKey]: "starting" }));
+      const inputType = mode === "storyboard" ? "script" : "image";
+      const workflowType = mode === "storyboard" ? "showcase-script-workflow" : "showcase-image-workflow";
+      const modelPreference = item.engine.includes("Kling") ? "kling-v1.5" : "nano-banana-pro";
+
+      const payload: Record<string, any> = {
+        prompt: item.desc || item.title,
+        workflowType,
+        modelPreference,
+        actorId: undefined,
+        musicStyle: undefined,
+      };
+      if (inputType === "image") payload.imageUrl = item.imageUrl;
+
+      const resp = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          op: "workflowTest",
+          sourceType: "showcase",
+          inputType,
+          payload,
+        }),
+      });
+
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || !data?.workflow) {
+        throw new Error(data?.error || `workflow_request_failed_${resp.status}`);
+      }
+
+      const workflowId = String(data.workflow.workflowId || "");
+      let latestWorkflow = data.workflow;
+      setRecreateStepMap((prev) => ({
+        ...prev,
+        [recreateKey]: `${latestWorkflow.status}:${latestWorkflow.currentStep}`,
+      }));
+      setRecreateResultMap((prev) => ({
+        ...prev,
+        [recreateKey]: formatWorkflowStatus(latestWorkflow),
+      }));
+
+      if (workflowId) {
+        for (let i = 0; i < 120; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          const statusResp = await fetch(`/api/jobs?op=workflowStatus&id=${encodeURIComponent(workflowId)}`);
+          const statusData = await statusResp.json().catch(() => null);
+          if (statusResp.ok && statusData?.workflow) {
+            latestWorkflow = statusData.workflow;
+            setRecreateStepMap((prev) => ({
+              ...prev,
+              [recreateKey]: `${latestWorkflow.status}:${latestWorkflow.currentStep}`,
+            }));
+            setRecreateResultMap((prev) => ({
+              ...prev,
+              [recreateKey]: formatWorkflowStatus(latestWorkflow),
+            }));
+            const wfStatus = String(latestWorkflow.status || "");
+            if (wfStatus === "done" || wfStatus === "failed") {
+              break;
+            }
+          }
+        }
+      }
+
+      const workflow = latestWorkflow;
+      const qs = new URLSearchParams({
+        style: item.style,
+        engine: item.engine,
+        workflowId: String(workflow.workflowId || ""),
+        workflowStatus: String(workflow.status || ""),
+        workflowStep: String(workflow.currentStep || ""),
+        workflowVideoUrl: String(workflow?.outputs?.finalVideoUrl || workflow?.outputs?.videoUrl || ""),
+        workflowFinalVideoUrl: String(workflow?.outputs?.finalVideoUrl || ""),
+        workflowScript: String(workflow?.outputs?.script || ""),
+        workflowStoryboard: JSON.stringify(workflow?.outputs?.storyboard || []),
+      });
+
+      if (closeModal) setSelectedItem(null);
+      navigate(`${mode === "storyboard" ? "/storyboard" : "/vfx"}?${qs.toString()}`);
+      toast.success("已创建 Showcase Workflow");
+    } catch (error: any) {
+      if (closeModal) setSelectedItem(null);
+      toast.error("Workflow 接入失败，已回退原流程");
+      navigate(fallbackPath);
+      console.error("showcase recreate workflow failed:", error);
+    } finally {
+      setRecreateLoadingId("");
+      setRecreateStepMap((prev) => {
+        const next = { ...prev };
+        delete next[recreateKey];
+        return next;
+      });
+      setRecreateResultMap((prev) => {
+        const next = { ...prev };
+        delete next[recreateKey];
+        return next;
+      });
+    }
+  }
+
+  function formatWorkflowStatus(workflow: any): string {
+    const status = String(workflow?.status || "-");
+    const step = String(workflow?.currentStep || "-");
+
+    const scriptProvider = String(workflow?.outputs?.scriptProvider || "-");
+    const scriptModel = String(workflow?.outputs?.scriptModel || "-");
+    const scriptFallback = String(Boolean(workflow?.outputs?.scriptIsFallback));
+    const scriptError = String(workflow?.outputs?.scriptErrorMessage || "");
+
+    const imageProvider = String(workflow?.outputs?.imageProvider || "-");
+    const imageModel = String(workflow?.outputs?.imageModel || "-");
+    const imageFallback = String(Boolean(workflow?.outputs?.imageIsFallback));
+    const imageError = String(workflow?.outputs?.imageErrorMessage || "");
+
+    const videoProvider = String(workflow?.outputs?.videoProvider || "-");
+    const videoModel = String(workflow?.outputs?.videoModel || "-");
+    const videoFallback = String(Boolean(workflow?.outputs?.videoIsFallback));
+    const videoError = String(workflow?.outputs?.videoErrorMessage || "");
+
+    const renderProvider = String(workflow?.outputs?.renderProvider || "-");
+    const renderFallback = String(Boolean(workflow?.outputs?.renderIsFallback));
+    const renderError = String(workflow?.outputs?.renderErrorMessage || "");
+
+    const parts = [
+      `status:${status}`,
+      `step:${step}`,
+      `script ${scriptProvider}/${scriptModel} fallback:${scriptFallback}${scriptError ? ` error:${scriptError}` : ""}`,
+      `image ${imageProvider}/${imageModel} fallback:${imageFallback}${imageError ? ` error:${imageError}` : ""}`,
+      `video ${videoProvider}/${videoModel} fallback:${videoFallback}${videoError ? ` error:${videoError}` : ""}`,
+      `render ${renderProvider} fallback:${renderFallback}${renderError ? ` error:${renderError}` : ""}`,
+    ];
+
+    return parts.join(" | ");
+  }
 
   return (
     <section className="mb-12">
@@ -455,18 +602,30 @@ function AIGallerySection() {
                 {/* Hover overlay with action buttons */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3 gap-2">
                   <p className="text-xs text-white/90 line-clamp-1 mb-1">{item.desc}</p>
+                  {recreateResultMap[`${item.id}:storyboard`] ? (
+                    <div className="text-[10px] text-white/90">{recreateResultMap[`${item.id}:storyboard`]}</div>
+                  ) : null}
+                  {recreateResultMap[`${item.id}:video`] ? (
+                    <div className="text-[10px] text-white/90">{recreateResultMap[`${item.id}:video`]}</div>
+                  ) : null}
                   <div className="flex gap-1.5">
                     <button
-                      onClick={(e) => { e.stopPropagation(); navigate(`/storyboard?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRecreate(item, "storyboard");
+                      }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-primary/90 hover:bg-primary text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Wand2 size={10} /> 用此风格生成分镜
+                      <Wand2 size={10} /> {recreateLoadingId === `${item.id}:storyboard` ? `接入中...${recreateStepMap[`${item.id}:storyboard`] || ""}` : "用此风格生成分镜"}
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); navigate(`/vfx?style=${encodeURIComponent(item.style)}&engine=${encodeURIComponent(item.engine)}`); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRecreate(item, "video");
+                      }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-purple-500/90 hover:bg-purple-500 text-white text-[10px] font-bold transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]"
                     >
-                      <Video size={10} /> 做同款视频
+                      <Video size={10} /> {recreateLoadingId === `${item.id}:video` ? `接入中...${recreateStepMap[`${item.id}:video`] || ""}` : "做同款视频"}
                     </button>
                   </div>
                 </div>
@@ -513,18 +672,28 @@ function AIGallerySection() {
               </div>
               <h3 className="text-lg font-bold mb-1">{selectedItem.title}</h3>
               <p className="text-sm text-muted-foreground mb-4">{selectedItem.desc}</p>
+              {recreateResultMap[`${selectedItem.id}:storyboard`] ? (
+                <p className="text-xs text-muted-foreground mb-2">{recreateResultMap[`${selectedItem.id}:storyboard`]}</p>
+              ) : null}
+              {recreateResultMap[`${selectedItem.id}:video`] ? (
+                <p className="text-xs text-muted-foreground mb-2">{recreateResultMap[`${selectedItem.id}:video`]}</p>
+              ) : null}
               <div className="flex gap-3">
                 <button
-                  onClick={() => { setSelectedItem(null); navigate(`/storyboard?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  onClick={() => {
+                    void handleRecreate(selectedItem, "storyboard", true);
+                  }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-primary/20"
                 >
-                  <Wand2 size={16} /> 用此风格生成分镜
+                  <Wand2 size={16} /> {recreateLoadingId === `${selectedItem.id}:storyboard` ? `接入中...${recreateStepMap[`${selectedItem.id}:storyboard`] || ""}` : "用此风格生成分镜"}
                 </button>
                 <button
-                  onClick={() => { setSelectedItem(null); navigate(`/vfx?style=${encodeURIComponent(selectedItem.style)}&engine=${encodeURIComponent(selectedItem.engine)}`); }}
+                  onClick={() => {
+                    void handleRecreate(selectedItem, "video", true);
+                  }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-purple-600/20"
                 >
-                  <Video size={16} /> 做同款视频
+                  <Video size={16} /> {recreateLoadingId === `${selectedItem.id}:video` ? `接入中...${recreateStepMap[`${selectedItem.id}:video`] || ""}` : "做同款视频"}
                 </button>
               </div>
             </div>

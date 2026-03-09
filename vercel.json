@@ -21,7 +21,7 @@
       "destination": "/api/:path*"
     },
     {
-      "source": "/:path*",
+      "source": "/:path((?!api/|assets/|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]

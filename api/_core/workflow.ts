@@ -1,26 +1,131 @@
-import type { WorkflowTask } from "./types/workflow";
-import { saveWorkflow, updateWorkflow, getWorkflow } from "./store/workflowStore";
-import { routeModel } from "../router/modelRouter";
-import { renderStep } from "./steps/renderStep";
+type WorkflowStep =
+  | "input"
+  | "script"
+  | "storyboard"
+  | "storyboardImages"
+  | "image"
+  | "video"
+  | "music"
+  | "render"
+  | "done"
+  | "error";
 
-export async function startWorkflow(task: WorkflowTask) {
-  saveWorkflow(task);
+type WorkflowStatus = "pending" | "running" | "done" | "failed";
 
-  try {
-    if (task.inputType === "script") {
-      return await runScriptWorkflow(task.workflowId);
-    }
+interface WorkflowOutputs {
+  script?: string;
+  scriptProvider?: string;
+  scriptModel?: string;
+  scriptIsFallback?: boolean;
+  scriptErrorMessage?: string;
+  storyboard?: Array<{
+    sceneIndex: number;
+    scenePrompt: string;
+    duration: number;
+    camera: string;
+    mood: string;
+  }>;
+  storyboardImages?: Array<{ sceneIndex: number; images: string[] }>;
+  imageUrls?: string[];
+  imageProvider?: string;
+  imageModel?: string;
+  imageIsFallback?: boolean;
+  imageErrorMessage?: string;
+  videoUrl?: string;
+  videoProvider?: string;
+  videoModel?: string;
+  videoIsFallback?: boolean;
+  videoErrorMessage?: string;
+  renderProvider?: string;
+  renderIsFallback?: boolean;
+  renderErrorMessage?: string;
+  finalVideoUrl?: string;
+}
 
-    if (task.inputType === "image") {
-      return await runImageWorkflow(task.workflowId);
-    }
+export interface WorkflowTask {
+  workflowId: string;
+  sourceType: "remix" | "showcase" | "direct" | "workflow";
+  inputType: "script" | "image";
+  currentStep: WorkflowStep;
+  status: WorkflowStatus;
+  payload: Record<string, any>;
+  outputs: WorkflowOutputs;
+  createdAt: number;
+  updatedAt: number;
+}
 
-    throw new Error("unknown workflow inputType");
-  } catch (error) {
+const store = new Map<string, WorkflowTask>();
+
+export function saveWorkflow(task: WorkflowTask) {
+  store.set(task.workflowId, task);
+}
+
+export function getWorkflow(workflowId: string) {
+  return store.get(workflowId);
+}
+
+function updateWorkflow(workflowId: string, patch: Partial<WorkflowTask>) {
+  const current = store.get(workflowId);
+  if (!current) return undefined;
+  const next: WorkflowTask = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
+    outputs: {
+      ...current.outputs,
+      ...(patch.outputs || {}),
+    },
+  };
+  store.set(workflowId, next);
+  return next;
+}
+
+function routeModel(type: "script" | "image" | "video" | "music") {
+  switch (type) {
+    case "script":
+      return { provider: "google", model: "gemini-3.1" };
+    case "image":
+      return { provider: "fal", model: "fal-ai/nano-banana-2" };
+    case "video":
+      return { provider: "kling", model: "kling-video" };
+    default:
+      return { provider: "suno", model: "suno" };
+  }
+}
+
+function renderStep(task: WorkflowTask) {
+  if (!task.outputs.videoUrl) {
     updateWorkflow(task.workflowId, {
       status: "failed",
       currentStep: "error",
+      outputs: {
+        renderProvider: "workflow-render",
+        renderIsFallback: true,
+        renderErrorMessage: "videoUrl is required before render",
+      },
     });
+    throw new Error("videoUrl is required before render");
+  }
+
+  updateWorkflow(task.workflowId, {
+    currentStep: "render",
+    outputs: {
+      finalVideoUrl: task.outputs.videoUrl,
+      renderProvider: "workflow-render",
+      renderIsFallback: false,
+      renderErrorMessage: undefined,
+    },
+  });
+}
+
+export async function startWorkflow(task: WorkflowTask) {
+  saveWorkflow(task);
+  try {
+    if (task.inputType === "script") return await runScriptWorkflow(task.workflowId);
+    if (task.inputType === "image") return await runImageWorkflow(task.workflowId);
+    throw new Error("unknown workflow inputType");
+  } catch (error) {
+    updateWorkflow(task.workflowId, { status: "failed", currentStep: "error" });
     throw error;
   }
 }
@@ -29,29 +134,17 @@ async function runScriptWorkflow(workflowId: string) {
   const task = getWorkflow(workflowId);
   if (!task) throw new Error("workflow not found");
 
-  updateWorkflow(workflowId, {
-    status: "running",
-    currentStep: "script",
-  });
-
+  updateWorkflow(workflowId, { status: "running", currentStep: "script" });
   const scriptRoute = routeModel("script");
   const prompt = String(task.payload?.prompt || task.payload?.text || "").trim();
-  if (!prompt) {
-    throw new Error("missing payload.prompt");
-  }
+  if (!prompt) throw new Error("missing payload.prompt");
 
   let scriptText = "";
   let scriptIsFallback = false;
   let scriptErrorMessage: string | undefined;
   try {
-    const scriptResp = await callWorkflowModelApi({
-      op: "scriptGenerate",
-      prompt,
-      model: scriptRoute.model,
-    });
-    if (!scriptResp.ok || !scriptResp.script) {
-      throw new Error(scriptResp.error || "scriptGenerate failed");
-    }
+    const scriptResp = await callWorkflowModelApi({ op: "scriptGenerate", prompt, model: scriptRoute.model });
+    if (!scriptResp.ok || !scriptResp.script) throw new Error(scriptResp.error || "scriptGenerate failed");
     scriptText = String(scriptResp.script);
   } catch (error) {
     scriptIsFallback = true;
@@ -60,7 +153,6 @@ async function runScriptWorkflow(workflowId: string) {
   }
 
   const storyboard = buildStoryboardFromScript(scriptText, prompt);
-
   updateWorkflow(workflowId, {
     currentStep: "storyboard",
     outputs: {
@@ -89,14 +181,8 @@ async function runScriptWorkflow(workflowId: string) {
   let videoIsFallback = true;
   let videoErrorMessage: string | undefined;
   try {
-    const videoResp = await callWorkflowModelApi({
-      op: "klingT2V",
-      prompt: scriptText,
-      model: videoRoute.model,
-    });
-    if (!videoResp.ok || !videoResp.videoUrl) {
-      throw new Error(videoResp.error || "klingT2V failed");
-    }
+    const videoResp = await callWorkflowModelApi({ op: "klingT2V", prompt: scriptText, model: videoRoute.model });
+    if (!videoResp.ok || !videoResp.videoUrl) throw new Error(videoResp.error || "klingT2V failed");
     videoUrl = String(videoResp.videoUrl);
     videoIsFallback = false;
   } catch (error) {
@@ -118,33 +204,18 @@ async function runScriptWorkflow(workflowId: string) {
   if (!beforeRender) throw new Error("workflow not found");
   renderStep(beforeRender);
 
-  updateWorkflow(workflowId, {
-    status: "done",
-    currentStep: "done",
-  });
-
+  updateWorkflow(workflowId, { status: "done", currentStep: "done" });
   return getWorkflow(workflowId);
 }
 
 async function runImageWorkflow(workflowId: string) {
   const task = getWorkflow(workflowId);
   if (!task) throw new Error("workflow not found");
-
   const prompt = typeof task.payload?.prompt === "string" ? task.payload.prompt.trim() : "";
   const originalImageUrl = typeof task.payload?.imageUrl === "string" ? task.payload.imageUrl.trim() : "";
-  if (!prompt && !originalImageUrl) {
-    updateWorkflow(workflowId, {
-      status: "failed",
-      currentStep: "error",
-    });
-    throw new Error("missing payload.prompt and payload.imageUrl");
-  }
+  if (!prompt && !originalImageUrl) throw new Error("missing payload.prompt and payload.imageUrl");
 
-  updateWorkflow(workflowId, {
-    status: "running",
-    currentStep: "image",
-  });
-
+  updateWorkflow(workflowId, { status: "running", currentStep: "image" });
   const imageRoute = routeModel("image");
   let preparedImageUrl = "";
   let imageUrls: string[] = [];
@@ -153,12 +224,7 @@ async function runImageWorkflow(workflowId: string) {
 
   if (prompt) {
     try {
-      const imageResp = await callWorkflowModelApi({
-        op: "bananaGenerate",
-        prompt,
-        numImages: 1,
-        aspectRatio: "auto",
-      });
+      const imageResp = await callWorkflowModelApi({ op: "bananaGenerate", prompt, numImages: 1, aspectRatio: "auto" });
       if (!imageResp.ok || !Array.isArray(imageResp.imageUrls) || !imageResp.imageUrls[0]) {
         throw new Error(imageResp.error || "bananaGenerate failed");
       }
@@ -171,16 +237,6 @@ async function runImageWorkflow(workflowId: string) {
         imageUrls = [originalImageUrl];
         imageIsFallback = true;
       } else {
-        updateWorkflow(workflowId, {
-          status: "failed",
-          currentStep: "error",
-          outputs: {
-            imageProvider: imageRoute.provider,
-            imageModel: imageRoute.model,
-            imageIsFallback: true,
-            imageErrorMessage,
-          },
-        });
         throw error;
       }
     }
@@ -191,14 +247,6 @@ async function runImageWorkflow(workflowId: string) {
     imageErrorMessage = "payload.prompt is missing, use payload.imageUrl as fallback";
   }
 
-  if (!preparedImageUrl) {
-    updateWorkflow(workflowId, {
-      status: "failed",
-      currentStep: "error",
-    });
-    throw new Error("no image available for kling i2v");
-  }
-
   updateWorkflow(workflowId, {
     outputs: {
       imageUrls,
@@ -207,11 +255,6 @@ async function runImageWorkflow(workflowId: string) {
       imageIsFallback,
       imageErrorMessage,
     },
-  });
-
-  updateWorkflow(workflowId, {
-    status: "running",
-    currentStep: "video",
   });
 
   const videoRoute = routeModel("video");
@@ -225,9 +268,7 @@ async function runImageWorkflow(workflowId: string) {
       prompt,
       model: videoRoute.model,
     });
-    if (!videoResp.ok || !videoResp.videoUrl) {
-      throw new Error(videoResp.error || "klingI2V failed");
-    }
+    if (!videoResp.ok || !videoResp.videoUrl) throw new Error(videoResp.error || "klingI2V failed");
     videoUrl = String(videoResp.videoUrl);
     videoIsFallback = false;
   } catch (error) {
@@ -248,22 +289,12 @@ async function runImageWorkflow(workflowId: string) {
   const beforeRender = getWorkflow(workflowId);
   if (!beforeRender) throw new Error("workflow not found");
   renderStep(beforeRender);
-
-  updateWorkflow(workflowId, {
-    status: "done",
-    currentStep: "done",
-  });
-
+  updateWorkflow(workflowId, { status: "done", currentStep: "done" });
   return getWorkflow(workflowId);
 }
 
 function buildStoryboardFromScript(script: string, fallbackPrompt: string) {
-  const segments = script
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 6);
-
+  const segments = script.split(/\n+/).map((line) => line.trim()).filter(Boolean).slice(0, 6);
   const source = segments.length > 0 ? segments : [fallbackPrompt];
   return source.map((line, idx) => ({
     sceneIndex: idx + 1,
@@ -282,16 +313,12 @@ function buildFallbackScript(prompt: string): string {
   ].join("\n");
 }
 
-async function generateStoryboardImages(
-  storyboard: Array<{ sceneIndex: number; scenePrompt: string }>
-): Promise<Array<{ sceneIndex: number; images: string[] }>> {
+async function generateStoryboardImages(storyboard: Array<{ sceneIndex: number; scenePrompt: string }>) {
   const results: Array<{ sceneIndex: number; images: string[] }> = [];
-
   for (const scene of storyboard) {
     const sceneIndex = Number(scene?.sceneIndex || 0);
     const scenePrompt = String(scene?.scenePrompt || "").trim();
     if (!sceneIndex || !scenePrompt) continue;
-
     try {
       const imageResp = await callWorkflowModelApi({
         op: "bananaGenerate",
@@ -300,38 +327,20 @@ async function generateStoryboardImages(
         aspectRatio: "16:9",
       });
       const images = Array.isArray(imageResp?.imageUrls)
-        ? imageResp.imageUrls
-            .map((url: any) => String(url))
-            .filter(Boolean)
-            .slice(0, 2)
+        ? imageResp.imageUrls.map((url: any) => String(url)).filter(Boolean).slice(0, 2)
         : [];
-
-      results.push({
-        sceneIndex,
-        images,
-      });
+      results.push({ sceneIndex, images });
     } catch {
-      results.push({
-        sceneIndex,
-        images: [],
-      });
+      results.push({ sceneIndex, images: [] });
     }
   }
-
   return results;
 }
 
 async function callWorkflowModelApi(payload: Record<string, any>) {
-  const mod = await import("../../api/jobs");
+  const mod = await import("../jobs.js");
   const handler = mod.default;
-
-  const req: any = {
-    method: "POST",
-    body: payload,
-    query: {},
-    headers: { "content-type": "application/json" },
-  };
-
+  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
   const res: any = {
     statusCode: 200,
     body: undefined,
@@ -344,10 +353,6 @@ async function callWorkflowModelApi(payload: Record<string, any>) {
       return this;
     },
   };
-
   await handler(req, res);
-  return {
-    statusCode: res.statusCode,
-    ...(res.body || {}),
-  };
+  return { statusCode: res.statusCode, ...(res.body || {}) };
 }

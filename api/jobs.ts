@@ -1,6 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 import sharp from "sharp";
+import { env, getEnvStatus } from "./_core/env.js";
+import { startWorkflow, getWorkflow, type WorkflowTask } from "./_core/workflow.js";
+import { generateImageWithBanana } from "./_core/banana.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -111,11 +115,103 @@ async function buildFirstFrameJpeg(input: Buffer, prompt: string, klingBase: str
   return { jpeg, bytes: jpeg.length };
 }
 
+async function createKlingI2VTask(
+  klingBase: string,
+  videoToken: string,
+  imageToken: string,
+  imageUrl: string,
+  prompt: string,
+  model: string
+) {
+  const buf = await fetchImageBuffer(imageUrl);
+  const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
+  const r = await fetchJson(`${klingBase}/v1/videos/image2video`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      model_name: model || "kling-v2-6",
+      image: first.jpeg.toString("base64"),
+      prompt,
+      duration: "5",
+      mode: "pro",
+      sound: "off",
+    }),
+  });
+  return { taskId: r.json?.data?.task_id || null, raw: r };
+}
+
+async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const r = await fetchJson(`${klingBase}/v1/videos/image2video/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+    });
+    const taskStatus = s(r.json?.data?.task_status || "");
+    if (taskStatus === "succeed") {
+      const videoUrl = r.json?.data?.task_result?.videos?.[0]?.url || null;
+      if (videoUrl) return { ok: true, videoUrl };
+      return { ok: false, error: "kling succeeded without video url" };
+    }
+    if (taskStatus === "failed") {
+      return { ok: false, error: s(r.json?.data?.task_status_msg || "kling generation failed") };
+    }
+  }
+  return { ok: false, error: "kling generation timeout" };
+}
+
+async function createKlingT2VTask(klingBase: string, videoToken: string, prompt: string, model: string) {
+  const r = await fetchJson(`${klingBase}/v1/videos/text2video`, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      model_name: model || "kling-v2-6",
+      prompt,
+      duration: "5",
+      mode: "pro",
+      aspect_ratio: "16:9",
+      sound: "off",
+    }),
+  });
+  return { taskId: r.json?.data?.task_id || null, raw: r };
+}
+
+async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+  const pollMs = 5_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    const r = await fetchJson(`${klingBase}/v1/videos/text2video/${encodeURIComponent(taskId)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+    });
+    const taskStatus = s(r.json?.data?.task_status || "");
+    if (taskStatus === "succeed") {
+      const videoUrl = r.json?.data?.task_result?.videos?.[0]?.url || null;
+      if (videoUrl) return { ok: true, videoUrl };
+      return { ok: false, error: "kling succeeded without video url" };
+    }
+    if (taskStatus === "failed") {
+      return { ok: false, error: s(r.json?.data?.task_status_msg || "kling generation failed") };
+    }
+  }
+  return { ok: false, error: "kling generation timeout" };
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? getBody(req) : {};
-    const op = s(q.op || b.op).trim();
+    const queryOp =
+      s(q.op).trim() ||
+      s(q.OP).trim() ||
+      s(q.Op).trim() ||
+      s(q.oP).trim();
+    const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
+    const op = queryOp || bodyOp;
+    const opNormalized = op.toLowerCase();
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -126,6 +222,176 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const AIM_BASE = (s(process.env.AIMUSIC_BASE_URL) || "https://api.aimusicapi.ai").replace(/\/+$/, "");
     const AIM_KEY  = s(process.env.AIMUSIC_API_KEY || process.env.AIMUSICAPI_KEY).trim();
+
+    if (opNormalized === "envstatus") {
+      if (req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      return res.status(200).json({
+        ok: true,
+        env: getEnvStatus(),
+      });
+    }
+
+    if (op === "workflowStatus") {
+      if (req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const id = s(q.id || b.id).trim();
+      const workflow = getWorkflow(id);
+      if (!workflow) {
+        return res.status(404).json({ ok: false, error: "workflow not found" });
+      }
+      return res.status(200).json({ ok: true, workflow });
+    }
+
+    if (op === "workflowTest") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const sourceType = b.sourceType;
+      const inputType = b.inputType;
+      const payload = b.payload ?? {};
+
+      if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase" && sourceType !== "workflow") {
+        return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase/workflow" });
+      }
+      if (inputType !== "script" && inputType !== "image") {
+        return res.status(400).json({ ok: false, error: "inputType must be script or image" });
+      }
+
+      const now = Date.now();
+      const task: WorkflowTask = {
+        workflowId: randomUUID(),
+        sourceType,
+        inputType,
+        currentStep: "input",
+        status: "pending",
+        payload,
+        outputs: {},
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const workflow = await startWorkflow(task);
+      return res.status(200).json({ ok: true, workflow });
+    }
+
+    if (op === "scriptGenerate") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt = s(b.prompt).trim();
+      const model = s(b.model || "gemini-3.1").trim();
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
+      if (!env.geminiApiKey) return res.status(500).json({ ok: false, error: "GEMINI_API_KEY is not configured" });
+
+      const { GoogleGenAI } = await import("@google/genai");
+      const ai = new GoogleGenAI({ apiKey: env.geminiApiKey });
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text:
+                  "请把下面创意写成可拍摄的短视频脚本（中文，120-220字，包含场景、动作、镜头和情绪节奏）：" +
+                  `\n${prompt}`,
+              },
+            ],
+          },
+        ],
+      });
+
+      const script =
+        response.candidates?.[0]?.content?.parts
+          ?.map((part: any) => part?.text || "")
+          .join("")
+          .trim() || "";
+
+      if (!script) {
+        return res.status(502).json({ ok: false, error: "empty script from gemini" });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        script,
+        provider: "google",
+        model,
+      });
+    }
+
+    if (op === "bananaGenerate" || op === "falImageGenerate" || op === "falImage") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const prompt = s(b.prompt).trim();
+      const numImages = Number(b.numImages || 1);
+      const aspectRatio = s(b.aspectRatio || "auto");
+      if (!prompt) return res.status(400).json({ ok: false, error: "missing prompt" });
+
+      const result = await generateImageWithBanana({ prompt, numImages, aspectRatio });
+      return res.status(200).json({
+        ok: true,
+        ...result,
+        imageUrl: result.imageUrls[0] || null,
+      });
+    }
+
+    if (op === "klingT2V" || op === "klingI2V") {
+      if (req.method !== "POST") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const model = s(b.model || "kling-video").trim();
+      const prompt = s(b.prompt).trim();
+
+      if (!VAK || !VSK) {
+        return res.status(500).json({ ok: false, error: "KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
+      }
+      const videoToken = jwtHS256(VAK, VSK);
+
+      if (op === "klingI2V" && !s(b.imageUrl).trim()) {
+        return res.status(400).json({ ok: false, error: "missing imageUrl" });
+      }
+      if (op === "klingT2V" && !prompt) {
+        return res.status(400).json({ ok: false, error: "missing prompt" });
+      }
+
+      if (op === "klingI2V") {
+        if (!IAK || !ISK) {
+          return res.status(500).json({ ok: false, error: "KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY is not configured" });
+        }
+        const imageToken = jwtHS256(IAK, ISK);
+        const created = await createKlingI2VTask(
+          KLING_BASE,
+          videoToken,
+          imageToken,
+          s(b.imageUrl).trim(),
+          prompt || "Cinematic motion shot with stable camera and rich detail.",
+          model
+        );
+        if (!created.taskId) return res.status(502).json({ ok: false, error: "kling i2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+        const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
+        if (!polled.ok) return res.status(502).json({ ok: false, error: polled.error });
+        return res.status(200).json({ ok: true, videoUrl: polled.videoUrl, provider: "kling", model });
+      }
+
+      const created = await createKlingT2VTask(KLING_BASE, videoToken, prompt, model);
+      if (!created.taskId) {
+        return res.status(502).json({ ok: false, error: "kling t2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+      }
+      const polled = await pollKlingT2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) {
+        return res.status(502).json({ ok: false, error: polled.error });
+      }
+      return res.status(200).json({
+        ok: true,
+        videoUrl: polled.videoUrl,
+        provider: "kling",
+        model,
+      });
+    }
 
     if (op === "aimusicSunoCreate") {
       if (!AIM_KEY) return res.status(500).json({ ok:false, error:"missing_env", detail:"AIMUSIC_API_KEY" });

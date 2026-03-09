@@ -21,8 +21,8 @@ export function routeModel(type: ModelType): ModelRoute {
 
     case "image":
       return {
-        provider:"banana",
-        model:"nano-banana-2"
+        provider:"fal",
+        model:"fal-ai/nano-banana-2"
       }
 
     case "video":

@@ -1,3 +1,5 @@
+import { env } from "./env";
+
 const DEFAULT_KLING_CN_BASE_URL = "https://api-beijing.klingai.com";
 
 const LEGACY_KLING_ENV_KEYS = [
@@ -15,7 +17,8 @@ function isTruthy(value: string | undefined): boolean {
 
 export function warnLegacyKlingEnvIgnored(): void {
   if (warnedLegacyKlingEnv) return;
-  const detected = LEGACY_KLING_ENV_KEYS.filter((key) => isTruthy(process.env[key]));
+  const legacyMap = env.legacyKlingEnv as Record<string, string>;
+  const detected = LEGACY_KLING_ENV_KEYS.filter((key) => isTruthy(legacyMap[key]));
   if (detected.length > 0) {
     console.warn(`[Kling] Legacy Kling env vars detected and ignored: ${detected.join(", ")}`);
     warnedLegacyKlingEnv = true;
@@ -24,10 +27,10 @@ export function warnLegacyKlingEnvIgnored(): void {
 
 function getMissingKlingCnVideoEnvError(): string | null {
   const missing: string[] = [];
-  if (!isTruthy(process.env.KLING_CN_VIDEO_ACCESS_KEY)) {
+  if (!isTruthy(env.klingVideoAccessKey)) {
     missing.push("KLING_CN_VIDEO_ACCESS_KEY");
   }
-  if (!isTruthy(process.env.KLING_CN_VIDEO_SECRET_KEY)) {
+  if (!isTruthy(env.klingVideoSecretKey)) {
     missing.push("KLING_CN_VIDEO_SECRET_KEY");
   }
   if (missing.length === 0) return null;
@@ -37,8 +40,8 @@ function getMissingKlingCnVideoEnvError(): string | null {
 export function getKlingCnConfig(): { baseUrl: string; accessKey: string; secretKey: string } {
   warnLegacyKlingEnvIgnored();
 
-  const envBaseUrl = process.env.KLING_CN_BASE_URL?.trim();
-  const isProduction = process.env.NODE_ENV === "production";
+  const envBaseUrl = env.klingCnBaseUrl;
+  const isProduction = env.nodeEnv === "production";
 
   if (isProduction && !envBaseUrl) {
     throw new Error("Missing KLING_CN_BASE_URL");
@@ -50,8 +53,8 @@ export function getKlingCnConfig(): { baseUrl: string; accessKey: string; secret
     throw new Error(missingEnvError);
   }
 
-  const accessKey = process.env.KLING_CN_VIDEO_ACCESS_KEY!.trim();
-  const secretKey = process.env.KLING_CN_VIDEO_SECRET_KEY!.trim();
+  const accessKey = env.klingVideoAccessKey;
+  const secretKey = env.klingVideoSecretKey;
 
   if (!baseUrl) {
     throw new Error("Missing KLING_CN_BASE_URL");
