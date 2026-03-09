@@ -17,6 +17,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/env-status",
+      "destination": "/api/jobs?op=envStatus"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },
