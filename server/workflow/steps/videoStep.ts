@@ -4,6 +4,38 @@ function sleep(ms:number){
   return new Promise((r)=>setTimeout(r, ms));
 }
 
+function s(v:any){
+  if(v==null) return "";
+  if(Array.isArray(v)) return String(v[0] ?? "");
+  return String(v);
+}
+
+function pickReferenceImages(task:any): string[] {
+  const out = task?.outputs || {};
+  const imgs = out?.storyboardImages || [];
+  const collected:string[] = [];
+  for (const scene of imgs) {
+    const arr = Array.isArray(scene?.images) ? scene.images : [];
+    for (const url of arr) {
+      const u = String(url || "").trim();
+      if (u) collected.push(u);
+      if (collected.length >= 3) return collected;
+    }
+  }
+  const fallback = String(task?.payload?.imageUrl || task?.payload?.referenceImage || "").trim();
+  if (fallback) collected.push(fallback);
+  return collected.slice(0, 3);
+}
+
+function pickPrompt(task:any){
+  return String(
+    task?.payload?.prompt ||
+    task?.outputs?.scriptText ||
+    task?.outputs?.script ||
+    "Cinematic motion based on the reference images, preserve subject consistency, natural camera movement, high realism."
+  ).trim();
+}
+
 function pickBaseUrl(){
   const raw =
     process.env.WORKFLOW_PUBLIC_BASE_URL ||
@@ -17,102 +49,76 @@ function pickBaseUrl(){
   return `https://${v.replace(/\/+$/, "")}`;
 }
 
-function pickReferenceImage(task:any){
-  const storyboardImages = task?.outputs?.storyboardImages || [];
-  const first = storyboardImages?.[0]?.images?.[0];
-  return first || task?.payload?.imageUrl || task?.payload?.referenceImage || "";
-}
-
-function pickPrompt(task:any){
-  return String(
-    task?.payload?.prompt ||
-    task?.outputs?.script?.prompt ||
-    task?.outputs?.scriptText ||
-    task?.outputs?.script ||
-    ""
-  ).trim();
-}
-
 export async function videoStep(task:any){
   task.outputs = task.outputs || {};
-  const referenceImage = pickReferenceImage(task);
-  if (!referenceImage) {
-    throw new Error("missing_reference_image");
-  }
 
   const videoRoute = routeModel("video");
-  const provider = String(videoRoute?.provider || "pro");
-  const model = String(videoRoute?.model || "veo-3.1-generate-001");
-  const baseUrl = pickBaseUrl();
+  const provider = String(videoRoute?.provider || "fal").trim() || "fal";
+  const model = String(videoRoute?.model || "fal-ai/veo3.1/reference-to-video").trim() || "fal-ai/veo3.1/reference-to-video";
+  const imageUrls = pickReferenceImages(task);
+  const prompt = pickPrompt(task);
 
-  const createResp = await fetch(`${baseUrl}/api/jobs`, {
+  if (!imageUrls.length) throw new Error("missing_reference_images");
+  if (!process.env.FAL_KEY) throw new Error("missing_env_FAL_KEY");
+
+  const baseUrl = pickBaseUrl();
+  const createResp = await fetch(`${baseUrl}/api/workflow-model`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type":"application/json" },
     body: JSON.stringify({
-      type: "video",
+      op: "falVeoReferenceVideo",
       provider,
       model,
-      prompt: pickPrompt(task),
-      imageUrl: referenceImage,
-      duration: 8,
-      aspectRatio: "16:9",
-      resolution: "720p"
+      prompt,
+      image_urls: imageUrls,
+      aspect_ratio: "16:9",
+      duration: "8s",
+      resolution: "720p",
+      generate_audio: true,
+      safety_tolerance: "4"
     })
   });
 
-  const createJson:any = await createResp.json().catch(() => ({}));
+  const createJson:any = await createResp.json().catch(()=> ({}));
   if (!createResp.ok) {
-    throw new Error(createJson?.error || createJson?.detail || "video_create_failed");
+    throw new Error(createJson?.error || createJson?.detail || "fal_veo_create_failed");
   }
 
-  let taskId = String(
-    createJson?.taskId ||
-    createJson?.operationName ||
-    createJson?.id ||
+  let requestId = String(createJson?.request_id || createJson?.requestId || createJson?.id || "").trim();
+  let videoUrl = String(
+    createJson?.video?.url ||
+    createJson?.data?.video?.url ||
+    createJson?.result?.video?.url ||
     ""
   ).trim();
 
-  let videoUrl = String(createJson?.videoUrl || "").trim();
+  for (let i = 0; i < 90 && !videoUrl; i++) {
+    if (!requestId) break;
+    await sleep(4000);
 
-  for (let i = 0; i < 120 && !videoUrl; i++) {
-    if (!taskId) break;
-
-    await sleep(5000);
-
-    const statusResp = await fetch(
-      `${baseUrl}/api/jobs?type=video&provider=${encodeURIComponent(provider)}&taskId=${encodeURIComponent(taskId)}`
-    );
-
-    const statusJson:any = await statusResp.json().catch(() => ({}));
-    if (!statusResp.ok) {
-      throw new Error(statusJson?.error || statusJson?.detail || "video_status_failed");
-    }
+    const st = await fetch(`${baseUrl}/api/workflow-model?op=falVeoReferenceVideoStatus&requestId=${encodeURIComponent(requestId)}&model=${encodeURIComponent(model)}`);
+    const j:any = await st.json().catch(()=> ({}));
+    if (!st.ok) throw new Error(j?.error || j?.detail || "fal_veo_status_failed");
 
     videoUrl = String(
-      statusJson?.videoUrl ||
-      statusJson?.url ||
+      j?.video?.url ||
+      j?.data?.video?.url ||
+      j?.result?.video?.url ||
+      j?.response?.video?.url ||
       ""
     ).trim();
 
-    const state = String(
-      statusJson?.taskStatus ||
-      statusJson?.status ||
-      statusJson?.state ||
-      ""
-    ).toLowerCase();
-
-    if (state in {"failed":1,"error":1,"cancelled":1,"canceled":1}) {
-      throw new Error(statusJson?.error || state || "video_failed");
+    const status = String(j?.status || j?.state || "").toUpperCase();
+    if (status in { "FAILED":1, "ERROR":1, "CANCELLED":1, "CANCELED":1 }) {
+      throw new Error(j?.error || status || "fal_veo_failed");
     }
   }
 
-  if (!videoUrl) {
-    throw new Error("video_timeout");
-  }
+  if (!videoUrl) throw new Error("fal_veo_timeout");
 
   task.outputs.videoProvider = provider;
   task.outputs.videoModel = model;
   task.outputs.videoUrl = videoUrl;
-  task.currentStep = "video";
+  task.outputs.finalVideoUrl = videoUrl;
   return task;
 }
