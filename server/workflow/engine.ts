@@ -1,5 +1,5 @@
 import { getWorkflow, updateWorkflow } from "./store/workflowStore";
-import { bananaGenerate } from "../models/banana";
+import { generateStoryboardSceneImages } from "../models/banana";
 import { videoStep } from "./steps/videoStep";
 
 async function generateStoryboardImages(storyboard:any[]) {
@@ -7,11 +7,9 @@ async function generateStoryboardImages(storyboard:any[]) {
 
   for (const scene of storyboard || []) {
     try {
-      const r = await bananaGenerate({
-        prompt: scene.scenePrompt || scene.prompt || "",
-        width: 1536,
-        height: 864,
-        num_images: 2
+      const r = await generateStoryboardSceneImages({
+        scenePrompt: scene.scenePrompt || scene.prompt || "",
+        count: 2,
       });
 
       const imgs = Array.isArray(r?.imageUrls) ? r.imageUrls : [];

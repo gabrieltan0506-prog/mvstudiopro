@@ -22,7 +22,7 @@ export function createApp() {
   app.get("/api/diag/providers", async (req, res) => {
     let effectiveTier: UserTier | "unknown" = "unknown";
     try {
-      const ctx = await createContext({ req: req as any, res: res as any });
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (ctx.user?.id) {
         effectiveTier = await resolveUserTier(ctx.user.id, ctx.user.role === "admin");
       }

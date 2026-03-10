@@ -714,6 +714,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             statusUrl,
             { method: "GET", headers: { Authorization: `Key ${falKey}` } },
           );
+          if (!statusResp.ok) {
+            const updated = {
+              ...workflow,
+              updatedAt: Date.now(),
+              outputs: {
+                ...outputs,
+                videoProvider: "fal",
+                videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoTaskStatus: "POLLING_ERROR",
+                videoRetryable: true,
+                videoErrorMessage: s(statusResp.json?.error || statusResp.rawText || `fal_status_http_${statusResp.status}`).trim(),
+              },
+            } as any;
+            saveCoreWorkflow(updated);
+            return res.status(200).json({
+              ok: true,
+              workflow: normalizeWorkflowForResponse(id ? getCoreWorkflow(id) : null, id),
+            });
+          }
           const taskStatus = s(
             statusResp.json?.status ||
             statusResp.json?.state ||
@@ -1157,9 +1176,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       if (!workflow.outputs?.storyboardConfirmed) {
         return res.status(400).json(fail("storyboard must be confirmed before video generation"));
-      }
-      if (!VAK || !VSK || !IAK || !ISK) {
-        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
       }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];

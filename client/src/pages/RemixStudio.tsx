@@ -530,18 +530,7 @@ function MusicPanel() {
   );
 }
 
-export default 
-function toggleCharacter(id){
-  setSelectedCharacter(id)
-}
-
-
-
-function RemixStudio(props){
-
-  const [selectedCharacter,setSelectedCharacter] = useState(null)
-
-
+export default function RemixStudio() {
   const [refImageUrl, setRefImageUrl] = useState<string>("");
 
   return (

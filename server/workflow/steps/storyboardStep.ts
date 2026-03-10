@@ -16,7 +16,7 @@ export async function storyboardStep(input: {
   });
   void storyboardPromptContext;
 
-  const sceneRegex = /(?:^|\n)\s*(?:scene|场景)\s*(\d+)\s*[:：]\s*(.+?)(?=\n\s*(?:scene|场景)\s*\d+\s*[:：]|$)/gis;
+  const sceneRegex = /(?:^|\n)\s*(?:scene|场景)\s*(\d+)\s*[:：]([\s\S]*?)(?=\n\s*(?:scene|场景)\s*\d+\s*[:：]|$)/gi;
   const scenes: StoryboardScene[] = [];
 
   let match: RegExpExecArray | null;

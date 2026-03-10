@@ -1,12 +1,21 @@
 import React from "react";
 
-const cards = [
-  ["可灵工作室", "Kling Studio", "图像 / 视频 / Motion Control / Lip Sync", "10 积分起", false, "/remix"],
-  ["虚拟艺人工坊", "Actor Studio", "上传人物图，生成场景与视频", "15 积分起", false, "/actor"],
-  ["分镜工作流", "Storyboard Workflow", "脚本 → 分镜 → 图像 → 视频", "20 积分起", false, "/workflow"],
-  ["AI 音乐工坊", "AI Music Studio", "Suno / Udio 配乐生成", "5 积分起", false, "/remix"],
-  ["爆款分析师", "Viral Analyst", "免费试用每日 3 次，付费解锁优化方案", "Pro 功能", true, "/viral"],
-  ["我的创作", "My Creations", "作品、任务、历史记录统一管理", "免费", false, "/my"],
+type ToolCard = {
+  zh: string;
+  en: string;
+  desc: string;
+  price: string;
+  pro: boolean;
+  href: string;
+};
+
+const cards: ToolCard[] = [
+  { zh: "可灵工作室", en: "Kling Studio", desc: "图像 / 视频 / Motion Control / Lip Sync", price: "10 积分起", pro: false, href: "/remix" },
+  { zh: "虚拟艺人工坊", en: "Actor Studio", desc: "上传人物图，生成场景与视频", price: "15 积分起", pro: false, href: "/actor" },
+  { zh: "分镜工作流", en: "Storyboard Workflow", desc: "脚本 → 分镜 → 图像 → 视频", price: "20 积分起", pro: false, href: "/workflow" },
+  { zh: "AI 音乐工坊", en: "AI Music Studio", desc: "Suno / Udio 配乐生成", price: "5 积分起", pro: false, href: "/remix" },
+  { zh: "爆款分析师", en: "Viral Analyst", desc: "免费试用每日 3 次，付费解锁优化方案", price: "Pro 功能", pro: true, href: "/viral" },
+  { zh: "我的创作", en: "My Creations", desc: "作品、任务、历史记录统一管理", price: "免费", pro: false, href: "/my" },
 ];
 
 export default function HomeTools() {
@@ -24,7 +33,7 @@ export default function HomeTools() {
           marginTop: 22,
         }}
       >
-        {cards.map(([zh, en, desc, price, pro, href], idx) => (
+        {cards.map(({ zh, en, desc, price, pro, href }, idx) => (
           <a
             key={zh}
             href={href}

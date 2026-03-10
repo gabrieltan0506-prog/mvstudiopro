@@ -3,7 +3,7 @@ import { fal } from "@fal-ai/client";
 export async function veoReferenceVideo(input: {
   prompt: string;
   reference_images: string[];
-  duration?: number;
+  duration?: "8s" | "9s" | "10s" | number;
   resolution?: "720p" | "1080p";
 }): Promise<{ videoUrl: string }> {
   const prompt = String(input.prompt || "").trim();
@@ -23,10 +23,10 @@ export async function veoReferenceVideo(input: {
   const result = (await fal.subscribe("fal-ai/veo3.1/reference-to-video", {
     input: {
       prompt,
-      reference_images: referenceImages,
-      duration: Number(input.duration || 0) || 5,
+      image_urls: referenceImages,
+      duration: "8s",
       resolution: input.resolution || "720p",
-    },
+    } as any,
     logs: false,
   })) as any;
 
