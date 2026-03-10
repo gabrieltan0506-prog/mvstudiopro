@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const NAV_ITEMS = [
+  { label: "节点工作流", href: "/workflow-nodes" },
   { label: "视频PK评分", href: "/analysis" },
   { label: "可灵工作室", href: "/remix" },
   { label: "虚拟偶像", href: "/idol" },
