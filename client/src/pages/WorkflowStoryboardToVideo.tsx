@@ -91,6 +91,15 @@ async function postJson(op: string, body: Record<string, any>) {
 }
 
 export default function WorkflowStoryboardToVideo() {
+  const [debugInfo, setDebugInfo] = useState<any>(null);
+  function showDebug(data: any) {
+    try {
+      setDebugInfo(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setDebugInfo(String(data));
+    }
+  }
+
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<any>(null);
   const [stepStates, setStepStates] = useState<Record<MainStepKey, StepState>>(INITIAL_STEP_STATES);
@@ -191,6 +200,7 @@ export default function WorkflowStoryboardToVideo() {
         workflow: workflow || undefined,
       };
       const { httpOk, json } = await postJson(op, payload);
+      showDebug({ step, op, payload, httpOk, json });
       const apiOk = json?.ok === true;
       if (!httpOk || !apiOk) {
         setStepState(step, { loading: false, success: false, error: extractErrorText(json) });
@@ -219,6 +229,7 @@ export default function WorkflowStoryboardToVideo() {
         workflow: workflow || undefined,
       };
       const { httpOk, json } = await postJson(op, payload);
+      showDebug({ stepKey, op, payload, httpOk, json });
       if (!httpOk || json?.ok !== true) {
         setAuxError(extractErrorText(json));
         return;
@@ -586,6 +597,12 @@ export default function WorkflowStoryboardToVideo() {
           <div>status: <code>{String(workflow.status || "-")}</code></div>
           <div>lockedCharacters: <code>{JSON.stringify(outputs.lockedCharacters || [])}</code></div>
           <div>referenceImages: <code>{JSON.stringify(outputs.referenceImages || [])}</code></div>
+        </div>
+      ) : null}
+      {debugInfo ? (
+        <div style={{ marginTop: 20, padding: 12, border: "1px solid #444", borderRadius: 6, background: "#111", color: "#0f0", fontSize: 12, whiteSpace: "pre-wrap" }}>
+          DEBUG RESPONSE:
+          {`\n`}{debugInfo}
         </div>
       ) : null}
     </div>
