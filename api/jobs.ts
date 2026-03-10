@@ -743,7 +743,14 @@ if (opNormalized === "workflowGenerateMusic") {
             statusResp.json?.request_status,
           ).trim().toUpperCase();
 
-          if (taskStatus === "COMPLETED") {
+          const canTryReadResult =
+            taskStatus === "COMPLETED" ||
+            taskStatus === "IN_QUEUE" ||
+            taskStatus === "IN_PROGRESS" ||
+            taskStatus === "RUNNING" ||
+            taskStatus === "PROCESSING";
+
+          if (canTryReadResult) {
             const resultResp = await fetchJson(
               `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}`,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
@@ -754,22 +761,51 @@ if (opNormalized === "workflowGenerateMusic") {
             );
             const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
 
-            const updated = {
-              ...workflow,
-              status: videoUrl ? "done" : "failed",
-              currentStep: videoUrl ? "done" : "error",
-              updatedAt: Date.now(),
-              outputs: {
-                ...outputs,
-                videoProvider: "fal",
-                videoModel: "fal-ai/veo3.1/reference-to-video",
-                videoTaskStatus: taskStatus,
-                videoUrl: videoUrl || undefined,
-                finalVideoUrl: videoUrl || undefined,
-                videoErrorMessage: videoUrl ? "" : "fal_veo_missing_video_url",
-              },
-            } as any;
-            saveCoreWorkflow(updated);
+            if (videoUrl) {
+              const updated = {
+                ...workflow,
+                status: "done",
+                currentStep: "done",
+                updatedAt: Date.now(),
+                outputs: {
+                  ...outputs,
+                  videoProvider: "fal",
+                  videoModel: "fal-ai/veo3.1/reference-to-video",
+                  videoTaskStatus: "COMPLETED",
+                  videoUrl,
+                  finalVideoUrl: videoUrl,
+                  videoErrorMessage: "",
+                },
+              } as any;
+              saveCoreWorkflow(updated);
+            } else if (taskStatus === "COMPLETED") {
+              const updated = {
+                ...workflow,
+                status: "failed",
+                currentStep: "error",
+                updatedAt: Date.now(),
+                outputs: {
+                  ...outputs,
+                  videoProvider: "fal",
+                  videoModel: "fal-ai/veo3.1/reference-to-video",
+                  videoTaskStatus: taskStatus,
+                  videoErrorMessage: "fal_veo_missing_video_url",
+                },
+              } as any;
+              saveCoreWorkflow(updated);
+            } else if (taskStatus) {
+              const updated = {
+                ...workflow,
+                updatedAt: Date.now(),
+                outputs: {
+                  ...outputs,
+                  videoProvider: "fal",
+                  videoModel: "fal-ai/veo3.1/reference-to-video",
+                  videoTaskStatus: taskStatus,
+                },
+              } as any;
+              saveCoreWorkflow(updated);
+            }
           } else if (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED" || taskStatus === "CANCELED") {
             const updated = {
               ...workflow,
@@ -782,18 +818,6 @@ if (opNormalized === "workflowGenerateMusic") {
                 videoModel: "fal-ai/veo3.1/reference-to-video",
                 videoTaskStatus: taskStatus,
                 videoErrorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
-              },
-            } as any;
-            saveCoreWorkflow(updated);
-          } else if (taskStatus) {
-            const updated = {
-              ...workflow,
-              updatedAt: Date.now(),
-              outputs: {
-                ...outputs,
-                videoProvider: "fal",
-                videoModel: "fal-ai/veo3.1/reference-to-video",
-                videoTaskStatus: taskStatus,
               },
             } as any;
             saveCoreWorkflow(updated);
