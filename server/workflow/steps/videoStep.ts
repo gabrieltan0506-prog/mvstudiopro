@@ -1,54 +1,118 @@
-import { updateWorkflow, getWorkflow } from "../store/workflowStore"
+import { routeModel } from "../../router/modelRouter";
 
-export async function runVideoStep(workflowId:string){
-
-const wf=getWorkflow(workflowId)
-if(!wf) throw new Error("workflow_not_found")
-
-const storyboardImages=wf.outputs?.storyboardImages
-if(!storyboardImages?.length) throw new Error("storyboard_images_missing")
-
-const referenceImage=storyboardImages[0]?.images?.[0]
-if(!referenceImage) throw new Error("reference_image_missing")
-
-updateWorkflow(workflowId,{status:"running",currentStep:"video"})
-
-const key=process.env.FAL_API_KEY||process.env.FAL_KEY
-if(!key) throw new Error("fal_key_missing")
-
-const res=await fetch("https://fal.run/fal-ai/veo3.1/reference-to-video",{
-method:"POST",
-headers:{
-"Authorization":`Key ${key}`,
-"Content-Type":"application/json"
-},
-body:JSON.stringify({
-reference_image:referenceImage,
-prompt:wf.payload.prompt,
-duration:8,
-resolution:"720p"
-})
-})
-
-if(!res.ok){
-const t=await res.text()
-throw new Error("veo_reference_failed:"+t)
+function sleep(ms:number){
+  return new Promise((r)=>setTimeout(r, ms));
 }
 
-const data=await res.json()
-const videoUrl=data?.video?.url||data?.url
-if(!videoUrl) throw new Error("video_url_missing")
-
-updateWorkflow(workflowId,{
-status:"done",
-currentStep:"done",
-outputs:{
-...wf.outputs,
-videoProvider:"fal",
-videoModel:"veo3.1-reference",
-finalVideoUrl:videoUrl
+function pickBaseUrl(){
+  const raw =
+    process.env.WORKFLOW_PUBLIC_BASE_URL ||
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+    process.env.VERCEL_BRANCH_URL ||
+    process.env.VERCEL_URL ||
+    "";
+  const v = String(raw || "").trim();
+  if (!v) return "https://www.mvstudiopro.com";
+  if (v.startsWith("http://") || v.startsWith("https://")) return v.replace(/\/+$/, "");
+  return `https://${v.replace(/\/+$/, "")}`;
 }
-})
 
-return getWorkflow(workflowId)
+function pickReferenceImage(task:any){
+  const storyboardImages = task?.outputs?.storyboardImages || [];
+  const first = storyboardImages?.[0]?.images?.[0];
+  return first || task?.payload?.imageUrl || task?.payload?.referenceImage || "";
+}
+
+function pickPrompt(task:any){
+  return String(
+    task?.payload?.prompt ||
+    task?.outputs?.script?.prompt ||
+    task?.outputs?.scriptText ||
+    task?.outputs?.script ||
+    ""
+  ).trim();
+}
+
+export async function videoStep(task:any){
+  task.outputs = task.outputs || {};
+  const referenceImage = pickReferenceImage(task);
+  if (!referenceImage) {
+    throw new Error("missing_reference_image");
+  }
+
+  const videoRoute = routeModel("video");
+  const provider = String(videoRoute?.provider || "pro");
+  const model = String(videoRoute?.model || "veo-3.1-generate-001");
+  const baseUrl = pickBaseUrl();
+
+  const createResp = await fetch(`${baseUrl}/api/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "video",
+      provider,
+      model,
+      prompt: pickPrompt(task),
+      imageUrl: referenceImage,
+      duration: 8,
+      aspectRatio: "16:9",
+      resolution: "720p"
+    })
+  });
+
+  const createJson:any = await createResp.json().catch(() => ({}));
+  if (!createResp.ok) {
+    throw new Error(createJson?.error || createJson?.detail || "video_create_failed");
+  }
+
+  let taskId = String(
+    createJson?.taskId ||
+    createJson?.operationName ||
+    createJson?.id ||
+    ""
+  ).trim();
+
+  let videoUrl = String(createJson?.videoUrl || "").trim();
+
+  for (let i = 0; i < 120 && !videoUrl; i++) {
+    if (!taskId) break;
+
+    await sleep(5000);
+
+    const statusResp = await fetch(
+      `${baseUrl}/api/jobs?type=video&provider=${encodeURIComponent(provider)}&taskId=${encodeURIComponent(taskId)}`
+    );
+
+    const statusJson:any = await statusResp.json().catch(() => ({}));
+    if (!statusResp.ok) {
+      throw new Error(statusJson?.error || statusJson?.detail || "video_status_failed");
+    }
+
+    videoUrl = String(
+      statusJson?.videoUrl ||
+      statusJson?.url ||
+      ""
+    ).trim();
+
+    const state = String(
+      statusJson?.taskStatus ||
+      statusJson?.status ||
+      statusJson?.state ||
+      ""
+    ).toLowerCase();
+
+    if (state in {"failed":1,"error":1,"cancelled":1,"canceled":1}) {
+      throw new Error(statusJson?.error || state || "video_failed");
+    }
+  }
+
+  if (!videoUrl) {
+    throw new Error("video_timeout");
+  }
+
+  task.outputs.videoProvider = provider;
+  task.outputs.videoModel = model;
+  task.outputs.videoUrl = videoUrl;
+  task.currentStep = "video";
+  return task;
 }
