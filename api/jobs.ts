@@ -1203,9 +1203,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
-      const requestedDuration = s(b.duration || "8s").trim().toLowerCase();
+      const rawSceneDuration = s(
+        b.sceneDuration ||
+        workflow.outputs?.sceneDuration ||
+        workflow.payload?.sceneDuration ||
+        "",
+      ).trim();
+      const normalizedSceneDuration = rawSceneDuration
+        ? `${rawSceneDuration.replace(/[^0-9]/g, "")}s`
+        : "";
+      const requestedDuration = s(b.duration || normalizedSceneDuration || "8s").trim().toLowerCase();
       const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
-      const duration = ["5s", "6s", "7s", "8s", "9s", "10s"].includes(requestedDuration)
+      const duration = ["8s", "9s", "10s"].includes(requestedDuration)
         ? requestedDuration
         : "8s";
       const resolution = ["540p", "720p", "1080p"].includes(requestedResolution)
@@ -1257,6 +1266,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           finalVideoUrl: undefined,
           videoDuration: duration,
           videoResolution: resolution,
+          videoAudioEnabled: false,
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
           referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
           videoErrorMessage: "",
@@ -1346,15 +1356,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         rawTask = polled.json ?? polled.rawText;
         const data = polled.json?.data || polled.json || {};
         const status = s(data.status || data.task_status || data.state || polled.json?.status || polled.json?.state || "").toLowerCase();
+        const dataList = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+        const first = dataList[0] || {};
         musicUrl =
           s(data.audio_url).trim() ||
           s(data.music_url).trim() ||
+          s(data.audioUrl).trim() ||
+          s(data.musicUrl).trim() ||
+          s(data.video_url).trim() ||
           s(data.url).trim() ||
           s(data.result?.audio_url).trim() ||
           s(data.result?.music_url).trim() ||
+          s(data.result?.audioUrl).trim() ||
+          s(data.result?.musicUrl).trim() ||
           s(data.data?.audio_url).trim() ||
           s(data.data?.music_url).trim() ||
-          s(data.data?.url).trim();
+          s(data.data?.audioUrl).trim() ||
+          s(data.data?.musicUrl).trim() ||
+          s(data.data?.url).trim() ||
+          s(first?.audio_url).trim() ||
+          s(first?.music_url).trim() ||
+          s(first?.audioUrl).trim() ||
+          s(first?.musicUrl).trim() ||
+          s(first?.url).trim();
         if (musicUrl) break;
         if (status === "failed" || status === "error") {
           return res.status(502).json(fail("udio_task_failed", "Udio task failed", { raw: rawTask }));
@@ -1372,6 +1396,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           musicDuration,
           musicTaskId: taskId,
           musicUrl,
+          musicErrorMessage: "",
         },
       });
       return res.status(200).json({ ok: true, workflow: next });

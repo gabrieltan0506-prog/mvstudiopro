@@ -108,6 +108,7 @@ export default function WorkflowStoryboardToVideo() {
   const [targetWords, setTargetWords] = useState("900");
   const [targetScenes, setTargetScenes] = useState("6");
   const [sceneDuration, setSceneDuration] = useState("5");
+  const [videoDuration, setVideoDuration] = useState("8s");
 
   const [scriptText, setScriptText] = useState("");
   const [storyboard, setStoryboard] = useState<Scene[]>([]);
@@ -160,6 +161,11 @@ export default function WorkflowStoryboardToVideo() {
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
   }, [workflow]);
+
+  useEffect(() => {
+    if (!workflow?.outputs?.musicUrl) return;
+    setStepState("generateMusic", { error: "" });
+  }, [workflow?.outputs?.musicUrl]);
 
   const outputs = workflow?.outputs || {};
   const scenes: Scene[] = Array.isArray(storyboard) ? storyboard : [];
@@ -491,8 +497,17 @@ export default function WorkflowStoryboardToVideo() {
 
       <div style={sectionStyle()}>
         <h2 style={{ marginTop: 0 }}>F. Video</h2>
+        <div style={{ marginBottom: 8 }}>
+          <input
+            value={videoDuration}
+            onChange={(e) => setVideoDuration(e.target.value)}
+            placeholder="Video Duration (8s / 9s / 10s)"
+            style={{ width: "100%", maxWidth: 360, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+          />
+          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>最少 8 秒，支持 8s / 9s / 10s</div>
+        </div>
         <button
-          onClick={() => runMainStep("generateVideo", "workflowGenerateVideo", { workflowId })}
+          onClick={() => runMainStep("generateVideo", "workflowGenerateVideo", { workflowId, duration: videoDuration })}
           disabled={anyMainStepLoading || !workflowId || !storyboardConfirmed}
           style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: storyboardConfirmed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)", color: "white", fontWeight: 800 }}
         >
@@ -502,9 +517,10 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateVideo.success ? <div style={statusTextStyle("#84f5a0")}>Video generated successfully.</div> : null}
         {stepStates.generateVideo.error ? <div style={statusTextStyle("#ff8080")}>Video Error: {stepStates.generateVideo.error}</div> : null}
         <div style={{ marginTop: 8 }}>videoProvider: fal <code>{String(outputs.videoProvider || "")}</code></div>
-        <div>videoModel:
-// Veo3.1 still unstable
-videoStatus: 'not_ready', fal-ai/veo3.1/reference-to-video <code>{String(outputs.videoModel || "")}</code></div>
+        <div>videoModel: <code>{String(outputs.videoModel || "")}</code></div>
+        <div>videoDuration: <code>{String(outputs.videoDuration || "")}</code></div>
+        <div>videoResolution: <code>{String(outputs.videoResolution || "")}</code></div>
+        <div>videoAudioEnabled: <code>{String(outputs.videoAudioEnabled ?? "")}</code></div>
         <div>videoUrl: <code>{String(outputs.videoUrl || "")}</code></div>
         <div>finalVideoUrl:
 
