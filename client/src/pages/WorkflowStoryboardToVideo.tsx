@@ -591,7 +591,6 @@ whiteSpace:"pre-wrap"
         {stepStates.generateMusic.error ? <div style={statusTextStyle("#ff8080")}>Music Error: {stepStates.generateMusic.error}</div> : null}
         <div style={{ marginTop: 8 }}>musicProvider: <code>{String(outputs.musicProvider || "")}</code></div>
         <div>
-生成音樂之後自動生成播放器，看看有沒有代碼的錯誤或是其他問題
       {workflow?.outputs?.musicUrl ? (
         <div style={{ marginTop: 12, padding: 12, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, background: "rgba(255,255,255,0.04)" }}>
           <div style={{ fontWeight: 800, marginBottom: 8 }}>音乐播放器</div>
