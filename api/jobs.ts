@@ -614,6 +614,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
+
+if (opNormalized === "workflowGenerateMusic") {
+
+  const workflowId = s(q.workflowId || b.workflowId).trim()
+  if(!workflowId) return res.status(400).json({ok:false,error:"missing_workflowId"})
+
+  const wf = getWorkflow(workflowId)
+  if(!wf) return res.status(404).json({ok:false,error:"workflow_not_found"})
+
+  const outputs = wf.outputs || {}
+  const prompt = String(b.musicPrompt || outputs.musicPrompt || "cinematic trailer soundtrack")
+
+  const create = await fetch("/api/jobs?op=aimusicUdioCreate",{
+    method:"POST",
+    headers:{ "Content-Type":"application/json"},
+    body:JSON.stringify({ prompt })
+  })
+
+  const cj = await create.json()
+  const taskId = cj?.taskId
+
+  if(!taskId){
+    return res.status(500).json({ok:false,error:"udio_create_failed"})
+  }
+
+  updateWorkflow(workflowId,{
+    outputs:{
+      ...outputs,
+      musicProvider:"udio",
+      musicTaskId:taskId
+    }
+  })
+
+  return res.json({ok:true,taskId})
+}
+
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
