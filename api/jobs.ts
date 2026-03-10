@@ -1189,7 +1189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           aspect_ratio: "16:9",
           duration: "8s",
           resolution: "720p",
-          generate_audio: true,
+          generate_audio: false,
           safety_tolerance: "4",
         }),
       });
