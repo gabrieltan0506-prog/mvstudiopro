@@ -650,6 +650,9 @@ function fail(error: string, message?: string, extra?: Record<string, any>) {
   };
 }
 
+const WORKFLOW_FAL_QUEUE_TIMEOUT_MS =
+  Number(process.env.WORKFLOW_FAL_QUEUE_TIMEOUT_MS || 15 * 60 * 1000);
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
@@ -695,6 +698,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const outputs: any = workflow.outputs || {};
         const falRequestId = s(outputs.falRequestId).trim();
         const existingVideoUrl = s(outputs.videoUrl).trim();
+        const videoQueuedAt = Number(outputs.videoQueuedAt || 0);
         const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
 
         if (falRequestId && !existingVideoUrl && falKey) {
@@ -739,6 +743,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   videoTaskStatus: "COMPLETED",
                   videoUrl,
                   finalVideoUrl: videoUrl,
+                  videoRetryable: false,
                   videoErrorMessage: "",
                 },
               } as any;
@@ -754,7 +759,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   videoProvider: "fal",
                   videoModel: "fal-ai/veo3.1/reference-to-video",
                   videoTaskStatus: taskStatus,
+                  videoRetryable: true,
                   videoErrorMessage: "fal_veo_missing_video_url",
+                },
+              } as any;
+              saveCoreWorkflow(updated);
+            } else if (
+              videoQueuedAt > 0 &&
+              Date.now() - videoQueuedAt > WORKFLOW_FAL_QUEUE_TIMEOUT_MS
+            ) {
+              const updated = {
+                ...workflow,
+                status: "failed",
+                currentStep: "error",
+                updatedAt: Date.now(),
+                outputs: {
+                  ...outputs,
+                  videoProvider: "fal",
+                  videoModel: "fal-ai/veo3.1/reference-to-video",
+                  videoTaskStatus: "TIMEOUT",
+                  videoRetryable: true,
+                  videoErrorMessage: "fal_queue_timeout_retryable",
                 },
               } as any;
               saveCoreWorkflow(updated);
@@ -767,6 +792,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                   videoProvider: "fal",
                   videoModel: "fal-ai/veo3.1/reference-to-video",
                   videoTaskStatus: taskStatus,
+                  videoRetryable: false,
                 },
               } as any;
               saveCoreWorkflow(updated);
@@ -782,6 +808,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 videoProvider: "fal",
                 videoModel: "fal-ai/veo3.1/reference-to-video",
                 videoTaskStatus: taskStatus,
+                videoRetryable: true,
                 videoErrorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
               },
             } as any;
@@ -1224,6 +1251,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
           videoTaskStatus: "IN_QUEUE",
+          videoQueuedAt: Date.now(),
+          videoRetryable: false,
+          videoUrl: undefined,
+          finalVideoUrl: undefined,
           videoDuration: duration,
           videoResolution: resolution,
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
