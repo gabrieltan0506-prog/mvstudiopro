@@ -663,41 +663,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
 
-if (opNormalized === "workflowGenerateMusic") {
-
-  const workflowId = s(q.workflowId || b.workflowId).trim()
-  if(!workflowId) return res.status(400).json({ok:false,error:"missing_workflowId"})
-
-  const wf = getWorkflow(workflowId)
-  if(!wf) return res.status(404).json({ok:false,error:"workflow_not_found"})
-
-  const outputs = wf.outputs || {}
-  const prompt = String(b.musicPrompt || outputs.musicPrompt || "cinematic trailer soundtrack")
-
-  const create = await fetch("/api/jobs?op=aimusicUdioCreate",{
-    method:"POST",
-    headers:{ "Content-Type":"application/json"},
-    body:JSON.stringify({ prompt })
-  })
-
-  const cj = await create.json()
-  const taskId = cj?.taskId
-
-  if(!taskId){
-    return res.status(500).json({ok:false,error:"udio_create_failed"})
-  }
-
-  updateWorkflow(workflowId,{
-    outputs:{
-      ...outputs,
-      musicProvider:"udio",
-      musicTaskId:taskId
-    }
-  })
-
-  return res.json({ok:true,taskId})
-}
-
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -1313,47 +1278,56 @@ if (opNormalized === "workflowGenerateMusic") {
         bpm: musicBpm,
       });
 
-      const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
+      const created = await fetchJson(`${AIM_BASE}/api/v1/producer/create`, {
         method: "POST",
         headers: { Authorization: `Bearer ${AIM_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }),
+        body: JSON.stringify({
+          task_type: "create_music",
+          sound: prompt,
+          make_instrumental: true,
+          mv: s(b.mv || "FUZZ-2.0").trim() || "FUZZ-2.0",
+        }),
       });
-      if (!created.ok) return res.status(502).json(fail("suno_create_failed", "Suno create request failed", { raw: created.json ?? created.rawText }));
+      if (!created.ok) return res.status(502).json(fail("udio_create_failed", "Udio create request failed", { raw: created.json ?? created.rawText }));
       const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId).trim();
-      if (!taskId) return res.status(502).json(fail("missing_suno_task_id", "Suno task id is missing", { raw: created.json ?? created.rawText }));
+      if (!taskId) return res.status(502).json(fail("missing_udio_task_id", "Udio task id is missing", { raw: created.json ?? created.rawText }));
 
       let musicUrl = "";
       let rawTask: any = null;
-      for (let i = 0; i < 24; i += 1) {
+      for (let i = 0; i < 80; i += 1) {
         await sleep(3000);
-        const polled = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`, {
+        const polled = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`, {
           method: "GET",
           headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
         });
         rawTask = polled.json ?? polled.rawText;
-        const data = polled.json?.data || {};
-        const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
+        const data = polled.json?.data || polled.json || {};
+        const status = s(data.status || data.task_status || data.state || polled.json?.status || polled.json?.state || "").toLowerCase();
         musicUrl =
           s(data.audio_url).trim() ||
           s(data.music_url).trim() ||
           s(data.url).trim() ||
           s(data.result?.audio_url).trim() ||
-          s(data.result?.music_url).trim();
+          s(data.result?.music_url).trim() ||
+          s(data.data?.audio_url).trim() ||
+          s(data.data?.music_url).trim() ||
+          s(data.data?.url).trim();
         if (musicUrl) break;
         if (status === "failed" || status === "error") {
-          return res.status(502).json(fail("suno_task_failed", "Suno task failed", { raw: rawTask }));
+          return res.status(502).json(fail("udio_task_failed", "Udio task failed", { raw: rawTask }));
         }
       }
-      if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
+      if (!musicUrl) return res.status(502).json(fail("udio_task_timeout_or_missing_music_url", "Udio task timeout or missing music url", { raw: rawTask }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
         outputs: {
-          musicProvider: "suno",
+          musicProvider: "udio",
           musicPrompt: rawPrompt,
           musicMood,
           musicBpm,
           musicDuration,
+          musicTaskId: taskId,
           musicUrl,
         },
       });
