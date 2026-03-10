@@ -697,13 +697,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (workflow) {
         const outputs: any = workflow.outputs || {};
         const falRequestId = s(outputs.falRequestId).trim();
+        const savedStatusUrl = s(outputs.falStatusUrl).trim();
+        const savedResponseUrl = s(outputs.falResponseUrl).trim();
         const existingVideoUrl = s(outputs.videoUrl).trim();
         const videoQueuedAt = Number(outputs.videoQueuedAt || 0);
         const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
 
         if (falRequestId && !existingVideoUrl && falKey) {
+          const statusUrl =
+            savedStatusUrl ||
+            `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(falRequestId)}/status`;
+          const responseUrl =
+            savedResponseUrl ||
+            `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(falRequestId)}`;
           const statusResp = await fetchJson(
-            `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}/status`,
+            statusUrl,
             { method: "GET", headers: { Authorization: `Key ${falKey}` } },
           );
           const taskStatus = s(
@@ -721,11 +729,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           if (canTryReadResult) {
             const resultResp = await fetchJson(
-              `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}`,
+              responseUrl,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const responseResp = await fetchJson(
-              `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}/response`,
+              `${responseUrl}/response`,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
@@ -1238,6 +1246,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }),
       });
       const requestId = s(createResp.json?.request_id || createResp.json?.requestId || createResp.json?.id).trim();
+      const statusUrl = s(createResp.json?.status_url).trim();
+      const responseUrl = s(createResp.json?.response_url).trim();
       if (!createResp.ok || !requestId) {
         const message = s(createResp.json?.detail || createResp.json?.error || createResp.rawText || "fal_veo_create_failed").trim();
         const failed = saveWorkflowPatch(workflow, {
@@ -1257,6 +1267,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: "running",
         outputs: {
           falRequestId: requestId,
+          falStatusUrl: statusUrl,
+          falResponseUrl: responseUrl,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
           videoTaskStatus: "IN_QUEUE",
