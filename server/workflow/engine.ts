@@ -1,143 +1,109 @@
+import { getWorkflow, updateWorkflow } from "./store/workflowStore"
+import { routeModel } from "../router/modelRouter"
+import { bananaGenerate } from "../models/banana"
 
-import { v4 as uuidv4 } from "uuid"
-import { generateScript } from "./steps/scriptStep"
-import { generateStoryboard } from "./steps/storyboardStep"
-import { generateStoryboardImages } from "./steps/storyboardImagesStep"
-import { generateVideo } from "./steps/videoStep"
-import { renderVideo } from "./steps/renderStep"
-import { generateMusic } from "../models/music"
-import { generateVoice } from "../models/tts"
+async function generateStoryboardImages(storyboard:any[]) {
+  const results:any[] = []
 
-export async function runWorkflow(payload:any){
+  for (const scene of storyboard) {
+    try {
+      const r = await bananaGenerate({
+        prompt: scene.scenePrompt,
+        width:1536,
+        height:864,
+        num_images:2
+      })
 
-const workflowId = uuidv4()
+      const imgs = r?.imageUrls || []
 
-const workflow:any = {
-workflowId,
-status:"running",
-currentStep:"script",
-payload,
-outputs:{}
+      results.push({
+        sceneIndex:scene.sceneIndex,
+        images:imgs
+      })
+
+    } catch(e:any) {
+
+      results.push({
+        sceneIndex:scene.sceneIndex,
+        images:[],
+        error:e?.message || "banana_error"
+      })
+    }
+  }
+
+  return results
 }
 
-try{
+export async function continueWorkflow(workflowId:string){
 
-/* SCRIPT */
+  const wf = getWorkflow(workflowId)
 
-workflow.currentStep="script"
+  if(!wf) throw new Error("workflow_not_found")
 
-const script = await generateScript({
-prompt:payload.prompt,
-targetWords:payload.targetWords,
-targetScenes:payload.targetScenes
-})
+  const storyboard = wf.outputs?.storyboard || []
 
-workflow.outputs.script = script.text
-workflow.outputs.scriptProvider="google"
-workflow.outputs.scriptModel="gemini-2.5-pro"
+  updateWorkflow(workflowId,{
+    currentStep:"storyboardImages"
+  })
 
+  const storyboardImages = await generateStoryboardImages(storyboard)
 
-/* STORYBOARD */
+  updateWorkflow(workflowId,{
+    outputs:{
+      ...wf.outputs,
+      storyboardImages
+    }
+  })
 
-workflow.currentStep="storyboard"
+  const referenceImage =
+    storyboardImages?.[0]?.images?.[0] || wf.payload?.imageUrl || null
 
-const storyboard = await generateStoryboard({
-script:script.text,
-targetScenes:payload.targetScenes,
-sceneDuration:payload.sceneDuration
-})
+  updateWorkflow(workflowId,{
+    currentStep:"video"
+  })
 
-workflow.outputs.storyboard = storyboard
+  const videoRoute = routeModel("video")
 
+  let videoUrl = null
+  let videoError = null
 
-/* STORYBOARD IMAGES */
+  try{
 
-workflow.currentStep="storyboardImages"
+    if(referenceImage){
 
-const storyboardImages = await generateStoryboardImages({
-scenes:storyboard,
-referenceImages:payload.referenceImages || []
-})
+      const res = await fetch("/api/workflow-model",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json"},
+        body:JSON.stringify({
+          op:"veoReferenceVideo",
+          referenceImage,
+          prompt:wf.payload?.prompt || "",
+          duration:8,
+          resolution:"720p"
+        })
+      })
 
-workflow.outputs.storyboardImages = storyboardImages
+      const j = await res.json()
 
+      videoUrl = j?.videoUrl || null
+    }
 
-/* CHARACTER LOCK */
+  }catch(e:any){
+    videoError = e?.message
+  }
 
-const referenceImages =
-payload.referenceImages ||
-(storyboardImages[0]?.images?.slice(0,2) || [])
+  updateWorkflow(workflowId,{
+    outputs:{
+      ...getWorkflow(workflowId)?.outputs,
+      videoUrl,
+      finalVideoUrl:videoUrl,
+      videoProvider:videoRoute.provider,
+      videoModel:videoRoute.model,
+      videoErrorMessage:videoError
+    },
+    currentStep:"done",
+    status:"done"
+  })
 
-workflow.outputs.lockedCharacters = referenceImages
-
-
-/* VIDEO */
-
-workflow.currentStep="video"
-
-const video = await generateVideo({
-scenes:storyboard,
-referenceImages
-})
-
-workflow.outputs.videoProvider="fal"
-workflow.outputs.videoModel="veo3.1-reference"
-workflow.outputs.videoUrl=video.url
-
-
-/* MUSIC */
-
-workflow.currentStep="music"
-
-const music = await generateMusic({
-prompt:payload.prompt,
-duration:payload.targetScenes * payload.sceneDuration
-})
-
-workflow.outputs.musicUrl = music.url
-
-
-/* VOICE */
-
-if(payload.dialogue){
-
-workflow.currentStep="voice"
-
-const voice = await generateVoice({
-text:payload.dialogue
-})
-
-workflow.outputs.voiceUrl = voice.url
-
+  return getWorkflow(workflowId)
 }
-
-
-/* RENDER */
-
-workflow.currentStep="render"
-
-const finalVideo = await renderVideo({
-videoUrl:workflow.outputs.videoUrl,
-musicUrl:workflow.outputs.musicUrl,
-voiceUrl:workflow.outputs.voiceUrl
-})
-
-workflow.outputs.finalVideoUrl = finalVideo.url
-
-
-workflow.status="done"
-workflow.currentStep="done"
-
-return { ok:true, workflow }
-
-}catch(e:any){
-
-workflow.status="failed"
-workflow.error=e.message
-
-return { ok:false, workflow }
-
-}
-
-}
-
