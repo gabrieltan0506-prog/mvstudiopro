@@ -1176,6 +1176,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
+      const requestedDuration = s(b.duration || "8s").trim().toLowerCase();
+      const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
+      const duration = ["5s", "6s", "7s", "8s", "9s", "10s"].includes(requestedDuration)
+        ? requestedDuration
+        : "8s";
+      const resolution = ["540p", "720p", "1080p"].includes(requestedResolution)
+        ? requestedResolution
+        : "720p";
 
       const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
         method: "POST",
@@ -1187,8 +1195,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           prompt,
           image_urls: imageUrls,
           aspect_ratio: "16:9",
-          duration: "8s",
-          resolution: "720p",
+          duration,
+          resolution,
           generate_audio: false,
           safety_tolerance: "4",
         }),
@@ -1216,6 +1224,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
           videoTaskStatus: "IN_QUEUE",
+          videoDuration: duration,
+          videoResolution: resolution,
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
           referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
           videoErrorMessage: "",
@@ -1229,6 +1239,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         provider: "fal",
         model: "fal-ai/veo3.1/reference-to-video",
         taskStatus: "IN_QUEUE",
+        duration,
+        resolution,
       });
     }
 
