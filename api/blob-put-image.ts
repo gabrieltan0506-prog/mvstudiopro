@@ -28,7 +28,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large" });
 
     // Your store is private; keep it private.
-    const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "private", contentType: mime });
+    const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "public",
+      token: process.env.MVSP_READ_WRITE_TOKEN, contentType: mime });
     return res.status(200).json({ ok: true, imageUrl: `${blob.url}?download=1`, blobUrl: blob.url });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: "server_error", message: e?.message || String(e) });
