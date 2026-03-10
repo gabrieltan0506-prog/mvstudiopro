@@ -1,3 +1,23 @@
+
+
+// sunoPollingFix
+async function pollSuno(taskId){
+
+  for(let i=0;i<60;i++){
+
+    const r = await fetch(`/api/jobs?op=aimusicSunoTask&taskId=${taskId}`)
+    const j = await r.json()
+
+    if(j?.music_url){
+      return j.music_url
+    }
+
+    await new Promise(r=>setTimeout(r,3000))
+  }
+
+  throw new Error("suno_poll_timeout")
+}
+
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";

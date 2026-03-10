@@ -502,7 +502,9 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateVideo.success ? <div style={statusTextStyle("#84f5a0")}>Video generated successfully.</div> : null}
         {stepStates.generateVideo.error ? <div style={statusTextStyle("#ff8080")}>Video Error: {stepStates.generateVideo.error}</div> : null}
         <div style={{ marginTop: 8 }}>videoProvider: fal <code>{String(outputs.videoProvider || "")}</code></div>
-        <div>videoModel: fal-ai/veo3.1/reference-to-video <code>{String(outputs.videoModel || "")}</code></div>
+        <div>videoModel:
+// Veo3.1 still unstable
+videoStatus: 'not_ready', fal-ai/veo3.1/reference-to-video <code>{String(outputs.videoModel || "")}</code></div>
         <div>videoUrl: <code>{String(outputs.videoUrl || "")}</code></div>
         <div>finalVideoUrl:
 
