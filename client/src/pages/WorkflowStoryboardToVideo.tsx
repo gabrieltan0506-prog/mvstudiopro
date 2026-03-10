@@ -504,7 +504,24 @@ export default function WorkflowStoryboardToVideo() {
         <div style={{ marginTop: 8 }}>videoProvider: fal <code>{String(outputs.videoProvider || "")}</code></div>
         <div>videoModel: fal-ai/veo3.1/reference-to-video <code>{String(outputs.videoModel || "")}</code></div>
         <div>videoUrl: <code>{String(outputs.videoUrl || "")}</code></div>
-        <div>finalVideoUrl: <code>{String(outputs.finalVideoUrl || "")}</code></div>
+        <div>finalVideoUrl:
+
+
+<div style={{
+marginTop:20,
+padding:12,
+border:"1px solid #444",
+borderRadius:6,
+background:"#111",
+color:"#0f0",
+fontSize:12,
+whiteSpace:"pre-wrap"
+}}>
+<b>DEBUG WORKFLOW STATE</b>
+{JSON.stringify(workflow,null,2)}
+</div>
+
+ <code>{String(outputs.finalVideoUrl || "")}</code></div>
       </div>
 
       <div style={sectionStyle()}>
@@ -586,7 +603,24 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.renderFinalVideo.loading ? <div style={statusTextStyle("#ffdd99")}>Rendering final video...</div> : null}
         {stepStates.renderFinalVideo.success ? <div style={statusTextStyle("#84f5a0")}>Final video rendered successfully.</div> : null}
         {stepStates.renderFinalVideo.error ? <div style={statusTextStyle("#ff8080")}>Render Error: {stepStates.renderFinalVideo.error}</div> : null}
-        <div style={{ marginTop: 8 }}>finalVideoUrl: <code>{String(outputs.finalVideoUrl || "")}</code></div>
+        <div style={{ marginTop: 8 }}>finalVideoUrl:
+
+
+<div style={{
+marginTop:20,
+padding:12,
+border:"1px solid #444",
+borderRadius:6,
+background:"#111",
+color:"#0f0",
+fontSize:12,
+whiteSpace:"pre-wrap"
+}}>
+<b>DEBUG WORKFLOW STATE</b>
+{JSON.stringify(workflow,null,2)}
+</div>
+
+ <code>{String(outputs.finalVideoUrl || "")}</code></div>
         {outputs.finalVideoUrl ? <video controls src={String(outputs.finalVideoUrl)} style={{ width: "100%", marginTop: 8, borderRadius: 8 }} /> : null}
       </div>
 
