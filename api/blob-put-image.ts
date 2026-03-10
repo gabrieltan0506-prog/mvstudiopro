@@ -30,7 +30,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Your store is private; keep it private.
     const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "public",
       token: process.env.MVSP_READ_WRITE_TOKEN, contentType: mime });
-    return res.status(200).json({ ok: true, imageUrl: `${blob.url}?download=1`, blobUrl: blob.url });
+    return res.status(200).json({ ok: true, imageUrl: blob.url, blobUrl: blob.url });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: "server_error", message: e?.message || String(e) });
   }
