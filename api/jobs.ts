@@ -66,6 +66,34 @@ async function fetchJson(url: string, init: RequestInit) {
   return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0, 4000) };
 }
 
+function extractFalVideoUrl(payload: any): string {
+  const direct = s(
+    payload?.video?.url ||
+    payload?.data?.video?.url ||
+    payload?.result?.video?.url ||
+    payload?.output?.video?.url ||
+    payload?.response?.video?.url ||
+    payload?.response?.data?.video?.url ||
+    payload?.response?.result?.video?.url ||
+    payload?.response?.output?.video?.url ||
+    payload?.response?.video_url ||
+    payload?.video_url ||
+    payload?.url,
+  ).trim();
+  if (direct) return direct;
+
+  const fromArray =
+    payload?.videos?.[0]?.url ||
+    payload?.data?.videos?.[0]?.url ||
+    payload?.result?.videos?.[0]?.url ||
+    payload?.output?.videos?.[0]?.url ||
+    payload?.response?.videos?.[0]?.url ||
+    payload?.response?.data?.videos?.[0]?.url ||
+    payload?.response?.result?.videos?.[0]?.url ||
+    payload?.response?.output?.videos?.[0]?.url;
+  return s(fromArray).trim();
+}
+
 async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
   const url = s(imageUrl).trim();
   if (!url) throw new Error("missing_image_url");
@@ -702,25 +730,29 @@ if (opNormalized === "workflowGenerateMusic") {
         const outputs: any = workflow.outputs || {};
         const falRequestId = s(outputs.falRequestId).trim();
         const existingVideoUrl = s(outputs.videoUrl).trim();
-        const falKey = s(process.env.FAL_KEY).trim();
+        const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
 
         if (falRequestId && !existingVideoUrl && falKey) {
           const statusResp = await fetchJson(
             `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}/status`,
             { method: "GET", headers: { Authorization: `Key ${falKey}` } },
           );
-          const taskStatus = s(statusResp.json?.status || statusResp.json?.state).trim().toUpperCase();
+          const taskStatus = s(
+            statusResp.json?.status ||
+            statusResp.json?.state ||
+            statusResp.json?.request_status,
+          ).trim().toUpperCase();
 
           if (taskStatus === "COMPLETED") {
             const resultResp = await fetchJson(
               `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}`,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
-            const videoUrl = s(
-              resultResp.json?.video?.url ||
-              resultResp.json?.data?.video?.url ||
-              resultResp.json?.result?.video?.url,
-            ).trim();
+            const responseResp = await fetchJson(
+              `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}/response`,
+              { method: "GET", headers: { Authorization: `Key ${falKey}` } },
+            );
+            const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
 
             const updated = {
               ...workflow,
@@ -731,6 +763,7 @@ if (opNormalized === "workflowGenerateMusic") {
                 ...outputs,
                 videoProvider: "fal",
                 videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoTaskStatus: taskStatus,
                 videoUrl: videoUrl || undefined,
                 finalVideoUrl: videoUrl || undefined,
                 videoErrorMessage: videoUrl ? "" : "fal_veo_missing_video_url",
@@ -747,7 +780,20 @@ if (opNormalized === "workflowGenerateMusic") {
                 ...outputs,
                 videoProvider: "fal",
                 videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoTaskStatus: taskStatus,
                 videoErrorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
+              },
+            } as any;
+            saveCoreWorkflow(updated);
+          } else if (taskStatus) {
+            const updated = {
+              ...workflow,
+              updatedAt: Date.now(),
+              outputs: {
+                ...outputs,
+                videoProvider: "fal",
+                videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoTaskStatus: taskStatus,
               },
             } as any;
             saveCoreWorkflow(updated);
@@ -1139,7 +1185,7 @@ if (opNormalized === "workflowGenerateMusic") {
 
       const fallbackRefs = Array.isArray(workflow.outputs?.referenceImages) ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean) : [];
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
-      const falKey = s(process.env.FAL_KEY).trim();
+      const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
 
       const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
@@ -1180,6 +1226,7 @@ if (opNormalized === "workflowGenerateMusic") {
           falRequestId: requestId,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
+          videoTaskStatus: "IN_QUEUE",
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
           referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
           videoErrorMessage: "",
