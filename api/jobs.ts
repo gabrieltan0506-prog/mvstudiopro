@@ -641,9 +641,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const id = s(q.id || q.workflowId || q.workflow_id || b.id || b.workflowId).trim();
       const workflow = id ? getCoreWorkflow(id) : null;
+
+      if (workflow) {
+        const outputs: any = workflow.outputs || {};
+        const falRequestId = s(outputs.falRequestId).trim();
+        const existingVideoUrl = s(outputs.videoUrl).trim();
+        const falKey = s(process.env.FAL_KEY).trim();
+
+        if (falRequestId && !existingVideoUrl && falKey) {
+          const statusResp = await fetchJson(
+            `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}/status`,
+            { method: "GET", headers: { Authorization: `Key ${falKey}` } },
+          );
+          const taskStatus = s(statusResp.json?.status || statusResp.json?.state).trim().toUpperCase();
+
+          if (taskStatus === "COMPLETED") {
+            const resultResp = await fetchJson(
+              `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(falRequestId)}`,
+              { method: "GET", headers: { Authorization: `Key ${falKey}` } },
+            );
+            const videoUrl = s(
+              resultResp.json?.video?.url ||
+              resultResp.json?.data?.video?.url ||
+              resultResp.json?.result?.video?.url,
+            ).trim();
+
+            const updated = {
+              ...workflow,
+              status: videoUrl ? "done" : "failed",
+              currentStep: videoUrl ? "done" : "error",
+              updatedAt: Date.now(),
+              outputs: {
+                ...outputs,
+                videoProvider: "fal",
+                videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoUrl: videoUrl || undefined,
+                finalVideoUrl: videoUrl || undefined,
+                videoErrorMessage: videoUrl ? "" : "fal_veo_missing_video_url",
+              },
+            } as any;
+            saveCoreWorkflow(updated);
+          } else if (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED" || taskStatus === "CANCELED") {
+            const updated = {
+              ...workflow,
+              status: "failed",
+              currentStep: "error",
+              updatedAt: Date.now(),
+              outputs: {
+                ...outputs,
+                videoProvider: "fal",
+                videoModel: "fal-ai/veo3.1/reference-to-video",
+                videoErrorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
+              },
+            } as any;
+            saveCoreWorkflow(updated);
+          }
+        }
+      }
+
       return res.status(200).json({
         ok: true,
-        workflow: normalizeWorkflowForResponse(workflow, id),
+        workflow: normalizeWorkflowForResponse(id ? getCoreWorkflow(id) : null, id),
       });
     }
 
@@ -1023,34 +1081,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json(fail("reference image is required before video generation"));
       }
 
-      const videoToken = jwtHS256(VAK, VSK);
-      const imageToken = jwtHS256(IAK, ISK);
-      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
-      const created = await createKlingI2VTask(
-        KLING_BASE,
-        videoToken,
-        imageToken,
-        referenceImageUrl,
-        prompt,
-        model
-      );
-      if (!created.taskId) {
-        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      const fallbackRefs = Array.isArray(workflow.outputs?.referenceImages) ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean) : [];
+      const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
+      const falKey = s(process.env.FAL_KEY).trim();
+      if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
+
+      const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
+        method: "POST",
+        headers: {
+          Authorization: `Key ${falKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt,
+          image_urls: imageUrls,
+          aspect_ratio: "16:9",
+          duration: "8s",
+          resolution: "720p",
+          generate_audio: true,
+          safety_tolerance: "4",
+        }),
+      });
+      const requestId = s(createResp.json?.request_id || createResp.json?.requestId || createResp.json?.id).trim();
+      if (!createResp.ok || !requestId) {
+        const message = s(createResp.json?.detail || createResp.json?.error || createResp.rawText || "fal_veo_create_failed").trim();
+        const failed = saveWorkflowPatch(workflow, {
+          currentStep: "error",
+          status: "failed",
+          outputs: {
+            videoProvider: "fal",
+            videoModel: "fal-ai/veo3.1/reference-to-video",
+            videoErrorMessage: message || "fal_veo_create_failed",
+          },
+        });
+        return res.status(502).json({ ok: false, error: message || "fal_veo_create_failed", workflow: failed });
       }
-      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
-      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "video generation failed")));
-      const next = saveWorkflowPatch(workflow, {
+
+      const queued = saveWorkflowPatch(workflow, {
         currentStep: "video",
+        status: "running",
         outputs: {
-          videoProvider: "kling",
-          videoModel: model,
-          videoUrl: polled.videoUrl,
+          falRequestId: requestId,
+          videoProvider: "fal",
+          videoModel: "fal-ai/veo3.1/reference-to-video",
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
-          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), referenceImageUrl])),
+          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
           videoErrorMessage: "",
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({
+        ok: true,
+        workflow: queued,
+        taskId: requestId,
+        requestId,
+        provider: "fal",
+        model: "fal-ai/veo3.1/reference-to-video",
+        taskStatus: "IN_QUEUE",
+      });
     }
 
     if (opNormalized === "workflowgeneratevoice") {
