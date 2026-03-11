@@ -819,16 +819,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             } else if (taskStatus === "COMPLETED") {
               const updated = {
                 ...workflow,
-                status: "failed",
-                currentStep: "error",
                 updatedAt: Date.now(),
                 outputs: {
                   ...outputs,
                   videoProvider: "fal",
                   videoModel: "fal-ai/veo3.1/reference-to-video",
                   videoTaskStatus: taskStatus,
-                  videoRetryable: true,
-                  videoErrorMessage: "fal_veo_missing_video_url",
+                  videoRetryable: false,
+                  videoErrorMessage: "fal_veo_result_pending",
                 },
               } as any;
               saveCoreWorkflow(updated);
@@ -959,9 +957,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               } else if (taskStatus === "COMPLETED") {
                 nextSceneVideos[idx] = {
                   ...item,
-                  taskStatus: "FAILED",
-                  retryable: true,
-                  errorMessage: "fal_veo_missing_video_url",
+                  taskStatus: "RESULT_PENDING",
+                  retryable: false,
+                  errorMessage: "fal_veo_result_pending",
                   updatedAt: Date.now(),
                 };
                 sceneVideosChanged = true;
@@ -1595,9 +1593,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
 
-      const parsedDuration = Number(s(b.duration || b.sceneDuration || "").replace(/[^0-9]/g, "")) || 0;
-      const fallbackDuration = Number(scene?.duration || 0) === 4 ? "4s" : (Number(scene?.duration || 0) === 6 ? "6s" : "8s");
-      const duration = parsedDuration === 4 ? "4s" : (parsedDuration === 6 ? "6s" : (parsedDuration === 8 ? "8s" : fallbackDuration));
+      const duration = "8s";
       const resolutionInput = s(b.resolution || "720p").trim().toLowerCase();
       const resolution = ["540p", "720p", "1080p"].includes(resolutionInput) ? resolutionInput : "720p";
 
@@ -1737,13 +1733,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         workflow.payload?.sceneDuration ||
         "",
       ).trim();
-      const parsedDuration = Number(rawSceneDuration.replace(/[^0-9]/g, "")) || 0;
-      const fallbackDuration = sceneDurationFromWorkflow === 4 ? "4s" : (sceneDurationFromWorkflow === 6 ? "6s" : "8s");
-      const requestedDuration = parsedDuration === 4 ? "4s" : (parsedDuration === 6 ? "6s" : (parsedDuration === 8 ? "8s" : ""));
       const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
-      const duration = ["4s", "6s", "8s"].includes(requestedDuration)
-        ? requestedDuration
-        : fallbackDuration;
+      const duration = "8s";
       const resolution = ["540p", "720p", "1080p"].includes(requestedResolution)
         ? requestedResolution
         : "720p";
