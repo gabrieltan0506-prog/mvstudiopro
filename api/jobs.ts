@@ -977,6 +977,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (opNormalized === "workflowanalyzeimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+
+      const imageUrl = s(b.imageUrl).trim();
+      if (!imageUrl) return res.status(400).json(fail("imageUrl required"));
+
+      const prompt = `Analyze the image and return JSON:
+{
+"type": "character | scene | mixed",
+"people_count": 0,
+"environment": ""
+}`;
+
+      const r = await callGoogleGateway({
+        op: "geminiVision",
+        prompt,
+        imageUrl,
+      });
+
+      if (r?.ok !== true) {
+        return res.status(502).json(fail("gemini_analyze_failed", s(r?.rawText || r?.json?.error || "").trim() || "gemini_analyze_failed"));
+      }
+
+      const text = extractGoogleText(r.raw);
+      const parsed = jparse(stripJsonFence(text)) || {};
+
+      return res.status(200).json({
+        ok: true,
+        type: s(parsed.type).trim() || "scene",
+        people_count: Number(parsed.people_count || 0) || 0,
+        environment: s(parsed.environment).trim(),
+      });
+    }
+
     if (opNormalized === "workflowtest") {
       if (req.method !== "POST") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -1146,6 +1180,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         results.push({
           sceneIndex: scene.sceneIndex,
           images: (generated.imageUrls || []).slice(0, 2),
+          references: [],
+          prompt: scene.scenePrompt,
+          duration: scene.duration,
+          sceneVideoUrl: "",
+          detectedType: "",
           characterLocked: false,
           referenceCharacterUrl: "",
           backgroundStatus: "not_removed",
@@ -1192,7 +1231,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
-          ? { ...item, images: (generated.imageUrls || []).slice(0, 2), backgroundStatus: item?.backgroundStatus || "not_removed" }
+          ? {
+            ...item,
+            images: (generated.imageUrls || []).slice(0, 2),
+            references: Array.isArray(item?.references) ? item.references : [],
+            prompt: s(targetScene?.scenePrompt).trim() || s(item?.prompt).trim(),
+            duration: Number(targetScene?.duration || 0) || Number(item?.duration || 0) || 8,
+            sceneVideoUrl: s(item?.sceneVideoUrl).trim(),
+            detectedType: s(item?.detectedType).trim(),
+            backgroundStatus: item?.backgroundStatus || "not_removed",
+          }
           : item,
       );
       const next = saveWorkflowPatch(workflow, {
