@@ -1161,12 +1161,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
       }
-      const scenes = scenesInput.map((scene: any, idx: number) =>
-        normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
-      );
+      const rawSelectedImageIndexes =
+        b.selectedImageIndexes && typeof b.selectedImageIndexes === "object" ? b.selectedImageIndexes : {};
+      const rawSceneDurations =
+        b.sceneDurations && typeof b.sceneDurations === "object" ? b.sceneDurations : {};
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const selectedImageUrls: string[] = [];
+
+      const scenes = scenesInput.map((scene: any, idx: number) => {
+        const base = normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5) as any;
+        const sceneIndex = Number(base?.sceneIndex || idx + 1) || (idx + 1);
+        const selectedImageIndex = Math.max(0, Number(rawSelectedImageIndexes?.[sceneIndex] ?? 0) || 0);
+        const requestedDuration = Number(rawSceneDurations?.[sceneIndex] ?? base?.duration ?? 8) || 8;
+        const duration = requestedDuration === 4 ? 4 : (requestedDuration === 6 ? 6 : 8);
+
+        const sceneImageItem = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex) as any;
+        const images = Array.isArray(sceneImageItem?.images) ? sceneImageItem.images : [];
+        const selectedImageUrl = s(
+          scene?.selectedImageUrl ||
+          sceneImageItem?.selectedImageUrl ||
+          images[selectedImageIndex] ||
+          images[0] ||
+          "",
+        ).trim();
+        if (selectedImageUrl) selectedImageUrls.push(selectedImageUrl);
+
+        return {
+          ...base,
+          duration,
+          selectedImageIndex,
+          selectedImageUrl,
+        };
+      });
+
+      const selectedImageIndexes = scenes.reduce((acc: Record<number, number>, scene: any) => {
+        const sceneIndex = Number(scene?.sceneIndex || 0);
+        if (!sceneIndex) return acc;
+        acc[sceneIndex] = Math.max(0, Number(scene?.selectedImageIndex ?? 0) || 0);
+        return acc;
+      }, {});
+      const sceneDurations = scenes.reduce((acc: Record<number, number>, scene: any) => {
+        const sceneIndex = Number(scene?.sceneIndex || 0);
+        if (!sceneIndex) return acc;
+        const d = Number(scene?.duration || 0) || 8;
+        acc[sceneIndex] = d === 4 ? 4 : (d === 6 ? 6 : 8);
+        return acc;
+      }, {});
+
+      const existingReferenceImages = Array.isArray(workflow.outputs?.referenceImages)
+        ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean)
+        : [];
+      const referenceImages = Array.from(new Set([...existingReferenceImages, ...selectedImageUrls]));
+      const referenceCharacterUrl = s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImages[0] || "";
+
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboard",
-        outputs: { storyboard: scenes, storyboardConfirmed: true, storyboardConfirmedAt: Date.now() },
+        outputs: {
+          storyboard: scenes,
+          storyboardConfirmed: true,
+          storyboardConfirmedAt: Date.now(),
+          selectedImageIndexes,
+          sceneDurations,
+          referenceImages,
+          referenceCharacterUrl,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -1203,14 +1261,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const uploadedRef = s(b.referenceImageUrl || b.referenceCharacterUrl || "").trim();
+      const selectedImageIndexesFromOutputs =
+        workflow.outputs?.selectedImageIndexes && typeof workflow.outputs.selectedImageIndexes === "object"
+          ? workflow.outputs.selectedImageIndexes
+          : {};
       const refsFromScenes = storyboardImages
-        .map((item: any) =>
-          s(
+        .map((item: any) => {
+          const sceneIndex = Number(item?.sceneIndex || 0);
+          const pickedIdx = Math.max(0, Number(selectedImageIndexesFromOutputs?.[sceneIndex] ?? 0) || 0);
+          return s(
             item?.characterPngUrl ||
             item?.referenceCharacterUrl ||
-            (Array.isArray(item?.images) ? item.images[0] : ""),
-          ).trim(),
-        )
+            (Array.isArray(item?.images) ? item.images[pickedIdx] || item.images[0] : ""),
+          ).trim();
+        })
         .filter(Boolean);
       const refsFromOutputs = [
         s(workflow.outputs?.characterPngUrl).trim(),
@@ -1227,20 +1291,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
+      const sceneIndexForVideo = Number(b.sceneIndex || 0) || 0;
+      const sceneDurationFromWorkflow = Number(
+        sceneIndexForVideo && Array.isArray(workflow.outputs?.storyboard)
+          ? (workflow.outputs.storyboard.find((x: any) => Number(x?.sceneIndex) === sceneIndexForVideo)?.duration || 0)
+          : (Array.isArray(workflow.outputs?.storyboard) ? (workflow.outputs.storyboard?.[0]?.duration || 0) : 0),
+      ) || 0;
       const rawSceneDuration = s(
+        b.duration ||
         b.sceneDuration ||
         workflow.outputs?.sceneDuration ||
         workflow.payload?.sceneDuration ||
         "",
       ).trim();
-      const normalizedSceneDuration = rawSceneDuration
-        ? `${rawSceneDuration.replace(/[^0-9]/g, "")}s`
-        : "";
-      const requestedDuration = s(b.duration || normalizedSceneDuration || "8s").trim().toLowerCase();
+      const parsedDuration = Number(rawSceneDuration.replace(/[^0-9]/g, "")) || 0;
+      const fallbackDuration = sceneDurationFromWorkflow === 4 ? "4s" : (sceneDurationFromWorkflow === 6 ? "6s" : "8s");
+      const requestedDuration = parsedDuration === 4 ? "4s" : (parsedDuration === 6 ? "6s" : (parsedDuration === 8 ? "8s" : ""));
       const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
-      const duration = ["8s", "9s", "10s"].includes(requestedDuration)
+      const duration = ["4s", "6s", "8s"].includes(requestedDuration)
         ? requestedDuration
-        : "8s";
+        : fallbackDuration;
       const resolution = ["540p", "720p", "1080p"].includes(requestedResolution)
         ? requestedResolution
         : "720p";
