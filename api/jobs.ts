@@ -35,6 +35,7 @@ import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardProm
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
 import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt.js";
 import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
+import { translateToEnglish } from "../server/workflow/utils/translatePrompt.js";
 import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
@@ -993,7 +994,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const results: WorkflowStoryboardImageItem[] = [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
       for (const scene of scenes) {
-        const imagePrompt = buildStoryboardImagePrompt({
+        const imagePromptZh = buildStoryboardImagePrompt({
           scenePrompt: scene.scenePrompt,
           environment: scene.environment,
           character: scene.character,
@@ -1004,6 +1005,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           lockedCharacterPrompt: lockedCharacterPrompt || undefined,
           referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
         });
+        const imagePrompt = await translateToEnglish(imagePromptZh);
         const generated = await generateImageWithBanana({
           prompt: imagePrompt,
           numImages: 2,
@@ -1039,7 +1041,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
-      const imagePrompt = buildStoryboardImagePrompt({
+      const imagePromptZh = buildStoryboardImagePrompt({
         scenePrompt: s(targetScene.scenePrompt).trim(),
         environment: s(targetScene.environment).trim(),
         character: s(targetScene.character).trim(),
@@ -1050,6 +1052,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
         referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
       });
+      const imagePrompt = await translateToEnglish(imagePromptZh);
       const generated = await generateImageWithBanana({
         prompt: imagePrompt,
         numImages: 2,
@@ -1238,9 +1241,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
-      const promptFromStoryboard = storyboard
-        .map((scene: any) =>
-          buildVideoPrompt({
+      const promptFromStoryboardParts = await Promise.all(
+        storyboard.map(async (scene: any) => {
+          const videoPromptZh = buildVideoPrompt({
             scenePrompt: s(scene?.scenePrompt).trim(),
             character: s(scene?.character).trim(),
             action: s(scene?.action).trim(),
@@ -1249,15 +1252,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             lighting: s(scene?.lighting).trim(),
             sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
             lockedCharacterPrompt: lockedCharacterPrompt || undefined,
-          }),
-        )
-        .filter(Boolean)
-        .join("\n");
-      const prompt = promptFromStoryboard || buildVideoPrompt({
+          });
+          return await translateToEnglish(videoPromptZh);
+        })
+      );
+      const promptFromStoryboard = promptFromStoryboardParts.filter(Boolean).join("\n");
+      const fallbackVideoPromptZh = buildVideoPrompt({
         scenePrompt: s(workflow.outputs?.script || workflow.payload?.prompt).trim(),
         sceneDuration: Number(workflow.outputs?.sceneDuration || 0) || 5,
         lockedCharacterPrompt: lockedCharacterPrompt || undefined,
       });
+      const prompt = promptFromStoryboard || (await translateToEnglish(fallbackVideoPromptZh));
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const uploadedRef = s(b.referenceImageUrl || b.referenceCharacterUrl || "").trim();
