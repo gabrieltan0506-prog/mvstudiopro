@@ -23,23 +23,23 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
-import { env, getEnvStatus } from "./_core/env.js";
-import { generateImageWithBanana } from "./_core/banana.js";
+import { env, getEnvStatus } from "./_core/env";
+import { generateImageWithBanana } from "./_core/banana";
 import {
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
-} from "./_core/workflow.js";
-import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
-import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
-import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
-import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt.js";
-import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
-import { translatePromptsToEnglish, translateToEnglish } from "../server/workflow/utils/translatePrompt.js";
-import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
-import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
-import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
-import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
+} from "./_core/workflow";
+import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt";
+import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt";
+import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt";
+import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt";
+import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt";
+import { translatePromptsToEnglish, translateToEnglish } from "../server/workflow/utils/translatePrompt";
+import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt";
+import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt";
+import { characterLockStep } from "../server/workflow/steps/characterLockStep";
+import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
