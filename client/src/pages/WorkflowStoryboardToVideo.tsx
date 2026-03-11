@@ -172,6 +172,9 @@ export default function WorkflowStoryboardToVideo() {
   const outputs = workflow?.outputs || {};
   const scenes: Scene[] = Array.isArray(storyboard) ? storyboard : [];
   const storyboardImages: SceneImages[] = Array.isArray(outputs.storyboardImages) ? outputs.storyboardImages : [];
+  const sceneVideoMap = new Map<number, any>(
+    (Array.isArray(outputs.sceneVideos) ? outputs.sceneVideos : []).map((item: any) => [Number(item?.sceneIndex || 0), item]),
+  );
   const storyboardConfirmed = Boolean(outputs.storyboardConfirmed);
 
   const anyMainStepLoading = Object.values(stepStates).some((s) => s.loading);
@@ -484,8 +487,15 @@ export default function WorkflowStoryboardToVideo() {
                     Upload Reference Character
                   </button>
                 </div>
-                                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, opacity: 0.9 }}>Scene Duration:</span>
+                  <button
+                    type="button"
+                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 4 }))}
+                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 4 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
+                  >
+                    4s
+                  </button>
                   <button
                     type="button"
                     onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 6 }))}
@@ -504,6 +514,42 @@ export default function WorkflowStoryboardToVideo() {
                     当前：{String((sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)))}s
                   </span>
                 </div>
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runAuxStep(`scene-video-${item.sceneIndex}`, "workflowGenerateSceneVideo", {
+                        workflowId,
+                        sceneIndex: Number(item.sceneIndex || 0),
+                        duration: `${String(sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8))}s`,
+                      })
+                    }
+                    disabled={!!auxBusyKey || !workflowId || !storyboardConfirmed}
+                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
+                  >
+                    {auxBusyKey === `scene-video-${item.sceneIndex}` ? "Queueing..." : "Generate Scene Video"}
+                  </button>
+                  {sceneVideoMap.get(Number(item.sceneIndex || 0))?.url ? (
+                    <a href={sceneVideoMap.get(Number(item.sceneIndex || 0))?.url} target="_blank" rel="noreferrer">
+                      Open Scene Video
+                    </a>
+                  ) : null}
+                  {sceneVideoMap.get(Number(item.sceneIndex || 0))?.taskStatus ? (
+                    <span style={{ fontSize: 12, opacity: 0.85 }}>
+                      Status: <code>{String(sceneVideoMap.get(Number(item.sceneIndex || 0))?.taskStatus || "")}</code>
+                    </span>
+                  ) : null}
+                </div>
+                {sceneVideoMap.get(Number(item.sceneIndex || 0))?.url ? (
+                  <div style={{ marginTop: 10 }}>
+                    <video
+                      src={sceneVideoMap.get(Number(item.sceneIndex || 0))?.url}
+                      controls
+                      playsInline
+                      style={{ width: "100%", maxWidth: 520, borderRadius: 12 }}
+                    />
+                  </div>
+                ) : null}
 {item.referenceCharacterUrl ? <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>Reference: <code>{item.referenceCharacterUrl}</code></div> : null}
                 {item.characterPngUrl ? <img src={item.characterPngUrl} style={{ width: 180, marginTop: 8, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} /> : null}
               </div>
