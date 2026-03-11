@@ -738,8 +738,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (workflow) {
         const outputs: any = workflow.outputs || {};
         const falRequestId = s(outputs.falRequestId).trim();
-        const savedStatusUrl = s(outputs.falStatusUrl).trim();
-        const savedResponseUrl = s(outputs.falResponseUrl).trim();
+        const savedStatusUrl = s(outputs.statusUrl || outputs.falStatusUrl).trim();
+        const savedResponseUrl = s(outputs.responseUrl || outputs.falResponseUrl).trim();
         const existingVideoUrl = s(outputs.videoUrl).trim();
         const videoQueuedAt = Number(outputs.videoQueuedAt || 0);
         const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
@@ -1786,8 +1786,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: "running",
         outputs: {
           falRequestId: requestId,
-          falStatusUrl: statusUrl,
-          falResponseUrl: responseUrl,
+          statusUrl,
+          responseUrl,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
           videoTaskStatus: "IN_QUEUE",
