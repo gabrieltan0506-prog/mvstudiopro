@@ -507,7 +507,7 @@ function sanitizeScenePrompt(value: any, sceneIndex: number, topic: string) {
     .replace(/^---+$/gm, "")
     .replace(/\r/g, "")
     .trim();
-  if (!cleaned) return `Scene ${sceneIndex}: ${topic}，电影感镜头推进。`;
+  if (!cleaned) return `場景${sceneIndex}：${topic}，电影感镜头推进。`;
   return cleaned;
 }
 
@@ -533,15 +533,15 @@ function normalizeStructuredStoryboard(input: {
     const character = s(item?.character).trim() || [mainAppearance, mainOutfit].filter(Boolean).join(", ");
     out.push({
       sceneIndex: i + 1,
-      sceneTitle: s(item?.sceneTitle).trim() || `Scene ${i + 1}`,
+      sceneTitle: s(item?.sceneTitle).trim() || `場景 ${i + 1}`,
       scenePrompt: sanitizeScenePrompt(item?.scenePrompt, i + 1, input.topic),
-      environment: s(item?.environment).trim() || "cinematic environment",
-      character: character || "same main character identity",
+      environment: s(item?.environment).trim() || "电影感场景环境",
+      character: character || "主角色身份保持一致",
       duration: sceneDuration,
-      camera: s(item?.camera || "medium").trim() || "medium",
-      mood: s(item?.mood || "cinematic").trim() || "cinematic",
-      lighting: s(item?.lighting || "dramatic lighting").trim() || "dramatic lighting",
-      action: s(item?.action || "character-driven cinematic action").trim() || "character-driven cinematic action",
+      camera: s(item?.camera || "中景").trim() || "中景",
+      mood: s(item?.mood || "电影感").trim() || "电影感",
+      lighting: s(item?.lighting || "电影感光影").trim() || "电影感光影",
+      action: s(item?.action || "以角色为核心的电影化动作").trim() || "以角色为核心的电影化动作",
     });
   }
   return out;
