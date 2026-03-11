@@ -1,0 +1,13 @@
+function buildVoicePrompt(input) {
+  const language = String(input.language || "\u4E2D\u6587").trim() || "\u4E2D\u6587";
+  const style = String(input.style || "\u7535\u5F71\u9884\u544A\u7247\u65C1\u767D").trim() || "\u7535\u5F71\u9884\u544A\u7247\u65C1\u767D";
+  return [
+    `${language}\u65C1\u767D\u3002`,
+    `\u98CE\u683C\uFF1A${style}\u3002`,
+    "\u58F0\u97F3\u8981\u6C42\uFF1A\u4F4E\u6C89\u3001\u6E05\u6670\u3001\u5BCC\u6709\u5F20\u529B\u3001\u8282\u594F\u7A33\u5B9A\u3001\u60C5\u7EEA\u63A8\u8FDB\u660E\u786E\u3002",
+    "\u9002\u914D\u7535\u5F71\u7EA7\u53D9\u4E8B\u4E0E\u9884\u544A\u7247\u8868\u8FBE\u3002"
+  ].join(" ");
+}
+export {
+  buildVoicePrompt
+};
