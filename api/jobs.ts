@@ -793,7 +793,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const responseResp = await fetchJson(
-              `${responseUrl}/response`,
+              `${responseUrl}`,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
@@ -938,7 +938,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 { method: "GET", headers: { Authorization: `Key ${falKey}` } },
               );
               const responseResp = await fetchJson(
-                `${responseUrl}/response`,
+                `${responseUrl}`,
                 { method: "GET", headers: { Authorization: `Key ${falKey}` } },
               );
               const sceneVideoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
