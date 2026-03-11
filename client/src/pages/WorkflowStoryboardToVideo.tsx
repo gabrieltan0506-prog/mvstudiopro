@@ -11,6 +11,7 @@ type Scene = {
 type SceneImages = {
   sceneIndex: number;
   images: string[];
+  prompt?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -176,6 +177,16 @@ export default function WorkflowStoryboardToVideo() {
     (Array.isArray(outputs.sceneVideos) ? outputs.sceneVideos : []).map((item: any) => [Number(item?.sceneIndex || 0), item]),
   );
   const storyboardConfirmed = Boolean(outputs.storyboardConfirmed);
+
+  function updateScenePrompt(sceneIndex: number, scenePrompt: string) {
+    setStoryboard((prev) =>
+      prev.map((scene) =>
+        Number(scene.sceneIndex || 0) === Number(sceneIndex || 0)
+          ? { ...scene, scenePrompt }
+          : scene,
+      ),
+    );
+  }
 
   const anyMainStepLoading = Object.values(stepStates).some((s) => s.loading);
 
@@ -440,6 +451,8 @@ export default function WorkflowStoryboardToVideo() {
         <div style={{ display: "grid", gap: 10 }}>
           {storyboardImages.map((item) => {
             const refInputValue = referenceInputMap[String(item.sceneIndex)] || "";
+            const sceneDraft = scenes.find((scene) => Number(scene.sceneIndex || 0) === Number(item.sceneIndex || 0));
+            const scenePromptValue = String(sceneDraft?.scenePrompt || item?.prompt || "").trim();
             return (
               <div key={String(item.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
                 <div style={{ fontWeight: 700 }}>Scene {item.sceneIndex}</div>
@@ -466,6 +479,25 @@ export default function WorkflowStoryboardToVideo() {
                 </div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
                   Transparent Character PNG: <code>{String(item.characterPngUrl || outputs.characterPngUrl || "")}</code>
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>Scene Prompt</div>
+                  <textarea
+                    value={scenePromptValue}
+                    onChange={(e) => updateScenePrompt(Number(item.sceneIndex || 0), e.target.value)}
+                    rows={4}
+                    placeholder="Edit this scene prompt"
+                    style={{
+                      width: "100%",
+                      minHeight: 96,
+                      resize: "vertical",
+                      padding: 12,
+                      borderRadius: 10,
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      background: "rgba(0,0,0,0.35)",
+                      color: "white",
+                    }}
+                  />
                 </div>
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button

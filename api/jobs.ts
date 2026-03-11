@@ -35,7 +35,7 @@ import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardProm
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
 import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt.js";
 import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
-import { translatePromptsToEnglish, translateToEnglish } from "../server/workflow/utils/translatePrompt.js";
+import { translateToEnglish } from "../server/workflow/utils/translatePrompt.js";
 import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
@@ -691,6 +691,10 @@ function fail(error: string, message?: string, extra?: Record<string, any>) {
   };
 }
 
+function falVeoReferenceRequestBase(requestId: string) {
+  return `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(requestId)}`;
+}
+
 const WORKFLOW_FAL_QUEUE_TIMEOUT_MS =
   Number(process.env.WORKFLOW_FAL_QUEUE_TIMEOUT_MS || 15 * 60 * 1000);
 
@@ -745,12 +749,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
 
         if (falRequestId && !existingVideoUrl && falKey) {
-          const statusUrl =
-            savedStatusUrl ||
-            `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(falRequestId)}/status`;
-          const responseUrl =
-            savedResponseUrl ||
-            `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(falRequestId)}`;
+          const requestBase = falVeoReferenceRequestBase(falRequestId);
+          const statusUrl = savedStatusUrl || `${requestBase}/status`;
+          const responseUrl = savedResponseUrl || requestBase;
           const statusResp = await fetchJson(
             statusUrl,
             { method: "GET", headers: { Authorization: `Key ${falKey}` } },
@@ -793,7 +794,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const responseResp = await fetchJson(
-              `${responseUrl}`,
+              `${responseUrl}/response`,
               { method: "GET", headers: { Authorization: `Key ${falKey}` } },
             );
             const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
@@ -897,12 +898,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (["FAILED", "ERROR", "CANCELLED", "CANCELED", "TIMEOUT", "COMPLETED"].includes(statusUpper)) continue;
 
             const queuedAt = Number(item.queuedAt || item.videoQueuedAt || 0);
-            const statusUrl =
-              s(item.statusUrl || item.falStatusUrl).trim() ||
-              `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(requestId)}/status`;
-            const responseUrl =
-              s(item.responseUrl || item.falResponseUrl).trim() ||
-              `https://queue.fal.run/fal-ai/veo3.1/requests/${encodeURIComponent(requestId)}`;
+            const requestBase = falVeoReferenceRequestBase(requestId);
+            const statusUrl = s(item.statusUrl || item.falStatusUrl).trim() || `${requestBase}/status`;
+            const responseUrl = s(item.responseUrl || item.falResponseUrl).trim() || requestBase;
 
             const statusResp = await fetchJson(
               statusUrl,
@@ -938,7 +936,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 { method: "GET", headers: { Authorization: `Key ${falKey}` } },
               );
               const responseResp = await fetchJson(
-                `${responseUrl}`,
+                `${responseUrl}/response`,
                 { method: "GET", headers: { Authorization: `Key ${falKey}` } },
               );
               const sceneVideoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
@@ -1577,7 +1575,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageUrls = Array.from(new Set([...refsFromBody, ...refsFromOutputs])).slice(0, 3);
       if (imageUrls.length === 0) return res.status(400).json(fail("scene references missing"));
 
-      const promptZh = buildVideoPrompt({
+      const prompt = buildVideoPrompt({
         scenePrompt: s(scene?.scenePrompt).trim(),
         character: s(scene?.character).trim(),
         action: s(scene?.action).trim(),
@@ -1587,7 +1585,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
       });
-      const prompt = await translateToEnglish(promptZh, { maxChars: 420 });
       if (!prompt) return res.status(400).json(fail("missing prompt for scene video generation"));
 
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
@@ -1595,7 +1592,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const duration = "8s";
       const resolutionInput = s(b.resolution || "720p").trim().toLowerCase();
-      const resolution = ["540p", "720p", "1080p"].includes(resolutionInput) ? resolutionInput : "720p";
+      const resolution = ["720p", "1080p", "4k"].includes(resolutionInput) ? resolutionInput : "720p";
 
       const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
         method: "POST",
@@ -1665,9 +1662,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
-      // Translate only key scenes for video prompt stability and latency.
       const keyScenes = storyboard.slice(0, 3);
-      const promptFromStoryboardZhParts = keyScenes.map((scene: any) =>
+      const promptFromStoryboard = keyScenes.map((scene: any) =>
         buildVideoPrompt({
           scenePrompt: s(scene?.scenePrompt).trim(),
           character: s(scene?.character).trim(),
@@ -1678,15 +1674,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
           lockedCharacterPrompt: lockedCharacterPrompt || undefined,
         }),
-      );
-      const promptFromStoryboardParts = await translatePromptsToEnglish(promptFromStoryboardZhParts, { maxChars: 360, concurrency: 3 });
-      const promptFromStoryboard = promptFromStoryboardParts.filter(Boolean).join("\n");
-      const fallbackVideoPromptZh = buildVideoPrompt({
+      ).filter(Boolean).join("\n");
+      const fallbackVideoPrompt = buildVideoPrompt({
         scenePrompt: s(workflow.outputs?.script || workflow.payload?.prompt).trim(),
         sceneDuration: Number(workflow.outputs?.sceneDuration || 0) || 5,
         lockedCharacterPrompt: lockedCharacterPrompt || undefined,
       });
-      const prompt = promptFromStoryboard || (await translateToEnglish(fallbackVideoPromptZh, { maxChars: 520 }));
+      const prompt = promptFromStoryboard || fallbackVideoPrompt;
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const uploadedRef = s(b.referenceImageUrl || b.referenceCharacterUrl || "").trim();
@@ -1720,22 +1714,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
       const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
       if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
-      const sceneIndexForVideo = Number(b.sceneIndex || 0) || 0;
-      const sceneDurationFromWorkflow = Number(
-        sceneIndexForVideo && Array.isArray(workflow.outputs?.storyboard)
-          ? (workflow.outputs.storyboard.find((x: any) => Number(x?.sceneIndex) === sceneIndexForVideo)?.duration || 0)
-          : (Array.isArray(workflow.outputs?.storyboard) ? (workflow.outputs.storyboard?.[0]?.duration || 0) : 0),
-      ) || 0;
-      const rawSceneDuration = s(
-        b.duration ||
-        b.sceneDuration ||
-        workflow.outputs?.sceneDuration ||
-        workflow.payload?.sceneDuration ||
-        "",
-      ).trim();
       const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
       const duration = "8s";
-      const resolution = ["540p", "720p", "1080p"].includes(requestedResolution)
+      const resolution = ["720p", "1080p", "4k"].includes(requestedResolution)
         ? requestedResolution
         : "720p";
 
