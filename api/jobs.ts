@@ -497,23 +497,32 @@ function buildStoryboardFromScript(input: {
 }
 
 async function callGoogleGateway(payload: Record<string, any>) {
-  const mod = await import("./google.js");
-  const handler = mod.default;
-  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
-  const res: any = {
-    statusCode: 200,
-    body: undefined,
-    status(code: number) {
-      this.statusCode = code;
-      return this;
-    },
-    json(data: any) {
-      this.body = data;
-      return this;
-    },
-  };
-  await handler(req, res);
-  return { statusCode: res.statusCode, ...(res.body || {}) };
+  try {
+    const mod = await import("./google.js");
+    const handler = mod.default;
+    const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
+    const res: any = {
+      statusCode: 200,
+      body: undefined,
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      json(data: any) {
+        this.body = data;
+        return this;
+      },
+    };
+    await handler(req, res);
+    return { statusCode: res.statusCode, ...(res.body || {}) };
+  } catch (error: any) {
+    return {
+      statusCode: 500,
+      ok: false,
+      error: "google_gateway_runtime_error",
+      message: error?.message || String(error),
+    };
+  }
 }
 
 function extractGoogleText(raw: any): string {
@@ -1092,66 +1101,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratescript") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const prompt = s(b.prompt).trim();
-      if (!prompt) return res.status(400).json(fail("prompt is required"));
-
-      const workflowId = s(b.workflowId).trim();
-      const targetWords = Number(b.targetWords || 0) || undefined;
-      const targetScenes = Number(b.targetScenes || 0) || undefined;
-      const sceneDuration = Number(b.sceneDuration || 0) || 5;
-
-      const task = workflowId
-        ? readWorkflow(workflowId, b.workflow)
-        : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
-      if (!workflowId) saveCoreWorkflow(task);
-
-      let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
       try {
-        generated = await generateScriptViaPromptBuilder({
-          prompt,
-          targetWords,
-          targetScenes,
-          sceneDuration,
+        if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+        const prompt = s(b.prompt).trim();
+        if (!prompt) return res.status(400).json(fail("prompt is required"));
+
+        const workflowId = s(b.workflowId).trim();
+        const targetWords = Number(b.targetWords || 0) || undefined;
+        const targetScenes = Number(b.targetScenes || 0) || undefined;
+        const sceneDuration = Number(b.sceneDuration || 0) || 5;
+
+        const task = workflowId
+          ? readWorkflow(workflowId, b.workflow)
+          : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
+        if (!workflowId) saveCoreWorkflow(task);
+
+        let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
+        try {
+          generated = await generateScriptViaPromptBuilder({
+            prompt,
+            targetWords,
+            targetScenes,
+            sceneDuration,
+          });
+        } catch (error: any) {
+          const message = error?.message || String(error) || "script_generation_failed";
+          return res.status(502).json(fail("script_generation_failed", message));
+        }
+        const script = generated.script;
+        const storyboard = generated.storyboard;
+        const scriptProvider = generated.provider;
+        const scriptModel = generated.model;
+        const scriptIsFallback = false;
+        const scriptErrorMessage = "";
+        const workflow = saveWorkflowPatch(task, {
+          currentStep: "script",
+          status: "running",
+          outputs: {
+            script,
+            scriptProvider,
+            scriptModel,
+            scriptIsFallback,
+            scriptErrorMessage,
+            storyboard,
+            storyboardStructuredStatus: "structured",
+            storyboardConfirmed: false,
+            targetWords,
+            targetScenes,
+            sceneDuration,
+          },
         });
-      } catch (error: any) {
-        const message = error?.message || String(error) || "script_generation_failed";
-        return res.status(502).json(fail("script_generation_failed", message));
-      }
-      const script = generated.script;
-      const storyboard = generated.storyboard;
-      const scriptProvider = generated.provider;
-      const scriptModel = generated.model;
-      const scriptIsFallback = false;
-      const scriptErrorMessage = "";
-      const workflow = saveWorkflowPatch(task, {
-        currentStep: "script",
-        status: "running",
-        outputs: {
+        return res.status(200).json({
+          ok: true,
           script,
+          storyboard,
           scriptProvider,
           scriptModel,
           scriptIsFallback,
           scriptErrorMessage,
-          storyboard,
-          storyboardStructuredStatus: "structured",
-          storyboardConfirmed: false,
-          targetWords,
-          targetScenes,
-          sceneDuration,
-        },
-      });
-      return res.status(200).json({
-        ok: true,
-        script,
-        storyboard,
-        scriptProvider,
-        scriptModel,
-        scriptIsFallback,
-        scriptErrorMessage,
-        workflowId: workflow.workflowId,
-        workflow,
-      });
+          workflowId: workflow.workflowId,
+          workflow,
+        });
+      } catch (error: any) {
+        return res.status(500).json(fail(
+          "workflow_generate_script_internal_error",
+          error?.message || String(error) || "unknown_error",
+        ));
+      }
     }
 
     if (opNormalized === "workflowgeneratestoryboard") {
