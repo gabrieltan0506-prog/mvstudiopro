@@ -11,12 +11,41 @@ type Scene = {
 type SceneImages = {
   sceneIndex: number;
   images: string[];
+  imageUrls?: string[];
   prompt?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
   backgroundStatus?: string;
 };
+
+function mergeWorkflowState(prev: any, next: any) {
+  if (!prev) return next;
+  if (!next) return prev;
+
+  const prevOutputs = prev?.outputs && typeof prev.outputs === "object" ? prev.outputs : {};
+  const nextOutputs = next?.outputs && typeof next.outputs === "object" ? next.outputs : {};
+  const mergedOutputs = { ...prevOutputs, ...nextOutputs };
+
+  if (!Array.isArray(nextOutputs.storyboardImages) && Array.isArray(prevOutputs.storyboardImages)) {
+    mergedOutputs.storyboardImages = prevOutputs.storyboardImages;
+  }
+  if (!Array.isArray(nextOutputs.sceneVideos) && Array.isArray(prevOutputs.sceneVideos)) {
+    mergedOutputs.sceneVideos = prevOutputs.sceneVideos;
+  }
+  if (!nextOutputs.videoUrl && prevOutputs.videoUrl) {
+    mergedOutputs.videoUrl = prevOutputs.videoUrl;
+  }
+  if (!nextOutputs.finalVideoUrl && prevOutputs.finalVideoUrl) {
+    mergedOutputs.finalVideoUrl = prevOutputs.finalVideoUrl;
+  }
+
+  return {
+    ...prev,
+    ...next,
+    outputs: mergedOutputs,
+  };
+}
 
 function normalizeSceneList(input: any[], fallbackDuration = 5): Scene[] {
   const src = Array.isArray(input) ? input : [];
@@ -109,8 +138,6 @@ export default function WorkflowStoryboardToVideo() {
   const [targetWords, setTargetWords] = useState("900");
   const [targetScenes, setTargetScenes] = useState("6");
   const [sceneDuration, setSceneDuration] = useState("8");
-  const [videoDuration, setVideoDuration] = useState("8s");
-
   const [scriptText, setScriptText] = useState("");
   const [storyboard, setStoryboard] = useState<Scene[]>([]);
 
@@ -128,7 +155,6 @@ export default function WorkflowStoryboardToVideo() {
 
   const [referenceInputMap, setReferenceInputMap] = useState<Record<string, string>>({});
   const [selectedImages, setSelectedImages] = useState<Record<number, number>>({});
-  const [sceneDurations, setSceneDurations] = useState<Record<number, number>>({});
   const [auxBusyKey, setAuxBusyKey] = useState("");
   const [auxError, setAuxError] = useState("");
 
@@ -142,7 +168,7 @@ export default function WorkflowStoryboardToVideo() {
       const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(workflowId)}`);
       const json = await resp.json().catch(() => null);
       if (!cancelled && resp.ok && json?.workflow && json.workflow.status !== "not_found") {
-        setWorkflow(json.workflow);
+        setWorkflow((prev: any) => mergeWorkflowState(prev, json.workflow));
       }
       timer = setTimeout(poll, 2000);
     };
@@ -176,7 +202,6 @@ export default function WorkflowStoryboardToVideo() {
   const sceneVideoMap = new Map<number, any>(
     (Array.isArray(outputs.sceneVideos) ? outputs.sceneVideos : []).map((item: any) => [Number(item?.sceneIndex || 0), item]),
   );
-  const storyboardConfirmed = Boolean(outputs.storyboardConfirmed);
 
   function updateScenePrompt(sceneIndex: number, scenePrompt: string) {
     setStoryboard((prev) =>
@@ -204,7 +229,7 @@ export default function WorkflowStoryboardToVideo() {
     const nextId = String(json?.workflow?.workflowId || json?.workflowId || workflowId || "");
     if (nextId) setWorkflowId(nextId);
     if (json?.workflow) {
-      setWorkflow(json.workflow);
+      setWorkflow((prev: any) => mergeWorkflowState(prev, json.workflow));
     }
   }
 
@@ -268,7 +293,7 @@ export default function WorkflowStoryboardToVideo() {
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 20, color: "white" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>/workflow</h1>
       <p style={{ opacity: 0.9, marginTop: 8 }}>
-        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Storyboard Images → Step 4 Character Lock / Upload Reference Character / Background Remove → Step 5 Confirm Storyboard → Step 6 Generate Video → Step 7 Generate Voice → Step 8 Generate Music → Step 9 Render Final Video
+        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Storyboard Images → Step 4 Character Lock / Upload Reference Character / Background Remove → Step 5 Generate Video → Step 6 Generate Voice → Step 7 Generate Music → Step 8 Render Final Video
       </p>
 
       <div style={sectionStyle()}>
@@ -426,11 +451,14 @@ export default function WorkflowStoryboardToVideo() {
             const refInputValue = referenceInputMap[String(item.sceneIndex)] || "";
             const sceneDraft = scenes.find((scene) => Number(scene.sceneIndex || 0) === Number(item.sceneIndex || 0));
             const scenePromptValue = String(sceneDraft?.scenePrompt || item?.prompt || "").trim();
+            const sceneImageUrls = Array.isArray(item.images)
+              ? item.images
+              : (Array.isArray(item.imageUrls) ? item.imageUrls : []);
             return (
               <div key={String(item.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
                 <div style={{ fontWeight: 700 }}>Scene {item.sceneIndex}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  {(Array.isArray(item.images) ? item.images : []).map((url: string, idx: number) => {
+                  {sceneImageUrls.map((url: string, idx: number) => {
                     const selected = (selectedImages[Number(item.sceneIndex || 0)] ?? 0) === idx;
                     return (
                       <button
@@ -586,32 +614,12 @@ export default function WorkflowStoryboardToVideo() {
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>E. Confirm</h2>
+        <h2 style={{ marginTop: 0 }}>E. Video</h2>
+        <div style={{ marginBottom: 8, fontSize: 14, opacity: 0.9 }}>Duration: 8s</div>
         <button
-          onClick={() => runAuxStep("confirmStoryboard", "workflowConfirmStoryboard", { workflowId, storyboard: scenes, selectedImageIndexes: selectedImages, sceneDurations })}
-          disabled={!!auxBusyKey || !workflowId || scenes.length === 0}
+          onClick={() => runMainStep("generateVideo", "workflowGenerateVideo", { workflowId, duration: "8s" })}
+          disabled={anyMainStepLoading || !workflowId}
           style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
-        >
-          {auxBusyKey === "confirmStoryboard" ? "Confirming..." : "Confirm Storyboard"}
-        </button>
-        <div style={{ marginTop: 8 }}>Storyboard Confirmed: <code>{String(storyboardConfirmed)}</code></div>
-      </div>
-
-      <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>F. Video</h2>
-        <div style={{ marginBottom: 8 }}>
-          <input
-            value={videoDuration}
-            onChange={(e) => setVideoDuration(e.target.value)}
-            placeholder="Video Duration (8s / 9s / 10s)"
-            style={{ width: "100%", maxWidth: 360, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-          />
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>最少 8 秒，支持 8s / 9s / 10s</div>
-        </div>
-        <button
-          onClick={() => runMainStep("generateVideo", "workflowGenerateVideo", { workflowId, duration: videoDuration })}
-          disabled={anyMainStepLoading || !workflowId || !storyboardConfirmed}
-          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: storyboardConfirmed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)", color: "white", fontWeight: 800 }}
         >
           {stepStates.generateVideo.loading ? "Generating..." : "Generate Video"}
         </button>
