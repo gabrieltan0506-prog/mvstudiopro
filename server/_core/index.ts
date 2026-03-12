@@ -11,6 +11,7 @@ import { registerStripeWebhook } from "../stripe-webhook";
 import jobsHandler from "../../api/jobs.js";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { businessHandler } from "../business/apiHandler";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
 import { startJobWorker } from "../jobs/runner";
 import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../services/provider-diagnostics";
@@ -82,6 +83,10 @@ async function startServer() {
 
   app.get("/api/jobs", async (req, res) => {
     return jobsHandler(req as any, res as any);
+  });
+
+  app.get("/api/business", async (req, res) => {
+    return businessHandler(req as any, res as any);
   });
 
   app.post("/api/jobs", async (req, res) => {

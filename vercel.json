@@ -17,6 +17,18 @@
   ],
   "rewrites": [
     {
+      "source": "/api/business",
+      "destination": "https://mvstudiopro.fly.dev/api/business"
+    },
+    {
+      "source": "/api/env-status",
+      "destination": "https://mvstudiopro.fly.dev/api/jobs?op=envStatus"
+    },
+    {
+      "source": "/api/diag/providers",
+      "destination": "https://mvstudiopro.fly.dev/api/diag/providers"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/:path*"
     },

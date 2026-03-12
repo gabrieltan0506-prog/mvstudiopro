@@ -1,11 +1,11 @@
-import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { analyzeVideo } from "../server/business/videoAnalyzer.js";
-import { getTrends } from "../server/business/trendCollector.js";
-import { buildInsight } from "../server/business/insightEngine.js";
-import { buildGrowthPlan } from "../server/business/growthPlanner.js";
-import { buildReport } from "../server/business/reportBuilder.js";
+import type { Request, Response } from "express";
+import { analyzeVideo } from "./videoAnalyzer.js";
+import { getTrends } from "./trendCollector.js";
+import { buildInsight } from "./insightEngine.js";
+import { buildGrowthPlan } from "./growthPlanner.js";
+import { buildReport } from "./reportBuilder.js";
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export async function businessHandler(req: Request, res: Response) {
   const op = String(req.query.op || "").trim();
 
   if (op === "analyze") {
