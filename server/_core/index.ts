@@ -91,6 +91,14 @@ async function startServer() {
 
   app.post("/api/jobs", async (req, res) => {
     try {
+      const queryOp = typeof req.query?.op === "string" ? req.query.op.trim() : "";
+      const bodyOp = typeof (req.body as any)?.op === "string" ? String((req.body as any).op).trim() : "";
+
+      // Workflow-style operations share the Vercel jobs handler contract.
+      if (queryOp || bodyOp) {
+        return jobsHandler(req as any, res as any);
+      }
+
       const { type, input, userId } = (req.body ?? {}) as {
         type?: JobType;
         input?: unknown;
