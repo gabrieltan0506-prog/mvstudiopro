@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd client && pnpm build",
+  "buildCommand": "pnpm exec vite build",
   "outputDirectory": "client/dist",
   "headers": [
     {
