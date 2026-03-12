@@ -135,7 +135,8 @@ async function createKlingI2VTask(
   imageToken: string,
   imageUrl: string,
   prompt: string,
-  model: string
+  model: string,
+  duration = "8"
 ) {
   const buf = await fetchImageBuffer(imageUrl);
   const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
@@ -146,7 +147,7 @@ async function createKlingI2VTask(
       model_name: model || "kling-v2-6",
       image: first.jpeg.toString("base64"),
       prompt,
-      duration: "5",
+      duration,
       mode: "pro",
       sound: "off",
     }),
@@ -315,10 +316,29 @@ type WorkflowStoryboardScene = {
 type WorkflowStoryboardImageItem = {
   sceneIndex: number;
   images: string[];
+  imageUrls?: string[];
+  prompt?: string;
+  duration?: number;
+  sceneVideoUrl?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
+  characterPngUrl?: string;
   backgroundStatus?: string;
 };
+
+function upsertStoryboardImageItem(
+  currentItems: any[],
+  sceneIndex: number,
+  buildNext: (existing: any) => WorkflowStoryboardImageItem,
+) {
+  const current = Array.isArray(currentItems) ? currentItems : [];
+  const existing = current.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || null;
+  const nextItem = buildNext(existing);
+  const next = current.some((item: any) => Number(item?.sceneIndex) === sceneIndex)
+    ? current.map((item: any) => (Number(item?.sceneIndex) === sceneIndex ? nextItem : item))
+    : [...current, nextItem];
+  return next.sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -810,6 +830,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         results.push({
           sceneIndex: scene.sceneIndex,
           images: (generated.imageUrls || []).slice(0, 2),
+          imageUrls: (generated.imageUrls || []).slice(0, 2),
+          prompt: scene.scenePrompt,
+          duration: 8,
+          sceneVideoUrl: "",
           characterLocked: false,
           referenceCharacterUrl: "",
           backgroundStatus: "not_removed",
@@ -853,14 +877,109 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         aspectRatio: "16:9",
         imageSize: "1536x864",
       });
-      const updated = currentImages.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex
-          ? { ...item, images: (generated.imageUrls || []).slice(0, 2), backgroundStatus: item?.backgroundStatus || "not_removed" }
-          : item,
-      );
+      const updated = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: (generated.imageUrls || []).slice(0, 2),
+        imageUrls: (generated.imageUrls || []).slice(0, 2),
+        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratesceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
+
+      const imagePrompt = buildStoryboardImagePrompt({
+        scenePrompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        environment: s(targetScene.environment).trim(),
+        character: s(targetScene.character).trim(),
+        camera: s(targetScene.camera).trim(),
+        mood: s(targetScene.mood).trim(),
+        lighting: s(targetScene.lighting).trim(),
+        action: s(targetScene.action).trim(),
+        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
+        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
+      });
+      const generated = await generateImageWithBanana({
+        prompt: imagePrompt,
+        numImages: 2,
+        aspectRatio: "16:9",
+        imageSize: "1536x864",
+      });
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: (generated.imageUrls || []).slice(0, 2),
+        imageUrls: (generated.imageUrls || []).slice(0, 2),
+        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          storyboardImages,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowuploadsceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const imageUrl = s(b.imageUrl).trim();
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!imageUrl) return res.status(400).json(fail("imageUrl is required"));
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex) || {};
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: [imageUrl],
+        imageUrls: [imageUrl],
+        prompt: s(targetScene.scenePrompt || targetScene.prompt || existing?.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          storyboardImages,
+          storyboardConfirmed: false,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -971,9 +1090,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      if (!workflow.outputs?.storyboardConfirmed) {
-        return res.status(400).json(fail("storyboard must be confirmed before video generation"));
-      }
       if (!VAK || !VSK || !IAK || !ISK) {
         return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
       }
@@ -1032,7 +1148,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageToken,
         referenceImageUrl,
         prompt,
-        model
+        model,
+        "8"
       );
       if (!created.taskId) {
         return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
@@ -1051,6 +1168,80 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       });
       return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratescenevideo") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!VAK || !VSK || !IAK || !ISK) {
+        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
+      }
+
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      if (!scene) return res.status(404).json(fail("scene not found"));
+      const sceneBundle = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+      const imageUrl =
+        s(sceneBundle?.characterPngUrl).trim() ||
+        s(sceneBundle?.referenceCharacterUrl).trim() ||
+        s((Array.isArray(sceneBundle?.imageUrls) ? sceneBundle.imageUrls[0] : "")).trim() ||
+        s((Array.isArray(sceneBundle?.images) ? sceneBundle.images[0] : "")).trim();
+      if (!imageUrl) return res.status(400).json(fail("scene image is required before scene video generation"));
+
+      const prompt = buildVideoPrompt({
+        scenePrompt: s(scene?.scenePrompt || scene?.prompt).trim(),
+        character: s(scene?.character).trim(),
+        action: s(scene?.action).trim(),
+        camera: s(scene?.camera).trim(),
+        mood: s(scene?.mood).trim(),
+        lighting: s(scene?.lighting).trim(),
+        sceneDuration: 8,
+        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
+      });
+      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
+      const videoToken = jwtHS256(VAK, VSK);
+      const imageToken = jwtHS256(IAK, ISK);
+      const created = await createKlingI2VTask(
+        KLING_BASE,
+        videoToken,
+        imageToken,
+        imageUrl,
+        prompt,
+        model,
+        "8"
+      );
+      if (!created.taskId) {
+        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      }
+      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "scene video generation failed")));
+
+      const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: Array.isArray(existing?.images) ? existing.images : [],
+        imageUrls: Array.isArray(existing?.imageUrls) ? existing.imageUrls : (Array.isArray(existing?.images) ? existing.images : []),
+        prompt: s(scene?.scenePrompt || scene?.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(polled.videoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "video",
+        outputs: {
+          storyboardImages: nextStoryboardImages,
+          videoProvider: "kling",
+          videoModel: model,
+          videoErrorMessage: "",
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: polled.videoUrl });
     }
 
     if (opNormalized === "workflowgeneratevoice") {
@@ -1146,16 +1337,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, workflow: next });
     }
 
-    if (opNormalized === "workflowrenderfinalvideo") {
+    if (opNormalized === "workflowrendervideo" || opNormalized === "workflowrenderfinalvideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const videoUrl = s(workflow.outputs?.videoUrl).trim();
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const sceneVideos = storyboardImages
+        .filter((item: any) => s(item?.sceneVideoUrl).trim())
+        .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
+        .map((item: any) => ({
+          sceneIndex: Number(item?.sceneIndex || 0),
+          url: s(item?.sceneVideoUrl).trim(),
+          duration: "8s",
+        }));
+      const videoUrl = s(workflow.outputs?.videoUrl).trim() || s(sceneVideos[0]?.url).trim();
       if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
         outputs: {
           finalVideoUrl: videoUrl,
+          sceneVideos,
           renderProvider: "workflow-render",
           renderIsFallback: false,
           renderErrorMessage: "",
