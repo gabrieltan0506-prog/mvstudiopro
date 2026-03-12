@@ -46,6 +46,82 @@ function buildRoutingMap() {
   };
 }
 
+const FLY_LOCAL_JOB_OPS = new Set([
+  "envstatus",
+  "workflowstatus",
+  "workflowcreate",
+  "wfcreate",
+  "workflowrendervideo",
+  "workflowrenderfinalvideo",
+]);
+
+function readJobsOp(req: express.Request) {
+  const queryOp = typeof req.query?.op === "string" ? req.query.op.trim() : "";
+  const bodyOp = typeof (req.body as any)?.op === "string" ? String((req.body as any).op).trim() : "";
+  return queryOp || bodyOp;
+}
+
+function shouldProxyJobsOpToVercel(rawOp: string) {
+  const normalized = rawOp.trim().toLowerCase();
+  return Boolean(normalized) && !FLY_LOCAL_JOB_OPS.has(normalized);
+}
+
+async function proxyToVercel(req: express.Request, res: express.Response) {
+  const baseUrl = String(
+    process.env.VERCEL_PROVIDER_PROXY_BASE_URL || "https://mvstudiopro.vercel.app",
+  ).trim().replace(/\/+$/, "");
+  const bypassSecret = String(
+    process.env.VERCEL_PROTECTION_BYPASS_SECRET || process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "",
+  ).trim();
+
+  const targetUrl = new URL(req.originalUrl || req.url, `${baseUrl}/`);
+  const headers = new Headers();
+  const contentType = req.header("content-type");
+  const accept = req.header("accept");
+
+  if (contentType) headers.set("content-type", contentType);
+  if (accept) headers.set("accept", accept);
+  headers.set("user-agent", "mvstudiopro-fly-proxy/1.0");
+  if (bypassSecret) {
+    headers.set("x-vercel-protection-bypass", bypassSecret);
+  }
+
+  const init: RequestInit = {
+    method: req.method,
+    headers,
+    redirect: "follow",
+  };
+
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    init.body = contentType?.includes("application/json")
+      ? JSON.stringify(req.body ?? {})
+      : (req.body as any);
+  }
+
+  const upstream = await fetch(targetUrl, init);
+  const responseText = await upstream.text();
+
+  res.status(upstream.status);
+  const upstreamType = upstream.headers.get("content-type");
+  if (upstreamType) {
+    res.setHeader("content-type", upstreamType);
+  }
+
+  // Vercel protects server-to-server access unless automation bypass is configured.
+  if (
+    upstream.status === 401 ||
+    upstream.status === 403
+  ) {
+    return res.send(JSON.stringify({
+      ok: false,
+      error: "vercel_proxy_blocked",
+      message: "Vercel blocked the Fly proxy request. Set VERCEL_PROTECTION_BYPASS_SECRET on Fly.",
+    }));
+  }
+
+  return res.send(responseText);
+}
+
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
     const server = net.createServer();
@@ -82,6 +158,10 @@ async function startServer() {
   registerAuthApiRoutes(app);
 
   app.get("/api/jobs", async (req, res) => {
+    const op = readJobsOp(req);
+    if (shouldProxyJobsOpToVercel(op)) {
+      return proxyToVercel(req, res);
+    }
     return jobsHandler(req as any, res as any);
   });
 
@@ -91,11 +171,14 @@ async function startServer() {
 
   app.post("/api/jobs", async (req, res) => {
     try {
-      const queryOp = typeof req.query?.op === "string" ? req.query.op.trim() : "";
-      const bodyOp = typeof (req.body as any)?.op === "string" ? String((req.body as any).op).trim() : "";
+      const op = readJobsOp(req);
 
       // Workflow-style operations share the Vercel jobs handler contract.
-      if (queryOp || bodyOp) {
+      if (shouldProxyJobsOpToVercel(op)) {
+        return proxyToVercel(req, res);
+      }
+
+      if (op) {
         return jobsHandler(req as any, res as any);
       }
 
