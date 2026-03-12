@@ -21,6 +21,11 @@ async function pollSuno(taskId){
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
@@ -40,6 +45,8 @@ import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
+
+const execFileAsync = promisify(execFile);
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -689,6 +696,205 @@ function fail(error: string, message?: string, extra?: Record<string, any>) {
     message: message || error,
     ...(extra || {}),
   };
+}
+
+function parseDurationSeconds(value: any, fallback = 8) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw.endsWith("s")) {
+    const n = Number(raw.slice(0, -1));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function resolutionToSize(value: any) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "720p") return { width: 1280, height: 720 };
+  if (raw === "1080p") return { width: 1920, height: 1080 };
+  if (raw === "2k" || raw === "1440p") return { width: 2560, height: 1440 };
+  if (raw === "4k" || raw === "2160p") return { width: 3840, height: 2160 };
+  return { width: 1920, height: 1080 };
+}
+
+async function downloadFileToPath(url: string, outPath: string) {
+  const resp = await fetch(url, { headers: { "User-Agent": "mvstudiopro-render" } });
+  if (!resp.ok) throw new Error(`download_failed:${resp.status}:${url}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+  await fs.writeFile(outPath, buf);
+  return outPath;
+}
+
+async function uploadVideoFileToPublicBlob(filePath: string, fileName = "final-video.mp4") {
+  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
+  const buf = await fs.readFile(filePath);
+  const blob = await put(`renders/${Date.now()}-${fileName}`, buf, {
+    access: "public",
+    token,
+    contentType: "video/mp4",
+  });
+  return blob.url;
+}
+
+async function renderWorkflowFinalVideo(input: {
+  sceneVideos: Array<{ url: string; duration?: string | number }>;
+  musicUrl?: string;
+  voiceUrl?: string;
+  transition?: string;
+  resolution?: string;
+}) {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "mvsp-render-"));
+  const transition = String(input.transition || "cut").trim().toLowerCase();
+  const size = resolutionToSize(input.resolution);
+  const sceneFiles: string[] = [];
+  const durations = input.sceneVideos.map((x) => parseDurationSeconds(x?.duration, 8));
+
+  for (let i = 0; i < input.sceneVideos.length; i += 1) {
+    const u = String(input.sceneVideos[i]?.url || "").trim();
+    if (!u) throw new Error(`missing_scene_video_url_${i + 1}`);
+    const fp = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}.mp4`);
+    await downloadFileToPath(u, fp);
+    sceneFiles.push(fp);
+  }
+
+  const mergedPath = path.join(tmpDir, "merged.mp4");
+  const finalPath = path.join(tmpDir, "final.mp4");
+
+  if (sceneFiles.length === 1) {
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-i",
+      sceneFiles[0],
+      "-vf",
+      `scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-movflags",
+      "+faststart",
+      "-an",
+      mergedPath,
+    ]);
+  } else if (transition === "fade") {
+    const args: string[] = ["-y"];
+    for (const f of sceneFiles) args.push("-i", f);
+
+    const filters: string[] = [];
+    for (let i = 0; i < sceneFiles.length; i += 1) {
+      filters.push(
+        `[${i}:v]scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setpts=PTS-STARTPTS[v${i}]`,
+      );
+    }
+
+    let prev = "v0";
+    let timeline = durations[0];
+    for (let i = 1; i < sceneFiles.length; i += 1) {
+      const out = `vx${i}`;
+      const offset = Math.max(0, timeline - 1);
+      filters.push(`[${prev}][v${i}]xfade=transition=fade:duration=1:offset=${offset}[${out}]`);
+      prev = out;
+      timeline += Math.max(1, durations[i] - 1);
+    }
+
+    await execFileAsync("ffmpeg", [
+      ...args,
+      "-filter_complex",
+      filters.join(";"),
+      "-map",
+      `[${prev}]`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-movflags",
+      "+faststart",
+      "-an",
+      mergedPath,
+    ]);
+  } else {
+    const concatList = path.join(tmpDir, "concat.txt");
+    await fs.writeFile(
+      concatList,
+      sceneFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"),
+    );
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      concatList,
+      "-vf",
+      `scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-movflags",
+      "+faststart",
+      "-an",
+      mergedPath,
+    ]);
+  }
+
+  const musicUrl = String(input.musicUrl || "").trim();
+  const voiceUrl = String(input.voiceUrl || "").trim();
+
+  if (!musicUrl && !voiceUrl) {
+    return uploadVideoFileToPublicBlob(mergedPath, "rendered-video.mp4");
+  }
+
+  const cmd = ["-y", "-i", mergedPath];
+
+  if (musicUrl) {
+    const musicPath = path.join(tmpDir, "music.mp3");
+    await downloadFileToPath(musicUrl, musicPath);
+    cmd.push("-i", musicPath);
+  }
+
+  if (voiceUrl) {
+    const voicePath = path.join(tmpDir, "voice.mp3");
+    await downloadFileToPath(voiceUrl, voicePath);
+    cmd.push("-i", voicePath);
+  }
+
+  if (musicUrl && voiceUrl) {
+    cmd.push(
+      "-filter_complex",
+      "[1:a]volume=0.35[m];[2:a]volume=1.0[v];[m][v]amix=inputs=2:duration=longest[aout]",
+      "-map",
+      "0:v",
+      "-map",
+      "[aout]",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-shortest",
+      finalPath,
+    );
+  } else {
+    cmd.push(
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-shortest",
+      finalPath,
+    );
+  }
+
+  await execFileAsync("ffmpeg", cmd);
+
+  return uploadVideoFileToPublicBlob(finalPath, "rendered-video.mp4");
 }
 
 function falVeoReferenceRequestBase(requestId: string) {
@@ -1905,22 +2111,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, workflow: next });
     }
 
-    if (opNormalized === "workflowrenderfinalvideo") {
+    if (opNormalized === "workflowrendervideo" || opNormalized === "workflowrenderfinalvideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const videoUrl = s(workflow.outputs?.videoUrl).trim();
-      if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
+      const rawSceneVideos = Array.isArray(workflow.outputs?.sceneVideos) ? workflow.outputs.sceneVideos : [];
+      const sceneVideos = rawSceneVideos
+        .filter((x: any) => String(x?.url || "").trim())
+        .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
+        .map((x: any) => ({
+          url: String(x?.url || "").trim(),
+          duration: x?.duration || workflow.outputs?.sceneDuration || 8,
+        }));
+
+      if (!sceneVideos.length) {
+        return res.status(400).json(fail("sceneVideos are required before render"));
+      }
+
+      const musicUrl = s(
+        b.musicUrl ||
+        workflow.outputs?.musicUrl ||
+        workflow.outputs?.generatedMusicUrl ||
+        workflow.outputs?.music?.url ||
+        "",
+      ).trim();
+
+      const voiceUrl = s(
+        b.voiceUrl ||
+        workflow.outputs?.voiceUrl ||
+        workflow.outputs?.generatedVoiceUrl ||
+        workflow.outputs?.voice?.url ||
+        "",
+      ).trim();
+
+      const transition = s(b.transition || workflow.outputs?.transition || "cut").trim().toLowerCase() || "cut";
+      const resolution = s(b.resolution || workflow.outputs?.resolution || "1080p").trim() || "1080p";
+
+      const finalVideoUrl = await renderWorkflowFinalVideo({
+        sceneVideos,
+        musicUrl: musicUrl || undefined,
+        voiceUrl: voiceUrl || undefined,
+        transition,
+        resolution,
+      });
+
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
         outputs: {
-          finalVideoUrl: videoUrl,
+          finalVideoUrl,
           renderProvider: "workflow-render",
           renderIsFallback: false,
           renderErrorMessage: "",
+          renderStatus: "COMPLETED",
+          transition,
+          resolution,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, finalVideoUrl });
     }
 
     if (opNormalized === "generatevoice") {
