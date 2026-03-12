@@ -1196,7 +1196,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratestoryboard") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const script = s(workflow.outputs?.script || b.script).trim();
+      const script = s(b.script || workflow.outputs?.script || workflow.payload?.script || "").trim();
       const storyboardCurrent = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       if (!script) return res.status(400).json(fail("script is required"));
       if (!storyboardCurrent.length) return res.status(400).json(fail("storyboard is required from workflowGenerateScript"));
@@ -1209,6 +1209,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           storyboardConfirmed: false,
         },
       });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratesceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0) || 0;
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex || 0) === sceneIndex);
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
+
+      const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
+      const imagePromptZh = buildStoryboardImagePrompt({
+        scenePrompt: s(targetScene?.scenePrompt).trim(),
+        environment: s(targetScene?.environment).trim(),
+        character: s(targetScene?.character).trim(),
+        camera: s(targetScene?.camera).trim(),
+        mood: s(targetScene?.mood).trim(),
+        lighting: s(targetScene?.lighting).trim(),
+        action: s(targetScene?.action).trim(),
+        lockedCharacterPrompt: lockedCharacterPrompt || undefined,
+        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
+      });
+      const imagePrompt = await translateToEnglish(imagePromptZh, { maxChars: 420 });
+      const generated = await generateImageWithBanana({
+        prompt: imagePrompt,
+        numImages: 2,
+        aspectRatio: "16:9",
+        imageSize: "1536x864",
+      });
+      const blobbed = await Promise.all(
+        ((generated.imageUrls || []).slice(0, 2)).map((u: any, i: number) =>
+          downloadToPublicBlob(String(u || "").trim(), `scene-${sceneIndex}-${i + 1}`),
+        ),
+      );
+
+      const nextItem = {
+        sceneIndex,
+        images: blobbed,
+        references: [],
+        prompt: s(targetScene?.scenePrompt).trim(),
+        duration: Number(targetScene?.duration || 0) || 8,
+        sceneVideoUrl: "",
+        detectedType: "",
+        characterLocked: false,
+        referenceCharacterUrl: "",
+        backgroundStatus: "not_removed",
+      };
+
+      const exists = currentImages.some((item: any) => Number(item?.sceneIndex || 0) === sceneIndex);
+      const storyboardImages = exists
+        ? currentImages.map((item: any) => Number(item?.sceneIndex || 0) === sceneIndex ? nextItem : item)
+        : [...currentImages, nextItem].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        status: "running",
+        outputs: {
+          ...workflow.outputs,
+          storyboardImages,
+        },
+      });
+
       return res.status(200).json({ ok: true, workflow: next });
     }
 
@@ -1568,9 +1634,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratescenevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      if (!workflow.outputs?.storyboardConfirmed) {
-        return res.status(400).json(fail("storyboard must be confirmed before scene video generation"));
-      }
 
       const sceneIndex = Number(b.sceneIndex || 0) || 0;
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));

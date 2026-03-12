@@ -410,38 +410,11 @@ export default function WorkflowStoryboardToVideo() {
           disabled={anyMainStepLoading || !workflowId || scenes.length === 0}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
-          {stepStates.generateStoryboardImages.loading ? "Generating..." : "Generate Storyboard Images"}
+          {stepStates.generateStoryboardImages.loading ? "Generating..." : "Generate Scene Image"}
         </button>
         {stepStates.generateStoryboard.success ? <div style={statusTextStyle("#84f5a0")}>Storyboard generated successfully.</div> : null}
         {stepStates.generateStoryboard.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Error: {stepStates.generateStoryboard.error}</div> : null}
         {stepStates.generateStoryboardImages.loading ? <div style={statusTextStyle("#ffdd99")}>Generating storyboard images...</div> : null}
-
-        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={() => runAuxStep("scene1-images", "workflowGenerateStoryboardImages", { workflowId, storyboard: scenes })}
-            disabled={!!auxBusyKey || !workflowId || scenes.length === 0}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "scene1-images" ? "Generating..." : "Generate Scene 1 Images"}
-          </button>
-          <button
-            type="button"
-            onClick={() => runAuxStep("remaining-images", "workflowGenerateRemainingSceneImages", { workflowId })}
-            disabled={!!auxBusyKey || !workflowId}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "remaining-images" ? "Generating..." : "Generate Remaining Scene Images"}
-          </button>
-          <button
-            type="button"
-            onClick={() => runAuxStep("lock-scene-1", "workflowLockCharacter", { workflowId, sceneIndex: 1, locked: true })}
-            disabled={!!auxBusyKey || !workflowId}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "lock-scene-1" ? "Locking..." : "Lock Scene 1 Character"}
-          </button>
-        </div>
 
         <div style={{ marginTop: 8 }}>storyboard structured status: <code>{String(outputs.storyboardStructuredStatus || "")}</code></div>
       </div>
@@ -555,13 +528,27 @@ export default function WorkflowStoryboardToVideo() {
                   <button
                     type="button"
                     onClick={() =>
+                      runAuxStep(`scene-image-${item.sceneIndex}`, "workflowGenerateSceneImage", {
+                        workflowId,
+                        sceneIndex: Number(item.sceneIndex || 0),
+                        script: scenePromptValue,
+                      })
+                    }
+                    disabled={!!auxBusyKey || !workflowId}
+                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
+                  >
+                    {auxBusyKey === `scene-image-${item.sceneIndex}` ? "Generating..." : "Generate Scene Image"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
                       runAuxStep(`scene-video-${item.sceneIndex}`, "workflowGenerateSceneVideo", {
                         workflowId,
                         sceneIndex: Number(item.sceneIndex || 0),
                         duration: "8s",
                       })
                     }
-                    disabled={!!auxBusyKey || !workflowId || !storyboardConfirmed}
+                    disabled={!!auxBusyKey || !workflowId}
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
                     {auxBusyKey === `scene-video-${item.sceneIndex}` ? "Queueing..." : "Generate Scene Video"}
