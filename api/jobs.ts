@@ -703,16 +703,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
     const b: any = req.method === "POST" ? getBody(req) : {};
-    const queryOp =
-      s(q.op).trim() ||
-      s(q.OP).trim() ||
-      s(q.Op).trim() ||
-      s(q.oP).trim();
-    const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
-    const op = queryOp || bodyOp;
-    const opNormalized = op.toLowerCase();
+    const opRaw = s(
+      q.op ||
+      q.OP ||
+      q.Op ||
+      q.oP ||
+      b.op ||
+      b.OP ||
+      b.Op ||
+      b.oP ||
+      b.jobType ||
+      req.body?.jobType ||
+      b.type ||
+      req.body?.type ||
+      ""
+    ).trim();
 
-    if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
+    const opAliasMap: Record<string, string> = {
+      generateScript: "workflowGenerateScript",
+      generateStoryboard: "workflowGenerateStoryboard",
+      generateStoryboardImages: "workflowGenerateStoryboardImages",
+      generateSceneVideo: "workflowGenerateSceneVideo",
+      generateVideo: "workflowGenerateVideo",
+      renderVideo: "workflowRenderVideo",
+      workflow_generate_script: "workflowGenerateScript",
+      workflow_generate_storyboard: "workflowGenerateStoryboard",
+      workflow_generate_storyboard_images: "workflowGenerateStoryboardImages",
+      workflow_generate_scene_video: "workflowGenerateSceneVideo",
+      workflow_generate_video: "workflowGenerateVideo",
+      workflow_render_video: "workflowRenderVideo",
+    };
+
+    const opResolved = s(opAliasMap[opRaw] || opRaw).trim();
+    const opNormalized = opResolved.toLowerCase();
+
+    if (!opResolved) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
     const VAK = s(process.env.KLING_CN_VIDEO_ACCESS_KEY).trim();
