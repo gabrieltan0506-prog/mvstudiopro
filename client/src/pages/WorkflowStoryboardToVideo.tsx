@@ -108,7 +108,7 @@ export default function WorkflowStoryboardToVideo() {
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
   const [targetWords, setTargetWords] = useState("900");
   const [targetScenes, setTargetScenes] = useState("6");
-  const [sceneDuration, setSceneDuration] = useState("5");
+  const [sceneDuration, setSceneDuration] = useState("8");
   const [videoDuration, setVideoDuration] = useState("8s");
 
   const [scriptText, setScriptText] = useState("");
@@ -281,9 +281,9 @@ export default function WorkflowStoryboardToVideo() {
           style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
         />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
-          <input value={targetWords} onChange={(e) => setTargetWords(e.target.value)} placeholder="Script Length" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
-          <input value={targetScenes} onChange={(e) => setTargetScenes(e.target.value)} placeholder="Scene Count" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
-          <input value={sceneDuration} onChange={(e) => setSceneDuration(e.target.value)} placeholder="Scene Duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+          <input value={targetWords} onChange={(e) => setTargetWords(e.target.value)} placeholder="Script Word Count" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+          <input value={targetScenes} onChange={(e) => setTargetScenes(e.target.value)} placeholder="Storyboard Scene Count" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+          <input value={sceneDuration} readOnly placeholder="Scene Duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "white" }} />
         </div>
         <button
           onClick={() =>
@@ -549,30 +549,7 @@ export default function WorkflowStoryboardToVideo() {
                 </div>
                 <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 12, opacity: 0.9 }}>Scene Duration:</span>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 4 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 4 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    4s
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 6 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 6 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    6s
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 8 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 8 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    8s
-                  </button>
-                  <span style={{ fontSize: 12, opacity: 0.8 }}>
-                    当前：{String((sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)))}s
-                  </span>
+                  <span style={{ fontSize: 12, opacity: 0.8 }}>8s fixed</span>
                 </div>
                 <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <button
@@ -581,7 +558,7 @@ export default function WorkflowStoryboardToVideo() {
                       runAuxStep(`scene-video-${item.sceneIndex}`, "workflowGenerateSceneVideo", {
                         workflowId,
                         sceneIndex: Number(item.sceneIndex || 0),
-                        duration: `${String(sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8))}s`,
+                        duration: "8s",
                       })
                     }
                     disabled={!!auxBusyKey || !workflowId || !storyboardConfirmed}

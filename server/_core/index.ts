@@ -20,6 +20,7 @@ import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { saveVideoShortLink } from "../services/video-short-links";
+import exportHandler from "../../api/export.js";
 
 function buildRoutingMap() {
   return {
@@ -167,6 +168,10 @@ async function startServer() {
 
   app.get("/api/business", async (req, res) => {
     return businessHandler(req as any, res as any);
+  });
+
+  app.all("/api/export", async (req, res) => {
+    return exportHandler(req as any, res as any);
   });
 
   app.post("/api/jobs", async (req, res) => {
