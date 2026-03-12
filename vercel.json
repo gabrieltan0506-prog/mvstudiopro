@@ -1,6 +1,6 @@
 {
   "buildCommand": "pnpm exec vite build",
-  "outputDirectory": "client/dist",
+  "outputDirectory": "server/_core/public",
   "headers": [
     {
       "source": "/",
