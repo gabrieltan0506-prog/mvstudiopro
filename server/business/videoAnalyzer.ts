@@ -18,10 +18,11 @@ export async function analyzeVideo(_meta: unknown): Promise<VideoAnalysis> {
     optimization: [
       "3秒内加入冲突",
       "减少空镜",
+      "加强CTA引导",
     ],
     commercialDirection: [
       "带货",
-      "广告",
+      "广告合作",
     ],
   };
 }

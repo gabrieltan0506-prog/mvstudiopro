@@ -26,7 +26,7 @@ const TemplatesLibrary = lazy(() => import("./pages/TemplatesLibrary"));
 const Login = lazy(() => import("./pages/Login"));
 const TestLab = lazy(() => import("./pages/TestLab"));
 const WorkflowNodes = lazy(() => import("./pages/WorkflowNodes"));
-const Business = lazy(() => import("./pages/Business"));
+const Business = lazy(() => import("./features/business/BusinessLabPage"));
 
 const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
 
