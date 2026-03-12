@@ -1,7 +1,7 @@
 
 
 // sunoPollingFix
-async function pollSuno(taskId){
+async function pollSuno(taskId: string){
 
   for(let i=0;i<60;i++){
 
@@ -735,6 +735,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     const opResolved = s(opAliasMap[opRaw] || opRaw).trim();
+    const op = opResolved;
     const opNormalized = opResolved.toLowerCase();
 
     if (!opResolved) return res.status(400).json({ ok: false, error: "missing_op" });

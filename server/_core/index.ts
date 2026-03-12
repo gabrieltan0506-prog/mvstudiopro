@@ -8,6 +8,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import uploadRouter from "../upload";
 import { registerStripeWebhook } from "../stripe-webhook";
+import jobsHandler from "../../api/jobs.js";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { createJob, getJobById, type JobType } from "../jobs/repository";
@@ -78,6 +79,10 @@ async function startServer() {
   // File upload
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
+
+  app.get("/api/jobs", async (req, res) => {
+    return jobsHandler(req as any, res as any);
+  });
 
   app.post("/api/jobs", async (req, res) => {
     try {
