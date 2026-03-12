@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -87,14 +87,14 @@ export * from "./schema-jobs";
 export * from "./schema-workflow";
 export * from "./schema-video-short-links";
 
-export const workflowRuns = pgTable("workflow_runs", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  type: text("type").notNull(),
-  status: text("status").notNull(),
-  inputJson: jsonb("input_json").notNull(),
-  stateJson: jsonb("state_json").notNull(),
-  outputsJson: jsonb("outputs_json").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+export const workflowRuns = mysqlTable("workflow_runs", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  userId: varchar("user_id", { length: 64 }).notNull(),
+  type: varchar("type", { length: 64 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  inputJson: json("input_json").notNull(),
+  stateJson: json("state_json").notNull(),
+  outputsJson: json("outputs_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });

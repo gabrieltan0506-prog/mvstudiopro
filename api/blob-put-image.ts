@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { put } from "@vercel/blob";
+import sharp from "sharp";
 
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -21,15 +22,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!m) return res.status(400).json({ ok: false, error: "invalid_data_url" });
 
-    const mime = m[1];
     const b64 = m[2];
-    const buf = Buffer.from(b64, "base64");
-    if (!buf.length) return res.status(400).json({ ok: false, error: "empty_file" });
-    if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large" });
+    const raw = Buffer.from(b64, "base64");
+    if (!raw.length) return res.status(400).json({ ok: false, error: "empty_file" });
+    if (raw.length > 20 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large_raw" });
 
-    // Your store is private; keep it private.
-    const blob = await put(`refs/${Date.now()}-${filename}`, buf, { access: "private", contentType: mime });
-    return res.status(200).json({ ok: true, imageUrl: `${blob.url}?download=1`, blobUrl: blob.url });
+    let out = await sharp(raw, { failOnError: false })
+      .rotate()
+      .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 84, mozjpeg: true })
+      .toBuffer();
+
+    if (out.length > 10 * 1024 * 1024) {
+      out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
+    }
+    if (out.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ ok: false, error: "file_too_large_after_compress" });
+    }
+
+    const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
+    if (!token) return res.status(500).json({ ok: false, error: "missing_env_MVSP_READ_WRITE_TOKEN" });
+
+    const safeName = filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "-") || "ref";
+    const blob = await put(`refs/${Date.now()}-${safeName}.jpg`, out, {
+      access: "public",
+      token,
+      contentType: "image/jpeg",
+    });
+
+    return res.status(200).json({ ok: true, imageUrl: blob.url, blobUrl: blob.url });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: "server_error", message: e?.message || String(e) });
   }

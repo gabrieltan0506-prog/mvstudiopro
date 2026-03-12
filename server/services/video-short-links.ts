@@ -8,11 +8,11 @@ const ttlMs = Number(process.env.VIDEO_SHORT_LINK_TTL_MS || DEFAULT_TTL_MS);
 const inMemoryLinks = new Map<string, { videoUrl: string; expiresAt: number }>();
 
 function pruneExpired(now = Date.now()): void {
-  for (const [taskId, item] of inMemoryLinks.entries()) {
+  inMemoryLinks.forEach((item, taskId) => {
     if (item.expiresAt <= now) {
       inMemoryLinks.delete(taskId);
     }
-  }
+  });
 }
 
 function writeInMemory(taskId: string, videoUrl: string): void {
@@ -80,4 +80,3 @@ export async function getVideoUrlByTaskId(taskId: string): Promise<string | null
   }
   return item.videoUrl;
 }
-

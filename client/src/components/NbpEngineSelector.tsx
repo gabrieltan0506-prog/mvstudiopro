@@ -13,7 +13,7 @@
  */
 import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
 
-export type EngineOption = "nano_flash" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
+export type EngineOption = "forge" | "nano_flash" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
 
 interface EngineInfo {
   id: EngineOption;

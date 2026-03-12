@@ -91,7 +91,7 @@ export async function getJobById(id: string): Promise<InMemoryJob | null> {
 export async function claimNextQueuedJob(): Promise<InMemoryJob | null> {
   const db = await getDb();
   if (!db) {
-    const next = [...inMemoryJobs.values()]
+    const next = Array.from(inMemoryJobs.values())
       .filter((job) => job.status === "queued")
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
 

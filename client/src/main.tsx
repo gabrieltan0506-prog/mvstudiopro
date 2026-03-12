@@ -19,7 +19,7 @@ import "./index.css";
     try { sessionStorage.setItem(KEY, "1"); } catch {}
   };
 
-  const isChunkError = (msg) =>
+  const isChunkError = (msg: unknown) =>
     typeof msg === "string" &&
     (msg.includes("Failed to fetch dynamically imported module") ||
      msg.includes("Importing a module script failed") ||
@@ -61,7 +61,7 @@ const redirectToLoginIfUnauthorized = (error: unknown) => {
   window.location.href = getLoginUrl();
 };
 
-queryClient.getQueryCache().subscribe(event => {
+queryClient.getQueryCache().subscribe((event: any) => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.query.state.error;
     redirectToLoginIfUnauthorized(error);
@@ -69,7 +69,7 @@ queryClient.getQueryCache().subscribe(event => {
   }
 });
 
-queryClient.getMutationCache().subscribe(event => {
+queryClient.getMutationCache().subscribe((event: any) => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.mutation.state.error;
     redirectToLoginIfUnauthorized(error);

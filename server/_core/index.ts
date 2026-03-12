@@ -94,7 +94,7 @@ async function startServer() {
         return res.status(400).json({ error: "input is required" });
       }
 
-      const ctx = await createContext({ req: req as any, res: res as any });
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
       let resolvedUserId = "public";
       if (typeof userId === "string" && userId.trim()) {
         if (!ctx.user) {
@@ -146,7 +146,7 @@ async function startServer() {
         return res.status(404).json({ error: "Job not found" });
       }
 
-      const ctx = await createContext({ req: req as any, res: res as any });
+      const ctx = await createContext({ req: req as any, res: res as any } as any);
       if (job.userId !== "public") {
         if (!ctx.user) {
           return res.status(401).json({ error: "Unauthorized" });
@@ -187,7 +187,7 @@ async function startServer() {
     try {
       let effectiveTier: "free" | "beta" | "paid" | "supervisor" | "unknown" = "unknown";
       try {
-        const ctx = await createContext({ req: req as any, res: res as any });
+        const ctx = await createContext({ req: req as any, res: res as any } as any);
         const rawUserId = ctx.user?.id;
         const userId = Number(rawUserId);
         if (rawUserId != null && Number.isFinite(userId)) {

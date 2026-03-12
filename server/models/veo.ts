@@ -35,9 +35,8 @@ export async function generateVideoWithVeo(input: {
     const result = (await fal.subscribe("fal-ai/veo3.1/reference-to-video", {
       input: {
         prompt: scenePrompt,
-        reference_images: images,
         image_urls: images,
-      },
+      } as any,
       logs: false,
     })) as any;
 

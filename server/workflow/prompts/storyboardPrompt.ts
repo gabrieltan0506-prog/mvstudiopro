@@ -11,12 +11,12 @@ export function buildStoryboardPrompt(input: {
 
   return [
     "你是 MVStudioPro 的电影分镜导演。",
-    "请把脚本转换为严格 JSON，且只能输出 JSON 本体。",
+    "请把脚本转换为严格 JSON，且只能输出 JSON 本体，所有字段内容必须使用简体中文。",
     "禁止 markdown、禁止解释、禁止额外文本。",
     `scenes 数量必须严格等于 ${targetScenes}，sceneIndex 从 1 到 ${targetScenes} 连续递增。`,
     `每个 scene 的 duration 必须填写 ${sceneDuration}。`,
     "所有 scene 字段都必须非空：sceneTitle/environment/character/action/camera/lighting/mood。",
-    "角色一致性必须明确：same face, same outfit, same hairstyle, same identity across scenes。",
+    "角色一致性必须明确：同一角色在所有分鏡中必須保持同一張臉、同一套服裝、同一髮型、同一身份。",
     "输出 JSON schema：",
     "{",
     '  \"storyTitle\": \"\",',
