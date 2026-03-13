@@ -30,6 +30,14 @@ function serializeFalError(value: any) {
   }
 }
 
+function sanitizeVideoPrompt(value: string) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[【】]/g, "")
+    .trim()
+    .slice(0, 700);
+}
+
 async function waitForFalVideoResult(requestId: string, key: string) {
   const safeRequestId = encodeURIComponent(String(requestId || "").trim());
   if (!safeRequestId) throw new Error("missing_fal_request_id");
@@ -119,7 +127,7 @@ export async function generateVideoWithVeo(input: {
   imageUrls: string[];
 }) {
   const key = String(process.env.FAL_API_KEY || process.env.FAL_KEY || "").trim();
-  const scenePrompt = String(input.scenePrompt || "").trim();
+  const scenePrompt = sanitizeVideoPrompt(String(input.scenePrompt || "").trim());
 
   if (!scenePrompt) {
     return {
@@ -144,7 +152,7 @@ export async function generateVideoWithVeo(input: {
   try {
     const images = Array.from(
       new Set([...(input.referenceImages || []), ...(input.imageUrls || [])].map((value) => String(value || "").trim()))
-    ).filter(Boolean);
+    ).filter(Boolean).slice(0, 3);
 
     if (!images.length) {
       return {
@@ -162,8 +170,10 @@ export async function generateVideoWithVeo(input: {
       body: JSON.stringify({
         prompt: scenePrompt,
         image_urls: images,
+        aspect_ratio: "16:9",
         duration: "8s",
         resolution: "720p",
+        generate_audio: false,
       }),
     });
     const createBody = await parseJsonSafe(createResp);

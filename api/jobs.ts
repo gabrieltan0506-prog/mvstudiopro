@@ -320,10 +320,17 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
       };
     }
 
-    const blob = await put(`voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`, audioBuffer, {
-      access: "public",
-      contentType: "audio/mpeg",
-    });
+    const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+    const blob = env.mvspReadWriteToken
+      ? await put(blobKey, audioBuffer, {
+          access: "public",
+          contentType: "audio/mpeg",
+          token: env.mvspReadWriteToken,
+        })
+      : await put(blobKey, audioBuffer, {
+          access: "public",
+          contentType: "audio/mpeg",
+        });
 
     return {
       ...baseResult,
@@ -345,6 +352,7 @@ type WorkflowStoryboardScene = {
   sceneIndex: number;
   sceneTitle?: string;
   scenePrompt: string;
+  primarySubject?: string;
   environment?: string;
   character?: string;
   duration: number;
@@ -352,12 +360,20 @@ type WorkflowStoryboardScene = {
   mood: string;
   lighting?: string;
   action?: string;
+  renderStillNeeded?: boolean;
+  renderStillPrompt?: string;
 };
 
 type WorkflowStoryboardImageItem = {
   sceneIndex: number;
   images: string[];
   imageUrls?: string[];
+  characterImages?: string[];
+  characterImageUrl?: string;
+  sceneImages?: string[];
+  sceneImageUrls?: string[];
+  renderStillImageUrl?: string;
+  renderStillPrompt?: string;
   prompt?: string;
   duration?: number;
   sceneVideoUrl?: string;
@@ -438,6 +454,7 @@ function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDur
     sceneIndex: Number(input?.sceneIndex || fallbackIndex),
     sceneTitle: s(input?.sceneTitle || `Scene ${fallbackIndex}`).trim(),
     scenePrompt: s(input?.scenePrompt).trim(),
+    primarySubject: s(input?.primarySubject || input?.character).trim(),
     environment: s(input?.environment || "cinematic environment").trim(),
     character: s(input?.character || "same main character identity").trim(),
     duration: Number(input?.duration || 0) || fallbackDuration,
@@ -445,7 +462,160 @@ function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDur
     mood: s(input?.mood || "cinematic").trim() || "cinematic",
     lighting: s(input?.lighting || "dramatic lighting").trim() || "dramatic lighting",
     action: s(input?.action || "character-driven cinematic action").trim() || "character-driven cinematic action",
+    renderStillNeeded: Boolean(input?.renderStillNeeded),
+    renderStillPrompt: s(input?.renderStillPrompt || input?.scenePrompt).trim(),
   };
+}
+
+function getStoryboardDraftFromBody(workflow: any, body: any) {
+  const scenesInput = Array.isArray(body?.storyboard) ? body.storyboard : workflow?.outputs?.storyboard;
+  return Array.isArray(scenesInput)
+    ? scenesInput.map((scene: any, idx: number) =>
+        normalizeStoryboardScene(scene, idx + 1, Number(workflow?.outputs?.sceneDuration || 0) || 8),
+      )
+    : [];
+}
+
+function getSceneCharacterImages(item: any): string[] {
+  const explicit = Array.isArray(item?.characterImages)
+    ? item.characterImages
+    : [item?.characterImageUrl || item?.characterPngUrl || item?.referenceCharacterUrl].filter(Boolean);
+  const normalized = explicit.map((value: any) => s(value).trim()).filter(Boolean);
+  if (normalized.length) return normalized.slice(0, 1);
+
+  const legacy = Array.isArray(item?.imageUrls)
+    ? item.imageUrls
+    : Array.isArray(item?.images)
+      ? item.images
+      : [];
+  return legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 1);
+}
+
+function getSceneEnvironmentImages(item: any): string[] {
+  const explicit = Array.isArray(item?.sceneImageUrls)
+    ? item.sceneImageUrls
+    : Array.isArray(item?.sceneImages)
+      ? item.sceneImages
+      : [];
+  const normalized = explicit.map((value: any) => s(value).trim()).filter(Boolean);
+  if (normalized.length) return normalized.slice(0, 2);
+
+  const legacy = Array.isArray(item?.imageUrls)
+    ? item.imageUrls
+    : Array.isArray(item?.images)
+      ? item.images
+      : [];
+  return legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(1, 3);
+}
+
+function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<string, any>) {
+  const nextCharacterImages = Array.isArray(patch.characterImages)
+    ? patch.characterImages.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 1)
+    : getSceneCharacterImages(existing);
+  const nextSceneImages = Array.isArray(patch.sceneImages)
+    ? patch.sceneImages.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 2)
+    : getSceneEnvironmentImages(existing);
+  const combinedImages = [...nextSceneImages, ...nextCharacterImages].filter(Boolean);
+
+  return {
+    ...(existing || {}),
+    ...patch,
+    sceneIndex,
+    characterImages: nextCharacterImages,
+    characterImageUrl: nextCharacterImages[0] || "",
+    sceneImages: nextSceneImages,
+    sceneImageUrls: nextSceneImages,
+    images: combinedImages,
+    imageUrls: combinedImages,
+    renderStillImageUrl: s(patch.renderStillImageUrl ?? existing?.renderStillImageUrl).trim(),
+    renderStillPrompt: s(patch.renderStillPrompt ?? existing?.renderStillPrompt).trim(),
+  } as WorkflowStoryboardImageItem;
+}
+
+function buildCharacterReferenceImagePrompt(scene: any, lockedCharacterPrompt?: string) {
+  const parts = [
+    "单人角色参考图。只生成一名人物，不要第二个人，不要群像，不要多人同框。",
+    "人物主体完整清晰，适合作为后续 reference-to-video 的人物参考图。",
+    "背景保持干净简洁，避免复杂场景和额外角色。",
+  ];
+  const identity = s(lockedCharacterPrompt).trim() || s(scene?.character).trim();
+  const primarySubject = s(scene?.primarySubject).trim();
+  if (primarySubject) parts.push(`主要人物：${primarySubject}`);
+  if (identity) parts.push(`人物设定：${identity}`);
+  if (s(scene?.scenePrompt).trim()) parts.push(`镜头对应情境：${s(scene.scenePrompt).trim()}`);
+  if (s(scene?.action).trim()) parts.push(`人物动作：${s(scene.action).trim()}`);
+  if (s(scene?.mood).trim()) parts.push(`情绪：${s(scene.mood).trim()}`);
+  if (s(scene?.lighting).trim()) parts.push(`光影：${s(scene.lighting).trim()}`);
+  return parts.join(" ");
+}
+
+function buildEnvironmentReferenceImagePrompt(scene: any) {
+  const parts = [
+    "场景环境参考图。不要出现任何人物、人脸、肢体、剪影或倒影。",
+    "只保留环境、道具、动物或其他物体，适合作为后续 reference-to-video 的场景参考图。",
+  ];
+  if (Boolean(scene?.renderStillNeeded)) parts.push("如果原场景有人物互动，也不要把人物画进这张场景图。");
+  if (s(scene?.environment).trim()) parts.push(`环境：${s(scene.environment).trim()}`);
+  if (s(scene?.scenePrompt).trim()) parts.push(`场景描述：${s(scene.scenePrompt).trim()}`);
+  if (s(scene?.camera).trim()) parts.push(`镜头：${s(scene.camera).trim()}`);
+  if (s(scene?.mood).trim()) parts.push(`氛围：${s(scene.mood).trim()}`);
+  if (s(scene?.lighting).trim()) parts.push(`光影：${s(scene.lighting).trim()}`);
+  if (s(scene?.action).trim()) parts.push(`动作感：${s(scene.action).trim()}`);
+  return parts.join(" ");
+}
+
+async function generateSceneAssetImages(scene: any, workflow: any) {
+  const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
+  const characterPrompt = buildCharacterReferenceImagePrompt(scene, lockedCharacterPrompt || undefined);
+  const environmentPrompt = buildEnvironmentReferenceImagePrompt(scene);
+
+  const [characterGenerated, environmentGenerated] = await Promise.all([
+    generateImageWithBanana({
+      prompt: characterPrompt,
+      numImages: 1,
+      aspectRatio: "9:16",
+      imageSize: "1024x1536",
+    }),
+    generateImageWithBanana({
+      prompt: environmentPrompt,
+      numImages: 2,
+      aspectRatio: "16:9",
+      imageSize: "1536x864",
+    }),
+  ]);
+
+  const characterImages = await uploadWorkflowImagesToBlob(
+    (characterGenerated.imageUrls || []).slice(0, 1),
+    `storyboard-scene-${scene.sceneIndex}-character`,
+  );
+  const sceneImages = await uploadWorkflowImagesToBlob(
+    (environmentGenerated.imageUrls || []).slice(0, 2),
+    `storyboard-scene-${scene.sceneIndex}-scene`,
+  );
+
+  return { characterImages, sceneImages };
+}
+
+function sceneNeedsRenderStill(scene: any) {
+  if (Boolean(scene?.renderStillNeeded)) return true;
+  const text = [s(scene?.scenePrompt), s(scene?.action), s(scene?.renderStillPrompt)].join(" ");
+  return /(两人|二人|三人|多人|一家|全家|众人|群像|合照|同框|一起|并肩|对视|互动)/.test(text);
+}
+
+function buildRenderStillPrompt(scene: any, customPrompt?: string) {
+  const manual = s(customPrompt).trim();
+  if (manual) return manual;
+  const parts = [
+    "电影感多人静态展示图",
+    "高质量影视级画面",
+    "用于最终 render 阶段的静态插帧，不用于 AI 视频生成",
+    s(scene?.renderStillPrompt || scene?.scenePrompt).trim(),
+    s(scene?.environment).trim() ? `环境：${s(scene?.environment).trim()}` : "",
+    s(scene?.camera).trim() ? `镜头：${s(scene?.camera).trim()}` : "",
+    s(scene?.lighting).trim() ? `光影：${s(scene?.lighting).trim()}` : "",
+    s(scene?.mood).trim() ? `情绪：${s(scene?.mood).trim()}` : "",
+  ].filter(Boolean);
+  return parts.join("，");
 }
 
 function buildStoryboardFromScript(input: {
@@ -522,6 +692,13 @@ function sanitizeScenePrompt(value: any, sceneIndex: number, topic: string) {
     .trim();
   if (!cleaned) return `Scene ${sceneIndex}: ${topic}，电影感镜头推进。`;
   return cleaned;
+}
+
+function simplifySceneVideoPrompt(scene: any) {
+  const source = s(scene?.scenePrompt || scene?.prompt).trim();
+  const firstSentence = source.split(/[。！？!?\n]/).map((part) => part.trim()).filter(Boolean)[0] || source;
+  const compact = firstSentence.replace(/\s+/g, " ").trim();
+  return compact.slice(0, 120);
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -841,53 +1018,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratestoryboardimages") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const scenesInput = Array.isArray(b.storyboard) ? b.storyboard : workflow.outputs?.storyboard;
-      if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
+      const scenes = getStoryboardDraftFromBody(workflow, b);
+      if (!Array.isArray(scenes) || scenes.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
       }
-      const scenes = scenesInput.map((scene: any, idx: number) =>
-        normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
-      );
       const results: WorkflowStoryboardImageItem[] = [];
-      const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
       for (const scene of scenes) {
-        const imagePrompt = buildStoryboardImagePrompt({
-          scenePrompt: scene.scenePrompt,
-          environment: scene.environment,
-          character: scene.character,
-          camera: scene.camera,
-          mood: scene.mood,
-          lighting: scene.lighting,
-          action: scene.action,
-          lockedCharacterPrompt: lockedCharacterPrompt || undefined,
-          referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
-        });
-        const generated = await generateImageWithBanana({
-          prompt: imagePrompt,
-          numImages: 2,
-          aspectRatio: "16:9",
-          imageSize: "1536x864",
-        });
-        const uploadedImages = await uploadWorkflowImagesToBlob(
-          (generated.imageUrls || []).slice(0, 2),
-          `storyboard-scene-${scene.sceneIndex}`
-        );
-        results.push({
-          sceneIndex: scene.sceneIndex,
-          images: uploadedImages,
-          imageUrls: uploadedImages,
+        const generatedAssets = await generateSceneAssetImages(scene, workflow);
+        results.push(buildSceneAssetBundle(null, scene.sceneIndex, {
           prompt: scene.scenePrompt,
           duration: 8,
           sceneVideoUrl: "",
+          renderStillPrompt: s(scene.renderStillPrompt || scene.scenePrompt).trim(),
           characterLocked: false,
           referenceCharacterUrl: "",
           backgroundStatus: "not_removed",
-        });
+          characterImages: generatedAssets.characterImages,
+          sceneImages: generatedAssets.sceneImages,
+        }));
       }
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         status: "running",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
           storyboard: scenes,
           storyboardImages: results,
           storyboardConfirmed: false,
@@ -901,47 +1055,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
-      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
-      const imagePrompt = buildStoryboardImagePrompt({
-        scenePrompt: s(targetScene.scenePrompt).trim(),
-        environment: s(targetScene.environment).trim(),
-        character: s(targetScene.character).trim(),
-        camera: s(targetScene.camera).trim(),
-        mood: s(targetScene.mood).trim(),
-        lighting: s(targetScene.lighting).trim(),
-        action: s(targetScene.action).trim(),
-        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
-        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
-      });
-      const generated = await generateImageWithBanana({
-        prompt: imagePrompt,
-        numImages: 2,
-        aspectRatio: "16:9",
-        imageSize: "1536x864",
-      });
-      const uploadedImages = await uploadWorkflowImagesToBlob(
-        (generated.imageUrls || []).slice(0, 2),
-        `storyboard-scene-${sceneIndex}`
-      );
-      const updated = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
-        ...(existing || {}),
-        sceneIndex,
-        images: uploadedImages,
-        imageUrls: uploadedImages,
-        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+      const generatedAssets = await generateSceneAssetImages(targetScene, workflow);
+      const updated = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
+        prompt: s(targetScene.scenePrompt).trim(),
         duration: 8,
         sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        renderStillPrompt: s(targetScene.renderStillPrompt || targetScene.scenePrompt).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
         characterPngUrl: s(existing?.characterPngUrl).trim(),
+        characterImages: generatedAssets.characterImages,
+        sceneImages: generatedAssets.sceneImages,
       }));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
-        outputs: { storyboardImages: updated, storyboardConfirmed: false },
+        outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
+          storyboardImages: updated,
+          storyboardConfirmed: false,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -951,50 +1089,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
-      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
-
-      const imagePrompt = buildStoryboardImagePrompt({
-        scenePrompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
-        environment: s(targetScene.environment).trim(),
-        character: s(targetScene.character).trim(),
-        camera: s(targetScene.camera).trim(),
-        mood: s(targetScene.mood).trim(),
-        lighting: s(targetScene.lighting).trim(),
-        action: s(targetScene.action).trim(),
-        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
-        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
-      });
-      const generated = await generateImageWithBanana({
-        prompt: imagePrompt,
-        numImages: 2,
-        aspectRatio: "16:9",
-        imageSize: "1536x864",
-      });
-      const uploadedImages = await uploadWorkflowImagesToBlob(
-        (generated.imageUrls || []).slice(0, 2),
-        `storyboard-scene-${sceneIndex}`
-      );
+      const generatedAssets = await generateSceneAssetImages(targetScene, workflow);
 
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
-        ...(existing || {}),
-        sceneIndex,
-        images: uploadedImages,
-        imageUrls: uploadedImages,
-        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
+        prompt: s(targetScene.scenePrompt).trim(),
         duration: 8,
         sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        renderStillPrompt: s(targetScene.renderStillPrompt || targetScene.scenePrompt).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
         characterPngUrl: s(existing?.characterPngUrl).trim(),
+        characterImages: generatedAssets.characterImages,
+        sceneImages: generatedAssets.sceneImages,
       }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
           storyboardImages,
           storyboardConfirmed: false,
         },
@@ -1007,34 +1125,99 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       const imageUrl = s(b.imageUrl).trim();
+      const assetType = s(b.assetType || "scene").trim().toLowerCase();
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       if (!imageUrl) return res.status(400).json(fail("imageUrl is required"));
 
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
-      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex) || {};
-      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
-        ...(existing || {}),
-        sceneIndex,
-        images: [imageUrl],
-        imageUrls: [imageUrl],
-        prompt: s(targetScene.scenePrompt || targetScene.prompt || existing?.prompt).trim(),
-        duration: 8,
-        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
-        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
-        characterLocked: Boolean(existing?.characterLocked),
-        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
-        characterPngUrl: s(existing?.characterPngUrl).trim(),
-      }));
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const targetScene: any = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex) || {};
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => {
+        const currentCharacterImages = getSceneCharacterImages(existing);
+        const currentSceneImages = getSceneEnvironmentImages(existing);
+        return buildSceneAssetBundle(existing, sceneIndex, {
+          prompt: s(targetScene.scenePrompt || existing?.prompt).trim(),
+          duration: 8,
+          sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+          renderStillImageUrl: assetType === "renderstill" ? imageUrl : s(existing?.renderStillImageUrl).trim(),
+          renderStillPrompt: s(targetScene.renderStillPrompt || targetScene.scenePrompt || existing?.renderStillPrompt).trim(),
+          backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+          characterLocked: Boolean(existing?.characterLocked),
+          referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+          characterPngUrl: s(existing?.characterPngUrl).trim(),
+          characterImages: assetType === "character" ? [imageUrl] : currentCharacterImages,
+          sceneImages: assetType === "character"
+            ? currentSceneImages
+            : assetType === "scene"
+              ? Array.from(new Set([...currentSceneImages, imageUrl])).slice(0, 2)
+              : currentSceneImages,
+        });
+      });
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
           storyboardImages,
           storyboardConfirmed: false,
         },
       });
       return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneraterenderstill") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      if (!scene) return res.status(404).json(fail("scene not found"));
+      const prompt = buildRenderStillPrompt(scene, b.renderStillPrompt);
+      if (!prompt) return res.status(400).json(fail("renderStillPrompt is required"));
+
+      const generated = await generateImageWithBanana({
+        prompt,
+        numImages: 1,
+        aspectRatio: "16:9",
+        imageSize: "1536x864",
+      });
+      const uploadedImages = await uploadWorkflowImagesToBlob(
+        (generated.imageUrls || []).slice(0, 1),
+        `storyboard-scene-${sceneIndex}-render-still`,
+      );
+      const renderStillImageUrl = s(uploadedImages[0]).trim();
+      if (!renderStillImageUrl) return res.status(502).json(fail("render still generation failed"));
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) =>
+        buildSceneAssetBundle(existing, sceneIndex, {
+          prompt: s(scene?.scenePrompt || existing?.prompt).trim(),
+          duration: 8,
+          sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+          renderStillImageUrl,
+          renderStillPrompt: prompt,
+          backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+          characterLocked: Boolean(existing?.characterLocked),
+          referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+          characterPngUrl: s(existing?.characterPngUrl).trim(),
+        }),
+      );
+
+      const nextStoryboard = storyboard.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex ? { ...item, renderStillNeeded: true, renderStillPrompt: prompt } : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard: nextStoryboard,
+          storyboardImages,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, renderStillImageUrl });
     }
 
     if (opNormalized === "workflowlockcharacter") {
@@ -1229,43 +1412,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
 
-      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
       if (!scene) return res.status(404).json(fail("scene not found"));
+      if (sceneNeedsRenderStill(scene)) {
+        return res.status(409).json(fail(
+          "multi-character scenes must use render stills instead of AI scene video generation",
+          "此分镜检测为多角色或多人场景，请改为上传或生成静态展示图，最终在 Render 阶段插入。",
+        ));
+      }
       const sceneBundle = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
-      const imageUrl =
+      const characterImageUrl =
         s(sceneBundle?.characterPngUrl).trim() ||
         s(sceneBundle?.referenceCharacterUrl).trim() ||
-        s((Array.isArray(sceneBundle?.imageUrls) ? sceneBundle.imageUrls[0] : "")).trim() ||
-        s((Array.isArray(sceneBundle?.images) ? sceneBundle.images[0] : "")).trim();
-      if (!imageUrl) return res.status(400).json(fail("scene image is required before scene video generation"));
+        getSceneCharacterImages(sceneBundle)[0] ||
+        "";
+      const sceneImageUrls = getSceneEnvironmentImages(sceneBundle);
+      const referenceImages = [...sceneImageUrls.slice(0, 2), characterImageUrl].map((value) => s(value).trim()).filter(Boolean);
+      if (!characterImageUrl) return res.status(400).json(fail("character image is required before scene video generation"));
+      if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
-      const prompt = buildVideoPrompt({
-        scenePrompt: s(scene?.scenePrompt || scene?.prompt).trim(),
-        character: s(scene?.character).trim(),
-        action: s(scene?.action).trim(),
-        camera: s(scene?.camera).trim(),
-        mood: s(scene?.mood).trim(),
-        lighting: s(scene?.lighting).trim(),
-        sceneDuration: 8,
-        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
-      });
+      const prompt = simplifySceneVideoPrompt(scene);
       const generated = await generateVideoWithVeo({
         scenePrompt: prompt,
-        referenceImages: [imageUrl],
-        imageUrls: [imageUrl],
+        referenceImages,
+        imageUrls: referenceImages,
       });
       if (!generated.videoUrl) {
         return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
       }
 
-      const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => ({
-        ...(existing || {}),
-        sceneIndex,
-        images: Array.isArray(existing?.images) ? existing.images : [],
-        imageUrls: Array.isArray(existing?.imageUrls) ? existing.imageUrls : (Array.isArray(existing?.images) ? existing.images : []),
-        prompt: s(scene?.scenePrompt || scene?.prompt).trim(),
+      const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
+        prompt: s(scene?.scenePrompt).trim(),
         duration: 8,
         sceneVideoUrl: s(generated.videoUrl).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
@@ -1276,6 +1455,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
           storyboardImages: nextStoryboardImages,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
@@ -1297,6 +1478,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voice = s(b.voice || "nova").trim() || "nova";
       if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      if (!s(voiceResult.voiceUrl).trim()) {
+        return res.status(502).json(
+          fail(
+            "voice_generation_failed",
+            voiceResult.voiceErrorMessage || "OpenAI TTS did not return a voiceUrl",
+            {
+              provider: voiceResult.voiceProvider,
+              model: voiceResult.voiceModel,
+              voice: voiceResult.voiceVoice,
+            },
+          ),
+        );
+      }
       const next = saveWorkflowPatch(workflow, {
         currentStep: "voice",
         outputs: {
@@ -1382,6 +1576,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const sceneVideos = storyboardImages
         .filter((item: any) => s(item?.sceneVideoUrl).trim())
         .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
@@ -1389,6 +1584,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneIndex: Number(item?.sceneIndex || 0),
           url: s(item?.sceneVideoUrl).trim(),
           duration: "8s",
+          stillImageUrl: s(item?.renderStillImageUrl).trim() || undefined,
+          stillDuration: sceneNeedsRenderStill(storyboard.find((scene: any) => Number(scene?.sceneIndex) === Number(item?.sceneIndex || 0))) ? "1.5s" : undefined,
         }));
       if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
       const finalVideoUrl = await renderWorkflowFinalVideo({

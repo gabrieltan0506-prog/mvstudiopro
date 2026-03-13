@@ -27,7 +27,13 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   const transition = String(input.transition || "cut").trim().toLowerCase();
   const size = resolutionToSize(input.resolution);
   const sceneFiles: string[] = [];
-  const durations = input.sceneVideos.map((x) => parseDurationSeconds(x?.duration, 8));
+  const durations = input.sceneVideos.flatMap((x) => {
+    const base = [parseDurationSeconds(x?.duration, 8)];
+    if (String(x?.stillImageUrl || "").trim()) {
+      base.push(parseDurationSeconds(x?.stillDuration, 1.5));
+    }
+    return base;
+  });
 
   for (let i = 0; i < input.sceneVideos.length; i += 1) {
     const url = String(input.sceneVideos[i]?.url || "").trim();
@@ -35,6 +41,34 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
     const filePath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}.mp4`);
     await downloadFileToPath(url, filePath);
     sceneFiles.push(filePath);
+
+    const stillImageUrl = String(input.sceneVideos[i]?.stillImageUrl || "").trim();
+    if (stillImageUrl) {
+      const stillPath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}-still.jpg`);
+      const stillVideoPath = path.join(tmpDir, `scene-${String(i + 1).padStart(2, "0")}-still.mp4`);
+      const stillDuration = parseDurationSeconds(input.sceneVideos[i]?.stillDuration, 1.5);
+      await downloadFileToPath(stillImageUrl, stillPath);
+      await runFfmpeg([
+        "-y",
+        "-loop",
+        "1",
+        "-t",
+        String(stillDuration),
+        "-i",
+        stillPath,
+        "-vf",
+        `scale=${size.width}:${size.height}:force_original_aspect_ratio=decrease,pad=${size.width}:${size.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-movflags",
+        "+faststart",
+        "-an",
+        stillVideoPath,
+      ]);
+      sceneFiles.push(stillVideoPath);
+    }
   }
 
   const mergedPath = path.join(tmpDir, "merged.mp4");

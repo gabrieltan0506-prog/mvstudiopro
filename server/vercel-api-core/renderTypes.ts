@@ -4,6 +4,8 @@ export interface SceneVideoInput {
   sceneIndex?: number;
   url: string;
   duration?: string | number;
+  stillImageUrl?: string;
+  stillDuration?: string | number;
 }
 
 export interface RenderWorkflowInput {

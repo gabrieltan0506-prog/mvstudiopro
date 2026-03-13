@@ -4,6 +4,9 @@ export const env = {
   klingVideoSecretKey: String(process.env.KLING_CN_VIDEO_SECRET_KEY || "").trim(),
   geminiApiKey: String(process.env.GEMINI_API_KEY || "").trim(),
   openaiApiKey: String(process.env.OPENAI_API_KEY || "").trim(),
+  aiMusicApiKey: String(process.env.AIMUSIC_API_KEY || process.env.AIMUSICAPI_KEY || "").trim(),
+  blobReadWriteToken: String(process.env.BLOB_READ_WRITE_TOKEN || "").trim(),
+  mvspReadWriteToken: String(process.env.MVSP_READ_WRITE_TOKEN || "").trim(),
 };
 
 export function getEnvStatus() {
@@ -13,5 +16,8 @@ export function getEnvStatus() {
     hasKlingVideoSecretKey: Boolean(env.klingVideoSecretKey),
     hasGeminiApiKey: Boolean(env.geminiApiKey),
     hasOpenAIKey: Boolean(env.openaiApiKey),
+    hasAiMusicKey: Boolean(env.aiMusicApiKey),
+    hasBlobReadWriteToken: Boolean(env.blobReadWriteToken),
+    hasMvspReadWriteToken: Boolean(env.mvspReadWriteToken),
   };
 }
