@@ -244,16 +244,17 @@ async function startServer() {
   }
 
   const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
+  const isDevelopment = process.env.NODE_ENV === "development";
+  const port = isDevelopment ? await findAvailablePort(preferredPort) : preferredPort;
 
-  if (port !== preferredPort) {
+  if (isDevelopment && port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  startJobWorker();
-
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    // Defer background worker startup until the HTTP listener is ready.
+    startJobWorker();
   });
 }
 
