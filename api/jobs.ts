@@ -113,6 +113,38 @@ async function uploadWorkflowImagesToBlob(imageUrls: string[], filenameBase: str
   return uploaded;
 }
 
+async function uploadWorkflowAudioToBlob(sourceUrl: string, filenameBase = "workflow-audio") {
+  const target = s(sourceUrl).trim();
+  if (!target) throw new Error("missing_audio_url");
+
+  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
+
+  const resp = await fetch(target, {
+    redirect: "follow",
+    headers: { "User-Agent": "mvstudiopro/1.0 (+audio-fetch)" },
+  });
+  if (!resp.ok) throw new Error(`audio_fetch_failed:${resp.status}`);
+
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  if (!buffer.length) throw new Error("empty_audio");
+  if (buffer.length > 30 * 1024 * 1024) throw new Error("audio_too_large");
+
+  const contentType = s(resp.headers.get("content-type")).trim() || "audio/mpeg";
+  const ext =
+    /audio\/wav/i.test(contentType) ? "wav" :
+    /audio\/ogg/i.test(contentType) ? "ogg" :
+    /audio\/mpeg|audio\/mp3/i.test(contentType) ? "mp3" :
+    "mp3";
+  const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-audio";
+  const blob = await put(`music/${Date.now()}-${safeName}.${ext}`, buffer, {
+    access: "public",
+    token,
+    contentType,
+  });
+  return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
+}
+
 function computeScaledSize(w0:number,h0:number,maxEdge:number){
   const m = Math.max(w0,h0);
   const scale = m <= maxEdge ? 1 : maxEdge / m;
@@ -837,34 +869,6 @@ function extractMusicUrlFromPayload(payload: any): string {
   };
   visit(payload);
   return candidates.find((candidate) => /^https?:\/\//i.test(candidate)) || "";
-}
-
-function extractMusicItemIdFromPayload(payload: any): string {
-  const candidates: string[] = [];
-  const seen = new Set<any>();
-  const visit = (value: any) => {
-    if (!value || seen.has(value) || typeof value !== "object") return;
-    seen.add(value);
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    const localCandidates = [
-      value.item_id,
-      value.itemId,
-      value.audio_id,
-      value.audioId,
-      value.song_id,
-      value.songId,
-    ];
-    for (const candidate of localCandidates) {
-      const normalized = s(candidate).trim();
-      if (normalized) candidates.push(normalized);
-    }
-    Object.values(value).forEach(visit);
-  };
-  visit(payload);
-  return candidates[0] || "";
 }
 
 function deriveMusicProvider(payload: any) {
@@ -2009,16 +2013,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const data = polled.json?.data || {};
         const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
         musicUrl = extractMusicUrlFromPayload(polled.json ?? rawTask);
-        if (!musicUrl) {
-          const itemId = extractMusicItemIdFromPayload(polled.json ?? rawTask);
-          if (itemId) musicUrl = `https://audiopipe.suno.ai/?item_id=${encodeURIComponent(itemId)}`;
-        }
         if (musicUrl) break;
         if (status === "failed" || status === "error" || status === "cancelled") {
           return res.status(502).json(fail("suno_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }));
         }
       }
       if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
+      let persistedMusicUrl = "";
+      try {
+        persistedMusicUrl = await uploadWorkflowAudioToBlob(musicUrl, "workflow-music");
+      } catch (error: any) {
+        return res.status(502).json(fail("music_download_failed", error?.message || String(error) || "music download failed", { raw: rawTask }));
+      }
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
@@ -2029,7 +2035,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           musicMood,
           musicBpm,
           musicDuration,
-          musicUrl,
+          musicUrl: persistedMusicUrl,
         },
       });
       return res.status(200).json({ ok: true, workflow: next });
