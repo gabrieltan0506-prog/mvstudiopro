@@ -244,6 +244,7 @@ export default function WorkflowStoryboardToVideo() {
   const [voicePrompt, setVoicePrompt] = useState("中文自然播报，电影预告片旁白风格");
 
   const [musicPrompt, setMusicPrompt] = useState("cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal");
+  const [musicProvider, setMusicProvider] = useState("suno");
   const [musicMood, setMusicMood] = useState("cinematic");
   const [musicBpm, setMusicBpm] = useState("110");
   const [musicDuration, setMusicDuration] = useState("30");
@@ -323,6 +324,13 @@ export default function WorkflowStoryboardToVideo() {
       return prev;
     });
   }, [storyboard]);
+
+  useEffect(() => {
+    const nextProvider = String(workflow?.outputs?.musicProvider || "").trim().toLowerCase();
+    if (nextProvider === "suno" || nextProvider === "udio") {
+      setMusicProvider(nextProvider);
+    }
+  }, [workflow?.outputs?.musicProvider]);
 
   useEffect(() => {
     if (!debugMode) return;
@@ -1177,6 +1185,10 @@ export default function WorkflowStoryboardToVideo() {
           {String(musicPrompt || "").length}/100 - 以音乐风格、情绪、主旋律和主乐器为主，剧情描述尽量不超过五句。
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
+          <select value={musicProvider} onChange={(e) => setMusicProvider(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}>
+            <option value="suno">Suno</option>
+            <option value="udio">Udio</option>
+          </select>
           <input value={musicMood} onChange={(e) => setMusicMood(e.target.value)} placeholder="Music Mood" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
           <input value={musicBpm} onChange={(e) => setMusicBpm(e.target.value)} placeholder="Music BPM" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
           <input value={musicDuration} onChange={(e) => setMusicDuration(e.target.value)} placeholder="Music Duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
@@ -1185,6 +1197,7 @@ export default function WorkflowStoryboardToVideo() {
           onClick={() =>
             runMainStep("generateMusic", "workflowGenerateMusic", {
               workflowId,
+              musicProvider,
               musicPrompt,
               musicMood,
               musicBpm: Number(musicBpm || 0) || undefined,

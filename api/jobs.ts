@@ -876,6 +876,11 @@ function deriveMusicProvider(payload: any) {
   return "aimusic";
 }
 
+function normalizeMusicProvider(value: any) {
+  const provider = s(value).trim().toLowerCase();
+  return provider === "udio" ? "udio" : "suno";
+}
+
 function deriveMusicError(status: string, payload: any) {
   const source = payload?.data || payload?.result || payload || {};
   return (
@@ -1971,6 +1976,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       if (!AIM_KEY) return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const requestedMusicProvider = normalizeMusicProvider(b.musicProvider || workflow.outputs?.musicProvider || "suno");
       const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
       const musicBpm = Number(b.musicBpm || 0) || 110;
       const musicDuration = Number(b.musicDuration || 0) || 30;
@@ -1990,20 +1996,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         bpm: musicBpm,
       });
 
-      const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
+      const createUrl = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/producer/create` : `${AIM_BASE}/api/v1/sonic/create`;
+      const taskUrlBase = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/producer/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
+      const createBody = requestedMusicProvider === "udio"
+        ? {
+            task_type: "create_music",
+            mv: "FUZZ-2.0",
+            title: truncateText(rawPrompt, 80) || "MV Studio Pro music",
+            prompt,
+            lyrics_type: Boolean(b.hasVocal) ? "generate" : "instrumental",
+          }
+        : {
+            task_type: "create_music",
+            custom_mode: false,
+            mv: "sonic-v5",
+            gpt_description_prompt: prompt,
+          };
+
+      const created = await fetchJson(createUrl, {
         method: "POST",
         headers: { Authorization: `Bearer ${AIM_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }),
+        body: JSON.stringify(createBody),
       });
-      if (!created.ok) return res.status(502).json(fail("suno_create_failed", "Suno create request failed", { raw: created.json ?? created.rawText }));
-      const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId).trim();
-      if (!taskId) return res.status(502).json(fail("missing_suno_task_id", "Suno task id is missing", { raw: created.json ?? created.rawText }));
+      if (!created.ok) return res.status(502).json(fail("music_create_failed", "Music create request failed", { provider: requestedMusicProvider, raw: created.json ?? created.rawText }));
+      const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId || created.json?.data?.id || created.json?.id).trim();
+      if (!taskId) return res.status(502).json(fail("missing_music_task_id", "Music task id is missing", { provider: requestedMusicProvider, raw: created.json ?? created.rawText }));
 
       let musicUrl = "";
       let rawTask: any = null;
       for (let i = 0; i < 40; i += 1) {
         await sleep(3000);
-        const polled = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`, {
+        const polled = await fetchJson(`${taskUrlBase}${encodeURIComponent(taskId)}`, {
           method: "GET",
           headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
         });
@@ -2013,22 +2036,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         musicUrl = extractMusicUrlFromPayload(polled.json ?? rawTask);
         if (musicUrl) break;
         if (status === "failed" || status === "error" || status === "cancelled") {
-          return res.status(502).json(fail("suno_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }));
+          return res.status(502).json(fail("music_task_failed", deriveMusicError(status, rawTask), { provider: requestedMusicProvider, raw: rawTask }));
         }
       }
-      if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
+      if (!musicUrl) return res.status(502).json(fail("music_task_timeout_or_missing_music_url", "Music task timeout or missing music url", { provider: requestedMusicProvider, raw: rawTask }));
       let persistedMusicUrl = "";
       try {
         persistedMusicUrl = await uploadWorkflowAudioToBlob(musicUrl, "workflow-music");
       } catch (error: any) {
-        return res.status(502).json(fail("music_download_failed", error?.message || String(error) || "music download failed", { raw: rawTask }));
+        return res.status(502).json(fail("music_download_failed", error?.message || String(error) || "music download failed", { provider: requestedMusicProvider, raw: rawTask }));
       }
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
         outputs: {
           storyboard,
-          musicProvider: deriveMusicProvider(rawTask),
+          musicProvider: requestedMusicProvider,
           musicPrompt: rawPrompt,
           musicMood,
           musicBpm,
