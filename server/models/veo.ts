@@ -1,3 +1,27 @@
+import { put } from "@vercel/blob";
+
+async function uploadVideoToMvspBlob(videoUrl: string) {
+  const sourceUrl = String(videoUrl || "").trim();
+  if (!sourceUrl) throw new Error("videoUrl is required");
+
+  const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
+  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
+
+  const resp = await fetch(sourceUrl);
+  if (!resp.ok) throw new Error(`failed_to_fetch_generated_video_${resp.status}`);
+
+  const buf = Buffer.from(await resp.arrayBuffer());
+  if (!buf.length) throw new Error("generated_video_is_empty");
+
+  const blob = await put(`scene-videos/${Date.now()}-scene-video.mp4`, buf, {
+    access: "public",
+    token,
+    contentType: "video/mp4",
+  });
+
+  return String(blob.url || "").trim();
+}
+
 export async function generateVideoWithVeo(input: {
   scenePrompt: string;
   referenceImages: string[];
@@ -18,7 +42,7 @@ export async function generateVideoWithVeo(input: {
 
   if (!key) {
     return {
-      videoUrl: `mock://fal-ai/veo3.1/reference-to-video?prompt=${encodeURIComponent(scenePrompt)}`,
+      videoUrl: "",
       provider: "fal",
       model: "fal-ai/veo3.1/reference-to-video",
       isFallback: true,
@@ -30,12 +54,26 @@ export async function generateVideoWithVeo(input: {
     const { fal } = await import("@fal-ai/client");
     fal.config({ credentials: key });
 
-    const images = [...(input.referenceImages || []), ...(input.imageUrls || [])].filter(Boolean);
+    const images = Array.from(
+      new Set([...(input.referenceImages || []), ...(input.imageUrls || [])].map((value) => String(value || "").trim()))
+    ).filter(Boolean);
+
+    if (!images.length) {
+      return {
+        videoUrl: "",
+        provider: "fal",
+        model: "fal-ai/veo3.1/reference-to-video",
+        isFallback: true,
+        errorMessage: "reference image is required",
+      };
+    }
 
     const result = (await fal.subscribe("fal-ai/veo3.1/reference-to-video", {
       input: {
         prompt: scenePrompt,
         image_urls: images,
+        duration: "8s",
+        resolution: "720p",
       } as any,
       logs: false,
     })) as any;
@@ -48,7 +86,7 @@ export async function generateVideoWithVeo(input: {
 
     if (!videoUrl) {
       return {
-        videoUrl: `mock://fal-ai/veo3.1/reference-to-video?prompt=${encodeURIComponent(scenePrompt)}`,
+        videoUrl: "",
         provider: "fal",
         model: "fal-ai/veo3.1/reference-to-video",
         isFallback: true,
@@ -56,8 +94,10 @@ export async function generateVideoWithVeo(input: {
       };
     }
 
+    const persistedVideoUrl = await uploadVideoToMvspBlob(videoUrl);
+
     return {
-      videoUrl,
+      videoUrl: persistedVideoUrl,
       provider: "fal",
       model: "fal-ai/veo3.1/reference-to-video",
       isFallback: false,
@@ -65,7 +105,7 @@ export async function generateVideoWithVeo(input: {
     };
   } catch (error: any) {
     return {
-      videoUrl: `mock://fal-ai/veo3.1/reference-to-video?prompt=${encodeURIComponent(scenePrompt)}`,
+      videoUrl: "",
       provider: "fal",
       model: "fal-ai/veo3.1/reference-to-video",
       isFallback: true,

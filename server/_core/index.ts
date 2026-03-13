@@ -19,6 +19,8 @@ import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { saveVideoShortLink } from "../services/video-short-links";
 import workflowJobsHandler from "../../api/jobs";
+import blobPutImageHandler from "../../api/blob-put-image";
+import exportHandler from "../../api/export";
 
 function buildRoutingMap() {
   return {
@@ -79,6 +81,14 @@ async function startServer() {
   // File upload
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
+
+  app.all("/api/blob-put-image", async (req, res) => {
+    return blobPutImageHandler(req as any, res as any);
+  });
+
+  app.all("/api/export", async (req, res) => {
+    return exportHandler(req as any, res as any);
+  });
 
   app.all("/api/jobs", async (req, res) => {
     const op = typeof req.query?.op === "string" ? req.query.op.trim() : "";

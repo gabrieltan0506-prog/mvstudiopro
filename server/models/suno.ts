@@ -15,7 +15,7 @@ export async function generateMusicWithSuno(input: { script: string }) {
 
   if (!key) {
     return {
-      musicUrl: `mock://suno?prompt=${encodeURIComponent(script.slice(0, 120))}`,
+      musicUrl: "",
       provider: "suno",
       model: "suno",
       isFallback: true,
@@ -43,7 +43,7 @@ export async function generateMusicWithSuno(input: { script: string }) {
     const taskId = String(createJson?.data?.task_id || createJson?.task_id || "").trim();
     if (!taskId) {
       return {
-        musicUrl: `mock://suno?prompt=${encodeURIComponent(script.slice(0, 120))}`,
+        musicUrl: "",
         provider: "suno",
         model: "suno",
         isFallback: true,
@@ -71,7 +71,7 @@ export async function generateMusicWithSuno(input: { script: string }) {
     }
 
     return {
-      musicUrl: `mock://suno?prompt=${encodeURIComponent(script.slice(0, 120))}`,
+      musicUrl: "",
       provider: "suno",
       model: "suno",
       isFallback: true,
@@ -79,7 +79,7 @@ export async function generateMusicWithSuno(input: { script: string }) {
     };
   } catch (error: any) {
     return {
-      musicUrl: `mock://suno?prompt=${encodeURIComponent(script.slice(0, 120))}`,
+      musicUrl: "",
       provider: "suno",
       model: "suno",
       isFallback: true,

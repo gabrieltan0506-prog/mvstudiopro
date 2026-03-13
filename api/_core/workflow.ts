@@ -177,7 +177,7 @@ async function runScriptWorkflow(workflowId: string) {
   });
 
   const videoRoute = routeModel("video");
-  let videoUrl = `mock://${videoRoute.provider}/${videoRoute.model}`;
+  let videoUrl = "";
   let videoIsFallback = true;
   let videoErrorMessage: string | undefined;
   try {
@@ -258,7 +258,7 @@ async function runImageWorkflow(workflowId: string) {
   });
 
   const videoRoute = routeModel("video");
-  let videoUrl = `mock://${videoRoute.provider}/${videoRoute.model}?imageUrl=${encodeURIComponent(preparedImageUrl)}`;
+  let videoUrl = "";
   let videoIsFallback = true;
   let videoErrorMessage: string | undefined;
   try {
