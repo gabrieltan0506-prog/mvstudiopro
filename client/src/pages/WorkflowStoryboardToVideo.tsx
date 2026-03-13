@@ -169,6 +169,14 @@ function toAssetDisplayUrl(url: string) {
   return `/api/jobs?op=blobMedia&url=${encodeURIComponent(normalized)}`;
 }
 
+function toAbsoluteAssetUrl(url: string) {
+  const normalized = toAssetDisplayUrl(url);
+  if (!normalized) return "";
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+  if (typeof window === "undefined") return normalized;
+  return new URL(normalized, window.location.origin).toString();
+}
+
 function buildMusicPromptSeedFromScenes(scenes: Scene[]) {
   const joined = scenes.slice(0, 4).map((scene) => scene.scenePrompt?.trim() || "").join(" ");
   const moodText = scenes.slice(0, 4).map((scene) => scene.mood?.trim() || "").join(" ");
@@ -241,6 +249,8 @@ export default function WorkflowStoryboardToVideo() {
   const [musicDuration, setMusicDuration] = useState("30");
 
   const [renderStillPromptMap, setRenderStillPromptMap] = useState<Record<string, string>>({});
+  const [sceneVoiceTypeMap, setSceneVoiceTypeMap] = useState<Record<string, string>>({});
+  const [sceneVoiceStyleMap, setSceneVoiceStyleMap] = useState<Record<string, string>>({});
   const [scriptDirty, setScriptDirty] = useState(false);
   const [storyboardDirty, setStoryboardDirty] = useState(false);
   const [auxBusyKey, setAuxBusyKey] = useState("");
@@ -279,7 +289,24 @@ export default function WorkflowStoryboardToVideo() {
     const outputs = workflow?.outputs || {};
     if (typeof outputs.script === "string" && !scriptDirty) setScriptText(outputs.script);
     if (Array.isArray(outputs.storyboard) && !storyboardDirty) {
-      setStoryboard(normalizeSceneList(outputs.storyboard, 8));
+      const normalizedStoryboard = normalizeSceneList(outputs.storyboard, 8);
+      setStoryboard(normalizedStoryboard);
+      setSceneVoiceTypeMap((prev) => {
+        const next = { ...prev };
+        for (const scene of normalizedStoryboard) {
+          const key = String(scene.sceneIndex || "");
+          if (!next[key]) next[key] = scene.voiceType || "female";
+        }
+        return next;
+      });
+      setSceneVoiceStyleMap((prev) => {
+        const next = { ...prev };
+        for (const scene of normalizedStoryboard) {
+          const key = String(scene.sceneIndex || "");
+          if (!(key in next)) next[key] = scene.voiceStyle || "";
+        }
+        return next;
+      });
     }
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
@@ -341,6 +368,14 @@ export default function WorkflowStoryboardToVideo() {
     if (json?.workflow) setWorkflow(json.workflow);
     setScriptDirty(false);
     setStoryboardDirty(false);
+  }
+
+  function getSceneVoiceTypeValue(scene: Scene) {
+    return sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female";
+  }
+
+  function getSceneVoiceStyleValue(scene: Scene) {
+    return sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "";
   }
 
   async function refreshWorkflow() {
@@ -457,7 +492,7 @@ export default function WorkflowStoryboardToVideo() {
     setExportError("");
     const scenesPayload = scenes.map((scene) => {
       const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
-      const imageUrls = getCombinedAssetUrls(bundle);
+      const imageUrls = getCombinedAssetUrls(bundle).map((value) => toAbsoluteAssetUrl(value)).filter(Boolean);
       return {
         ...scene,
         imageUrls,
@@ -517,15 +552,58 @@ export default function WorkflowStoryboardToVideo() {
   }
 
   function requestSceneVoiceGeneration(scene: Scene) {
+    const sceneVoiceType = getSceneVoiceTypeValue(scene);
+    const sceneVoiceStyle = getSceneVoiceStyleValue(scene);
     void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
       workflowId,
       sceneIndex: scene.sceneIndex,
       dialogueText: String(scene.voiceover || scene.scenePrompt || "").trim(),
       voicePrompt,
-      voiceType: String(scene.voiceType || "female").trim() || "female",
-      voiceStyle: String(scene.voiceStyle || "").trim(),
-      voice: mapSceneVoiceTypeToVoice(String(scene.voiceType || "female")),
+      voiceType: String(sceneVoiceType || "female").trim() || "female",
+      voiceStyle: String(sceneVoiceStyle || "").trim(),
+      voice: mapSceneVoiceTypeToVoice(String(sceneVoiceType || "female")),
     });
+  }
+
+  async function generateAllSceneAssetsSequentially() {
+    if (!workflowId || scenes.length === 0) return;
+    setStepState("generateStoryboardImages", { loading: true, error: "", success: false });
+    const warnings: string[] = [];
+    let currentWorkflow = workflow;
+    let completed = 0;
+    for (const scene of scenes) {
+      const payload = {
+        workflowId,
+        workflow: currentWorkflow || workflow || undefined,
+        script: scriptText,
+        storyboard: scenes,
+        sceneIndex: scene.sceneIndex,
+      };
+      try {
+        const { httpOk, status, json } = await postJson("workflowGenerateSceneImage", payload);
+        if (debugMode) {
+          setLastDebugEntry({ op: "workflowGenerateSceneImage", request: payload, httpOk, status, json });
+        }
+        if (!httpOk || json?.ok !== true) {
+          warnings.push(`scene ${scene.sceneIndex}: ${extractErrorText(json)}`);
+          continue;
+        }
+        completed += 1;
+        currentWorkflow = json.workflow || currentWorkflow;
+        writeBackWorkflow(json);
+      } catch (error: any) {
+        warnings.push(`scene ${scene.sceneIndex}: ${error?.message || String(error) || "unknown_error"}`);
+      }
+    }
+    if (warnings.length && completed === 0) {
+      setStepState("generateStoryboardImages", { loading: false, success: false, error: warnings.join(" | ") });
+      return;
+    }
+    if (warnings.length) {
+      setStepState("generateStoryboardImages", { loading: false, success: true, error: warnings.join(" | ") });
+      return;
+    }
+    setStepState("generateStoryboardImages", { loading: false, success: true, error: "" });
   }
 
   function selectSceneImage(sceneIndex: number, imageUrl: string) {
@@ -743,7 +821,7 @@ export default function WorkflowStoryboardToVideo() {
           ))}
         </div>
         <button
-          onClick={() => runMainStep("generateStoryboardImages", "workflowGenerateStoryboardImages", { workflowId })}
+          onClick={() => void generateAllSceneAssetsSequentially()}
           disabled={anyMainStepLoading || !workflowId || scenes.length === 0}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
@@ -869,13 +947,15 @@ export default function WorkflowStoryboardToVideo() {
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
                   <select
-                    value={scene.voiceType || "female"}
+                    value={getSceneVoiceTypeValue(scene)}
                     onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setSceneVoiceTypeMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: nextValue }));
                       setStoryboardDirty(true);
                       setStoryboard((prev) =>
                         prev.map((entry) =>
                           Number(entry.sceneIndex) === Number(scene.sceneIndex)
-                            ? { ...entry, voiceType: e.target.value }
+                            ? { ...entry, voiceType: nextValue }
                             : entry,
                         ),
                       );
@@ -887,13 +967,15 @@ export default function WorkflowStoryboardToVideo() {
                     <option value="cartoon">Cartoon</option>
                   </select>
                   <select
-                    value={scene.voiceStyle || ""}
+                    value={getSceneVoiceStyleValue(scene)}
                     onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setSceneVoiceStyleMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: nextValue }));
                       setStoryboardDirty(true);
                       setStoryboard((prev) =>
                         prev.map((entry) =>
                           Number(entry.sceneIndex) === Number(scene.sceneIndex)
-                            ? { ...entry, voiceStyle: e.target.value }
+                            ? { ...entry, voiceStyle: nextValue }
                             : entry,
                         ),
                       );

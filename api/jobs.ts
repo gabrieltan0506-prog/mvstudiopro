@@ -836,6 +836,34 @@ function extractMusicUrlFromPayload(payload: any): string {
   return candidates.find((candidate) => /^https?:\/\//i.test(candidate)) || "";
 }
 
+function extractMusicItemIdFromPayload(payload: any): string {
+  const candidates: string[] = [];
+  const seen = new Set<any>();
+  const visit = (value: any) => {
+    if (!value || seen.has(value) || typeof value !== "object") return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const localCandidates = [
+      value.item_id,
+      value.itemId,
+      value.audio_id,
+      value.audioId,
+      value.song_id,
+      value.songId,
+    ];
+    for (const candidate of localCandidates) {
+      const normalized = s(candidate).trim();
+      if (normalized) candidates.push(normalized);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(payload);
+  return candidates[0] || "";
+}
+
 function deriveMusicProvider(payload: any) {
   const text = JSON.stringify(payload || {}).toLowerCase();
   if (text.includes("udio")) return "udio";
@@ -1326,23 +1354,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!Array.isArray(scenes) || scenes.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
       }
-      const results: WorkflowStoryboardImageItem[] = [];
       const warnings: string[] = [];
-      for (const scene of scenes) {
-        const generatedAssets = await generateSceneAssetImages(scene, workflow);
-        warnings.push(...(generatedAssets.warnings || []));
-        results.push(buildSceneAssetBundle(null, scene.sceneIndex, {
-          prompt: scene.scenePrompt,
-          duration: 8,
-          sceneVideoUrl: "",
-          renderStillPrompt: s(scene.renderStillPrompt || scene.scenePrompt).trim(),
-          characterLocked: false,
-          referenceCharacterUrl: "",
-          backgroundStatus: "not_removed",
-          characterImages: generatedAssets.characterImages,
-          sceneImages: generatedAssets.sceneImages,
-        }));
+      const settled = await Promise.allSettled(
+        scenes.map(async (scene) => {
+          const generatedAssets = await generateSceneAssetImages(scene, workflow);
+          return {
+            sceneIndex: scene.sceneIndex,
+            warnings: generatedAssets.warnings || [],
+            bundle: buildSceneAssetBundle(null, scene.sceneIndex, {
+              prompt: scene.scenePrompt,
+              duration: 8,
+              sceneVideoUrl: "",
+              renderStillPrompt: s(scene.renderStillPrompt || scene.scenePrompt).trim(),
+              characterLocked: false,
+              referenceCharacterUrl: "",
+              backgroundStatus: "not_removed",
+              characterImages: generatedAssets.characterImages,
+              sceneImages: generatedAssets.sceneImages,
+            }),
+          };
+        }),
+      );
+      const results: WorkflowStoryboardImageItem[] = [];
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          warnings.push(...result.value.warnings);
+          results.push(result.value.bundle);
+        } else {
+          warnings.push(result.reason?.message || String(result.reason) || "scene asset generation failed");
+        }
       }
+      results.sort((a, b) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         status: "running",
@@ -1942,7 +1984,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       let musicUrl = "";
       let rawTask: any = null;
-      for (let i = 0; i < 24; i += 1) {
+      for (let i = 0; i < 40; i += 1) {
         await sleep(3000);
         const polled = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`, {
           method: "GET",
@@ -1952,8 +1994,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const data = polled.json?.data || {};
         const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
         musicUrl = extractMusicUrlFromPayload(polled.json ?? rawTask);
+        if (!musicUrl) {
+          const itemId = extractMusicItemIdFromPayload(polled.json ?? rawTask);
+          if (itemId) musicUrl = `https://audiopipe.suno.ai/?item_id=${encodeURIComponent(itemId)}`;
+        }
         if (musicUrl) break;
-        if (status === "failed" || status === "error") {
+        if (status === "failed" || status === "error" || status === "cancelled") {
           return res.status(502).json(fail("suno_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }));
         }
       }
