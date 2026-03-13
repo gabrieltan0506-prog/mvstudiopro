@@ -289,12 +289,19 @@ export async function exportToPDF(
   });
 
   const pdfBuffer = fs.readFileSync(filePath);
-  const { key: pdfKey } = await storagePut(fileName, pdfBuffer, "application/pdf");
   fs.unlinkSync(filePath);
-  const { url: pdfDownloadUrl } = await storageGet(pdfKey);
-  console.log("[StoryboardExport] PDF generated:", { key: pdfKey, url: pdfDownloadUrl, watermark: addWatermark });
-
-  return { url: pdfDownloadUrl, message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！" };
+  try {
+    const { key: pdfKey } = await storagePut(fileName, pdfBuffer, "application/pdf");
+    const { url: pdfDownloadUrl } = await storageGet(pdfKey);
+    console.log("[StoryboardExport] PDF generated:", { key: pdfKey, url: pdfDownloadUrl, watermark: addWatermark });
+    return { url: pdfDownloadUrl, message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！" };
+  } catch (error) {
+    console.warn("[StoryboardExport] PDF fallback to data URL:", error);
+    return {
+      url: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
+      message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！",
+    };
+  }
 }
 
 // ─── Word Export ────────────────────────────────────────
@@ -529,9 +536,16 @@ export async function exportToWord(
 
   const buffer = await Packer.toBuffer(doc);
   const wordFileName = `storyboard_${Date.now()}.docx`;
-  const { key: wordKey } = await storagePut(wordFileName, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-  const { url: wordDownloadUrl } = await storageGet(wordKey);
-  console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl, watermark: addWatermark });
-
-  return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！" };
+  try {
+    const { key: wordKey } = await storagePut(wordFileName, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    const { url: wordDownloadUrl } = await storageGet(wordKey);
+    console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl, watermark: addWatermark });
+    return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！" };
+  } catch (error) {
+    console.warn("[StoryboardExport] Word fallback to data URL:", error);
+    return {
+      url: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${buffer.toString("base64")}`,
+      message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！",
+    };
+  }
 }

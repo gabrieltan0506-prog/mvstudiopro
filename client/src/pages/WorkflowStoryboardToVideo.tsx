@@ -161,13 +161,15 @@ function buildMusicPromptSeedFromScenes(scenes: Scene[]) {
   const source = scenes
     .slice(0, 6)
     .map((scene) => [
-      scene.scenePrompt?.trim(),
       scene.mood?.trim() ? `情绪:${scene.mood.trim()}` : "",
       scene.lighting?.trim() ? `光影:${scene.lighting.trim()}` : "",
+      scene.camera?.trim() ? `镜头:${scene.camera.trim()}` : "",
+      scene.scenePrompt?.trim(),
     ].filter(Boolean).join("，"))
     .filter(Boolean)
     .join("；");
-  return source.slice(0, 500);
+  if (!source) return "";
+  return `电影配乐，主旋律清晰，纯音乐，无人声，${source}`.slice(0, 380);
 }
 
 async function postJson(op: string, body: Record<string, any>) {
@@ -211,8 +213,11 @@ export default function WorkflowStoryboardToVideo() {
   const [musicDuration, setMusicDuration] = useState("30");
 
   const [renderStillPromptMap, setRenderStillPromptMap] = useState<Record<string, string>>({});
+  const [scriptDirty, setScriptDirty] = useState(false);
+  const [storyboardDirty, setStoryboardDirty] = useState(false);
   const [auxBusyKey, setAuxBusyKey] = useState("");
   const [auxError, setAuxError] = useState("");
+  const [exportError, setExportError] = useState("");
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
   const [renderStillWarningScene, setRenderStillWarningScene] = useState<number | null>(null);
   const [debugMode, setDebugMode] = useState(false);
@@ -244,13 +249,13 @@ export default function WorkflowStoryboardToVideo() {
   useEffect(() => {
     if (!workflow) return;
     const outputs = workflow?.outputs || {};
-    if (typeof outputs.script === "string") setScriptText(outputs.script);
-    if (Array.isArray(outputs.storyboard)) {
+    if (typeof outputs.script === "string" && !scriptDirty) setScriptText(outputs.script);
+    if (Array.isArray(outputs.storyboard) && !storyboardDirty) {
       setStoryboard(normalizeSceneList(outputs.storyboard, 8));
     }
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
-  }, [workflow, dialogueText, voicePrompt]);
+  }, [workflow, dialogueText, voicePrompt, scriptDirty, storyboardDirty]);
 
   useEffect(() => {
     const generated = buildMusicPromptSeedFromScenes(Array.isArray(storyboard) ? storyboard : []);
@@ -305,6 +310,8 @@ export default function WorkflowStoryboardToVideo() {
     const nextId = String(json?.workflow?.workflowId || json?.workflowId || workflowId || "");
     if (nextId) setWorkflowId(nextId);
     if (json?.workflow) setWorkflow(json.workflow);
+    setScriptDirty(false);
+    setStoryboardDirty(false);
   }
 
   async function refreshWorkflow() {
@@ -418,6 +425,7 @@ export default function WorkflowStoryboardToVideo() {
   }
 
   async function exportStoryboardDoc(format: "docx" | "pdf") {
+    setExportError("");
     const scenesPayload = scenes.map((scene) => {
       const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
       const imageUrls = getCombinedAssetUrls(bundle);
@@ -440,9 +448,20 @@ export default function WorkflowStoryboardToVideo() {
     });
     const json = await resp.json().catch(() => null);
     if (!resp.ok || !json?.url) {
-      throw new Error(extractErrorText(json));
+      const message = extractErrorText(json);
+      setExportError(message);
+      throw new Error(message);
     }
-    window.open(String(json.url), "_blank", "noopener,noreferrer");
+    const link = document.createElement("a");
+    link.href = String(json.url);
+    if (!String(json.url).startsWith("data:")) {
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+    }
+    link.download = format === "pdf" ? "storyboard.pdf" : "storyboard.docx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function exportStoryboardImage(imageUrl: string) {
@@ -480,6 +499,30 @@ export default function WorkflowStoryboardToVideo() {
   }
 
   function selectSceneImage(sceneIndex: number, imageUrl: string) {
+    setWorkflow((prev: any) => {
+      if (!prev?.outputs?.storyboardImages) return prev;
+      const storyboardImages = prev.outputs.storyboardImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex
+          ? {
+              ...item,
+              selectedSceneImageUrl: imageUrl,
+              sceneImageUrls: Array.isArray(item?.sceneImageUrls)
+                ? [imageUrl, ...item.sceneImageUrls.filter((value: string) => value !== imageUrl)].slice(0, 2)
+                : item?.sceneImageUrls,
+              sceneImages: Array.isArray(item?.sceneImages)
+                ? [imageUrl, ...item.sceneImages.filter((value: string) => value !== imageUrl)].slice(0, 2)
+                : item?.sceneImages,
+            }
+          : item,
+      );
+      return {
+        ...prev,
+        outputs: {
+          ...prev.outputs,
+          storyboardImages,
+        },
+      };
+    });
     void runAuxStep(`scene-select-${sceneIndex}`, "workflowSelectSceneImage", {
       workflowId,
       sceneIndex,
@@ -575,7 +618,10 @@ export default function WorkflowStoryboardToVideo() {
         <h2 style={{ marginTop: 0 }}>B. Script</h2>
         <textarea
           value={scriptText}
-          onChange={(e) => setScriptText(e.target.value)}
+          onChange={(e) => {
+            setScriptDirty(true);
+            setScriptText(e.target.value);
+          }}
           rows={8}
           placeholder="Script"
           style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
@@ -594,6 +640,7 @@ export default function WorkflowStoryboardToVideo() {
               });
               return;
             }
+            setStoryboardDirty(true);
             setStoryboard(refreshed);
             setStepState("generateStoryboard", { loading: false, success: true, error: "" });
           }}
@@ -618,6 +665,7 @@ export default function WorkflowStoryboardToVideo() {
                 onChange={(e) => {
                   const next = [...scenes];
                   next[idx] = { ...scene, scenePrompt: e.target.value, duration: 8 };
+                  setStoryboardDirty(true);
                   setStoryboard(next);
                 }}
                 rows={3}
@@ -631,6 +679,7 @@ export default function WorkflowStoryboardToVideo() {
                   onChange={(e) => {
                     const next = [...scenes];
                     next[idx] = { ...scene, camera: e.target.value };
+                    setStoryboardDirty(true);
                     setStoryboard(next);
                   }}
                   placeholder="camera"
@@ -641,6 +690,7 @@ export default function WorkflowStoryboardToVideo() {
                   onChange={(e) => {
                     const next = [...scenes];
                     next[idx] = { ...scene, mood: e.target.value };
+                    setStoryboardDirty(true);
                     setStoryboard(next);
                   }}
                   placeholder="mood"
@@ -652,6 +702,7 @@ export default function WorkflowStoryboardToVideo() {
                 onChange={(e) => {
                   const next = [...scenes];
                   next[idx] = { ...scene, voiceover: e.target.value };
+                  setStoryboardDirty(true);
                   setStoryboard(next);
                 }}
                 rows={2}
@@ -679,9 +730,10 @@ export default function WorkflowStoryboardToVideo() {
           Rule: each scene keeps one character image and one or two scene-only images. Scene video uses this exact bundle for FAL.
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          <button type="button" onClick={() => void exportStoryboardDoc("docx")}>Export DOCX</button>
-          <button type="button" onClick={() => void exportStoryboardDoc("pdf")}>Export PDF</button>
+          <button type="button" onClick={() => void exportStoryboardDoc("docx").catch(() => undefined)}>Export DOCX</button>
+          <button type="button" onClick={() => void exportStoryboardDoc("pdf").catch(() => undefined)}>Export PDF</button>
         </div>
+        {exportError ? <div style={statusTextStyle("#ff8080")}>Export Error: {exportError}</div> : null}
         <div style={{ display: "grid", gap: 10 }}>
           {scenes.map((scene) => {
             const item = sceneBundlesByIndex[Number(scene.sceneIndex || 0)] || { sceneIndex: scene.sceneIndex, images: [] };
@@ -732,19 +784,21 @@ export default function WorkflowStoryboardToVideo() {
                     {sceneImageUrls.map((url: string, idx: number) => (
                       <div
                         key={`${scene.sceneIndex}-scene-${idx}`}
+                        onClick={() => selectSceneImage(Number(scene.sceneIndex || 0), url)}
                         style={{
                           borderRadius: 10,
                           padding: 6,
                           border: selectedSceneImageUrl === url ? "2px solid #f59e0b" : "1px solid rgba(255,255,255,0.12)",
                           boxShadow: selectedSceneImageUrl === url ? "0 0 0 2px rgba(245,158,11,0.18)" : "none",
+                          cursor: "pointer",
                         }}
                       >
                         <img src={url} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                         <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button type="button" onClick={() => selectSceneImage(Number(scene.sceneIndex || 0), url)}>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); selectSceneImage(Number(scene.sceneIndex || 0), url); }}>
                             {selectedSceneImageUrl === url ? "Selected" : "Use This Scene"}
                           </button>
-                          <button type="button" onClick={() => exportStoryboardImage(url)}>Export Image</button>
+                          <button type="button" onClick={(e) => { e.stopPropagation(); exportStoryboardImage(url); }}>Export Image</button>
                         </div>
                       </div>
                     ))}
@@ -764,6 +818,7 @@ export default function WorkflowStoryboardToVideo() {
                 <textarea
                   value={scene.voiceover || scene.scenePrompt || ""}
                   onChange={(e) => {
+                    setStoryboardDirty(true);
                     setStoryboard((prev) =>
                       prev.map((entry) =>
                         Number(entry.sceneIndex) === Number(scene.sceneIndex)
@@ -780,6 +835,7 @@ export default function WorkflowStoryboardToVideo() {
                   <select
                     value={scene.voiceType || "female"}
                     onChange={(e) => {
+                      setStoryboardDirty(true);
                       setStoryboard((prev) =>
                         prev.map((entry) =>
                           Number(entry.sceneIndex) === Number(scene.sceneIndex)
@@ -797,6 +853,7 @@ export default function WorkflowStoryboardToVideo() {
                   <select
                     value={scene.voiceStyle || ""}
                     onChange={(e) => {
+                      setStoryboardDirty(true);
                       setStoryboard((prev) =>
                         prev.map((entry) =>
                           Number(entry.sceneIndex) === Number(scene.sceneIndex)
@@ -989,11 +1046,15 @@ export default function WorkflowStoryboardToVideo() {
         </div>
         <textarea
           value={musicPrompt}
-          onChange={(e) => setMusicPrompt(e.target.value)}
+          onChange={(e) => setMusicPrompt(e.target.value.slice(0, 400))}
+          maxLength={400}
           rows={3}
           placeholder="Music Prompt"
           style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
         />
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.78 }}>
+          {String(musicPrompt || "").length}/400 - 请简短描述音乐风格、主旋律和情绪，不要直接粘贴整段脚本。
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
           <input value={musicMood} onChange={(e) => setMusicMood(e.target.value)} placeholder="Music Mood" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
           <input value={musicBpm} onChange={(e) => setMusicBpm(e.target.value)} placeholder="Music BPM" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />

@@ -750,19 +750,79 @@ function buildSceneVoiceStyleText(scene: any, overrideStyle?: string) {
   return descriptors.join("，");
 }
 
+function truncateText(value: string, maxLength: number) {
+  const trimmed = s(value).replace(/\s+/g, " ").trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
 function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string) {
-  const sceneSummary = (Array.isArray(storyboard) ? storyboard : [])
-    .slice(0, 6)
-    .map((scene: any) => [
-      s(scene?.scenePrompt).trim(),
-      s(scene?.mood).trim() ? `情绪:${s(scene?.mood).trim()}` : "",
-      s(scene?.lighting).trim() ? `光影:${s(scene?.lighting).trim()}` : "",
-    ].filter(Boolean).join("，"))
+  const sourceScenes = (Array.isArray(storyboard) ? storyboard : []).slice(0, 4);
+  const moods = Array.from(new Set(sourceScenes.map((scene: any) => s(scene?.mood).trim()).filter(Boolean))).slice(0, 3);
+  const lighting = Array.from(new Set(sourceScenes.map((scene: any) => s(scene?.lighting).trim()).filter(Boolean))).slice(0, 2);
+  const moments = sourceScenes
+    .map((scene: any) => truncateText(s(scene?.scenePrompt).trim(), 48))
     .filter(Boolean)
     .join("；");
-  const source = sceneSummary || s(fallbackScript).trim();
-  if (!source) return "";
-  return source.slice(0, 500);
+  const fallback = truncateText(s(fallbackScript).trim(), 120);
+  const seed = [
+    "电影配乐，纯音乐，无人声，主旋律清晰",
+    moods.length ? `情绪:${moods.join("、")}` : "",
+    lighting.length ? `氛围:${lighting.join("、")}` : "",
+    moments ? `画面:${moments}` : fallback,
+  ].filter(Boolean).join("，");
+  return truncateText(seed, 380);
+}
+
+function extractMusicUrlFromPayload(payload: any): string {
+  const candidates: string[] = [];
+  const seen = new Set<any>();
+  const visit = (value: any) => {
+    if (!value || seen.has(value)) return;
+    if (typeof value !== "object") return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const localCandidates = [
+      value.audio_url,
+      value.audioUrl,
+      value.music_url,
+      value.musicUrl,
+      value.stream_url,
+      value.streamUrl,
+      value.download_url,
+      value.downloadUrl,
+      value.url,
+    ];
+    for (const candidate of localCandidates) {
+      const normalized = s(candidate).trim();
+      if (normalized) candidates.push(normalized);
+    }
+    Object.values(value).forEach(visit);
+  };
+  visit(payload);
+  return candidates.find((candidate) => /^https?:\/\//i.test(candidate)) || "";
+}
+
+function deriveMusicProvider(payload: any) {
+  const text = JSON.stringify(payload || {}).toLowerCase();
+  if (text.includes("udio")) return "udio";
+  if (text.includes("suno")) return "suno";
+  return "aimusic";
+}
+
+function deriveMusicError(status: string, payload: any) {
+  const source = payload?.data || payload?.result || payload || {};
+  return (
+    s(source?.error_message).trim() ||
+    s(source?.errorMessage).trim() ||
+    s(source?.message).trim() ||
+    s(source?.error).trim() ||
+    status
+  );
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -1671,7 +1731,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const musicDuration = Number(b.musicDuration || 0) || 30;
       const storyboard = getStoryboardDraftFromBody(workflow, b);
       const autoMusicPrompt = deriveMusicSeedFromStoryboard(storyboard, s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim());
-      const rawPrompt = s(b.musicPrompt).trim() || autoMusicPrompt || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
+      const rawPrompt = truncateText(
+        s(b.musicPrompt).trim() || autoMusicPrompt || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim(),
+        380,
+      );
       if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
       const prompt = buildMusicPrompt({
         genre: rawPrompt,
@@ -1702,15 +1765,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         rawTask = polled.json ?? polled.rawText;
         const data = polled.json?.data || {};
         const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
-        musicUrl =
-          s(data.audio_url).trim() ||
-          s(data.music_url).trim() ||
-          s(data.url).trim() ||
-          s(data.result?.audio_url).trim() ||
-          s(data.result?.music_url).trim();
+        musicUrl = extractMusicUrlFromPayload(polled.json ?? rawTask);
         if (musicUrl) break;
         if (status === "failed" || status === "error") {
-          return res.status(502).json(fail("suno_task_failed", "Suno task failed", { raw: rawTask }));
+          return res.status(502).json(fail("suno_task_failed", deriveMusicError(status, rawTask), { raw: rawTask }));
         }
       }
       if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
@@ -1719,7 +1777,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         currentStep: "music",
         outputs: {
           storyboard,
-          musicProvider: "suno",
+          musicProvider: deriveMusicProvider(rawTask),
           musicPrompt: rawPrompt,
           musicMood,
           musicBpm,
