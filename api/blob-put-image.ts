@@ -10,6 +10,15 @@ function getBody(req: VercelRequest): any {
   return b;
 }
 
+function getPublicAssetBaseUrl() {
+  return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.fly.dev";
+}
+
+function buildBlobMediaUrlFromPath(pathname: string) {
+  const normalized = String(pathname || "").replace(/^\/+/, "").trim();
+  return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -50,7 +59,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       contentType: "image/jpeg",
     });
 
-    return res.status(200).json({ ok: true, imageUrl: blob.url, blobUrl: blob.url });
+    return res.status(200).json({
+      ok: true,
+      imageUrl: buildBlobMediaUrlFromPath(String(blob.pathname || "")),
+      blobUrl: blob.url,
+      blobPath: blob.pathname,
+    });
   } catch (e: any) {
     return res.status(500).json({ ok: false, error: "server_error", message: e?.message || String(e) });
   }

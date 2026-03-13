@@ -101,7 +101,7 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
     token,
     contentType: "image/jpeg",
   });
-  return s(blob.url).trim();
+  return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
 }
 
 async function uploadWorkflowImagesToBlob(imageUrls: string[], filenameBase: string) {
@@ -863,6 +863,51 @@ function getBlobPathname(url: string) {
   }
 }
 
+function getPublicAssetBaseUrl() {
+  return s(process.env.OAUTH_SERVER_URL).trim() || "https://mvstudiopro.fly.dev";
+}
+
+function buildBlobMediaUrlFromPath(pathname: string) {
+  const normalized = s(pathname).replace(/^\/+/, "").trim();
+  if (!normalized) return "";
+  return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
+}
+
+async function proxyBlobAssetByPath(pathname: string) {
+  const normalizedPath = s(pathname).replace(/^\/+/, "").trim();
+  if (!normalizedPath) throw new Error("blobPath is required");
+  const tokens = Array.from(
+    new Set(
+      [
+        env.mvspReadWriteToken,
+        process.env.MVSP_READ_WRITE_TOKEN,
+        process.env.BLOB_READ_WRITE_TOKEN,
+      ].map((value) => s(value).trim()).filter(Boolean),
+    ),
+  );
+  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
+  const errors: string[] = [];
+
+  for (const token of tokens) {
+    try {
+      const byPath = await get(normalizedPath, { token, access: "public" });
+      const statusCode = byPath?.statusCode ?? 0;
+      if (byPath && statusCode === 200 && byPath.stream) {
+        return {
+          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
+          contentType: byPath.blob.contentType || "application/octet-stream",
+          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
+        };
+      }
+      errors.push(`get-path:${statusCode}`);
+    } catch (error: any) {
+      errors.push(`get-path:${error?.message || String(error)}`);
+    }
+  }
+
+  throw new Error(`blob_path_proxy_failed:${errors.join("|")}`);
+}
+
 async function proxyBlobAsset(url: string) {
   const target = s(url).trim();
   if (!target) throw new Error("url is required");
@@ -1115,9 +1160,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
+      const blobPath = s(q.blobPath || b.blobPath).trim();
+      if (blobPath) {
+        const asset = await proxyBlobAssetByPath(blobPath);
+        res.setHeader("Content-Type", asset.contentType);
+        res.setHeader("Cache-Control", asset.cacheControl);
+        return res.status(200).send(asset.buffer);
+      }
       const targetUrl = s(q.url || b.url).trim();
       if (!targetUrl) {
-        return res.status(400).json({ ok: false, error: "url is required" });
+        return res.status(400).json({ ok: false, error: "url or blobPath is required" });
       }
       const asset = await proxyBlobAsset(targetUrl);
       res.setHeader("Content-Type", asset.contentType);
