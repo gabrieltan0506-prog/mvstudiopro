@@ -842,6 +842,15 @@ function deriveMusicError(status: string, payload: any) {
   );
 }
 
+function getBlobPathname(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.replace(/^\/+/, "");
+  } catch {
+    return s(url).replace(/^\/+/, "").trim();
+  }
+}
+
 async function proxyBlobAsset(url: string) {
   const target = s(url).trim();
   if (!target) throw new Error("url is required");
@@ -856,7 +865,7 @@ async function proxyBlobAsset(url: string) {
   }
   const token = env.mvspReadWriteToken || process.env.MVSP_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
   if (!token) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const result = await get(target, { token, access: "public" });
+  const result = await get(getBlobPathname(target), { token, access: "public" });
   const statusCode = result?.statusCode ?? 0;
   if (!result || statusCode !== 200 || !result.stream) {
     throw new Error(`blob_proxy_failed:${statusCode}`);

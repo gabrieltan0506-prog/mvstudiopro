@@ -53,6 +53,15 @@ const WATERMARK_COLOR_RGBA = "rgba(255, 107, 53, 0.52)"; // Stronger watermark o
 const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.28)";
 const MAX_IMAGE_WIDTH = 480; // Max width in Word document (points)
 
+function getBlobPathname(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.replace(/^\/+/, "");
+  } catch {
+    return String(url || "").replace(/^\/+/, "").trim();
+  }
+}
+
 // ─── Font Management ────────────────────────────────────
 async function ensureFonts(): Promise<{ regular: string | null; bold: string | null }> {
   const regularCandidates = [
@@ -88,7 +97,7 @@ async function downloadImageWithDimensions(url: string): Promise<{
   const target = String(url || "").trim();
   let buffer: Buffer;
   if (/\.blob\.vercel-storage\.com\//i.test(target) && env.mvspReadWriteToken) {
-    const result = await get(target, { token: env.mvspReadWriteToken, access: "public" });
+    const result = await get(getBlobPathname(target), { token: env.mvspReadWriteToken, access: "public" });
     const statusCode = result?.statusCode ?? 0;
     if (!result || statusCode !== 200 || !result.stream) {
       throw new Error(`blob_image_fetch_failed:${statusCode}`);
