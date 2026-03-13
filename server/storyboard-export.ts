@@ -95,14 +95,54 @@ async function downloadImageWithDimensions(url: string): Promise<{
   scaledHeight: number;
 }> {
   const target = String(url || "").trim();
-  let buffer: Buffer;
+  let buffer: Buffer | null = null;
   if (/\.blob\.vercel-storage\.com\//i.test(target) && env.mvspReadWriteToken) {
-    const result = await get(getBlobPathname(target), { token: env.mvspReadWriteToken, access: "public" });
-    const statusCode = result?.statusCode ?? 0;
-    if (!result || statusCode !== 200 || !result.stream) {
-      throw new Error(`blob_image_fetch_failed:${statusCode}`);
+    const errors: string[] = [];
+    try {
+      const direct = await fetch(target, {
+        headers: { authorization: `Bearer ${env.mvspReadWriteToken}` },
+        redirect: "follow",
+      });
+      if (direct.ok) {
+        buffer = Buffer.from(await direct.arrayBuffer());
+      } else {
+        errors.push(`direct:${direct.status}`);
+      }
+    } catch (error: any) {
+      errors.push(`direct:${error?.message || String(error)}`);
     }
-    buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
+
+    if (!buffer) {
+      try {
+        const byUrl = await get(target, { token: env.mvspReadWriteToken, access: "public" });
+        const statusCode = byUrl?.statusCode ?? 0;
+        if (byUrl && statusCode === 200 && byUrl.stream) {
+          buffer = Buffer.from(await new Response(byUrl.stream).arrayBuffer());
+        } else {
+          errors.push(`get-url:${statusCode}`);
+        }
+      } catch (error: any) {
+        errors.push(`get-url:${error?.message || String(error)}`);
+      }
+    }
+
+    if (!buffer) {
+      try {
+        const byPath = await get(getBlobPathname(target), { token: env.mvspReadWriteToken, access: "public" });
+        const statusCode = byPath?.statusCode ?? 0;
+        if (byPath && statusCode === 200 && byPath.stream) {
+          buffer = Buffer.from(await new Response(byPath.stream).arrayBuffer());
+        } else {
+          errors.push(`get-path:${statusCode}`);
+        }
+      } catch (error: any) {
+        errors.push(`get-path:${error?.message || String(error)}`);
+      }
+    }
+
+    if (!buffer) {
+      throw new Error(`blob_image_fetch_failed:${errors.join("|")}`);
+    }
   } else {
     const response = await axios.get(target, {
       responseType: "arraybuffer",
@@ -112,7 +152,8 @@ async function downloadImageWithDimensions(url: string): Promise<{
   }
   
   // Use sharp to get actual image dimensions
-  const metadata = await sharp(buffer).metadata();
+  const finalBuffer = buffer || Buffer.alloc(0);
+  const metadata = await sharp(finalBuffer).metadata();
   const origWidth = metadata.width || 1024;
   const origHeight = metadata.height || 576;
   
@@ -121,7 +162,7 @@ async function downloadImageWithDimensions(url: string): Promise<{
   const scaledWidth = Math.min(origWidth, MAX_IMAGE_WIDTH);
   const scaledHeight = Math.round(scaledWidth * aspectRatio);
   
-  return { buffer, width: origWidth, height: origHeight, scaledWidth, scaledHeight };
+  return { buffer: finalBuffer, width: origWidth, height: origHeight, scaledWidth, scaledHeight };
 }
 
 /**

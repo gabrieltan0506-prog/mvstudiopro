@@ -385,6 +385,7 @@ type WorkflowStoryboardImageItem = {
   sceneVoicePrompt?: string;
   sceneVoiceType?: string;
   sceneVoiceStyle?: string;
+  sceneVoiceVoice?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -555,6 +556,7 @@ function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<
     sceneVoicePrompt: s(patch.sceneVoicePrompt ?? existing?.sceneVoicePrompt).trim(),
     sceneVoiceType: s(patch.sceneVoiceType ?? existing?.sceneVoiceType).trim(),
     sceneVoiceStyle: s(patch.sceneVoiceStyle ?? existing?.sceneVoiceStyle).trim(),
+    sceneVoiceVoice: s(patch.sceneVoiceVoice ?? existing?.sceneVoiceVoice).trim(),
   } as WorkflowStoryboardImageItem;
 }
 
@@ -749,7 +751,7 @@ function buildSceneVoiceText(scene: any, overrideText?: string) {
 
 function mapSceneVoiceTypeToVoice(voiceType: string) {
   const normalized = s(voiceType).trim().toLowerCase();
-  if (normalized === "male") return "verse";
+  if (normalized === "male") return "onyx";
   if (normalized === "cartoon") return "echo";
   return "alloy";
 }
@@ -787,9 +789,13 @@ function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string
     "电影感推进";
   const instrumentation =
     /(紧张|惊险|悬疑|危机|追逐)/.test(combined)
-      ? "管弦乐与电子脉冲，钢琴主旋律"
-      : "弦乐与钢琴主旋律";
-  return truncateText(`${style}，${mood}，${instrumentation}，纯音乐，无人声。`, 100);
+      ? "管弦乐与电子脉冲"
+      : "弦乐与钢琴";
+  const lead =
+    /(拉丁|热带)/.test(combined) ? "拉丁打击乐主律动" :
+    /(间谍|特工|潜行|追逐|杀手)/.test(combined) ? "低音弦乐与钢琴主旋律" :
+    "钢琴主旋律";
+  return truncateText(`${style}，${mood}，${instrumentation}，${lead}，纯音乐，无人声。`, 100);
 }
 
 function extractMusicUrlFromPayload(payload: any): string {
@@ -865,17 +871,56 @@ async function proxyBlobAsset(url: string) {
   }
   const token = env.mvspReadWriteToken || process.env.MVSP_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
   if (!token) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
-  const result = await get(getBlobPathname(target), { token, access: "public" });
-  const statusCode = result?.statusCode ?? 0;
-  if (!result || statusCode !== 200 || !result.stream) {
-    throw new Error(`blob_proxy_failed:${statusCode}`);
+  const errors: string[] = [];
+
+  try {
+    const direct = await fetch(target, {
+      headers: { authorization: `Bearer ${token}` },
+      redirect: "follow",
+    });
+    if (direct.ok) {
+      return {
+        buffer: Buffer.from(await direct.arrayBuffer()),
+        contentType: direct.headers.get("content-type") || "application/octet-stream",
+        cacheControl: direct.headers.get("cache-control") || "public, max-age=300",
+      };
+    }
+    errors.push(`direct:${direct.status}`);
+  } catch (error: any) {
+    errors.push(`direct:${error?.message || String(error)}`);
   }
-  const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
-  return {
-    buffer,
-    contentType: result.blob.contentType || "application/octet-stream",
-    cacheControl: result.blob.cacheControl || "public, max-age=300",
-  };
+
+  try {
+    const byUrl = await get(target, { token, access: "public" });
+    const statusCode = byUrl?.statusCode ?? 0;
+    if (byUrl && statusCode === 200 && byUrl.stream) {
+      return {
+        buffer: Buffer.from(await new Response(byUrl.stream).arrayBuffer()),
+        contentType: byUrl.blob.contentType || "application/octet-stream",
+        cacheControl: byUrl.blob.cacheControl || "public, max-age=300",
+      };
+    }
+    errors.push(`get-url:${statusCode}`);
+  } catch (error: any) {
+    errors.push(`get-url:${error?.message || String(error)}`);
+  }
+
+  try {
+    const byPath = await get(getBlobPathname(target), { token, access: "public" });
+    const statusCode = byPath?.statusCode ?? 0;
+    if (byPath && statusCode === 200 && byPath.stream) {
+      return {
+        buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
+        contentType: byPath.blob.contentType || "application/octet-stream",
+        cacheControl: byPath.blob.cacheControl || "public, max-age=300",
+      };
+    }
+    errors.push(`get-path:${statusCode}`);
+  } catch (error: any) {
+    errors.push(`get-path:${error?.message || String(error)}`);
+  }
+
+  throw new Error(`blob_proxy_failed:${errors.join("|")}`);
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -1775,6 +1820,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneVoicePrompt: voicePrompt,
           sceneVoiceType: voiceType,
           sceneVoiceStyle: voiceStyle,
+          sceneVoiceVoice: voiceResult.voiceVoice,
         }),
       );
       const nextStoryboard = storyboard.map((item: any) =>

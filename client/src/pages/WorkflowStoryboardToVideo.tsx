@@ -36,6 +36,7 @@ type SceneImages = {
   sceneVoicePrompt?: string;
   sceneVoiceType?: string;
   sceneVoiceStyle?: string;
+  sceneVoiceVoice?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -183,9 +184,20 @@ function buildMusicPromptSeedFromScenes(scenes: Scene[]) {
     "电影感推进";
   const instrumentation =
     /(紧张|惊险|悬疑|危机|追逐)/.test(combined)
-      ? "管弦乐与电子脉冲，钢琴主旋律"
-      : "弦乐与钢琴主旋律";
-  return `${style}，${mood}，${instrumentation}，纯音乐，无人声。`.slice(0, 100);
+      ? "管弦乐与电子脉冲"
+      : "弦乐与钢琴";
+  const lead =
+    /(拉丁|热带)/.test(combined) ? "拉丁打击乐主律动" :
+    /(间谍|特工|潜行|追逐|杀手)/.test(combined) ? "低音弦乐与钢琴主旋律" :
+    "钢琴主旋律";
+  return `${style}，${mood}，${instrumentation}，${lead}，纯音乐，无人声。`.slice(0, 100);
+}
+
+function mapSceneVoiceTypeToVoice(voiceType: string) {
+  const normalized = String(voiceType || "").trim().toLowerCase();
+  if (normalized === "male") return "onyx";
+  if (normalized === "cartoon") return "echo";
+  return "alloy";
 }
 
 async function postJson(op: string, body: Record<string, any>) {
@@ -512,6 +524,7 @@ export default function WorkflowStoryboardToVideo() {
       voicePrompt,
       voiceType: String(scene.voiceType || "female").trim() || "female",
       voiceStyle: String(scene.voiceStyle || "").trim(),
+      voice: mapSceneVoiceTypeToVoice(String(scene.voiceType || "female")),
     });
   }
 
@@ -779,6 +792,7 @@ export default function WorkflowStoryboardToVideo() {
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice URL: <code>{String(item.sceneVoiceUrl || "")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Type: <code>{String(item.sceneVoiceType || scene.voiceType || "-")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Style: <code>{String(item.sceneVoiceStyle || scene.voiceStyle || "-")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Engine Voice: <code>{String(item.sceneVoiceVoice || "-")}</code></div>
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Render Still Prompt</div>
                 <textarea
                   value={renderStillPromptValue}
@@ -1068,7 +1082,7 @@ export default function WorkflowStoryboardToVideo() {
         </div>
         <textarea
           value={musicPrompt}
-          onChange={(e) => setMusicPrompt(e.target.value.slice(0, 400))}
+          onChange={(e) => setMusicPrompt(e.target.value.slice(0, 100))}
           maxLength={100}
           rows={3}
           placeholder="Music Prompt"
