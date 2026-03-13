@@ -354,6 +354,8 @@ type WorkflowStoryboardScene = {
   scenePrompt: string;
   primarySubject?: string;
   voiceover?: string;
+  voiceType?: string;
+  voiceStyle?: string;
   environment?: string;
   character?: string;
   duration: number;
@@ -381,6 +383,8 @@ type WorkflowStoryboardImageItem = {
   sceneVideoUrl?: string;
   sceneVoiceUrl?: string;
   sceneVoicePrompt?: string;
+  sceneVoiceType?: string;
+  sceneVoiceStyle?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -460,6 +464,8 @@ function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDur
     scenePrompt: s(input?.scenePrompt).trim(),
     primarySubject: s(input?.primarySubject || input?.character).trim(),
     voiceover: s(input?.voiceover || input?.scenePrompt).trim(),
+    voiceType: s(input?.voiceType || "female").trim() || "female",
+    voiceStyle: s(input?.voiceStyle || "").trim(),
     environment: s(input?.environment || "cinematic environment").trim(),
     character: s(input?.character || "same main character identity").trim(),
     duration: Number(input?.duration || 0) || fallbackDuration,
@@ -547,6 +553,8 @@ function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<
     renderStillPrompt: s(patch.renderStillPrompt ?? existing?.renderStillPrompt).trim(),
     sceneVoiceUrl: s(patch.sceneVoiceUrl ?? existing?.sceneVoiceUrl).trim(),
     sceneVoicePrompt: s(patch.sceneVoicePrompt ?? existing?.sceneVoicePrompt).trim(),
+    sceneVoiceType: s(patch.sceneVoiceType ?? existing?.sceneVoiceType).trim(),
+    sceneVoiceStyle: s(patch.sceneVoiceStyle ?? existing?.sceneVoiceStyle).trim(),
   } as WorkflowStoryboardImageItem;
 }
 
@@ -723,6 +731,23 @@ function buildSceneVoiceText(scene: any, overrideText?: string) {
   const manual = s(overrideText).trim();
   if (manual) return manual;
   return s(scene?.voiceover || scene?.scenePrompt || scene?.prompt).trim();
+}
+
+function mapSceneVoiceTypeToVoice(voiceType: string) {
+  const normalized = s(voiceType).trim().toLowerCase();
+  if (normalized === "male") return "onyx";
+  if (normalized === "cartoon") return "echo";
+  return "alloy";
+}
+
+function buildSceneVoiceStyleText(scene: any, overrideStyle?: string) {
+  const voiceType = s(scene?.voiceType || "female").trim() || "female";
+  const baseStyle = s(overrideStyle || scene?.voiceStyle).trim();
+  const descriptors = [
+    `旁白角色类型：${voiceType}`,
+    baseStyle ? `情绪风格：${baseStyle}` : "",
+  ].filter(Boolean);
+  return descriptors.join("，");
 }
 
 function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string) {
@@ -1591,12 +1616,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const dialogueText = buildSceneVoiceText(scene, b.dialogueText);
       if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
+      const voiceType = s(b.voiceType || scene.voiceType || "female").trim() || "female";
+      const voiceStyle = s(b.voiceStyle || scene.voiceStyle).trim();
       const voicePrompt = buildVoicePrompt({
         dialogueText,
-        style: s(b.voicePrompt || workflow.outputs?.voicePrompt).trim(),
+        style: [s(b.voicePrompt || workflow.outputs?.voicePrompt).trim(), buildSceneVoiceStyleText(scene, voiceStyle)].filter(Boolean).join("，"),
         language: s(b.language || "中文").trim() || "中文",
       });
-      const voice = s(b.voice || "nova").trim() || "nova";
+      const voice = s(b.voice || mapSceneVoiceTypeToVoice(voiceType)).trim() || mapSceneVoiceTypeToVoice(voiceType);
       const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
       if (!s(voiceResult.voiceUrl).trim()) {
         return res.status(502).json(
@@ -1614,10 +1641,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           prompt: s(scene?.scenePrompt || existing?.prompt).trim(),
           sceneVoiceUrl: voiceResult.voiceUrl,
           sceneVoicePrompt: voicePrompt,
+          sceneVoiceType: voiceType,
+          sceneVoiceStyle: voiceStyle,
         }),
       );
       const nextStoryboard = storyboard.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex ? { ...item, voiceover: dialogueText } : item,
+        Number(item?.sceneIndex) === sceneIndex ? { ...item, voiceover: dialogueText, voiceType, voiceStyle } : item,
       );
 
       const next = saveWorkflowPatch(workflow, {

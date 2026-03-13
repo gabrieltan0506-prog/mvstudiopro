@@ -8,6 +8,8 @@ type Scene = {
   mood: string;
   primarySubject?: string;
   voiceover?: string;
+  voiceType?: string;
+  voiceStyle?: string;
   character?: string;
   environment?: string;
   action?: string;
@@ -32,6 +34,8 @@ type SceneImages = {
   sceneVideoUrl?: string;
   sceneVoiceUrl?: string;
   sceneVoicePrompt?: string;
+  sceneVoiceType?: string;
+  sceneVoiceStyle?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -106,6 +110,8 @@ function normalizeSceneList(input: any[], fallbackDuration = 8): Scene[] {
     mood: String(item?.mood || "cinematic").trim() || "cinematic",
     primarySubject: String(item?.primarySubject || item?.character || "").trim(),
     voiceover: String(item?.voiceover || item?.scenePrompt || "").trim(),
+    voiceType: String(item?.voiceType || "female").trim() || "female",
+    voiceStyle: String(item?.voiceStyle || "").trim(),
     character: String(item?.character || "").trim(),
     environment: String(item?.environment || "").trim(),
     action: String(item?.action || "").trim(),
@@ -468,6 +474,8 @@ export default function WorkflowStoryboardToVideo() {
       sceneIndex: scene.sceneIndex,
       dialogueText: String(scene.voiceover || scene.scenePrompt || "").trim(),
       voicePrompt,
+      voiceType: String(scene.voiceType || "female").trim() || "female",
+      voiceStyle: String(scene.voiceStyle || "").trim(),
     });
   }
 
@@ -768,6 +776,44 @@ export default function WorkflowStoryboardToVideo() {
                   placeholder="Per-scene voice text"
                   style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
                 />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                  <select
+                    value={scene.voiceType || "female"}
+                    onChange={(e) => {
+                      setStoryboard((prev) =>
+                        prev.map((entry) =>
+                          Number(entry.sceneIndex) === Number(scene.sceneIndex)
+                            ? { ...entry, voiceType: e.target.value }
+                            : entry,
+                        ),
+                      );
+                    }}
+                    style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+                  >
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                    <option value="cartoon">Cartoon</option>
+                  </select>
+                  <select
+                    value={scene.voiceStyle || ""}
+                    onChange={(e) => {
+                      setStoryboard((prev) =>
+                        prev.map((entry) =>
+                          Number(entry.sceneIndex) === Number(scene.sceneIndex)
+                            ? { ...entry, voiceStyle: e.target.value }
+                            : entry,
+                        ),
+                      );
+                    }}
+                    style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+                  >
+                    <option value="">Normal</option>
+                    <option value="warm">Warm</option>
+                    <option value="calm">Calm</option>
+                    <option value="energetic">Energetic</option>
+                    <option value="cinematic">Cinematic</option>
+                  </select>
+                </div>
                 {item.sceneVoiceUrl ? <audio controls src={String(item.sceneVoiceUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
