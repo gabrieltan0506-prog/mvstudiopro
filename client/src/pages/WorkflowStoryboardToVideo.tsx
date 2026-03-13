@@ -971,7 +971,15 @@ export default function WorkflowStoryboardToVideo() {
                     <option value="cinematic">Cinematic</option>
                   </select>
                 </div>
-                {item.sceneVoiceUrl ? <audio controls src={String(item.sceneVoiceUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
+                {item.sceneVoiceUrl ? (
+                  <audio
+                    key={String(item.sceneVoiceUrl)}
+                    controls
+                    preload="metadata"
+                    src={toAssetDisplayUrl(String(item.sceneVoiceUrl))}
+                    style={{ width: "100%", marginTop: 8 }}
+                  />
+                ) : null}
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={() => runAuxStep(`scene-image-${scene.sceneIndex}`, "workflowGenerateSceneImage", { workflowId, sceneIndex: scene.sceneIndex })}
@@ -1139,7 +1147,15 @@ export default function WorkflowStoryboardToVideo() {
         <div style={{ marginTop: 8 }}>voiceProvider: <code>{String(outputs.voiceProvider || "")}</code></div>
         <div>voiceModel: <code>{String(outputs.voiceModel || "")}</code></div>
         <div>voiceUrl: <code>{String(outputs.voiceUrl || "")}</code></div>
-        {outputs.voiceUrl ? <audio controls src={String(outputs.voiceUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
+        {outputs.voiceUrl ? (
+          <audio
+            key={String(outputs.voiceUrl)}
+            controls
+            preload="metadata"
+            src={toAssetDisplayUrl(String(outputs.voiceUrl))}
+            style={{ width: "100%", marginTop: 8 }}
+          />
+        ) : null}
       </div>
 
       <div style={sectionStyle()}>
@@ -1185,7 +1201,15 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateMusic.error ? <div style={statusTextStyle("#ff8080")}>Music Error: {stepStates.generateMusic.error}</div> : null}
         <div style={{ marginTop: 8 }}>musicProvider: <code>{String(outputs.musicProvider || "")}</code></div>
         <div>musicUrl: <code>{String(outputs.musicUrl || "")}</code></div>
-        {outputs.musicUrl ? <audio controls src={String(outputs.musicUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
+        {outputs.musicUrl ? (
+          <audio
+            key={String(outputs.musicUrl)}
+            controls
+            preload="metadata"
+            src={toAssetDisplayUrl(String(outputs.musicUrl))}
+            style={{ width: "100%", marginTop: 8 }}
+          />
+        ) : null}
       </div>
 
       <div style={sectionStyle()}>

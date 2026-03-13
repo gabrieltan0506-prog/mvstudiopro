@@ -372,7 +372,7 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
 
     return {
       ...baseResult,
-      voiceUrl: blob.url,
+      voiceUrl: buildBlobMediaUrlFromPath(s(blob.pathname).trim()),
       voiceIsFallback: false,
       voiceErrorMessage: "",
     };
@@ -677,9 +677,7 @@ async function generateSceneAssetImages(scene: any, workflow: any) {
 }
 
 function sceneNeedsRenderStill(scene: any) {
-  if (Boolean(scene?.renderStillNeeded)) return true;
-  const text = [s(scene?.scenePrompt), s(scene?.action), s(scene?.renderStillPrompt)].join(" ");
-  return /(两人|二人|三人|多人|一家|全家|众人|群像|合照|同框|一起|并肩|对视|互动)/.test(text);
+  return Boolean(scene?.renderStillNeeded);
 }
 
 function buildRenderStillPrompt(scene: any, customPrompt?: string) {
