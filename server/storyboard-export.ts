@@ -96,47 +96,55 @@ async function downloadImageWithDimensions(url: string): Promise<{
 }> {
   const target = String(url || "").trim();
   let buffer: Buffer | null = null;
-  if (/\.blob\.vercel-storage\.com\//i.test(target) && env.mvspReadWriteToken) {
+  if (/\.blob\.vercel-storage\.com\//i.test(target) && (env.mvspReadWriteToken || process.env.BLOB_READ_WRITE_TOKEN)) {
     const errors: string[] = [];
-    try {
-      const direct = await fetch(target, {
-        headers: { authorization: `Bearer ${env.mvspReadWriteToken}` },
-        redirect: "follow",
-      });
-      if (direct.ok) {
-        buffer = Buffer.from(await direct.arrayBuffer());
-      } else {
-        errors.push(`direct:${direct.status}`);
-      }
-    } catch (error: any) {
-      errors.push(`direct:${error?.message || String(error)}`);
-    }
-
-    if (!buffer) {
+    const tokens = Array.from(
+      new Set([env.mvspReadWriteToken, process.env.MVSP_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN].filter(Boolean)),
+    ) as string[];
+    for (const token of tokens) {
       try {
-        const byUrl = await get(target, { token: env.mvspReadWriteToken, access: "public" });
-        const statusCode = byUrl?.statusCode ?? 0;
-        if (byUrl && statusCode === 200 && byUrl.stream) {
-          buffer = Buffer.from(await new Response(byUrl.stream).arrayBuffer());
+        const direct = await fetch(target, {
+          headers: { authorization: `Bearer ${token}` },
+          redirect: "follow",
+        });
+        if (direct.ok) {
+          buffer = Buffer.from(await direct.arrayBuffer());
+          break;
         } else {
-          errors.push(`get-url:${statusCode}`);
+          errors.push(`direct:${direct.status}`);
         }
       } catch (error: any) {
-        errors.push(`get-url:${error?.message || String(error)}`);
+        errors.push(`direct:${error?.message || String(error)}`);
       }
-    }
 
-    if (!buffer) {
-      try {
-        const byPath = await get(getBlobPathname(target), { token: env.mvspReadWriteToken, access: "public" });
-        const statusCode = byPath?.statusCode ?? 0;
-        if (byPath && statusCode === 200 && byPath.stream) {
-          buffer = Buffer.from(await new Response(byPath.stream).arrayBuffer());
-        } else {
-          errors.push(`get-path:${statusCode}`);
+      if (!buffer) {
+        try {
+          const byUrl = await get(target, { token, access: "public" });
+          const statusCode = byUrl?.statusCode ?? 0;
+          if (byUrl && statusCode === 200 && byUrl.stream) {
+            buffer = Buffer.from(await new Response(byUrl.stream).arrayBuffer());
+            break;
+          } else {
+            errors.push(`get-url:${statusCode}`);
+          }
+        } catch (error: any) {
+          errors.push(`get-url:${error?.message || String(error)}`);
         }
-      } catch (error: any) {
-        errors.push(`get-path:${error?.message || String(error)}`);
+      }
+
+      if (!buffer) {
+        try {
+          const byPath = await get(getBlobPathname(target), { token, access: "public" });
+          const statusCode = byPath?.statusCode ?? 0;
+          if (byPath && statusCode === 200 && byPath.stream) {
+            buffer = Buffer.from(await new Response(byPath.stream).arrayBuffer());
+            break;
+          } else {
+            errors.push(`get-path:${statusCode}`);
+          }
+        } catch (error: any) {
+          errors.push(`get-path:${error?.message || String(error)}`);
+        }
       }
     }
 

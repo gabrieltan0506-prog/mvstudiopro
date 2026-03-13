@@ -52,14 +52,20 @@ async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
   const url = s(imageUrl).trim();
   if (!url) throw new Error("missing_image_url");
 
-  // allow private blob fetch with token
-  const token = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
+  const tokens = Array.from(
+    new Set(
+      [process.env.MVSP_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN].map((value) => s(value).trim()).filter(Boolean),
+    ),
+  );
   const headers: Record<string, string> = { "User-Agent": "mvstudiopro/1.0 (+fetch)" };
 
   let r = await fetch(url, { redirect: "follow", headers });
-  if (r.status === 403 && token) {
-    headers.Authorization = `Bearer ${token}`;
-    r = await fetch(url, { redirect: "follow", headers });
+  if ((r.status === 403 || r.status === 404) && tokens.length) {
+    for (const token of tokens) {
+      headers.Authorization = `Bearer ${token}`;
+      r = await fetch(url, { redirect: "follow", headers });
+      if (r.ok) break;
+    }
   }
   if (!r.ok) throw new Error(`image_fetch_failed:${r.status}`);
   const buf = Buffer.from(await r.arrayBuffer());
@@ -869,55 +875,65 @@ async function proxyBlobAsset(url: string) {
       cacheControl: response.headers.get("cache-control") || "public, max-age=300",
     };
   }
-  const token = env.mvspReadWriteToken || process.env.MVSP_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
-  if (!token) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
+  const tokens = Array.from(
+    new Set(
+      [
+        env.mvspReadWriteToken,
+        process.env.MVSP_READ_WRITE_TOKEN,
+        process.env.BLOB_READ_WRITE_TOKEN,
+      ].map((value) => s(value).trim()).filter(Boolean),
+    ),
+  );
+  if (!tokens.length) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
   const errors: string[] = [];
 
-  try {
-    const direct = await fetch(target, {
-      headers: { authorization: `Bearer ${token}` },
-      redirect: "follow",
-    });
-    if (direct.ok) {
-      return {
-        buffer: Buffer.from(await direct.arrayBuffer()),
-        contentType: direct.headers.get("content-type") || "application/octet-stream",
-        cacheControl: direct.headers.get("cache-control") || "public, max-age=300",
-      };
+  for (const token of tokens) {
+    try {
+      const direct = await fetch(target, {
+        headers: { authorization: `Bearer ${token}` },
+        redirect: "follow",
+      });
+      if (direct.ok) {
+        return {
+          buffer: Buffer.from(await direct.arrayBuffer()),
+          contentType: direct.headers.get("content-type") || "application/octet-stream",
+          cacheControl: direct.headers.get("cache-control") || "public, max-age=300",
+        };
+      }
+      errors.push(`direct:${direct.status}`);
+    } catch (error: any) {
+      errors.push(`direct:${error?.message || String(error)}`);
     }
-    errors.push(`direct:${direct.status}`);
-  } catch (error: any) {
-    errors.push(`direct:${error?.message || String(error)}`);
-  }
 
-  try {
-    const byUrl = await get(target, { token, access: "public" });
-    const statusCode = byUrl?.statusCode ?? 0;
-    if (byUrl && statusCode === 200 && byUrl.stream) {
-      return {
-        buffer: Buffer.from(await new Response(byUrl.stream).arrayBuffer()),
-        contentType: byUrl.blob.contentType || "application/octet-stream",
-        cacheControl: byUrl.blob.cacheControl || "public, max-age=300",
-      };
+    try {
+      const byUrl = await get(target, { token, access: "public" });
+      const statusCode = byUrl?.statusCode ?? 0;
+      if (byUrl && statusCode === 200 && byUrl.stream) {
+        return {
+          buffer: Buffer.from(await new Response(byUrl.stream).arrayBuffer()),
+          contentType: byUrl.blob.contentType || "application/octet-stream",
+          cacheControl: byUrl.blob.cacheControl || "public, max-age=300",
+        };
+      }
+      errors.push(`get-url:${statusCode}`);
+    } catch (error: any) {
+      errors.push(`get-url:${error?.message || String(error)}`);
     }
-    errors.push(`get-url:${statusCode}`);
-  } catch (error: any) {
-    errors.push(`get-url:${error?.message || String(error)}`);
-  }
 
-  try {
-    const byPath = await get(getBlobPathname(target), { token, access: "public" });
-    const statusCode = byPath?.statusCode ?? 0;
-    if (byPath && statusCode === 200 && byPath.stream) {
-      return {
-        buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
-        contentType: byPath.blob.contentType || "application/octet-stream",
-        cacheControl: byPath.blob.cacheControl || "public, max-age=300",
-      };
+    try {
+      const byPath = await get(getBlobPathname(target), { token, access: "public" });
+      const statusCode = byPath?.statusCode ?? 0;
+      if (byPath && statusCode === 200 && byPath.stream) {
+        return {
+          buffer: Buffer.from(await new Response(byPath.stream).arrayBuffer()),
+          contentType: byPath.blob.contentType || "application/octet-stream",
+          cacheControl: byPath.blob.cacheControl || "public, max-age=300",
+        };
+      }
+      errors.push(`get-path:${statusCode}`);
+    } catch (error: any) {
+      errors.push(`get-path:${error?.message || String(error)}`);
     }
-    errors.push(`get-path:${statusCode}`);
-  } catch (error: any) {
-    errors.push(`get-path:${error?.message || String(error)}`);
   }
 
   throw new Error(`blob_proxy_failed:${errors.join("|")}`);
