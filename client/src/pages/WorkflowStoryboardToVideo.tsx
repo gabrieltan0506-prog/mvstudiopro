@@ -6,34 +6,29 @@ type Scene = {
   duration: number;
   camera: string;
   mood: string;
+  character?: string;
+  environment?: string;
+  action?: string;
+  lighting?: string;
 };
 
 type SceneImages = {
   sceneIndex: number;
   images: string[];
+  imageUrls?: string[];
   prompt?: string;
+  duration?: number;
+  sceneVideoUrl?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
   backgroundStatus?: string;
 };
 
-function normalizeSceneList(input: any[], fallbackDuration = 5): Scene[] {
-  const src = Array.isArray(input) ? input : [];
-  return src.map((item: any, idx: number) => ({
-    sceneIndex: Number(item?.sceneIndex || idx + 1),
-    scenePrompt: String(item?.scenePrompt || "").replace(/\r/g, "").replace(/^---+$/gm, "").trim(),
-    duration: Number(item?.duration || 0) || fallbackDuration,
-    camera: String(item?.camera || "medium").trim() || "medium",
-    mood: String(item?.mood || "cinematic").trim() || "cinematic",
-  }));
-}
-
 type MainStepKey =
   | "generateScript"
   | "generateStoryboard"
   | "generateStoryboardImages"
-  | "generateVideo"
   | "generateVoice"
   | "generateMusic"
   | "renderFinalVideo";
@@ -48,7 +43,6 @@ const INITIAL_STEP_STATES: Record<MainStepKey, StepState> = {
   generateScript: { loading: false, error: "", success: false },
   generateStoryboard: { loading: false, error: "", success: false },
   generateStoryboardImages: { loading: false, error: "", success: false },
-  generateVideo: { loading: false, error: "", success: false },
   generateVoice: { loading: false, error: "", success: false },
   generateMusic: { loading: false, error: "", success: false },
   renderFinalVideo: { loading: false, error: "", success: false },
@@ -81,6 +75,21 @@ function extractErrorText(json: any): string {
   return msg;
 }
 
+function normalizeSceneList(input: any[], fallbackDuration = 8): Scene[] {
+  const src = Array.isArray(input) ? input : [];
+  return src.map((item: any, idx: number) => ({
+    sceneIndex: Number(item?.sceneIndex || idx + 1),
+    scenePrompt: String(item?.scenePrompt || item?.prompt || "").replace(/\r/g, "").replace(/^---+$/gm, "").trim(),
+    duration: 8,
+    camera: String(item?.camera || "medium").trim() || "medium",
+    mood: String(item?.mood || "cinematic").trim() || "cinematic",
+    character: String(item?.character || "").trim(),
+    environment: String(item?.environment || "").trim(),
+    action: String(item?.action || "").trim(),
+    lighting: String(item?.lighting || "").trim(),
+  }));
+}
+
 async function postJson(op: string, body: Record<string, any>) {
   const resp = await fetch(`/api/jobs?op=${encodeURIComponent(op)}`, {
     method: "POST",
@@ -91,16 +100,16 @@ async function postJson(op: string, body: Record<string, any>) {
   return { httpOk: resp.ok, json };
 }
 
-export default function WorkflowStoryboardToVideo() {
-  const [debugInfo, setDebugInfo] = useState<any>(null);
-  function showDebug(data: any) {
-    try {
-      setDebugInfo(JSON.stringify(data, null, 2));
-    } catch (e) {
-      setDebugInfo(String(data));
-    }
-  }
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
+}
 
+export default function WorkflowStoryboardToVideo() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<any>(null);
   const [stepStates, setStepStates] = useState<Record<MainStepKey, StepState>>(INITIAL_STEP_STATES);
@@ -108,8 +117,7 @@ export default function WorkflowStoryboardToVideo() {
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
   const [targetWords, setTargetWords] = useState("900");
   const [targetScenes, setTargetScenes] = useState("6");
-  const [sceneDuration, setSceneDuration] = useState("5");
-  const [videoDuration, setVideoDuration] = useState("8s");
+  const [sceneDuration] = useState("8");
 
   const [scriptText, setScriptText] = useState("");
   const [storyboard, setStoryboard] = useState<Scene[]>([]);
@@ -117,20 +125,15 @@ export default function WorkflowStoryboardToVideo() {
   const [dialogueText, setDialogueText] = useState("");
   const [voicePrompt, setVoicePrompt] = useState("中文自然播报，电影预告片旁白风格");
 
-  const defaultMusicPrompt = useMemo(
-    () => "cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal",
-    [],
-  );
-  const [musicPrompt, setMusicPrompt] = useState(defaultMusicPrompt);
+  const [musicPrompt, setMusicPrompt] = useState("cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal");
   const [musicMood, setMusicMood] = useState("cinematic");
   const [musicBpm, setMusicBpm] = useState("110");
   const [musicDuration, setMusicDuration] = useState("30");
 
   const [referenceInputMap, setReferenceInputMap] = useState<Record<string, string>>({});
-  const [selectedImages, setSelectedImages] = useState<Record<number, number>>({});
-  const [sceneDurations, setSceneDurations] = useState<Record<number, number>>({});
   const [auxBusyKey, setAuxBusyKey] = useState("");
   const [auxError, setAuxError] = useState("");
+  const [uploadingSceneIndex, setUploadingSceneIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -159,36 +162,25 @@ export default function WorkflowStoryboardToVideo() {
     const outputs = workflow?.outputs || {};
     if (typeof outputs.script === "string") setScriptText(outputs.script);
     if (Array.isArray(outputs.storyboard)) {
-      setStoryboard(normalizeSceneList(outputs.storyboard, Number(outputs.sceneDuration || 0) || 5));
+      setStoryboard(normalizeSceneList(outputs.storyboard, 8));
     }
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
-  }, [workflow]);
-
-  useEffect(() => {
-    if (!workflow?.outputs?.musicUrl) return;
-    setStepState("generateMusic", { error: "" });
-  }, [workflow?.outputs?.musicUrl]);
+  }, [workflow, dialogueText, voicePrompt]);
 
   const outputs = workflow?.outputs || {};
   const scenes: Scene[] = Array.isArray(storyboard) ? storyboard : [];
   const storyboardImages: SceneImages[] = Array.isArray(outputs.storyboardImages) ? outputs.storyboardImages : [];
-  const sceneVideoMap = new Map<number, any>(
-    (Array.isArray(outputs.sceneVideos) ? outputs.sceneVideos : []).map((item: any) => [Number(item?.sceneIndex || 0), item]),
+  const sceneBundlesByIndex = useMemo(
+    () =>
+      Object.fromEntries(
+        storyboardImages.map((item) => [Number(item?.sceneIndex || 0), item]),
+      ) as Record<number, SceneImages>,
+    [storyboardImages],
   );
-  const storyboardConfirmed = Boolean(outputs.storyboardConfirmed);
-
-  function updateScenePrompt(sceneIndex: number, scenePrompt: string) {
-    setStoryboard((prev) =>
-      prev.map((scene) =>
-        Number(scene.sceneIndex || 0) === Number(sceneIndex || 0)
-          ? { ...scene, scenePrompt }
-          : scene,
-      ),
-    );
-  }
 
   const anyMainStepLoading = Object.values(stepStates).some((s) => s.loading);
+  const hasAnySceneVideo = storyboardImages.some((item) => String(item?.sceneVideoUrl || "").trim());
 
   function setStepState(step: MainStepKey, patch: Partial<StepState>) {
     setStepStates((prev) => ({
@@ -203,9 +195,14 @@ export default function WorkflowStoryboardToVideo() {
   function writeBackWorkflow(json: any) {
     const nextId = String(json?.workflow?.workflowId || json?.workflowId || workflowId || "");
     if (nextId) setWorkflowId(nextId);
-    if (json?.workflow) {
-      setWorkflow(json.workflow);
-    }
+    if (json?.workflow) setWorkflow(json.workflow);
+  }
+
+  async function refreshWorkflow() {
+    if (!workflowId) return;
+    const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(workflowId)}`);
+    const json = await resp.json().catch(() => null);
+    if (resp.ok && json?.workflow) setWorkflow(json.workflow);
   }
 
   async function runMainStep(
@@ -222,7 +219,6 @@ export default function WorkflowStoryboardToVideo() {
         workflow: workflow || undefined,
       };
       const { httpOk, json } = await postJson(op, payload);
-      showDebug({ step, op, payload, httpOk, json });
       const apiOk = json?.ok === true;
       if (!httpOk || !apiOk) {
         setStepState(step, { loading: false, success: false, error: extractErrorText(json) });
@@ -251,7 +247,6 @@ export default function WorkflowStoryboardToVideo() {
         workflow: workflow || undefined,
       };
       const { httpOk, json } = await postJson(op, payload);
-      showDebug({ stepKey, op, payload, httpOk, json });
       if (!httpOk || json?.ok !== true) {
         setAuxError(extractErrorText(json));
         return;
@@ -264,11 +259,92 @@ export default function WorkflowStoryboardToVideo() {
     }
   }
 
+  async function uploadSceneReferenceImage(file: File, sceneIndex: number) {
+    try {
+      setUploadingSceneIndex(sceneIndex);
+      setAuxError("");
+      const dataUrl = await fileToDataUrl(file);
+      const uploadResp = await fetch("/api/blob-put-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: `scene-${sceneIndex}.jpg` }),
+      });
+      const uploadJson = await uploadResp.json().catch(() => null);
+      if (!uploadResp.ok || !uploadJson?.imageUrl) {
+        throw new Error(extractErrorText(uploadJson));
+      }
+
+      const bindResp = await fetch("/api/jobs?op=workflowUploadSceneImage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workflowId,
+          workflow,
+          sceneIndex,
+          imageUrl: String(uploadJson.imageUrl || "").trim(),
+        }),
+      });
+      const bindJson = await bindResp.json().catch(() => null);
+      if (!bindResp.ok || bindJson?.ok !== true) {
+        throw new Error(extractErrorText(bindJson));
+      }
+      writeBackWorkflow(bindJson);
+      await refreshWorkflow();
+    } catch (error: any) {
+      setAuxError(error?.message || String(error) || "upload_failed");
+    } finally {
+      setUploadingSceneIndex(null);
+    }
+  }
+
+  async function exportStoryboardDoc(format: "docx" | "pdf") {
+    const scenesPayload = scenes.map((scene) => {
+      const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
+      const imageUrls = Array.isArray(bundle?.imageUrls)
+        ? bundle.imageUrls
+        : Array.isArray(bundle?.images)
+          ? bundle.images
+          : [];
+      return {
+        ...scene,
+        imageUrls,
+      };
+    });
+    const resp = await fetch(`/api/export?op=${format === "docx" ? "storyboard-docx" : "storyboard-pdf"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Storyboard Export",
+        script: scriptText,
+        scenes: scenesPayload,
+        isPaidUser: false,
+        musicMood,
+        musicBpm,
+      }),
+    });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.url) {
+      throw new Error(extractErrorText(json));
+    }
+    window.open(String(json.url), "_blank", "noopener,noreferrer");
+  }
+
+  function exportStoryboardImage(imageUrl: string) {
+    const a = document.createElement("a");
+    a.href = imageUrl;
+    a.target = "_blank";
+    a.rel = "noreferrer";
+    a.download = `storyboard-${Date.now()}.jpg`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 20, color: "white" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>/workflow</h1>
       <p style={{ opacity: 0.9, marginTop: 8 }}>
-        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Storyboard Images → Step 4 Character Lock / Upload Reference Character / Background Remove → Step 5 Confirm Storyboard → Step 6 Generate Video → Step 7 Generate Voice → Step 8 Generate Music → Step 9 Render Final Video
+        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Scene Images → Step 4 Per-scene Upload / Character Lock / Background Remove → Step 5 Generate Scene Videos → Step 6 Generate Voice → Step 7 Generate Music → Step 8 Final Render
       </p>
 
       <div style={sectionStyle()}>
@@ -283,8 +359,9 @@ export default function WorkflowStoryboardToVideo() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginTop: 10 }}>
           <input value={targetWords} onChange={(e) => setTargetWords(e.target.value)} placeholder="Script Length" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
           <input value={targetScenes} onChange={(e) => setTargetScenes(e.target.value)} placeholder="Scene Count" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
-          <input value={sceneDuration} onChange={(e) => setSceneDuration(e.target.value)} placeholder="Scene Duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+          <input value={sceneDuration} readOnly placeholder="Scene Duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.08)", color: "white" }} />
         </div>
+        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85 }}>Scene duration is fixed at 8 seconds.</div>
         <button
           onClick={() =>
             runMainStep(
@@ -295,15 +372,13 @@ export default function WorkflowStoryboardToVideo() {
                 prompt,
                 targetWords: Number(targetWords || 0) || undefined,
                 targetScenes: Number(targetScenes || 0) || undefined,
-                sceneDuration: Number(sceneDuration || 0) || 5,
+                sceneDuration: 8,
               },
               (json) => {
                 const nextId = String(json?.workflow?.workflowId || json?.workflowId || "");
                 if (nextId) setWorkflowId(nextId);
                 if (typeof json?.script === "string") setScriptText(json.script);
-                if (Array.isArray(json?.storyboard)) {
-                  setStoryboard(normalizeSceneList(json.storyboard, Number(sceneDuration || 0) || 5));
-                }
+                if (Array.isArray(json?.storyboard)) setStoryboard(normalizeSceneList(json.storyboard, 8));
               },
             )
           }
@@ -328,7 +403,7 @@ export default function WorkflowStoryboardToVideo() {
           onClick={() => {
             const refreshed = normalizeSceneList(
               Array.isArray(storyboard) ? storyboard : workflow?.outputs?.storyboard || [],
-              Number(sceneDuration || 0) || 5,
+              8,
             );
             if (!refreshed.length) {
               setStepState("generateStoryboard", {
@@ -344,13 +419,11 @@ export default function WorkflowStoryboardToVideo() {
           disabled={anyMainStepLoading || !workflowId}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
-          {stepStates.generateStoryboard.loading ? "Refreshing..." : "Generate Storyboard"}
+          Generate Storyboard
         </button>
         {stepStates.generateScript.success ? <div style={statusTextStyle("#84f5a0")}>Script generated successfully.</div> : null}
         {stepStates.generateScript.error ? <div style={statusTextStyle("#ff8080")}>Script Error: {stepStates.generateScript.error}</div> : null}
-        {stepStates.generateStoryboard.loading ? <div style={statusTextStyle("#ffdd99")}>Refreshing storyboard...</div> : null}
-        <div style={{ marginTop: 8 }}>scriptProvider: <code>{String(outputs.scriptProvider || "")}</code></div>
-        <div>scriptModel: <code>{String(outputs.scriptModel || "")}</code></div>
+        {stepStates.generateStoryboard.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Error: {stepStates.generateStoryboard.error}</div> : null}
       </div>
 
       <div style={sectionStyle()}>
@@ -363,7 +436,7 @@ export default function WorkflowStoryboardToVideo() {
                 value={scene.scenePrompt}
                 onChange={(e) => {
                   const next = [...scenes];
-                  next[idx] = { ...scene, scenePrompt: e.target.value };
+                  next[idx] = { ...scene, scenePrompt: e.target.value, duration: 8 };
                   setStoryboard(next);
                 }}
                 rows={3}
@@ -371,16 +444,7 @@ export default function WorkflowStoryboardToVideo() {
                 style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
               />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-                <input
-                  value={String(scene.duration)}
-                  onChange={(e) => {
-                    const next = [...scenes];
-                    next[idx] = { ...scene, duration: Number(e.target.value || 0) || 5 };
-                    setStoryboard(next);
-                  }}
-                  placeholder="duration"
-                  style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-                />
+                <input value="8" readOnly placeholder="duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.08)", color: "white" }} />
                 <input
                   value={scene.camera}
                   onChange={(e) => {
@@ -410,116 +474,97 @@ export default function WorkflowStoryboardToVideo() {
           disabled={anyMainStepLoading || !workflowId || scenes.length === 0}
           style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
-          {stepStates.generateStoryboardImages.loading ? "Generating..." : "Generate Storyboard Images"}
+          {stepStates.generateStoryboardImages.loading ? "Generating..." : "Generate All Scene Images"}
         </button>
-        {stepStates.generateStoryboard.success ? <div style={statusTextStyle("#84f5a0")}>Storyboard generated successfully.</div> : null}
-        {stepStates.generateStoryboard.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Error: {stepStates.generateStoryboard.error}</div> : null}
-        {stepStates.generateStoryboardImages.loading ? <div style={statusTextStyle("#ffdd99")}>Generating storyboard images...</div> : null}
-
-        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={() => runAuxStep("scene1-images", "workflowGenerateStoryboardImages", { workflowId, storyboard: scenes })}
-            disabled={!!auxBusyKey || !workflowId || scenes.length === 0}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "scene1-images" ? "Generating..." : "Generate Scene 1 Images"}
-          </button>
-          <button
-            type="button"
-            onClick={() => runAuxStep("remaining-images", "workflowGenerateRemainingSceneImages", { workflowId })}
-            disabled={!!auxBusyKey || !workflowId}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "remaining-images" ? "Generating..." : "Generate Remaining Scene Images"}
-          </button>
-          <button
-            type="button"
-            onClick={() => runAuxStep("lock-scene-1", "workflowLockCharacter", { workflowId, sceneIndex: 1, locked: true })}
-            disabled={!!auxBusyKey || !workflowId}
-            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-          >
-            {auxBusyKey === "lock-scene-1" ? "Locking..." : "Lock Scene 1 Character"}
-          </button>
-        </div>
-
-        <div style={{ marginTop: 8 }}>storyboard structured status: <code>{String(outputs.storyboardStructuredStatus || "")}</code></div>
+        {stepStates.generateStoryboardImages.success ? <div style={statusTextStyle("#84f5a0")}>Storyboard images generated successfully.</div> : null}
+        {stepStates.generateStoryboardImages.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Images Error: {stepStates.generateStoryboardImages.error}</div> : null}
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>D. Storyboard Images</h2>
+        <h2 style={{ marginTop: 0 }}>D. Scene Editor</h2>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => void exportStoryboardDoc("docx")}>Export DOCX</button>
+          <button type="button" onClick={() => void exportStoryboardDoc("pdf")}>Export PDF</button>
+        </div>
         <div style={{ display: "grid", gap: 10 }}>
-          {storyboardImages.map((item) => {
-            const refInputValue = referenceInputMap[String(item.sceneIndex)] || "";
-            const sceneDraft = scenes.find((scene) => Number(scene.sceneIndex || 0) === Number(item.sceneIndex || 0));
-            const scenePromptValue = String(sceneDraft?.scenePrompt || item?.prompt || "").trim();
+          {scenes.map((scene) => {
+            const item = sceneBundlesByIndex[Number(scene.sceneIndex || 0)] || { sceneIndex: scene.sceneIndex, images: [] };
+            const imageUrls = Array.isArray(item.imageUrls)
+              ? item.imageUrls
+              : Array.isArray(item.images)
+                ? item.images
+                : [];
+            const refInputValue = referenceInputMap[String(scene.sceneIndex)] || "";
+            const busyGenerateImage = auxBusyKey === `scene-image-${scene.sceneIndex}`;
+            const busyGenerateVideo = auxBusyKey === `scene-video-${scene.sceneIndex}`;
+            const busyLock = auxBusyKey === `lock-${scene.sceneIndex}`;
+            const busyBg = auxBusyKey === `bg-${scene.sceneIndex}`;
+            const busyUploadRef = auxBusyKey === `upload-ref-${scene.sceneIndex}`;
             return (
-              <div key={String(item.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
-                <div style={{ fontWeight: 700 }}>Scene {item.sceneIndex}</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-                  {(Array.isArray(item.images) ? item.images : []).map((url: string, idx: number) => {
-                    const selected = (selectedImages[Number(item.sceneIndex || 0)] ?? 0) === idx;
-                    return (
-                      <button
-                        key={`${item.sceneIndex}-${idx}`}
-                        type="button"
-                        onClick={() => setSelectedImages((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: idx }))}
-                        style={{ padding: 0, borderRadius: 8, border: selected ? "2px solid #ff4ecd" : "1px solid rgba(255,255,255,0.12)", background: "transparent", cursor: "pointer" }}
-                      >
-                        <img src={url} style={{ width: "100%", borderRadius: 8, background: "black", display: "block" }} />
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
-                  Background Status: <code>{String(item.backgroundStatus || "not_checked")}</code>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  Reference Character: <code>{String(item.referenceCharacterUrl || outputs.referenceCharacterUrl || "")}</code>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  Transparent Character PNG: <code>{String(item.characterPngUrl || outputs.characterPngUrl || "")}</code>
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.9, marginBottom: 6 }}>Scene Prompt</div>
-                  <textarea
-                    value={scenePromptValue}
-                    onChange={(e) => updateScenePrompt(Number(item.sceneIndex || 0), e.target.value)}
-                    rows={4}
-                    placeholder="Edit this scene prompt"
-                    style={{
-                      width: "100%",
-                      minHeight: 96,
-                      resize: "vertical",
-                      padding: 12,
-                      borderRadius: 10,
-                      border: "1px solid rgba(255,255,255,0.15)",
-                      background: "rgba(0,0,0,0.35)",
-                      color: "white",
-                    }}
-                  />
-                </div>
+              <div key={String(scene.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
+                <div style={{ fontWeight: 700 }}>Scene {scene.sceneIndex}</div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Prompt: <code>{scene.scenePrompt || "-"}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Background Status: <code>{String(item.backgroundStatus || "not_removed")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Reference Character: <code>{String(item.referenceCharacterUrl || outputs.referenceCharacterUrl || "")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Transparent Character PNG: <code>{String(item.characterPngUrl || outputs.characterPngUrl || "")}</code></div>
+                {imageUrls.length ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+                    {imageUrls.map((url: string, idx: number) => (
+                      <div key={`${scene.sceneIndex}-${idx}`}>
+                        <img src={url} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                        <div style={{ marginTop: 8 }}>
+                          <button type="button" onClick={() => exportStoryboardImage(url)}>Export Image</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {item.sceneVideoUrl ? (
+                  <div style={{ marginTop: 10 }}>
+                    <video controls src={String(item.sceneVideoUrl)} style={{ width: "100%", maxWidth: 720, borderRadius: 12, border: "1px solid #333" }} />
+                  </div>
+                ) : null}
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
-                    onClick={() => runAuxStep(`regen-${item.sceneIndex}`, "workflowRegenerateSceneImages", { workflowId, sceneIndex: item.sceneIndex })}
+                    onClick={() => runAuxStep(`scene-image-${scene.sceneIndex}`, "workflowGenerateSceneImage", { workflowId, sceneIndex: scene.sceneIndex })}
                     disabled={!!auxBusyKey || !workflowId}
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
-                    {auxBusyKey === `regen-${item.sceneIndex}` ? "Regenerating..." : "Regenerate Scene Images"}
+                    {busyGenerateImage ? "Generating..." : "Generate Scene Image"}
+                  </button>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}>
+                    <span>{uploadingSceneIndex === scene.sceneIndex ? "Uploading..." : "Upload Image"}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0));
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                  <button
+                    onClick={() => runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", { workflowId, sceneIndex: scene.sceneIndex, duration: "8s" })}
+                    disabled={!!auxBusyKey || !workflowId || imageUrls.length === 0}
+                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
+                  >
+                    {busyGenerateVideo ? "Generating..." : "Generate Scene Video"}
                   </button>
                   <button
-                    onClick={() => runAuxStep(`lock-${item.sceneIndex}`, "workflowLockCharacter", { workflowId, sceneIndex: item.sceneIndex, locked: !item.characterLocked })}
-                    disabled={!!auxBusyKey || !workflowId}
+                    onClick={() => runAuxStep(`lock-${scene.sceneIndex}`, "workflowLockCharacter", { workflowId, sceneIndex: scene.sceneIndex, locked: !item.characterLocked })}
+                    disabled={!!auxBusyKey || !workflowId || imageUrls.length === 0}
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
-                    {item.characterLocked ? "Unlock Character" : "Lock Character"}
+                    {busyLock ? "Working..." : item.characterLocked ? "Unlock Character" : "Lock Character"}
                   </button>
                   <button
-                    onClick={() => runAuxStep(`bg-${item.sceneIndex}`, "workflowBackgroundRemove", { workflowId, sceneIndex: item.sceneIndex })}
-                    disabled={!!auxBusyKey || !workflowId}
+                    onClick={() => runAuxStep(`bg-${scene.sceneIndex}`, "workflowBackgroundRemove", { workflowId, sceneIndex: scene.sceneIndex })}
+                    disabled={!!auxBusyKey || !workflowId || imageUrls.length === 0}
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
-                    {auxBusyKey === `bg-${item.sceneIndex}` ? "Removing..." : "Background Remove"}
+                    {busyBg ? "Removing..." : "Background Remove"}
                   </button>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginTop: 8 }}>
@@ -527,7 +572,7 @@ export default function WorkflowStoryboardToVideo() {
                     value={refInputValue}
                     onChange={(e) => {
                       const next = { ...referenceInputMap };
-                      next[String(item.sceneIndex)] = e.target.value;
+                      next[String(scene.sceneIndex)] = e.target.value;
                       setReferenceInputMap(next);
                     }}
                     placeholder="Reference character image URL"
@@ -535,153 +580,35 @@ export default function WorkflowStoryboardToVideo() {
                   />
                   <button
                     onClick={() =>
-                      runAuxStep(`upload-${item.sceneIndex}`, "workflowUploadReferenceCharacter", {
+                      runAuxStep(`upload-ref-${scene.sceneIndex}`, "workflowUploadReferenceCharacter", {
                         workflowId,
-                        sceneIndex: item.sceneIndex,
+                        sceneIndex: scene.sceneIndex,
                         referenceCharacterUrl: refInputValue,
                       })
                     }
                     disabled={!!auxBusyKey || !workflowId || !refInputValue.trim()}
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
-                    Upload Reference Character
+                    {busyUploadRef ? "Uploading..." : "Upload Reference Character"}
                   </button>
                 </div>
-                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, opacity: 0.9 }}>Scene Duration:</span>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 4 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 4 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    4s
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 6 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 6 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    6s
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSceneDurations((prev) => ({ ...prev, [Number(item.sceneIndex || 0)]: 8 }))}
-                    style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)", background: (sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)) === 8 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)", color: "white" }}
-                  >
-                    8s
-                  </button>
-                  <span style={{ fontSize: 12, opacity: 0.8 }}>
-                    当前：{String((sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8)))}s
-                  </span>
-                </div>
-                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      runAuxStep(`scene-video-${item.sceneIndex}`, "workflowGenerateSceneVideo", {
-                        workflowId,
-                        sceneIndex: Number(item.sceneIndex || 0),
-                        duration: `${String(sceneDurations[Number(item.sceneIndex || 0)] ?? (Number(scenes.find((s) => s.sceneIndex === item.sceneIndex)?.duration || 0) || 8))}s`,
-                      })
-                    }
-                    disabled={!!auxBusyKey || !workflowId || !storyboardConfirmed}
-                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-                  >
-                    {auxBusyKey === `scene-video-${item.sceneIndex}` ? "Queueing..." : "Generate Scene Video"}
-                  </button>
-                  {sceneVideoMap.get(Number(item.sceneIndex || 0))?.url ? (
-                    <a href={sceneVideoMap.get(Number(item.sceneIndex || 0))?.url} target="_blank" rel="noreferrer">
-                      Open Scene Video
-                    </a>
-                  ) : null}
-                  {sceneVideoMap.get(Number(item.sceneIndex || 0))?.taskStatus ? (
-                    <span style={{ fontSize: 12, opacity: 0.85 }}>
-                      Status: <code>{String(sceneVideoMap.get(Number(item.sceneIndex || 0))?.taskStatus || "")}</code>
-                    </span>
-                  ) : null}
-                </div>
-                {sceneVideoMap.get(Number(item.sceneIndex || 0))?.url ? (
-                  <div style={{ marginTop: 10 }}>
-                    <video
-                      src={sceneVideoMap.get(Number(item.sceneIndex || 0))?.url}
-                      controls
-                      playsInline
-                      style={{ width: "100%", maxWidth: 520, borderRadius: 12 }}
-                    />
-                  </div>
-                ) : null}
-{item.referenceCharacterUrl ? <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>Reference: <code>{item.referenceCharacterUrl}</code></div> : null}
-                {item.characterPngUrl ? <img src={item.characterPngUrl} style={{ width: 180, marginTop: 8, borderRadius: 8, background: "rgba(255,255,255,0.05)" }} /> : null}
               </div>
             );
           })}
         </div>
-        {stepStates.generateStoryboardImages.success ? <div style={statusTextStyle("#84f5a0")}>Storyboard images generated successfully.</div> : null}
-        {stepStates.generateStoryboardImages.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Images Error: {stepStates.generateStoryboardImages.error}</div> : null}
-        {auxError ? <div style={statusTextStyle("#ff8080")}>Storyboard Images Action Error: {auxError}</div> : null}
+        {auxError ? <div style={statusTextStyle("#ff8080")}>Scene Action Error: {auxError}</div> : null}
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>E. Confirm</h2>
-        <button
-          onClick={() => runAuxStep("confirmStoryboard", "workflowConfirmStoryboard", { workflowId, storyboard: scenes, selectedImageIndexes: selectedImages, sceneDurations })}
-          disabled={!!auxBusyKey || !workflowId || scenes.length === 0}
-          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
-        >
-          {auxBusyKey === "confirmStoryboard" ? "Confirming..." : "Confirm Storyboard"}
-        </button>
-        <div style={{ marginTop: 8 }}>Storyboard Confirmed: <code>{String(storyboardConfirmed)}</code></div>
-      </div>
-
-      <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>F. Video</h2>
-        <div style={{ marginBottom: 8 }}>
-          <input
-            value={videoDuration}
-            onChange={(e) => setVideoDuration(e.target.value)}
-            placeholder="Video Duration (8s / 9s / 10s)"
-            style={{ width: "100%", maxWidth: 360, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-          />
-          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>最少 8 秒，支持 8s / 9s / 10s</div>
-        </div>
-        <button
-          onClick={() => runMainStep("generateVideo", "workflowGenerateVideo", { workflowId, duration: videoDuration })}
-          disabled={anyMainStepLoading || !workflowId || !storyboardConfirmed}
-          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: storyboardConfirmed ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)", color: "white", fontWeight: 800 }}
-        >
-          {stepStates.generateVideo.loading ? "Generating..." : "Generate Video"}
-        </button>
-        {stepStates.generateVideo.loading ? <div style={statusTextStyle("#ffdd99")}>Generating video...</div> : null}
-        {stepStates.generateVideo.success ? <div style={statusTextStyle("#84f5a0")}>Video generated successfully.</div> : null}
-        {stepStates.generateVideo.error ? <div style={statusTextStyle("#ff8080")}>Video Error: {stepStates.generateVideo.error}</div> : null}
-        <div style={{ marginTop: 8 }}>videoProvider: fal <code>{String(outputs.videoProvider || "")}</code></div>
+        <h2 style={{ marginTop: 0 }}>E. Video</h2>
+        <div style={{ marginTop: 8 }}>Each scene video is fixed at 8 seconds and generated per scene.</div>
+        <div style={{ marginTop: 8 }}>videoProvider: <code>{String(outputs.videoProvider || "")}</code></div>
         <div>videoModel: <code>{String(outputs.videoModel || "")}</code></div>
-        <div>videoDuration: <code>{String(outputs.videoDuration || "")}</code></div>
-        <div>videoResolution: <code>{String(outputs.videoResolution || "")}</code></div>
-        <div>videoAudioEnabled: <code>{String(outputs.videoAudioEnabled ?? "")}</code></div>
         <div>videoUrl: <code>{String(outputs.videoUrl || "")}</code></div>
-        <div>finalVideoUrl:
-
-
-<div style={{
-marginTop:20,
-padding:12,
-border:"1px solid #444",
-borderRadius:6,
-background:"#111",
-color:"#0f0",
-fontSize:12,
-whiteSpace:"pre-wrap"
-}}>
-<b>DEBUG WORKFLOW STATE</b>
-{JSON.stringify(workflow,null,2)}
-</div>
-
- <code>{String(outputs.finalVideoUrl || "")}</code></div>
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>G. Voice</h2>
+        <h2 style={{ marginTop: 0 }}>F. Voice</h2>
         <textarea
           value={dialogueText}
           onChange={(e) => setDialogueText(e.target.value)}
@@ -712,7 +639,7 @@ whiteSpace:"pre-wrap"
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>H. Music</h2>
+        <h2 style={{ marginTop: 0 }}>G. Music</h2>
         <textarea
           value={musicPrompt}
           onChange={(e) => setMusicPrompt(e.target.value)}
@@ -744,50 +671,22 @@ whiteSpace:"pre-wrap"
         {stepStates.generateMusic.success ? <div style={statusTextStyle("#84f5a0")}>Music generated successfully.</div> : null}
         {stepStates.generateMusic.error ? <div style={statusTextStyle("#ff8080")}>Music Error: {stepStates.generateMusic.error}</div> : null}
         <div style={{ marginTop: 8 }}>musicProvider: <code>{String(outputs.musicProvider || "")}</code></div>
-        <div>
-      {workflow?.outputs?.musicUrl ? (
-        <div style={{ marginTop: 12, padding: 12, border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, background: "rgba(255,255,255,0.04)" }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>音乐播放器</div>
-          <audio controls src={workflow?.outputs?.musicUrl} style={{ width: "100%" }} />
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8, wordBreak: "break-all" }}>
-            {workflow?.outputs?.musicUrl}
-          </div>
-        </div>
-      ) : null}
-
-musicUrl: <code>{String(outputs.musicUrl || "")}</code></div>
+        <div>musicUrl: <code>{String(outputs.musicUrl || "")}</code></div>
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>I. Render</h2>
+        <h2 style={{ marginTop: 0 }}>H. Render</h2>
         <button
-          onClick={() => runMainStep("renderFinalVideo", "workflowRenderFinalVideo", { workflowId })}
-          disabled={anyMainStepLoading || !workflowId || !outputs.videoUrl}
+          onClick={() => runMainStep("renderFinalVideo", "workflowRenderVideo", { workflowId })}
+          disabled={anyMainStepLoading || !workflowId || !hasAnySceneVideo}
           style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
-          {stepStates.renderFinalVideo.loading ? "Rendering..." : "Render Final Video"}
+          {stepStates.renderFinalVideo.loading ? "Rendering..." : "Final Render"}
         </button>
         {stepStates.renderFinalVideo.loading ? <div style={statusTextStyle("#ffdd99")}>Rendering final video...</div> : null}
         {stepStates.renderFinalVideo.success ? <div style={statusTextStyle("#84f5a0")}>Final video rendered successfully.</div> : null}
         {stepStates.renderFinalVideo.error ? <div style={statusTextStyle("#ff8080")}>Render Error: {stepStates.renderFinalVideo.error}</div> : null}
-        <div style={{ marginTop: 8 }}>finalVideoUrl:
-
-
-<div style={{
-marginTop:20,
-padding:12,
-border:"1px solid #444",
-borderRadius:6,
-background:"#111",
-color:"#0f0",
-fontSize:12,
-whiteSpace:"pre-wrap"
-}}>
-<b>DEBUG WORKFLOW STATE</b>
-{JSON.stringify(workflow,null,2)}
-</div>
-
- <code>{String(outputs.finalVideoUrl || "")}</code></div>
+        <div style={{ marginTop: 8 }}>finalVideoUrl: <code>{String(outputs.finalVideoUrl || "")}</code></div>
         {outputs.finalVideoUrl ? <video controls src={String(outputs.finalVideoUrl)} style={{ width: "100%", marginTop: 8, borderRadius: 8 }} /> : null}
       </div>
 
@@ -798,12 +697,6 @@ whiteSpace:"pre-wrap"
           <div>status: <code>{String(workflow.status || "-")}</code></div>
           <div>lockedCharacters: <code>{JSON.stringify(outputs.lockedCharacters || [])}</code></div>
           <div>referenceImages: <code>{JSON.stringify(outputs.referenceImages || [])}</code></div>
-        </div>
-      ) : null}
-      {debugInfo ? (
-        <div style={{ marginTop: 20, padding: 12, border: "1px solid #444", borderRadius: 6, background: "#111", color: "#0f0", fontSize: 12, whiteSpace: "pre-wrap" }}>
-          DEBUG RESPONSE:
-          {`\n`}{debugInfo}
         </div>
       ) : null}
     </div>

@@ -1,11 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
-import { promisify } from "node:util";
-import { execFile as execFileCb } from "node:child_process";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { promises as fs } from "node:fs";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
@@ -15,20 +10,15 @@ import {
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
 } from "./_core/workflow.js";
-import { storageGet, storagePut } from "../server/storage.js";
-import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
 import { buildCharacterLockPrompt } from "../server/workflow/prompts/characterLockPrompt.js";
 import { buildVideoPrompt } from "../server/workflow/prompts/videoPrompt.js";
-import { translateToEnglish } from "../server/workflow/utils/translatePrompt.js";
 import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
-
-const execFile = promisify(execFileCb);
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -38,37 +28,6 @@ function getBody(req: VercelRequest): any {
   if (typeof b === "string") return jparse(b) ?? {};
   return b;
 }
-
-async function downloadToPublicBlob(url: string, name = "ref") {
-  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
-
-  const resp = await fetch(url, { headers: { "User-Agent": "mvstudiopro/blob-fetch" } });
-  if (!resp.ok) throw new Error(`download_failed:${resp.status}`);
-
-  const input = Buffer.from(await resp.arrayBuffer());
-
-  let out = await sharp(input, { failOnError: false })
-    .rotate()
-    .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 84, mozjpeg: true })
-    .toBuffer();
-
-  if (out.length > 10 * 1024 * 1024) {
-    out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
-  }
-  if (out.length > 10 * 1024 * 1024) throw new Error("blob_image_too_large");
-
-  const safeName = name.replace(/[^a-zA-Z0-9_-]+/g, "-") || "ref";
-  const blob = await put(`refs/${Date.now()}-${safeName}.jpg`, out, {
-    access: "public",
-    token,
-    contentType: "image/jpeg",
-  });
-
-  return blob.url;
-}
-
 function b64url(buf: Buffer) {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -85,34 +44,6 @@ async function fetchJson(url: string, init: RequestInit) {
   const text = await r.text();
   const json = jparse(text);
   return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0, 4000) };
-}
-
-function extractFalVideoUrl(payload: any): string {
-  const direct = s(
-    payload?.video?.url ||
-    payload?.data?.video?.url ||
-    payload?.result?.video?.url ||
-    payload?.output?.video?.url ||
-    payload?.response?.video?.url ||
-    payload?.response?.data?.video?.url ||
-    payload?.response?.result?.video?.url ||
-    payload?.response?.output?.video?.url ||
-    payload?.response?.video_url ||
-    payload?.video_url ||
-    payload?.url,
-  ).trim();
-  if (direct) return direct;
-
-  const fromArray =
-    payload?.videos?.[0]?.url ||
-    payload?.data?.videos?.[0]?.url ||
-    payload?.result?.videos?.[0]?.url ||
-    payload?.output?.videos?.[0]?.url ||
-    payload?.response?.videos?.[0]?.url ||
-    payload?.response?.data?.videos?.[0]?.url ||
-    payload?.response?.result?.videos?.[0]?.url ||
-    payload?.response?.output?.videos?.[0]?.url;
-  return s(fromArray).trim();
 }
 
 async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
@@ -386,129 +317,27 @@ type WorkflowStoryboardImageItem = {
   sceneIndex: number;
   images: string[];
   imageUrls?: string[];
-  characterLocked?: boolean;
-  referenceCharacterUrl?: string;
-  backgroundStatus?: string;
   prompt?: string;
   duration?: number;
   sceneVideoUrl?: string;
+  characterLocked?: boolean;
+  referenceCharacterUrl?: string;
+  characterPngUrl?: string;
+  backgroundStatus?: string;
 };
 
-async function fetchRemoteBuffer(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    redirect: "follow",
-    headers: { "User-Agent": "mvstudiopro/1.0 (+asset-fetch)" },
-  });
-  if (!response.ok) {
-    throw new Error(`remote_fetch_failed:${response.status}`);
-  }
-  return Buffer.from(await response.arrayBuffer());
-}
-
-async function renderWorkflowFinalVideo(input: {
-  sceneVideos: Array<{ sceneIndex: number; url: string }>;
-  musicUrl?: string;
-  voiceUrl?: string;
-}) {
-  const workDir = await fs.mkdtemp(path.join(tmpdir(), "mvsp-render-"));
-  try {
-    const normalizedFiles: string[] = [];
-    for (let index = 0; index < input.sceneVideos.length; index += 1) {
-      const scene = input.sceneVideos[index];
-      const sourceBuffer = await fetchRemoteBuffer(scene.url);
-      const sourcePath = path.join(workDir, `scene-${index + 1}.mp4`);
-      const normalizedPath = path.join(workDir, `scene-${index + 1}-normalized.mp4`);
-      await fs.writeFile(sourcePath, sourceBuffer);
-      await execFile("ffmpeg", [
-        "-y",
-        "-i", sourcePath,
-        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,fps=24",
-        "-r", "24",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-pix_fmt", "yuv420p",
-        "-an",
-        normalizedPath,
-      ]);
-      normalizedFiles.push(normalizedPath);
-    }
-
-    const concatListPath = path.join(workDir, "concat.txt");
-    await fs.writeFile(
-      concatListPath,
-      normalizedFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join("\n"),
-      "utf8",
-    );
-
-    const concatPath = path.join(workDir, "concat.mp4");
-    await execFile("ffmpeg", [
-      "-y",
-      "-f", "concat",
-      "-safe", "0",
-      "-i", concatListPath,
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-pix_fmt", "yuv420p",
-      "-movflags", "+faststart",
-      concatPath,
-    ]);
-
-    let finalPath = concatPath;
-    const audioInputs: string[] = [];
-    const filterInputs: string[] = [];
-
-    if (input.musicUrl) {
-      const musicPath = path.join(workDir, "music.mp3");
-      await fs.writeFile(musicPath, await fetchRemoteBuffer(input.musicUrl));
-      audioInputs.push(musicPath);
-      filterInputs.push(`[1:a]volume=0.35[a0]`);
-    }
-
-    if (input.voiceUrl) {
-      const voicePath = path.join(workDir, "voice.mp3");
-      await fs.writeFile(voicePath, await fetchRemoteBuffer(input.voiceUrl));
-      audioInputs.push(voicePath);
-      filterInputs.push(`[${audioInputs.length}:a]volume=1.0[a${audioInputs.length - 1}]`);
-    }
-
-    if (audioInputs.length > 0) {
-      const mixedPath = path.join(workDir, "final.mp4");
-      const ffmpegArgs = ["-y", "-i", concatPath];
-      for (const audioFile of audioInputs) {
-        ffmpegArgs.push("-i", audioFile);
-      }
-      if (audioInputs.length === 1) {
-        ffmpegArgs.push(
-          "-map", "0:v:0",
-          "-map", "1:a:0",
-          "-c:v", "copy",
-          "-c:a", "aac",
-          "-shortest",
-          mixedPath,
-        );
-      } else {
-        ffmpegArgs.push(
-          "-filter_complex",
-          `${filterInputs.join(";")};${audioInputs.map((_, idx) => `[a${idx}]`).join("")}amix=inputs=${audioInputs.length}:duration=shortest:normalize=0[mix]`,
-          "-map", "0:v:0",
-          "-map", "[mix]",
-          "-c:v", "copy",
-          "-c:a", "aac",
-          "-shortest",
-          mixedPath,
-        );
-      }
-      await execFile("ffmpeg", ffmpegArgs);
-      finalPath = mixedPath;
-    }
-
-    const outputBuffer = await fs.readFile(finalPath);
-    const key = `workflow/final-${Date.now()}-${randomUUID()}.mp4`;
-    const uploaded = await storagePut(key, outputBuffer, "video/mp4");
-    return (await storageGet(uploaded.key)).url;
-  } finally {
-    await fs.rm(workDir, { recursive: true, force: true });
-  }
+function upsertStoryboardImageItem(
+  currentItems: any[],
+  sceneIndex: number,
+  buildNext: (existing: any) => WorkflowStoryboardImageItem,
+) {
+  const current = Array.isArray(currentItems) ? currentItems : [];
+  const existing = current.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || null;
+  const nextItem = buildNext(existing);
+  const next = current.some((item: any) => Number(item?.sceneIndex) === sceneIndex)
+    ? current.map((item: any) => (Number(item?.sceneIndex) === sceneIndex ? nextItem : item))
+    : [...current, nextItem];
+  return next.sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
 }
 
 function sleep(ms: number) {
@@ -608,32 +437,23 @@ function buildStoryboardFromScript(input: {
 }
 
 async function callGoogleGateway(payload: Record<string, any>) {
-  try {
-    const mod = await import("./google.js");
-    const handler = mod.default;
-    const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
-    const res: any = {
-      statusCode: 200,
-      body: undefined,
-      status(code: number) {
-        this.statusCode = code;
-        return this;
-      },
-      json(data: any) {
-        this.body = data;
-        return this;
-      },
-    };
-    await handler(req, res);
-    return { statusCode: res.statusCode, ...(res.body || {}) };
-  } catch (error: any) {
-    return {
-      statusCode: 500,
-      ok: false,
-      error: "google_gateway_runtime_error",
-      message: error?.message || String(error),
-    };
-  }
+  const mod = await import("./google.js");
+  const handler = mod.default;
+  const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
+  const res: any = {
+    statusCode: 200,
+    body: undefined,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(data: any) {
+      this.body = data;
+      return this;
+    },
+  };
+  await handler(req, res);
+  return { statusCode: res.statusCode, ...(res.body || {}) };
 }
 
 function extractGoogleText(raw: any): string {
@@ -659,7 +479,7 @@ function sanitizeScenePrompt(value: any, sceneIndex: number, topic: string) {
     .replace(/^---+$/gm, "")
     .replace(/\r/g, "")
     .trim();
-  if (!cleaned) return `場景${sceneIndex}：${topic}，电影感镜头推进。`;
+  if (!cleaned) return `Scene ${sceneIndex}: ${topic}，电影感镜头推进。`;
   return cleaned;
 }
 
@@ -685,15 +505,15 @@ function normalizeStructuredStoryboard(input: {
     const character = s(item?.character).trim() || [mainAppearance, mainOutfit].filter(Boolean).join(", ");
     out.push({
       sceneIndex: i + 1,
-      sceneTitle: s(item?.sceneTitle).trim() || `場景 ${i + 1}`,
+      sceneTitle: s(item?.sceneTitle).trim() || `Scene ${i + 1}`,
       scenePrompt: sanitizeScenePrompt(item?.scenePrompt, i + 1, input.topic),
-      environment: s(item?.environment).trim() || "电影感场景环境",
-      character: character || "主角色身份保持一致",
+      environment: s(item?.environment).trim() || "cinematic environment",
+      character: character || "same main character identity",
       duration: sceneDuration,
-      camera: s(item?.camera || "中景").trim() || "中景",
-      mood: s(item?.mood || "电影感").trim() || "电影感",
-      lighting: s(item?.lighting || "电影感光影").trim() || "电影感光影",
-      action: s(item?.action || "以角色为核心的电影化动作").trim() || "以角色为核心的电影化动作",
+      camera: s(item?.camera || "medium").trim() || "medium",
+      mood: s(item?.mood || "cinematic").trim() || "cinematic",
+      lighting: s(item?.lighting || "dramatic lighting").trim() || "dramatic lighting",
+      action: s(item?.action || "character-driven cinematic action").trim() || "character-driven cinematic action",
     });
   }
   return out;
@@ -802,13 +622,6 @@ function fail(error: string, message?: string, extra?: Record<string, any>) {
   };
 }
 
-function falVeoReferenceRequestBase(requestId: string) {
-  return `https://queue.fal.run/fal-ai/veo3.1/reference-to-video/requests/${encodeURIComponent(requestId)}`;
-}
-
-const WORKFLOW_FAL_QUEUE_TIMEOUT_MS =
-  Number(process.env.WORKFLOW_FAL_QUEUE_TIMEOUT_MS || 15 * 60 * 1000);
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const q: any = req.query || {};
@@ -821,7 +634,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bodyOp = s(b.op || b.OP || b.Op || b.oP).trim();
     const op = queryOp || bodyOp;
     const opNormalized = op.toLowerCase();
-
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
@@ -849,315 +661,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       const id = s(q.id || q.workflowId || q.workflow_id || b.id || b.workflowId).trim();
       const workflow = id ? getCoreWorkflow(id) : null;
-
-      if (workflow) {
-        const outputs: any = workflow.outputs || {};
-        const falRequestId = s(outputs.falRequestId).trim();
-        const savedStatusUrl = s(outputs.statusUrl || outputs.falStatusUrl).trim();
-        const savedResponseUrl = s(outputs.responseUrl || outputs.falResponseUrl).trim();
-        const existingVideoUrl = s(outputs.videoUrl).trim();
-        const videoQueuedAt = Number(outputs.videoQueuedAt || 0);
-        const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
-
-        if (falRequestId && !existingVideoUrl && falKey) {
-          const requestBase = falVeoReferenceRequestBase(falRequestId);
-          const statusUrl = savedStatusUrl || `${requestBase}/status`;
-          const responseUrl = savedResponseUrl || requestBase;
-          const statusResp = await fetchJson(
-            statusUrl,
-            { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-          );
-          if (!statusResp.ok) {
-            const updated = {
-              ...workflow,
-              updatedAt: Date.now(),
-              outputs: {
-                ...outputs,
-                videoProvider: "fal",
-                videoModel: "fal-ai/veo3.1/reference-to-video",
-                videoTaskStatus: "POLLING_ERROR",
-                videoRetryable: true,
-                videoErrorMessage: s(statusResp.json?.error || statusResp.rawText || `fal_status_http_${statusResp.status}`).trim(),
-              },
-            } as any;
-            saveCoreWorkflow(updated);
-            return res.status(200).json({
-              ok: true,
-              workflow: normalizeWorkflowForResponse(id ? getCoreWorkflow(id) : null, id),
-            });
-          }
-          const taskStatus = s(
-            statusResp.json?.status ||
-            statusResp.json?.state ||
-            statusResp.json?.request_status,
-          ).trim().toUpperCase();
-
-          const canTryReadResult =
-            taskStatus === "COMPLETED" ||
-            taskStatus === "IN_QUEUE" ||
-            taskStatus === "IN_PROGRESS" ||
-            taskStatus === "RUNNING" ||
-            taskStatus === "PROCESSING";
-
-          if (canTryReadResult) {
-            const resultResp = await fetchJson(
-              responseUrl,
-              { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-            );
-            const responseResp = await fetchJson(
-              `${responseUrl}/response`,
-              { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-            );
-            const videoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
-
-            if (videoUrl) {
-              const updated = {
-                ...workflow,
-                status: "done",
-                currentStep: "done",
-                updatedAt: Date.now(),
-                outputs: {
-                  ...outputs,
-                  videoProvider: "fal",
-                  videoModel: "fal-ai/veo3.1/reference-to-video",
-                  videoTaskStatus: "COMPLETED",
-                  videoUrl,
-                  finalVideoUrl: videoUrl,
-                  videoRetryable: false,
-                  videoErrorMessage: "",
-                },
-              } as any;
-              saveCoreWorkflow(updated);
-            } else if (taskStatus === "COMPLETED") {
-              const updated = {
-                ...workflow,
-                updatedAt: Date.now(),
-                outputs: {
-                  ...outputs,
-                  videoProvider: "fal",
-                  videoModel: "fal-ai/veo3.1/reference-to-video",
-                  videoTaskStatus: taskStatus,
-                  videoRetryable: false,
-                  videoErrorMessage: "fal_veo_result_pending",
-                },
-              } as any;
-              saveCoreWorkflow(updated);
-            } else if (
-              videoQueuedAt > 0 &&
-              Date.now() - videoQueuedAt > WORKFLOW_FAL_QUEUE_TIMEOUT_MS
-            ) {
-              const updated = {
-                ...workflow,
-                status: "failed",
-                currentStep: "error",
-                updatedAt: Date.now(),
-                outputs: {
-                  ...outputs,
-                  videoProvider: "fal",
-                  videoModel: "fal-ai/veo3.1/reference-to-video",
-                  videoTaskStatus: "TIMEOUT",
-                  videoRetryable: true,
-                  videoErrorMessage: "fal_queue_timeout_retryable",
-                },
-              } as any;
-              saveCoreWorkflow(updated);
-            } else if (taskStatus) {
-              const updated = {
-                ...workflow,
-                updatedAt: Date.now(),
-                outputs: {
-                  ...outputs,
-                  videoProvider: "fal",
-                  videoModel: "fal-ai/veo3.1/reference-to-video",
-                  videoTaskStatus: taskStatus,
-                  videoRetryable: false,
-                },
-              } as any;
-              saveCoreWorkflow(updated);
-            }
-          } else if (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED" || taskStatus === "CANCELED") {
-            const updated = {
-              ...workflow,
-              status: "failed",
-              currentStep: "error",
-              updatedAt: Date.now(),
-              outputs: {
-                ...outputs,
-                videoProvider: "fal",
-                videoModel: "fal-ai/veo3.1/reference-to-video",
-                videoTaskStatus: taskStatus,
-                videoRetryable: true,
-                videoErrorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
-              },
-            } as any;
-            saveCoreWorkflow(updated);
-          }
-        }
-
-        const reloadedWorkflow = id ? getCoreWorkflow(id) : workflow;
-        const reloadedOutputs: any = reloadedWorkflow?.outputs || {};
-        const sceneVideos = Array.isArray(reloadedOutputs.sceneVideos) ? reloadedOutputs.sceneVideos : [];
-        if (sceneVideos.length > 0 && falKey && reloadedWorkflow) {
-          let sceneVideosChanged = false;
-          const nextSceneVideos = [...sceneVideos];
-          for (let idx = 0; idx < nextSceneVideos.length; idx += 1) {
-            const item: any = nextSceneVideos[idx] || {};
-            const requestId = s(item.requestId || item.falRequestId).trim();
-            const existingSceneVideoUrl = s(item.url || item.videoUrl).trim();
-            const statusUpper = s(item.taskStatus || item.status).trim().toUpperCase();
-            if (!requestId || existingSceneVideoUrl) continue;
-            if (["FAILED", "ERROR", "CANCELLED", "CANCELED", "TIMEOUT", "COMPLETED"].includes(statusUpper)) continue;
-
-            const queuedAt = Number(item.queuedAt || item.videoQueuedAt || 0);
-            const requestBase = falVeoReferenceRequestBase(requestId);
-            const statusUrl = s(item.statusUrl || item.falStatusUrl).trim() || `${requestBase}/status`;
-            const responseUrl = s(item.responseUrl || item.falResponseUrl).trim() || requestBase;
-
-            const statusResp = await fetchJson(
-              statusUrl,
-              { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-            );
-            if (!statusResp.ok) {
-              nextSceneVideos[idx] = {
-                ...item,
-                taskStatus: "POLLING_ERROR",
-                retryable: true,
-                errorMessage: s(statusResp.json?.error || statusResp.rawText || `fal_status_http_${statusResp.status}`).trim(),
-                updatedAt: Date.now(),
-              };
-              sceneVideosChanged = true;
-              continue;
-            }
-
-            const taskStatus = s(
-              statusResp.json?.status ||
-              statusResp.json?.state ||
-              statusResp.json?.request_status,
-            ).trim().toUpperCase();
-            const canTryReadResult =
-              taskStatus === "COMPLETED" ||
-              taskStatus === "IN_QUEUE" ||
-              taskStatus === "IN_PROGRESS" ||
-              taskStatus === "RUNNING" ||
-              taskStatus === "PROCESSING";
-
-            if (canTryReadResult) {
-              const resultResp = await fetchJson(
-                responseUrl,
-                { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-              );
-              const responseResp = await fetchJson(
-                `${responseUrl}/response`,
-                { method: "GET", headers: { Authorization: `Key ${falKey}` } },
-              );
-              const sceneVideoUrl = extractFalVideoUrl(resultResp.json) || extractFalVideoUrl(responseResp.json);
-
-              if (sceneVideoUrl) {
-                nextSceneVideos[idx] = {
-                  ...item,
-                  url: sceneVideoUrl,
-                  videoUrl: sceneVideoUrl,
-                  taskStatus: "COMPLETED",
-                  retryable: false,
-                  errorMessage: "",
-                  updatedAt: Date.now(),
-                };
-                sceneVideosChanged = true;
-              } else if (taskStatus === "COMPLETED") {
-                nextSceneVideos[idx] = {
-                  ...item,
-                  taskStatus: "RESULT_PENDING",
-                  retryable: false,
-                  errorMessage: "fal_veo_result_pending",
-                  updatedAt: Date.now(),
-                };
-                sceneVideosChanged = true;
-              } else if (
-                queuedAt > 0 &&
-                Date.now() - queuedAt > WORKFLOW_FAL_QUEUE_TIMEOUT_MS
-              ) {
-                nextSceneVideos[idx] = {
-                  ...item,
-                  taskStatus: "TIMEOUT",
-                  retryable: true,
-                  errorMessage: "fal_queue_timeout_retryable",
-                  updatedAt: Date.now(),
-                };
-                sceneVideosChanged = true;
-              } else if (taskStatus) {
-                nextSceneVideos[idx] = {
-                  ...item,
-                  taskStatus,
-                  retryable: false,
-                  updatedAt: Date.now(),
-                };
-                sceneVideosChanged = true;
-              }
-            } else if (taskStatus === "FAILED" || taskStatus === "ERROR" || taskStatus === "CANCELLED" || taskStatus === "CANCELED") {
-              nextSceneVideos[idx] = {
-                ...item,
-                taskStatus,
-                retryable: true,
-                errorMessage: s(statusResp.json?.error || taskStatus || "fal_veo_failed").trim(),
-                updatedAt: Date.now(),
-              };
-              sceneVideosChanged = true;
-            }
-          }
-
-          if (sceneVideosChanged) {
-            saveCoreWorkflow({
-              ...reloadedWorkflow,
-              updatedAt: Date.now(),
-              outputs: {
-                ...reloadedOutputs,
-                sceneVideos: nextSceneVideos,
-              },
-            } as any);
-          }
-        }
-      }
-
       return res.status(200).json({
         ok: true,
-        workflow: normalizeWorkflowForResponse(id ? getCoreWorkflow(id) : null, id),
+        workflow: normalizeWorkflowForResponse(workflow, id),
       });
     }
-
-    if (opNormalized === "workflowanalyzeimage") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-
-      const imageUrl = s(b.imageUrl).trim();
-      if (!imageUrl) return res.status(400).json(fail("imageUrl required"));
-
-      const prompt = `Analyze the image and return JSON only:
-{
-  "type": "character | scene | mixed",
-  "people_count": 0,
-  "environment": ""
-}`;
-
-      const r = await callGoogleGateway({
-        op: "geminiVision",
-        prompt,
-        imageUrl,
-      });
-
-      if (r?.ok !== true) {
-        return res.status(502).json(fail("gemini_analyze_failed", s(r?.rawText || r?.json?.error || "").trim() || "gemini_analyze_failed"));
-      }
-
-      const text = extractGoogleText(r.raw);
-      const parsed = jparse(stripJsonFence(text)) || {};
-
-      return res.status(200).json({
-        ok: true,
-        type: s(parsed.type).trim() || "scene",
-        people_count: Number(parsed.people_count || 0) || 0,
-        environment: s(parsed.environment).trim(),
-      });
-    }
-
 
     if (opNormalized === "workflowtest") {
       if (req.method !== "POST") {
@@ -1208,73 +716,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (opNormalized === "workflowgeneratescript") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const prompt = s(b.prompt).trim();
+      if (!prompt) return res.status(400).json(fail("prompt is required"));
+
+      const workflowId = s(b.workflowId).trim();
+      const targetWords = Number(b.targetWords || 0) || undefined;
+      const targetScenes = Number(b.targetScenes || 0) || undefined;
+      const sceneDuration = Number(b.sceneDuration || 0) || 5;
+
+      const task = workflowId
+        ? readWorkflow(workflowId, b.workflow)
+        : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
+      if (!workflowId) saveCoreWorkflow(task);
+
+      let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
       try {
-        if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-        const prompt = s(b.prompt).trim();
-        if (!prompt) return res.status(400).json(fail("prompt is required"));
-
-        const workflowId = s(b.workflowId).trim();
-        const targetWords = Number(b.targetWords || 0) || undefined;
-        const targetScenes = Number(b.targetScenes || 0) || undefined;
-        const sceneDuration = Number(b.sceneDuration || 0) || 5;
-
-        const task = workflowId
-          ? readWorkflow(workflowId, b.workflow)
-          : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
-        if (!workflowId) saveCoreWorkflow(task);
-
-        let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
-        try {
-          generated = await generateScriptViaPromptBuilder({
-            prompt,
-            targetWords,
-            targetScenes,
-            sceneDuration,
-          });
-        } catch (error: any) {
-          const message = error?.message || String(error) || "script_generation_failed";
-          return res.status(502).json(fail("script_generation_failed", message));
-        }
-        const script = generated.script;
-        const storyboard = generated.storyboard;
-        const scriptProvider = generated.provider;
-        const scriptModel = generated.model;
-        const scriptIsFallback = false;
-        const scriptErrorMessage = "";
-        const workflow = saveWorkflowPatch(task, {
-          currentStep: "script",
-          status: "running",
-          outputs: {
-            script,
-            scriptProvider,
-            scriptModel,
-            scriptIsFallback,
-            scriptErrorMessage,
-            storyboard,
-            storyboardStructuredStatus: "structured",
-            storyboardConfirmed: false,
-            targetWords,
-            targetScenes,
-            sceneDuration,
-          },
+        generated = await generateScriptViaPromptBuilder({
+          prompt,
+          targetWords,
+          targetScenes,
+          sceneDuration,
         });
-        return res.status(200).json({
-          ok: true,
+      } catch (error: any) {
+        const message = error?.message || String(error) || "script_generation_failed";
+        return res.status(502).json(fail("script_generation_failed", message));
+      }
+      const script = generated.script;
+      const storyboard = generated.storyboard;
+      const scriptProvider = generated.provider;
+      const scriptModel = generated.model;
+      const scriptIsFallback = false;
+      const scriptErrorMessage = "";
+      const workflow = saveWorkflowPatch(task, {
+        currentStep: "script",
+        status: "running",
+        outputs: {
           script,
-          storyboard,
           scriptProvider,
           scriptModel,
           scriptIsFallback,
           scriptErrorMessage,
-          workflowId: workflow.workflowId,
-          workflow,
-        });
-      } catch (error: any) {
-        return res.status(500).json(fail(
-          "workflow_generate_script_internal_error",
-          error?.message || String(error) || "unknown_error",
-        ));
-      }
+          storyboard,
+          storyboardStructuredStatus: "structured",
+          storyboardConfirmed: false,
+          targetWords,
+          targetScenes,
+          sceneDuration,
+        },
+      });
+      return res.status(200).json({
+        ok: true,
+        script,
+        storyboard,
+        scriptProvider,
+        scriptModel,
+        scriptIsFallback,
+        scriptErrorMessage,
+        workflowId: workflow.workflowId,
+        workflow,
+      });
     }
 
     if (opNormalized === "workflowgeneratestoryboard") {
@@ -1303,140 +804,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
       }
-
       const scenes = scenesInput.map((scene: any, idx: number) =>
         normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
       );
-      const scene1 = scenes.find((x: any) => Number(x?.sceneIndex || 0) === 1) || scenes[0];
-      if (!scene1) return res.status(400).json(fail("scene 1 is required"));
-
+      const results: WorkflowStoryboardImageItem[] = [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
-      const imagePromptZh = buildStoryboardImagePrompt({
-        scenePrompt: scene1.scenePrompt,
-        environment: scene1.environment,
-        character: scene1.character,
-        camera: scene1.camera,
-        mood: scene1.mood,
-        lighting: scene1.lighting,
-        action: scene1.action,
-        lockedCharacterPrompt: lockedCharacterPrompt || undefined,
-        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
-      });
-      const imagePrompt = await translateToEnglish(imagePromptZh, { maxChars: 420 });
-      const generated = await generateImageWithBanana({
-        prompt: imagePrompt,
-        numImages: 2,
-        aspectRatio: "16:9",
-        imageSize: "1536x864",
-      });
-      const blobbed = await Promise.all(
-        ((generated.imageUrls || []).slice(0, 2)).map((u: any, i: number) =>
-          downloadToPublicBlob(String(u || "").trim(), `scene-${scene1.sceneIndex}-${i + 1}`),
-        ),
-      );
-
-      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const scene1Block = {
-        sceneIndex: scene1.sceneIndex,
-        images: blobbed,
-        references: [],
-        prompt: scene1.scenePrompt,
-        duration: scene1.duration,
-        sceneVideoUrl: "",
-        detectedType: "",
-        characterLocked: false,
-        referenceCharacterUrl: "",
-        backgroundStatus: "not_removed",
-      };
-      const merged = [
-        scene1Block,
-        ...currentImages.filter((item: any) => Number(item?.sceneIndex || 0) !== Number(scene1.sceneIndex || 0)),
-      ].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
-
-      const next = saveWorkflowPatch(workflow, {
-        currentStep: "storyboardImages",
-        status: "running",
-        outputs: {
-          storyboard: scenes,
-          storyboardImages: merged,
-          storyboardConfirmed: false,
-        },
-      });
-      return res.status(200).json({ ok: true, workflow: next });
-    }
-
-
-    if (opNormalized === "workflowgenerateremainingsceneimages") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-
-      const scenes = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
-      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
-      const referenceCharacterUrl = s(workflow.outputs?.referenceCharacterUrl).trim();
-
-      const generatedBlocks: any[] = [];
       for (const scene of scenes) {
-        if (Number(scene?.sceneIndex || 0) <= 1) continue;
-
-        const imagePromptZh = buildStoryboardImagePrompt({
-          scenePrompt: s(scene?.scenePrompt).trim(),
-          environment: s(scene?.environment).trim(),
-          character: s(scene?.character).trim(),
-          camera: s(scene?.camera).trim(),
-          mood: s(scene?.mood).trim(),
-          lighting: s(scene?.lighting).trim(),
-          action: s(scene?.action).trim(),
+        const imagePrompt = buildStoryboardImagePrompt({
+          scenePrompt: scene.scenePrompt,
+          environment: scene.environment,
+          character: scene.character,
+          camera: scene.camera,
+          mood: scene.mood,
+          lighting: scene.lighting,
+          action: scene.action,
           lockedCharacterPrompt: lockedCharacterPrompt || undefined,
-          referenceImageMode: referenceCharacterUrl ? "reference-image" : "text-only",
+          referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
         });
-
-        const imagePrompt = await translateToEnglish(imagePromptZh, { maxChars: 420 });
         const generated = await generateImageWithBanana({
           prompt: imagePrompt,
           numImages: 2,
           aspectRatio: "16:9",
           imageSize: "1536x864",
         });
-
-        const blobbed = await Promise.all(
-          ((generated.imageUrls || []).slice(0, 2)).map((u: any, i: number) =>
-            downloadToPublicBlob(String(u || "").trim(), `scene-${scene.sceneIndex}-${i + 1}`),
-          ),
-        );
-
-        generatedBlocks.push({
+        results.push({
           sceneIndex: scene.sceneIndex,
-          images: blobbed,
-          imageUrls: blobbed,
-          references: referenceCharacterUrl ? [referenceCharacterUrl] : [],
-          characterLocked: !!referenceCharacterUrl,
-          referenceCharacterUrl: referenceCharacterUrl || "",
-          detectedType: "",
-          backgroundStatus: "not_removed",
+          images: (generated.imageUrls || []).slice(0, 2),
+          imageUrls: (generated.imageUrls || []).slice(0, 2),
           prompt: scene.scenePrompt,
           duration: 8,
           sceneVideoUrl: "",
+          characterLocked: false,
+          referenceCharacterUrl: "",
+          backgroundStatus: "not_removed",
         });
       }
-
-      const merged = [
-        ...currentImages.filter((x: any) => Number(x?.sceneIndex || 0) <= 1),
-        ...generatedBlocks,
-      ].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
-
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         status: "running",
         outputs: {
-          storyboardImages: merged,
+          storyboard: scenes,
+          storyboardImages: results,
           storyboardConfirmed: false,
         },
       });
-
       return res.status(200).json({ ok: true, workflow: next });
     }
-
 
     if (opNormalized === "workflowregeneratesceneimages") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
@@ -1447,7 +860,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
-      const imagePromptZh = buildStoryboardImagePrompt({
+      const imagePrompt = buildStoryboardImagePrompt({
         scenePrompt: s(targetScene.scenePrompt).trim(),
         environment: s(targetScene.environment).trim(),
         character: s(targetScene.character).trim(),
@@ -1458,28 +871,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
         referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
       });
-      const imagePrompt = await translateToEnglish(imagePromptZh, { maxChars: 420 });
       const generated = await generateImageWithBanana({
         prompt: imagePrompt,
         numImages: 2,
         aspectRatio: "16:9",
         imageSize: "1536x864",
       });
-      const updated = currentImages.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex
-          ? {
-              ...item,
-              images: (generated.imageUrls || []).slice(0, 2),
-              imageUrls: (generated.imageUrls || []).slice(0, 2),
-              references: Array.isArray(item?.references) ? item.references : [],
-              prompt: s(targetScene?.scenePrompt).trim() || s(item?.prompt).trim(),
-              sceneVideoUrl: s(item?.sceneVideoUrl).trim(),
-              detectedType: s(item?.detectedType).trim(),
-              backgroundStatus: item?.backgroundStatus || "not_removed",
-              duration: 8,
-            }
-          : item,
-      );
+      const updated = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: (generated.imageUrls || []).slice(0, 2),
+        imageUrls: (generated.imageUrls || []).slice(0, 2),
+        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         outputs: { storyboardImages: updated, storyboardConfirmed: false },
@@ -1493,7 +903,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
-      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
       if (!targetScene) return res.status(404).json(fail("scene not found"));
 
@@ -1506,9 +915,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lighting: s(targetScene.lighting).trim(),
         action: s(targetScene.action).trim(),
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
-        referenceImageMode: "reference-image",
+        referenceImageMode: workflow.outputs?.referenceImages?.length ? "reference-image" : "text-only",
       });
-
       const generated = await generateImageWithBanana({
         prompt: imagePrompt,
         numImages: 2,
@@ -1516,23 +924,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageSize: "1536x864",
       });
 
-      const generatedImages = (generated.imageUrls || []).slice(0, 2);
-      const existing = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
-      const nextItem = {
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
         ...(existing || {}),
         sceneIndex,
-        images: generatedImages,
-        imageUrls: generatedImages,
+        images: (generated.imageUrls || []).slice(0, 2),
+        imageUrls: (generated.imageUrls || []).slice(0, 2),
         prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
         duration: 8,
         sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
-      };
-      const storyboardImages = currentImages.some((item: any) => Number(item?.sceneIndex) === sceneIndex)
-        ? currentImages.map((item: any) => Number(item?.sceneIndex) === sceneIndex ? nextItem : item)
-        : [...currentImages, nextItem].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
@@ -1552,23 +957,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
       if (!imageUrl) return res.status(400).json(fail("imageUrl is required"));
 
-      const current = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const existing = current.find((x: any) => Number(x?.sceneIndex) === sceneIndex);
-      const nextItem = {
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex) || {};
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
         ...(existing || {}),
         sceneIndex,
         images: [imageUrl],
         imageUrls: [imageUrl],
-        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
-        prompt: s(existing?.prompt).trim(),
+        prompt: s(targetScene.scenePrompt || targetScene.prompt || existing?.prompt).trim(),
         duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
-      };
-      const storyboardImages = current.some((x: any) => Number(x?.sceneIndex) === sceneIndex)
-        ? current.map((x: any) => Number(x?.sceneIndex) === sceneIndex ? nextItem : x)
-        : [...current, nextItem].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
@@ -1673,234 +1077,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!Array.isArray(scenesInput) || scenesInput.length === 0) {
         return res.status(400).json(fail("storyboard is required"));
       }
-      const rawSelectedImageIndexes =
-        b.selectedImageIndexes && typeof b.selectedImageIndexes === "object" ? b.selectedImageIndexes : {};
-      const rawSceneDurations =
-        b.sceneDurations && typeof b.sceneDurations === "object" ? b.sceneDurations : {};
-      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const selectedImageUrls: string[] = [];
-
-      const scenes = scenesInput.map((scene: any, idx: number) => {
-        const base = normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5) as any;
-        const sceneIndex = Number(base?.sceneIndex || idx + 1) || (idx + 1);
-        const selectedImageIndex = Math.max(0, Number(rawSelectedImageIndexes?.[sceneIndex] ?? 0) || 0);
-        const requestedDuration = Number(rawSceneDurations?.[sceneIndex] ?? base?.duration ?? 8) || 8;
-        const duration = requestedDuration === 4 ? 4 : (requestedDuration === 6 ? 6 : 8);
-
-        const sceneImageItem = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex) as any;
-        const images = Array.isArray(sceneImageItem?.images) ? sceneImageItem.images : [];
-        const selectedImageUrl = s(
-          scene?.selectedImageUrl ||
-          sceneImageItem?.selectedImageUrl ||
-          images[selectedImageIndex] ||
-          images[0] ||
-          "",
-        ).trim();
-        if (selectedImageUrl) selectedImageUrls.push(selectedImageUrl);
-
-        return {
-          ...base,
-          duration,
-          selectedImageIndex,
-          selectedImageUrl,
-        };
-      });
-
-      const selectedImageIndexes = scenes.reduce((acc: Record<number, number>, scene: any) => {
-        const sceneIndex = Number(scene?.sceneIndex || 0);
-        if (!sceneIndex) return acc;
-        acc[sceneIndex] = Math.max(0, Number(scene?.selectedImageIndex ?? 0) || 0);
-        return acc;
-      }, {});
-      const sceneDurations = scenes.reduce((acc: Record<number, number>, scene: any) => {
-        const sceneIndex = Number(scene?.sceneIndex || 0);
-        if (!sceneIndex) return acc;
-        const d = Number(scene?.duration || 0) || 8;
-        acc[sceneIndex] = d === 4 ? 4 : (d === 6 ? 6 : 8);
-        return acc;
-      }, {});
-
-      const scene1 = scenes.find((x: any) => Number(x?.sceneIndex || 0) === 1) || scenes[0];
-      const scene1Selected = s(scene1?.selectedImageUrl).trim();
-      const existingReferenceImages = Array.isArray(workflow.outputs?.referenceImages)
-        ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean)
-        : [];
-      const referenceImages = Array.from(new Set([scene1Selected, ...existingReferenceImages, ...selectedImageUrls].filter(Boolean)));
-      const referenceCharacterUrl = scene1Selected || s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImages[0] || "";
-
+      const scenes = scenesInput.map((scene: any, idx: number) =>
+        normalizeStoryboardScene(scene, idx + 1, Number(workflow.outputs?.sceneDuration || 0) || 5),
+      );
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboard",
-        outputs: {
-          storyboard: scenes,
-          storyboardConfirmed: true,
-          storyboardConfirmedAt: Date.now(),
-          selectedImageIndexes,
-          sceneDurations,
-          referenceImages,
-          referenceCharacterUrl,
-        },
+        outputs: { storyboard: scenes, storyboardConfirmed: true, storyboardConfirmedAt: Date.now() },
       });
       return res.status(200).json({ ok: true, workflow: next });
-    }
-
-
-    if (opNormalized === "workflowgeneratescenevideo") {
-      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
-      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      if (!workflow.outputs?.storyboardConfirmed) {
-        return res.status(400).json(fail("storyboard must be confirmed before scene video generation"));
-      }
-
-      const sceneIndex = Number(b.sceneIndex || 0) || 0;
-      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
-
-      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
-      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const scene = storyboard.find((item: any) => Number(item?.sceneIndex || 0) === sceneIndex);
-      if (!scene) return res.status(404).json(fail("scene not found"));
-
-      const selectedImageIndexes =
-        workflow.outputs?.selectedImageIndexes && typeof workflow.outputs.selectedImageIndexes === "object"
-          ? workflow.outputs.selectedImageIndexes
-          : {};
-      const imageItem = storyboardImages.find((item: any) => Number(item?.sceneIndex || 0) === sceneIndex);
-      const selectedIndex = Math.max(0, Number(selectedImageIndexes?.[sceneIndex] ?? 0) || 0);
-      const selectedSceneImageUrl = s(
-        imageItem?.characterPngUrl ||
-        imageItem?.referenceCharacterUrl ||
-        (Array.isArray(imageItem?.images) ? imageItem.images[selectedIndex] || imageItem.images[0] : ""),
-      ).trim();
-
-      const refsFromBody = Array.isArray(b.referenceImages) ? b.referenceImages.map((x: any) => s(x).trim()).filter(Boolean) : [];
-      const refsFromOutputs = [
-        s(workflow.outputs?.referenceCharacterUrl).trim(),
-        s(workflow.outputs?.characterPngUrl).trim(),
-        selectedSceneImageUrl,
-        ...(Array.isArray(workflow.outputs?.referenceImages) ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()) : []),
-      ].filter(Boolean);
-      const imageUrls = Array.from(new Set([...refsFromBody, ...refsFromOutputs])).slice(0, 3);
-      if (imageUrls.length === 0) return res.status(400).json(fail("scene references missing"));
-
-      const prompt = buildVideoPrompt({
-        scenePrompt: s(scene?.scenePrompt).trim(),
-        character: s(scene?.character).trim(),
-        action: s(scene?.action).trim(),
-        camera: s(scene?.camera).trim(),
-        mood: s(scene?.mood).trim(),
-        lighting: s(scene?.lighting).trim(),
-        sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
-        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
-      });
-      if (!prompt) return res.status(400).json(fail("missing prompt for scene video generation"));
-
-      const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
-      if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
-
-      const duration = "8s";
-      const resolutionInput = s(b.resolution || "720p").trim().toLowerCase();
-      const resolution = ["720p", "1080p", "4k"].includes(resolutionInput) ? resolutionInput : "720p";
-
-      const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
-        method: "POST",
-        headers: {
-          Authorization: `Key ${falKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt,
-          image_urls: imageUrls,
-          aspect_ratio: "16:9",
-          duration,
-          resolution,
-          generate_audio: false,
-          safety_tolerance: "4",
-        }),
-      });
-
-      const requestId = s(createResp.json?.request_id || createResp.json?.requestId || createResp.json?.id).trim();
-      const statusUrl = s(createResp.json?.status_url).trim();
-      const responseUrl = s(createResp.json?.response_url).trim();
-      if (!createResp.ok || !requestId) {
-        const message = s(createResp.json?.detail || createResp.json?.error || createResp.rawText || "fal_veo_create_failed").trim();
-        return res.status(502).json(fail("fal_create_failed", message || "fal_veo_create_failed", { detail: createResp.json || createResp.rawText }));
-      }
-
-      const currentSceneVideos = Array.isArray(workflow.outputs?.sceneVideos) ? workflow.outputs.sceneVideos : [];
-      const sceneVideos = currentSceneVideos.filter((item: any) => Number(item?.sceneIndex || 0) !== sceneIndex);
-      sceneVideos.push({
-        sceneIndex,
-        requestId,
-        statusUrl,
-        responseUrl,
-        taskStatus: "IN_QUEUE",
-        duration,
-        resolution,
-        referenceImages: imageUrls,
-        queuedAt: Date.now(),
-        url: "",
-      });
-
-      const next = saveWorkflowPatch(workflow, {
-        currentStep: "video",
-        status: "running",
-        outputs: {
-          sceneVideos,
-        },
-      });
-
-      return res.status(200).json({
-        ok: true,
-        workflow: next,
-        sceneIndex,
-        requestId,
-        taskStatus: "IN_QUEUE",
-        duration,
-        resolution,
-      });
     }
 
     if (opNormalized === "workflowgeneratevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      if (!VAK || !VSK || !IAK || !ISK) {
+        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
+      }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
-      const keyScenes = storyboard.slice(0, 3);
-      const promptFromStoryboard = keyScenes.map((scene: any) =>
-        buildVideoPrompt({
-          scenePrompt: s(scene?.scenePrompt).trim(),
-          character: s(scene?.character).trim(),
-          action: s(scene?.action).trim(),
-          camera: s(scene?.camera).trim(),
-          mood: s(scene?.mood).trim(),
-          lighting: s(scene?.lighting).trim(),
-          sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
-          lockedCharacterPrompt: lockedCharacterPrompt || undefined,
-        }),
-      ).filter(Boolean).join("\n");
-      const fallbackVideoPrompt = buildVideoPrompt({
+      const promptFromStoryboard = storyboard
+        .map((scene: any) =>
+          buildVideoPrompt({
+            scenePrompt: s(scene?.scenePrompt).trim(),
+            character: s(scene?.character).trim(),
+            action: s(scene?.action).trim(),
+            camera: s(scene?.camera).trim(),
+            mood: s(scene?.mood).trim(),
+            lighting: s(scene?.lighting).trim(),
+            sceneDuration: Number(scene?.duration || 0) || Number(workflow.outputs?.sceneDuration || 0) || 5,
+            lockedCharacterPrompt: lockedCharacterPrompt || undefined,
+          }),
+        )
+        .filter(Boolean)
+        .join("\n");
+      const prompt = promptFromStoryboard || buildVideoPrompt({
         scenePrompt: s(workflow.outputs?.script || workflow.payload?.prompt).trim(),
         sceneDuration: Number(workflow.outputs?.sceneDuration || 0) || 5,
         lockedCharacterPrompt: lockedCharacterPrompt || undefined,
       });
-      const prompt = promptFromStoryboard || fallbackVideoPrompt;
       if (!prompt) return res.status(400).json(fail("missing prompt for video generation"));
 
       const uploadedRef = s(b.referenceImageUrl || b.referenceCharacterUrl || "").trim();
-      const selectedImageIndexesFromOutputs =
-        workflow.outputs?.selectedImageIndexes && typeof workflow.outputs.selectedImageIndexes === "object"
-          ? workflow.outputs.selectedImageIndexes
-          : {};
       const refsFromScenes = storyboardImages
-        .map((item: any) => {
-          const sceneIndex = Number(item?.sceneIndex || 0);
-          const pickedIdx = Math.max(0, Number(selectedImageIndexesFromOutputs?.[sceneIndex] ?? 0) || 0);
-          return s(
+        .map((item: any) =>
+          s(
             item?.characterPngUrl ||
             item?.referenceCharacterUrl ||
-            (Array.isArray(item?.images) ? item.images[pickedIdx] || item.images[0] : ""),
-          ).trim();
-        })
+            (Array.isArray(item?.images) ? item.images[0] : ""),
+          ).trim(),
+        )
         .filter(Boolean);
       const refsFromOutputs = [
         s(workflow.outputs?.characterPngUrl).trim(),
@@ -1913,51 +1139,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json(fail("reference image is required before video generation"));
       }
 
-      const fallbackRefs = Array.isArray(workflow.outputs?.referenceImages)
-        ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean)
-        : [];
-      const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
-      const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
-      const duration = "8s";
-      const resolution = ["720p", "1080p", "4k"].includes(requestedResolution)
-        ? requestedResolution
-        : "720p";
-
-      const generated = await generateVideoWithVeo({
-        scenePrompt: prompt,
-        referenceImages: imageUrls,
-        imageUrls,
-      });
-      if (!generated.videoUrl) {
-        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "video generation failed"));
+      const videoToken = jwtHS256(VAK, VSK);
+      const imageToken = jwtHS256(IAK, ISK);
+      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
+      const created = await createKlingI2VTask(
+        KLING_BASE,
+        videoToken,
+        imageToken,
+        referenceImageUrl,
+        prompt,
+        model,
+        "8"
+      );
+      if (!created.taskId) {
+        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
       }
-
+      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "video generation failed")));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
-        status: "running",
         outputs: {
-          videoProvider: "fal",
-          videoModel: "fal-ai/veo3.1/reference-to-video",
-          videoUrl: generated.videoUrl,
-          finalVideoUrl: undefined,
-          videoDuration: duration,
-          videoResolution: resolution,
-          videoTaskStatus: generated.isFallback ? "COMPLETED_WITH_FALLBACK" : "COMPLETED",
+          videoProvider: "kling",
+          videoModel: model,
+          videoUrl: polled.videoUrl,
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
-          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
-          videoErrorMessage: generated.errorMessage || "",
+          referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), referenceImageUrl])),
+          videoErrorMessage: "",
         },
       });
-      return res.status(200).json({
-        ok: true,
-        workflow: next,
-        provider: "fal",
-        model: "fal-ai/veo3.1/reference-to-video",
-        taskStatus: generated.isFallback ? "COMPLETED_WITH_FALLBACK" : "COMPLETED",
-        videoUrl: generated.videoUrl,
-        duration,
-        resolution,
-      });
+      return res.status(200).json({ ok: true, workflow: next });
     }
 
     if (opNormalized === "workflowgeneratescenevideo") {
@@ -1965,61 +1175,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!VAK || !VSK || !IAK || !ISK) {
+        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
+      }
 
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
-      const targetImageBundle = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
-      if (!targetScene) return res.status(404).json(fail("scene not found"));
-      const imageUrl = s(
-        targetImageBundle?.referenceCharacterUrl ||
-        targetImageBundle?.characterPngUrl ||
-        (Array.isArray(targetImageBundle?.images) ? targetImageBundle.images[0] : "") ||
-        (Array.isArray(targetImageBundle?.imageUrls) ? targetImageBundle.imageUrls[0] : ""),
-      ).trim();
-      if (!imageUrl) return res.status(400).json(fail("scene image is required before video generation"));
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      if (!scene) return res.status(404).json(fail("scene not found"));
+      const sceneBundle = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+      const imageUrl =
+        s(sceneBundle?.characterPngUrl).trim() ||
+        s(sceneBundle?.referenceCharacterUrl).trim() ||
+        s((Array.isArray(sceneBundle?.imageUrls) ? sceneBundle.imageUrls[0] : "")).trim() ||
+        s((Array.isArray(sceneBundle?.images) ? sceneBundle.images[0] : "")).trim();
+      if (!imageUrl) return res.status(400).json(fail("scene image is required before scene video generation"));
 
       const prompt = buildVideoPrompt({
-        scenePrompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
-        character: s(targetScene.character).trim(),
-        action: s(targetScene.action).trim(),
-        camera: s(targetScene.camera).trim(),
-        mood: s(targetScene.mood).trim(),
-        lighting: s(targetScene.lighting).trim(),
+        scenePrompt: s(scene?.scenePrompt || scene?.prompt).trim(),
+        character: s(scene?.character).trim(),
+        action: s(scene?.action).trim(),
+        camera: s(scene?.camera).trim(),
+        mood: s(scene?.mood).trim(),
+        lighting: s(scene?.lighting).trim(),
         sceneDuration: 8,
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
       });
-      const generated = await generateVideoWithVeo({
-        scenePrompt: prompt,
-        referenceImages: [imageUrl],
-        imageUrls: [imageUrl],
-      });
-      if (!generated.videoUrl) {
-        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
-      }
-
-      const nextStoryboardImages = storyboardImages.map((item: any) =>
-        Number(item?.sceneIndex) === sceneIndex
-          ? {
-              ...item,
-              sceneVideoUrl: generated.videoUrl,
-              prompt: s(item?.prompt).trim() || s(targetScene.scenePrompt || targetScene.prompt).trim(),
-              duration: 8,
-              videoProvider: "fal",
-              videoModel: "fal-ai/veo3.1/reference-to-video",
-            }
-          : item,
+      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
+      const videoToken = jwtHS256(VAK, VSK);
+      const imageToken = jwtHS256(IAK, ISK);
+      const created = await createKlingI2VTask(
+        KLING_BASE,
+        videoToken,
+        imageToken,
+        imageUrl,
+        prompt,
+        model,
+        "8"
       );
+      if (!created.taskId) {
+        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      }
+      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
+      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "scene video generation failed")));
+
+      const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => ({
+        ...(existing || {}),
+        sceneIndex,
+        images: Array.isArray(existing?.images) ? existing.images : [],
+        imageUrls: Array.isArray(existing?.imageUrls) ? existing.imageUrls : (Array.isArray(existing?.images) ? existing.images : []),
+        prompt: s(scene?.scenePrompt || scene?.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(polled.videoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+      }));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
           storyboardImages: nextStoryboardImages,
-          storyboardConfirmed: false,
-          videoProvider: "fal",
-          videoModel: "fal-ai/veo3.1/reference-to-video",
+          videoProvider: "kling",
+          videoModel: model,
+          videoErrorMessage: "",
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: generated.videoUrl });
+      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: polled.videoUrl });
     }
 
     if (opNormalized === "workflowgeneratevoice") {
@@ -2068,72 +1290,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         bpm: musicBpm,
       });
 
-      const created = await fetchJson(`${AIM_BASE}/api/v1/producer/create`, {
+      const created = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`, {
         method: "POST",
         headers: { Authorization: `Bearer ${AIM_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({
-          task_type: "create_music",
-          sound: prompt,
-          make_instrumental: true,
-          mv: s(b.mv || "FUZZ-2.0").trim() || "FUZZ-2.0",
-        }),
+        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }),
       });
-      if (!created.ok) return res.status(502).json(fail("udio_create_failed", "Udio create request failed", { raw: created.json ?? created.rawText }));
+      if (!created.ok) return res.status(502).json(fail("suno_create_failed", "Suno create request failed", { raw: created.json ?? created.rawText }));
       const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId).trim();
-      if (!taskId) return res.status(502).json(fail("missing_udio_task_id", "Udio task id is missing", { raw: created.json ?? created.rawText }));
+      if (!taskId) return res.status(502).json(fail("missing_suno_task_id", "Suno task id is missing", { raw: created.json ?? created.rawText }));
 
       let musicUrl = "";
       let rawTask: any = null;
-      for (let i = 0; i < 80; i += 1) {
+      for (let i = 0; i < 24; i += 1) {
         await sleep(3000);
-        const polled = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`, {
+        const polled = await fetchJson(`${AIM_BASE}/api/v1/sonic/task/${encodeURIComponent(taskId)}`, {
           method: "GET",
           headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
         });
         rawTask = polled.json ?? polled.rawText;
-        const data = polled.json?.data || polled.json || {};
-        const status = s(data.status || data.task_status || data.state || polled.json?.status || polled.json?.state || "").toLowerCase();
-        const dataList = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-        const first = dataList[0] || {};
+        const data = polled.json?.data || {};
+        const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
         musicUrl =
           s(data.audio_url).trim() ||
           s(data.music_url).trim() ||
-          s(data.audioUrl).trim() ||
-          s(data.musicUrl).trim() ||
-          s(data.video_url).trim() ||
           s(data.url).trim() ||
           s(data.result?.audio_url).trim() ||
-          s(data.result?.music_url).trim() ||
-          s(data.result?.audioUrl).trim() ||
-          s(data.result?.musicUrl).trim() ||
-          s(data.data?.audio_url).trim() ||
-          s(data.data?.music_url).trim() ||
-          s(data.data?.audioUrl).trim() ||
-          s(data.data?.musicUrl).trim() ||
-          s(data.data?.url).trim() ||
-          s(first?.audio_url).trim() ||
-          s(first?.music_url).trim() ||
-          s(first?.audioUrl).trim() ||
-          s(first?.musicUrl).trim() ||
-          s(first?.url).trim();
+          s(data.result?.music_url).trim();
         if (musicUrl) break;
         if (status === "failed" || status === "error") {
-          return res.status(502).json(fail("udio_task_failed", "Udio task failed", { raw: rawTask }));
+          return res.status(502).json(fail("suno_task_failed", "Suno task failed", { raw: rawTask }));
         }
       }
-      if (!musicUrl) return res.status(502).json(fail("udio_task_timeout_or_missing_music_url", "Udio task timeout or missing music url", { raw: rawTask }));
+      if (!musicUrl) return res.status(502).json(fail("suno_task_timeout_or_missing_music_url", "Suno task timeout or missing music url", { raw: rawTask }));
 
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
         outputs: {
-          musicProvider: "udio",
+          musicProvider: "suno",
           musicPrompt: rawPrompt,
           musicMood,
           musicBpm,
           musicDuration,
-          musicTaskId: taskId,
           musicUrl,
-          musicErrorMessage: "",
         },
       });
       return res.status(200).json({ ok: true, workflow: next });
@@ -2142,8 +1340,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowrendervideo" || opNormalized === "workflowrenderfinalvideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const transition = s(b.transition || workflow.outputs?.transition || "cut").trim().toLowerCase() || "cut";
-      const resolution = s(b.resolution || workflow.outputs?.resolution || "1080p").trim() || "1080p";
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const sceneVideos = storyboardImages
         .filter((item: any) => s(item?.sceneVideoUrl).trim())
@@ -2151,33 +1347,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .map((item: any) => ({
           sceneIndex: Number(item?.sceneIndex || 0),
           url: s(item?.sceneVideoUrl).trim(),
-          duration: item?.duration || workflow.outputs?.sceneDuration || 8,
+          duration: "8s",
         }));
-      const videoUrl = s(workflow.outputs?.videoUrl).trim();
-      if (!sceneVideos.length && !videoUrl) return res.status(400).json(fail("sceneVideos are required before render"));
-
-      let finalVideoUrl = videoUrl;
-      if (sceneVideos.length) {
-        finalVideoUrl = await renderWorkflowFinalVideo({
-          sceneVideos,
-          musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || workflow.outputs?.music?.url || "").trim() || undefined,
-          voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || workflow.outputs?.voice?.url || "").trim() || undefined,
-        });
-      }
+      const videoUrl = s(workflow.outputs?.videoUrl).trim() || s(sceneVideos[0]?.url).trim();
+      if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
         outputs: {
-          finalVideoUrl,
+          finalVideoUrl: videoUrl,
+          sceneVideos,
           renderProvider: "workflow-render",
           renderIsFallback: false,
           renderErrorMessage: "",
-          renderStatus: "COMPLETED",
-          transition,
-          resolution,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, finalVideoUrl });
+      return res.status(200).json({ ok: true, workflow: next });
     }
 
     if (opNormalized === "generatevoice") {
