@@ -10,14 +10,14 @@ import {
   runFfmpeg,
 } from "./renderUtils.js";
 
-async function uploadVideoFileToPublicBlob(filePath: string, fileName = "final-video.mp4") {
+async function uploadFileToPublicBlob(filePath: string, fileName: string, contentType: string) {
   const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
   if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
   const buf = await fs.readFile(filePath);
   const blob = await put(`renders/${Date.now()}-${fileName}`, buf, {
     access: "public",
     token,
-    contentType: "video/mp4",
+    contentType,
   });
   return blob.url;
 }
@@ -155,9 +155,41 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
 
   const musicUrl = String(input.musicUrl || "").trim();
   const voiceUrl = String(input.voiceUrl || "").trim();
+  const sceneVoiceUrls = input.sceneVideos
+    .map((scene) => String(scene?.voiceUrl || "").trim())
+    .filter(Boolean);
+  let effectiveVoiceUrl = voiceUrl;
 
-  if (!musicUrl && !voiceUrl) {
-    return uploadVideoFileToPublicBlob(mergedPath, "rendered-video.mp4");
+  if (!effectiveVoiceUrl && sceneVoiceUrls.length) {
+    const concatVoiceList = path.join(tmpDir, "voice-concat.txt");
+    const voiceFiles: string[] = [];
+    for (let i = 0; i < sceneVoiceUrls.length; i += 1) {
+      const voicePath = path.join(tmpDir, `voice-${String(i + 1).padStart(2, "0")}.mp3`);
+      await downloadFileToPath(sceneVoiceUrls[i], voicePath);
+      voiceFiles.push(voicePath);
+    }
+    await fs.writeFile(
+      concatVoiceList,
+      voiceFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join("\n"),
+    );
+    const mergedVoicePath = path.join(tmpDir, "voice-merged.mp3");
+    await runFfmpeg([
+      "-y",
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      concatVoiceList,
+      "-c",
+      "copy",
+      mergedVoicePath,
+    ]);
+    effectiveVoiceUrl = await uploadFileToPublicBlob(mergedVoicePath, "scene-voice-track.mp3", "audio/mpeg");
+  }
+
+  if (!musicUrl && !effectiveVoiceUrl) {
+    return uploadFileToPublicBlob(mergedPath, "rendered-video.mp4", "video/mp4");
   }
 
   const cmd = ["-y", "-i", mergedPath];
@@ -168,13 +200,13 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
     cmd.push("-i", musicPath);
   }
 
-  if (voiceUrl) {
+  if (effectiveVoiceUrl) {
     const voicePath = path.join(tmpDir, "voice.mp3");
-    await downloadFileToPath(voiceUrl, voicePath);
+    await downloadFileToPath(effectiveVoiceUrl, voicePath);
     cmd.push("-i", voicePath);
   }
 
-  if (musicUrl && voiceUrl) {
+  if (musicUrl && effectiveVoiceUrl) {
     cmd.push(
       "-filter_complex",
       "[1:a]volume=0.35[m];[2:a]volume=1.0[v];[m][v]amix=inputs=2:duration=longest[aout]",
@@ -206,5 +238,5 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
 
   await runFfmpeg(cmd);
 
-  return uploadVideoFileToPublicBlob(finalPath, "rendered-video.mp4");
+  return uploadFileToPublicBlob(finalPath, "rendered-video.mp4", "video/mp4");
 }

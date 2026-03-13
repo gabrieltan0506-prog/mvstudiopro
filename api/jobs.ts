@@ -353,6 +353,7 @@ type WorkflowStoryboardScene = {
   sceneTitle?: string;
   scenePrompt: string;
   primarySubject?: string;
+  voiceover?: string;
   environment?: string;
   character?: string;
   duration: number;
@@ -372,11 +373,14 @@ type WorkflowStoryboardImageItem = {
   characterImageUrl?: string;
   sceneImages?: string[];
   sceneImageUrls?: string[];
+  selectedSceneImageUrl?: string;
   renderStillImageUrl?: string;
   renderStillPrompt?: string;
   prompt?: string;
   duration?: number;
   sceneVideoUrl?: string;
+  sceneVoiceUrl?: string;
+  sceneVoicePrompt?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -455,6 +459,7 @@ function normalizeStoryboardScene(input: any, fallbackIndex: number, fallbackDur
     sceneTitle: s(input?.sceneTitle || `Scene ${fallbackIndex}`).trim(),
     scenePrompt: s(input?.scenePrompt).trim(),
     primarySubject: s(input?.primarySubject || input?.character).trim(),
+    voiceover: s(input?.voiceover || input?.scenePrompt).trim(),
     environment: s(input?.environment || "cinematic environment").trim(),
     character: s(input?.character || "same main character identity").trim(),
     duration: Number(input?.duration || 0) || fallbackDuration,
@@ -492,20 +497,30 @@ function getSceneCharacterImages(item: any): string[] {
 }
 
 function getSceneEnvironmentImages(item: any): string[] {
+  const selected = s(item?.selectedSceneImageUrl).trim();
   const explicit = Array.isArray(item?.sceneImageUrls)
     ? item.sceneImageUrls
     : Array.isArray(item?.sceneImages)
       ? item.sceneImages
       : [];
   const normalized = explicit.map((value: any) => s(value).trim()).filter(Boolean);
-  if (normalized.length) return normalized.slice(0, 2);
+  if (normalized.length) {
+    const ordered = selected && normalized.includes(selected)
+      ? [selected, ...normalized.filter((value: string) => value !== selected)]
+      : normalized;
+    return ordered.slice(0, 2);
+  }
 
   const legacy = Array.isArray(item?.imageUrls)
     ? item.imageUrls
     : Array.isArray(item?.images)
       ? item.images
       : [];
-  return legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(1, 3);
+  const normalizedLegacy = legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(1, 3);
+  if (selected && normalizedLegacy.includes(selected)) {
+    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 2);
+  }
+  return normalizedLegacy;
 }
 
 function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<string, any>) {
@@ -525,10 +540,13 @@ function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<
     characterImageUrl: nextCharacterImages[0] || "",
     sceneImages: nextSceneImages,
     sceneImageUrls: nextSceneImages,
+    selectedSceneImageUrl: s(patch.selectedSceneImageUrl ?? existing?.selectedSceneImageUrl).trim() || nextSceneImages[0] || "",
     images: combinedImages,
     imageUrls: combinedImages,
     renderStillImageUrl: s(patch.renderStillImageUrl ?? existing?.renderStillImageUrl).trim(),
     renderStillPrompt: s(patch.renderStillPrompt ?? existing?.renderStillPrompt).trim(),
+    sceneVoiceUrl: s(patch.sceneVoiceUrl ?? existing?.sceneVoiceUrl).trim(),
+    sceneVoicePrompt: s(patch.sceneVoicePrompt ?? existing?.sceneVoicePrompt).trim(),
   } as WorkflowStoryboardImageItem;
 }
 
@@ -699,6 +717,27 @@ function simplifySceneVideoPrompt(scene: any) {
   const firstSentence = source.split(/[。！？!?\n]/).map((part) => part.trim()).filter(Boolean)[0] || source;
   const compact = firstSentence.replace(/\s+/g, " ").trim();
   return compact.slice(0, 120);
+}
+
+function buildSceneVoiceText(scene: any, overrideText?: string) {
+  const manual = s(overrideText).trim();
+  if (manual) return manual;
+  return s(scene?.voiceover || scene?.scenePrompt || scene?.prompt).trim();
+}
+
+function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string) {
+  const sceneSummary = (Array.isArray(storyboard) ? storyboard : [])
+    .slice(0, 6)
+    .map((scene: any) => [
+      s(scene?.scenePrompt).trim(),
+      s(scene?.mood).trim() ? `情绪:${s(scene?.mood).trim()}` : "",
+      s(scene?.lighting).trim() ? `光影:${s(scene?.lighting).trim()}` : "",
+    ].filter(Boolean).join("，"))
+    .filter(Boolean)
+    .join("；");
+  const source = sceneSummary || s(fallbackScript).trim();
+  if (!source) return "";
+  return source.slice(0, 500);
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -1166,6 +1205,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, workflow: next });
     }
 
+    if (opNormalized === "workflowselectsceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const imageUrl = s(b.imageUrl).trim();
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!imageUrl) return res.status(400).json(fail("imageUrl is required"));
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => {
+        const currentSceneImages = getSceneEnvironmentImages(existing);
+        if (!currentSceneImages.includes(imageUrl)) {
+          return buildSceneAssetBundle(existing, sceneIndex, {
+            selectedSceneImageUrl: s(existing?.selectedSceneImageUrl).trim() || currentSceneImages[0] || "",
+          });
+        }
+        return buildSceneAssetBundle(existing, sceneIndex, {
+          selectedSceneImageUrl: imageUrl,
+          sceneImages: [imageUrl, ...currentSceneImages.filter((value) => value !== imageUrl)].slice(0, 2),
+        });
+      });
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
+          storyboardImages,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, selectedSceneImageUrl: imageUrl });
+    }
+
     if (opNormalized === "workflowgeneraterenderstill") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
@@ -1507,6 +1580,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, workflow: next });
     }
 
+    if (opNormalized === "workflowgeneratescenevoice") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      if (!scene) return res.status(404).json(fail("scene not found"));
+
+      const dialogueText = buildSceneVoiceText(scene, b.dialogueText);
+      if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
+      const voicePrompt = buildVoicePrompt({
+        dialogueText,
+        style: s(b.voicePrompt || workflow.outputs?.voicePrompt).trim(),
+        language: s(b.language || "中文").trim() || "中文",
+      });
+      const voice = s(b.voice || "nova").trim() || "nova";
+      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      if (!s(voiceResult.voiceUrl).trim()) {
+        return res.status(502).json(
+          fail(
+            "voice_generation_failed",
+            voiceResult.voiceErrorMessage || "OpenAI TTS did not return a voiceUrl",
+            { provider: voiceResult.voiceProvider, model: voiceResult.voiceModel, voice: voiceResult.voiceVoice },
+          ),
+        );
+      }
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) =>
+        buildSceneAssetBundle(existing, sceneIndex, {
+          prompt: s(scene?.scenePrompt || existing?.prompt).trim(),
+          sceneVoiceUrl: voiceResult.voiceUrl,
+          sceneVoicePrompt: voicePrompt,
+        }),
+      );
+      const nextStoryboard = storyboard.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex ? { ...item, voiceover: dialogueText } : item,
+      );
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "voice",
+        outputs: {
+          storyboard: nextStoryboard,
+          storyboardImages,
+          voiceProvider: voiceResult.voiceProvider,
+          voiceModel: voiceResult.voiceModel,
+          voiceVoice: voiceResult.voiceVoice,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, sceneVoiceUrl: voiceResult.voiceUrl });
+    }
+
     if (opNormalized === "workflowgeneratemusic") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       if (!AIM_KEY) return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
@@ -1514,7 +1640,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
       const musicBpm = Number(b.musicBpm || 0) || 110;
       const musicDuration = Number(b.musicDuration || 0) || 30;
-      const rawPrompt = s(b.musicPrompt).trim() || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const autoMusicPrompt = deriveMusicSeedFromStoryboard(storyboard, s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim());
+      const rawPrompt = s(b.musicPrompt).trim() || autoMusicPrompt || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim();
       if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
       const prompt = buildMusicPrompt({
         genre: rawPrompt,
@@ -1561,6 +1689,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const next = saveWorkflowPatch(workflow, {
         currentStep: "music",
         outputs: {
+          storyboard,
           musicProvider: "suno",
           musicPrompt: rawPrompt,
           musicMood,
@@ -1586,6 +1715,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           duration: "8s",
           stillImageUrl: s(item?.renderStillImageUrl).trim() || undefined,
           stillDuration: sceneNeedsRenderStill(storyboard.find((scene: any) => Number(scene?.sceneIndex) === Number(item?.sceneIndex || 0))) ? "1.5s" : undefined,
+          voiceUrl: s(item?.sceneVoiceUrl).trim() || undefined,
         }));
       if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
       const finalVideoUrl = await renderWorkflowFinalVideo({

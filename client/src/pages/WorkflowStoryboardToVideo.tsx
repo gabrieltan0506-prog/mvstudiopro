@@ -7,6 +7,7 @@ type Scene = {
   camera: string;
   mood: string;
   primarySubject?: string;
+  voiceover?: string;
   character?: string;
   environment?: string;
   action?: string;
@@ -23,11 +24,14 @@ type SceneImages = {
   characterImageUrl?: string;
   sceneImages?: string[];
   sceneImageUrls?: string[];
+  selectedSceneImageUrl?: string;
   renderStillImageUrl?: string;
   renderStillPrompt?: string;
   prompt?: string;
   duration?: number;
   sceneVideoUrl?: string;
+  sceneVoiceUrl?: string;
+  sceneVoicePrompt?: string;
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   characterPngUrl?: string;
@@ -101,6 +105,7 @@ function normalizeSceneList(input: any[], fallbackDuration = 8): Scene[] {
     camera: String(item?.camera || "medium").trim() || "medium",
     mood: String(item?.mood || "cinematic").trim() || "cinematic",
     primarySubject: String(item?.primarySubject || item?.character || "").trim(),
+    voiceover: String(item?.voiceover || item?.scenePrompt || "").trim(),
     character: String(item?.character || "").trim(),
     environment: String(item?.environment || "").trim(),
     action: String(item?.action || "").trim(),
@@ -121,19 +126,42 @@ function getCharacterImageUrls(bundle: any): string[] {
 }
 
 function getSceneImageUrls(bundle: any): string[] {
+  const selected = String(bundle?.selectedSceneImageUrl || "").trim();
   const explicit = Array.isArray(bundle?.sceneImageUrls)
     ? bundle.sceneImageUrls
     : Array.isArray(bundle?.sceneImages)
       ? bundle.sceneImages
       : [];
   const normalized = explicit.map((value: any) => String(value || "").trim()).filter(Boolean);
-  if (normalized.length) return normalized.slice(0, 2);
+  if (normalized.length) {
+    const ordered = selected && normalized.includes(selected)
+      ? [selected, ...normalized.filter((value: string) => value !== selected)]
+      : normalized;
+    return ordered.slice(0, 2);
+  }
   const legacy = Array.isArray(bundle?.imageUrls) ? bundle.imageUrls : Array.isArray(bundle?.images) ? bundle.images : [];
-  return legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 3);
+  const normalizedLegacy = legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 3);
+  if (selected && normalizedLegacy.includes(selected)) {
+    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 2);
+  }
+  return normalizedLegacy;
 }
 
 function getCombinedAssetUrls(bundle: any): string[] {
   return [...getSceneImageUrls(bundle), ...getCharacterImageUrls(bundle)].filter(Boolean);
+}
+
+function buildMusicPromptSeedFromScenes(scenes: Scene[]) {
+  const source = scenes
+    .slice(0, 6)
+    .map((scene) => [
+      scene.scenePrompt?.trim(),
+      scene.mood?.trim() ? `情绪:${scene.mood.trim()}` : "",
+      scene.lighting?.trim() ? `光影:${scene.lighting.trim()}` : "",
+    ].filter(Boolean).join("，"))
+    .filter(Boolean)
+    .join("；");
+  return source.slice(0, 500);
 }
 
 async function postJson(op: string, body: Record<string, any>) {
@@ -217,6 +245,18 @@ export default function WorkflowStoryboardToVideo() {
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
   }, [workflow, dialogueText, voicePrompt]);
+
+  useEffect(() => {
+    const generated = buildMusicPromptSeedFromScenes(Array.isArray(storyboard) ? storyboard : []);
+    if (!generated) return;
+    setMusicPrompt((prev) => {
+      const trimmed = String(prev || "").trim();
+      if (!trimmed || trimmed === "cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal") {
+        return generated;
+      }
+      return prev;
+    });
+  }, [storyboard]);
 
   useEffect(() => {
     if (!debugMode) return;
@@ -422,6 +462,23 @@ export default function WorkflowStoryboardToVideo() {
     });
   }
 
+  function requestSceneVoiceGeneration(scene: Scene) {
+    void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
+      workflowId,
+      sceneIndex: scene.sceneIndex,
+      dialogueText: String(scene.voiceover || scene.scenePrompt || "").trim(),
+      voicePrompt,
+    });
+  }
+
+  function selectSceneImage(sceneIndex: number, imageUrl: string) {
+    void runAuxStep(`scene-select-${sceneIndex}`, "workflowSelectSceneImage", {
+      workflowId,
+      sceneIndex,
+      imageUrl,
+    });
+  }
+
   function getRenderStillPromptValue(scene: Scene) {
     return renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? scene.scenePrompt ?? "";
   }
@@ -430,7 +487,7 @@ export default function WorkflowStoryboardToVideo() {
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 20, color: "white" }}>
       <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>/workflow</h1>
       <p style={{ opacity: 0.9, marginTop: 8 }}>
-        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Scene Assets → Step 4 Per-scene Character + Scene Upload → Step 5 Generate Scene Videos → Step 6 Generate Voice → Step 7 Generate Music → Step 8 Final Render
+        Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Scene Assets → Step 4 Per-scene Character + Scene Upload → Step 5 Per-scene Voice + Video → Step 6 Optional Global Voice → Step 7 Generate Music → Step 8 Final Render
       </p>
       <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button
@@ -582,6 +639,17 @@ export default function WorkflowStoryboardToVideo() {
                   style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
                 />
               </div>
+              <textarea
+                value={scene.voiceover || ""}
+                onChange={(e) => {
+                  const next = [...scenes];
+                  next[idx] = { ...scene, voiceover: e.target.value };
+                  setStoryboard(next);
+                }}
+                rows={2}
+                placeholder="scene voice text"
+                style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+              />
             </div>
           ))}
         </div>
@@ -613,8 +681,10 @@ export default function WorkflowStoryboardToVideo() {
             const sceneImageUrls = getSceneImageUrls(item);
             const busyGenerateImage = auxBusyKey === `scene-image-${scene.sceneIndex}`;
             const busyGenerateVideo = auxBusyKey === `scene-video-${scene.sceneIndex}`;
+            const busyGenerateVoice = auxBusyKey === `scene-voice-${scene.sceneIndex}`;
             const busyGenerateRenderStill = auxBusyKey === `render-still-${scene.sceneIndex}`;
             const renderStillPromptValue = getRenderStillPromptValue(scene);
+            const selectedSceneImageUrl = String(item.selectedSceneImageUrl || sceneImageUrls[0] || "").trim();
             return (
               <div key={String(scene.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
                 <div style={{ fontWeight: 700 }}>Scene {scene.sceneIndex}</div>
@@ -624,7 +694,9 @@ export default function WorkflowStoryboardToVideo() {
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Render Still Prompt: <code>{scene.renderStillPrompt || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Character Image: <code>{String(characterImageUrls[0] || "")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Images: <code>{String(sceneImageUrls.length)}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Selected Scene Image: <code>{selectedSceneImageUrl || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Render Still Image: <code>{String(item.renderStillImageUrl || "")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice URL: <code>{String(item.sceneVoiceUrl || "")}</code></div>
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Render Still Prompt</div>
                 <textarea
                   value={renderStillPromptValue}
@@ -650,9 +722,20 @@ export default function WorkflowStoryboardToVideo() {
                 {sceneImageUrls.length ? (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
                     {sceneImageUrls.map((url: string, idx: number) => (
-                      <div key={`${scene.sceneIndex}-scene-${idx}`}>
+                      <div
+                        key={`${scene.sceneIndex}-scene-${idx}`}
+                        style={{
+                          borderRadius: 10,
+                          padding: 6,
+                          border: selectedSceneImageUrl === url ? "2px solid #f59e0b" : "1px solid rgba(255,255,255,0.12)",
+                          boxShadow: selectedSceneImageUrl === url ? "0 0 0 2px rgba(245,158,11,0.18)" : "none",
+                        }}
+                      >
                         <img src={url} style={{ width: "100%", borderRadius: 8, background: "black" }} />
-                        <div style={{ marginTop: 8 }}>
+                        <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" onClick={() => selectSceneImage(Number(scene.sceneIndex || 0), url)}>
+                            {selectedSceneImageUrl === url ? "Selected" : "Use This Scene"}
+                          </button>
                           <button type="button" onClick={() => exportStoryboardImage(url)}>Export Image</button>
                         </div>
                       </div>
@@ -669,6 +752,23 @@ export default function WorkflowStoryboardToVideo() {
                     <img src={String(item.renderStillImageUrl)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                   </div>
                 ) : null}
+                <div style={{ marginTop: 10, fontWeight: 600 }}>Scene Voice Text</div>
+                <textarea
+                  value={scene.voiceover || scene.scenePrompt || ""}
+                  onChange={(e) => {
+                    setStoryboard((prev) =>
+                      prev.map((entry) =>
+                        Number(entry.sceneIndex) === Number(scene.sceneIndex)
+                          ? { ...entry, voiceover: e.target.value }
+                          : entry,
+                      ),
+                    );
+                  }}
+                  rows={2}
+                  placeholder="Per-scene voice text"
+                  style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+                />
+                {item.sceneVoiceUrl ? <audio controls src={String(item.sceneVoiceUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={() => runAuxStep(`scene-image-${scene.sceneIndex}`, "workflowGenerateSceneImage", { workflowId, sceneIndex: scene.sceneIndex })}
@@ -728,6 +828,13 @@ export default function WorkflowStoryboardToVideo() {
                     style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
                   >
                     {busyGenerateRenderStill ? "Generating..." : "Generate Render Still"}
+                  </button>
+                  <button
+                    onClick={() => requestSceneVoiceGeneration(scene)}
+                    disabled={!!auxBusyKey || !workflowId || !String(scene.voiceover || scene.scenePrompt || "").trim()}
+                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
+                  >
+                    {busyGenerateVoice ? "Generating..." : "Generate Scene Voice"}
                   </button>
                   <button
                     onClick={() => requestSceneVideoGeneration(scene)}
@@ -797,7 +904,7 @@ export default function WorkflowStoryboardToVideo() {
       </div>
 
       <div style={sectionStyle()}>
-        <h2 style={{ marginTop: 0 }}>F. Voice</h2>
+        <h2 style={{ marginTop: 0 }}>F. Global Voice (Optional)</h2>
         <textarea
           value={dialogueText}
           onChange={(e) => setDialogueText(e.target.value)}
@@ -829,6 +936,11 @@ export default function WorkflowStoryboardToVideo() {
 
       <div style={sectionStyle()}>
         <h2 style={{ marginTop: 0 }}>G. Music</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <button type="button" onClick={() => setMusicPrompt(buildMusicPromptSeedFromScenes(scenes) || musicPrompt)}>
+            Auto Fill From Scenes
+          </button>
+        </div>
         <textarea
           value={musicPrompt}
           onChange={(e) => setMusicPrompt(e.target.value)}

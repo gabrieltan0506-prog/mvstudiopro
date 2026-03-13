@@ -6,6 +6,7 @@ export interface SceneVideoInput {
   duration?: string | number;
   stillImageUrl?: string;
   stillDuration?: string | number;
+  voiceUrl?: string;
 }
 
 export interface RenderWorkflowInput {
