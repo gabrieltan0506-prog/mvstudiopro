@@ -1,5 +1,79 @@
 import { put } from "@vercel/blob";
 
+const FAL_CREATE_URL = "https://queue.fal.run/fal-ai/veo3.1/reference-to-video";
+const FAL_REQUESTS_BASE_URL = "https://queue.fal.run/fal-ai/veo3.1/requests";
+
+function falAuthHeaders(key: string) {
+  return {
+    Authorization: `Key ${key}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function parseJsonSafe(resp: Response) {
+  const text = await resp.text();
+  try {
+    return { text, json: JSON.parse(text) as any };
+  } catch {
+    return { text, json: null as any };
+  }
+}
+
+async function waitForFalVideoResult(requestId: string, key: string) {
+  const safeRequestId = encodeURIComponent(String(requestId || "").trim());
+  if (!safeRequestId) throw new Error("missing_fal_request_id");
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const statusResp = await fetch(`${FAL_REQUESTS_BASE_URL}/${safeRequestId}/status`, {
+      method: "GET",
+      headers: falAuthHeaders(key),
+    });
+    const statusBody = await parseJsonSafe(statusResp);
+    if (!statusResp.ok) {
+      throw new Error(
+        String(statusBody?.json?.detail || statusBody?.json?.error || statusBody?.text || `fal_status_${statusResp.status}`).trim()
+      );
+    }
+
+    const status = String(
+      statusBody?.json?.status ||
+      statusBody?.json?.state ||
+      statusBody?.json?.request_status ||
+      ""
+    ).trim().toUpperCase();
+
+    if (status === "COMPLETED") {
+      const resultResp = await fetch(`${FAL_REQUESTS_BASE_URL}/${safeRequestId}`, {
+        method: "GET",
+        headers: falAuthHeaders(key),
+      });
+      const resultBody = await parseJsonSafe(resultResp);
+      if (!resultResp.ok) {
+        throw new Error(
+          String(resultBody?.json?.detail || resultBody?.json?.error || resultBody?.text || `fal_result_${resultResp.status}`).trim()
+        );
+      }
+      return resultBody.json;
+    }
+
+    if (status === "FAILED" || status === "ERROR" || status === "CANCELLED") {
+      throw new Error(
+        String(
+          statusBody?.json?.error ||
+          statusBody?.json?.detail ||
+          statusBody?.json?.message ||
+          status ||
+          "fal_request_failed"
+        ).trim()
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+
+  throw new Error("fal_request_timeout");
+}
+
 async function uploadVideoToMvspBlob(videoUrl: string) {
   const sourceUrl = String(videoUrl || "").trim();
   if (!sourceUrl) throw new Error("videoUrl is required");
@@ -51,9 +125,6 @@ export async function generateVideoWithVeo(input: {
   }
 
   try {
-    const { fal } = await import("@fal-ai/client");
-    fal.config({ credentials: key });
-
     const images = Array.from(
       new Set([...(input.referenceImages || []), ...(input.imageUrls || [])].map((value) => String(value || "").trim()))
     ).filter(Boolean);
@@ -68,18 +139,56 @@ export async function generateVideoWithVeo(input: {
       };
     }
 
-    const result = (await fal.subscribe("fal-ai/veo3.1/reference-to-video", {
-      input: {
+    const createResp = await fetch(FAL_CREATE_URL, {
+      method: "POST",
+      headers: falAuthHeaders(key),
+      body: JSON.stringify({
         prompt: scenePrompt,
         image_urls: images,
         duration: "8s",
         resolution: "720p",
-      } as any,
-      logs: false,
-    })) as any;
+      }),
+    });
+    const createBody = await parseJsonSafe(createResp);
+    if (!createResp.ok) {
+      return {
+        videoUrl: "",
+        provider: "fal",
+        model: "fal-ai/veo3.1/reference-to-video",
+        isFallback: true,
+        errorMessage: String(
+          createBody?.json?.detail ||
+          createBody?.json?.error ||
+          createBody?.json?.message ||
+          createBody?.text ||
+          `fal_create_${createResp.status}`
+        ).trim(),
+      };
+    }
+
+    const requestId = String(
+      createBody?.json?.request_id ||
+      createBody?.json?.requestId ||
+      createBody?.json?.id ||
+      ""
+    ).trim();
+    if (!requestId) {
+      return {
+        videoUrl: "",
+        provider: "fal",
+        model: "fal-ai/veo3.1/reference-to-video",
+        isFallback: true,
+        errorMessage: "fal request_id missing",
+      };
+    }
+
+    const result = await waitForFalVideoResult(requestId, key);
 
     const videoUrl =
       String(result?.data?.video?.url || "").trim() ||
+      String(result?.video?.url || "").trim() ||
+      String(result?.output?.video?.url || "").trim() ||
+      String(result?.output?.url || "").trim() ||
       String(result?.video?.url || "").trim() ||
       String(result?.data?.url || "").trim() ||
       "";
