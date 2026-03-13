@@ -12,8 +12,12 @@ COPY . .
 
 RUN pnpm install
 
-# 编译 TypeScript
-RUN pnpm build
+# Build server code and client assets for production static serving
+RUN pnpm build \
+ && pnpm exec vite build \
+ && rm -rf server/_core/public \
+ && mkdir -p server/_core/public \
+ && cp -R client/dist/. server/_core/public/
 
 EXPOSE 3000
 
