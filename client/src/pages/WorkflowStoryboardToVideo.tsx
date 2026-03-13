@@ -1185,6 +1185,7 @@ export default function WorkflowStoryboardToVideo() {
         {stepStates.generateMusic.error ? <div style={statusTextStyle("#ff8080")}>Music Error: {stepStates.generateMusic.error}</div> : null}
         <div style={{ marginTop: 8 }}>musicProvider: <code>{String(outputs.musicProvider || "")}</code></div>
         <div>musicUrl: <code>{String(outputs.musicUrl || "")}</code></div>
+        {outputs.musicUrl ? <audio controls src={String(outputs.musicUrl)} style={{ width: "100%", marginTop: 8 }} /> : null}
       </div>
 
       <div style={sectionStyle()}>
