@@ -21,6 +21,11 @@ async function pollSuno(taskId){
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
+import { execFile as execFileCb } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
@@ -31,6 +36,8 @@ import {
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
 } from "./_core/workflow.js";
+import { storageGet, storagePut } from "../server/storage.js";
+import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
@@ -41,6 +48,8 @@ import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
+
+const execFile = promisify(execFileCb);
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -216,7 +225,8 @@ async function createKlingI2VTask(
   imageToken: string,
   imageUrl: string,
   prompt: string,
-  model: string
+  model: string,
+  duration = "8"
 ) {
   const buf = await fetchImageBuffer(imageUrl);
   const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
@@ -227,7 +237,7 @@ async function createKlingI2VTask(
       model_name: model || "kling-v2-6",
       image: first.jpeg.toString("base64"),
       prompt,
-      duration: "5",
+      duration,
       mode: "pro",
       sound: "off",
     }),
@@ -396,10 +406,130 @@ type WorkflowStoryboardScene = {
 type WorkflowStoryboardImageItem = {
   sceneIndex: number;
   images: string[];
+  imageUrls?: string[];
   characterLocked?: boolean;
   referenceCharacterUrl?: string;
   backgroundStatus?: string;
+  prompt?: string;
+  duration?: number;
+  sceneVideoUrl?: string;
 };
+
+async function fetchRemoteBuffer(url: string): Promise<Buffer> {
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: { "User-Agent": "mvstudiopro/1.0 (+asset-fetch)" },
+  });
+  if (!response.ok) {
+    throw new Error(`remote_fetch_failed:${response.status}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function renderWorkflowFinalVideo(input: {
+  sceneVideos: Array<{ sceneIndex: number; url: string }>;
+  musicUrl?: string;
+  voiceUrl?: string;
+}) {
+  const workDir = await fs.mkdtemp(path.join(tmpdir(), "mvsp-render-"));
+  try {
+    const normalizedFiles: string[] = [];
+    for (const [index, scene] of input.sceneVideos.entries()) {
+      const sourceBuffer = await fetchRemoteBuffer(scene.url);
+      const sourcePath = path.join(workDir, `scene-${index + 1}.mp4`);
+      const normalizedPath = path.join(workDir, `scene-${index + 1}-normalized.mp4`);
+      await fs.writeFile(sourcePath, sourceBuffer);
+      await execFile("ffmpeg", [
+        "-y",
+        "-i", sourcePath,
+        "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,fps=24",
+        "-r", "24",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        normalizedPath,
+      ]);
+      normalizedFiles.push(normalizedPath);
+    }
+
+    const concatListPath = path.join(workDir, "concat.txt");
+    await fs.writeFile(
+      concatListPath,
+      normalizedFiles.map((file) => `file '${file.replace(/'/g, "'\\''")}'`).join("\n"),
+      "utf8",
+    );
+
+    const concatPath = path.join(workDir, "concat.mp4");
+    await execFile("ffmpeg", [
+      "-y",
+      "-f", "concat",
+      "-safe", "0",
+      "-i", concatListPath,
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      concatPath,
+    ]);
+
+    let finalPath = concatPath;
+    const audioInputs: string[] = [];
+    const filterInputs: string[] = [];
+
+    if (input.musicUrl) {
+      const musicPath = path.join(workDir, "music.mp3");
+      await fs.writeFile(musicPath, await fetchRemoteBuffer(input.musicUrl));
+      audioInputs.push(musicPath);
+      filterInputs.push(`[1:a]volume=0.35[a0]`);
+    }
+
+    if (input.voiceUrl) {
+      const voicePath = path.join(workDir, "voice.mp3");
+      await fs.writeFile(voicePath, await fetchRemoteBuffer(input.voiceUrl));
+      audioInputs.push(voicePath);
+      filterInputs.push(`[${audioInputs.length}:a]volume=1.0[a${audioInputs.length - 1}]`);
+    }
+
+    if (audioInputs.length > 0) {
+      const mixedPath = path.join(workDir, "final.mp4");
+      const ffmpegArgs = ["-y", "-i", concatPath];
+      for (const audioFile of audioInputs) {
+        ffmpegArgs.push("-i", audioFile);
+      }
+      if (audioInputs.length === 1) {
+        ffmpegArgs.push(
+          "-map", "0:v:0",
+          "-map", "1:a:0",
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-shortest",
+          mixedPath,
+        );
+      } else {
+        ffmpegArgs.push(
+          "-filter_complex",
+          `${filterInputs.join(";")};${audioInputs.map((_, idx) => `[a${idx}]`).join("")}amix=inputs=${audioInputs.length}:duration=shortest:normalize=0[mix]`,
+          "-map", "0:v:0",
+          "-map", "[mix]",
+          "-c:v", "copy",
+          "-c:a", "aac",
+          "-shortest",
+          mixedPath,
+        );
+      }
+      await execFile("ffmpeg", ffmpegArgs);
+      finalPath = mixedPath;
+    }
+
+    const outputBuffer = await fs.readFile(finalPath);
+    const key = `workflow/final-${Date.now()}-${randomUUID()}.mp4`;
+    const uploaded = await storagePut(key, outputBuffer, "video/mp4");
+    return (await storageGet(uploaded.key)).url;
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true });
+  }
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -1298,14 +1428,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         generatedBlocks.push({
           sceneIndex: scene.sceneIndex,
           images: blobbed,
+          imageUrls: blobbed,
           references: referenceCharacterUrl ? [referenceCharacterUrl] : [],
-          prompt: scene.scenePrompt,
-          duration: scene.duration,
-          sceneVideoUrl: "",
-          detectedType: "",
           characterLocked: !!referenceCharacterUrl,
           referenceCharacterUrl: referenceCharacterUrl || "",
+          detectedType: "",
           backgroundStatus: "not_removed",
+          prompt: scene.scenePrompt,
+          duration: 8,
+          sceneVideoUrl: "",
         });
       }
 
@@ -1357,20 +1488,114 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const updated = currentImages.map((item: any) =>
         Number(item?.sceneIndex) === sceneIndex
           ? {
-            ...item,
-            images: (generated.imageUrls || []).slice(0, 2),
-            references: Array.isArray(item?.references) ? item.references : [],
-            prompt: s(targetScene?.scenePrompt).trim() || s(item?.prompt).trim(),
-            duration: Number(targetScene?.duration || 0) || Number(item?.duration || 0) || 8,
-            sceneVideoUrl: s(item?.sceneVideoUrl).trim(),
-            detectedType: s(item?.detectedType).trim(),
-            backgroundStatus: item?.backgroundStatus || "not_removed",
-          }
+              ...item,
+              images: (generated.imageUrls || []).slice(0, 2),
+              imageUrls: (generated.imageUrls || []).slice(0, 2),
+              references: Array.isArray(item?.references) ? item.references : [],
+              prompt: s(targetScene?.scenePrompt).trim() || s(item?.prompt).trim(),
+              sceneVideoUrl: s(item?.sceneVideoUrl).trim(),
+              detectedType: s(item?.detectedType).trim(),
+              backgroundStatus: item?.backgroundStatus || "not_removed",
+              duration: 8,
+            }
           : item,
       );
       const next = saveWorkflowPatch(workflow, {
         currentStep: "storyboardImages",
         outputs: { storyboardImages: updated, storyboardConfirmed: false },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowgeneratesceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
+
+      const imagePrompt = buildStoryboardImagePrompt({
+        scenePrompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        environment: s(targetScene.environment).trim(),
+        character: s(targetScene.character).trim(),
+        camera: s(targetScene.camera).trim(),
+        mood: s(targetScene.mood).trim(),
+        lighting: s(targetScene.lighting).trim(),
+        action: s(targetScene.action).trim(),
+        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
+        referenceImageMode: "reference-image",
+      });
+
+      const generated = await generateImageWithBanana({
+        prompt: imagePrompt,
+        numImages: 2,
+        aspectRatio: "16:9",
+        imageSize: "1536x864",
+      });
+
+      const generatedImages = (generated.imageUrls || []).slice(0, 2);
+      const existing = currentImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      const nextItem = {
+        ...(existing || {}),
+        sceneIndex,
+        images: generatedImages,
+        imageUrls: generatedImages,
+        prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+      };
+      const storyboardImages = currentImages.some((item: any) => Number(item?.sceneIndex) === sceneIndex)
+        ? currentImages.map((item: any) => Number(item?.sceneIndex) === sceneIndex ? nextItem : item)
+        : [...currentImages, nextItem].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          storyboardImages,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next });
+    }
+
+    if (opNormalized === "workflowuploadsceneimage") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const imageUrl = s(b.imageUrl).trim();
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (!imageUrl) return res.status(400).json(fail("imageUrl is required"));
+
+      const current = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const existing = current.find((x: any) => Number(x?.sceneIndex) === sceneIndex);
+      const nextItem = {
+        ...(existing || {}),
+        sceneIndex,
+        images: [imageUrl],
+        imageUrls: [imageUrl],
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        prompt: s(existing?.prompt).trim(),
+        duration: 8,
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+      };
+      const storyboardImages = current.some((x: any) => Number(x?.sceneIndex) === sceneIndex)
+        ? current.map((x: any) => Number(x?.sceneIndex) === sceneIndex ? nextItem : x)
+        : [...current, nextItem].sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          storyboardImages,
+          storyboardConfirmed: false,
+        },
       });
       return res.status(200).json({ ok: true, workflow: next });
     }
@@ -1657,9 +1882,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      if (!workflow.outputs?.storyboardConfirmed) {
-        return res.status(400).json(fail("storyboard must be confirmed before video generation"));
-      }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
@@ -1711,82 +1933,113 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json(fail("reference image is required before video generation"));
       }
 
-      const fallbackRefs = Array.isArray(workflow.outputs?.referenceImages) ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean) : [];
+      const fallbackRefs = Array.isArray(workflow.outputs?.referenceImages)
+        ? workflow.outputs.referenceImages.map((x: any) => s(x).trim()).filter(Boolean)
+        : [];
       const imageUrls = Array.from(new Set([referenceImageUrl, ...referenceCandidates.slice(1), ...fallbackRefs])).slice(0, 3);
-      const falKey = s(process.env.FAL_KEY || process.env.FAL_API_KEY).trim();
-      if (!falKey) return res.status(500).json(fail("missing_env_FAL_KEY"));
       const requestedResolution = s(b.resolution || "720p").trim().toLowerCase();
       const duration = "8s";
       const resolution = ["720p", "1080p", "4k"].includes(requestedResolution)
         ? requestedResolution
         : "720p";
 
-      const createResp = await fetchJson("https://queue.fal.run/fal-ai/veo3.1/reference-to-video", {
-        method: "POST",
-        headers: {
-          Authorization: `Key ${falKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prompt,
-          image_urls: imageUrls,
-          aspect_ratio: "16:9",
-          duration,
-          resolution,
-          generate_audio: false,
-          safety_tolerance: "4",
-        }),
+      const generated = await generateVideoWithVeo({
+        scenePrompt: prompt,
+        referenceImages: imageUrls,
+        imageUrls,
       });
-      const requestId = s(createResp.json?.request_id || createResp.json?.requestId || createResp.json?.id).trim();
-      const statusUrl = s(createResp.json?.status_url).trim();
-      const responseUrl = s(createResp.json?.response_url).trim();
-      if (!createResp.ok || !requestId) {
-        const message = s(createResp.json?.detail || createResp.json?.error || createResp.rawText || "fal_veo_create_failed").trim();
-        const failed = saveWorkflowPatch(workflow, {
-          currentStep: "error",
-          status: "failed",
-          outputs: {
-            videoProvider: "fal",
-            videoModel: "fal-ai/veo3.1/reference-to-video",
-            videoErrorMessage: message || "fal_veo_create_failed",
-          },
-        });
-        return res.status(502).json({ ok: false, error: message || "fal_veo_create_failed", workflow: failed });
+      if (!generated.videoUrl) {
+        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "video generation failed"));
       }
 
-      const queued = saveWorkflowPatch(workflow, {
+      const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         status: "running",
         outputs: {
-          falRequestId: requestId,
-          statusUrl,
-          responseUrl,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",
-          videoTaskStatus: "IN_QUEUE",
-          videoQueuedAt: Date.now(),
-          videoRetryable: false,
-          videoUrl: undefined,
+          videoUrl: generated.videoUrl,
           finalVideoUrl: undefined,
           videoDuration: duration,
           videoResolution: resolution,
-          videoAudioEnabled: false,
+          videoTaskStatus: generated.isFallback ? "COMPLETED_WITH_FALLBACK" : "COMPLETED",
           referenceCharacterUrl: s(workflow.outputs?.referenceCharacterUrl).trim() || referenceImageUrl,
           referenceImages: Array.from(new Set([...(workflow.outputs?.referenceImages || []), ...imageUrls])),
-          videoErrorMessage: "",
+          videoErrorMessage: generated.errorMessage || "",
         },
       });
       return res.status(200).json({
         ok: true,
-        workflow: queued,
-        taskId: requestId,
-        requestId,
+        workflow: next,
         provider: "fal",
         model: "fal-ai/veo3.1/reference-to-video",
-        taskStatus: "IN_QUEUE",
+        taskStatus: generated.isFallback ? "COMPLETED_WITH_FALLBACK" : "COMPLETED",
+        videoUrl: generated.videoUrl,
         duration,
         resolution,
       });
+    }
+
+    if (opNormalized === "workflowgeneratescenevideo") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+
+      const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
+      const targetImageBundle = storyboardImages.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
+      const imageUrl = s(
+        targetImageBundle?.referenceCharacterUrl ||
+        targetImageBundle?.characterPngUrl ||
+        (Array.isArray(targetImageBundle?.images) ? targetImageBundle.images[0] : "") ||
+        (Array.isArray(targetImageBundle?.imageUrls) ? targetImageBundle.imageUrls[0] : ""),
+      ).trim();
+      if (!imageUrl) return res.status(400).json(fail("scene image is required before video generation"));
+
+      const prompt = buildVideoPrompt({
+        scenePrompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
+        character: s(targetScene.character).trim(),
+        action: s(targetScene.action).trim(),
+        camera: s(targetScene.camera).trim(),
+        mood: s(targetScene.mood).trim(),
+        lighting: s(targetScene.lighting).trim(),
+        sceneDuration: 8,
+        lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
+      });
+      const generated = await generateVideoWithVeo({
+        scenePrompt: prompt,
+        referenceImages: [imageUrl],
+        imageUrls: [imageUrl],
+      });
+      if (!generated.videoUrl) {
+        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
+      }
+
+      const nextStoryboardImages = storyboardImages.map((item: any) =>
+        Number(item?.sceneIndex) === sceneIndex
+          ? {
+              ...item,
+              sceneVideoUrl: generated.videoUrl,
+              prompt: s(item?.prompt).trim() || s(targetScene.scenePrompt || targetScene.prompt).trim(),
+              duration: 8,
+              videoProvider: "fal",
+              videoModel: "fal-ai/veo3.1/reference-to-video",
+            }
+          : item,
+      );
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "video",
+        outputs: {
+          storyboardImages: nextStoryboardImages,
+          storyboardConfirmed: false,
+          videoProvider: "fal",
+          videoModel: "fal-ai/veo3.1/reference-to-video",
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: generated.videoUrl });
     }
 
     if (opNormalized === "workflowgeneratevoice") {
@@ -1909,46 +2162,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowrendervideo" || opNormalized === "workflowrenderfinalvideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      const rawSceneVideos = Array.isArray(workflow.outputs?.sceneVideos) ? workflow.outputs.sceneVideos : [];
-      const sceneVideos = rawSceneVideos
-        .filter((x: any) => String(x?.url || "").trim())
-        .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
-        .map((x: any) => ({
-          url: String(x?.url || "").trim(),
-          duration: x?.duration || workflow.outputs?.sceneDuration || 8,
-        }));
-
-      if (!sceneVideos.length) {
-        return res.status(400).json(fail("sceneVideos are required before render"));
-      }
-
-      const musicUrl = s(
-        b.musicUrl ||
-        workflow.outputs?.musicUrl ||
-        workflow.outputs?.generatedMusicUrl ||
-        workflow.outputs?.music?.url ||
-        "",
-      ).trim();
-
-      const voiceUrl = s(
-        b.voiceUrl ||
-        workflow.outputs?.voiceUrl ||
-        workflow.outputs?.generatedVoiceUrl ||
-        workflow.outputs?.voice?.url ||
-        "",
-      ).trim();
-
       const transition = s(b.transition || workflow.outputs?.transition || "cut").trim().toLowerCase() || "cut";
       const resolution = s(b.resolution || workflow.outputs?.resolution || "1080p").trim() || "1080p";
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const sceneVideos = storyboardImages
+        .filter((item: any) => s(item?.sceneVideoUrl).trim())
+        .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
+        .map((item: any) => ({
+          sceneIndex: Number(item?.sceneIndex || 0),
+          url: s(item?.sceneVideoUrl).trim(),
+          duration: item?.duration || workflow.outputs?.sceneDuration || 8,
+        }));
+      const videoUrl = s(workflow.outputs?.videoUrl).trim();
+      if (!sceneVideos.length && !videoUrl) return res.status(400).json(fail("sceneVideos are required before render"));
 
-      const finalVideoUrl = await renderWorkflowFinalVideo({
-        sceneVideos,
-        musicUrl: musicUrl || undefined,
-        voiceUrl: voiceUrl || undefined,
-        transition,
-        resolution,
-      });
-
+      let finalVideoUrl = videoUrl;
+      if (sceneVideos.length) {
+        finalVideoUrl = await renderWorkflowFinalVideo({
+          sceneVideos,
+          musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || workflow.outputs?.music?.url || "").trim() || undefined,
+          voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || workflow.outputs?.voice?.url || "").trim() || undefined,
+          transition,
+          resolution,
+        });
+      }
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
