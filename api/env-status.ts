@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getEnvStatus } from "./_core/env.js";
+import { getEnvStatus } from "../server/vercel-api-core/env.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "GET") {

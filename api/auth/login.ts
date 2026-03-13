@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { buildSessionCookie, signSession } from "./_session.js";
+import { buildSessionCookie, signSession } from "../../server/vercel-auth/session.js";
 
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {

@@ -19,6 +19,17 @@ async function parseJsonSafe(resp: Response) {
   }
 }
 
+function serializeFalError(value: any) {
+  if (value == null) return "";
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Error) return `${value.name}: ${value.message}`.trim();
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value).trim();
+  }
+}
+
 async function waitForFalVideoResult(requestId: string, key: string) {
   const safeRequestId = encodeURIComponent(String(requestId || "").trim());
   if (!safeRequestId) throw new Error("missing_fal_request_id");
@@ -30,9 +41,13 @@ async function waitForFalVideoResult(requestId: string, key: string) {
     });
     const statusBody = await parseJsonSafe(statusResp);
     if (!statusResp.ok) {
-      throw new Error(
-        String(statusBody?.json?.detail || statusBody?.json?.error || statusBody?.text || `fal_status_${statusResp.status}`).trim()
-      );
+      throw new Error([
+        `fal_status_${statusResp.status}`,
+        serializeFalError(statusBody?.json?.detail),
+        serializeFalError(statusBody?.json?.error),
+        serializeFalError(statusBody?.json),
+        serializeFalError(statusBody?.text),
+      ].filter(Boolean).join(" | "));
     }
 
     const status = String(
@@ -49,23 +64,25 @@ async function waitForFalVideoResult(requestId: string, key: string) {
       });
       const resultBody = await parseJsonSafe(resultResp);
       if (!resultResp.ok) {
-        throw new Error(
-          String(resultBody?.json?.detail || resultBody?.json?.error || resultBody?.text || `fal_result_${resultResp.status}`).trim()
-        );
+        throw new Error([
+          `fal_result_${resultResp.status}`,
+          serializeFalError(resultBody?.json?.detail),
+          serializeFalError(resultBody?.json?.error),
+          serializeFalError(resultBody?.json),
+          serializeFalError(resultBody?.text),
+        ].filter(Boolean).join(" | "));
       }
       return resultBody.json;
     }
 
     if (status === "FAILED" || status === "ERROR" || status === "CANCELLED") {
-      throw new Error(
-        String(
-          statusBody?.json?.error ||
-          statusBody?.json?.detail ||
-          statusBody?.json?.message ||
-          status ||
-          "fal_request_failed"
-        ).trim()
-      );
+      throw new Error([
+        `fal_request_${status.toLowerCase()}`,
+        serializeFalError(statusBody?.json?.error),
+        serializeFalError(statusBody?.json?.detail),
+        serializeFalError(statusBody?.json?.message),
+        serializeFalError(statusBody?.json),
+      ].filter(Boolean).join(" | "));
     }
 
     await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -156,13 +173,14 @@ export async function generateVideoWithVeo(input: {
         provider: "fal",
         model: "fal-ai/veo3.1/reference-to-video",
         isFallback: true,
-        errorMessage: String(
-          createBody?.json?.detail ||
-          createBody?.json?.error ||
-          createBody?.json?.message ||
-          createBody?.text ||
-          `fal_create_${createResp.status}`
-        ).trim(),
+        errorMessage: [
+          `fal_create_${createResp.status}`,
+          serializeFalError(createBody?.json?.detail),
+          serializeFalError(createBody?.json?.error),
+          serializeFalError(createBody?.json?.message),
+          serializeFalError(createBody?.json),
+          serializeFalError(createBody?.text),
+        ].filter(Boolean).join(" | "),
       };
     }
 

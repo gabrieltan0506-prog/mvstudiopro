@@ -338,7 +338,7 @@ async function generateStoryboardImages(storyboard: Array<{ sceneIndex: number; 
 }
 
 async function callWorkflowModelApi(payload: Record<string, any>) {
-  const mod = await import("../jobs.js");
+  const mod = await import("../../api/jobs.js");
   const handler = mod.default;
   const req: any = { method: "POST", body: payload, query: {}, headers: { "content-type": "application/json" } };
   const res: any = {

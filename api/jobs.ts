@@ -3,14 +3,14 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
-import { env, getEnvStatus } from "./_core/env.js";
-import { renderWorkflowFinalVideo } from "./_core/render.js";
-import { generateImageWithBanana } from "./_core/banana.js";
+import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
+import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
+import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
 import {
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
-} from "./_core/workflow.js";
+} from "../server/vercel-api-core/workflow.js";
 import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
@@ -66,6 +66,45 @@ async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
   if (!buf.length) throw new Error("empty_image");
   if (buf.length > 10 * 1024 * 1024) throw new Error("image_too_large");
   return buf;
+}
+
+async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workflow-scene") {
+  const sourceUrl = s(imageUrl).trim();
+  if (!sourceUrl) throw new Error("missing_image_url");
+
+  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
+
+  const raw = await fetchImageBuffer(sourceUrl);
+  let out = await sharp(raw, { failOnError: false })
+    .rotate()
+    .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 84, mozjpeg: true })
+    .toBuffer();
+
+  if (out.length > 10 * 1024 * 1024) {
+    out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
+  }
+  if (out.length > 10 * 1024 * 1024) {
+    throw new Error("image_too_large_after_compress");
+  }
+
+  const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-scene";
+  const blob = await put(`refs/${Date.now()}-${safeName}.jpg`, out, {
+    access: "public",
+    token,
+    contentType: "image/jpeg",
+  });
+  return s(blob.url).trim();
+}
+
+async function uploadWorkflowImagesToBlob(imageUrls: string[], filenameBase: string) {
+  const urls = Array.isArray(imageUrls) ? imageUrls.map((url) => s(url).trim()).filter(Boolean) : [];
+  const uploaded: string[] = [];
+  for (let i = 0; i < urls.length; i += 1) {
+    uploaded.push(await uploadWorkflowImageToBlob(urls[i], `${filenameBase}-${i + 1}`));
+  }
+  return uploaded;
 }
 
 function computeScaledSize(w0:number,h0:number,maxEdge:number){
@@ -829,10 +868,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           aspectRatio: "16:9",
           imageSize: "1536x864",
         });
+        const uploadedImages = await uploadWorkflowImagesToBlob(
+          (generated.imageUrls || []).slice(0, 2),
+          `storyboard-scene-${scene.sceneIndex}`
+        );
         results.push({
           sceneIndex: scene.sceneIndex,
-          images: (generated.imageUrls || []).slice(0, 2),
-          imageUrls: (generated.imageUrls || []).slice(0, 2),
+          images: uploadedImages,
+          imageUrls: uploadedImages,
           prompt: scene.scenePrompt,
           duration: 8,
           sceneVideoUrl: "",
@@ -879,11 +922,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         aspectRatio: "16:9",
         imageSize: "1536x864",
       });
+      const uploadedImages = await uploadWorkflowImagesToBlob(
+        (generated.imageUrls || []).slice(0, 2),
+        `storyboard-scene-${sceneIndex}`
+      );
       const updated = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
         ...(existing || {}),
         sceneIndex,
-        images: (generated.imageUrls || []).slice(0, 2),
-        imageUrls: (generated.imageUrls || []).slice(0, 2),
+        images: uploadedImages,
+        imageUrls: uploadedImages,
         prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
         duration: 8,
         sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
@@ -925,13 +972,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         aspectRatio: "16:9",
         imageSize: "1536x864",
       });
+      const uploadedImages = await uploadWorkflowImagesToBlob(
+        (generated.imageUrls || []).slice(0, 2),
+        `storyboard-scene-${sceneIndex}`
+      );
 
       const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => ({
         ...(existing || {}),
         sceneIndex,
-        images: (generated.imageUrls || []).slice(0, 2),
-        imageUrls: (generated.imageUrls || []).slice(0, 2),
+        images: uploadedImages,
+        imageUrls: uploadedImages,
         prompt: s(targetScene.scenePrompt || targetScene.prompt).trim(),
         duration: 8,
         sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
