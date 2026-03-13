@@ -9,7 +9,7 @@ export function buildVoicePrompt(input: {
   return [
     `${language}旁白。`,
     `风格：${style}。`,
-    "声音要求：低沉、清晰、富有张力、节奏稳定、情绪推进明确。",
+    "声音要求：咬字清晰、节奏稳定、情绪推进明确，严格贴合角色类型与风格要求。",
     "适配电影级叙事与预告片表达。",
   ].join(" ");
 }

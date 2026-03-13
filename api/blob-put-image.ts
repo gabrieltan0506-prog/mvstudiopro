@@ -38,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let out = await sharp(raw, { failOnError: false })
       .rotate()
-      .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
+      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 84, mozjpeg: true })
       .toBuffer();
 

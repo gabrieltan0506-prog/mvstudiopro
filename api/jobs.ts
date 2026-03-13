@@ -84,7 +84,7 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
   const raw = await fetchImageBuffer(sourceUrl);
   let out = await sharp(raw, { failOnError: false })
     .rotate()
-    .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
+    .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
     .jpeg({ quality: 84, mozjpeg: true })
     .toBuffer();
 
@@ -759,7 +759,7 @@ function mapSceneVoiceTypeToVoice(voiceType: string) {
   const normalized = s(voiceType).trim().toLowerCase();
   if (normalized === "male") return "onyx";
   if (normalized === "cartoon") return "echo";
-  return "alloy";
+  return "shimmer";
 }
 
 function buildSceneVoiceStyleText(scene: any, overrideStyle?: string) {
@@ -768,6 +768,9 @@ function buildSceneVoiceStyleText(scene: any, overrideStyle?: string) {
   const descriptors = [
     `旁白角色类型：${voiceType}`,
     baseStyle ? `情绪风格：${baseStyle}` : "",
+    voiceType === "male" ? "音色：成熟男声，低沉、有力、克制" : "",
+    voiceType === "cartoon" ? "音色：夸张卡通感，轻快、明亮、活泼" : "",
+    voiceType === "female" ? "音色：清晰女声，明亮、柔和、带电影感" : "",
   ].filter(Boolean);
   return descriptors.join("，");
 }
@@ -1801,7 +1804,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex);
       if (!scene) return res.status(404).json(fail("scene not found"));
-      if (sceneNeedsRenderStill(scene)) {
+      const effectiveScene = {
+        ...scene,
+        scenePrompt: s(b.scenePrompt || scene.scenePrompt).trim() || s(scene.scenePrompt).trim(),
+        primarySubject: s(b.primarySubject || scene.primarySubject || scene.character).trim() || s(scene.primarySubject || scene.character).trim(),
+        character: s(b.character || scene.character).trim() || s(scene.character).trim(),
+        action: s(b.action || scene.action).trim() || s(scene.action).trim(),
+        camera: s(b.camera || scene.camera).trim() || s(scene.camera).trim(),
+        mood: s(b.mood || scene.mood).trim() || s(scene.mood).trim(),
+        lighting: s(b.lighting || scene.lighting).trim() || s(scene.lighting).trim(),
+      };
+      if (sceneNeedsRenderStill(effectiveScene)) {
         return res.status(409).json(fail(
           "multi-character scenes must use render stills instead of AI scene video generation",
           "此分镜检测为多角色或多人场景，请改为上传或生成静态展示图，最终在 Render 阶段插入。",
@@ -1818,7 +1831,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!characterImageUrl) return res.status(400).json(fail("character image is required before scene video generation"));
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
-      const prompt = simplifySceneVideoPrompt(scene);
+      const prompt = simplifySceneVideoPrompt(effectiveScene);
       const generated = await generateVideoWithVeo({
         scenePrompt: prompt,
         referenceImages,
@@ -1829,7 +1842,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-        prompt: s(scene?.scenePrompt).trim(),
+        prompt: s(effectiveScene?.scenePrompt).trim(),
         duration: 8,
         sceneVideoUrl: s(generated.videoUrl).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
@@ -1841,7 +1854,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         currentStep: "video",
         outputs: {
           script: s(b.script || workflow.outputs?.script).trim(),
-          storyboard,
+          storyboard: storyboard.map((item: any) =>
+            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
+          ),
           storyboardImages: nextStoryboardImages,
           videoProvider: "fal",
           videoModel: "fal-ai/veo3.1/reference-to-video",

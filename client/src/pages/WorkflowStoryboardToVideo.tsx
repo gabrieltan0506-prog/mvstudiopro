@@ -205,7 +205,7 @@ function mapSceneVoiceTypeToVoice(voiceType: string) {
   const normalized = String(voiceType || "").trim().toLowerCase();
   if (normalized === "male") return "onyx";
   if (normalized === "cartoon") return "echo";
-  return "alloy";
+  return "shimmer";
 }
 
 async function postJson(op: string, body: Record<string, any>) {
@@ -544,10 +544,21 @@ export default function WorkflowStoryboardToVideo() {
       setRenderStillWarningScene(Number(scene.sceneIndex || 0));
       return;
     }
+    const sceneVoiceType = getSceneVoiceTypeValue(scene);
+    const sceneVoiceStyle = getSceneVoiceStyleValue(scene);
     void runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", {
       workflowId,
       sceneIndex: scene.sceneIndex,
       duration: "8s",
+      scenePrompt: String(scene.scenePrompt || "").trim(),
+      primarySubject: String(scene.primarySubject || scene.character || "").trim(),
+      character: String(scene.character || "").trim(),
+      action: String(scene.action || "").trim(),
+      camera: String(scene.camera || "").trim(),
+      mood: String(scene.mood || "").trim(),
+      lighting: String(scene.lighting || "").trim(),
+      voiceType: String(sceneVoiceType || "female").trim() || "female",
+      voiceStyle: String(sceneVoiceStyle || "").trim(),
     });
   }
 
@@ -768,55 +779,10 @@ export default function WorkflowStoryboardToVideo() {
           {scenes.map((scene, idx) => (
             <div key={scene.sceneIndex || idx} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(255,255,255,0.10)" }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>Scene {scene.sceneIndex || idx + 1}</div>
-              <textarea
-                value={scene.scenePrompt}
-                onChange={(e) => {
-                  const next = [...scenes];
-                  next[idx] = { ...scene, scenePrompt: e.target.value, duration: 8 };
-                  setStoryboardDirty(true);
-                  setStoryboard(next);
-                }}
-                rows={3}
-                placeholder="scenePrompt"
-                style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-              />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
-                <input value="8" readOnly placeholder="duration" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.08)", color: "white" }} />
-                <input
-                  value={scene.camera}
-                  onChange={(e) => {
-                    const next = [...scenes];
-                    next[idx] = { ...scene, camera: e.target.value };
-                    setStoryboardDirty(true);
-                    setStoryboard(next);
-                  }}
-                  placeholder="camera"
-                  style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-                />
-                <input
-                  value={scene.mood}
-                  onChange={(e) => {
-                    const next = [...scenes];
-                    next[idx] = { ...scene, mood: e.target.value };
-                    setStoryboardDirty(true);
-                    setStoryboard(next);
-                  }}
-                  placeholder="mood"
-                  style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-                />
+              <div style={{ fontSize: 14, lineHeight: 1.6, opacity: 0.92 }}>{scene.scenePrompt || "-"}</div>
+              <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
+                主体：{scene.primarySubject || scene.character || "-"} / 时长：8 秒 / 如需编辑视频 prompt、旁白、render still，请在下方 `D. Scene Editor` 中修改。
               </div>
-              <textarea
-                value={scene.voiceover || ""}
-                onChange={(e) => {
-                  const next = [...scenes];
-                  next[idx] = { ...scene, voiceover: e.target.value };
-                  setStoryboardDirty(true);
-                  setStoryboard(next);
-                }}
-                rows={2}
-                placeholder="scene voice text"
-                style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
-              />
             </div>
           ))}
         </div>
@@ -859,10 +825,8 @@ export default function WorkflowStoryboardToVideo() {
             return (
               <div key={String(scene.sceneIndex)} style={{ padding: 10, borderRadius: 10, background: "rgba(0,0,0,0.3)" }}>
                 <div style={{ fontWeight: 700 }}>Scene {scene.sceneIndex}</div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Prompt: <code>{scene.scenePrompt || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Primary Subject: <code>{scene.primarySubject || scene.character || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Render Still Needed: <code>{String(Boolean(scene.renderStillNeeded))}</code></div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Render Still Prompt: <code>{scene.renderStillPrompt || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Character Image: <code>{String(characterImageUrls[0] || "")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Images: <code>{String(sceneImageUrls.length)}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Selected Scene Image: <code>{selectedSceneImageUrl || "-"}</code></div>
@@ -871,6 +835,24 @@ export default function WorkflowStoryboardToVideo() {
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Type: <code>{String(item.sceneVoiceType || scene.voiceType || "-")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Style: <code>{String(item.sceneVoiceStyle || scene.voiceStyle || "-")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Engine Voice: <code>{String(item.sceneVoiceVoice || "-")}</code></div>
+                <div style={{ marginTop: 10, fontWeight: 600 }}>Scene Prompt</div>
+                <textarea
+                  value={scene.scenePrompt || ""}
+                  onChange={(e) => {
+                    const nextValue = e.target.value;
+                    setStoryboardDirty(true);
+                    setStoryboard((prev) =>
+                      prev.map((entry) =>
+                        Number(entry.sceneIndex) === Number(scene.sceneIndex)
+                          ? { ...entry, scenePrompt: nextValue }
+                          : entry,
+                      ),
+                    );
+                  }}
+                  rows={3}
+                  placeholder="Per-scene video prompt"
+                  style={{ width: "100%", marginTop: 8, padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
+                />
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Render Still Prompt</div>
                 <textarea
                   value={renderStillPromptValue}
@@ -1024,32 +1006,6 @@ export default function WorkflowStoryboardToVideo() {
                       }}
                     />
                   </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}>
-                    <span>{uploadingAssetKey === `${scene.sceneIndex}:renderstill` ? "Uploading..." : "Upload Render Still"}</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      style={{ display: "none" }}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "renderstill");
-                        e.currentTarget.value = "";
-                      }}
-                    />
-                  </label>
-                  <button
-                    onClick={() =>
-                      runAuxStep(`render-still-${scene.sceneIndex}`, "workflowGenerateRenderStill", {
-                        workflowId,
-                        sceneIndex: scene.sceneIndex,
-                        renderStillPrompt: renderStillPromptValue,
-                      })
-                    }
-                    disabled={!!auxBusyKey || !workflowId || !renderStillPromptValue.trim()}
-                    style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
-                  >
-                    {busyGenerateRenderStill ? "Generating..." : "Generate Render Still"}
-                  </button>
                   <button
                     onClick={() => requestSceneVoiceGeneration(scene)}
                     disabled={!!auxBusyKey || !workflowId || !String(scene.voiceover || scene.scenePrompt || "").trim()}
@@ -1064,6 +1020,37 @@ export default function WorkflowStoryboardToVideo() {
                   >
                     {busyGenerateVideo ? "Generating..." : "Generate Scene Video"}
                   </button>
+                </div>
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                  <div style={{ marginBottom: 8, fontWeight: 600 }}>Render Still</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}>
+                      <span>{uploadingAssetKey === `${scene.sceneIndex}:renderstill` ? "Uploading..." : "Upload Render Still"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: "none" }}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "renderstill");
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <button
+                      onClick={() =>
+                        runAuxStep(`render-still-${scene.sceneIndex}`, "workflowGenerateRenderStill", {
+                          workflowId,
+                          sceneIndex: scene.sceneIndex,
+                          renderStillPrompt: renderStillPromptValue,
+                        })
+                      }
+                      disabled={!!auxBusyKey || !workflowId || !renderStillPromptValue.trim()}
+                      style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white" }}
+                    >
+                      {busyGenerateRenderStill ? "Generating..." : "Generate Render Still"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
