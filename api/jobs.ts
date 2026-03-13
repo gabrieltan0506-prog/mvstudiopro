@@ -4,12 +4,14 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
+import { renderWorkflowFinalVideo } from "./_core/render.js";
 import { generateImageWithBanana } from "./_core/banana.js";
 import {
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
   type WorkflowTask,
 } from "./_core/workflow.js";
+import { generateVideoWithVeo } from "../server/models/veo.js";
 import { buildScriptPrompt } from "../server/workflow/prompts/scriptPrompt.js";
 import { buildStoryboardPrompt } from "../server/workflow/prompts/storyboardPrompt.js";
 import { buildStoryboardImagePrompt } from "../server/workflow/prompts/storyboardImagePrompt.js";
@@ -1175,9 +1177,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const sceneIndex = Number(b.sceneIndex || 0);
       if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
-      if (!VAK || !VSK || !IAK || !ISK) {
-        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
-      }
 
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
@@ -1201,23 +1200,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sceneDuration: 8,
         lockedCharacterPrompt: s(workflow.outputs?.lockedCharacterPrompt).trim() || undefined,
       });
-      const model = s(b.model || "kling-v2-6").trim() || "kling-v2-6";
-      const videoToken = jwtHS256(VAK, VSK);
-      const imageToken = jwtHS256(IAK, ISK);
-      const created = await createKlingI2VTask(
-        KLING_BASE,
-        videoToken,
-        imageToken,
-        imageUrl,
-        prompt,
-        model,
-        "8"
-      );
-      if (!created.taskId) {
-        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+      const generated = await generateVideoWithVeo({
+        scenePrompt: prompt,
+        referenceImages: [imageUrl],
+        imageUrls: [imageUrl],
+      });
+      if (!generated.videoUrl) {
+        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
       }
-      const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
-      if (!polled.ok) return res.status(502).json(fail(String(polled.error || "scene video generation failed")));
 
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => ({
         ...(existing || {}),
@@ -1226,7 +1216,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageUrls: Array.isArray(existing?.imageUrls) ? existing.imageUrls : (Array.isArray(existing?.images) ? existing.images : []),
         prompt: s(scene?.scenePrompt || scene?.prompt).trim(),
         duration: 8,
-        sceneVideoUrl: s(polled.videoUrl).trim(),
+        sceneVideoUrl: s(generated.videoUrl).trim(),
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
@@ -1236,12 +1226,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         currentStep: "video",
         outputs: {
           storyboardImages: nextStoryboardImages,
-          videoProvider: "kling",
-          videoModel: model,
-          videoErrorMessage: "",
+          videoProvider: "fal",
+          videoModel: "fal-ai/veo3.1/reference-to-video",
+          videoErrorMessage: generated.errorMessage || "",
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: polled.videoUrl });
+      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: generated.videoUrl });
     }
 
     if (opNormalized === "workflowgeneratevoice") {
@@ -1349,20 +1339,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           url: s(item?.sceneVideoUrl).trim(),
           duration: "8s",
         }));
-      const videoUrl = s(workflow.outputs?.videoUrl).trim() || s(sceneVideos[0]?.url).trim();
-      if (!videoUrl) return res.status(400).json(fail("videoUrl is required before render"));
+      if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
+      const finalVideoUrl = await renderWorkflowFinalVideo({
+        sceneVideos,
+        musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || "").trim() || undefined,
+        voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || "").trim() || undefined,
+      });
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
         status: "done",
         outputs: {
-          finalVideoUrl: videoUrl,
+          finalVideoUrl,
           sceneVideos,
           renderProvider: "workflow-render",
           renderIsFallback: false,
           renderErrorMessage: "",
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, finalVideoUrl });
     }
 
     if (opNormalized === "generatevoice") {
