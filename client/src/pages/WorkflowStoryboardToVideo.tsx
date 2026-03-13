@@ -157,19 +157,35 @@ function getCombinedAssetUrls(bundle: any): string[] {
   return [...getSceneImageUrls(bundle), ...getCharacterImageUrls(bundle)].filter(Boolean);
 }
 
+function isVercelBlobUrl(url: string) {
+  return /\.blob\.vercel-storage\.com\//i.test(String(url || ""));
+}
+
+function toAssetDisplayUrl(url: string) {
+  const normalized = String(url || "").trim();
+  if (!normalized) return "";
+  if (!isVercelBlobUrl(normalized)) return normalized;
+  return `/api/jobs?op=blobMedia&url=${encodeURIComponent(normalized)}`;
+}
+
 function buildMusicPromptSeedFromScenes(scenes: Scene[]) {
-  const source = scenes
-    .slice(0, 6)
-    .map((scene) => [
-      scene.mood?.trim() ? `情绪:${scene.mood.trim()}` : "",
-      scene.lighting?.trim() ? `光影:${scene.lighting.trim()}` : "",
-      scene.camera?.trim() ? `镜头:${scene.camera.trim()}` : "",
-      scene.scenePrompt?.trim(),
-    ].filter(Boolean).join("，"))
-    .filter(Boolean)
-    .join("；");
-  if (!source) return "";
-  return `电影配乐，主旋律清晰，纯音乐，无人声，${source}`.slice(0, 380);
+  const joined = scenes.slice(0, 4).map((scene) => scene.scenePrompt?.trim() || "").join(" ");
+  const moodText = scenes.slice(0, 4).map((scene) => scene.mood?.trim() || "").join(" ");
+  const combined = `${joined} ${moodText}`;
+  const style =
+    /(间谍|特工|潜行|追逐|杀手)/.test(combined) ? "间谍电影风格" :
+    /(拉丁|热带|舞蹈|海边)/.test(combined) ? "拉丁电影风格" :
+    "电影配乐";
+  const mood =
+    /(紧张|惊险|悬疑|危机|追逐)/.test(combined) ? "紧张悬疑" :
+    /(浪漫|温柔|治愈)/.test(combined) ? "温柔抒情" :
+    /(悲伤|孤独|诀别)/.test(combined) ? "伤感克制" :
+    "电影感推进";
+  const instrumentation =
+    /(紧张|惊险|悬疑|危机|追逐)/.test(combined)
+      ? "管弦乐与电子脉冲，钢琴主旋律"
+      : "弦乐与钢琴主旋律";
+  return `${style}，${mood}，${instrumentation}，纯音乐，无人声。`.slice(0, 100);
 }
 
 async function postJson(op: string, body: Record<string, any>) {
@@ -285,6 +301,7 @@ export default function WorkflowStoryboardToVideo() {
   const outputs = workflow?.outputs || {};
   const scenes: Scene[] = Array.isArray(storyboard) ? storyboard : [];
   const storyboardImages: SceneImages[] = Array.isArray(outputs.storyboardImages) ? outputs.storyboardImages : [];
+  const storyboardImageWarnings: string[] = Array.isArray(outputs.storyboardImageWarnings) ? outputs.storyboardImageWarnings : [];
   const sceneBundlesByIndex = useMemo(
     () =>
       Object.fromEntries(
@@ -466,7 +483,7 @@ export default function WorkflowStoryboardToVideo() {
 
   function exportStoryboardImage(imageUrl: string) {
     const a = document.createElement("a");
-    a.href = imageUrl;
+    a.href = toAssetDisplayUrl(imageUrl);
     a.target = "_blank";
     a.rel = "noreferrer";
     a.download = `storyboard-${Date.now()}.jpg`;
@@ -722,6 +739,9 @@ export default function WorkflowStoryboardToVideo() {
         <div style={{ marginTop: 8, fontSize: 13, opacity: 0.85 }}>Each scene generates one character image plus one to two scene images. Multi-person moments should be handled as render stills, not AI scene videos.</div>
         {stepStates.generateStoryboardImages.success ? <div style={statusTextStyle("#84f5a0")}>Scene assets generated successfully.</div> : null}
         {stepStates.generateStoryboardImages.error ? <div style={statusTextStyle("#ff8080")}>Storyboard Images Error: {stepStates.generateStoryboardImages.error}</div> : null}
+        {storyboardImageWarnings.length ? (
+          <div style={statusTextStyle("#ffdd99")}>Scene Asset Warnings: {storyboardImageWarnings.join(" | ")}</div>
+        ) : null}
       </div>
 
       <div style={sectionStyle()}>
@@ -757,6 +777,8 @@ export default function WorkflowStoryboardToVideo() {
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Selected Scene Image: <code>{selectedSceneImageUrl || "-"}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Render Still Image: <code>{String(item.renderStillImageUrl || "")}</code></div>
                 <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice URL: <code>{String(item.sceneVoiceUrl || "")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Type: <code>{String(item.sceneVoiceType || scene.voiceType || "-")}</code></div>
+                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.88 }}>Scene Voice Style: <code>{String(item.sceneVoiceStyle || scene.voiceStyle || "-")}</code></div>
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Render Still Prompt</div>
                 <textarea
                   value={renderStillPromptValue}
@@ -770,7 +792,7 @@ export default function WorkflowStoryboardToVideo() {
                   <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 360px)", gap: 8, marginTop: 8 }}>
                     {characterImageUrls.map((url: string, idx: number) => (
                       <div key={`${scene.sceneIndex}-${idx}`}>
-                        <img src={url} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                        <img src={toAssetDisplayUrl(url)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                         <div style={{ marginTop: 8 }}>
                           <button type="button" onClick={() => exportStoryboardImage(url)}>Export Image</button>
                         </div>
@@ -793,7 +815,7 @@ export default function WorkflowStoryboardToVideo() {
                           cursor: "pointer",
                         }}
                       >
-                        <img src={url} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                        <img src={toAssetDisplayUrl(url)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                         <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button type="button" onClick={(e) => { e.stopPropagation(); selectSceneImage(Number(scene.sceneIndex || 0), url); }}>
                             {selectedSceneImageUrl === url ? "Selected" : "Use This Scene"}
@@ -811,7 +833,7 @@ export default function WorkflowStoryboardToVideo() {
                 ) : null}
                 {item.renderStillImageUrl ? (
                   <div style={{ marginTop: 10, maxWidth: 360 }}>
-                    <img src={String(item.renderStillImageUrl)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                    <img src={toAssetDisplayUrl(String(item.renderStillImageUrl))} style={{ width: "100%", borderRadius: 8, background: "black" }} />
                   </div>
                 ) : null}
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Scene Voice Text</div>
@@ -1047,13 +1069,13 @@ export default function WorkflowStoryboardToVideo() {
         <textarea
           value={musicPrompt}
           onChange={(e) => setMusicPrompt(e.target.value.slice(0, 400))}
-          maxLength={400}
+          maxLength={100}
           rows={3}
           placeholder="Music Prompt"
           style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }}
         />
         <div style={{ marginTop: 6, fontSize: 12, opacity: 0.78 }}>
-          {String(musicPrompt || "").length}/400 - 请简短描述音乐风格、主旋律和情绪，不要直接粘贴整段脚本。
+          {String(musicPrompt || "").length}/100 - 以音乐风格、情绪、主旋律和主乐器为主，剧情描述尽量不超过五句。
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 8 }}>
           <input value={musicMood} onChange={(e) => setMusicMood(e.target.value)} placeholder="Music Mood" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />

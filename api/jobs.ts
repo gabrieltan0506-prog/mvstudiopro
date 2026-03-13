@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { put } from "@vercel/blob";
+import { get, put } from "@vercel/blob";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
 import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
@@ -594,32 +594,46 @@ async function generateSceneAssetImages(scene: any, workflow: any) {
   const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
   const characterPrompt = buildCharacterReferenceImagePrompt(scene, lockedCharacterPrompt || undefined);
   const environmentPrompt = buildEnvironmentReferenceImagePrompt(scene);
+  const warnings: string[] = [];
 
-  const [characterGenerated, environmentGenerated] = await Promise.all([
-    generateImageWithBanana({
-      prompt: characterPrompt,
-      numImages: 1,
-      aspectRatio: "9:16",
-      imageSize: "1024x1536",
-    }),
-    generateImageWithBanana({
-      prompt: environmentPrompt,
-      numImages: 2,
-      aspectRatio: "16:9",
-      imageSize: "1536x864",
-    }),
-  ]);
+  const characterImagesPromise = (async () => {
+    try {
+      const characterGenerated = await generateImageWithBanana({
+        prompt: characterPrompt,
+        numImages: 1,
+        aspectRatio: "9:16",
+        imageSize: "1024x1536",
+      });
+      return await uploadWorkflowImagesToBlob(
+        (characterGenerated.imageUrls || []).slice(0, 1),
+        `storyboard-scene-${scene.sceneIndex}-character`,
+      );
+    } catch (error: any) {
+      warnings.push(`scene ${scene.sceneIndex} character image failed: ${error?.message || String(error)}`);
+      return [];
+    }
+  })();
 
-  const characterImages = await uploadWorkflowImagesToBlob(
-    (characterGenerated.imageUrls || []).slice(0, 1),
-    `storyboard-scene-${scene.sceneIndex}-character`,
-  );
-  const sceneImages = await uploadWorkflowImagesToBlob(
-    (environmentGenerated.imageUrls || []).slice(0, 2),
-    `storyboard-scene-${scene.sceneIndex}-scene`,
-  );
+  const sceneImagesPromise = (async () => {
+    try {
+      const environmentGenerated = await generateImageWithBanana({
+        prompt: environmentPrompt,
+        numImages: 2,
+        aspectRatio: "16:9",
+        imageSize: "1536x864",
+      });
+      return await uploadWorkflowImagesToBlob(
+        (environmentGenerated.imageUrls || []).slice(0, 2),
+        `storyboard-scene-${scene.sceneIndex}-scene`,
+      );
+    } catch (error: any) {
+      warnings.push(`scene ${scene.sceneIndex} scene image failed: ${error?.message || String(error)}`);
+      return [];
+    }
+  })();
 
-  return { characterImages, sceneImages };
+  const [characterImages, sceneImages] = await Promise.all([characterImagesPromise, sceneImagesPromise]);
+  return { characterImages, sceneImages, warnings };
 }
 
 function sceneNeedsRenderStill(scene: any) {
@@ -735,7 +749,7 @@ function buildSceneVoiceText(scene: any, overrideText?: string) {
 
 function mapSceneVoiceTypeToVoice(voiceType: string) {
   const normalized = s(voiceType).trim().toLowerCase();
-  if (normalized === "male") return "onyx";
+  if (normalized === "male") return "verse";
   if (normalized === "cartoon") return "echo";
   return "alloy";
 }
@@ -758,21 +772,24 @@ function truncateText(value: string, maxLength: number) {
 }
 
 function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string) {
-  const sourceScenes = (Array.isArray(storyboard) ? storyboard : []).slice(0, 4);
-  const moods = Array.from(new Set(sourceScenes.map((scene: any) => s(scene?.mood).trim()).filter(Boolean))).slice(0, 3);
-  const lighting = Array.from(new Set(sourceScenes.map((scene: any) => s(scene?.lighting).trim()).filter(Boolean))).slice(0, 2);
-  const moments = sourceScenes
-    .map((scene: any) => truncateText(s(scene?.scenePrompt).trim(), 48))
-    .filter(Boolean)
-    .join("；");
-  const fallback = truncateText(s(fallbackScript).trim(), 120);
-  const seed = [
-    "电影配乐，纯音乐，无人声，主旋律清晰",
-    moods.length ? `情绪:${moods.join("、")}` : "",
-    lighting.length ? `氛围:${lighting.join("、")}` : "",
-    moments ? `画面:${moments}` : fallback,
-  ].filter(Boolean).join("，");
-  return truncateText(seed, 380);
+  const combined = [
+    ...(Array.isArray(storyboard) ? storyboard : []).slice(0, 4).map((scene: any) => [s(scene?.scenePrompt), s(scene?.mood), s(scene?.lighting)].join(" ")),
+    s(fallbackScript).trim(),
+  ].join(" ");
+  const style =
+    /(间谍|特工|潜行|追逐|杀手)/.test(combined) ? "间谍电影风格" :
+    /(拉丁|热带|舞蹈|海边)/.test(combined) ? "拉丁电影风格" :
+    "电影配乐";
+  const mood =
+    /(紧张|惊险|悬疑|危机|追逐)/.test(combined) ? "紧张悬疑" :
+    /(浪漫|温柔|治愈)/.test(combined) ? "温柔抒情" :
+    /(悲伤|孤独|诀别)/.test(combined) ? "伤感克制" :
+    "电影感推进";
+  const instrumentation =
+    /(紧张|惊险|悬疑|危机|追逐)/.test(combined)
+      ? "管弦乐与电子脉冲，钢琴主旋律"
+      : "弦乐与钢琴主旋律";
+  return truncateText(`${style}，${mood}，${instrumentation}，纯音乐，无人声。`, 100);
 }
 
 function extractMusicUrlFromPayload(payload: any): string {
@@ -823,6 +840,33 @@ function deriveMusicError(status: string, payload: any) {
     s(source?.error).trim() ||
     status
   );
+}
+
+async function proxyBlobAsset(url: string) {
+  const target = s(url).trim();
+  if (!target) throw new Error("url is required");
+  if (!/\.blob\.vercel-storage\.com\//i.test(target)) {
+    const response = await fetch(target, { redirect: "follow" });
+    if (!response.ok) throw new Error(`asset_fetch_failed:${response.status}`);
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+      cacheControl: response.headers.get("cache-control") || "public, max-age=300",
+    };
+  }
+  const token = env.mvspReadWriteToken || process.env.MVSP_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN || "";
+  if (!token) throw new Error("MVSP_READ_WRITE_TOKEN is required for blob proxy");
+  const result = await get(target, { token, access: "public" });
+  const statusCode = result?.statusCode ?? 0;
+  if (!result || statusCode !== 200 || !result.stream) {
+    throw new Error(`blob_proxy_failed:${statusCode}`);
+  }
+  const buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
+  return {
+    buffer,
+    contentType: result.blob.contentType || "application/octet-stream",
+    cacheControl: result.blob.cacheControl || "public, max-age=300",
+  };
 }
 
 function callGeminiScriptGateway(prompt: string) {
@@ -997,6 +1041,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (opNormalized === "blobmedia") {
+      if (req.method !== "GET") {
+        return res.status(405).json({ ok: false, error: "Method not allowed" });
+      }
+      const targetUrl = s(q.url || b.url).trim();
+      if (!targetUrl) {
+        return res.status(400).json({ ok: false, error: "url is required" });
+      }
+      const asset = await proxyBlobAsset(targetUrl);
+      res.setHeader("Content-Type", asset.contentType);
+      res.setHeader("Cache-Control", asset.cacheControl);
+      return res.status(200).send(asset.buffer);
+    }
+
     if (opNormalized === "workflowstatus") {
       if (req.method !== "GET") {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
@@ -1147,8 +1205,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json(fail("storyboard is required"));
       }
       const results: WorkflowStoryboardImageItem[] = [];
+      const warnings: string[] = [];
       for (const scene of scenes) {
         const generatedAssets = await generateSceneAssetImages(scene, workflow);
+        warnings.push(...(generatedAssets.warnings || []));
         results.push(buildSceneAssetBundle(null, scene.sceneIndex, {
           prompt: scene.scenePrompt,
           duration: 8,
@@ -1168,10 +1228,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           script: s(b.script || workflow.outputs?.script).trim(),
           storyboard: scenes,
           storyboardImages: results,
+          storyboardImageWarnings: warnings,
           storyboardConfirmed: false,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, warnings });
     }
 
     if (opNormalized === "workflowregeneratesceneimages") {
@@ -1202,10 +1263,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           script: s(b.script || workflow.outputs?.script).trim(),
           storyboard,
           storyboardImages: updated,
+          storyboardImageWarnings: generatedAssets.warnings || [],
           storyboardConfirmed: false,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, warnings: generatedAssets.warnings || [] });
     }
 
     if (opNormalized === "workflowgeneratesceneimage") {
@@ -1238,10 +1300,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           script: s(b.script || workflow.outputs?.script).trim(),
           storyboard,
           storyboardImages,
+          storyboardImageWarnings: generatedAssets.warnings || [],
           storyboardConfirmed: false,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, warnings: generatedAssets.warnings || [] });
     }
 
     if (opNormalized === "workflowuploadsceneimage") {
@@ -1733,7 +1796,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const autoMusicPrompt = deriveMusicSeedFromStoryboard(storyboard, s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim());
       const rawPrompt = truncateText(
         s(b.musicPrompt).trim() || autoMusicPrompt || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim(),
-        380,
+        100,
       );
       if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
       const prompt = buildMusicPrompt({

@@ -12,7 +12,9 @@ import fs from "fs";
 import path from "path";
 import axios from "axios";
 import sharp from "sharp";
+import { get } from "@vercel/blob";
 import { storagePut, storageGet } from "./storage";
+import { env } from "./vercel-api-core/env";
 
 // ─── Types ──────────────────────────────────────────────
 interface StoryboardScene {
@@ -47,8 +49,8 @@ interface ExportOptions {
 const WATERMARK_TEXT = "MV Studio Pro";
 const WATERMARK_URL = "mvstudiopro.com";
 const WATERMARK_COLOR_HEX = "FF6B35"; // Vibrant orange for visibility
-const WATERMARK_COLOR_RGBA = "rgba(255, 107, 53, 0.35)"; // Semi-transparent orange
-const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.18)";
+const WATERMARK_COLOR_RGBA = "rgba(255, 107, 53, 0.52)"; // Stronger watermark overlay
+const WATERMARK_COLOR_RGBA_LIGHT = "rgba(255, 107, 53, 0.28)";
 const MAX_IMAGE_WIDTH = 480; // Max width in Word document (points)
 
 // ─── Font Management ────────────────────────────────────
@@ -83,11 +85,22 @@ async function downloadImageWithDimensions(url: string): Promise<{
   scaledWidth: number;
   scaledHeight: number;
 }> {
-  const response = await axios.get(url, {
-    responseType: "arraybuffer",
-    timeout: 15000,
-  });
-  const buffer = Buffer.from(response.data);
+  const target = String(url || "").trim();
+  let buffer: Buffer;
+  if (/\.blob\.vercel-storage\.com\//i.test(target) && env.mvspReadWriteToken) {
+    const result = await get(target, { token: env.mvspReadWriteToken, access: "public" });
+    const statusCode = result?.statusCode ?? 0;
+    if (!result || statusCode !== 200 || !result.stream) {
+      throw new Error(`blob_image_fetch_failed:${statusCode}`);
+    }
+    buffer = Buffer.from(await new Response(result.stream).arrayBuffer());
+  } else {
+    const response = await axios.get(target, {
+      responseType: "arraybuffer",
+      timeout: 15000,
+    });
+    buffer = Buffer.from(response.data);
+  }
   
   // Use sharp to get actual image dimensions
   const metadata = await sharp(buffer).metadata();
@@ -111,7 +124,7 @@ async function addExportWatermark(imageBuffer: Buffer): Promise<Buffer> {
   const width = metadata.width || 1024;
   const height = metadata.height || 576;
   
-  const fontSize = Math.max(18, Math.floor(Math.min(width, height) * 0.07));
+  const fontSize = Math.max(26, Math.floor(Math.min(width, height) * 0.1));
   
   // Create diagonal repeating watermark with orange color
   const svgOverlay = `
@@ -132,21 +145,21 @@ async function addExportWatermark(imageBuffer: Buffer): Promise<Buffer> {
           }
         </style>
       </defs>
-      <text x="50%" y="25%" text-anchor="middle" dominant-baseline="middle" 
+      <text x="50%" y="18%" text-anchor="middle" dominant-baseline="middle" 
         class="wm-sm" font-size="${fontSize * 0.6}" 
-        transform="rotate(-25, ${width / 2}, ${height * 0.25})">${WATERMARK_TEXT}</text>
+        transform="rotate(-25, ${width / 2}, ${height * 0.18})">${WATERMARK_TEXT}</text>
       <text x="50%" y="50%" text-anchor="middle" dominant-baseline="middle" 
         class="wm" font-size="${fontSize}" 
         transform="rotate(-25, ${width / 2}, ${height / 2})">${WATERMARK_TEXT}</text>
-      <text x="50%" y="75%" text-anchor="middle" dominant-baseline="middle" 
+      <text x="50%" y="82%" text-anchor="middle" dominant-baseline="middle" 
         class="wm-sm" font-size="${fontSize * 0.6}" 
-        transform="rotate(-25, ${width / 2}, ${height * 0.75})">${WATERMARK_URL}</text>
-      <text x="20%" y="40%" text-anchor="middle" dominant-baseline="middle" 
+        transform="rotate(-25, ${width / 2}, ${height * 0.82})">${WATERMARK_URL}</text>
+      <text x="22%" y="42%" text-anchor="middle" dominant-baseline="middle" 
         class="wm-sm" font-size="${fontSize * 0.5}" 
-        transform="rotate(-25, ${width * 0.2}, ${height * 0.4})">${WATERMARK_URL}</text>
-      <text x="80%" y="60%" text-anchor="middle" dominant-baseline="middle" 
+        transform="rotate(-25, ${width * 0.22}, ${height * 0.42})">${WATERMARK_TEXT}</text>
+      <text x="78%" y="58%" text-anchor="middle" dominant-baseline="middle" 
         class="wm-sm" font-size="${fontSize * 0.5}" 
-        transform="rotate(-25, ${width * 0.8}, ${height * 0.6})">${WATERMARK_URL}</text>
+        transform="rotate(-25, ${width * 0.78}, ${height * 0.58})">${WATERMARK_URL}</text>
     </svg>`;
   
   return image
