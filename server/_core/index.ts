@@ -18,6 +18,7 @@ import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { saveVideoShortLink } from "../services/video-short-links";
+import workflowJobsHandler from "../../api/jobs";
 
 function buildRoutingMap() {
   return {
@@ -79,7 +80,16 @@ async function startServer() {
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
 
-  app.post("/api/jobs", async (req, res) => {
+  app.all("/api/jobs", async (req, res) => {
+    const op = typeof req.query?.op === "string" ? req.query.op.trim() : "";
+    if (op) {
+      return workflowJobsHandler(req as any, res as any);
+    }
+
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method not allowed" });
+    }
+
     try {
       const { type, input, userId } = (req.body ?? {}) as {
         type?: JobType;

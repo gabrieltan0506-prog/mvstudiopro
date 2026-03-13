@@ -1,23 +1,3 @@
-
-
-// sunoPollingFix
-async function pollSuno(taskId){
-
-  for(let i=0;i<60;i++){
-
-    const r = await fetch(`/api/jobs?op=aimusicSunoTask&taskId=${taskId}`)
-    const j = await r.json()
-
-    if(j?.music_url){
-      return j.music_url
-    }
-
-    await new Promise(r=>setTimeout(r,3000))
-  }
-
-  throw new Error("suno_poll_timeout")
-}
-
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
@@ -29,7 +9,6 @@ import { promises as fs } from "node:fs";
 import sharp from "sharp";
 import { put } from "@vercel/blob";
 import { env, getEnvStatus } from "./_core/env.js";
-import { renderWorkflowFinalVideo } from "./_core/render.js";
 import { generateImageWithBanana } from "./_core/banana.js";
 import {
   getWorkflow as getCoreWorkflow,
@@ -434,7 +413,8 @@ async function renderWorkflowFinalVideo(input: {
   const workDir = await fs.mkdtemp(path.join(tmpdir(), "mvsp-render-"));
   try {
     const normalizedFiles: string[] = [];
-    for (const [index, scene] of input.sceneVideos.entries()) {
+    for (let index = 0; index < input.sceneVideos.length; index += 1) {
+      const scene = input.sceneVideos[index];
       const sourceBuffer = await fetchRemoteBuffer(scene.url);
       const sourcePath = path.join(workDir, `scene-${index + 1}.mp4`);
       const normalizedPath = path.join(workDir, `scene-${index + 1}-normalized.mp4`);
@@ -2182,8 +2162,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneVideos,
           musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || workflow.outputs?.music?.url || "").trim() || undefined,
           voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || workflow.outputs?.voice?.url || "").trim() || undefined,
-          transition,
-          resolution,
         });
       }
       const next = saveWorkflowPatch(workflow, {
