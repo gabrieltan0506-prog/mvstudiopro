@@ -251,7 +251,9 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
+  const host = isDevelopment ? "127.0.0.1" : "0.0.0.0";
+
+  server.listen(port, host, () => {
     console.log(`Server running on http://localhost:${port}/`);
     // Defer background worker startup until the HTTP listener is ready.
     startJobWorker();
