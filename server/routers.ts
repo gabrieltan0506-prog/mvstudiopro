@@ -26,7 +26,8 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
+import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -435,9 +436,30 @@ export const appRouter = router({
         };
       }),
 
+    getGrowthSystemStatus: publicProcedure
+      .query(async () => {
+        const smtp = getSmtpStatus();
+        const scheduler = await readTrendStore();
+        const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "benjamintan0318@gmail.com").trim();
+
+        return {
+          success: true,
+          targetEmail,
+          smtp,
+          scheduler: Object.values(scheduler.scheduler || {}).map((item) => ({
+            platform: item?.platform,
+            lastRunAt: item?.lastRunAt,
+            lastSuccessAt: item?.lastSuccessAt,
+            nextRunAt: item?.nextRunAt,
+            failureCount: item?.failureCount ?? 0,
+            lastError: item?.lastError,
+          })),
+        };
+      }),
+
     refreshGrowthTrends: publicProcedure
       .input(z.object({
-        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"])).default(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"]),
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),
       }))
       .mutation(async ({ input }) => {
         const collected = await collectTrendPlatforms(input.platforms);
@@ -453,6 +475,45 @@ export const appRouter = router({
             count: item?.items.length ?? 0,
           })),
           errors: collected.errors,
+        };
+      }),
+
+    exportGrowthTrendsCsv: publicProcedure
+      .input(z.object({
+        email: z.string().email().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const exported = await exportTrendCollectionsCsv();
+        const targetEmail = input.email || String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim() || undefined;
+        let emailed = false;
+        let emailError: string | undefined;
+
+        if (targetEmail) {
+          try {
+            await sendMailWithAttachments({
+              to: targetEmail,
+              subject: "Creator Growth Camp 趋势抓取 CSV",
+              text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。\n清单：${exported.manifestPath}`,
+              attachments: exported.files.map((file) => ({
+                filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,
+                path: file.filePath,
+                contentType: "text/csv",
+              })),
+            });
+            emailed = true;
+          } catch (error) {
+            emailError = error instanceof Error ? error.message : String(error);
+          }
+        }
+
+        return {
+          success: true,
+          manifestPath: exported.manifestPath,
+          files: exported.files,
+          rows: exported.rows,
+          emailed,
+          targetEmail,
+          emailError,
         };
       }),
 

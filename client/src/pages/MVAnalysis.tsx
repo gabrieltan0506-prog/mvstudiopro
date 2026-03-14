@@ -87,7 +87,7 @@ type ExecutionBriefRow = {
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const GROWTH_HANDOFF_STORAGE_KEY = "mvsp-growth-handoff";
-const FULL_PLATFORM_ORDER = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"] as const;
+const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
@@ -403,6 +403,11 @@ export default function MVAnalysisPage() {
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
     enabled: isAuthenticated && !loading && !supervisorAccess,
     refetchOnMount: true,
+  });
+  const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
+    enabled: debugMode,
+    staleTime: 30_000,
+    refetchInterval: debugMode ? 30_000 : false,
   });
 
   useEffect(() => {
@@ -924,10 +929,27 @@ export default function MVAnalysisPage() {
                   <div>trend source: {String(growthSnapshot?.status.source || "-")}</div>
                   <div>mime: {String(debugInfo?.mimeType || fileMimeType || "-")}</div>
                   <div>file: {String(debugInfo?.fileName || fileName || "-")}</div>
+                  <div>smtp configured: {String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
+                  <div>mail to: {String(growthSystemStatusQuery.data?.targetEmail || "-")}</div>
+                  <div>smtp from: {String(growthSystemStatusQuery.data?.smtp?.from || "-")}</div>
+                  <div>smtp missing: {Array.isArray(growthSystemStatusQuery.data?.smtp?.missing) ? growthSystemStatusQuery.data?.smtp?.missing.join(", ") || "-" : "-"}</div>
                   {debugInfo?.extractionMethod ? <div>extract: {String(debugInfo.extractionMethod)}</div> : null}
                   {debugInfo?.videoDuration ? <div>video sec: {String(debugInfo.videoDuration)}</div> : null}
                   {debugInfo?.transcriptChars ? <div>transcript chars: {String(debugInfo.transcriptChars)}</div> : null}
                 </div>
+                {growthSystemStatusQuery.data?.scheduler?.length ? (
+                  <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
+                    <div className="font-semibold text-cyan-100">抓取调度状态</div>
+                    {growthSystemStatusQuery.data.scheduler.map((item) => (
+                      <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
+                        <div>{String(item.platform)} last success: {String(item.lastSuccessAt || "-")}</div>
+                        <div>{String(item.platform)} next run: {String(item.nextRunAt || "-")}</div>
+                        <div>{String(item.platform)} failures: {String(item.failureCount ?? 0)}</div>
+                        <div>{String(item.platform)} error: {String(item.lastError || "-")}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -1043,7 +1065,7 @@ export default function MVAnalysisPage() {
                         <div className="font-semibold text-white">数据口径说明</div>
                         <p className="mt-2">
                           当前这里展示的是<strong>实时抓取样本 + 结构化补位</strong>，不是完整的 30 天历史数据库。
-                          其中抖音、小红书、B站为当前 live sample；快手、视频号若未接入真实 collector，只能提供结构建议，不能作为真实趋势证据使用。
+                          其中抖音、快手、B站、小红书以真实 collector 为准；若某个平台当前未抓到真实样本，只会降级为结构建议，不会作为真实趋势证据使用。
                         </p>
                       </div>
                       <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
@@ -1116,7 +1138,7 @@ export default function MVAnalysisPage() {
                         <div className="text-sm font-semibold text-white">平台化优化原则</div>
                         <div className="mt-3 space-y-2 text-sm leading-7 text-white/68">
                           <div>• 抖音、快手优先参考强钩子和结果前置版本。</div>
-                          <div>• 小红书、视频号优先参考拆解感、收藏理由和封面主信息版本。</div>
+                          <div>• 小红书优先参考拆解感、收藏理由和封面主信息版本。</div>
                           <div>• B站优先参考幕后复盘、案例拆解和长尾讨论版本。</div>
                           <div>• 如果不同平台建议重复，直接沿用已验证平台的方案，不重复重做。</div>
                         </div>

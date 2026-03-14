@@ -41,7 +41,7 @@ export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
     .filter(Boolean) as GrowthPlatform[];
   const unique = Array.from(new Set(mapped));
-  return unique.length ? unique.slice(0, 5) : ["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"];
+  return unique.length ? unique.slice(0, 4) : ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
 }
 
 function clamp(value: number, min: number, max: number) {

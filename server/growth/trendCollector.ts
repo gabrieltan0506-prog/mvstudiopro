@@ -48,6 +48,13 @@ function safeDateFromUnix(timestamp?: number) {
   return new Date(timestamp * 1000).toISOString();
 }
 
+function parseCsvEnv(name: string) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -169,12 +176,123 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   };
 }
 
+async function collectKuaishou(): Promise<PlatformTrendCollection> {
+  const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
+  if (!principals.length) {
+    throw new Error("KUAISHOU_TREND_PRINCIPALS 未配置，无法抓取快手真实样本");
+  }
+
+  const cookie = String(process.env.KUAISHOU_COOKIE || "").trim();
+  const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
+  const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 12) || 12));
+  const query = `
+    query publicFeeds($principalId: String!, $pcursor: String, $count: Int) {
+      publicFeeds(principalId: $principalId, pcursor: $pcursor, count: $count) {
+        pcursor
+        list {
+          id
+          caption
+          poster
+          timestamp
+          expTag
+          user {
+            id
+            name
+          }
+          counts {
+            displayView
+            displayLike
+            displayComment
+          }
+        }
+      }
+    }
+  `;
+
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+
+  for (const principalId of principals) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+        ...(cookie ? { cookie } : {}),
+      },
+      body: JSON.stringify({
+        operationName: "publicFeeds",
+        query,
+        variables: {
+          principalId,
+          pcursor: "",
+          count,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
+    }
+
+    const payload = await response.json() as {
+      data?: {
+        publicFeeds?: {
+          list?: Array<Record<string, any>>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    if (payload.errors?.length) {
+      throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+    }
+
+    const list = payload.data?.publicFeeds?.list ?? [];
+    for (const item of list) {
+      const caption = String(item.caption ?? "").trim();
+      if (!caption) continue;
+      items.push({
+        id: String(item.id ?? `${principalId}-${items.length}`),
+        title: caption,
+        author: String(item.user?.name ?? item.user?.id ?? principalId).trim() || principalId,
+        url: item.id ? `https://www.kuaishou.com/short-video/${item.id}` : undefined,
+        publishedAt: safeDateFromUnix(Number(item.timestamp)),
+        likes: parseChineseCount(item.counts?.displayLike),
+        comments: parseChineseCount(item.counts?.displayComment),
+        views: parseChineseCount(item.counts?.displayView),
+        hotValue:
+          (parseChineseCount(item.counts?.displayLike) || 0) +
+          (parseChineseCount(item.counts?.displayComment) || 0),
+        contentType: "video",
+        tags: [String(item.expTag ?? "").trim()].filter(Boolean),
+      });
+    }
+    notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId}.`);
+  }
+
+  if (!items.length) {
+    throw new Error("Kuaishou collector returned 0 items");
+  }
+
+  return {
+    platform: "kuaishou",
+    source: "live",
+    collectedAt: new Date().toISOString(),
+    windowDays: 30,
+    items,
+    notes,
+  };
+}
+
 export async function collectPlatformTrends(platform: GrowthPlatform): Promise<PlatformTrendCollection> {
   switch (platform) {
     case "bilibili":
       return collectBilibili();
     case "douyin":
       return collectDouyin();
+    case "kuaishou":
+      return collectKuaishou();
     case "xiaohongshu":
       return collectXiaohongshu();
     default:
