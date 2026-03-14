@@ -136,7 +136,7 @@ export type VoiceSynthesisInput = {
 };
 
 export type VoiceSynthesisResult = {
-  provider: "vertex" | "minimax" | "openai";
+  provider: "vertex" | "minimax";
   model: string;
   voice: string;
   audioBuffer: Buffer;
@@ -324,81 +324,16 @@ async function tryMiniMaxTts(input: VoiceSynthesisInput): Promise<VoiceSynthesis
   }
 }
 
-async function tryOpenAiTts(input: VoiceSynthesisInput): Promise<VoiceSynthesisResult> {
-  const apiKey = s(process.env.OPENAI_API_KEY).trim();
-  const voice = s(input.voice || "nova").trim() || "nova";
-  if (!apiKey) {
-    return emptyResult({
-      provider: "openai",
-      model: "gpt-4o-mini-tts",
-      voice,
-      errorMessage: "missing_env_OPENAI_API_KEY",
-    });
-  }
-  try {
-    const response = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini-tts",
-        voice,
-        input: s(input.dialogueText).trim(),
-        format: "mp3",
-        instructions: s(input.voicePrompt).trim() || undefined,
-      }),
-    });
-    if (!response.ok) {
-      const err = (await response.text()).slice(0, 600);
-      return emptyResult({
-        provider: "openai",
-        model: "gpt-4o-mini-tts",
-        voice,
-        errorMessage: `openai_tts_failed:${response.status}:${err}`,
-      });
-    }
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
-    if (!audioBuffer.length) {
-      return emptyResult({
-        provider: "openai",
-        model: "gpt-4o-mini-tts",
-        voice,
-        errorMessage: "openai_tts_empty_audio",
-      });
-    }
-    return {
-      provider: "openai",
-      model: "gpt-4o-mini-tts",
-      voice,
-      audioBuffer,
-      contentType: "audio/mpeg",
-      extension: "mp3",
-      isFallback: false,
-      errorMessage: "",
-    };
-  } catch (error: any) {
-    return emptyResult({
-      provider: "openai",
-      model: "gpt-4o-mini-tts",
-      voice,
-      errorMessage: error?.message || String(error),
-    });
-  }
-}
-
 export async function synthesizeVoiceAudio(input: VoiceSynthesisInput): Promise<VoiceSynthesisResult> {
   const dialogueText = s(input.dialogueText).trim();
-  const openAiVoice = s(input.voice || "nova").trim() || "nova";
   const defaultVertexModel = s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-flash-preview-tts").trim() || "gemini-2.5-flash-preview-tts";
   const defaultVertexVoice = mapVertexVoice({ voiceType: input.voiceType });
   const defaultMiniMaxVoice = buildMiniMaxVoiceConfig({ voiceType: input.voiceType, voiceStyle: input.voiceStyle }).voiceId;
   if (!dialogueText) {
     return emptyResult({
-      provider: hasVertexTtsEnv() ? "vertex" : s(process.env.MINIMAX_API_KEY).trim() ? "minimax" : "openai",
-      model: hasVertexTtsEnv() ? defaultVertexModel : s(process.env.MINIMAX_API_KEY).trim() ? "speech-02-turbo" : "gpt-4o-mini-tts",
-      voice: hasVertexTtsEnv() ? defaultVertexVoice : s(process.env.MINIMAX_API_KEY).trim() ? defaultMiniMaxVoice : openAiVoice,
+      provider: hasVertexTtsEnv() ? "vertex" : "minimax",
+      model: hasVertexTtsEnv() ? defaultVertexModel : "speech-02-turbo",
+      voice: hasVertexTtsEnv() ? defaultVertexVoice : defaultMiniMaxVoice,
       errorMessage: "dialogueText is required",
     });
   }
@@ -416,16 +351,10 @@ export async function synthesizeVoiceAudio(input: VoiceSynthesisInput): Promise<
     if (miniMaxResult.errorMessage) errors.push(miniMaxResult.errorMessage);
   }
 
-  if (s(process.env.OPENAI_API_KEY).trim()) {
-    const openAiResult = await tryOpenAiTts(input);
-    if (openAiResult.audioBuffer.length) return openAiResult;
-    if (openAiResult.errorMessage) errors.push(openAiResult.errorMessage);
-  }
-
   return emptyResult({
-    provider: hasVertexTtsEnv() ? "vertex" : s(process.env.MINIMAX_API_KEY).trim() ? "minimax" : "openai",
-    model: hasVertexTtsEnv() ? defaultVertexModel : s(process.env.MINIMAX_API_KEY).trim() ? "speech-02-turbo" : "gpt-4o-mini-tts",
-    voice: hasVertexTtsEnv() ? defaultVertexVoice : s(process.env.MINIMAX_API_KEY).trim() ? defaultMiniMaxVoice : openAiVoice,
-    errorMessage: errors.length ? errors.join(" | ") : "VERTEX_TTS, MINIMAX_API_KEY or OPENAI_API_KEY is not configured",
+    provider: hasVertexTtsEnv() ? "vertex" : "minimax",
+    model: hasVertexTtsEnv() ? defaultVertexModel : "speech-02-turbo",
+    voice: hasVertexTtsEnv() ? defaultVertexVoice : defaultMiniMaxVoice,
+    errorMessage: errors.length ? errors.join(" | ") : "VERTEX_TTS or MINIMAX_API_KEY is not configured",
   });
 }

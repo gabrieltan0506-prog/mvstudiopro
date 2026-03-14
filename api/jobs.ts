@@ -1913,7 +1913,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(502).json(
           fail(
             "voice_generation_failed",
-            voiceResult.voiceErrorMessage || "OpenAI TTS did not return a voiceUrl",
+            voiceResult.voiceErrorMessage || "Voice synthesis did not return a voiceUrl",
             {
               provider: voiceResult.voiceProvider,
               model: voiceResult.voiceModel,
@@ -1962,7 +1962,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(502).json(
           fail(
             "voice_generation_failed",
-            voiceResult.voiceErrorMessage || "OpenAI TTS did not return a voiceUrl",
+            voiceResult.voiceErrorMessage || "Voice synthesis did not return a voiceUrl",
             { provider: voiceResult.voiceProvider, model: voiceResult.voiceModel, voice: voiceResult.voiceVoice },
           ),
         );
@@ -2154,13 +2154,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const dialogueText = s(b.dialogueText).trim();
       const voicePrompt = buildVoicePrompt({
         dialogueText,
-        style: s(b.voicePrompt).trim(),
+        style: [s(b.voicePrompt).trim(), s(b.voiceStyle).trim()].filter(Boolean).join("，"),
         language: s(b.language || "中文").trim() || "中文",
       });
       const voice = s(b.voice || "nova").trim() || "nova";
+      const voiceType = s(b.voiceType || "female").trim() || "female";
+      const voiceStyle = s(b.voiceStyle).trim();
       const workflowId = s(b.workflowId).trim();
 
-      const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice });
+      const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice, voiceType, voiceStyle });
       let workflow: any = undefined;
       if (workflowId) {
         const current = getCoreWorkflow(workflowId);
@@ -2178,6 +2180,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               voiceUrl: voiceResult.voiceUrl,
               voiceIsFallback: voiceResult.voiceIsFallback,
               voiceErrorMessage: voiceResult.voiceErrorMessage,
+              voiceType,
+              voiceStyle,
             },
           };
           saveCoreWorkflow(workflow as any);
