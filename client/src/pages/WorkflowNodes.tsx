@@ -16,9 +16,12 @@ import {
   Scissors,
   AlertCircle,
   CheckCircle2,
-  PlayCircle,
   Bug,
-  Upload,
+  RefreshCcw,
+  LoaderCircle,
+  CloudUpload,
+  Wand2,
+  ArrowRight,
 } from "lucide-react";
 
 type Scene = {
@@ -109,6 +112,7 @@ const EDGES = [
 ];
 
 const INITIAL_STEP: StepState = { loading: false, error: "", success: false };
+const DEFAULT_SCENE_VOICE_PROMPT = "中文自然播报，电影预告片旁白风格";
 
 function badgeClass(status: NodeStatus) {
   if (status === "已接入") return "border-emerald-400/30 bg-emerald-400/10 text-emerald-300";
@@ -128,6 +132,15 @@ function edgePath(from: NodeItem, to: NodeItem) {
 
 function jparse(t: string) { try { return JSON.parse(t); } catch { return null; } }
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
+function extractErrorText(json: any): string {
+  return s(json?.message || json?.error).trim() || "request_failed";
+}
+function mapSceneVoiceTypeToVoice(voiceType: string) {
+  const normalized = s(voiceType).trim().toLowerCase();
+  if (normalized === "male") return "onyx";
+  if (normalized === "cartoon") return "echo";
+  return "shimmer";
+}
 
 function normalizeSceneList(input: any[]): Scene[] {
   const src = Array.isArray(input) ? input : [];
@@ -198,6 +211,15 @@ function toMediaUrl(url: string) {
   return normalized;
 }
 
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("file_read_failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function postJson(op: string, body: Record<string, any>) {
   const resp = await fetch(`/api/jobs?op=${encodeURIComponent(op)}`, {
     method: "POST",
@@ -211,6 +233,7 @@ async function postJson(op: string, body: Record<string, any>) {
 export default function WorkflowNodes() {
   const [selected, setSelected] = useState<string>("prompt");
   const [workflowId, setWorkflowId] = useState<string>("");
+  const [workflowIdInput, setWorkflowIdInput] = useState<string>("");
   const [workflow, setWorkflow] = useState<any>(null);
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [debugMode, setDebugMode] = useState(true);
@@ -218,6 +241,7 @@ export default function WorkflowNodes() {
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
   const [auxError, setAuxError] = useState("");
+  const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
   const [targetWords, setTargetWords] = useState("900");
@@ -243,6 +267,34 @@ export default function WorkflowNodes() {
   const current = nodeMap.get(selected) || nodes[0];
   const outputs = workflow?.outputs || {};
   const storyboardImages: SceneImages[] = Array.isArray(outputs.storyboardImages) ? outputs.storyboardImages : [];
+  const storyboardImageWarnings: string[] = Array.isArray(outputs.storyboardImageWarnings) ? outputs.storyboardImageWarnings : [];
+  const sceneBundlesByIndex = useMemo(
+    () => Object.fromEntries(storyboardImages.map((item) => [Number(item?.sceneIndex || 0), item])) as Record<number, SceneImages>,
+    [storyboardImages],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const existingId = s(params.get("workflowId")).trim() || s(window.localStorage.getItem("workflowNodes:workflowId")).trim();
+    if (existingId) {
+      setWorkflowId(existingId);
+      setWorkflowIdInput(existingId);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (workflowId) {
+      window.localStorage.setItem("workflowNodes:workflowId", workflowId);
+      setWorkflowIdInput(workflowId);
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("workflowId", workflowId);
+      window.history.replaceState({}, "", nextUrl.toString());
+      return;
+    }
+    window.localStorage.removeItem("workflowNodes:workflowId");
+  }, [workflowId]);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -328,41 +380,112 @@ export default function WorkflowNodes() {
     });
   }, [storyboard]);
 
+  useEffect(() => {
+    const nextProvider = s(outputs.musicProvider).trim().toLowerCase();
+    if (nextProvider === "suno" || nextProvider === "udio") setMusicProvider(nextProvider);
+  }, [outputs.musicProvider]);
+
+  function writeBackWorkflow(json: any) {
+    const nextId = s(json?.workflow?.workflowId || json?.workflowId || workflowId).trim();
+    if (nextId) setWorkflowId(nextId);
+    if (json?.workflow) setWorkflow(json.workflow);
+    setScriptDirty(false);
+    setStoryboardDirty(false);
+  }
+
+  function buildRequestBody(body: Record<string, any>) {
+    return {
+      ...body,
+      workflowId: body.workflowId || workflowId || undefined,
+      workflow: body.workflow || workflow || undefined,
+      script: body.script ?? scriptText,
+      storyboard: body.storyboard ?? storyboard,
+    };
+  }
+
+  async function refreshWorkflow(targetWorkflowId?: string) {
+    const nextId = s(targetWorkflowId || workflowId || workflowIdInput).trim();
+    if (!nextId) return;
+    const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(nextId)}`);
+    const json = await resp.json().catch(() => null);
+    if (resp.ok && json?.workflow && json.workflow.status !== "not_found") {
+      setWorkflow(json.workflow);
+      setWorkflowId(nextId);
+    } else if (resp.ok && json?.workflow?.status === "not_found") {
+      setGlobalStep({ loading: false, error: "workflow_not_found", success: false });
+    }
+  }
+
   async function runOp(op: string, body: Record<string, any>, onSuccess?: (json: any) => void) {
     setGlobalStep({ loading: true, error: "", success: false });
     setAuxError("");
-    const result = await postJson(op, body);
-    setLastDebugEntry({ op, request: body, httpOk: result.httpOk, status: result.status, json: result.json });
-    if (!result.httpOk || result.json?.ok === false) {
-      const errorText = String(result.json?.message || result.json?.error || "request_failed");
-      setGlobalStep({ loading: false, error: errorText, success: false });
+    try {
+      const payload = buildRequestBody(body);
+      const result = await postJson(op, payload);
+      setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
+      if (!result.httpOk || result.json?.ok === false) {
+        const errorText = extractErrorText(result.json);
+        setGlobalStep({ loading: false, error: errorText, success: false });
+        return null;
+      }
+      writeBackWorkflow(result.json);
+      setGlobalStep({ loading: false, error: "", success: true });
+      onSuccess?.(result.json);
+      return result.json;
+    } catch (error: any) {
+      setGlobalStep({ loading: false, error: error?.message || String(error) || "request_failed", success: false });
       return null;
     }
-    const nextWorkflow = result.json?.workflow || workflow;
-    if (nextWorkflow) {
-      setWorkflow(nextWorkflow);
-      const nextId = String(nextWorkflow?.workflowId || result.json?.workflowId || workflowId || "");
-      if (nextId) setWorkflowId(nextId);
-    }
-    setGlobalStep({ loading: false, error: "", success: true });
-    onSuccess?.(result.json);
-    return result.json;
   }
 
   async function runAuxStep(key: string, op: string, body: Record<string, any>, onSuccess?: (json: any) => void) {
     setAuxBusyKey(key);
     setAuxError("");
-    const result = await postJson(op, body);
-    setLastDebugEntry({ op, request: body, httpOk: result.httpOk, status: result.status, json: result.json });
-    if (!result.httpOk || result.json?.ok === false) {
-      setAuxError(String(result.json?.message || result.json?.error || "request_failed"));
-      setAuxBusyKey("");
+    try {
+      const payload = buildRequestBody(body);
+      const result = await postJson(op, payload);
+      setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
+      if (!result.httpOk || result.json?.ok === false) {
+        setAuxError(extractErrorText(result.json));
+        return null;
+      }
+      writeBackWorkflow(result.json);
+      onSuccess?.(result.json);
+      return result.json;
+    } catch (error: any) {
+      setAuxError(error?.message || String(error) || "request_failed");
       return null;
+    } finally {
+      setAuxBusyKey("");
     }
-    if (result.json?.workflow) setWorkflow(result.json.workflow);
-    onSuccess?.(result.json);
-    setAuxBusyKey("");
-    return result.json;
+  }
+
+  async function uploadSceneReferenceImage(file: File, sceneIndex: number, assetType: "character" | "scene" | "renderstill") {
+    setUploadingAssetKey(`${sceneIndex}:${assetType}`);
+    setAuxError("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const uploadResp = await fetch("/api/blob-put-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, filename: `workflow-node-${sceneIndex}-${assetType}.jpg` }),
+      });
+      const uploadJson = await uploadResp.json().catch(() => null);
+      if (!uploadResp.ok || !uploadJson?.imageUrl) {
+        throw new Error(extractErrorText(uploadJson));
+      }
+      const bound = await runAuxStep(`upload-${sceneIndex}-${assetType}`, "workflowUploadSceneImage", {
+        workflowId,
+        sceneIndex,
+        imageUrl: s(uploadJson.imageUrl).trim(),
+        assetType,
+      });
+      if (!bound) throw new Error("workflow_image_bind_failed");
+    } catch (error: any) {
+      setAuxError(error?.message || String(error) || "upload_failed");
+    } finally {
+      setUploadingAssetKey(null);
+    }
   }
 
   function updateScene(sceneIndex: number, patch: Partial<Scene>) {
@@ -403,7 +526,108 @@ export default function WorkflowNodes() {
   }
 
   function selectedScenesForRender() {
-    return storyboard.filter((scene) => renderVoiceSceneMap[String(scene.sceneIndex)]);
+    return storyboard.filter((scene) => renderVoiceSceneMap[String(scene.sceneIndex)] !== false);
+  }
+
+  function selectedNodeRuntimeStatus() {
+    return renderNodeStatus(selected);
+  }
+
+  function nextRecommendedNode() {
+    if (!workflowId) return "prompt";
+    if (!outputs.script) return "script";
+    if (!Array.isArray(outputs.storyboard) || !outputs.storyboard.length || !outputs.storyboardConfirmed) return "storyboard";
+    if (!storyboardImages.length) return "assets";
+    if (!storyboardImages.some((item) => s(item?.sceneVideoUrl).trim())) return "video";
+    if (!outputs.musicUrl) return "music";
+    if (!outputs.finalVideoUrl) return "render";
+    return "render";
+  }
+
+  function stepCountSummary() {
+    return {
+      scenes: Array.isArray(outputs.storyboard) ? outputs.storyboard.length : 0,
+      bundles: storyboardImages.length,
+      sceneVideos: storyboardImages.filter((item) => s(item?.sceneVideoUrl).trim()).length,
+      sceneVoices: storyboardImages.filter((item) => s(item?.sceneVoiceUrl).trim()).length,
+    };
+  }
+
+  function selectedNodeSnapshot() {
+    switch (selected) {
+      case "prompt":
+        return {
+          workflowId,
+          prompt,
+          targetWords: Number(targetWords || 0) || undefined,
+          targetScenes: Number(targetScenes || 0) || undefined,
+        };
+      case "script":
+        return {
+          script: outputs.script || scriptText,
+          currentStep: workflow?.currentStep,
+        };
+      case "storyboard":
+        return {
+          storyboardConfirmed: outputs.storyboardConfirmed,
+          storyboardCount: storyboard.length,
+          storyboard: storyboard.slice(0, 6),
+        };
+      case "assets":
+        return {
+          bundleCount: storyboardImages.length,
+          warnings: storyboardImageWarnings,
+          bundles: storyboardImages.slice(0, 4),
+        };
+      case "renderStill":
+        return storyboard.map((scene) => {
+          const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
+          return {
+            sceneIndex: scene.sceneIndex,
+            renderStillNeeded: Boolean(scene.renderStillNeeded),
+            renderStillPrompt: renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? "",
+            renderStillImageUrl: s(bundle?.renderStillImageUrl).trim(),
+          };
+        });
+      case "video":
+        return storyboard.map((scene) => {
+          const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
+          return {
+            sceneIndex: scene.sceneIndex,
+            selectedSceneImageUrl: s(bundle?.selectedSceneImageUrl).trim(),
+            sceneVideoUrl: s(bundle?.sceneVideoUrl).trim(),
+          };
+        });
+      case "voice":
+        return storyboard.map((scene) => {
+          const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
+          return {
+            sceneIndex: scene.sceneIndex,
+            voiceover: scene.voiceover || scene.scenePrompt,
+            sceneVoiceType: sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female",
+            sceneVoiceStyle: sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "",
+            sceneVoiceUrl: s(bundle?.sceneVoiceUrl).trim(),
+          };
+        });
+      case "music":
+        return {
+          musicProvider,
+          musicPrompt,
+          musicMood,
+          musicBpm,
+          musicDuration,
+          outputMusicUrl: outputs.musicUrl,
+        };
+      case "render":
+        return {
+          includeSceneVoiceIndexes: selectedScenesForRender().map((scene) => scene.sceneIndex),
+          musicStartSec: Number(musicStartSec || 0) || 0,
+          musicEndSec: Number(musicEndSec || 0) || 0,
+          finalVideoUrl: outputs.finalVideoUrl,
+        };
+      default:
+        return {};
+    }
   }
 
   function renderPromptPanel() {
@@ -450,7 +674,6 @@ export default function WorkflowNodes() {
           <Button disabled={globalStep.loading || !scriptText.trim()} onClick={() => void runOp("workflowGenerateStoryboard", {
             workflowId,
             script: scriptText,
-            workflow,
           }, (json) => {
             if (Array.isArray(json?.workflow?.outputs?.storyboard)) {
               setStoryboard(normalizeSceneList(json.workflow.outputs.storyboard));
@@ -458,9 +681,9 @@ export default function WorkflowNodes() {
             }
             setSelected("storyboard");
           })} className="rounded-xl bg-primary px-5">
-            {globalStep.loading ? "Updating..." : "Refresh Storyboard"}
+            {globalStep.loading ? "Updating..." : "Load Storyboard Stage"}
           </Button>
-          <div className="text-sm text-white/60">把脚本编辑后的结果重新拆成 storyboard，后续节点都以这里的最新内容为准。</div>
+          <div className="text-sm text-white/60">這一步沿用現有後端 contract，將 workflow 切到 storyboard stage。分鏡內容的編修與保存在下一個節點完成。</div>
         </div>
       </div>
     );
@@ -469,6 +692,19 @@ export default function WorkflowNodes() {
   function renderStoryboardPanel() {
     return (
       <div className="space-y-4">
+        <div className="flex flex-wrap gap-3">
+          <Button
+            disabled={globalStep.loading || !storyboard.length}
+            onClick={() => void runOp("workflowConfirmStoryboard", {
+              workflowId,
+              storyboard,
+            }, () => setSelected("assets"))}
+            className="rounded-xl bg-primary px-5"
+          >
+            {globalStep.loading ? "Saving..." : "Confirm Storyboard"}
+          </Button>
+          <div className="text-sm text-white/60">把目前 inspector 裡修改過的 scenes 寫回 workflow，後續節點直接使用這份 storyboard。</div>
+        </div>
         {storyboard.length ? storyboard.map((scene) => (
           <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-3 text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
@@ -481,6 +717,14 @@ export default function WorkflowNodes() {
               <input value={scene.mood || ""} onChange={(e) => updateScene(scene.sceneIndex, { mood: e.target.value })} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Mood" />
               <input value={scene.lighting || ""} onChange={(e) => updateScene(scene.sceneIndex, { lighting: e.target.value })} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Lighting" />
             </div>
+            <label className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">
+              <input
+                type="checkbox"
+                checked={Boolean(scene.renderStillNeeded)}
+                onChange={(e) => updateScene(scene.sceneIndex, { renderStillNeeded: e.target.checked })}
+              />
+              Mark as render still scene
+            </label>
           </div>
         )) : <div className="rounded-xl border border-dashed border-white/15 p-4 text-sm text-white/55">先生成 script 才会出现 storyboard 节点内容。</div>}
       </div>
@@ -490,6 +734,9 @@ export default function WorkflowNodes() {
   function renderAssetsPanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
+          這個節點是 scene 級素材工作台。每個分鏡應保留 1 張角色圖與 1-2 張場景圖，並在這裡決定哪張場景圖進入後續 Scene Video。
+        </div>
         <div className="flex flex-wrap gap-3">
           <Button disabled={globalStep.loading || !storyboard.length} onClick={() => void runOp("workflowGenerateStoryboardImages", {
             workflowId,
@@ -542,6 +789,20 @@ export default function WorkflowNodes() {
                   ) : (
                     <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-white/15 text-sm text-white/40">No character image</div>
                   )}
+                  <label className="mt-3 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                    <CloudUpload className="h-4 w-4" />
+                    {uploadingAssetKey === `${bundle.sceneIndex}:character` ? "Uploading..." : "Upload Character"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void uploadSceneReferenceImage(file, Number(bundle.sceneIndex || 0), "character");
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
                 </div>
                 <div>
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/55">Scene Images</div>
@@ -566,7 +827,23 @@ export default function WorkflowNodes() {
                       <div className="flex h-48 items-center justify-center rounded-xl border border-dashed border-white/15 text-sm text-white/40">No scene images yet</div>
                     )}
                   </div>
-                  <div className="mt-3 text-xs text-white/50 break-all">selectedSceneImageUrl: {selectedSceneUrl || "--"}</div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                      <CloudUpload className="h-4 w-4" />
+                      {uploadingAssetKey === `${bundle.sceneIndex}:scene` ? "Uploading..." : "Upload Scene"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) void uploadSceneReferenceImage(file, Number(bundle.sceneIndex || 0), "scene");
+                          e.currentTarget.value = "";
+                        }}
+                      />
+                    </label>
+                    <div className="text-xs text-white/50 break-all">selectedSceneImageUrl: {selectedSceneUrl || "--"}</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -579,6 +856,9 @@ export default function WorkflowNodes() {
   function renderRenderStillPanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-100">
+          多人場景建議走 Render Still，再在 Final Render 中插入，避免直接用 scene video 造成角色不穩定。
+        </div>
         {storyboard.map((scene) => (
           <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-2 flex items-center justify-between gap-3">
@@ -587,6 +867,20 @@ export default function WorkflowNodes() {
             </div>
             <textarea value={renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""} onChange={(e) => setRenderStillPromptMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} rows={3} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" />
             <div className="mt-3 flex flex-wrap gap-3">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                <CloudUpload className="h-4 w-4" />
+                {uploadingAssetKey === `${scene.sceneIndex}:renderstill` ? "Uploading..." : "Upload Render Still"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "renderstill");
+                    e.currentTarget.value = "";
+                  }}
+                />
+              </label>
               <Button disabled={auxBusyKey === `render-still-${scene.sceneIndex}`} onClick={() => void runAuxStep(`render-still-${scene.sceneIndex}`, "workflowGenerateRenderStill", {
                 workflowId,
                 workflow,
@@ -605,6 +899,9 @@ export default function WorkflowNodes() {
   function renderVoicePanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
+          旁白以 scene 為單位生成。勾選 <span className="font-semibold text-white">Include in render</span> 的 scene 才會在最終 Render 中混入。
+        </div>
         {storyboard.map((scene) => {
           const key = String(scene.sceneIndex);
           const bundle = storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex);
@@ -629,12 +926,12 @@ export default function WorkflowNodes() {
               <div className="mt-3 flex flex-wrap gap-3">
                 <Button disabled={auxBusyKey === `scene-voice-${scene.sceneIndex}`} onClick={() => void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
                   workflowId,
-                  workflow,
-                  storyboard,
                   sceneIndex: scene.sceneIndex,
-                  voiceText: scene.voiceover || scene.scenePrompt,
+                  dialogueText: scene.voiceover || scene.scenePrompt,
+                  voicePrompt: DEFAULT_SCENE_VOICE_PROMPT,
                   voiceType: sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female",
                   voiceStyle: sceneVoiceStyleMap[key] ?? scene.voiceStyle ?? "",
+                  voice: mapSceneVoiceTypeToVoice(sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female"),
                 })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-voice-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Voice"}</Button>
                 <label className="inline-flex items-center gap-2 text-sm text-white/70"><input type="checkbox" checked={Boolean(renderVoiceSceneMap[key])} onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [key]: e.target.checked }))} /> Include in render</label>
               </div>
@@ -649,6 +946,9 @@ export default function WorkflowNodes() {
   function renderMusicPanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
+          音樂節點只負責生成與保存穩定 URL；真正的截取區間與混音在 Final Render。
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <select value={musicProvider} onChange={(e) => setMusicProvider(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
             <option value="suno">Suno</option>
@@ -664,13 +964,11 @@ export default function WorkflowNodes() {
         </div>
         <Button disabled={globalStep.loading} onClick={() => void runOp("workflowGenerateMusic", {
           workflowId,
-          workflow,
-          storyboard,
           musicPrompt,
           musicProvider,
-          mood: musicMood,
-          bpm: Number(musicBpm || 0) || undefined,
-          duration: Number(musicDuration || 0) || undefined,
+          musicMood,
+          musicBpm: Number(musicBpm || 0) || undefined,
+          musicDuration: Number(musicDuration || 0) || undefined,
         })} className="rounded-xl bg-primary px-5">{globalStep.loading ? "Generating..." : "Generate Music"}</Button>
         {outputs.musicUrl ? <audio key={outputs.musicUrl} className="w-full" controls src={toMediaUrl(outputs.musicUrl)} /> : null}
       </div>
@@ -680,6 +978,9 @@ export default function WorkflowNodes() {
   function renderVideoPanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
+          Scene Video 會讀取這個 workflow 裡目前已選定的角色圖與場景圖。如果 scene 被標記為多人場景，建議回 Render Still 節點處理。
+        </div>
         {storyboard.map((scene) => {
           const bundle = storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex);
           return (
@@ -693,8 +994,6 @@ export default function WorkflowNodes() {
               <div className="mt-3 flex flex-wrap gap-3">
                 <Button disabled={auxBusyKey === `scene-video-${scene.sceneIndex}`} onClick={() => void runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", {
                   workflowId,
-                  workflow,
-                  storyboard,
                   sceneIndex: scene.sceneIndex,
                   duration: "8s",
                   scenePrompt: scene.scenePrompt,
@@ -704,6 +1003,8 @@ export default function WorkflowNodes() {
                   camera: scene.camera,
                   mood: scene.mood,
                   lighting: scene.lighting,
+                  voiceType: sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female",
+                  voiceStyle: sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "",
                 })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-video-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Video"}</Button>
               </div>
               {bundle?.sceneVideoUrl ? <video key={bundle.sceneVideoUrl} className="mt-3 w-full rounded-xl border border-white/10" controls src={toMediaUrl(bundle.sceneVideoUrl)} /> : null}
@@ -726,13 +1027,32 @@ export default function WorkflowNodes() {
         </div>
         <Button disabled={globalStep.loading} onClick={() => void runOp("workflowRenderVideo", {
           workflowId,
-          workflow,
-          storyboard,
           musicStartSec: Number(musicStartSec || 0) || 0,
           musicEndSec: Number(musicEndSec || 0) || 0,
-          renderVoiceSceneIndexes: selectedScenesForRender().map((scene) => scene.sceneIndex),
+          includeSceneVoiceIndexes: selectedScenesForRender().map((scene) => scene.sceneIndex),
         })} className="rounded-xl bg-primary px-5">{globalStep.loading ? "Rendering..." : "Final Render"}</Button>
         {outputs.finalVideoUrl ? <video key={outputs.finalVideoUrl} className="w-full rounded-xl border border-white/10" controls src={toMediaUrl(outputs.finalVideoUrl)} /> : null}
+      </div>
+    );
+  }
+
+  function renderSummaryCards() {
+    const summary = stepCountSummary();
+    const cards = [
+      { label: "Storyboard", value: String(summary.scenes), hint: "Scenes" },
+      { label: "Asset Bundles", value: String(summary.bundles), hint: "Character + scene" },
+      { label: "Scene Videos", value: String(summary.sceneVideos), hint: "Ready clips" },
+      { label: "Scene Voices", value: String(summary.sceneVoices), hint: "Narration" },
+    ];
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <div key={card.label} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="text-xs uppercase tracking-[0.18em] text-white/45">{card.label}</div>
+            <div className="mt-3 text-3xl font-black text-white">{card.value}</div>
+            <div className="mt-1 text-sm text-white/55">{card.hint}</div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -758,17 +1078,55 @@ export default function WorkflowNodes() {
       <Navbar />
       <main className="px-4 pb-8 pt-24 md:px-6">
         <div className="mx-auto max-w-[1880px]">
+          <div className="mb-4 overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(236,72,153,0.22),transparent_32%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6 md:p-8">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">画布式工作流 <span className="ml-2 text-xs text-white/45">Canvas Workflow</span></div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 第一、二阶段验收版</h1>
+                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/72 md:text-base">保留旧版 <span className="text-white">/workflow</span> 作为 fallback，这里负责真实执行、调试、节点检查与 scene 级编辑。现在的目标是让 Prompt 到 Final Render 全链可验收。</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button className="rounded-xl bg-primary px-5 text-primary-foreground hover:bg-primary/90" onClick={() => setSelected(nextRecommendedNode())}>
+                  <Wand2 className="mr-2 h-4 w-4" />
+                  打开建议节点
+                </Button>
+                <a href="/workflow">
+                  <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">查看旧版页面</Button>
+                </a>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-wrap items-center gap-3 text-sm text-white/60">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+                <ArrowRight className="h-4 w-4" />
+                Recommended: <span className="font-semibold text-white">{nextRecommendedNode()}</span>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
+                <LoaderCircle className={`h-4 w-4 ${globalStep.loading || !!auxBusyKey ? "animate-spin text-primary" : "text-white/45"}`} />
+                Runtime: <span className="font-semibold text-white">{globalStep.loading || !!auxBusyKey ? "busy" : "idle"}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            {renderSummaryCards()}
+          </div>
+
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">画布式工作流 <span className="ml-2 text-xs text-white/45">Canvas Workflow</span></div>
-              <h1 className="mt-3 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 第一批真接线</h1>
-              <p className="mt-3 max-w-4xl text-sm leading-7 text-white/70 md:text-base">旧版 <span className="text-white">/workflow</span> 继续保留，这里开始承接真实执行与 debug。固定 8 秒规则只在 nodes 里体现，不改旧页面。</p>
+              <div className="text-lg font-bold text-white">验收导航</div>
+              <div className="mt-1 text-sm text-white/55">Phase 1 + Phase 2 一次看完，畫布負責上下文，右側 inspector 負責真實操作。</div>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Button className="rounded-xl bg-primary px-5 text-primary-foreground hover:bg-primary/90" onClick={() => setSelected("prompt")}>开始节点执行</Button>
-              <a href="/workflow">
-                <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">查看旧版页面</Button>
-              </a>
+            <div className="flex flex-wrap gap-2">
+              {["prompt", "script", "storyboard", "assets", "renderStill", "voice", "music", "video", "render"].map((nodeId) => (
+                <button
+                  key={nodeId}
+                  type="button"
+                  onClick={() => setSelected(nodeId)}
+                  className={`rounded-full border px-3 py-1.5 text-xs transition-colors ${selected === nodeId ? "border-primary/40 bg-primary/15 text-primary" : "border-white/10 bg-white/5 text-white/65 hover:bg-white/10"}`}
+                >
+                  {nodeId}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -827,9 +1185,24 @@ export default function WorkflowNodes() {
                   <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4">
                     <div className="mb-1 text-xl font-black">{current.title}</div>
                     <div className="mb-3 text-xs text-white/45">{current.en}</div>
-                    <div className="mb-3 inline-flex rounded-full border px-2.5 py-1 text-xs text-white/70">状态：{current.status}</div>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <div className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${badgeClass(current.status)}`}>接入：{current.status}</div>
+                      <div className="inline-flex rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">运行：{selectedNodeRuntimeStatus()}</div>
+                    </div>
                     <div className="text-sm leading-7 text-white/72">{current.desc}</div>
                     <div className="mt-3 text-xs text-white/50">workflowId: {workflowId || "not started"}</div>
+                  </div>
+
+                  <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">Inspector</div>
+                      <div className="mt-2 text-sm text-white/70">這裡編輯的是當前所選節點的真實輸入，不是靜態 mock UI。</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">Next Step</div>
+                      <div className="mt-2 text-sm font-semibold text-white">{nextRecommendedNode()}</div>
+                      <div className="mt-1 text-xs text-white/55">你可以直接跳到建議節點繼續流程。</div>
+                    </div>
                   </div>
 
                   {globalStep.error ? <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200"><AlertCircle className="h-4 w-4" /> {globalStep.error}</div> : null}
@@ -837,17 +1210,54 @@ export default function WorkflowNodes() {
                   {globalStep.success ? <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"><CheckCircle2 className="h-4 w-4" /> 上一步执行成功</div> : null}
 
                   {renderSelectedPanel()}
+
+                  <div className="mt-5 rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                    <div className="mb-2 text-sm font-semibold text-white">Latest Output Snapshot</div>
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs text-white/70">{JSON.stringify(selectedNodeSnapshot(), null, 2)}</pre>
+                  </div>
                 </CardContent>
               </Card>
 
               <Card className="border-white/10 bg-white/5">
                 <CardContent className="p-5">
                   <div className="mb-3 text-lg font-bold">运行状态</div>
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    <input
+                      value={workflowIdInput}
+                      onChange={(e) => setWorkflowIdInput(e.target.value)}
+                      placeholder="Paste workflowId"
+                      className="min-w-[220px] flex-1 rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
+                    />
+                    <Button
+                      variant="outline"
+                      className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
+                      onClick={() => {
+                        const nextId = s(workflowIdInput).trim();
+                        if (!nextId) return;
+                        setWorkflowId(nextId);
+                        void refreshWorkflow(nextId);
+                      }}
+                    >
+                      Load Workflow
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
+                      onClick={() => void refreshWorkflow()}
+                      disabled={!workflowId}
+                    >
+                      <RefreshCcw className="mr-2 h-4 w-4" />
+                      Refresh
+                    </Button>
+                  </div>
                   <div className="space-y-2 text-sm text-white/72">
                     <div>currentStep: <code>{s(workflow?.currentStep) || "--"}</code></div>
                     <div>status: <code>{s(workflow?.status) || "--"}</code></div>
                     <div>storyboard scenes: <code>{String(Array.isArray(outputs.storyboard) ? outputs.storyboard.length : 0)}</code></div>
                     <div>scene bundles: <code>{String(storyboardImages.length)}</code></div>
+                    <div>scene videos: <code>{String(storyboardImages.filter((item) => s(item?.sceneVideoUrl).trim()).length)}</code></div>
+                    <div>scene voices: <code>{String(storyboardImages.filter((item) => s(item?.sceneVoiceUrl).trim()).length)}</code></div>
+                    <div>storyboard warnings: <code>{String(storyboardImageWarnings.length)}</code></div>
                   </div>
                 </CardContent>
               </Card>
