@@ -6,6 +6,7 @@ import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
+import type { GrowthSnapshot } from "@shared/growth";
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -139,6 +140,27 @@ export default function MVAnalysisPage() {
 
   const analyzeMutation = trpc.mvAnalysis.analyzeFrame.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
+  const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
+    {
+      context: context || undefined,
+      requestedPlatforms: analysis?.platforms || [],
+      analysis: analysis || {
+        composition: 0,
+        color: 0,
+        lighting: 0,
+        impact: 0,
+        viralPotential: 0,
+        strengths: [],
+        improvements: [],
+        platforms: [],
+        summary: "",
+      },
+    },
+    {
+      enabled: Boolean(analysis),
+      staleTime: 60_000,
+    },
+  );
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
     enabled: isAuthenticated && !loading,
     refetchOnMount: true,
@@ -295,6 +317,7 @@ export default function MVAnalysisPage() {
     () => analysis ? buildPlatformRecommendations(analysis.platforms, context, analysis) : [],
     [analysis, context],
   );
+  const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
   const businessInsights = useMemo(
     () => analysis ? buildBusinessInsights(analysis, context) : [],
     [analysis, context],
@@ -539,26 +562,107 @@ export default function MVAnalysisPage() {
                     <TrendingUp className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">趋势洞察</h2>
                   </div>
-                  <div className="mt-5 grid gap-4 md:grid-cols-3">
-                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <div className="text-sm font-semibold text-white">30 天平台动向</div>
-                      <p className="mt-3 text-sm leading-7 text-white/65">
-                        趋势数据库接入中。当前先建议你观察近 30 天同题材内容里的开头结构、标题句式和互动问题设置。
-                      </p>
+                  {growthSnapshotQuery.isLoading ? (
+                    <div className="mt-5 grid gap-4 md:grid-cols-3">
+                      {[0, 1, 2].map((item) => (
+                        <div key={item} className="animate-pulse rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="h-4 w-24 rounded bg-white/10" />
+                          <div className="mt-4 h-20 rounded bg-white/5" />
+                        </div>
+                      ))}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <div className="text-sm font-semibold text-white">热点结构模板</div>
-                      <p className="mt-3 text-sm leading-7 text-white/65">
-                        你这条内容更适合靠「{analysis.impact >= 70 ? "强开头 + 快节奏推进" : "清晰信息架构 + 结果前置"}」去对齐热门结构。
-                      </p>
+                  ) : null}
+                  {growthSnapshot ? (
+                    <>
+                      <div className="mt-4 flex flex-wrap gap-2 text-xs text-white/60">
+                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                          source: {growthSnapshot.status.source}
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                          freshness: {growthSnapshot.status.freshnessLabel}
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
+                          window: {growthSnapshot.status.windowDays} 天
+                        </div>
+                      </div>
+                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
+                        <div className="font-semibold text-white">趋势摘要</div>
+                        <p className="mt-2">{growthSnapshot.overview.trendNarrative}</p>
+                        <p className="mt-2 text-white/55">{growthSnapshot.overview.nextCollectionPlan}</p>
+                      </div>
+                      <div className="mt-5 grid gap-4 md:grid-cols-3">
+                        {growthSnapshot.platformSnapshots.map((platform) => (
+                          <div key={platform.platform} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-white">{platform.displayName}</div>
+                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
+                                {platform.fitLabel}
+                              </div>
+                            </div>
+                            <p className="mt-3 text-sm leading-7 text-white/65">{platform.summary}</p>
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-white/70">
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                <div className="text-white/45">热度动量</div>
+                                <div className="mt-1 text-xl font-bold text-white">{platform.momentumScore}</div>
+                              </div>
+                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                                <div className="text-white/45">受众适配</div>
+                                <div className="mt-1 text-xl font-bold text-white">{platform.audienceFitScore}</div>
+                              </div>
+                            </div>
+                            <div className="mt-4 text-xs leading-6 text-white/60">
+                              <div>近 30 天样本：{platform.last30d.postsAnalyzed} 条 / {platform.last30d.creatorsTracked} 位创作者</div>
+                              <div>中位互动率：{platform.last30d.engagementRateMedian}%</div>
+                              <div>增长率：{platform.last30d.growthRate}%</div>
+                              <div>推荐时长：{platform.last30d.topDurationRange}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-5 grid gap-4 md:grid-cols-2">
+                        {growthSnapshot.contentPatterns.map((pattern) => (
+                          <div key={pattern.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-white">{pattern.title}</div>
+                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
+                                {pattern.momentum}
+                              </div>
+                            </div>
+                            <p className="mt-3 text-sm leading-7 text-white/65">{pattern.description}</p>
+                            <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
+                              Hook 模板：{pattern.hookTemplate}
+                            </div>
+                            <div className="mt-3 text-xs text-white/60">
+                              商业提示：{pattern.monetizationHint}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-5 grid gap-4 md:grid-cols-2">
+                        {growthSnapshot.opportunities.map((item) => (
+                          <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="text-sm font-semibold text-white">{item.title}</div>
+                            <p className="mt-3 text-sm leading-7 text-white/65">{item.whyNow}</p>
+                            <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
+                              下一步：{item.nextAction}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {growthSnapshot.status.notes.length ? (
+                        <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/60">
+                          {growthSnapshot.status.notes.map((note, index) => (
+                            <div key={index}>• {note}</div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {growthSnapshotQuery.error ? (
+                    <div className="mt-5 rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-100">
+                      趋势数据加载失败：{growthSnapshotQuery.error.message}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <div className="text-sm font-semibold text-white">后续扩展接口</div>
-                      <p className="mt-3 text-sm leading-7 text-white/65">
-                        后面这里会接入平台趋势资料、热门内容结构数据库和 AI 创作辅助联动。
-                      </p>
-                    </div>
-                  </div>
+                  ) : null}
                 </div>
 
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
