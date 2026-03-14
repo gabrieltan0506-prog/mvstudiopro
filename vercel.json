@@ -18,7 +18,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "/api/:path*"
+      "destination": "https://mvstudiopro.fly.dev/api/:path*"
     },
     {
       "source": "/:path((?!api/|assets/|.*\\..*).*)",
