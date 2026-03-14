@@ -63,6 +63,46 @@ function parseCsvEnv(name: string) {
 async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
+  const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
+
+  const pushBilibiliItem = (item: Record<string, any>) => {
+    const title = String(item.title ?? "").trim();
+    if (!title) return;
+    items.push({
+      id: String(item.aid ?? item.id ?? item.bvid ?? `bili-${items.length}`),
+      title,
+      author: String(item.owner?.name ?? "").trim() || undefined,
+      url: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : undefined,
+      publishedAt: safeDateFromUnix(Number(item.pubdate)),
+      likes: Number(item.stat?.like ?? 0) || undefined,
+      comments: Number(item.stat?.reply ?? 0) || undefined,
+      shares: Number(item.stat?.share ?? 0) || undefined,
+      views: Number(item.stat?.view ?? 0) || undefined,
+      hotValue: Number(item.stat?.like ?? 0) + Number(item.stat?.reply ?? 0),
+      contentType: "video",
+      tags: [String(item.tname ?? "").trim()].filter(Boolean),
+    });
+  };
+
+  if (cookie) {
+    const response = await fetch("https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=10&fresh_type=4&fresh_idx=1&fresh_idx_1h=1", {
+      headers: {
+        accept: "application/json,text/plain,*/*",
+        cookie,
+        referer: "https://www.bilibili.com/",
+        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Bilibili recommend API responded with ${response.status}`);
+    }
+    const payload = await response.json() as {
+      data?: { item?: Array<Record<string, any>> };
+    };
+    const list = payload.data?.item ?? [];
+    list.forEach(pushBilibiliItem);
+    notes.push(`Fetched ${list.length} authenticated Bilibili recommended videos.`);
+  }
 
   for (const page of [1, 2, 3]) {
     const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=20`, {
@@ -75,25 +115,10 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
       data?: { list?: Array<Record<string, any>> };
     };
     const list = payload.data?.list ?? [];
-    for (const item of list) {
-      items.push({
-        id: String(item.aid ?? item.bvid ?? `${page}-${items.length}`),
-        title: String(item.title ?? "").trim(),
-        author: String(item.owner?.name ?? "").trim() || undefined,
-        url: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : undefined,
-        publishedAt: safeDateFromUnix(Number(item.pubdate)),
-        likes: Number(item.stat?.like ?? 0) || undefined,
-        comments: Number(item.stat?.reply ?? 0) || undefined,
-        shares: Number(item.stat?.share ?? 0) || undefined,
-        views: Number(item.stat?.view ?? 0) || undefined,
-        hotValue: Number(item.stat?.like ?? 0) + Number(item.stat?.share ?? 0),
-        contentType: "video",
-        tags: [String(item.tname ?? "").trim()].filter(Boolean),
-      });
-    }
+    list.forEach(pushBilibiliItem);
   }
 
-  notes.push(`Fetched ${items.length} popular Bilibili videos.`);
+  notes.push(`Fetched ${items.length} total Bilibili videos after merging popular and authenticated feed.`);
   return {
     platform: "bilibili",
     source: "live",
