@@ -57,6 +57,18 @@ type StrategyPillar = {
   accent: string;
 };
 
+const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
+function hasSupervisorAccess() {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("supervisor") === "1") {
+    localStorage.setItem(SUPERVISOR_ACCESS_KEY, "1");
+    return true;
+  }
+  return localStorage.getItem(SUPERVISOR_ACCESS_KEY) === "1";
+}
+
 function getScoreTone(score: number) {
   if (score >= 80) return { label: "强", color: "text-emerald-300", chip: "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" };
   if (score >= 65) return { label: "可放大", color: "text-amber-200", chip: "border-amber-300/20 bg-amber-400/10 text-amber-100" };
@@ -213,6 +225,7 @@ function buildCreationAssistBrief(
 export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
   const { isAuthenticated, loading } = useAuth();
+  const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
 
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -257,13 +270,17 @@ export default function MVAnalysisPage() {
     },
   );
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
-    enabled: isAuthenticated && !loading,
+    enabled: isAuthenticated && !loading && !supervisorAccess,
     refetchOnMount: true,
   });
 
   useEffect(() => {
-    if (!loading && !isAuthenticated) navigate("/login");
-  }, [loading, isAuthenticated, navigate]);
+    setSupervisorAccess(hasSupervisorAccess());
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !isAuthenticated && !supervisorAccess) navigate("/login");
+  }, [loading, isAuthenticated, supervisorAccess, navigate]);
 
   useEffect(() => {
     if (uploadStage === "uploading" || uploadStage === "analyzing") {
@@ -355,19 +372,21 @@ export default function MVAnalysisPage() {
   const handleAnalyze = useCallback(async () => {
     if (!imageBase64) return;
 
-    try {
-      const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "analysis" });
-      if (!accessCheck.allowed) {
-        setQuotaModalInfo({
-          isTrial: (accessCheck as any).isTrial,
-          planName: (accessCheck as any).planName,
-        });
-        setQuotaModalVisible(true);
+    if (!supervisorAccess) {
+      try {
+        const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "analysis" });
+        if (!accessCheck.allowed) {
+          setQuotaModalInfo({
+            isTrial: (accessCheck as any).isTrial,
+            planName: (accessCheck as any).planName,
+          });
+          setQuotaModalVisible(true);
+          return;
+        }
+      } catch (accessError: any) {
+        toast.error(accessError.message || "无法检查使用权限");
         return;
       }
-    } catch (accessError: any) {
-      toast.error(accessError.message || "无法检查使用权限");
-      return;
     }
 
     setUploadStage("uploading");
@@ -385,12 +404,14 @@ export default function MVAnalysisPage() {
       setAnalysis(result.analysis);
       setUploadProgress(100);
       setUploadStage("done");
-      usageStatsQuery.refetch();
+      if (!supervisorAccess) {
+        usageStatsQuery.refetch();
+      }
     } catch (analysisError: any) {
       setError(analysisError.message || "分析失败，请稍后再试");
       setUploadStage("error");
     }
-  }, [imageBase64, checkAccessMutation, fileSize, analyzeMutation, context, usageStatsQuery]);
+  }, [imageBase64, supervisorAccess, checkAccessMutation, fileSize, analyzeMutation, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setSelectedImage(null);
@@ -474,7 +495,7 @@ export default function MVAnalysisPage() {
     );
   }
 
-  if (!isAuthenticated) return null;
+  if (!isAuthenticated && !supervisorAccess) return null;
 
   return (
     <div className="min-h-screen bg-[#08111f] text-[#f7f4ef]">
@@ -503,8 +524,15 @@ export default function MVAnalysisPage() {
           <button onClick={() => window.history.back()} className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10">
             <ArrowLeft className="h-5 w-5" />
           </button>
-          <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
-            Creator Growth Camp
+          <div className="flex flex-wrap items-center gap-2">
+            {supervisorAccess ? (
+              <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-200">
+                Supervisor Mode
+              </div>
+            ) : null}
+            <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
+              Creator Growth Camp
+            </div>
           </div>
         </div>
 
