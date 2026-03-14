@@ -443,12 +443,22 @@ export default function MVAnalysisPage() {
     [analysis, platformRecommendations],
   );
   const commercialTracks = useMemo(
-    () => analysis ? buildCommercialTracks(analysis, context, growthSnapshot) : [],
+    () => {
+      if (!analysis) return [];
+      return growthSnapshot?.monetizationTracks?.length
+        ? growthSnapshot.monetizationTracks
+        : buildCommercialTracks(analysis, context, growthSnapshot);
+    },
     [analysis, context, growthSnapshot],
   );
   const creationAssistBrief = useMemo(
-    () => analysis ? buildCreationAssistBrief(analysis, context, platformRecommendations, commercialTracks) : "",
-    [analysis, context, platformRecommendations, commercialTracks],
+    () => {
+      if (!analysis) return "";
+      return growthSnapshot?.creationAssist?.brief
+        ? growthSnapshot.creationAssist.brief
+        : buildCreationAssistBrief(analysis, context, platformRecommendations, commercialTracks);
+    },
+    [analysis, context, platformRecommendations, commercialTracks, growthSnapshot],
   );
   const strategyPillars = useMemo(
     () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
@@ -785,6 +795,19 @@ export default function MVAnalysisPage() {
                           </div>
                         ))}
                       </div>
+                      <div className="mt-5 grid gap-4 md:grid-cols-3">
+                        {growthSnapshot.structurePatterns.map((pattern) => (
+                          <div key={pattern.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="text-sm font-semibold text-white">{pattern.title}</div>
+                            <p className="mt-3 text-sm leading-7 text-white/65">{pattern.angle}</p>
+                            <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
+                              钩子：{pattern.hook}
+                            </div>
+                            <div className="mt-3 text-sm leading-7 text-white/60">CTA：{pattern.cta}</div>
+                            <div className="mt-2 text-xs text-white/40">依据：{pattern.evidence}</div>
+                          </div>
+                        ))}
+                      </div>
                       <div className="mt-5 grid gap-4 md:grid-cols-2">
                         {growthSnapshot.opportunities.map((item) => (
                           <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
@@ -903,6 +926,18 @@ export default function MVAnalysisPage() {
                       className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
                     >
                       复制 7 天增长规划
+                    </button>
+                    <button
+                      onClick={() => void handleCopyText(growthSnapshot?.creationAssist?.storyboardPrompt || creationAssistBrief, "分镜提示词已复制")}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
+                    >
+                      复制分镜提示词
+                    </button>
+                    <button
+                      onClick={() => void handleCopyText(growthSnapshot?.creationAssist?.workflowPrompt || creationAssistBrief, "工作流提示词已复制")}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
+                    >
+                      复制工作流提示词
                     </button>
                     <a
                       href="/storyboard"

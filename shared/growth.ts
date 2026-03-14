@@ -70,6 +70,29 @@ export const growthOpportunitySchema = z.object({
   linkedPlatforms: z.array(growthPlatformSchema),
 });
 
+export const growthStructurePatternSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  angle: z.string(),
+  hook: z.string(),
+  cta: z.string(),
+  recommendedPlatforms: z.array(growthPlatformSchema),
+  evidence: z.string(),
+});
+
+export const growthMonetizationTrackSchema = z.object({
+  name: z.string(),
+  fit: z.number().min(0).max(100),
+  reason: z.string(),
+  nextStep: z.string(),
+});
+
+export const growthCreationAssistSchema = z.object({
+  brief: z.string(),
+  storyboardPrompt: z.string(),
+  workflowPrompt: z.string(),
+});
+
 export const growthSnapshotStatusSchema = z.object({
   source: z.enum(["mock", "fallback", "live", "hybrid"]),
   generatedAt: z.string(),
@@ -91,6 +114,9 @@ export const growthSnapshotSchema = z.object({
   platformSnapshots: z.array(growthPlatformSnapshotSchema),
   contentPatterns: z.array(growthContentPatternSchema),
   opportunities: z.array(growthOpportunitySchema),
+  structurePatterns: z.array(growthStructurePatternSchema),
+  monetizationTracks: z.array(growthMonetizationTrackSchema),
+  creationAssist: growthCreationAssistSchema,
 });
 
 export type GrowthPlatform = z.infer<typeof growthPlatformSchema>;
@@ -99,5 +125,8 @@ export type GrowthMetricWindow = z.infer<typeof growthMetricWindowSchema>;
 export type GrowthPlatformSnapshot = z.infer<typeof growthPlatformSnapshotSchema>;
 export type GrowthContentPattern = z.infer<typeof growthContentPatternSchema>;
 export type GrowthOpportunity = z.infer<typeof growthOpportunitySchema>;
+export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema>;
+export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSchema>;
+export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;
 export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;

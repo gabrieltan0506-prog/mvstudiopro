@@ -1,5 +1,6 @@
 import {
   type GrowthAnalysisScores,
+  type GrowthMonetizationTrack,
   type GrowthPlatform,
   type GrowthPlatformSnapshot,
   type GrowthSnapshot,
@@ -195,6 +196,118 @@ function buildOpportunitiesFromCollections(collections: PlatformTrendCollection[
   ];
 }
 
+function buildStructurePatterns(
+  analysis: GrowthAnalysisScores,
+  requestedPlatforms: GrowthPlatform[],
+  collections: PlatformTrendCollection[],
+) {
+  const titles = collections.flatMap((collection) => collection.items.slice(0, 8).map((item) => item.title));
+  const hasCase = titles.some((title) => /案例|复盘|教程|拆解/.test(title));
+  const hasEmotion = titles.some((title) => /哭|崩溃|救命|离谱|逆天|震惊/.test(title));
+  const hasLifestyle = titles.some((title) => /日常|穿搭|家居|生活|vlog|探店/.test(title));
+
+  return [
+    {
+      id: "structure-result-proof",
+      title: "结果先出 + 证据补强",
+      angle: hasEmotion
+        ? "先抛结果或反差，再用一条最强证据把情绪拉满。"
+        : "先给结果，再快速交代为什么可信，减少无效铺垫。",
+      hook: "开头 2 秒只做一件事：给结果、给反差、给结论。",
+      cta: "结尾补“要模板/案例/链接”的单一行动指令。",
+      recommendedPlatforms: requestedPlatforms.slice(0, 2),
+      evidence: "近 30 天热门样本里，结果前置类结构在短平台更稳定。",
+    },
+    {
+      id: "structure-breakdown-template",
+      title: hasCase ? "案例拆解 + 方法模板" : "过程拆解 + 可复制模板",
+      angle: hasCase
+        ? "把案例讲成方法，把结果讲成可复制路径。"
+        : "把过程拆成三步，观众更容易收藏和转发。",
+      hook: "先说最终结果，再说三步方法或两个误区。",
+      cta: "引导到咨询、课程、陪跑或案例包。",
+      recommendedPlatforms: ["xiaohongshu", "bilibili"],
+      evidence: hasLifestyle
+        ? "小红书样本里，带模板感和生活方式包装的内容更容易被收藏。"
+        : "B站 / 小红书样本对拆解、复盘、教程的承接更强。",
+    },
+    {
+      id: "structure-series-promise",
+      title: "系列承诺 + 连续更新",
+      angle: analysis.viralPotential >= 75
+        ? "把单条潜力内容延展成系列，尽快形成稳定记忆点。"
+        : "先用系列结构降低试错成本，让内容方向更快收敛。",
+      hook: "这一条先给结论，下一条专门讲过程或资源。",
+      cta: "让用户评论关键词、预约下一集或进入私域。",
+      recommendedPlatforms: ["douyin", "xiaohongshu", "bilibili"],
+      evidence: "当单条内容已有基础反馈，系列化通常比继续单发更容易形成商业承接。",
+    },
+  ];
+}
+
+function buildMonetizationTracks(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  platformSnapshots: GrowthPlatformSnapshot[],
+): GrowthMonetizationTrack[] {
+  const text = context.trim();
+  const xiaohongshuFit = platformSnapshots.find((item) => item.platform === "xiaohongshu")?.audienceFitScore || 0;
+  const bilibiliFit = platformSnapshots.find((item) => item.platform === "bilibili")?.audienceFitScore || 0;
+  const douyinFit = platformSnapshots.find((item) => item.platform === "douyin")?.audienceFitScore || 0;
+
+  return [
+    {
+      name: "品牌合作",
+      fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0)), 36, 96),
+      reason: "视觉包装和表达统一性更强时，更容易承接品牌合作、案例展示和商业合作页。",
+      nextStep: "补一版案例导向标题和服务说明，让合作方快速理解你擅长的商业结果。",
+    },
+    {
+      name: "电商带货",
+      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0)), 36, 96),
+      reason: "冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。",
+      nextStep: "把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。",
+    },
+    {
+      name: "知识付费",
+      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0)), 36, 96),
+      reason: "适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。",
+      nextStep: "把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。",
+    },
+    {
+      name: "社群会员",
+      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4), 36, 96),
+      reason: "只要能持续输出同主题内容和过程感，就更容易建立陪伴感并承接社群或会员。",
+      nextStep: "连续发布 3 条同主题内容，并在结尾加入系列承诺和进群/订阅理由。",
+    },
+  ].sort((a, b) => b.fit - a.fit);
+}
+
+function buildCreationAssist(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  requestedPlatforms: GrowthPlatform[],
+  monetizationTracks: GrowthMonetizationTrack[],
+) {
+  const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
+  const primaryPlatform = PLATFORM_LABELS[requestedPlatforms[0] || "douyin"] || "抖音";
+  const backgroundLine = context.trim()
+    ? `业务背景：${context.trim()}`
+    : "业务背景：未填写，建议补充目标受众、成交方式和想放大的内容主题。";
+
+  return {
+    brief: [
+      `内容目标：把当前素材升级成更适合 ${primaryPlatform} 分发，并服务于「${primaryTrack}」转化的内容版本。`,
+      `核心分析：${analysis.summary}`,
+      "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
+      "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
+      backgroundLine,
+    ].join("\n"),
+    storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA。${backgroundLine}`,
+    workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本。优先服务于 ${primaryTrack} 转化。`,
+  };
+}
+
 function buildPlatformSnapshot(platform: GrowthPlatform, analysis: GrowthAnalysisScores, context: string): GrowthPlatformSnapshot {
   const momentumBase =
     platform === "douyin" ? analysis.impact :
@@ -329,6 +442,9 @@ export function buildMockGrowthSnapshot(params: {
         linkedPlatforms: requestedPlatforms.slice(0, 2),
       },
     ],
+    structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, []),
+    monetizationTracks: buildMonetizationTracks(params.analysis, context, platformSnapshots),
+    creationAssist: buildCreationAssist(params.analysis, context, requestedPlatforms, buildMonetizationTracks(params.analysis, context, platformSnapshots)),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
@@ -378,6 +494,7 @@ export function buildGrowthSnapshotFromCollections(params: {
 
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
+  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots);
 
   const snapshot = {
     status: {
@@ -405,6 +522,9 @@ export function buildGrowthSnapshotFromCollections(params: {
     platformSnapshots,
     contentPatterns: buildContentPatternsFromCollections(activeCollections),
     opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),
+    structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, activeCollections),
+    monetizationTracks,
+    creationAssist: buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
