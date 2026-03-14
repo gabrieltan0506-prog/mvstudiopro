@@ -2064,6 +2064,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         language: s(b.language || "中文").trim() || "中文",
       });
       const voice = s(b.voice || "nova").trim() || "nova";
+      const voiceType = s(b.voiceType || workflow.outputs?.voiceType || "female").trim() || "female";
+      const voiceStyle = s(b.voiceStyle || workflow.outputs?.voiceStyle).trim();
       if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
       const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice, voiceType, voiceStyle });
       if (!s(voiceResult.voiceUrl).trim()) {
