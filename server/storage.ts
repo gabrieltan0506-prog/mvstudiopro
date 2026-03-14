@@ -25,7 +25,9 @@ export async function storagePut(
 ): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
 
-  if (!ENV.blobReadWriteToken) {
+  const token = String(process.env.MVSP_READ_WRITE_TOKEN || ENV.blobReadWriteToken || "").trim();
+
+  if (!token) {
     return {
       key,
       url: buildLocalDataUrl(data, contentType),
@@ -39,7 +41,7 @@ export async function storagePut(
 
   const blob = await put(key, body, {
     access: "public",
-    token: ENV.blobReadWriteToken,
+    token,
     contentType,
   });
 

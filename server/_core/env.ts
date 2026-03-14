@@ -7,5 +7,5 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  blobReadWriteToken: process.env.BLOB_READ_WRITE_TOKEN ?? process.env.MVSP_READ_WRITE_TOKEN ?? "",
+  blobReadWriteToken: process.env.MVSP_READ_WRITE_TOKEN ?? process.env.BLOB_READ_WRITE_TOKEN ?? "",
 };
