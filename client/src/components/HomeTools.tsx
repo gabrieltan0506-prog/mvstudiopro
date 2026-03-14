@@ -14,7 +14,7 @@ const cards: ToolCard[] = [
   { zh: "虚拟艺人工坊", en: "Actor Studio", desc: "上传人物图，生成场景与视频", price: "15 积分起", pro: false, href: "/actor" },
   { zh: "分镜工作流", en: "Storyboard Workflow", desc: "脚本 → 分镜 → 图像 → 视频", price: "20 积分起", pro: false, href: "/workflow" },
   { zh: "AI 音乐工坊", en: "AI Music Studio", desc: "Suno / Udio 配乐生成", price: "5 积分起", pro: false, href: "/remix" },
-  { zh: "創作商業成長營", en: "Creator Growth Camp", desc: "上传内容，一键生成增长策略、商业洞察与平台建议", price: "Pro 功能", pro: true, href: "/creator-growth-camp" },
+  { zh: "創作商業成長營", en: "Creator Growth Camp", desc: "上传素材，直接生成增长诊断、商业路径与发布动作", price: "Pro 功能", pro: true, href: "/creator-growth-camp" },
   { zh: "我的创作", en: "My Creations", desc: "作品、任务、历史记录统一管理", price: "免费", pro: false, href: "/my" },
 ];
 
@@ -42,17 +42,17 @@ export default function HomeTools() {
               borderRadius: 24,
               background:
                 pro
-                  ? "linear-gradient(135deg, rgba(124,58,237,0.32), rgba(255,79,179,0.16))"
+                  ? "radial-gradient(circle at top left, rgba(255,138,61,0.3), transparent 35%), linear-gradient(135deg, rgba(17,33,58,0.96), rgba(12,18,32,0.96))"
                   : idx === 0
                   ? "linear-gradient(135deg, rgba(91,33,182,0.35), rgba(255,79,179,0.18))"
                   : "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))",
               border:
                 pro
-                  ? "1px solid rgba(255,79,179,0.40)"
+                  ? "1px solid rgba(255,179,127,0.34)"
                   : idx === 0
                   ? "1px solid rgba(255,138,91,0.36)"
                   : "1px solid rgba(255,255,255,0.08)",
-              boxShadow: pro ? "0 14px 40px rgba(236,72,153,0.10)" : "none",
+              boxShadow: pro ? "0 18px 42px rgba(255,138,61,0.12)" : "none",
               position: "relative",
               textDecoration: "none",
             }}
@@ -66,12 +66,12 @@ export default function HomeTools() {
                   padding: "6px 10px",
                   borderRadius: 999,
                   background: "rgba(255,255,255,0.08)",
-                  color: "#ff9b75",
+                  color: "#ffb37f",
                   fontSize: 11,
                   fontWeight: 900,
                 }}
               >
-                高价值功能
+                增长主线
               </div>
             ) : null}
 

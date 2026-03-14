@@ -309,7 +309,7 @@ export default function HomeHero() {
                 开始创作
               </a>
               <a
-                href="/showcase"
+                href="/creator-growth-camp"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -321,7 +321,7 @@ export default function HomeHero() {
                   textDecoration: "none",
                 }}
               >
-                爆款案例
+                进入成长营
               </a>
             </div>
           </div>
