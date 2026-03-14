@@ -239,7 +239,6 @@ function buildPlatformOptimizationCards(
     const hasLiveSample = snapshot?.last30d.sampleSizeLabel === "live-sample-30d";
     const referencePlatform =
       platformKey === "kuaishou" ? "抖音" :
-      platformKey === "weixin_channels" ? "小红书" :
       platformKey === "bilibili" ? "B站" :
       displayName;
 
