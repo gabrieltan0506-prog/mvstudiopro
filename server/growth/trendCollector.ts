@@ -48,6 +48,11 @@ function safeDateFromUnix(timestamp?: number) {
   return new Date(timestamp * 1000).toISOString();
 }
 
+function safeDateFromTimestamp(timestamp?: number) {
+  if (!timestamp || !Number.isFinite(timestamp)) return undefined;
+  return new Date(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000).toISOString();
+}
+
 function parseCsvEnv(name: string) {
   return String(process.env[name] || "")
     .split(",")
@@ -100,6 +105,72 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 }
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
+  const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
+  if (cookie) {
+    const response = await fetch(
+      "https://www.douyin.com/aweme/v1/web/tab/feed/?publish_video_strategy_type=2&aid=6383&channel=channel_pc_web&cookie_enabled=true&screen_width=1280&screen_height=800&browser_online=true&cpu_core_num=8&device_memory=8&downlink=10&effective_type=4g&round_trip_time=200",
+      {
+        headers: {
+          accept: "application/json,text/plain,*/*",
+          cookie,
+          referer: "https://www.douyin.com/",
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+        },
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Douyin feed responded with ${response.status}`);
+    }
+
+    const payload = await response.json() as {
+      aweme_list?: Array<Record<string, any>>;
+      has_more?: number;
+    };
+
+    const items = (payload.aweme_list ?? [])
+      .map((item) => {
+        const title = String(item.desc ?? item.caption ?? "").trim();
+        if (!title) return null;
+        const stats = item.statistics ?? {};
+        const author = item.author ?? {};
+        const tags = Array.isArray(item.text_extra)
+          ? item.text_extra
+            .map((entry) => String(entry?.hashtag_name ?? "").trim())
+            .filter(Boolean)
+          : [];
+        return {
+          id: String(item.aweme_id ?? item.group_id ?? ""),
+          title,
+          author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
+          url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
+          publishedAt: safeDateFromUnix(Number(item.create_time)),
+          likes: Number(stats.digg_count ?? 0) || undefined,
+          comments: Number(stats.comment_count ?? 0) || undefined,
+          shares: Number(stats.share_count ?? 0) || undefined,
+          views: Number(stats.play_count ?? 0) || undefined,
+          hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
+          contentType: "video" as const,
+          tags,
+        } satisfies TrendItem;
+      })
+      .filter(Boolean) as TrendItem[];
+
+    if (items.length) {
+      return {
+        platform: "douyin",
+        source: "live",
+        collectedAt: new Date().toISOString(),
+        windowDays: 30,
+        items,
+        notes: [
+          `Fetched ${items.length} Douyin authenticated feed videos.`,
+          `Douyin has_more: ${payload.has_more ?? 0}`,
+        ],
+      };
+    }
+  }
+
   const response = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
     headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
   });
@@ -131,8 +202,12 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
 }
 
 async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
+  const cookie = String(process.env.XHS_COOKIE || "").trim();
   const response = await fetch("https://www.xiaohongshu.com/explore", {
-    headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
+    headers: {
+      "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+      ...(cookie ? { cookie } : {}),
+    },
   });
   if (!response.ok) {
     throw new Error(`Xiaohongshu page responded with ${response.status}`);
@@ -172,107 +247,146 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     collectedAt: new Date().toISOString(),
     windowDays: 30,
     items,
-    notes: [`Fetched ${items.length} Xiaohongshu explore notes.`],
+    notes: [
+      `Fetched ${items.length} Xiaohongshu explore notes${cookie ? " with authenticated cookie" : ""}.`,
+    ],
   };
 }
 
 async function collectKuaishou(): Promise<PlatformTrendCollection> {
-  const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
-  if (!principals.length) {
-    throw new Error("KUAISHOU_TREND_PRINCIPALS 未配置，无法抓取快手真实样本");
-  }
-
   const cookie = String(process.env.KUAISHOU_COOKIE || "").trim();
+  const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 12) || 12));
-  const query = `
-    query publicFeeds($principalId: String!, $pcursor: String, $count: Int) {
-      publicFeeds(principalId: $principalId, pcursor: $pcursor, count: $count) {
-        pcursor
-        list {
-          id
-          caption
-          poster
-          timestamp
-          expTag
-          user {
-            id
-            name
-          }
-          counts {
-            displayView
-            displayLike
-            displayComment
-          }
-        }
-      }
-    }
-  `;
-
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
-  for (const principalId of principals) {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-        ...(cookie ? { cookie } : {}),
-      },
-      body: JSON.stringify({
-        operationName: "publicFeeds",
-        query,
-        variables: {
-          principalId,
-          pcursor: "",
-          count,
-        },
-      }),
+  const pushKuaishouItem = (item: Record<string, any>, sourceLabel: string) => {
+    const photo = item.photo ?? item;
+    const author = item.author ?? item.user ?? {};
+    const caption = String(photo.caption ?? item.caption ?? "").trim();
+    const tags = Array.isArray(item.tags)
+      ? item.tags
+        .map((tag) => String(tag?.name ?? tag ?? "").trim())
+        .filter(Boolean)
+      : [String(photo.expTag ?? item.expTag ?? "").trim()].filter(Boolean);
+    const title = caption || tags[0];
+    if (!title) return;
+
+    const id = String(photo.id ?? item.id ?? `${sourceLabel}-${items.length}`);
+    const authorId = String(author.id ?? item.author_id ?? "").trim();
+    const authorName = String(author.name ?? item.author_name ?? authorId).trim();
+    const likes = parseChineseCount(photo.likeCount ?? item.likeCount);
+    const comments = parseChineseCount(photo.commentCount ?? item.commentCount ?? item.comment?.us_c);
+    const views = parseChineseCount(photo.viewCount ?? item.viewCount);
+    items.push({
+      id,
+      title,
+      author: authorName || authorId || undefined,
+      url: id ? `https://www.kuaishou.com/short-video/${id}` : undefined,
+      publishedAt: safeDateFromTimestamp(Number(photo.timestamp ?? item.timestamp)),
+      likes,
+      comments,
+      views,
+      hotValue: (likes || 0) + (comments || 0),
+      contentType: "video",
+      tags,
     });
+  };
 
+  if (cookie) {
+    const response = await fetch("https://www.kuaishou.com/rest/v/profile/private/list", {
+      headers: {
+        accept: "application/json,text/plain,*/*",
+        cookie,
+        referer: "https://www.kuaishou.com/new-reco",
+        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+      },
+    });
     if (!response.ok) {
-      throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
+      throw new Error(`Kuaishou private list responded with ${response.status}`);
     }
-
     const payload = await response.json() as {
-      data?: {
-        publicFeeds?: {
-          list?: Array<Record<string, any>>;
-        };
-      };
-      errors?: Array<{ message?: string }>;
+      feeds?: Array<Record<string, any>>;
+      pcursor?: string;
     };
-
-    if (payload.errors?.length) {
-      throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+    const list = payload.feeds ?? [];
+    list.forEach((item) => pushKuaishouItem(item, "private-list"));
+    notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from private/list.`);
+    if (payload.pcursor) {
+      notes.push(`Kuaishou next cursor: ${payload.pcursor}`);
     }
+  }
 
-    const list = payload.data?.publicFeeds?.list ?? [];
-    for (const item of list) {
-      const caption = String(item.caption ?? "").trim();
-      if (!caption) continue;
-      items.push({
-        id: String(item.id ?? `${principalId}-${items.length}`),
-        title: caption,
-        author: String(item.user?.name ?? item.user?.id ?? principalId).trim() || principalId,
-        url: item.id ? `https://www.kuaishou.com/short-video/${item.id}` : undefined,
-        publishedAt: safeDateFromUnix(Number(item.timestamp)),
-        likes: parseChineseCount(item.counts?.displayLike),
-        comments: parseChineseCount(item.counts?.displayComment),
-        views: parseChineseCount(item.counts?.displayView),
-        hotValue:
-          (parseChineseCount(item.counts?.displayLike) || 0) +
-          (parseChineseCount(item.counts?.displayComment) || 0),
-        contentType: "video",
-        tags: [String(item.expTag ?? "").trim()].filter(Boolean),
+  if (principals.length) {
+    const query = `
+      query publicFeeds($principalId: String!, $pcursor: String, $count: Int) {
+        publicFeeds(principalId: $principalId, pcursor: $pcursor, count: $count) {
+          pcursor
+          list {
+            id
+            caption
+            poster
+            timestamp
+            expTag
+            user {
+              id
+              name
+            }
+            counts {
+              displayView
+              displayLike
+              displayComment
+            }
+          }
+        }
+      }
+    `;
+
+    for (const principalId of principals) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          ...(cookie ? { cookie } : {}),
+        },
+        body: JSON.stringify({
+          operationName: "publicFeeds",
+          query,
+          variables: {
+            principalId,
+            pcursor: "",
+            count,
+          },
+        }),
       });
+
+      if (!response.ok) {
+        throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
+      }
+
+      const payload = await response.json() as {
+        data?: {
+          publicFeeds?: {
+            list?: Array<Record<string, any>>;
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+
+      if (payload.errors?.length) {
+        throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+      }
+
+      const list = payload.data?.publicFeeds?.list ?? [];
+      list.forEach((item) => pushKuaishouItem(item, principalId));
+      notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId}.`);
     }
-    notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId}.`);
   }
 
   if (!items.length) {
-    throw new Error("Kuaishou collector returned 0 items");
+    throw new Error("Kuaishou collector returned 0 items. 请配置 KUAISHOU_COOKIE 或 KUAISHOU_TREND_PRINCIPALS。");
   }
 
   return {

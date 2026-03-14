@@ -6,6 +6,7 @@ type SmtpConfig = {
   user: string;
   pass: string;
   from: string;
+  provider: "smtp" | "resend";
 };
 
 function getMissingVars() {
@@ -13,10 +14,28 @@ function getMissingVars() {
   return required.filter(key => !process.env[key] || String(process.env[key]).trim().length === 0);
 }
 
+function getResendMissingVars() {
+  const required = ["RESEND_API_KEY", "RESEND_FROM"] as const;
+  return required.filter(key => !process.env[key] || String(process.env[key]).trim().length === 0);
+}
+
 export function getSmtpStatus() {
+  const resendMissing = getResendMissingVars();
+  if (resendMissing.length === 0) {
+    return {
+      configured: true,
+      provider: "resend" as const,
+      missing: [] as string[],
+      from: String(process.env.RESEND_FROM || "").trim() || undefined,
+      host: "smtp.resend.com",
+      port: String(process.env.RESEND_PORT || "465"),
+    };
+  }
+
   const missing = getMissingVars();
   return {
     configured: missing.length === 0,
+    provider: "smtp" as const,
     missing,
     from: String(process.env.SMTP_FROM || "").trim() || undefined,
     host: String(process.env.SMTP_HOST || "").trim() || undefined,
@@ -25,9 +44,21 @@ export function getSmtpStatus() {
 }
 
 function getConfig(): SmtpConfig {
+  const resendMissing = getResendMissingVars();
+  if (resendMissing.length === 0) {
+    return {
+      host: "smtp.resend.com",
+      port: Number(process.env.RESEND_PORT || 465),
+      user: "resend",
+      pass: String(process.env.RESEND_API_KEY),
+      from: String(process.env.RESEND_FROM),
+      provider: "resend",
+    };
+  }
+
   const missing = getMissingVars();
   if (missing.length > 0) {
-    throw new Error(`SMTP 配置缺失，请设置环境变量：${missing.join("、")}`);
+    throw new Error(`邮件配置缺失，请设置 SMTP 或 Resend 环境变量。当前缺少：${missing.join("、")}`);
   }
 
   const port = Number(process.env.SMTP_PORT);
@@ -41,6 +72,7 @@ function getConfig(): SmtpConfig {
     user: String(process.env.SMTP_USER),
     pass: String(process.env.SMTP_PASS),
     from: String(process.env.SMTP_FROM),
+    provider: "smtp",
   };
 }
 

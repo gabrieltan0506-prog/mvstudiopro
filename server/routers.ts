@@ -440,7 +440,7 @@ export const appRouter = router({
       .query(async () => {
         const smtp = getSmtpStatus();
         const scheduler = await readTrendStore();
-        const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "benjamintan0318@gmail.com").trim();
+        const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
 
         return {
           success: true,

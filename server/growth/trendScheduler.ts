@@ -24,8 +24,6 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const DEFAULT_REPORT_EMAIL = "benjamintan0318@gmail.com";
-
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -48,7 +46,7 @@ async function notifyCollectionUpdate(params: {
   collectedAt: string;
   nextRunAt: string;
 }) {
-  const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || DEFAULT_REPORT_EMAIL).trim();
+  const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
   if (!recipient) return;
 
   const exported = await exportTrendCollectionsCsv();
