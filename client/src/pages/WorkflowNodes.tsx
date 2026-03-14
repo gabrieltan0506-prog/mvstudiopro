@@ -1229,8 +1229,6 @@ export default function WorkflowNodes() {
           const selectedSceneImageUrl = s(bundle?.selectedSceneImageUrl).trim() || sceneUrl;
           const busyAssets = auxBusyKey === `scene-assets-${scene.sceneIndex}`;
           const busyVideo = auxBusyKey === `scene-video-${scene.sceneIndex}`;
-          const sceneVoiceType = getSceneVoiceTypeValue(scene);
-          const sceneVoiceStyle = getSceneVoiceStyleValue(scene);
           const sceneCardError = getSceneCardError(Number(scene.sceneIndex || 0));
           const siblingScenes = storyboard.filter((item) => item.sceneIndex !== scene.sceneIndex);
           return (
@@ -1274,41 +1272,12 @@ export default function WorkflowNodes() {
                       <input value={scene.mood || ""} onChange={(e) => updateScene(scene.sceneIndex, { mood: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Mood" />
                       <input value={scene.lighting || ""} onChange={(e) => updateScene(scene.sceneIndex, { lighting: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Lighting" />
                     </div>
-                    <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(scene.renderStillNeeded)}
-                        onChange={(e) => updateScene(scene.sceneIndex, { renderStillNeeded: e.target.checked })}
-                      />
-                      Mark as render still scene
-                    </label>
-                    <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Voice Text</div>
-                    <textarea
-                      value={scene.voiceover || ""}
-                      onChange={(e) => updateScene(scene.sceneIndex, { voiceover: e.target.value })}
-                      rows={4}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white outline-none"
-                    />
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <select value={sceneVoiceType} onChange={(e) => setSceneVoiceTypeMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white">
-                        <option value="female">Female</option>
-                        <option value="male">Male</option>
-                        <option value="cartoon">Cartoon</option>
-                      </select>
-                      <select value={sceneVoiceStyle} onChange={(e) => setSceneVoiceStyleMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white">
-                        <option value="">Normal</option>
-                        <option value="warm">Warm</option>
-                        <option value="calm">Calm</option>
-                        <option value="energetic">Energetic</option>
-                        <option value="cinematic">Cinematic</option>
-                      </select>
-                    </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" className="rounded-xl border-white/10 bg-white/[0.03] text-white hover:bg-white/10" onClick={() => setSelected("voice")}>
-                        Open Voice Node
+                        Voice Node
                       </Button>
                       <Button variant="outline" className="rounded-xl border-white/10 bg-white/[0.03] text-white hover:bg-white/10" onClick={() => setSelected("renderStill")}>
-                        Open Render Still
+                        Render Still Node
                       </Button>
                     </div>
                   </div>
@@ -1446,8 +1415,8 @@ export default function WorkflowNodes() {
                           camera: scene.camera,
                           mood: scene.mood,
                           lighting: scene.lighting,
-                          voiceType: sceneVoiceType,
-                          voiceStyle: sceneVoiceStyle,
+                          voiceType: getSceneVoiceTypeValue(scene),
+                          voiceStyle: getSceneVoiceStyleValue(scene),
                         })}>
                           {busyVideo ? "Generating..." : "Generate Video"}
                         </Button>
