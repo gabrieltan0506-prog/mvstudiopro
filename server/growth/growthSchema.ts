@@ -1,8 +1,11 @@
 import {
   type GrowthAnalysisScores,
+  type GrowthBusinessInsight,
   type GrowthMonetizationTrack,
   type GrowthPlatform,
+  type GrowthPlatformRecommendation,
   type GrowthPlatformSnapshot,
+  type GrowthPlanStep,
   type GrowthSnapshot,
   growthSnapshotSchema,
 } from "@shared/growth";
@@ -283,6 +286,97 @@ function buildMonetizationTracks(
   ].sort((a, b) => b.fit - a.fit);
 }
 
+function buildPlatformRecommendations(
+  requestedPlatforms: GrowthPlatform[],
+  analysis: GrowthAnalysisScores,
+  platformSnapshots: GrowthPlatformSnapshot[],
+): GrowthPlatformRecommendation[] {
+  const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
+  return selectedPlatforms.slice(0, 3).map((platform, index) => {
+    const snapshot = platformSnapshots.find((item) => item.platform === platform);
+    if (platform === "douyin") {
+      return {
+        name: PLATFORM_LABELS[platform],
+        reason: analysis.impact >= 70
+          ? "当前画面冲击力较强，适合先在高分发效率的平台验证强钩子和转化动作。"
+          : "适合先测试更强开场，但需要把开头刺激和结果感再往前提。",
+        action: index === 0
+          ? "先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。"
+          : "补一版更强标题和对比封面，再做第二轮测试。",
+      };
+    }
+    if (platform === "xiaohongshu") {
+      return {
+        name: PLATFORM_LABELS[platform],
+        reason: "适合放大审美、方法感和可收藏的结构，尤其适合做拆解版和模板版。",
+        action: "补一段创作思路或场景拆解，并强化封面主信息和收藏理由。",
+      };
+    }
+    if (platform === "bilibili") {
+      return {
+        name: PLATFORM_LABELS[platform],
+        reason: "适合承接完整叙事、幕后复盘和创作过程，更利于延长内容生命周期。",
+        action: "把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。",
+      };
+    }
+    return {
+      name: snapshot?.displayName || PLATFORM_LABELS[platform as GrowthPlatform],
+      reason: "适合作为次分发渠道，验证不同标题、封面和叙事强度的版本差异。",
+      action: "保留核心卖点，输出一版平台适配文案后再投放。",
+    };
+  });
+}
+
+function buildBusinessInsights(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  monetizationTracks: GrowthMonetizationTrack[],
+): GrowthBusinessInsight[] {
+  const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
+  return [
+    {
+      title: "商业判断",
+      detail: analysis.viralPotential >= 75
+        ? "内容已经具备较强增长底子，应该尽快把流量导向可复制的服务、课程、案例库或接单能力。"
+        : "当前更适合先把内容结构做稳，再用明确 CTA 把观众引向咨询、社群或私域留资。",
+    },
+    {
+      title: "包装能力",
+      detail: analysis.color + analysis.composition >= 145
+        ? "视觉包装是当前优势，可以优先做系列化栏目和品牌化表达。"
+        : "视觉统一性还不够，建议先固定封面模板、标题句式和片头格式。",
+    },
+    {
+      title: "商业落点",
+      detail: context.trim()
+        ? `你给出的业务背景「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」适合先验证「${primaryTrack}」方向。`
+        : `建议先围绕「${primaryTrack}」验证一条最短商业路径，而不是同时试多个承接方向。`,
+    },
+  ];
+}
+
+function buildGrowthPlan(
+  analysis: GrowthAnalysisScores,
+  platformRecommendations: GrowthPlatformRecommendation[],
+): GrowthPlanStep[] {
+  const topPlatform = platformRecommendations[0]?.name || "抖音";
+  return [
+    { day: 1, title: "聚焦卖点", action: "重新定义这条内容的单一目标，只保留一个最强卖点，并重写开头 3 秒。" },
+    { day: 2, title: "准备测试素材", action: "基于当前画面生成 2 个封面版本和 2 个标题版本，准备 A/B 测试。" },
+    { day: 3, title: "首发验证", action: `先在 ${topPlatform} 发第一版，重点观察停留、完播和评论关键词。` },
+    { day: 4, title: "节奏重写", action: "根据反馈重写中段节奏，把弱镜头删掉，强化转折点。" },
+    { day: 5, title: "矩阵延展", action: "补一版幕后、拆解或教学内容，让单条内容变成内容矩阵。" },
+    { day: 6, title: "模板沉淀", action: "将表现最好的表达方式整理成模板，开始做系列化发布。" },
+    {
+      day: 7,
+      title: "商业承接",
+      action: analysis.viralPotential >= 75
+        ? "加入明确商业转化动作，比如咨询入口、服务介绍和预约表单。"
+        : "复盘数据，确认下一轮优先优化的是开头冲击力还是画面统一性。",
+    },
+  ];
+}
+
 function buildCreationAssist(
   analysis: GrowthAnalysisScores,
   context: string,
@@ -305,6 +399,23 @@ function buildCreationAssist(
     ].join("\n"),
     storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA。${backgroundLine}`,
     workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本。优先服务于 ${primaryTrack} 转化。`,
+  };
+}
+
+function buildGrowthHandoff(
+  context: string,
+  requestedPlatforms: GrowthPlatform[],
+  monetizationTracks: GrowthMonetizationTrack[],
+  creationAssist: ReturnType<typeof buildCreationAssist>,
+) {
+  const recommendedTrack = monetizationTracks[0]?.name || "品牌合作";
+  return {
+    brief: creationAssist.brief,
+    storyboardPrompt: creationAssist.storyboardPrompt,
+    workflowPrompt: creationAssist.workflowPrompt,
+    recommendedTrack,
+    recommendedPlatforms: requestedPlatforms.slice(0, 3),
+    businessGoal: context.trim() || `优先验证「${recommendedTrack}」这条商业承接路径。`,
   };
 }
 
@@ -374,6 +485,11 @@ export function buildMockGrowthSnapshot(params: {
   const platformSnapshots = requestedPlatforms.map((platform) =>
     buildPlatformSnapshot(platform, params.analysis, context),
   );
+  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
+  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks);
+  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
+  const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
 
   const today = new Date();
   const generatedAt = today.toISOString();
@@ -443,8 +559,12 @@ export function buildMockGrowthSnapshot(params: {
       },
     ],
     structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, []),
-    monetizationTracks: buildMonetizationTracks(params.analysis, context, platformSnapshots),
-    creationAssist: buildCreationAssist(params.analysis, context, requestedPlatforms, buildMonetizationTracks(params.analysis, context, platformSnapshots)),
+    monetizationTracks,
+    platformRecommendations,
+    businessInsights,
+    growthPlan,
+    creationAssist,
+    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, monetizationTracks, creationAssist),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
@@ -495,6 +615,10 @@ export function buildGrowthSnapshotFromCollections(params: {
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
+  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks);
+  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
+  const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
 
   const snapshot = {
     status: {
@@ -524,7 +648,11 @@ export function buildGrowthSnapshotFromCollections(params: {
     opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),
     structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, activeCollections),
     monetizationTracks,
-    creationAssist: buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks),
+    platformRecommendations,
+    businessInsights,
+    growthPlan,
+    creationAssist,
+    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, monetizationTracks, creationAssist),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
