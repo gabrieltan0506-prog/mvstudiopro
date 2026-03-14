@@ -17,6 +17,9 @@ type VideoAnalysisResult = {
     videoUrl: string;
     transcript: string;
     videoDuration: number;
+    provider: string;
+    model: string;
+    fallback: boolean;
   };
 };
 
@@ -186,6 +189,9 @@ summary 必须覆盖：
         videoUrl,
         transcript,
         videoDuration: multiFrame.videoDuration,
+        provider: response.provider || "unknown",
+        model: response.model || "unknown",
+        fallback: false,
       },
     };
   } catch (error) {
@@ -196,6 +202,9 @@ summary 必须覆盖：
         videoUrl,
         transcript,
         videoDuration: multiFrame.videoDuration,
+        provider: "fallback",
+        model: "deterministic",
+        fallback: true,
       },
     };
   }

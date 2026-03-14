@@ -312,7 +312,17 @@ export const appRouter = router({
           });
 
           const analysis = JSON.parse(response.choices[0].message.content as string);
-          return { success: true, analysis, frameUrl };
+          return {
+            success: true,
+            analysis,
+            frameUrl,
+            debug: {
+              route: "analyzeFrame",
+              provider: response.provider || "unknown",
+              model: response.model || "unknown",
+              fallback: false,
+            },
+          };
         } catch (error) {
           console.warn("[mvAnalysis.analyzeFrame] Falling back to deterministic analysis:", error);
           return {
@@ -320,6 +330,12 @@ export const appRouter = router({
             analysis: buildFallbackFrameAnalysis(input.context),
             frameUrl,
             fallback: true,
+            debug: {
+              route: "analyzeFrame",
+              provider: "fallback",
+              model: "deterministic",
+              fallback: true,
+            },
           };
         }
       }),
@@ -339,6 +355,13 @@ export const appRouter = router({
           fileUrl: result.documentMeta.fileUrl,
           extractionMethod: result.documentMeta.extractionMethod,
           extractedTextPreview: result.documentMeta.extractedTextPreview,
+          debug: {
+            route: "analyzeDocument",
+            provider: result.documentMeta.provider,
+            model: result.documentMeta.model,
+            fallback: result.documentMeta.fallback,
+            extractionMethod: result.documentMeta.extractionMethod,
+          },
         };
       }),
 
@@ -357,6 +380,14 @@ export const appRouter = router({
           videoUrl: result.videoMeta.videoUrl,
           transcript: result.videoMeta.transcript,
           videoDuration: result.videoMeta.videoDuration,
+          debug: {
+            route: "analyzeVideo",
+            provider: result.videoMeta.provider,
+            model: result.videoMeta.model,
+            fallback: result.videoMeta.fallback,
+            transcriptChars: result.videoMeta.transcript.length,
+            videoDuration: result.videoMeta.videoDuration,
+          },
         };
       }),
 

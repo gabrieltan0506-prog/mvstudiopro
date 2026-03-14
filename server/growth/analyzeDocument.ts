@@ -9,6 +9,9 @@ type DocumentAnalysisResult = {
     fileUrl: string;
     extractionMethod: "docx_xml" | "pdf_strings" | "none";
     extractedTextPreview: string;
+    provider: string;
+    model: string;
+    fallback: boolean;
   };
 };
 
@@ -132,6 +135,9 @@ export async function analyzeDocument(params: {
         fileUrl,
         extractionMethod: extracted.method,
         extractedTextPreview: extractedPreview,
+        provider: response.provider || "unknown",
+        model: response.model || "unknown",
+        fallback: false,
       },
     };
   } catch (error) {
@@ -142,6 +148,9 @@ export async function analyzeDocument(params: {
         fileUrl,
         extractionMethod: extracted.method,
         extractedTextPreview: extractedPreview,
+        provider: "fallback",
+        model: "deterministic",
+        fallback: true,
       },
     };
   }

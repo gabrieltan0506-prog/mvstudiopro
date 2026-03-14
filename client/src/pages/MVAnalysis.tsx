@@ -48,6 +48,7 @@ type AnalysisResult = {
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
 type InputKind = "image" | "document" | "video";
+type DebugInfo = Record<string, unknown> | null;
 
 type CommercialTrack = {
   name: string;
@@ -203,6 +204,11 @@ export default function MVAnalysisPage() {
   const [fileSize, setFileSize] = useState(0);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
+  const [debugMode, setDebugMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("debug") === "1";
+  });
+  const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -291,6 +297,7 @@ export default function MVAnalysisPage() {
     setUploadProgress(0);
     setError(null);
     setAnalysis(null);
+    setDebugInfo(null);
     setPreviewUrl(null);
 
     const sizeMB = file.size / (1024 * 1024);
@@ -398,6 +405,13 @@ export default function MVAnalysisPage() {
               context: context || undefined,
             });
       setAnalysis(result.analysis);
+      setDebugInfo({
+        inputKind,
+        fileName,
+        mimeType: fileMimeType || null,
+        fileSize,
+        ...((result as any).debug || {}),
+      });
       setUploadProgress(100);
       setUploadStage("done");
       if (!supervisorAccess) {
@@ -417,6 +431,7 @@ export default function MVAnalysisPage() {
     setAnalysis(null);
     setError(null);
     setContext("");
+    setDebugInfo(null);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
@@ -545,11 +560,18 @@ export default function MVAnalysisPage() {
           />
         ) : null}
 
-        <div className="mb-8 flex items-center justify-between">
+          <div className="mb-8 flex items-center justify-between">
           <button onClick={() => window.history.back()} className="rounded-full border border-white/10 bg-white/5 p-2 transition hover:bg-white/10">
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setDebugMode((prev) => !prev)}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-white/75 transition hover:bg-white/10"
+            >
+              {debugMode ? "Debug ON" : "Debug OFF"}
+            </button>
             {supervisorAccess ? (
               <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-200">
                 Supervisor Mode
@@ -714,6 +736,25 @@ export default function MVAnalysisPage() {
 
         {analysis ? (
           <section className="mt-8 space-y-6">
+            {debugMode ? (
+              <div className="rounded-[24px] border border-cyan-300/20 bg-cyan-400/10 p-5">
+                <div className="text-sm font-semibold text-cyan-100">Debug 面板</div>
+                <div className="mt-3 grid gap-2 text-sm text-white/75 md:grid-cols-2">
+                  <div>input: {String(debugInfo?.inputKind || inputKind || "-")}</div>
+                  <div>route: {String(debugInfo?.route || "-")}</div>
+                  <div>provider: {String(debugInfo?.provider || "-")}</div>
+                  <div>model: {String(debugInfo?.model || "-")}</div>
+                  <div>fallback: {String(debugInfo?.fallback ?? "-")}</div>
+                  <div>trend source: {String(growthSnapshot?.status.source || "-")}</div>
+                  <div>mime: {String(debugInfo?.mimeType || fileMimeType || "-")}</div>
+                  <div>file: {String(debugInfo?.fileName || fileName || "-")}</div>
+                  {debugInfo?.extractionMethod ? <div>extract: {String(debugInfo.extractionMethod)}</div> : null}
+                  {debugInfo?.videoDuration ? <div>video sec: {String(debugInfo.videoDuration)}</div> : null}
+                  {debugInfo?.transcriptChars ? <div>transcript chars: {String(debugInfo.transcriptChars)}</div> : null}
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid gap-4 lg:grid-cols-3">
               {strategyPillars.map((item) => (
                 <div key={item.title} className="rounded-[24px] border border-white/10 bg-[#0f1a2c] p-5">
