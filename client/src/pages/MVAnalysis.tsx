@@ -44,6 +44,13 @@ type PlatformRecommendation = {
   action: string;
 };
 
+type CommercialTrack = {
+  name: string;
+  fit: number;
+  reason: string;
+  nextStep: string;
+};
+
 function getScoreTone(score: number) {
   if (score >= 80) return { label: "强", color: "text-emerald-300", chip: "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" };
   if (score >= 65) return { label: "可放大", color: "text-amber-200", chip: "border-amber-300/20 bg-amber-400/10 text-amber-100" };
@@ -114,6 +121,61 @@ function buildGrowthPlan(analysis: AnalysisResult, platforms: PlatformRecommenda
       ? "Day 7: 加入明确商业转化动作，比如咨询入口、服务介绍、预约表单。"
       : "Day 7: 复盘数据，确认下一轮要优先优化的是开头冲击力还是画面统一性。",
   ];
+}
+
+function buildCommercialTracks(
+  analysis: AnalysisResult,
+  context: string,
+  growthSnapshot: GrowthSnapshot | null,
+): CommercialTrack[] {
+  const text = context.trim();
+  const xiaohongshuFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "xiaohongshu")?.audienceFitScore || 0;
+  const bilibiliFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "bilibili")?.audienceFitScore || 0;
+  const douyinFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "douyin")?.audienceFitScore || 0;
+
+  return [
+    {
+      name: "品牌合作",
+      fit: Math.min(96, Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0))),
+      reason: "视觉包装和表达统一性较强时，更容易承接品牌合作、案例展示和商业合作页。",
+      nextStep: "补一版案例导向标题和服务说明，让合作方能快速理解你擅长的商业结果。",
+    },
+    {
+      name: "电商带货",
+      fit: Math.min(96, Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0))),
+      reason: "冲击力和节奏更适合做转化型表达，但产品利益点和 CTA 需要足够直接。",
+      nextStep: "把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。",
+    },
+    {
+      name: "知识付费",
+      fit: Math.min(96, Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0))),
+      reason: "适合把内容拆成方法、结构、案例复盘，再沉淀成课程、模板或陪跑服务。",
+      nextStep: "把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。",
+    },
+    {
+      name: "社群会员",
+      fit: Math.min(96, Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4)),
+      reason: "如果能持续输出同主题内容和过程感，最容易建立陪伴感并承接社群或会员。",
+      nextStep: "连续发布 3 条同主题内容，并在结尾加入系列承诺和进群/订阅理由。",
+    },
+  ].sort((a, b) => b.fit - a.fit);
+}
+
+function buildCreationAssistBrief(
+  analysis: AnalysisResult,
+  context: string,
+  platforms: PlatformRecommendation[],
+  tracks: CommercialTrack[],
+) {
+  const primaryTrack = tracks[0]?.name || "品牌合作";
+  const primaryPlatform = platforms[0]?.name || "抖音";
+  return [
+    `内容目标：把当前素材升级成更适合 ${primaryPlatform} 分发、并服务于「${primaryTrack}」转化的内容版本。`,
+    `核心分析：${analysis.summary}`,
+    "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
+    "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
+    context.trim() ? `业务背景：${context.trim()}` : "业务背景：未填写，建议补充目标受众与转化目标。",
+  ].join("\n");
 }
 
 export default function MVAnalysisPage() {
@@ -323,6 +385,15 @@ export default function MVAnalysisPage() {
     }
   }, [refreshGrowthMutation, growthSnapshotQuery]);
 
+  const handleCopyText = useCallback(async (text: string, successMessage: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(successMessage);
+    } catch (copyError: any) {
+      toast.error(copyError.message || "复制失败");
+    }
+  }, []);
+
   const isProcessing = uploadStage === "uploading" || uploadStage === "analyzing";
   const remainingTime = Math.max(0, estimatedTime - elapsedTime);
 
@@ -338,6 +409,14 @@ export default function MVAnalysisPage() {
   const growthPlan = useMemo(
     () => analysis ? buildGrowthPlan(analysis, platformRecommendations) : [],
     [analysis, platformRecommendations],
+  );
+  const commercialTracks = useMemo(
+    () => analysis ? buildCommercialTracks(analysis, context, growthSnapshot) : [],
+    [analysis, context, growthSnapshot],
+  );
+  const creationAssistBrief = useMemo(
+    () => analysis ? buildCreationAssistBrief(analysis, context, platformRecommendations, commercialTracks) : "",
+    [analysis, context, platformRecommendations, commercialTracks],
   );
 
   if (loading) {
@@ -699,6 +778,23 @@ export default function MVAnalysisPage() {
                       </div>
                     ))}
                   </div>
+                  <div className="mt-6 grid gap-4 md:grid-cols-2">
+                    {commercialTracks.map((track) => {
+                      const tone = getScoreTone(track.fit);
+                      return (
+                        <div key={track.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-sm font-semibold text-white">{track.name}</div>
+                            <div className={`rounded-full border px-3 py-1 text-xs ${tone.chip}`}>匹配度 {track.fit}</div>
+                          </div>
+                          <p className="mt-3 text-sm leading-7 text-white/65">{track.reason}</p>
+                          <div className="mt-3 rounded-xl border border-[#f5b7ff]/15 bg-[#f5b7ff]/10 p-3 text-sm text-[#fbe1ff]">
+                            第一动作：{track.nextStep}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -736,12 +832,38 @@ export default function MVAnalysisPage() {
                 </div>
 
                 <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
-                  <div className="text-sm uppercase tracking-[0.22em] text-white/45">Expansion Hooks</div>
-                  <div className="mt-4 space-y-3 text-sm leading-7 text-white/70">
-                    <div>• 平台趋势资料：等待 30 天快照数据接入。</div>
-                    <div>• 热门内容结构数据库：等待结构标签和案例数据接入。</div>
-                    <div>• 商业模式推荐引擎：后续会把内容类型映射到服务、课程、社群和品牌合作。</div>
-                    <div>• AI 创作辅助联动：下一版可直接把建议同步到 workflow / storyboard。</div>
+                  <div className="flex items-center gap-3 text-[#ffd08f]">
+                    <Rocket className="h-5 w-5" />
+                    <h2 className="text-2xl font-bold">AI 创作辅助</h2>
+                  </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                    <pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-white/70">{creationAssistBrief}</pre>
+                  </div>
+                  <div className="mt-4 grid gap-3">
+                    <button
+                      onClick={() => void handleCopyText(creationAssistBrief, "创作简报已复制")}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
+                    >
+                      复制创作简报
+                    </button>
+                    <button
+                      onClick={() => void handleCopyText(growthPlan.join("\n"), "7 天增长规划已复制")}
+                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
+                    >
+                      复制 7 天增长规划
+                    </button>
+                    <a
+                      href="/storyboard"
+                      className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
+                    >
+                      进入分镜脚本
+                    </a>
+                    <a
+                      href="/workflow"
+                      className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/10"
+                    >
+                      进入工作流执行
+                    </a>
                   </div>
                 </div>
               </div>

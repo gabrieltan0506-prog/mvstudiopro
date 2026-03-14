@@ -18,6 +18,19 @@ function getStorageConfig(): StorageConfig {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
 }
 
+function buildLocalDataUrl(
+  data: Buffer | Uint8Array | string,
+  contentType: string,
+): string {
+  if (typeof data === "string") {
+    const isInlineUrl = /^data:|^https?:\/\//.test(data);
+    if (isInlineUrl) return data;
+    return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
+  }
+
+  return `data:${contentType};base64,${Buffer.from(data).toString("base64")}`;
+}
+
 function buildUploadUrl(baseUrl: string, relKey: string): URL {
   const url = new URL("v1/storage/upload", ensureTrailingSlash(baseUrl));
   url.searchParams.set("path", normalizeKey(relKey));
@@ -65,8 +78,15 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream",
 ): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
+  if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
+    return {
+      key,
+      url: buildLocalDataUrl(data, contentType),
+    };
+  }
+
+  const { baseUrl, apiKey } = getStorageConfig();
   const uploadUrl = buildUploadUrl(baseUrl, key);
   const formData = toFormData(data, contentType, key.split("/").pop() ?? key);
   const response = await fetch(uploadUrl, {
@@ -86,8 +106,15 @@ export async function storagePut(
 }
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
-  const { baseUrl, apiKey } = getStorageConfig();
   const key = normalizeKey(relKey);
+  if (!ENV.forgeApiUrl || !ENV.forgeApiKey) {
+    return {
+      key,
+      url: key,
+    };
+  }
+
+  const { baseUrl, apiKey } = getStorageConfig();
   return {
     key,
     url: await buildDownloadUrl(baseUrl, key, apiKey),

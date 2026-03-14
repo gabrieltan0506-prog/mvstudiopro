@@ -557,7 +557,18 @@ export function registerAuthApiRoutes(app: Express) {
       }
 
       const db = await getDb();
-      if (!db) return res.status(500).json({ error: "Database not available" });
+      if (!db) {
+        return res.status(200).json({
+          id: authedUser.id,
+          email: authedUser.email ?? null,
+          role: authedUser.role,
+          credits: authedUser.credits ?? 9999,
+          verifyStatus: authedUser.verifyStatus ?? "approved",
+          roleTag: authedUser.roleTag ?? "normal",
+          contactWechat: null,
+          contactPhone: null,
+        });
+      }
       const [user] = await db.select().from(users).where(eq(users.id, authedUser.id)).limit(1);
       if (!user) return res.status(404).json({ error: "User not found" });
 
