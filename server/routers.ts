@@ -22,6 +22,7 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
+import { buildMockGrowthSnapshot } from "./growth/growthSchema";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -36,6 +37,7 @@ import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
+import { growthAnalysisScoresSchema } from "@shared/growth";
 
 async function generateKlingBeijingVideo(params: {
   prompt: string;
@@ -277,6 +279,26 @@ export const appRouter = router({
 
         const analysis = JSON.parse(response.choices[0].message.content as string);
         return { success: true, analysis, frameUrl };
+      }),
+
+    getGrowthSnapshot: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        requestedPlatforms: z.array(z.string()).optional(),
+        analysis: growthAnalysisScoresSchema,
+      }))
+      .query(async ({ input }) => {
+        const snapshot = buildMockGrowthSnapshot({
+          analysis: input.analysis,
+          context: input.context,
+          requestedPlatforms: input.requestedPlatforms,
+        });
+
+        return {
+          success: true,
+          source: snapshot.status.source,
+          snapshot,
+        };
       }),
 
     // Analyze a single segment frame (used by full video analysis)
