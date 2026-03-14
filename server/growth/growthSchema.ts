@@ -215,7 +215,7 @@ function buildStructurePatterns(
         : "先给结果，再快速交代为什么可信，减少无效铺垫。",
       hook: "开头 2 秒只做一件事：给结果、给反差、给结论。",
       cta: "结尾补“要模板/案例/链接”的单一行动指令。",
-      recommendedPlatforms: requestedPlatforms.slice(0, 2),
+      recommendedPlatforms: requestedPlatforms.slice(0, 2) as GrowthPlatform[],
       evidence: "近 30 天热门样本里，结果前置类结构在短平台更稳定。",
     },
     {
@@ -226,7 +226,7 @@ function buildStructurePatterns(
         : "把过程拆成三步，观众更容易收藏和转发。",
       hook: "先说最终结果，再说三步方法或两个误区。",
       cta: "引导到咨询、课程、陪跑或案例包。",
-      recommendedPlatforms: ["xiaohongshu", "bilibili"],
+      recommendedPlatforms: ["xiaohongshu", "bilibili"] as GrowthPlatform[],
       evidence: hasLifestyle
         ? "小红书样本里，带模板感和生活方式包装的内容更容易被收藏。"
         : "B站 / 小红书样本对拆解、复盘、教程的承接更强。",
@@ -239,7 +239,7 @@ function buildStructurePatterns(
         : "先用系列结构降低试错成本，让内容方向更快收敛。",
       hook: "这一条先给结论，下一条专门讲过程或资源。",
       cta: "让用户评论关键词、预约下一集或进入私域。",
-      recommendedPlatforms: ["douyin", "xiaohongshu", "bilibili"],
+      recommendedPlatforms: ["douyin", "xiaohongshu", "bilibili"] as GrowthPlatform[],
       evidence: "当单条内容已有基础反馈，系列化通常比继续单发更容易形成商业承接。",
     },
   ];
