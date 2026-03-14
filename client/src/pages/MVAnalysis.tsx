@@ -6,13 +6,23 @@ import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
-import type { GrowthSnapshot } from "@shared/growth";
+import { GrowthHandoffActions } from "@/components/growth/GrowthHandoffActions";
+import { GrowthSectionCard } from "@/components/growth/GrowthSectionCard";
+import type {
+  GrowthBusinessInsight,
+  GrowthHandoff,
+  GrowthPlanStep,
+  GrowthPlatformRecommendation,
+  GrowthSnapshot,
+} from "@shared/growth";
 import {
   ArrowLeft,
   BriefcaseBusiness,
   CheckCircle2,
   Compass,
+  FileText,
   FileUp,
+  Film,
   Lightbulb,
   LineChart,
   Loader2,
@@ -37,12 +47,7 @@ type AnalysisResult = {
 };
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
-
-type PlatformRecommendation = {
-  name: string;
-  reason: string;
-  action: string;
-};
+type InputKind = "image" | "document" | "video";
 
 type CommercialTrack = {
   name: string;
@@ -58,6 +63,7 @@ type StrategyPillar = {
 };
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+const GROWTH_HANDOFF_STORAGE_KEY = "mvsp-growth-handoff";
 
 function hasSupervisorAccess() {
   if (typeof window === "undefined") return false;
@@ -69,81 +75,36 @@ function hasSupervisorAccess() {
   return localStorage.getItem(SUPERVISOR_ACCESS_KEY) === "1";
 }
 
+function persistGrowthHandoff(handoff: GrowthHandoff | null) {
+  if (!handoff || typeof window === "undefined") return;
+  localStorage.setItem(
+    GROWTH_HANDOFF_STORAGE_KEY,
+    JSON.stringify({
+      ...handoff,
+      source: "creator-growth-camp",
+      savedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => resolve(String(event.target?.result || ""));
+    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function getScoreTone(score: number) {
   if (score >= 80) return { label: "强", color: "text-emerald-300", chip: "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" };
   if (score >= 65) return { label: "可放大", color: "text-amber-200", chip: "border-amber-300/20 bg-amber-400/10 text-amber-100" };
   return { label: "需重构", color: "text-rose-200", chip: "border-rose-300/20 bg-rose-400/10 text-rose-100" };
 }
 
-function buildPlatformRecommendations(platforms: string[], context: string, analysis: AnalysisResult): PlatformRecommendation[] {
-  const normalized = (platforms || []).slice(0, 3);
-  if (!normalized.length) {
-    return [
-      { name: "抖音", reason: "适合验证强开头和短时高冲击内容。", action: "先做 15 秒钩子版，主打前三秒情绪抓取。" },
-      { name: "小红书", reason: "适合做审美、风格、生活方式类包装。", action: "补上封面标题和亮点拆解，强调收藏价值。" },
-    ];
-  }
-  return normalized.map((platform, index) => {
-    if (/抖音/i.test(platform)) {
-      return {
-        name: platform,
-        reason: analysis.impact >= 70 ? "当前画面冲击力不错，适合快速分发与测试转化。" : "需要更强的开场刺激，但分发效率最高。",
-        action: index === 0 ? "先发 9:16 短切版，前 2 秒直接给冲突点或结果。" : "追加对比封面和强钩子标题再发。",
-      };
-    }
-    if (/小红书/i.test(platform)) {
-      return {
-        name: platform,
-        reason: "更适合做风格包装、攻略感和审美表达。",
-        action: "补一段“创作思路 / 场景拆解”，提高收藏与转发意图。",
-      };
-    }
-    if (/B站|bilibili/i.test(platform)) {
-      return {
-        name: platform,
-        reason: "适合发布完整叙事、幕后拆解和创作过程。",
-        action: "增加创作解说版或过程版，拉高完播和评论讨论。",
-      };
-    }
-    return {
-      name: platform,
-      reason: "适合作为次分发渠道，验证不同标题和封面策略。",
-      action: "做一版平台适配文案，保留核心卖点但重写 opening。",
-    };
-  });
-}
-
-function buildBusinessInsights(analysis: AnalysisResult, context: string) {
-  const monetization = analysis.viralPotential >= 75
-    ? "内容已经具备较强增长底子，下一步应该把流量导向可复制的服务、课程、案例库或接单能力。"
-    : "目前更适合先把内容结构做稳，再用明确的 CTA 把观众引向咨询、社群或私域留资。";
-  const packaging = analysis.color + analysis.composition >= 145
-    ? "视觉包装是优势，可以优先做品牌系列化栏目。"
-    : "视觉统一性还不够，建议先固定封面模板、标题句式和片头格式。";
-  const offer = context.trim()
-    ? `你补充的背景里提到「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」，这很适合转成可售卖的内容主题或服务说明。`
-    : "建议从“案例拆解 / 模板交付 / 陪跑服务”三种轻商业化入口里先选一个验证。";
-  return [monetization, packaging, offer];
-}
-
-function buildGrowthPlan(analysis: AnalysisResult, platforms: PlatformRecommendation[]) {
-  const topPlatform = platforms[0]?.name || "抖音";
-  return [
-    "Day 1: 重新定义这条内容的单一目标，只保留一个最强卖点，并重写开头 3 秒。",
-    "Day 2: 基于当前画面生成 2 个封面版本和 2 个标题版本，准备 A/B 测试。",
-    `Day 3: 先在 ${topPlatform} 发第一版，重点观察停留、完播和评论关键词。`,
-    "Day 4: 根据反馈重写中段节奏，把弱镜头删掉，强化转折点。",
-    "Day 5: 补一版“幕后 / 拆解 / 教学”内容，让单条内容变成内容矩阵。",
-    "Day 6: 将表现最好的表达方式整理成模板，开始做系列化发布。",
-    analysis.viralPotential >= 75
-      ? "Day 7: 加入明确商业转化动作，比如咨询入口、服务介绍、预约表单。"
-      : "Day 7: 复盘数据，确认下一轮要优先优化的是开头冲击力还是画面统一性。",
-  ];
-}
-
 function buildStrategyPillars(
   analysis: AnalysisResult,
-  recommendations: PlatformRecommendation[],
+  recommendations: GrowthPlatformRecommendation[],
   tracks: CommercialTrack[],
 ): StrategyPillar[] {
   const bestPlatform = recommendations[0]?.name || "抖音";
@@ -208,7 +169,7 @@ function buildCommercialTracks(
 function buildCreationAssistBrief(
   analysis: AnalysisResult,
   context: string,
-  platforms: PlatformRecommendation[],
+  platforms: GrowthPlatformRecommendation[],
   tracks: CommercialTrack[],
 ) {
   const primaryTrack = tracks[0]?.name || "品牌合作";
@@ -227,8 +188,10 @@ export default function MVAnalysisPage() {
   const { isAuthenticated, loading } = useAuth();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
 
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileBase64, setFileBase64] = useState<string | null>(null);
+  const [inputKind, setInputKind] = useState<InputKind | null>(null);
+  const [fileMimeType, setFileMimeType] = useState("");
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState(0);
@@ -246,6 +209,8 @@ export default function MVAnalysisPage() {
   const startTimeRef = useRef(0);
 
   const analyzeMutation = trpc.mvAnalysis.analyzeFrame.useMutation();
+  const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
+  const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
@@ -307,70 +272,87 @@ export default function MVAnalysisPage() {
 
     const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
-    if (!isImage && !isVideo) {
-      setError("请上传图片或视频文件（JPG、PNG、MP4）");
+    const isDocument =
+      file.type === "application/pdf" ||
+      file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      /\.pdf$/i.test(file.name) ||
+      /\.docx$/i.test(file.name);
+
+    if (!isImage && !isVideo && !isDocument) {
+      setError("请上传图片、Word、PDF 或 MP4 文件");
       return;
     }
 
     setFileName(file.name);
     setFileSize(file.size);
+    setFileMimeType(file.type || "");
+    setInputKind(isImage ? "image" : isVideo ? "video" : "document");
     setUploadStage("reading");
     setUploadProgress(0);
     setError(null);
     setAnalysis(null);
+    setPreviewUrl(null);
 
     const sizeMB = file.size / (1024 * 1024);
     setEstimatedTime(Math.max(10, Math.round(sizeMB * 2 + 15)));
 
-    if (isImage) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        setSelectedImage(dataUrl);
-        setImageBase64(dataUrl.split(",")[1]);
-        setUploadStage("idle");
-        setUploadProgress(100);
-      };
-      reader.readAsDataURL(file);
-      return;
-    }
+    void (async () => {
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        setFileBase64(dataUrl.split(",")[1] || "");
 
-    const video = document.createElement("video");
-    const url = URL.createObjectURL(file);
-    video.src = url;
-    video.muted = true;
-    video.currentTime = 1;
-    video.onloadeddata = () => {
-      video.currentTime = Math.min(1, video.duration / 4);
-    };
-    video.onseeked = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        URL.revokeObjectURL(url);
-        setError("视频读取失败，请尝试上传图片截屏");
+        if (isImage) {
+          setPreviewUrl(dataUrl);
+          setUploadStage("idle");
+          setUploadProgress(100);
+          return;
+        }
+
+        if (isDocument) {
+          setUploadStage("idle");
+          setUploadProgress(100);
+          return;
+        }
+
+        const video = document.createElement("video");
+        const url = URL.createObjectURL(file);
+        video.src = url;
+        video.muted = true;
+        video.currentTime = 1;
+        video.onloadeddata = () => {
+          video.currentTime = Math.min(1, video.duration / 4);
+        };
+        video.onseeked = () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            URL.revokeObjectURL(url);
+            setError("视频读取失败，请重试");
+            setUploadStage("error");
+            return;
+          }
+          ctx.drawImage(video, 0, 0);
+          setPreviewUrl(canvas.toDataURL("image/jpeg", 0.9));
+          setUploadStage("idle");
+          setUploadProgress(100);
+          URL.revokeObjectURL(url);
+        };
+        video.onerror = () => {
+          setError("视频读取失败，请重试");
+          setUploadStage("error");
+          URL.revokeObjectURL(url);
+        };
+      } catch (fileError: any) {
+        setError(fileError.message || "文件读取失败");
         setUploadStage("error");
-        return;
       }
-      ctx.drawImage(video, 0, 0);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
-      setSelectedImage(dataUrl);
-      setImageBase64(dataUrl.split(",")[1]);
-      setUploadStage("idle");
-      setUploadProgress(100);
-      URL.revokeObjectURL(url);
-    };
-    video.onerror = () => {
-      setError("视频读取失败，请尝试上传图片截屏");
-      setUploadStage("error");
-      URL.revokeObjectURL(url);
-    };
+    })();
   }, []);
 
   const handleAnalyze = useCallback(async () => {
-    if (!imageBase64) return;
+    if (!fileBase64 || !inputKind) return;
 
     if (!supervisorAccess) {
       try {
@@ -396,11 +378,25 @@ export default function MVAnalysisPage() {
     setEstimatedTime(Math.max(12, Math.round(fileSize / (1024 * 1024) * 1.5 + 12)));
 
     try {
-      const result = await analyzeMutation.mutateAsync({
-        imageBase64,
-        mimeType: "image/jpeg",
-        context: context || undefined,
-      });
+      const result = inputKind === "image"
+        ? await analyzeMutation.mutateAsync({
+            imageBase64: fileBase64,
+            mimeType: fileMimeType || "image/jpeg",
+            context: context || undefined,
+          })
+        : inputKind === "document"
+          ? await analyzeDocumentMutation.mutateAsync({
+              fileBase64,
+              mimeType: fileMimeType || "application/octet-stream",
+              fileName,
+              context: context || undefined,
+            })
+          : await analyzeVideoMutation.mutateAsync({
+              fileBase64,
+              mimeType: fileMimeType || "video/mp4",
+              fileName,
+              context: context || undefined,
+            });
       setAnalysis(result.analysis);
       setUploadProgress(100);
       setUploadStage("done");
@@ -411,11 +407,13 @@ export default function MVAnalysisPage() {
       setError(analysisError.message || "分析失败，请稍后再试");
       setUploadStage("error");
     }
-  }, [imageBase64, supervisorAccess, checkAccessMutation, fileSize, analyzeMutation, context, usageStatsQuery]);
+  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeMutation, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
-    setSelectedImage(null);
-    setImageBase64(null);
+    setPreviewUrl(null);
+    setFileBase64(null);
+    setInputKind(null);
+    setFileMimeType("");
     setAnalysis(null);
     setError(null);
     setContext("");
@@ -447,22 +445,48 @@ export default function MVAnalysisPage() {
     }
   }, []);
 
+  const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "handoff 已暂存") => {
+    if (!handoff) return;
+    persistGrowthHandoff(handoff);
+    toast.success(successMessage);
+  }, []);
+
+  const scoreItems = useMemo(() => {
+    if (!analysis) return [];
+    if (inputKind === "document") {
+      return [
+        { label: "结构质量", value: analysis.composition },
+        { label: "包装潜力", value: analysis.color },
+        { label: "信息清晰", value: analysis.lighting },
+        { label: "表达钩子", value: analysis.impact },
+        { label: "商业放大空间", value: analysis.viralPotential },
+      ];
+    }
+    if (inputKind === "video") {
+      return [
+        { label: "叙事结构", value: analysis.composition },
+        { label: "视觉包装", value: analysis.color },
+        { label: "信息清晰", value: analysis.lighting },
+        { label: "节奏冲击", value: analysis.impact },
+        { label: "商业放大空间", value: analysis.viralPotential },
+      ];
+    }
+    return [
+      { label: "构图结构", value: analysis.composition },
+      { label: "色彩识别", value: analysis.color },
+      { label: "光线氛围", value: analysis.lighting },
+      { label: "冲击强度", value: analysis.impact },
+      { label: "商业放大空间", value: analysis.viralPotential },
+    ];
+  }, [analysis, inputKind]);
+
   const isProcessing = uploadStage === "uploading" || uploadStage === "analyzing";
   const remainingTime = Math.max(0, estimatedTime - elapsedTime);
 
-  const platformRecommendations = useMemo(
-    () => analysis ? buildPlatformRecommendations(analysis.platforms, context, analysis) : [],
-    [analysis, context],
-  );
   const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
-  const businessInsights = useMemo(
-    () => analysis ? buildBusinessInsights(analysis, context) : [],
-    [analysis, context],
-  );
-  const growthPlan = useMemo(
-    () => analysis ? buildGrowthPlan(analysis, platformRecommendations) : [],
-    [analysis, platformRecommendations],
-  );
+  const platformRecommendations = growthSnapshot?.platformRecommendations ?? [];
+  const businessInsights: GrowthBusinessInsight[] = growthSnapshot?.businessInsights ?? [];
+  const growthPlan: GrowthPlanStep[] = growthSnapshot?.growthPlan ?? [];
   const commercialTracks = useMemo(
     () => {
       if (!analysis) return [];
@@ -481,6 +505,7 @@ export default function MVAnalysisPage() {
     },
     [analysis, context, platformRecommendations, commercialTracks, growthSnapshot],
   );
+  const growthHandoff = growthSnapshot?.growthHandoff ?? null;
   const strategyPillars = useMemo(
     () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
     [analysis, platformRecommendations, commercialTracks],
@@ -560,7 +585,7 @@ export default function MVAnalysisPage() {
             </div>
 
             <div className="rounded-[28px] border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
-              {!selectedImage ? (
+              {!fileBase64 ? (
                 <button
                   onClick={handleSelectFile}
                   className="flex min-h-[360px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
@@ -568,16 +593,30 @@ export default function MVAnalysisPage() {
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
-                  <div className="mt-5 text-2xl font-bold">上传图片或视频封面</div>
+                  <div className="mt-5 text-2xl font-bold">上传图片、Word、PDF 或 MP4</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    先上传一张画面，我们会基于这张素材生成完整的成长报告首版。支持 JPG、PNG、MP4。
+                    成长营现在支持图片、`.docx`、`.pdf`、`.mp4`，会按文件类型自动选择分析链路并统一产出报告。
                   </p>
                 </button>
               ) : (
                 <div className="space-y-4">
-                  <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/30">
-                    <img src={selectedImage} alt="Selected" className="max-h-[360px] w-full object-cover" />
-                  </div>
+                  {previewUrl ? (
+                    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black/30">
+                      <img src={previewUrl} alt="Selected" className="max-h-[360px] w-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="flex min-h-[220px] flex-col items-center justify-center rounded-[24px] border border-white/10 bg-black/30 px-6 text-center">
+                      {inputKind === "document" ? <FileText className="h-12 w-12 text-[#ffb37f]" /> : <Film className="h-12 w-12 text-[#ffb37f]" />}
+                      <div className="mt-4 text-xl font-bold text-white">
+                        {inputKind === "document" ? "文档已就绪" : "视频文件已就绪"}
+                      </div>
+                      <p className="mt-2 text-sm leading-7 text-white/60">
+                        {inputKind === "document"
+                          ? "将先抽取正文或页面内容，再输出统一的成长营报告。"
+                          : "将先抽帧并尝试转写音频，再输出统一的成长营报告。"}
+                      </p>
+                    </div>
+                  )}
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-2">
@@ -601,7 +640,7 @@ export default function MVAnalysisPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*,.docx,application/pdf,video/mp4"
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -622,7 +661,7 @@ export default function MVAnalysisPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleAnalyze}
-                  disabled={!imageBase64 || isProcessing}
+                  disabled={!fileBase64 || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
@@ -685,13 +724,7 @@ export default function MVAnalysisPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-5">
-              {[
-                { label: "构图结构", value: analysis.composition },
-                { label: "色彩识别", value: analysis.color },
-                { label: "光线氛围", value: analysis.lighting },
-                { label: "冲击强度", value: analysis.impact },
-                { label: "商业放大空间", value: analysis.viralPotential },
-              ].map((item) => {
+              {scoreItems.map((item) => {
                 const tone = getScoreTone(item.value);
                 return (
                   <div key={item.label} className="rounded-[24px] border border-white/10 bg-[#0f1a2c] p-5">
@@ -869,10 +902,12 @@ export default function MVAnalysisPage() {
                     <h2 className="text-2xl font-bold">商业洞察</h2>
                   </div>
                   <div className="mt-5 space-y-3">
-                    {businessInsights.map((item, index) => (
-                      <div key={index} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
-                        {item}
-                      </div>
+                    {businessInsights.map((item) => (
+                      <GrowthSectionCard
+                        key={item.title}
+                        title={item.title}
+                        description={item.detail}
+                      />
                     ))}
                   </div>
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -905,9 +940,14 @@ export default function MVAnalysisPage() {
                     先跑最适合的首发渠道，再把同一条内容拆成不同标题、封面和叙事强度做二次分发。
                   </p>
                   <div className="mt-5 space-y-4">
-                    {platformRecommendations.map((platform) => (
+                    {platformRecommendations.map((platform, index) => (
                       <div key={platform.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className="text-lg font-bold text-white">{platform.name}</div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-lg font-bold text-white">{platform.name}</div>
+                          <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
+                            #{index + 1}
+                          </div>
+                        </div>
                         <p className="mt-2 text-sm leading-7 text-white/70">{platform.reason}</p>
                         <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
                           建议动作：{platform.action}
@@ -926,9 +966,11 @@ export default function MVAnalysisPage() {
                     这 7 天不是泛泛建议，而是按“先验证，再放大，再承接商业动作”的顺序推进。
                   </p>
                   <div className="mt-5 space-y-3">
-                    {growthPlan.map((item, index) => (
-                      <div key={index} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
-                        {item}
+                    {growthPlan.map((item) => (
+                      <div key={item.day} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
+                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9df6c0]">Day {item.day}</div>
+                        <div className="mt-2 text-base font-semibold text-white">{item.title}</div>
+                        <div className="mt-2">{item.action}</div>
                       </div>
                     ))}
                   </div>
@@ -942,39 +984,24 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
                     <pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-white/70">{creationAssistBrief}</pre>
                   </div>
-                  <div className="mt-4 grid gap-3">
-                    <button
-                      onClick={() => void handleCopyText(creationAssistBrief, "创作简报已复制")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
-                    >
-                      复制执行简报
-                    </button>
-                    <button
-                      onClick={() => void handleCopyText(growthPlan.join("\n"), "7 天增长规划已复制")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
-                    >
-                      复制 7 天增长规划
-                    </button>
-                    <button
-                      onClick={() => void handleCopyText(growthSnapshot?.creationAssist?.storyboardPrompt || creationAssistBrief, "分镜提示词已复制")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
-                    >
-                      复制分镜提示词
-                    </button>
-                    <button
-                      onClick={() => void handleCopyText(growthSnapshot?.creationAssist?.workflowPrompt || creationAssistBrief, "工作流提示词已复制")}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
-                    >
-                      复制工作流提示词
-                    </button>
+                  <GrowthHandoffActions
+                    handoff={growthHandoff}
+                    growthPlan={growthPlan}
+                    fallbackBrief={creationAssistBrief}
+                    onCopyText={handleCopyText}
+                    onStoreHandoff={handleStoreHandoff}
+                  />
+                  <div className="mt-3 grid gap-3">
                     <a
                       href="/storyboard"
+                      onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
                       className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
                     >
                       进入分镜创作
                     </a>
                     <a
                       href="/workflow"
+                      onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 workflow")}
                       className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/10"
                     >
                       进入工作流执行

@@ -87,10 +87,36 @@ export const growthMonetizationTrackSchema = z.object({
   nextStep: z.string(),
 });
 
+export const growthPlatformRecommendationSchema = z.object({
+  name: z.string(),
+  reason: z.string(),
+  action: z.string(),
+});
+
+export const growthBusinessInsightSchema = z.object({
+  title: z.string(),
+  detail: z.string(),
+});
+
+export const growthPlanStepSchema = z.object({
+  day: z.number().int().min(1).max(30),
+  title: z.string(),
+  action: z.string(),
+});
+
 export const growthCreationAssistSchema = z.object({
   brief: z.string(),
   storyboardPrompt: z.string(),
   workflowPrompt: z.string(),
+});
+
+export const growthHandoffSchema = z.object({
+  brief: z.string(),
+  storyboardPrompt: z.string(),
+  workflowPrompt: z.string(),
+  recommendedTrack: z.string(),
+  recommendedPlatforms: z.array(growthPlatformSchema),
+  businessGoal: z.string(),
 });
 
 export const growthSnapshotStatusSchema = z.object({
@@ -116,7 +142,11 @@ export const growthSnapshotSchema = z.object({
   opportunities: z.array(growthOpportunitySchema),
   structurePatterns: z.array(growthStructurePatternSchema),
   monetizationTracks: z.array(growthMonetizationTrackSchema),
+  platformRecommendations: z.array(growthPlatformRecommendationSchema),
+  businessInsights: z.array(growthBusinessInsightSchema),
+  growthPlan: z.array(growthPlanStepSchema),
   creationAssist: growthCreationAssistSchema,
+  growthHandoff: growthHandoffSchema,
 });
 
 export type GrowthPlatform = z.infer<typeof growthPlatformSchema>;
@@ -127,6 +157,10 @@ export type GrowthContentPattern = z.infer<typeof growthContentPatternSchema>;
 export type GrowthOpportunity = z.infer<typeof growthOpportunitySchema>;
 export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema>;
 export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSchema>;
+export type GrowthPlatformRecommendation = z.infer<typeof growthPlatformRecommendationSchema>;
+export type GrowthBusinessInsight = z.infer<typeof growthBusinessInsightSchema>;
+export type GrowthPlanStep = z.infer<typeof growthPlanStepSchema>;
 export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;
+export type GrowthHandoff = z.infer<typeof growthHandoffSchema>;
 export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;

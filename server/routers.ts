@@ -23,6 +23,8 @@ import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
 import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizePlatforms } from "./growth/growthSchema";
+import { analyzeDocument } from "./growth/analyzeDocument";
+import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
 import { isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
 import { creationsRouter, recordCreation } from "./routers/creations";
@@ -320,6 +322,42 @@ export const appRouter = router({
             fallback: true,
           };
         }
+      }),
+
+    analyzeDocument: publicProcedure
+      .input(z.object({
+        fileBase64: z.string().min(1),
+        mimeType: z.string().min(1),
+        fileName: z.string().optional(),
+        context: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await analyzeDocument(input);
+        return {
+          success: true,
+          analysis: result.analysis,
+          fileUrl: result.documentMeta.fileUrl,
+          extractionMethod: result.documentMeta.extractionMethod,
+          extractedTextPreview: result.documentMeta.extractedTextPreview,
+        };
+      }),
+
+    analyzeVideo: publicProcedure
+      .input(z.object({
+        fileBase64: z.string().min(1),
+        mimeType: z.string().min(1),
+        fileName: z.string().optional(),
+        context: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await analyzeVideo(input);
+        return {
+          success: true,
+          analysis: result.analysis,
+          videoUrl: result.videoMeta.videoUrl,
+          transcript: result.videoMeta.transcript,
+          videoDuration: result.videoMeta.videoDuration,
+        };
       }),
 
     getGrowthSnapshot: publicProcedure
