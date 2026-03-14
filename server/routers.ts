@@ -22,7 +22,9 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
-import { buildMockGrowthSnapshot } from "./growth/growthSchema";
+import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizePlatforms } from "./growth/growthSchema";
+import { collectTrendPlatforms } from "./growth/trendCollector";
+import { isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -288,16 +290,61 @@ export const appRouter = router({
         analysis: growthAnalysisScoresSchema,
       }))
       .query(async ({ input }) => {
-        const snapshot = buildMockGrowthSnapshot({
-          analysis: input.analysis,
-          context: input.context,
-          requestedPlatforms: input.requestedPlatforms,
-        });
+        const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
+        const store = await readTrendStore();
+        const stalePlatforms = requestedPlatforms.filter((platform) =>
+          isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
+        );
+
+        let collections = store.collections;
+        let errors: Partial<Record<typeof requestedPlatforms[number], string>> = {};
+
+        if (stalePlatforms.length) {
+          const collected = await collectTrendPlatforms(stalePlatforms);
+          collections = (await mergeTrendCollections(collected.collections)).collections;
+          errors = collected.errors as Partial<Record<typeof requestedPlatforms[number], string>>;
+        }
+
+        const hasAnyLiveCollection = requestedPlatforms.some((platform) => collections[platform]?.items.length);
+        const snapshot = hasAnyLiveCollection
+          ? buildGrowthSnapshotFromCollections({
+              analysis: input.analysis,
+              context: input.context,
+              requestedPlatforms,
+              collections,
+              errors,
+            })
+          : buildMockGrowthSnapshot({
+              analysis: input.analysis,
+              context: input.context,
+              requestedPlatforms,
+            });
 
         return {
           success: true,
           source: snapshot.status.source,
           snapshot,
+        };
+      }),
+
+    refreshGrowthTrends: publicProcedure
+      .input(z.object({
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili"])).default(["douyin", "xiaohongshu", "bilibili"]),
+      }))
+      .mutation(async ({ input }) => {
+        const collected = await collectTrendPlatforms(input.platforms);
+        const store = await mergeTrendCollections(collected.collections);
+
+        return {
+          success: true,
+          updatedAt: store.updatedAt,
+          collections: Object.values(store.collections).map((item) => ({
+            platform: item?.platform,
+            collectedAt: item?.collectedAt,
+            source: item?.source,
+            count: item?.items.length ?? 0,
+          })),
+          errors: collected.errors,
         };
       }),
 

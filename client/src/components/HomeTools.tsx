@@ -14,7 +14,7 @@ const cards: ToolCard[] = [
   { zh: "虚拟艺人工坊", en: "Actor Studio", desc: "上传人物图，生成场景与视频", price: "15 积分起", pro: false, href: "/actor" },
   { zh: "分镜工作流", en: "Storyboard Workflow", desc: "脚本 → 分镜 → 图像 → 视频", price: "20 积分起", pro: false, href: "/workflow" },
   { zh: "AI 音乐工坊", en: "AI Music Studio", desc: "Suno / Udio 配乐生成", price: "5 积分起", pro: false, href: "/remix" },
-  { zh: "爆款分析师", en: "Viral Analyst", desc: "免费试用每日 3 次，付费解锁优化方案", price: "Pro 功能", pro: true, href: "/viral" },
+  { zh: "創作商業成長營", en: "Creator Growth Camp", desc: "上传内容，一键生成增长策略、商业洞察与平台建议", price: "Pro 功能", pro: true, href: "/creator-growth-camp" },
   { zh: "我的创作", en: "My Creations", desc: "作品、任务、历史记录统一管理", price: "免费", pro: false, href: "/my" },
 ];
 

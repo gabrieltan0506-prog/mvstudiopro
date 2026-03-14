@@ -251,14 +251,14 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                围绕创作者工作流设计：可灵工作室、虚拟艺人工坊、分镜工作流、爆款分析师。
+                围绕创作者工作流设计：可灵工作室、虚拟艺人工坊、分镜工作流、創作商業成長營。
               </div>
 
               <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
                 {[
                   "可灵工作室：图像 / 视频 / Motion Control / Lip Sync",
                   "虚拟艺人工坊：人物上传 → 场景 → 视频",
-                  "爆款分析师：免费试用每日 3 次，付费解锁优化方案",
+                  "創作商業成長營：上传内容，生成增长策略、商业洞察与发布建议",
                 ].map((line) => (
                   <div
                     key={line}

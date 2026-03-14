@@ -5,8 +5,9 @@ import {
   type GrowthSnapshot,
   growthSnapshotSchema,
 } from "@shared/growth";
+import type { PlatformTrendCollection } from "./trendCollector";
 
-const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
+export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   douyin: "抖音",
   weixin_channels: "视频号",
   xiaohongshu: "小红书",
@@ -15,7 +16,7 @@ const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   toutiao: "今日头条",
 };
 
-const PLATFORM_ALIASES = Object.fromEntries([
+export const PLATFORM_ALIASES = Object.fromEntries([
   ["douyin", "douyin"],
   ["抖音", "douyin"],
   ["xiaohongshu", "xiaohongshu"],
@@ -31,7 +32,7 @@ const PLATFORM_ALIASES = Object.fromEntries([
   ["今日头条", "toutiao"],
 ]) as Record<string, GrowthPlatform>;
 
-function normalizePlatforms(input?: string[]): GrowthPlatform[] {
+export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
   const mapped = (input || [])
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
     .filter(Boolean) as GrowthPlatform[];
@@ -41,6 +42,23 @@ function normalizePlatforms(input?: string[]): GrowthPlatform[] {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function topDurationRangeFor(platform: GrowthPlatform) {
+  return platform === "bilibili"
+    ? "45-120 秒"
+    : platform === "xiaohongshu"
+    ? "20-45 秒"
+    : "12-35 秒";
 }
 
 function buildMetricWindow(platform: GrowthPlatform, analysis: GrowthAnalysisScores) {
@@ -85,6 +103,96 @@ function buildPlatformSummary(platform: GrowthPlatform, analysis: GrowthAnalysis
     return `${label} 近 30 天更能承接完整叙事与创作拆解，适合延展出幕后版、教程版或案例复盘版。`;
   }
   return `${label} 可作为次分发平台，适合用不同封面与文案角度验证同一素材的受众匹配度。`;
+}
+
+function buildPlatformSummaryFromCollection(
+  platform: GrowthPlatform,
+  analysis: GrowthAnalysisScores,
+  collection: PlatformTrendCollection,
+) {
+  const topItem = collection.items[0];
+  const baseSummary = buildPlatformSummary(platform, analysis);
+  if (!topItem) return baseSummary;
+  return `${baseSummary} 当前样本里最强势的话题/内容是「${topItem.title}」，说明最近分发仍然偏向更直接、更高可读性的表达。`;
+}
+
+function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection) {
+  const likes = collection.items.map((item) => item.likes || item.hotValue || 0).filter(Boolean);
+  const comments = collection.items.map((item) => item.comments || 0).filter(Boolean);
+  const shares = collection.items.map((item) => item.shares || 0).filter(Boolean);
+  const views = collection.items.map((item) => item.views || 0).filter(Boolean);
+  const creators = new Set(collection.items.map((item) => item.author).filter(Boolean));
+  const engagementBase = median(likes) + median(comments) * 4 + median(shares) * 6;
+  const engagementRateMedian = clamp(Number(((engagementBase || analysis.viralPotential * 100) / Math.max(median(views) || 50_000, 10_000) * 100).toFixed(1)), 1.6, 18.5);
+  const growthRate = clamp(Number((analysis.impact * 0.18 + (median(shares) || 0) / 600 - 4).toFixed(1)), -10, 28);
+  const saveRateMedian = clamp(Number((((median(likes) || analysis.color * 100) / Math.max(median(views) || 50_000, 10_000)) * 100).toFixed(1)), 0.6, 12.5);
+
+  return {
+    postsAnalyzed: collection.items.length,
+    creatorsTracked: creators.size || Math.round(collection.items.length * 0.65),
+    avgViews: Math.round(median(views) || (analysis.impact + analysis.viralPotential) * 900),
+    avgLikes: Math.round(median(likes) || analysis.color * 120),
+    avgComments: Math.round(median(comments) || analysis.composition * 3),
+    avgShares: Math.round(median(shares) || analysis.impact * 2),
+    engagementRateMedian,
+    growthRate,
+    saveRateMedian,
+    topDurationRange: topDurationRangeFor(platform),
+    sampleSizeLabel: collection.source === "live" ? "live-sample-30d" : "seed-sample-30d",
+  };
+}
+
+function buildContentPatternsFromCollections(collections: PlatformTrendCollection[]) {
+  const titles = collections.flatMap((collection) => collection.items.slice(0, 6).map((item) => item.title));
+  const hasCase = titles.some((title) => /案例|复盘|教程|拆解/.test(title));
+  const hasAesthetic = titles.some((title) => /治愈|灵感|穿搭|家居|日常|妆|拍照/.test(title));
+
+  return [
+    {
+      id: "pattern-hook-result-first",
+      title: "结果前置 + 快速交代冲突",
+      description: "高频热门内容仍然偏向一上来就给结果、反差或结论，不再适合长铺垫开场。",
+      momentum: "rising" as const,
+      platforms: ["douyin", "xiaohongshu"] as GrowthPlatform[],
+      hookTemplate: "先抛结果或反差，再用一句话交代为什么值得继续看。",
+      monetizationHint: "适合挂服务咨询、案例转化、私域入口。",
+    },
+    {
+      id: "pattern-breakdown-storytelling",
+      title: hasCase ? "案例拆解 + 方法复盘" : "过程叙事 + 可复制模板",
+      description: hasCase
+        ? "最近热门样本里“案例 / 复盘 / 拆解”密度较高，说明幕后方法论仍有承接空间。"
+        : "过程化表达和模板化表达仍然稳定，适合把单条内容延展成系列。",
+      momentum: "stable" as const,
+      platforms: ["bilibili", "xiaohongshu"] as GrowthPlatform[],
+      hookTemplate: "先抛结果，再拆三步方法，把过程讲成可复制模板。",
+      monetizationHint: hasAesthetic
+        ? "适合模板售卖、课程和品牌合作。"
+        : "适合陪跑、案例库、交付服务。",
+    },
+  ];
+}
+
+function buildOpportunitiesFromCollections(collections: PlatformTrendCollection[], requestedPlatforms: GrowthPlatform[]) {
+  const totalLiveItems = collections.reduce((sum, collection) => sum + collection.items.length, 0);
+  return [
+    {
+      id: "opp-platform-fit",
+      title: "先做平台适配版本，而不是一稿通发",
+      whyNow: totalLiveItems >= 20
+        ? `当前已抓到 ${totalLiveItems} 条平台样本，平台偏好差异明显，应该先做版本适配再验证分发。`
+        : "平台样本已经显示出明显结构差异，先做 2-3 个版本能更快找到反馈。",
+      nextAction: "先产出抖音强钩子版 + 小红书拆解版 + B站幕后版。",
+      linkedPlatforms: requestedPlatforms,
+    },
+    {
+      id: "opp-commercial-bridge",
+      title: "把内容流量桥接到明确商业入口",
+      whyNow: "热门结构不等于商业转化，内容一旦有基础吸引力，就应该立刻补上 CTA 和服务承接。",
+      nextAction: "下一条内容开始增加服务说明、案例 CTA 或私域承接动作。",
+      linkedPlatforms: requestedPlatforms.slice(0, 2),
+    },
+  ];
 }
 
 function buildPlatformSnapshot(platform: GrowthPlatform, analysis: GrowthAnalysisScores, context: string): GrowthPlatformSnapshot {
@@ -221,6 +329,82 @@ export function buildMockGrowthSnapshot(params: {
         linkedPlatforms: requestedPlatforms.slice(0, 2),
       },
     ],
+  } satisfies GrowthSnapshot;
+
+  return growthSnapshotSchema.parse(snapshot);
+}
+
+export function buildGrowthSnapshotFromCollections(params: {
+  analysis: GrowthAnalysisScores;
+  context?: string;
+  requestedPlatforms?: string[];
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  errors?: Partial<Record<GrowthPlatform, string>>;
+}): GrowthSnapshot {
+  const requestedPlatforms = normalizePlatforms(params.requestedPlatforms || params.analysis.platforms);
+  const context = String(params.context || "").trim();
+  const activeCollections = requestedPlatforms
+    .map((platform) => params.collections[platform])
+    .filter(Boolean) as PlatformTrendCollection[];
+
+  if (!activeCollections.length) {
+    return buildMockGrowthSnapshot({
+      analysis: params.analysis,
+      context,
+      requestedPlatforms,
+    });
+  }
+
+  const platformSnapshots = requestedPlatforms.map((platform) => {
+    const collection = params.collections[platform];
+    if (!collection || !collection.items.length) {
+      return buildPlatformSnapshot(platform, params.analysis, context);
+    }
+    const base = buildPlatformSnapshot(platform, params.analysis, context);
+    const metricWindow = buildMetricWindowFromCollection(platform, params.analysis, collection);
+    return {
+      ...base,
+      summary: buildPlatformSummaryFromCollection(platform, params.analysis, collection),
+      last30d: metricWindow,
+      momentumScore: clamp(Math.round(metricWindow.growthRate * 3 + 60), 35, 96),
+      audienceFitScore: clamp(Math.round((base.audienceFitScore + metricWindow.engagementRateMedian * 4) / 2), 38, 95),
+      competitionLevel:
+        metricWindow.avgLikes >= 30_000 ? "high" :
+        metricWindow.avgLikes >= 8_000 ? "medium" :
+        "low",
+      sampleTopics: collection.items.slice(0, 3).map((item) => item.title),
+    } satisfies GrowthPlatformSnapshot;
+  });
+
+  const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
+  const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
+
+  const snapshot = {
+    status: {
+      source: missingPlatforms.length ? "hybrid" : "live",
+      generatedAt: new Date().toISOString(),
+      windowDays: 30,
+      freshnessLabel: missingPlatforms.length ? "30-day hybrid sample" : "30-day live sample",
+      collectorReady: true,
+      missingConnectors: missingPlatforms.map((platform) => `${platform}.trends.fetch30d`),
+      notes: [
+        `Live collectors ready for ${livePlatforms.join(", ") || "none"}.`,
+        ...activeCollections.flatMap((item) => item.notes.slice(0, 2)),
+        ...Object.entries(params.errors || {}).map(([platform, error]) => `${platform}: ${error}`),
+      ],
+    },
+    requestedPlatforms,
+    overview: {
+      summary: "趋势模块已经开始消费真实平台抓取结果，并保留 fallback 结构，便于继续扩展到完整的 30 天趋势库。",
+      trendNarrative:
+        params.analysis.impact >= 72
+          ? "当前内容适合先打强钩子和分发效率高的平台，再用拆解版和幕后版承接长尾讨论。"
+          : "当前内容更适合先做结构重写、封面测试和平台化版本，再逐步扩大投放。",
+      nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，把当前 live sample 收敛成稳定 30 天趋势库。",
+    },
+    platformSnapshots,
+    contentPatterns: buildContentPatternsFromCollections(activeCollections),
+    opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);

@@ -140,6 +140,7 @@ export default function MVAnalysisPage() {
 
   const analyzeMutation = trpc.mvAnalysis.analyzeFrame.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
+  const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
@@ -310,6 +311,18 @@ export default function MVAnalysisPage() {
     setFileSize(0);
   }, []);
 
+  const handleRefreshGrowth = useCallback(async () => {
+    try {
+      await refreshGrowthMutation.mutateAsync({
+        platforms: ["douyin", "xiaohongshu", "bilibili"],
+      });
+      await growthSnapshotQuery.refetch();
+      toast.success("趋势数据已刷新");
+    } catch (refreshError: any) {
+      toast.error(refreshError.message || "趋势数据刷新失败");
+    }
+  }, [refreshGrowthMutation, growthSnapshotQuery]);
+
   const isProcessing = uploadStage === "uploading" || uploadStage === "analyzing";
   const remainingTime = Math.max(0, estimatedTime - elapsedTime);
 
@@ -366,7 +379,7 @@ export default function MVAnalysisPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
-            Creator Growth Camp MVP
+            Creator Growth Camp
           </div>
         </div>
 
@@ -375,7 +388,7 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                创作商业成長營
+                創作商業成長營
               </div>
               <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
                 不只分析一帧画面，而是给你一份可执行的内容增长与商业化报告。
@@ -403,7 +416,7 @@ export default function MVAnalysisPage() {
                   </div>
                   <div className="mt-5 text-2xl font-bold">上传图片或视频封面</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    先上传一张画面，我们会用它生成“创作商业成長營”的首版诊断报告。支持 JPG、PNG、MP4。
+                    先上传一张画面，我们会用它生成“創作商業成長營”的首版诊断报告。支持 JPG、PNG、MP4。
                   </p>
                 </button>
               ) : (
@@ -558,9 +571,18 @@ export default function MVAnalysisPage() {
                 </div>
 
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#90c4ff]">
-                    <TrendingUp className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">趋势洞察</h2>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 text-[#90c4ff]">
+                      <TrendingUp className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">趋势洞察</h2>
+                    </div>
+                    <button
+                      onClick={handleRefreshGrowth}
+                      disabled={refreshGrowthMutation.isPending}
+                      className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/75 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {refreshGrowthMutation.isPending ? "刷新中..." : "刷新 30 天样本"}
+                    </button>
                   </div>
                   {growthSnapshotQuery.isLoading ? (
                     <div className="mt-5 grid gap-4 md:grid-cols-3">
