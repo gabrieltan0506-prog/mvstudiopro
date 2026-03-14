@@ -95,6 +95,14 @@ function mapVertexVoice(input: { voiceType?: string }) {
   return s(process.env.VERTEX_TTS_VOICE_FEMALE || "Kore").trim() || "Kore";
 }
 
+function inferVertexLanguageCode(text: string) {
+  const source = s(text).trim();
+  if (/[\u4e00-\u9fff]/.test(source)) return "cmn-CN";
+  if (/[ぁ-んァ-ヶ]/.test(source)) return "ja-JP";
+  if (/[가-힣]/.test(source)) return "ko-KR";
+  return "en-US";
+}
+
 function hasVertexTtsEnv() {
   return Boolean(s(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim() && s(process.env.VERTEX_PROJECT_ID).trim());
 }
@@ -161,36 +169,36 @@ function emptyResult(input: Partial<VoiceSynthesisResult> & Pick<VoiceSynthesisR
 
 async function tryVertexTts(input: VoiceSynthesisInput): Promise<VoiceSynthesisResult> {
   const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
-  const location = s(process.env.VERTEX_TTS_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
-  const model = s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-flash-preview-tts").trim() || "gemini-2.5-flash-preview-tts";
+  const location = s(process.env.VERTEX_TTS_LOCATION || process.env.VERTEX_GEMINI_LOCATION || "us-central1").trim() || "us-central1";
+  const model = s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-pro-tts").trim() || "gemini-2.5-pro-tts";
   const voiceName = mapVertexVoice({ voiceType: input.voiceType });
   const baseUrl = location === "global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
-  const systemParts = [
-    "You are a text-to-speech model.",
-    "Speak only the user-provided dialogue without adding any extra words.",
-    "Preserve the original language of the dialogue.",
-  ];
-  if (s(input.voicePrompt).trim()) {
-    systemParts.push(`Style instructions: ${s(input.voicePrompt).trim().slice(0, 400)}`);
-  }
+  const languageCode = inferVertexLanguageCode(input.dialogueText);
+  const stylePrompt = s(input.voicePrompt).trim();
+  const textPrompt = stylePrompt
+    ? `${stylePrompt.slice(0, 300)}\n\n${s(input.dialogueText).trim()}`
+    : s(input.dialogueText).trim();
 
   try {
     const accessToken = await getVertexAccessToken();
-    const response = await fetch(`${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`, {
+    const response = await fetch(`${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
+        "x-goog-user-project": projectId,
       },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemParts.join(" ") }] },
-        contents: [{ role: "user", parts: [{ text: s(input.dialogueText).trim() }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
+        contents: [{ parts: [{ text: textPrompt }] }],
+        generation_config: {
+          response_modalities: ["AUDIO"],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
+              prebuiltVoiceConfig: {
+                voiceName,
+              },
             },
+            languageCode,
           },
         },
       }),
@@ -326,7 +334,7 @@ async function tryMiniMaxTts(input: VoiceSynthesisInput): Promise<VoiceSynthesis
 
 export async function synthesizeVoiceAudio(input: VoiceSynthesisInput): Promise<VoiceSynthesisResult> {
   const dialogueText = s(input.dialogueText).trim();
-  const defaultVertexModel = s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-flash-preview-tts").trim() || "gemini-2.5-flash-preview-tts";
+  const defaultVertexModel = s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-pro-tts").trim() || "gemini-2.5-pro-tts";
   const defaultVertexVoice = mapVertexVoice({ voiceType: input.voiceType });
   const defaultMiniMaxVoice = buildMiniMaxVoiceConfig({ voiceType: input.voiceType, voiceStyle: input.voiceStyle }).voiceId;
   if (!dialogueText) {
