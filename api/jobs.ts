@@ -553,7 +553,7 @@ function getSceneEnvironmentImages(item: any): string[] {
     const ordered = selected && normalized.includes(selected)
       ? [selected, ...normalized.filter((value: string) => value !== selected)]
       : normalized;
-    return ordered.slice(0, 2);
+    return ordered.slice(0, 1);
   }
 
   const legacy = Array.isArray(item?.imageUrls)
@@ -561,9 +561,9 @@ function getSceneEnvironmentImages(item: any): string[] {
     : Array.isArray(item?.images)
       ? item.images
       : [];
-  const normalizedLegacy = legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(1, 3);
+  const normalizedLegacy = legacy.map((value: any) => s(value).trim()).filter(Boolean).slice(1, 2);
   if (selected && normalizedLegacy.includes(selected)) {
-    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 2);
+    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 1);
   }
   return normalizedLegacy;
 }
@@ -573,7 +573,7 @@ function buildSceneAssetBundle(existing: any, sceneIndex: number, patch: Record<
     ? patch.characterImages.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 1)
     : getSceneCharacterImages(existing);
   const nextSceneImages = Array.isArray(patch.sceneImages)
-    ? patch.sceneImages.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 2)
+    ? patch.sceneImages.map((value: any) => s(value).trim()).filter(Boolean).slice(0, 1)
     : getSceneEnvironmentImages(existing);
   const combinedImages = [...nextSceneImages, ...nextCharacterImages].filter(Boolean);
 
@@ -658,12 +658,12 @@ async function generateSceneAssetImages(scene: any, workflow: any) {
     try {
       const environmentGenerated = await generateImageWithBanana({
         prompt: environmentPrompt,
-        numImages: 2,
+        numImages: 1,
         aspectRatio: "16:9",
         imageSize: "1536x864",
       });
       return await uploadWorkflowImagesToBlob(
-        (environmentGenerated.imageUrls || []).slice(0, 2),
+        (environmentGenerated.imageUrls || []).slice(0, 1),
         `storyboard-scene-${scene.sceneIndex}-scene`,
       );
     } catch (error: any) {
@@ -1510,7 +1510,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneImages: assetType === "character"
             ? currentSceneImages
             : assetType === "scene"
-              ? Array.from(new Set([...currentSceneImages, imageUrl])).slice(0, 2)
+              ? Array.from(new Set([...currentSceneImages, imageUrl])).slice(0, 1)
               : currentSceneImages,
         });
       });
@@ -1546,7 +1546,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         return buildSceneAssetBundle(existing, sceneIndex, {
           selectedSceneImageUrl: imageUrl,
-          sceneImages: [imageUrl, ...currentSceneImages.filter((value) => value !== imageUrl)].slice(0, 2),
+          sceneImages: [imageUrl, ...currentSceneImages.filter((value) => value !== imageUrl)].slice(0, 1),
         });
       });
 
@@ -1834,7 +1834,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         getSceneCharacterImages(sceneBundle)[0] ||
         "";
       const sceneImageUrls = getSceneEnvironmentImages(sceneBundle);
-      const referenceImages = [...sceneImageUrls.slice(0, 2), characterImageUrl].map((value) => s(value).trim()).filter(Boolean);
+      const referenceImages = [...sceneImageUrls.slice(0, 1), characterImageUrl].map((value) => s(value).trim()).filter(Boolean);
       if (!characterImageUrl) return res.status(400).json(fail("character image is required before scene video generation"));
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 

@@ -16,12 +16,12 @@ export async function storyboardImagesStep(scenes: StoryboardScene[]): Promise<S
     });
     const generated = await generateStoryboardSceneImages({
       scenePrompt: prompt,
-      count: 2,
+      count: 1,
     });
 
     result.push({
       sceneIndex: scene.sceneIndex,
-      images: generated.imageUrls.slice(0, 2),
+      images: generated.imageUrls.slice(0, 1),
     });
   }
   return result;

@@ -91,7 +91,7 @@ const NODE_ITEMS: NodeItem[] = [
   { id: "prompt", title: "提示词输入", en: "Prompt", x: 60, y: 120, color: "from-fuchsia-500/30 to-pink-500/10", desc: "输入主题、脚本长度与分镜数量，固定 8 秒规则在节点链路内生效。", icon: Sparkles, status: "已接入" },
   { id: "script", title: "脚本生成", en: "Script", x: 320, y: 70, color: "from-violet-500/30 to-indigo-500/10", desc: "根据提示生成完整脚本，并可继续编辑后续场景。", icon: FileText, status: "已接入" },
   { id: "storyboard", title: "故事板", en: "Storyboard", x: 590, y: 70, color: "from-sky-500/30 to-cyan-500/10", desc: "拆分成 scene prompt、主角、镜头、动作、情绪。", icon: PanelsTopLeft, status: "已接入" },
-  { id: "assets", title: "分镜资产", en: "Scene Assets", x: 860, y: 70, color: "from-emerald-500/30 to-teal-500/10", desc: "每个分镜保留 1 张角色图和 1-2 张场景图。", icon: ImageIcon, status: "已接入" },
+  { id: "assets", title: "分镜资产", en: "Scene Assets", x: 860, y: 70, color: "from-emerald-500/30 to-teal-500/10", desc: "每个分镜保留 1 张角色图和 1 张场景图。", icon: ImageIcon, status: "已接入" },
   { id: "renderStill", title: "多人静帧", en: "Render Still", x: 860, y: 290, color: "from-amber-500/30 to-yellow-500/10", desc: "多人场景不走 AI 视频，改走 Render Still 插帧。", icon: Lock, status: "已接入" },
   { id: "removebg", title: "去背景", en: "Background Removal", x: 1120, y: 290, color: "from-orange-500/30 to-red-500/10", desc: "后续会继续接入角色抠图和延展链路。", icon: Scissors, status: "开发中" },
   { id: "video", title: "视频生成", en: "Scene Video", x: 1120, y: 70, color: "from-blue-500/30 to-indigo-500/10", desc: "按场景逐镜生成 8 秒视频。", icon: Video, status: "已接入" },
@@ -183,13 +183,13 @@ function getSceneImageUrls(bundle: any): string[] {
   const normalized = explicit.map((value: any) => String(value || "").trim()).filter(Boolean);
   if (normalized.length) {
     return selected && normalized.includes(selected)
-      ? [selected, ...normalized.filter((value: string) => value !== selected)].slice(0, 2)
-      : normalized.slice(0, 2);
+      ? [selected, ...normalized.filter((value: string) => value !== selected)].slice(0, 1)
+      : normalized.slice(0, 1);
   }
   const legacy = Array.isArray(bundle?.imageUrls) ? bundle.imageUrls : Array.isArray(bundle?.images) ? bundle.images : [];
-  const normalizedLegacy = legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 3);
+  const normalizedLegacy = legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 2);
   if (selected && normalizedLegacy.includes(selected)) {
-    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 2);
+    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 1);
   }
   return normalizedLegacy;
 }
@@ -735,7 +735,7 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          這個節點是 scene 級素材工作台。每個分鏡應保留 1 張角色圖與 1-2 張場景圖，並在這裡決定哪張場景圖進入後續 Scene Video。
+          這個節點是 scene 級素材工作台。每個分鏡保留 1 張角色圖與 1 張場景圖，並在這裡決定目前用哪張素材進入後續 Scene Video。
         </div>
         <div className="flex flex-wrap gap-3">
           <Button disabled={globalStep.loading || !storyboard.length} onClick={() => void runOp("workflowGenerateStoryboardImages", {
@@ -745,7 +745,7 @@ export default function WorkflowNodes() {
           }, () => setSelected("renderStill"))} className="rounded-xl bg-primary px-5">
             {globalStep.loading ? "Generating..." : "Generate All Scene Assets"}
           </Button>
-          <div className="text-sm text-white/60">每个 scene 会生成 1 张人物图 + 1-2 张场景图，视频节点优先吃这里最新的一组。</div>
+          <div className="text-sm text-white/60">每个 scene 会生成 1 张人物图 + 1 张场景图，视频节点直接吃这里当前这一组。</div>
         </div>
         {storyboardImages.length ? storyboardImages.map((bundle) => {
           const characterUrls = getCharacterImageUrls(bundle);

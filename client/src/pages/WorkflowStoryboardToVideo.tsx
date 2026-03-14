@@ -144,12 +144,12 @@ function getSceneImageUrls(bundle: any): string[] {
     const ordered = selected && normalized.includes(selected)
       ? [selected, ...normalized.filter((value: string) => value !== selected)]
       : normalized;
-    return ordered.slice(0, 2);
+    return ordered.slice(0, 1);
   }
   const legacy = Array.isArray(bundle?.imageUrls) ? bundle.imageUrls : Array.isArray(bundle?.images) ? bundle.images : [];
-  const normalizedLegacy = legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 3);
+  const normalizedLegacy = legacy.map((value: any) => String(value || "").trim()).filter(Boolean).slice(1, 2);
   if (selected && normalizedLegacy.includes(selected)) {
-    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 2);
+    return [selected, ...normalizedLegacy.filter((value: string) => value !== selected)].slice(0, 1);
   }
   return normalizedLegacy;
 }
@@ -649,12 +649,12 @@ export default function WorkflowStoryboardToVideo() {
         Number(item?.sceneIndex) === sceneIndex
           ? {
               ...item,
-              selectedSceneImageUrl: imageUrl,
+                selectedSceneImageUrl: imageUrl,
               sceneImageUrls: Array.isArray(item?.sceneImageUrls)
-                ? [imageUrl, ...item.sceneImageUrls.filter((value: string) => value !== imageUrl)].slice(0, 2)
+                ? [imageUrl, ...item.sceneImageUrls.filter((value: string) => value !== imageUrl)].slice(0, 1)
                 : item?.sceneImageUrls,
               sceneImages: Array.isArray(item?.sceneImages)
-                ? [imageUrl, ...item.sceneImages.filter((value: string) => value !== imageUrl)].slice(0, 2)
+                ? [imageUrl, ...item.sceneImages.filter((value: string) => value !== imageUrl)].slice(0, 1)
                 : item?.sceneImages,
             }
           : item,

@@ -323,11 +323,11 @@ async function generateStoryboardImages(storyboard: Array<{ sceneIndex: number; 
       const imageResp = await callWorkflowModelApi({
         op: "bananaGenerate",
         prompt: scenePrompt,
-        numImages: 2,
+        numImages: 1,
         aspectRatio: "16:9",
       });
       const images = Array.isArray(imageResp?.imageUrls)
-        ? imageResp.imageUrls.map((url: any) => String(url)).filter(Boolean).slice(0, 2)
+        ? imageResp.imageUrls.map((url: any) => String(url)).filter(Boolean).slice(0, 1)
         : [];
       results.push({ sceneIndex, images });
     } catch {
