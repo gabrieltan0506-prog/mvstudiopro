@@ -51,6 +51,12 @@ type CommercialTrack = {
   nextStep: string;
 };
 
+type StrategyPillar = {
+  title: string;
+  description: string;
+  accent: string;
+};
+
 function getScoreTone(score: number) {
   if (score >= 80) return { label: "强", color: "text-emerald-300", chip: "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" };
   if (score >= 65) return { label: "可放大", color: "text-amber-200", chip: "border-amber-300/20 bg-amber-400/10 text-amber-100" };
@@ -97,7 +103,7 @@ function buildPlatformRecommendations(platforms: string[], context: string, anal
 
 function buildBusinessInsights(analysis: AnalysisResult, context: string) {
   const monetization = analysis.viralPotential >= 75
-    ? "内容已经具备较强传播底子，下一步应该把流量导向可复制的服务、课程、案例库或接单能力。"
+    ? "内容已经具备较强增长底子，下一步应该把流量导向可复制的服务、课程、案例库或接单能力。"
     : "目前更适合先把内容结构做稳，再用明确的 CTA 把观众引向咨询、社群或私域留资。";
   const packaging = analysis.color + analysis.composition >= 145
     ? "视觉包装是优势，可以优先做品牌系列化栏目。"
@@ -120,6 +126,32 @@ function buildGrowthPlan(analysis: AnalysisResult, platforms: PlatformRecommenda
     analysis.viralPotential >= 75
       ? "Day 7: 加入明确商业转化动作，比如咨询入口、服务介绍、预约表单。"
       : "Day 7: 复盘数据，确认下一轮要优先优化的是开头冲击力还是画面统一性。",
+  ];
+}
+
+function buildStrategyPillars(
+  analysis: AnalysisResult,
+  recommendations: PlatformRecommendation[],
+  tracks: CommercialTrack[],
+): StrategyPillar[] {
+  const bestPlatform = recommendations[0]?.name || "抖音";
+  const bestTrack = tracks[0]?.name || "品牌合作";
+  return [
+    {
+      title: "内容定位",
+      description: analysis.summary,
+      accent: "text-[#ffcf92]",
+    },
+    {
+      title: "首发渠道",
+      description: `优先在 ${bestPlatform} 验证第一版表达，再按平台节奏拆成标题、封面和结构变体。`,
+      accent: "text-[#9dd0ff]",
+    },
+    {
+      title: "商业方向",
+      description: `这条内容当前最适合承接「${bestTrack}」路径，报告下方会给出第一动作。`,
+      accent: "text-[#b8ffcf]",
+    },
   ];
 }
 
@@ -418,6 +450,10 @@ export default function MVAnalysisPage() {
     () => analysis ? buildCreationAssistBrief(analysis, context, platformRecommendations, commercialTracks) : "",
     [analysis, context, platformRecommendations, commercialTracks],
   );
+  const strategyPillars = useMemo(
+    () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
+    [analysis, platformRecommendations, commercialTracks],
+  );
 
   if (loading) {
     return (
@@ -470,16 +506,17 @@ export default function MVAnalysisPage() {
                 創作商業成長營
               </div>
               <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
-                不只分析一帧画面，而是给你一份可执行的内容增长与商业化报告。
+                从一张画面开始，直接产出你的内容增长与商业化行动方案。
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-8 text-white/70">
-                这一版先复用现有视觉分析能力，输出内容结构分析、趋势洞察、商业潜力判断、推荐发布平台和 7 天增长规划。
-                后续会继续接入 30 天平台趋势资料与热门内容结构数据库。
+                这不是单纯的画面打分页。系统会结合素材分析、近 30 天平台样本、商业承接路径和发布建议，
+                输出一份可以立刻执行的成长营报告。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">趋势洞察</div>
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
+                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
               </div>
             </div>
@@ -495,7 +532,7 @@ export default function MVAnalysisPage() {
                   </div>
                   <div className="mt-5 text-2xl font-bold">上传图片或视频封面</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    先上传一张画面，我们会用它生成“創作商業成長營”的首版诊断报告。支持 JPG、PNG、MP4。
+                    先上传一张画面，我们会基于这张素材生成完整的成长报告首版。支持 JPG、PNG、MP4。
                   </p>
                 </button>
               ) : (
@@ -533,7 +570,7 @@ export default function MVAnalysisPage() {
 
               <div className="mt-5">
                 <label className="mb-2 block text-sm font-semibold text-white/80">
-                  业务背景 / 内容目标
+                  业务背景 / 商业目标
                 </label>
                 <textarea
                   value={context}
@@ -551,7 +588,7 @@ export default function MVAnalysisPage() {
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  开始生成成长报告
+                  生成成长营报告
                 </button>
                 <button
                   onClick={handleReset}
@@ -600,13 +637,22 @@ export default function MVAnalysisPage() {
 
         {analysis ? (
           <section className="mt-8 space-y-6">
+            <div className="grid gap-4 lg:grid-cols-3">
+              {strategyPillars.map((item) => (
+                <div key={item.title} className="rounded-[24px] border border-white/10 bg-[#0f1a2c] p-5">
+                  <div className={`text-sm font-semibold ${item.accent}`}>{item.title}</div>
+                  <p className="mt-3 text-sm leading-7 text-white/68">{item.description}</p>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-4 md:grid-cols-5">
               {[
                 { label: "构图结构", value: analysis.composition },
                 { label: "色彩识别", value: analysis.color },
                 { label: "光线氛围", value: analysis.lighting },
                 { label: "冲击强度", value: analysis.impact },
-                { label: "增长潜力", value: analysis.viralPotential },
+                { label: "商业放大空间", value: analysis.viralPotential },
               ].map((item) => {
                 const tone = getScoreTone(item.value);
                 return (
@@ -624,24 +670,24 @@ export default function MVAnalysisPage() {
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center gap-3 text-[#ffb37f]">
                     <Sparkles className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">内容结构分析</h2>
+                    <h2 className="text-2xl font-bold">内容分析</h2>
                   </div>
                   <p className="mt-4 text-base leading-8 text-white/70">{analysis.summary}</p>
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
                     <div className="rounded-2xl border border-emerald-300/10 bg-emerald-400/5 p-4">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
-                        <CheckCircle2 className="h-4 w-4" />
+                        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
+                          <CheckCircle2 className="h-4 w-4" />
                         当前优势
-                      </div>
+                        </div>
                       <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
                         {analysis.strengths.map((item, index) => <li key={index}>• {item}</li>)}
                       </ul>
                     </div>
                     <div className="rounded-2xl border border-amber-300/10 bg-amber-400/5 p-4">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                        <Lightbulb className="h-4 w-4" />
+                        <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
+                          <Lightbulb className="h-4 w-4" />
                         优先优化点
-                      </div>
+                        </div>
                       <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
                         {analysis.improvements.map((item, index) => <li key={index}>• {item}</li>)}
                       </ul>
@@ -730,12 +776,12 @@ export default function MVAnalysisPage() {
                               </div>
                             </div>
                             <p className="mt-3 text-sm leading-7 text-white/65">{pattern.description}</p>
-                            <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
-                              Hook 模板：{pattern.hookTemplate}
-                            </div>
-                            <div className="mt-3 text-xs text-white/60">
+                          <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
+                              内容切口：{pattern.hookTemplate}
+                          </div>
+                          <div className="mt-3 text-xs text-white/60">
                               商业提示：{pattern.monetizationHint}
-                            </div>
+                          </div>
                           </div>
                         ))}
                       </div>
@@ -804,6 +850,9 @@ export default function MVAnalysisPage() {
                     <Send className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">推荐发布平台</h2>
                   </div>
+                  <p className="mt-4 text-sm leading-7 text-white/60">
+                    先跑最适合的首发渠道，再把同一条内容拆成不同标题、封面和叙事强度做二次分发。
+                  </p>
                   <div className="mt-5 space-y-4">
                     {platformRecommendations.map((platform) => (
                       <div key={platform.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
@@ -822,6 +871,9 @@ export default function MVAnalysisPage() {
                     <LineChart className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">7 天增长规划</h2>
                   </div>
+                  <p className="mt-4 text-sm leading-7 text-white/60">
+                    这 7 天不是泛泛建议，而是按“先验证，再放大，再承接商业动作”的顺序推进。
+                  </p>
                   <div className="mt-5 space-y-3">
                     {growthPlan.map((item, index) => (
                       <div key={index} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
@@ -834,7 +886,7 @@ export default function MVAnalysisPage() {
                 <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
                   <div className="flex items-center gap-3 text-[#ffd08f]">
                     <Rocket className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">AI 创作辅助</h2>
+                    <h2 className="text-2xl font-bold">创作执行简报</h2>
                   </div>
                   <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
                     <pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-white/70">{creationAssistBrief}</pre>
@@ -844,7 +896,7 @@ export default function MVAnalysisPage() {
                       onClick={() => void handleCopyText(creationAssistBrief, "创作简报已复制")}
                       className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
                     >
-                      复制创作简报
+                      复制执行简报
                     </button>
                     <button
                       onClick={() => void handleCopyText(growthPlan.join("\n"), "7 天增长规划已复制")}
@@ -856,7 +908,7 @@ export default function MVAnalysisPage() {
                       href="/storyboard"
                       className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
                     >
-                      进入分镜脚本
+                      进入分镜创作
                     </a>
                     <a
                       href="/workflow"
