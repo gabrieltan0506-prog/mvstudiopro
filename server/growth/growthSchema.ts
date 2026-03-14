@@ -41,7 +41,7 @@ export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
     .filter(Boolean) as GrowthPlatform[];
   const unique = Array.from(new Set(mapped));
-  return unique.length ? unique.slice(0, 4) : ["douyin", "xiaohongshu", "bilibili"];
+  return unique.length ? unique.slice(0, 5) : ["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"];
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -337,17 +337,17 @@ function buildBusinessInsights(
     {
       title: "商业判断",
       detail: analysis.viralPotential >= 75
-        ? "内容已经具备较强增长底子，应该尽快把流量导向可复制的服务、课程、案例库或接单能力。"
-        : "当前更适合先把内容结构做稳，再用明确 CTA 把观众引向咨询、社群或私域留资。",
+        ? "内容已有放大基础，下一步不是继续堆信息，而是把流量导向可复制的服务、课程、案例页或咨询入口。"
+        : "当前仍应先把内容结构、信息顺序和包装一致性做稳，再补上行动引导（CTA）和承接入口。",
     },
     {
       title: "包装能力",
       detail: analysis.color + analysis.composition >= 145
-        ? "视觉包装是当前优势，可以优先做系列化栏目和品牌化表达。"
-        : "视觉统一性还不够，建议先固定封面模板、标题句式和片头格式。",
+        ? "视觉包装已具备系列化潜力，适合尽快固定封面模板、标题句式和栏目识别。"
+        : "视觉统一性还不够，建议先固定封面模板、标题句式、字幕样式和片头格式。",
     },
     {
-      title: "商业落点",
+      title: "承接路径",
       detail: context.trim()
         ? `你给出的业务背景「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」适合先验证「${primaryTrack}」方向。`
         : `建议先围绕「${primaryTrack}」验证一条最短商业路径，而不是同时试多个承接方向。`,
@@ -507,7 +507,7 @@ export function buildMockGrowthSnapshot(params: {
       source: "fallback",
       generatedAt,
       windowDays: 30,
-      freshnessLabel: "Mock 30-day fallback",
+      freshnessLabel: "结构化参考样本，非真实 30 天历史库",
       collectorReady: false,
       missingConnectors: [
         "douyin.trends.fetch30d",
@@ -515,8 +515,8 @@ export function buildMockGrowthSnapshot(params: {
         "bilibili.trends.fetch30d",
       ],
       notes: [
-        "当前为 schema-ready fallback 数据。",
-        "字段已按明日抓取任务需要的 30 天窗口指标展开。",
+        "当前为结构化 fallback 数据，不代表真实 30 天平台历史统计。",
+        "字段已按后续真实抓取任务需要的 30 天窗口指标展开。",
       ],
     },
     requestedPlatforms,
@@ -625,23 +625,24 @@ export function buildGrowthSnapshotFromCollections(params: {
       source: missingPlatforms.length ? "hybrid" : "live",
       generatedAt: new Date().toISOString(),
       windowDays: 30,
-      freshnessLabel: missingPlatforms.length ? "30-day hybrid sample" : "30-day live sample",
+      freshnessLabel: missingPlatforms.length ? "当前 live sample + 结构化补位，并非完整 30 天历史库" : "当前 live sample，非完整 30 天历史库",
       collectorReady: true,
       missingConnectors: missingPlatforms.map((platform) => `${platform}.trends.fetch30d`),
       notes: [
         `Live collectors ready for ${livePlatforms.join(", ") || "none"}.`,
+        "当前 live 数据来自平台实时热门样本，不等于完整 30 天历史数据仓。",
         ...activeCollections.flatMap((item) => item.notes.slice(0, 2)),
         ...Object.entries(params.errors || {}).map(([platform, error]) => `${platform}: ${error}`),
       ],
     },
     requestedPlatforms,
     overview: {
-      summary: "趋势模块已经开始消费真实平台抓取结果，并保留 fallback 结构，便于继续扩展到完整的 30 天趋势库。",
+      summary: "趋势模块已经开始消费真实平台实时样本，并保留 fallback 结构；当前仍是样本级参考，不应表述为完整 30 天历史库。",
       trendNarrative:
         params.analysis.impact >= 72
           ? "当前内容适合先打强钩子和分发效率高的平台，再用拆解版和幕后版承接长尾讨论。"
           : "当前内容更适合先做结构重写、封面测试和平台化版本，再逐步扩大投放。",
-      nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，把当前 live sample 收敛成稳定 30 天趋势库。",
+      nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 30 天趋势库。",
     },
     platformSnapshots,
     contentPatterns: buildContentPatternsFromCollections(activeCollections),

@@ -63,8 +63,38 @@ type StrategyPillar = {
   accent: string;
 };
 
+type ContentInsightBlock = {
+  title: string;
+  text: string;
+  tone: "highlight" | "warning" | "neutral";
+};
+
+type PlatformOptimizationCard = {
+  name: string;
+  sourceLabel: string;
+  sourceTone: "live" | "reference";
+  summary: string;
+  percentageMomentum: number;
+  percentageFit: number;
+  action: string;
+  note: string;
+};
+
+type ExecutionBriefRow = {
+  label: string;
+  content: string;
+};
+
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const GROWTH_HANDOFF_STORAGE_KEY = "mvsp-growth-handoff";
+const FULL_PLATFORM_ORDER = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"] as const;
+const PLATFORM_LABELS: Record<string, string> = {
+  douyin: "抖音",
+  xiaohongshu: "小红书",
+  bilibili: "B站",
+  kuaishou: "快手",
+  weixin_channels: "视频号",
+};
 
 function hasSupervisorAccess() {
   if (typeof window === "undefined") return false;
@@ -103,6 +133,38 @@ function getScoreTone(score: number) {
   return { label: "需重构", color: "text-rose-200", chip: "border-rose-300/20 bg-rose-400/10 text-rose-100" };
 }
 
+function formatPercent(value: number) {
+  return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
+}
+
+function replaceTerms(text: string) {
+  return String(text || "")
+    .replace(/\bCTA\b/g, "行动引导（CTA）")
+    .replace(/live sample/gi, "实时样本")
+    .replace(/hybrid/gi, "混合")
+    .replace(/fallback/gi, "补位");
+}
+
+function normalizeAnalysisScale(result: AnalysisResult): AnalysisResult {
+  const numericValues = [
+    result.composition,
+    result.color,
+    result.lighting,
+    result.impact,
+    result.viralPotential,
+  ];
+  const shouldUpscale = numericValues.every((value) => value >= 0 && value <= 5);
+  if (!shouldUpscale) return result;
+  return {
+    ...result,
+    composition: Math.round(result.composition * 20),
+    color: Math.round(result.color * 20),
+    lighting: Math.round(result.lighting * 20),
+    impact: Math.round(result.impact * 20),
+    viralPotential: Math.round(result.viralPotential * 20),
+  };
+}
+
 function buildStrategyPillars(
   analysis: AnalysisResult,
   recommendations: GrowthPlatformRecommendation[],
@@ -125,6 +187,104 @@ function buildStrategyPillars(
       title: "商业方向",
       description: `这条内容当前最适合承接「${bestTrack}」路径，报告下方会给出第一动作。`,
       accent: "text-[#b8ffcf]",
+    },
+  ];
+}
+
+function buildContentInsightBlocks(analysis: AnalysisResult): ContentInsightBlock[] {
+  return [
+    {
+      title: "核心定位",
+      text: analysis.summary,
+      tone: "highlight",
+    },
+    {
+      title: "当前优势",
+      text: analysis.strengths.slice(0, 2).join("；") || "当前优势还不够稳定，建议先把可复用的表达亮点固定下来。",
+      tone: "neutral",
+    },
+    {
+      title: "高优先级问题",
+      text: analysis.improvements.slice(0, 2).join("；") || "当前没有识别到明确问题，但建议继续做钩子、节奏和信息顺序的优化。",
+      tone: "warning",
+    },
+    {
+      title: "第一优先动作",
+      text: analysis.improvements[0] || "先把开头 2-3 秒重写成结果前置版本，再进入平台测试。",
+      tone: "highlight",
+    },
+  ];
+}
+
+function buildPlatformOptimizationCards(
+  growthSnapshot: GrowthSnapshot | null,
+  recommendations: GrowthPlatformRecommendation[],
+): PlatformOptimizationCard[] {
+  const recommendationMap = new Map(recommendations.map((item) => [item.name, item]));
+  return FULL_PLATFORM_ORDER.map((platformKey) => {
+    const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.platform === platformKey);
+    const displayName = PLATFORM_LABELS[platformKey];
+    const recommendation = recommendationMap.get(displayName);
+    const hasLiveSample = snapshot?.last30d.sampleSizeLabel === "live-sample-30d";
+    const referencePlatform =
+      platformKey === "kuaishou" ? "抖音" :
+      platformKey === "weixin_channels" ? "小红书" :
+      platformKey === "bilibili" ? "B站" :
+      displayName;
+
+    return {
+      name: displayName,
+      sourceLabel: hasLiveSample ? "当前实时样本" : "仅结构建议",
+      sourceTone: hasLiveSample ? "live" : "reference",
+      percentageMomentum: snapshot?.momentumScore ?? 0,
+      percentageFit: snapshot?.audienceFitScore ?? 0,
+      summary: snapshot?.summary || `${displayName} 当前还没有接入真实抓取，先按结构适配给出参考建议。`,
+      action: recommendation?.action || (hasLiveSample
+        ? `优先参考 ${displayName} 当前更匹配的表达结构做首轮测试。`
+        : `当前未接入真实抓取，先参考${referencePlatform}的优化方案做结构适配。`),
+      note: hasLiveSample
+        ? `当前展示的是实时抓取样本，不应表述为完整 30 天历史库。`
+        : `当前没有 ${displayName} 的真实抓取数据，这里只提供结构性建议，不提供真实趋势结论。`,
+    };
+  });
+}
+
+function buildExecutionBriefRows(analysis: AnalysisResult, context: string): ExecutionBriefRow[] {
+  const normalized = `${analysis.summary}\n${context}`;
+  const isMedicalSports = /医生|医学|慢性病|健康管理|网球|比赛|运动损伤|康复/.test(normalized);
+  if (isMedicalSports) {
+    return [
+      {
+        label: "A. 核心分析",
+        content: [
+          "画面节奏与视觉：原始素材节奏平缓，无亮点。二次创作应通过关键击球慢放、运动员表情特写、关键信息字幕和数据图表来制造节奏与视觉焦点。",
+          "叙事结构与口播/字幕：核心是打造“医生看比赛”的独特视角。可以做三种结构：1. 运动损伤科普。2. 慢性病管理关联。3. 励志故事与心理健康。",
+        ].join("\n"),
+      },
+      {
+        label: "B. 商业转化潜力",
+        content: [
+          "潜力巨大。通过上述内容，可将抽象医学知识具象化，塑造“懂健康、懂生活”的专家形象。",
+          "转化路径：吸引精准用户 -> 建立信任 -> 导流到线上咨询、付费健康管理社群、相关课程或线下门诊。",
+        ].join("\n"),
+      },
+    ];
+  }
+
+  return [
+    {
+      label: "A. 核心分析",
+      content: [
+        `画面节奏与视觉：${analysis.summary}`,
+        `叙事结构与口播/字幕：优先围绕“${analysis.improvements[0] || "结果前置"}”重写表达顺序，并把关键信息做成字幕层级。`,
+      ].join("\n"),
+    },
+    {
+      label: "B. 商业转化潜力",
+      content: [
+        "商业转化路径：先吸引精准受众，再通过稳定栏目感建立信任，最后承接到咨询、产品、课程或服务入口。",
+        "当前建议：只保留一条最清晰的商业路径，不要同时混合多个变现方向。",
+      ].join("\n"),
     },
   ];
 }
@@ -222,7 +382,7 @@ export default function MVAnalysisPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
-      requestedPlatforms: analysis?.platforms || [],
+      requestedPlatforms: analysis?.platforms?.length ? analysis.platforms : [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
         color: 0,
@@ -404,7 +564,7 @@ export default function MVAnalysisPage() {
               fileName,
               context: context || undefined,
             });
-      setAnalysis(result.analysis);
+      setAnalysis(normalizeAnalysisScale(result.analysis));
       setDebugInfo({
         inputKind,
         fileName,
@@ -442,7 +602,7 @@ export default function MVAnalysisPage() {
   const handleRefreshGrowth = useCallback(async () => {
     try {
       await refreshGrowthMutation.mutateAsync({
-        platforms: ["douyin", "xiaohongshu", "bilibili"],
+        platforms: [...FULL_PLATFORM_ORDER],
       });
       await growthSnapshotQuery.refetch();
       toast.success("趋势数据已刷新");
@@ -524,6 +684,22 @@ export default function MVAnalysisPage() {
   const strategyPillars = useMemo(
     () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
     [analysis, platformRecommendations, commercialTracks],
+  );
+  const contentInsightBlocks = useMemo(
+    () => analysis ? buildContentInsightBlocks(analysis) : [],
+    [analysis],
+  );
+  const platformOptimizationCards = useMemo(
+    () => buildPlatformOptimizationCards(growthSnapshot, platformRecommendations),
+    [growthSnapshot, platformRecommendations],
+  );
+  const highConfidenceTracks = useMemo(
+    () => commercialTracks.filter((track) => track.fit >= 80),
+    [commercialTracks],
+  );
+  const executionBriefRows = useMemo(
+    () => analysis ? buildExecutionBriefRows(analysis, context) : [],
+    [analysis, context],
   );
 
   if (loading) {
@@ -755,11 +931,11 @@ export default function MVAnalysisPage() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-[1.35fr_0.8fr_0.8fr]">
               {strategyPillars.map((item) => (
                 <div key={item.title} className="rounded-[24px] border border-white/10 bg-[#0f1a2c] p-5">
                   <div className={`text-sm font-semibold ${item.accent}`}>{item.title}</div>
-                  <p className="mt-3 text-sm leading-7 text-white/68">{item.description}</p>
+                  <p className={`mt-3 text-sm leading-7 text-white/68 ${item.title === "内容定位" ? "min-h-[220px]" : "min-h-[120px]"}`}>{item.description}</p>
                 </div>
               ))}
             </div>
@@ -770,7 +946,10 @@ export default function MVAnalysisPage() {
                 return (
                   <div key={item.label} className="rounded-[24px] border border-white/10 bg-[#0f1a2c] p-5">
                     <div className="text-sm text-white/55">{item.label}</div>
-                    <div className={`mt-4 text-4xl font-black ${tone.color}`}>{item.value}</div>
+                    <div className={`mt-4 text-4xl font-black ${tone.color}`}>{item.value}<span className="ml-1 text-base font-semibold text-white/55">/100</span></div>
+                    <div className="mt-2 h-2 rounded-full bg-white/5">
+                      <div className={`h-2 rounded-full ${item.value >= 80 ? "bg-emerald-300" : item.value >= 65 ? "bg-amber-200" : "bg-rose-200"}`} style={{ width: `${Math.max(4, item.value)}%` }} />
+                    </div>
                     <div className={`mt-3 inline-flex rounded-full border px-3 py-1 text-xs ${tone.chip}`}>{tone.label}</div>
                   </div>
                 );
@@ -784,22 +963,38 @@ export default function MVAnalysisPage() {
                     <Sparkles className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">内容分析</h2>
                   </div>
-                  <p className="mt-4 text-base leading-8 text-white/70">{analysis.summary}</p>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {contentInsightBlocks.map((item) => (
+                      <div
+                        key={item.title}
+                        className={`rounded-2xl border p-4 ${
+                          item.tone === "highlight"
+                            ? "border-[#ff8a3d]/20 bg-[#ff8a3d]/10"
+                            : item.tone === "warning"
+                              ? "border-amber-300/15 bg-amber-400/8"
+                              : "border-white/10 bg-black/15"
+                        }`}
+                      >
+                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                        <p className="mt-3 text-sm leading-7 text-white/75">{item.text}</p>
+                      </div>
+                    ))}
+                  </div>
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
                     <div className="rounded-2xl border border-emerald-300/10 bg-emerald-400/5 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
-                          <CheckCircle2 className="h-4 w-4" />
+                      <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
+                        <CheckCircle2 className="h-4 w-4" />
                         当前优势
-                        </div>
+                      </div>
                       <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
                         {analysis.strengths.map((item, index) => <li key={index}>• {item}</li>)}
                       </ul>
                     </div>
                     <div className="rounded-2xl border border-amber-300/10 bg-amber-400/5 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                          <Lightbulb className="h-4 w-4" />
+                      <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
+                        <Lightbulb className="h-4 w-4" />
                         优先优化点
-                        </div>
+                      </div>
                       <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
                         {analysis.improvements.map((item, index) => <li key={index}>• {item}</li>)}
                       </ul>
@@ -844,36 +1039,43 @@ export default function MVAnalysisPage() {
                           window: {growthSnapshot.status.windowDays} 天
                         </div>
                       </div>
+                      <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
+                        <div className="font-semibold text-white">数据口径说明</div>
+                        <p className="mt-2">
+                          当前这里展示的是<strong>实时抓取样本 + 结构化补位</strong>，不是完整的 30 天历史数据库。
+                          其中抖音、小红书、B站为当前 live sample；快手、视频号若未接入真实 collector，只能提供结构建议，不能作为真实趋势证据使用。
+                        </p>
+                      </div>
                       <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
                         <div className="font-semibold text-white">趋势摘要</div>
-                        <p className="mt-2">{growthSnapshot.overview.trendNarrative}</p>
-                        <p className="mt-2 text-white/55">{growthSnapshot.overview.nextCollectionPlan}</p>
+                        <p className="mt-2">{replaceTerms(growthSnapshot.overview.trendNarrative)}</p>
+                        <p className="mt-2 text-white/55">{replaceTerms(growthSnapshot.overview.nextCollectionPlan)}</p>
                       </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-3">
-                        {growthSnapshot.platformSnapshots.map((platform) => (
-                          <div key={platform.platform} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        {platformOptimizationCards.map((platform) => (
+                          <div key={platform.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                             <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold text-white">{platform.displayName}</div>
-                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
-                                {platform.fitLabel}
+                              <div className="text-sm font-semibold text-white">{platform.name}</div>
+                              <div className={`rounded-full border px-2 py-1 text-[11px] ${platform.sourceTone === "live" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" : "border-amber-300/20 bg-amber-400/10 text-amber-100"}`}>
+                                {platform.sourceLabel}
                               </div>
                             </div>
                             <p className="mt-3 text-sm leading-7 text-white/65">{platform.summary}</p>
                             <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-white/70">
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                                 <div className="text-white/45">热度动量</div>
-                                <div className="mt-1 text-xl font-bold text-white">{platform.momentumScore}</div>
+                                <div className="mt-1 text-xl font-bold text-white">{formatPercent(platform.percentageMomentum)}</div>
                               </div>
                               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                                 <div className="text-white/45">受众适配</div>
-                                <div className="mt-1 text-xl font-bold text-white">{platform.audienceFitScore}</div>
+                                <div className="mt-1 text-xl font-bold text-white">{formatPercent(platform.percentageFit)}</div>
                               </div>
                             </div>
-                            <div className="mt-4 text-xs leading-6 text-white/60">
-                              <div>近 30 天样本：{platform.last30d.postsAnalyzed} 条 / {platform.last30d.creatorsTracked} 位创作者</div>
-                              <div>中位互动率：{platform.last30d.engagementRateMedian}%</div>
-                              <div>增长率：{platform.last30d.growthRate}%</div>
-                              <div>推荐时长：{platform.last30d.topDurationRange}</div>
+                            <div className="mt-4 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
+                              平台优化建议：{platform.action}
+                            </div>
+                            <div className="mt-3 text-xs leading-6 text-white/60">
+                              {platform.note}
                             </div>
                           </div>
                         ))}
@@ -892,12 +1094,12 @@ export default function MVAnalysisPage() {
                               内容切口：{pattern.hookTemplate}
                           </div>
                           <div className="mt-3 text-xs text-white/60">
-                              商业提示：{pattern.monetizationHint}
+                              商业提示：{replaceTerms(pattern.monetizationHint)}
                           </div>
                           </div>
                         ))}
                       </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-3">
+                      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         {growthSnapshot.structurePatterns.map((pattern) => (
                           <div key={pattern.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                             <div className="text-sm font-semibold text-white">{pattern.title}</div>
@@ -905,26 +1107,24 @@ export default function MVAnalysisPage() {
                             <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
                               钩子：{pattern.hook}
                             </div>
-                            <div className="mt-3 text-sm leading-7 text-white/60">CTA：{pattern.cta}</div>
+                            <div className="mt-3 text-sm leading-7 text-white/60">行动引导（CTA）：{pattern.cta}</div>
                             <div className="mt-2 text-xs text-white/40">依据：{pattern.evidence}</div>
                           </div>
                         ))}
                       </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-2">
-                        {growthSnapshot.opportunities.map((item) => (
-                          <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="text-sm font-semibold text-white">{item.title}</div>
-                            <p className="mt-3 text-sm leading-7 text-white/65">{item.whyNow}</p>
-                            <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
-                              下一步：{item.nextAction}
-                            </div>
-                          </div>
-                        ))}
+                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <div className="text-sm font-semibold text-white">平台化优化原则</div>
+                        <div className="mt-3 space-y-2 text-sm leading-7 text-white/68">
+                          <div>• 抖音、快手优先参考强钩子和结果前置版本。</div>
+                          <div>• 小红书、视频号优先参考拆解感、收藏理由和封面主信息版本。</div>
+                          <div>• B站优先参考幕后复盘、案例拆解和长尾讨论版本。</div>
+                          <div>• 如果不同平台建议重复，直接沿用已验证平台的方案，不重复重做。</div>
+                        </div>
                       </div>
                       {growthSnapshot.status.notes.length ? (
                         <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/60">
                           {growthSnapshot.status.notes.map((note, index) => (
-                            <div key={index}>• {note}</div>
+                            <div key={index}>• {replaceTerms(note)}</div>
                           ))}
                         </div>
                       ) : null}
@@ -947,27 +1147,35 @@ export default function MVAnalysisPage() {
                       <GrowthSectionCard
                         key={item.title}
                         title={item.title}
-                        description={item.detail}
+                        description={replaceTerms(item.detail)}
                       />
                     ))}
                   </div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/68">
+                    术语说明：行动引导（CTA）指的是你希望用户下一步做什么，比如咨询、留言、进入社群、预约服务或点击商品入口。
+                  </div>
                   <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    {commercialTracks.map((track) => {
+                    {highConfidenceTracks.map((track) => {
                       const tone = getScoreTone(track.fit);
                       return (
                         <div key={track.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="flex items-center justify-between gap-3">
                             <div className="text-sm font-semibold text-white">{track.name}</div>
-                            <div className={`rounded-full border px-3 py-1 text-xs ${tone.chip}`}>匹配度 {track.fit}</div>
+                            <div className={`rounded-full border px-3 py-1 text-xs ${tone.chip}`}>匹配度 {track.fit}%</div>
                           </div>
-                          <p className="mt-3 text-sm leading-7 text-white/65">{track.reason}</p>
+                          <p className="mt-3 text-sm leading-7 text-white/65">{replaceTerms(track.reason)}</p>
                           <div className="mt-3 rounded-xl border border-[#f5b7ff]/15 bg-[#f5b7ff]/10 p-3 text-sm text-[#fbe1ff]">
-                            第一动作：{track.nextStep}
+                            第一动作：{replaceTerms(track.nextStep)}
                           </div>
                         </div>
                       );
                     })}
                   </div>
+                  {!highConfidenceTracks.length ? (
+                    <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
+                      当前没有达到 80% 以上匹配度的商业方向。此时不应该直接给出“品牌合作”或“带货”结论，而应该继续先优化内容包装、结构和承接入口。
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -1022,8 +1230,17 @@ export default function MVAnalysisPage() {
                     <Rocket className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">创作执行简报</h2>
                   </div>
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <pre className="whitespace-pre-wrap font-sans text-sm leading-7 text-white/70">{creationAssistBrief}</pre>
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                    <table className="w-full border-collapse text-sm leading-7 text-white/72">
+                      <tbody>
+                        {executionBriefRows.map((row) => (
+                          <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                            <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                            <td className="px-4 py-4 whitespace-pre-wrap">{row.content}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                   <GrowthHandoffActions
                     handoff={growthHandoff}
