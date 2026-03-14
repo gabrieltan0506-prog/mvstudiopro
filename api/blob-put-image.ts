@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { put } from "@vercel/blob";
-import sharp from "sharp";
 
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -36,27 +35,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!raw.length) return res.status(400).json({ ok: false, error: "empty_file" });
     if (raw.length > 20 * 1024 * 1024) return res.status(400).json({ ok: false, error: "file_too_large_raw" });
 
-    let out = await sharp(raw, { failOnError: false })
-      .rotate()
-      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 84, mozjpeg: true })
-      .toBuffer();
-
-    if (out.length > 10 * 1024 * 1024) {
-      out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
-    }
-    if (out.length > 10 * 1024 * 1024) {
-      return res.status(400).json({ ok: false, error: "file_too_large_after_compress" });
-    }
-
     const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
     if (!token) return res.status(500).json({ ok: false, error: "missing_env_MVSP_READ_WRITE_TOKEN" });
 
+    const contentType = String(m[1] || "image/jpeg").trim() || "image/jpeg";
+    const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : contentType.includes("gif") ? "gif" : "jpg";
     const safeName = filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "-") || "ref";
-    const blob = await put(`refs/${Date.now()}-${safeName}.jpg`, out, {
+    const blob = await put(`refs/${Date.now()}-${safeName}.${ext}`, raw, {
       access: "public",
       token,
-      contentType: "image/jpeg",
+      contentType,
     });
 
     return res.status(200).json({

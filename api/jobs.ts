@@ -48,7 +48,7 @@ async function fetchJson(url: string, init: RequestInit) {
   return { ok: r.ok, status: r.status, url, json, rawText: text.slice(0, 4000) };
 }
 
-async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
+async function fetchImageAsset(imageUrl: string): Promise<{ buffer: Buffer; contentType: string }> {
   const url = s(imageUrl).trim();
   if (!url) throw new Error("missing_image_url");
 
@@ -68,38 +68,56 @@ async function fetchImageBuffer(imageUrl: string): Promise<Buffer> {
     }
   }
   if (!r.ok) throw new Error(`image_fetch_failed:${r.status}`);
-  const buf = Buffer.from(await r.arrayBuffer());
-  if (!buf.length) throw new Error("empty_image");
-  if (buf.length > 10 * 1024 * 1024) throw new Error("image_too_large");
-  return buf;
+  const buffer = Buffer.from(await r.arrayBuffer());
+  if (!buffer.length) throw new Error("empty_image");
+  if (buffer.length > 20 * 1024 * 1024) throw new Error("image_too_large");
+  return {
+    buffer,
+    contentType: s(r.headers.get("content-type") || "image/jpeg").trim() || "image/jpeg",
+  };
 }
 
-async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workflow-scene") {
+function imageContentTypeToExtension(contentType: string) {
+  const normalized = s(contentType).trim().toLowerCase();
+  if (normalized.includes("png")) return "png";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("gif")) return "gif";
+  return "jpg";
+}
+
+async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workflow-scene", options?: { mode?: "original" | "video" }) {
   const sourceUrl = s(imageUrl).trim();
   if (!sourceUrl) throw new Error("missing_image_url");
 
   const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
   if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
 
-  const raw = await fetchImageBuffer(sourceUrl);
-  let out = await sharp(raw, { failOnError: false })
-    .rotate()
-    .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 84, mozjpeg: true })
-    .toBuffer();
-
-  if (out.length > 10 * 1024 * 1024) {
-    out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
-  }
-  if (out.length > 10 * 1024 * 1024) {
-    throw new Error("image_too_large_after_compress");
-  }
-
+  const asset = await fetchImageAsset(sourceUrl);
   const safeName = filenameBase.replace(/[^a-zA-Z0-9_-]+/g, "-") || "workflow-scene";
-  const blob = await put(`refs/${Date.now()}-${safeName}.jpg`, out, {
+  let out = asset.buffer;
+  let contentType = asset.contentType;
+  let ext = imageContentTypeToExtension(contentType);
+
+  if (options?.mode === "video") {
+    out = await sharp(asset.buffer, { failOnError: false })
+      .rotate()
+      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 84, mozjpeg: true })
+      .toBuffer();
+    contentType = "image/jpeg";
+    ext = "jpg";
+    if (out.length > 10 * 1024 * 1024) {
+      out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
+    }
+    if (out.length > 10 * 1024 * 1024) {
+      throw new Error("image_too_large_after_compress");
+    }
+  }
+
+  const blob = await put(`refs/${Date.now()}-${safeName}.${ext}`, out, {
     access: "public",
     token,
-    contentType: "image/jpeg",
+    contentType,
   });
   return buildBlobMediaUrlFromPath(s(blob.pathname).trim());
 }
@@ -217,7 +235,7 @@ async function createKlingI2VTask(
   model: string,
   duration = "8"
 ) {
-  const buf = await fetchImageBuffer(imageUrl);
+  const { buffer: buf } = await fetchImageAsset(imageUrl);
   const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
   const r = await fetchJson(`${klingBase}/v1/videos/image2video`, {
     method: "POST",
@@ -294,13 +312,44 @@ async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: s
   return { ok: false, error: "kling generation timeout" };
 }
 
-async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: string; voice?: string }) {
+function mapSceneVoiceTypeToMiniMaxVoice(voiceType: string) {
+  const normalized = s(voiceType).trim().toLowerCase();
+  if (normalized === "male") return "Chinese (Mandarin)_Reliable_Executive";
+  if (normalized === "cartoon") return "Chinese (Mandarin)_News_Anchor";
+  return "Chinese (Mandarin)_News_Anchor";
+}
+
+function buildMiniMaxVoiceConfig(input: { voiceType?: string; voiceStyle?: string }) {
+  const voiceType = s(input.voiceType || "female").trim() || "female";
+  const voiceStyle = s(input.voiceStyle).trim().toLowerCase();
+  const speed =
+    voiceStyle === "energetic" ? 1.08 :
+    voiceStyle === "warm" ? 0.98 :
+    voiceStyle === "calm" ? 0.92 :
+    voiceStyle === "cinematic" ? 0.95 :
+    1;
+  const pitch =
+    voiceType === "male" ? -1 :
+    voiceType === "cartoon" ? 2 :
+    0;
+  return {
+    voiceId: mapSceneVoiceTypeToMiniMaxVoice(voiceType),
+    speed,
+    pitch,
+    vol: 1,
+  };
+}
+
+async function generateSceneVoice(input: { dialogueText: string; voicePrompt?: string; voice?: string; voiceType?: string; voiceStyle?: string }) {
   const dialogueText = s(input.dialogueText).trim();
   const voicePrompt = s(input.voicePrompt).trim();
   const voice = s(input.voice || "nova").trim() || "nova";
+  const miniMaxApiKey = s(process.env.MINIMAX_API_KEY).trim();
+  const miniMaxBase = s(process.env.MINIMAX_API_BASE || "https://api.minimax.io").trim() || "https://api.minimax.io";
+  const miniMaxVoice = buildMiniMaxVoiceConfig({ voiceType: input.voiceType, voiceStyle: input.voiceStyle });
   const baseResult = {
-    voiceProvider: "openai" as const,
-    voiceModel: "gpt-4o-mini-tts" as const,
+    voiceProvider: miniMaxApiKey ? "minimax" as const : "openai" as const,
+    voiceModel: miniMaxApiKey ? "speech-02-turbo" as const : "gpt-4o-mini-tts" as const,
     voiceVoice: voice,
   };
 
@@ -312,16 +361,99 @@ async function generateOpenAiVoice(input: { dialogueText: string; voicePrompt?: 
       voiceErrorMessage: "dialogueText is required",
     };
   }
-  if (!env.openaiApiKey) {
+  if (!miniMaxApiKey && !env.openaiApiKey) {
     return {
       ...baseResult,
       voiceUrl: "",
       voiceIsFallback: true,
-      voiceErrorMessage: "OPENAI_API_KEY is not configured",
+      voiceErrorMessage: "MINIMAX_API_KEY or OPENAI_API_KEY is not configured",
     };
   }
 
   try {
+    if (miniMaxApiKey) {
+      const body: Record<string, any> = {
+        model: "speech-02-turbo",
+        text: dialogueText,
+        stream: false,
+        language_boost: "Chinese",
+        output_format: "hex",
+        voice_setting: {
+          voice_id: miniMaxVoice.voiceId,
+          speed: miniMaxVoice.speed,
+          vol: miniMaxVoice.vol,
+          pitch: miniMaxVoice.pitch,
+        },
+        audio_setting: {
+          sample_rate: 32000,
+          bitrate: 128000,
+          format: "mp3",
+          channel: 1,
+        },
+      };
+      if (voicePrompt) {
+        body.pronunciation_dict = { tone: [voicePrompt.slice(0, 180)] };
+      }
+
+      const r = await fetch(`${miniMaxBase.replace(/\/$/, "")}/v1/t2a_v2`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${miniMaxApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const json = await r.json().catch(() => null);
+      const hexAudio = s(json?.data?.audio).trim();
+      const baseRespCode = Number(json?.base_resp?.status_code ?? -1);
+      if (!r.ok || baseRespCode !== 0 || !hexAudio) {
+        return {
+          ...baseResult,
+          voiceProvider: "minimax" as const,
+          voiceModel: "speech-02-turbo" as const,
+          voiceVoice: miniMaxVoice.voiceId,
+          voiceUrl: "",
+          voiceIsFallback: true,
+          voiceErrorMessage: `minimax_tts_failed:${r.status}:${s(json?.base_resp?.status_msg || json?.message || "missing_audio").trim() || "missing_audio"}`,
+        };
+      }
+
+      const audioBuffer = Buffer.from(hexAudio, "hex");
+      if (!audioBuffer.length) {
+        return {
+          ...baseResult,
+          voiceProvider: "minimax" as const,
+          voiceModel: "speech-02-turbo" as const,
+          voiceVoice: miniMaxVoice.voiceId,
+          voiceUrl: "",
+          voiceIsFallback: true,
+          voiceErrorMessage: "minimax_tts_empty_audio",
+        };
+      }
+
+      const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+      const blob = env.mvspReadWriteToken
+        ? await put(blobKey, audioBuffer, {
+            access: "public",
+            contentType: "audio/mpeg",
+            token: env.mvspReadWriteToken,
+          })
+        : await put(blobKey, audioBuffer, {
+            access: "public",
+            contentType: "audio/mpeg",
+          });
+
+      return {
+        ...baseResult,
+        voiceProvider: "minimax" as const,
+        voiceModel: "speech-02-turbo" as const,
+        voiceVoice: miniMaxVoice.voiceId,
+        voiceUrl: buildBlobMediaUrlFromPath(s(blob.pathname).trim()),
+        voiceIsFallback: false,
+        voiceErrorMessage: "",
+      };
+    }
+
     const body: Record<string, any> = {
       model: "gpt-4o-mini-tts",
       voice,
@@ -630,49 +762,51 @@ function buildEnvironmentReferenceImagePrompt(scene: any) {
   return parts.join(" ");
 }
 
-async function generateSceneAssetImages(scene: any, workflow: any) {
+async function generateSceneCharacterImages(scene: any, workflow: any, warnings?: string[]) {
   const lockedCharacterPrompt = s(workflow.outputs?.lockedCharacterPrompt).trim();
   const characterPrompt = buildCharacterReferenceImagePrompt(scene, lockedCharacterPrompt || undefined);
+  try {
+    const characterGenerated = await generateImageWithBanana({
+      prompt: characterPrompt,
+      numImages: 1,
+      aspectRatio: "9:16",
+      imageSize: "1024x1536",
+    });
+    return await uploadWorkflowImagesToBlob(
+      (characterGenerated.imageUrls || []).slice(0, 1),
+      `storyboard-scene-${scene.sceneIndex}-character`,
+    );
+  } catch (error: any) {
+    warnings?.push(`scene ${scene.sceneIndex} character image failed: ${error?.message || String(error)}`);
+    return [];
+  }
+}
+
+async function generateSceneEnvironmentImages(scene: any, warnings?: string[]) {
   const environmentPrompt = buildEnvironmentReferenceImagePrompt(scene);
+  try {
+    const environmentGenerated = await generateImageWithBanana({
+      prompt: environmentPrompt,
+      numImages: 1,
+      aspectRatio: "16:9",
+      imageSize: "1536x864",
+    });
+    return await uploadWorkflowImagesToBlob(
+      (environmentGenerated.imageUrls || []).slice(0, 1),
+      `storyboard-scene-${scene.sceneIndex}-scene`,
+    );
+  } catch (error: any) {
+    warnings?.push(`scene ${scene.sceneIndex} scene image failed: ${error?.message || String(error)}`);
+    return [];
+  }
+}
+
+async function generateSceneAssetImages(scene: any, workflow: any) {
   const warnings: string[] = [];
-
-  const characterImagesPromise = (async () => {
-    try {
-      const characterGenerated = await generateImageWithBanana({
-        prompt: characterPrompt,
-        numImages: 1,
-        aspectRatio: "9:16",
-        imageSize: "1024x1536",
-      });
-      return await uploadWorkflowImagesToBlob(
-        (characterGenerated.imageUrls || []).slice(0, 1),
-        `storyboard-scene-${scene.sceneIndex}-character`,
-      );
-    } catch (error: any) {
-      warnings.push(`scene ${scene.sceneIndex} character image failed: ${error?.message || String(error)}`);
-      return [];
-    }
-  })();
-
-  const sceneImagesPromise = (async () => {
-    try {
-      const environmentGenerated = await generateImageWithBanana({
-        prompt: environmentPrompt,
-        numImages: 1,
-        aspectRatio: "16:9",
-        imageSize: "1536x864",
-      });
-      return await uploadWorkflowImagesToBlob(
-        (environmentGenerated.imageUrls || []).slice(0, 1),
-        `storyboard-scene-${scene.sceneIndex}-scene`,
-      );
-    } catch (error: any) {
-      warnings.push(`scene ${scene.sceneIndex} scene image failed: ${error?.message || String(error)}`);
-      return [];
-    }
-  })();
-
-  const [characterImages, sceneImages] = await Promise.all([characterImagesPromise, sceneImagesPromise]);
+  const [characterImages, sceneImages] = await Promise.all([
+    generateSceneCharacterImages(scene, workflow, warnings),
+    generateSceneEnvironmentImages(scene, warnings),
+  ]);
   return { characterImages, sceneImages, warnings };
 }
 
@@ -1481,6 +1615,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, workflow: next, warnings: generatedAssets.warnings || [] });
     }
 
+    if (opNormalized === "workflowregeneratesceneasset") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const assetType = s(b.assetType || "").trim().toLowerCase();
+      if (!sceneIndex) return res.status(400).json(fail("sceneIndex is required"));
+      if (assetType !== "character" && assetType !== "scene") return res.status(400).json(fail("assetType must be character or scene"));
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const targetScene = storyboard.find((scene: any) => Number(scene?.sceneIndex) === sceneIndex);
+      if (!targetScene) return res.status(404).json(fail("scene not found"));
+
+      const warnings: string[] = [];
+      const generatedImages = assetType === "character"
+        ? await generateSceneCharacterImages(targetScene, workflow, warnings)
+        : await generateSceneEnvironmentImages(targetScene, warnings);
+
+      const currentImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const storyboardImages = upsertStoryboardImageItem(currentImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
+        prompt: s(targetScene.scenePrompt).trim(),
+        duration: 8,
+        sceneVideoUrl: s(existing?.sceneVideoUrl).trim(),
+        renderStillPrompt: s(targetScene.renderStillPrompt || targetScene.scenePrompt).trim(),
+        backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
+        characterLocked: Boolean(existing?.characterLocked),
+        referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
+        characterPngUrl: s(existing?.characterPngUrl).trim(),
+        characterImages: assetType === "character" ? generatedImages : getSceneCharacterImages(existing),
+        sceneImages: assetType === "scene" ? generatedImages : getSceneEnvironmentImages(existing),
+        selectedSceneImageUrl: assetType === "scene" ? s(generatedImages[0]).trim() : s(existing?.selectedSceneImageUrl).trim(),
+      }));
+
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "storyboardImages",
+        outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard,
+          storyboardImages,
+          storyboardImageWarnings: warnings,
+          storyboardConfirmed: false,
+        },
+      });
+      return res.status(200).json({ ok: true, workflow: next, warnings });
+    }
+
     if (opNormalized === "workflowuploadsceneimage") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
@@ -1510,7 +1688,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneImages: assetType === "character"
             ? currentSceneImages
             : assetType === "scene"
-              ? Array.from(new Set([...currentSceneImages, imageUrl])).slice(0, 1)
+              ? [imageUrl, ...currentSceneImages.filter((value: string) => value !== imageUrl)].slice(0, 1)
               : currentSceneImages,
         });
       });
@@ -1839,10 +2017,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
       const prompt = simplifySceneVideoPrompt(effectiveScene);
+      const preparedReferenceImages = await Promise.all(
+        referenceImages.map((imageUrl, idx) => uploadWorkflowImageToBlob(imageUrl, `scene-video-${sceneIndex}-ref-${idx + 1}`, { mode: "video" })),
+      );
       const generated = await generateVideoWithVeo({
         scenePrompt: prompt,
-        referenceImages,
-        imageUrls: referenceImages,
+        referenceImages: preparedReferenceImages,
+        imageUrls: preparedReferenceImages,
       });
       if (!generated.videoUrl) {
         return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
@@ -1884,7 +2065,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
       const voice = s(b.voice || "nova").trim() || "nova";
       if (!dialogueText) return res.status(400).json(fail("dialogueText is required"));
-      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice, voiceType, voiceStyle });
       if (!s(voiceResult.voiceUrl).trim()) {
         return res.status(502).json(
           fail(
@@ -1933,7 +2114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         language: s(b.language || "中文").trim() || "中文",
       });
       const voice = s(b.voice || mapSceneVoiceTypeToVoice(voiceType)).trim() || mapSceneVoiceTypeToVoice(voiceType);
-      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice, voiceType, voiceStyle });
       if (!s(voiceResult.voiceUrl).trim()) {
         return res.status(502).json(
           fail(
@@ -2077,6 +2258,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const includeSceneVoiceIndexes = Array.isArray(b.includeSceneVoiceIndexes)
         ? b.includeSceneVoiceIndexes.map((value: any) => Number(value || 0)).filter((value: number) => value > 0)
         : [];
+      const hasExplicitSceneVoiceSelection = Array.isArray(b.includeSceneVoiceIndexes);
       const includeSceneVoiceSet = new Set(includeSceneVoiceIndexes);
       const sceneVideos = storyboardImages
         .filter((item: any) => s(item?.sceneVideoUrl).trim())
@@ -2087,10 +2269,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           duration: "8s",
           stillImageUrl: s(item?.renderStillImageUrl).trim() || undefined,
           stillDuration: sceneNeedsRenderStill(storyboard.find((scene: any) => Number(scene?.sceneIndex) === Number(item?.sceneIndex || 0))) ? "1.5s" : undefined,
-          voiceUrl: includeSceneVoiceSet.size === 0 || includeSceneVoiceSet.has(Number(item?.sceneIndex || 0))
+          voiceUrl: !hasExplicitSceneVoiceSelection
+            ? s(item?.sceneVoiceUrl).trim() || undefined
+            : includeSceneVoiceSet.has(Number(item?.sceneIndex || 0))
             ? s(item?.sceneVoiceUrl).trim() || undefined
             : undefined,
-          includeVoice: includeSceneVoiceSet.size === 0 || includeSceneVoiceSet.has(Number(item?.sceneIndex || 0)),
+          includeVoice: !hasExplicitSceneVoiceSelection || includeSceneVoiceSet.has(Number(item?.sceneIndex || 0)),
         }));
       if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
       const musicStartSec = Number(b.musicStartSec || 0);
@@ -2133,7 +2317,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const voice = s(b.voice || "nova").trim() || "nova";
       const workflowId = s(b.workflowId).trim();
 
-      const voiceResult = await generateOpenAiVoice({ dialogueText, voicePrompt, voice });
+      const voiceResult = await generateSceneVoice({ dialogueText, voicePrompt, voice });
       let workflow: any = undefined;
       if (workflowId) {
         const current = getCoreWorkflow(workflowId);
@@ -2312,7 +2496,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const duration = s(b.duration || "10");
       if (duration !== "5" && duration !== "10") return res.status(400).json({ ok:false, error:"invalid_duration", detail:duration });
 
-      const buf = await fetchImageBuffer(imageUrl);
+      const { buffer: buf } = await fetchImageAsset(imageUrl);
       const first = await buildFirstFrameJpeg(buf, prompt, KLING_BASE, imageToken);
 
       const r = await fetchJson(`${KLING_BASE}/v1/videos/image2video`,{
