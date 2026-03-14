@@ -1057,6 +1057,385 @@ export default function WorkflowNodes() {
     );
   }
 
+  function getSceneVoiceTypeValue(scene: Scene) {
+    return sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female";
+  }
+
+  function getSceneVoiceStyleValue(scene: Scene) {
+    return sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "";
+  }
+
+  function getRenderStillPromptValue(scene: Scene) {
+    return renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? scene.scenePrompt ?? "";
+  }
+
+  function renderWorkflowRibbon() {
+    return (
+      <div className="grid gap-3 lg:grid-cols-3 xl:grid-cols-5">
+        {nodes.map((node) => {
+          const Icon = node.icon;
+          const active = selected === node.id;
+          return (
+            <button
+              key={node.id}
+              type="button"
+              onClick={() => setSelected(node.id)}
+              className={`rounded-[24px] border p-4 text-left transition-all ${active ? "border-primary/50 bg-primary/10 shadow-[0_20px_60px_rgba(236,72,153,0.16)]" : "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 text-white">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-base font-bold text-white">{node.title}</div>
+                    <div className="text-xs text-white/45">{node.en}</div>
+                  </div>
+                </div>
+                <span className={`rounded-full border px-2 py-1 text-[11px] ${badgeClass(node.status)}`}>{node.status}</span>
+              </div>
+              <div className="mt-4 text-sm leading-6 text-white/68">{node.desc}</div>
+              <div className="mt-4 text-xs text-white/45">{renderNodeStatus(node.id)}</div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderSceneCanvas() {
+    if (!storyboard.length) {
+      return (
+        <div className="rounded-[28px] border border-dashed border-white/15 bg-white/[0.03] p-8 text-sm text-white/55">
+          先生成 script 與 storyboard，左側畫布才會展開真正的 scene 創作工作區。
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+          <div>
+            <div className="text-lg font-bold text-white">Scene Canvas</div>
+            <div className="mt-1 text-sm text-white/60">左側畫布現在是創作主工作區。分鏡文案、角色圖、場景圖、旁白、場景視頻與生成操作都在這裡完成。</div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              className="rounded-xl bg-primary px-4"
+              disabled={globalStep.loading || !storyboard.length}
+              onClick={() => void runOp("workflowConfirmStoryboard", { workflowId, storyboard })}
+            >
+              保存分镜
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
+              disabled={globalStep.loading || !storyboard.length}
+              onClick={() => void runOp("workflowGenerateStoryboardImages", { workflowId, workflow, storyboard })}
+            >
+              生成全部分镜资产
+            </Button>
+          </div>
+        </div>
+
+        {storyboard.map((scene) => {
+          const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)] || { sceneIndex: scene.sceneIndex, images: [] };
+          const characterUrl = getCharacterImageUrls(bundle)[0] || "";
+          const sceneUrl = getSceneImageUrls(bundle)[0] || "";
+          const renderStillUrl = s(bundle?.renderStillImageUrl).trim();
+          const sceneVoiceUrl = s(bundle?.sceneVoiceUrl).trim();
+          const sceneVideoUrl = s(bundle?.sceneVideoUrl).trim();
+          const selectedSceneImageUrl = s(bundle?.selectedSceneImageUrl).trim() || sceneUrl;
+          const busyAssets = auxBusyKey === `scene-assets-${scene.sceneIndex}`;
+          const busyVoice = auxBusyKey === `scene-voice-${scene.sceneIndex}`;
+          const busyVideo = auxBusyKey === `scene-video-${scene.sceneIndex}`;
+          const busyStill = auxBusyKey === `render-still-${scene.sceneIndex}`;
+          const sceneVoiceType = getSceneVoiceTypeValue(scene);
+          const sceneVoiceStyle = getSceneVoiceStyleValue(scene);
+          const renderStillPrompt = getRenderStillPromptValue(scene);
+          return (
+            <div key={scene.sceneIndex} className="overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))]">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+                <div>
+                  <div className="text-xl font-black text-white">Scene {scene.sceneIndex}</div>
+                  <div className="mt-1 text-sm text-white/55">Primary subject: {scene.primarySubject || scene.character || "-"}</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">8s fixed</span>
+                  <span className={`rounded-full border px-3 py-1 text-xs ${scene.renderStillNeeded ? "border-amber-400/30 bg-amber-400/10 text-amber-200" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"}`}>
+                    {scene.renderStillNeeded ? "Render Still" : "Scene Video"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-6 p-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+                <div className="space-y-4">
+                  <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                    <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Scene Prompt</div>
+                    <textarea
+                      value={scene.scenePrompt || ""}
+                      onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })}
+                      rows={6}
+                      className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white outline-none"
+                    />
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <input value={scene.primarySubject || ""} onChange={(e) => updateScene(scene.sceneIndex, { primarySubject: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Primary Subject" />
+                    <input value={scene.character || ""} onChange={(e) => updateScene(scene.sceneIndex, { character: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Character" />
+                    <input value={scene.action || ""} onChange={(e) => updateScene(scene.sceneIndex, { action: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Action" />
+                    <input value={scene.camera || ""} onChange={(e) => updateScene(scene.sceneIndex, { camera: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Camera" />
+                    <input value={scene.mood || ""} onChange={(e) => updateScene(scene.sceneIndex, { mood: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Mood" />
+                    <input value={scene.lighting || ""} onChange={(e) => updateScene(scene.sceneIndex, { lighting: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Lighting" />
+                  </div>
+
+                  <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/75">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(scene.renderStillNeeded)}
+                      onChange={(e) => updateScene(scene.sceneIndex, { renderStillNeeded: e.target.checked })}
+                    />
+                    Mark as render still scene
+                  </label>
+
+                  <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                    <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Voice Text</div>
+                    <textarea
+                      value={scene.voiceover || ""}
+                      onChange={(e) => updateScene(scene.sceneIndex, { voiceover: e.target.value })}
+                      rows={4}
+                      className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white outline-none"
+                    />
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <select value={sceneVoiceType} onChange={(e) => setSceneVoiceTypeMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white">
+                        <option value="female">Female</option>
+                        <option value="male">Male</option>
+                        <option value="cartoon">Cartoon</option>
+                      </select>
+                      <select value={sceneVoiceStyle} onChange={(e) => setSceneVoiceStyleMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-white">
+                        <option value="">Normal</option>
+                        <option value="warm">Warm</option>
+                        <option value="calm">Calm</option>
+                        <option value="energetic">Energetic</option>
+                        <option value="cinematic">Cinematic</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                    <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Render Still Prompt</div>
+                    <textarea
+                      value={renderStillPrompt}
+                      onChange={(e) => setRenderStillPromptMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))}
+                      rows={4}
+                      className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-[26px] border border-white/10 bg-[#0b1020] p-4">
+                      <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/45">Character</div>
+                      {characterUrl ? (
+                        <img src={toMediaUrl(characterUrl)} alt={`scene-${scene.sceneIndex}-character`} className="h-[420px] w-full rounded-2xl border border-white/10 object-cover" />
+                      ) : (
+                        <div className="flex h-[420px] items-center justify-center rounded-2xl border border-dashed border-white/10 text-sm text-white/35">No character image</div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                          <CloudUpload className="h-4 w-4" />
+                          {uploadingAssetKey === `${scene.sceneIndex}:character` ? "Uploading..." : "Upload Character"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "character");
+                              e.currentTarget.value = "";
+                            }}
+                          />
+                        </label>
+                        <Button className="rounded-xl bg-primary px-4" disabled={busyAssets} onClick={() => void runAuxStep(`scene-assets-${scene.sceneIndex}`, "workflowGenerateSceneImage", { workflowId, workflow, storyboard, sceneIndex: scene.sceneIndex })}>
+                          {busyAssets ? "Generating..." : "Generate Scene Assets"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[26px] border border-white/10 bg-[#0b1020] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="text-xs uppercase tracking-[0.18em] text-white/45">Scene Image</div>
+                        <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] text-primary">{selectedSceneImageUrl ? "Selected" : "Pending"}</span>
+                      </div>
+                      {sceneUrl ? (
+                        <button type="button" onClick={() => selectSceneImage(scene.sceneIndex, sceneUrl)} className="block w-full">
+                          <img src={toMediaUrl(sceneUrl)} alt={`scene-${scene.sceneIndex}-environment`} className={`h-[420px] w-full rounded-2xl border object-cover transition-all ${selectedSceneImageUrl === sceneUrl ? "border-primary shadow-[0_0_0_1px_rgba(236,72,153,0.28)]" : "border-white/10"}`} />
+                        </button>
+                      ) : (
+                        <div className="flex h-[420px] items-center justify-center rounded-2xl border border-dashed border-white/10 text-sm text-white/35">No scene image</div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                          <CloudUpload className="h-4 w-4" />
+                          {uploadingAssetKey === `${scene.sceneIndex}:scene` ? "Uploading..." : "Upload Scene"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "scene");
+                              e.currentTarget.value = "";
+                            }}
+                          />
+                        </label>
+                        <Button variant="outline" className="rounded-xl border-white/10 bg-white/[0.03] text-white hover:bg-white/10" disabled={!sceneUrl} onClick={() => selectSceneImage(scene.sceneIndex, sceneUrl)}>
+                          Use This Scene
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-3">
+                    <div className="rounded-[24px] border border-white/10 bg-[#0b1020] p-4 lg:col-span-1">
+                      <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/45">Scene Voice</div>
+                      {sceneVoiceUrl ? (
+                        <audio key={sceneVoiceUrl} controls className="w-full" src={toMediaUrl(sceneVoiceUrl)} />
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/35">No voice generated yet</div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button className="rounded-xl bg-primary px-4" disabled={busyVoice} onClick={() => void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
+                          workflowId,
+                          sceneIndex: scene.sceneIndex,
+                          dialogueText: scene.voiceover || scene.scenePrompt,
+                          voicePrompt: DEFAULT_SCENE_VOICE_PROMPT,
+                          voiceType: sceneVoiceType,
+                          voiceStyle: sceneVoiceStyle,
+                          voice: mapSceneVoiceTypeToVoice(sceneVoiceType),
+                        })}>
+                          {busyVoice ? "Generating..." : "Generate Voice"}
+                        </Button>
+                        <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
+                          <input type="checkbox" checked={Boolean(renderVoiceSceneMap[String(scene.sceneIndex)])} onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.checked }))} />
+                          Include in render
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[24px] border border-white/10 bg-[#0b1020] p-4 lg:col-span-1">
+                      <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/45">Scene Video</div>
+                      {sceneVideoUrl ? (
+                        <video key={sceneVideoUrl} controls className="h-[210px] w-full rounded-2xl border border-white/10 object-cover" src={toMediaUrl(sceneVideoUrl)} />
+                      ) : (
+                        <div className="flex h-[210px] items-center justify-center rounded-2xl border border-dashed border-white/10 text-sm text-white/35">No scene video yet</div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button className="rounded-xl bg-primary px-4" disabled={busyVideo || !characterUrl || !sceneUrl} onClick={() => void runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", {
+                          workflowId,
+                          sceneIndex: scene.sceneIndex,
+                          duration: "8s",
+                          scenePrompt: scene.scenePrompt,
+                          primarySubject: scene.primarySubject,
+                          character: scene.character,
+                          action: scene.action,
+                          camera: scene.camera,
+                          mood: scene.mood,
+                          lighting: scene.lighting,
+                          voiceType: sceneVoiceType,
+                          voiceStyle: sceneVoiceStyle,
+                        })}>
+                          {busyVideo ? "Generating..." : "Generate Video"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[24px] border border-white/10 bg-[#0b1020] p-4 lg:col-span-1">
+                      <div className="mb-3 text-xs uppercase tracking-[0.18em] text-white/45">Render Still</div>
+                      {renderStillUrl ? (
+                        <img src={toMediaUrl(renderStillUrl)} alt={`scene-${scene.sceneIndex}-renderstill`} className="h-[210px] w-full rounded-2xl border border-white/10 object-cover" />
+                      ) : (
+                        <div className="flex h-[210px] items-center justify-center rounded-2xl border border-dashed border-white/10 text-sm text-white/35">No render still yet</div>
+                      )}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/80 hover:bg-white/10">
+                          <CloudUpload className="h-4 w-4" />
+                          {uploadingAssetKey === `${scene.sceneIndex}:renderstill` ? "Uploading..." : "Upload Still"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) void uploadSceneReferenceImage(file, Number(scene.sceneIndex || 0), "renderstill");
+                              e.currentTarget.value = "";
+                            }}
+                          />
+                        </label>
+                        <Button variant="outline" className="rounded-xl border-white/10 bg-white/[0.03] text-white hover:bg-white/10" disabled={busyStill || !renderStillPrompt.trim()} onClick={() => void runAuxStep(`render-still-${scene.sceneIndex}`, "workflowGenerateRenderStill", {
+                          workflowId,
+                          workflow,
+                          storyboard,
+                          sceneIndex: scene.sceneIndex,
+                          renderStillPrompt,
+                        })}>
+                          {busyStill ? "Generating..." : "Generate Still"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderCanvasSurface() {
+    if (selected === "prompt" || selected === "script") {
+      return (
+        <div className="space-y-5">
+          {renderWorkflowRibbon()}
+          <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-6">
+            {selected === "prompt" ? renderPromptPanel() : renderScriptPanel()}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5">
+        {renderWorkflowRibbon()}
+        {renderSceneCanvas()}
+      </div>
+    );
+  }
+
+  function renderCompactInspector() {
+    if (selected === "prompt" || selected === "script" || selected === "music" || selected === "render") {
+      return renderSelectedPanel();
+    }
+
+    return (
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4 text-sm text-white/70">
+          這個節點的主要創作操作已經搬到左側畫布。右側只保留節點說明、狀態與輸出快照，方便你對照驗收。
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4 text-sm text-white/72">
+          <div className="text-xs uppercase tracking-[0.18em] text-white/45">Node Focus</div>
+          <div className="mt-3 space-y-2">
+            <div>selected: <code>{selected}</code></div>
+            <div>runtime: <code>{selectedNodeRuntimeStatus()}</code></div>
+            <div>workflowId: <code>{workflowId || "--"}</code></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderSelectedPanel() {
     switch (selected) {
       case "prompt": return renderPromptPanel();
@@ -1131,48 +1510,18 @@ export default function WorkflowNodes() {
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
-            <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))]">
-              <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
-                <div className="text-lg font-bold">节点画布 <span className="ml-2 text-xs text-white/45">Node Canvas</span></div>
-                <div className="inline-flex items-center gap-2 text-xs text-white/55"><Move className="h-4 w-4" /> 当前以稳定接线为主，不破坏旧链路</div>
-              </div>
-              <div className="relative overflow-auto">
-                <div className="relative" style={{ width: 1900, height: 620, backgroundImage: "radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px)", backgroundSize: "24px 24px" }}>
-                  <svg className="absolute inset-0 h-full w-full">
-                    {EDGES.map(([a, b]) => {
-                      const from = nodeMap.get(a)!;
-                      const to = nodeMap.get(b)!;
-                      const active = selected === a || selected === b;
-                      return <path key={`${a}-${b}`} d={edgePath(from, to)} fill="none" stroke={active ? "rgba(236,72,153,0.9)" : "rgba(255,255,255,0.22)"} strokeWidth={active ? 3 : 2} strokeDasharray={active ? "0" : "6 6"} strokeLinecap="round" />;
-                    })}
-                  </svg>
-
-                  {nodes.map((node) => {
-                    const Icon = node.icon;
-                    const active = selected === node.id;
-                    return (
-                      <button key={node.id} onClick={() => setSelected(node.id)} className={`absolute w-[220px] rounded-2xl border text-left transition-all duration-200 ${active ? "border-primary/60 shadow-[0_0_0_1px_rgba(236,72,153,0.28),0_24px_80px_rgba(236,72,153,0.16)]" : "border-white/10 hover:border-white/20"}`} style={{ left: node.x, top: node.y }}>
-                        <div className={`rounded-2xl bg-gradient-to-br ${node.color} p-[1px]`}>
-                          <div className="rounded-2xl bg-[#0b1020]/95 p-4 backdrop-blur-xl">
-                            <div className="mb-3 flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-white"><Icon className="h-5 w-5" /></div>
-                                <div>
-                                  <div className="font-bold text-white">{node.title}</div>
-                                  <div className="text-[11px] text-white/45">{node.en}</div>
-                                </div>
-                              </div>
-                              <span className={`rounded-full border px-2 py-1 text-[11px] ${badgeClass(node.status)}`}>{node.status}</span>
-                            </div>
-                            <div className="text-xs leading-6 text-white/68">{node.desc}</div>
-                            <div className="mt-3 text-[11px] text-white/45">{renderNodeStatus(node.id)}</div>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4 md:p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-lg font-bold">节点画布 <span className="ml-2 text-xs text-white/45">Node Canvas</span></div>
+                  <div className="mt-1 text-sm text-white/55">左側是主創作區，不再只是示意圖。你可以直接在 scene 卡片裡完成素材、旁白、視頻與靜幀操作。</div>
+                </div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/60">
+                  <Move className="h-4 w-4" />
+                  Canvas-first creation
                 </div>
               </div>
+              {renderCanvasSurface()}
             </div>
 
             <div className="space-y-4">
@@ -1209,7 +1558,7 @@ export default function WorkflowNodes() {
                   {auxError ? <div className="mb-4 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200"><AlertCircle className="h-4 w-4" /> {auxError}</div> : null}
                   {globalStep.success ? <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"><CheckCircle2 className="h-4 w-4" /> 上一步执行成功</div> : null}
 
-                  {renderSelectedPanel()}
+                  {renderCompactInspector()}
 
                   <div className="mt-5 rounded-2xl border border-white/10 bg-[#0b1020] p-4">
                     <div className="mb-2 text-sm font-semibold text-white">Latest Output Snapshot</div>
