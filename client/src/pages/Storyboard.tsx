@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+import { readGrowthHandoff } from "@/lib/growthHandoff";
 import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
 import {
   ChevronRight,
@@ -278,6 +279,16 @@ export default function StoryboardPage() {
       navigate("/login");
     }
   }, [loading, isAuthenticated, navigate]);
+
+  useEffect(() => {
+    const persisted = readGrowthHandoff();
+    const handoff = persisted?.handoff;
+    if (!handoff) return;
+    setLyricsText((prev) => prev.trim() || handoff.storyboardPrompt || handoff.brief || prev);
+    if (!referenceStyleDescription.trim() && handoff.businessGoal?.trim()) {
+      setReferenceStyleDescription(handoff.businessGoal.trim());
+    }
+  }, [referenceStyleDescription]);
 
   const charCount = lyricsText.length;
   const currentMaxChars = scriptSource === "ai" ? AI_GENERATE_MAX_CHARS : OWN_SCRIPT_MAX_CHARS;

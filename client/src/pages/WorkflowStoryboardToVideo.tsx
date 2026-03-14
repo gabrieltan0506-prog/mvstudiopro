@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { readGrowthHandoff } from "@/lib/growthHandoff";
 
 type Scene = {
   sceneIndex: number;
@@ -265,6 +266,23 @@ export default function WorkflowStoryboardToVideo() {
   const [debugMode, setDebugMode] = useState(false);
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
+
+  useEffect(() => {
+    const persisted = readGrowthHandoff();
+    const handoff = persisted?.handoff;
+    if (!handoff) return;
+    setPrompt((prev) =>
+      !prev.trim() || prev === "未来都市追逐，镜头节奏快速，电影感强"
+        ? handoff.workflowPrompt || handoff.brief || prev
+        : prev,
+    );
+    setDialogueText((prev) => prev.trim() || handoff.brief || prev);
+    setMusicPrompt((prev) =>
+      !prev.trim() || prev === "cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal"
+        ? `cinematic trailer soundtrack for ${handoff.recommendedTrack}`
+        : prev,
+    );
+  }, []);
 
   useEffect(() => {
     if (!workflowId) return;

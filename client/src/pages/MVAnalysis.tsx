@@ -8,6 +8,7 @@ import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { GrowthHandoffActions } from "@/components/growth/GrowthHandoffActions";
 import { GrowthSectionCard } from "@/components/growth/GrowthSectionCard";
+import { getGrowthHandoffStatus, saveGrowthHandoff } from "@/lib/growthHandoff";
 import type {
   GrowthBusinessInsight,
   GrowthHandoff,
@@ -86,7 +87,6 @@ type ExecutionBriefRow = {
 };
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
-const GROWTH_HANDOFF_STORAGE_KEY = "mvsp-growth-handoff";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -104,18 +104,6 @@ function hasSupervisorAccess() {
     return true;
   }
   return localStorage.getItem(SUPERVISOR_ACCESS_KEY) === "1";
-}
-
-function persistGrowthHandoff(handoff: GrowthHandoff | null) {
-  if (!handoff || typeof window === "undefined") return;
-  localStorage.setItem(
-    GROWTH_HANDOFF_STORAGE_KEY,
-    JSON.stringify({
-      ...handoff,
-      source: "creator-growth-camp",
-      savedAt: new Date().toISOString(),
-    }),
-  );
 }
 
 function readFileAsDataUrl(file: File) {
@@ -143,6 +131,29 @@ function replaceTerms(text: string) {
     .replace(/live sample/gi, "实时样本")
     .replace(/hybrid/gi, "混合")
     .replace(/fallback/gi, "补位");
+}
+
+function translateTrendSource(source: GrowthSnapshot["status"]["source"]) {
+  if (source === "live") return "实时样本";
+  if (source === "hybrid") return "实时样本 + 结构补位";
+  if (source === "fallback") return "结构补位";
+  return "模拟样本";
+}
+
+function localizeTrendNote(note: string) {
+  return replaceTerms(note)
+    .replace(/^Live collectors ready for (.+)\.$/i, (_match, platforms) => {
+      const names = String(platforms || "")
+        .split(",")
+        .map((item) => PLATFORM_LABELS[String(item).trim()] || String(item).trim())
+        .filter(Boolean)
+        .join("、");
+      return names ? `已接入真实抓取平台：${names}。` : "当前没有已接入的真实抓取平台。";
+    })
+    .replace(/^No live collector configured for kuaishou\.$/i, "快手暂未接入真实抓取，仅提供结构建议。")
+    .replace(/^No live collector configured for weixin_channels\.$/i, "视频号暂未接入真实抓取，仅提供结构建议。")
+    .replace(/^Fetched (\d+) Douyin hot search topics\.$/i, "已抓取抖音实时样本：$1 条。")
+    .replace(/^Fetched (\d+) popular Bilibili videos\.$/i, "已抓取 B 站实时样本：$1 条。");
 }
 
 function normalizeAnalysisScale(result: AnalysisResult): AnalysisResult {
@@ -627,7 +638,7 @@ export default function MVAnalysisPage() {
 
   const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "handoff 已暂存") => {
     if (!handoff) return;
-    persistGrowthHandoff(handoff);
+    saveGrowthHandoff(handoff);
     toast.success(successMessage);
   }, []);
 
@@ -686,6 +697,7 @@ export default function MVAnalysisPage() {
     [analysis, context, platformRecommendations, commercialTracks, growthSnapshot],
   );
   const growthHandoff = growthSnapshot?.growthHandoff ?? null;
+  const growthHandoffStatus = useMemo(() => getGrowthHandoffStatus(growthHandoff), [growthHandoff]);
   const strategyPillars = useMemo(
     () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
     [analysis, platformRecommendations, commercialTracks],
@@ -977,6 +989,9 @@ export default function MVAnalysisPage() {
                 );
               })}
             </div>
+            <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/60">
+              说明：以上 5 个维度是独立评分，满分均为 100 分，数值越高代表该维度越成熟，并不是综合总分。
+            </div>
 
             <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
               <div className="space-y-6">
@@ -1052,13 +1067,13 @@ export default function MVAnalysisPage() {
                     <>
                       <div className="mt-4 flex flex-wrap gap-2 text-xs text-white/60">
                         <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          source: {growthSnapshot.status.source}
+                          数据来源：{translateTrendSource(growthSnapshot.status.source)}
                         </div>
                         <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          freshness: {growthSnapshot.status.freshnessLabel}
+                          数据时效：{replaceTerms(growthSnapshot.status.freshnessLabel)}
                         </div>
                         <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          window: {growthSnapshot.status.windowDays} 天
+                          样本窗口：{growthSnapshot.status.windowDays} 天
                         </div>
                       </div>
                       <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
@@ -1146,7 +1161,7 @@ export default function MVAnalysisPage() {
                       {growthSnapshot.status.notes.length ? (
                         <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/60">
                           {growthSnapshot.status.notes.map((note, index) => (
-                            <div key={index}>• {replaceTerms(note)}</div>
+                            <div key={index}>• {localizeTrendNote(note)}</div>
                           ))}
                         </div>
                       ) : null}
@@ -1271,6 +1286,19 @@ export default function MVAnalysisPage() {
                     onCopyText={handleCopyText}
                     onStoreHandoff={handleStoreHandoff}
                   />
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/68">
+                    <div className="font-semibold text-white">handoff 交接状态</div>
+                    <div className="mt-2">
+                      {growthHandoffStatus.ready
+                        ? "当前 payload 已包含创作简报、分镜提示词、工作流提示词、商业目标、推荐方向与推荐平台，可直接交给 storyboard / workflow。"
+                        : `当前 payload 还缺少：${growthHandoffStatus.missing.join("、")}。这会影响后续创作流接收。`}
+                    </div>
+                    {growthHandoff?.recommendedPlatforms?.length ? (
+                      <div className="mt-2 text-white/55">
+                        当前推荐平台：{growthHandoff.recommendedPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="mt-3 grid gap-3">
                     <a
                       href="/storyboard"

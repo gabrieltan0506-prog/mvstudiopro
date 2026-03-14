@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { readGrowthHandoff } from "@/lib/growthHandoff";
 import Navbar from "@/components/Navbar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -268,6 +269,27 @@ export default function WorkflowNodes() {
   const [renderVoiceSceneMap, setRenderVoiceSceneMap] = useState<Record<string, boolean>>({});
   const [reuseCharacterSceneMap, setReuseCharacterSceneMap] = useState<Record<string, string>>({});
   const [reuseSceneImageMap, setReuseSceneImageMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const persisted = readGrowthHandoff();
+    const handoff = persisted?.handoff;
+    if (!handoff) return;
+    setPrompt((prev) =>
+      !prev.trim() || prev === "未来都市追逐，镜头节奏快速，电影感强"
+        ? handoff.workflowPrompt || handoff.brief || prev
+        : prev,
+    );
+    setVoiceLabText((prev) =>
+      !prev.trim() || prev === "你好，這是一段獨立語音測試，不依賴分鏡或腳本。"
+        ? handoff.brief || prev
+        : prev,
+    );
+    setMusicPrompt((prev) =>
+      !prev.trim() || prev === "cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal"
+        ? `cinematic trailer soundtrack for ${handoff.recommendedTrack}`
+        : prev,
+    );
+  }, []);
 
   const nodes = useMemo(() => NODE_ITEMS, []);
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);

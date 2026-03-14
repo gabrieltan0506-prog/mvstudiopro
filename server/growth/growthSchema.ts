@@ -629,10 +629,12 @@ export function buildGrowthSnapshotFromCollections(params: {
       collectorReady: true,
       missingConnectors: missingPlatforms.map((platform) => `${platform}.trends.fetch30d`),
       notes: [
-        `Live collectors ready for ${livePlatforms.join(", ") || "none"}.`,
-        "当前 live 数据来自平台实时热门样本，不等于完整 30 天历史数据仓。",
+        livePlatforms.length
+          ? `已接入真实抓取平台：${livePlatforms.map((platform) => PLATFORM_LABELS[platform]).join("、")}。`
+          : "当前没有已接入的真实抓取平台。",
+        "当前实时数据来自平台热门样本，不等于完整 30 天历史数据仓。",
         ...activeCollections.flatMap((item) => item.notes.slice(0, 2)),
-        ...Object.entries(params.errors || {}).map(([platform, error]) => `${platform}: ${error}`),
+        ...Object.entries(params.errors || {}).map(([platform, error]) => `${PLATFORM_LABELS[platform as GrowthPlatform] || platform}：${error}`),
       ],
     },
     requestedPlatforms,
