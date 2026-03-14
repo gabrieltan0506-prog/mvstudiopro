@@ -250,6 +250,7 @@ export default function WorkflowNodes() {
   const [scriptDirty, setScriptDirty] = useState(false);
   const [storyboard, setStoryboard] = useState<Scene[]>([]);
   const [storyboardDirty, setStoryboardDirty] = useState(false);
+  const [sceneVoiceTextMap, setSceneVoiceTextMap] = useState<Record<string, string>>({});
   const [sceneVoiceTypeMap, setSceneVoiceTypeMap] = useState<Record<string, string>>({});
   const [sceneVoiceStyleMap, setSceneVoiceStyleMap] = useState<Record<string, string>>({});
   const [renderStillPromptMap, setRenderStillPromptMap] = useState<Record<string, string>>({});
@@ -335,6 +336,14 @@ export default function WorkflowNodes() {
     if (Array.isArray(nextOutputs.storyboard) && !storyboardDirty) {
       const normalized = normalizeSceneList(nextOutputs.storyboard);
       setStoryboard(normalized);
+      setSceneVoiceTextMap((prev) => {
+        const next = { ...prev };
+        for (const scene of normalized) {
+          const key = String(scene.sceneIndex);
+          if (!(key in next)) next[key] = scene.voiceover || "";
+        }
+        return next;
+      });
       setSceneVoiceTypeMap((prev) => {
         const next = { ...prev };
         for (const scene of normalized) {
@@ -963,10 +972,18 @@ export default function WorkflowNodes() {
         {storyboard.map((scene) => {
           const key = String(scene.sceneIndex);
           const bundle = storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex);
+          const manualVoiceText = sceneVoiceTextMap[key] ?? "";
           return (
             <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="mb-2 text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
-              <textarea value={scene.voiceover || ""} onChange={(e) => updateScene(scene.sceneIndex, { voiceover: e.target.value })} rows={3} className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" />
+              <div className="mb-2 text-xs font-medium uppercase tracking-[0.22em] text-white/45">Direct Voice Text</div>
+              <textarea
+                value={manualVoiceText}
+                onChange={(e) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                rows={4}
+                placeholder="直接輸入你要生成的旁白文字"
+                className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
+              />
               <div className="grid gap-3 md:grid-cols-2">
                 <select value={sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female"} onChange={(e) => setSceneVoiceTypeMap((prev) => ({ ...prev, [key]: e.target.value }))} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
                   <option value="female">Female</option>
@@ -982,15 +999,21 @@ export default function WorkflowNodes() {
                 </select>
               </div>
               <div className="mt-3 flex flex-wrap gap-3">
-                <Button disabled={auxBusyKey === `scene-voice-${scene.sceneIndex}`} onClick={() => void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
-                  workflowId,
-                  sceneIndex: scene.sceneIndex,
-                  dialogueText: scene.voiceover || scene.scenePrompt,
-                  voicePrompt: DEFAULT_SCENE_VOICE_PROMPT,
-                  voiceType: sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female",
-                  voiceStyle: sceneVoiceStyleMap[key] ?? scene.voiceStyle ?? "",
-                  voice: mapSceneVoiceTypeToVoice(sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female"),
-                })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-voice-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Voice"}</Button>
+                <Button
+                  disabled={auxBusyKey === `scene-voice-${scene.sceneIndex}` || !manualVoiceText.trim()}
+                  onClick={() => void runAuxStep(`scene-voice-${scene.sceneIndex}`, "workflowGenerateSceneVoice", {
+                    workflowId,
+                    sceneIndex: scene.sceneIndex,
+                    dialogueText: manualVoiceText.trim(),
+                    voicePrompt: DEFAULT_SCENE_VOICE_PROMPT,
+                    voiceType: sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female",
+                    voiceStyle: sceneVoiceStyleMap[key] ?? scene.voiceStyle ?? "",
+                    voice: mapSceneVoiceTypeToVoice(sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female"),
+                  })}
+                  className="rounded-xl bg-primary px-5"
+                >
+                  {auxBusyKey === `scene-voice-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Voice"}
+                </Button>
                 <label className="inline-flex items-center gap-2 text-sm text-white/70"><input type="checkbox" checked={Boolean(renderVoiceSceneMap[key])} onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [key]: e.target.checked }))} /> Include in render</label>
               </div>
               {bundle?.sceneVoiceUrl ? <audio key={bundle.sceneVoiceUrl} className="mt-3 w-full" controls src={toMediaUrl(bundle.sceneVoiceUrl)} /> : null}
