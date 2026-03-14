@@ -554,19 +554,13 @@ export async function preCheckVideoDuration(
 }
 
 // ─── 主函数：多帧视频分析 ──────────────────────────
-export async function analyzeVideoMultiFrame(
-  videoUrl: string,
+async function analyzeVideoMultiFrameFromPath(
+  videoPath: string,
   onProgress?: ProgressCallback
 ): Promise<MultiFrameResult> {
-  let videoPath = "";
   let tmpDir = "";
 
   try {
-    // 阶段 1：下载视频
-    onProgress?.("downloading", 0, "正在下载视频文档...");
-    videoPath = await downloadVideo(videoUrl, onProgress);
-
-    // 阶段 1.5：检测时长并确定抽帧策略
     onProgress?.("checking", 0, "正在检测视频时长...");
     const duration = await getVideoDuration(videoPath);
     const validation = validateDuration(duration);
@@ -587,7 +581,6 @@ export async function analyzeVideoMultiFrame(
       `以 ${strategy.scoringFrames} 帧平均分计算`
     );
 
-    // 阶段 2：抽取帧
     onProgress?.("extracting", 0, `正在从视频中均匀抽取 ${strategy.totalExtracted} 帧...`);
     const { framePaths } = await extractFrames(videoPath, strategy.totalExtracted, onProgress);
     tmpDir = path.dirname(framePaths[0] || "");
@@ -598,7 +591,6 @@ export async function analyzeVideoMultiFrame(
 
     onProgress?.("extracting", 100, `成功抽取 ${framePaths.length} 帧`);
 
-    // 阶段 3：上传帧到存储
     onProgress?.("uploading", 0, "正在上传帧图片...");
     const frameUrls: { path: string; url: string; timestamp: number }[] = [];
 
@@ -617,7 +609,6 @@ export async function analyzeVideoMultiFrame(
       );
     }
 
-    // 阶段 4：逐帧 AI 分析
     const rawFrameAnalyses: FrameAnalysis[] = [];
 
     for (let i = 0; i < frameUrls.length; i++) {
@@ -660,7 +651,6 @@ export async function analyzeVideoMultiFrame(
       }
     }
 
-    // 阶段 4.5：去除最低分帧
     onProgress?.(
       "scoring",
       10,
@@ -678,7 +668,6 @@ export async function analyzeVideoMultiFrame(
       `已去除 ${droppedFrames.length} 帧（${droppedFrames.map((f) => `第${f.frameIndex + 1}帧:${f.frameScore}分`).join("、")}），以 ${scoringFrames.length} 帧计算最终评分`
     );
 
-    // 阶段 5：综合评分（仅使用计分帧）
     onProgress?.("scoring", 50, `正在综合分析 ${scoringFrames.length} 帧的数据...`);
 
     const synthesized = await synthesizeScores(markedFrameAnalyses, duration, strategy);
@@ -694,10 +683,28 @@ export async function analyzeVideoMultiFrame(
       ...synthesized,
     };
   } finally {
-    // 清理临时文档
-    const toClean: string[] = [];
-    if (videoPath) toClean.push(videoPath);
-    if (tmpDir) toClean.push(tmpDir);
-    cleanup(toClean).catch(() => {});
+    if (tmpDir) cleanup([tmpDir]).catch(() => {});
   }
+}
+
+export async function analyzeVideoMultiFrame(
+  videoUrl: string,
+  onProgress?: ProgressCallback
+): Promise<MultiFrameResult> {
+  let videoPath = "";
+
+  try {
+    onProgress?.("downloading", 0, "正在下载视频文档...");
+    videoPath = await downloadVideo(videoUrl, onProgress);
+    return analyzeVideoMultiFrameFromPath(videoPath, onProgress);
+  } finally {
+    if (videoPath) cleanup([videoPath]).catch(() => {});
+  }
+}
+
+export async function analyzeVideoMultiFrameFromLocalFile(
+  videoPath: string,
+  onProgress?: ProgressCallback
+): Promise<MultiFrameResult> {
+  return analyzeVideoMultiFrameFromPath(videoPath, onProgress);
 }

@@ -5,7 +5,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
 import { storagePut } from "../storage";
-import { analyzeVideoMultiFrame } from "../videoAnalysis";
+import { analyzeVideoMultiFrameFromLocalFile } from "../videoAnalysis";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 
@@ -115,7 +115,7 @@ export async function analyzeVideo(params: {
   const buffer = Buffer.from(params.fileBase64, "base64");
   const keyName = params.fileName || `video-${Date.now()}.mp4`;
   const { url: videoUrl } = await storagePut(`growth-camp/videos/${Date.now()}-${keyName}`, buffer, params.mimeType);
-  const multiFrame = await analyzeVideoMultiFrame(videoUrl);
+  const multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
   const transcript = await transcribeVideoAudio(buffer).catch(() => "");
   const frameHighlights = multiFrame.frameAnalyses
     .filter((item) => !item.dropped)
