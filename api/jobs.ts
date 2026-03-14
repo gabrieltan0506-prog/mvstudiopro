@@ -21,6 +21,7 @@ import { buildVoicePrompt } from "../server/workflow/prompts/voicePrompt.js";
 import { buildMusicPrompt } from "../server/workflow/prompts/musicPrompt.js";
 import { characterLockStep } from "../server/workflow/steps/characterLockStep.js";
 import { backgroundRemoveStep } from "../server/workflow/steps/backgroundRemoveStep.js";
+import { synthesizeVoiceAudio } from "../server/models/voiceSynthesis.js";
 
 function s(v: any): string { if (v == null) return ""; if (Array.isArray(v)) return String(v[0] ?? ""); return String(v); }
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
@@ -312,205 +313,45 @@ async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: s
   return { ok: false, error: "kling generation timeout" };
 }
 
-function mapSceneVoiceTypeToMiniMaxVoice(voiceType: string) {
-  const normalized = s(voiceType).trim().toLowerCase();
-  if (normalized === "male") return "Chinese (Mandarin)_Reliable_Executive";
-  if (normalized === "cartoon") return "Chinese (Mandarin)_News_Anchor";
-  return "Chinese (Mandarin)_News_Anchor";
-}
-
-function buildMiniMaxVoiceConfig(input: { voiceType?: string; voiceStyle?: string }) {
-  const voiceType = s(input.voiceType || "female").trim() || "female";
-  const voiceStyle = s(input.voiceStyle).trim().toLowerCase();
-  const speed =
-    voiceStyle === "energetic" ? 1.08 :
-    voiceStyle === "warm" ? 0.98 :
-    voiceStyle === "calm" ? 0.92 :
-    voiceStyle === "cinematic" ? 0.95 :
-    1;
-  const pitch =
-    voiceType === "male" ? -1 :
-    voiceType === "cartoon" ? 2 :
-    0;
-  return {
-    voiceId: mapSceneVoiceTypeToMiniMaxVoice(voiceType),
-    speed,
-    pitch,
-    vol: 1,
-  };
-}
-
 async function generateSceneVoice(input: { dialogueText: string; voicePrompt?: string; voice?: string; voiceType?: string; voiceStyle?: string }) {
-  const dialogueText = s(input.dialogueText).trim();
-  const voicePrompt = s(input.voicePrompt).trim();
-  const voice = s(input.voice || "nova").trim() || "nova";
-  const miniMaxApiKey = s(process.env.MINIMAX_API_KEY).trim();
-  const miniMaxBase = s(process.env.MINIMAX_API_BASE || "https://api.minimax.io").trim() || "https://api.minimax.io";
-  const miniMaxVoice = buildMiniMaxVoiceConfig({ voiceType: input.voiceType, voiceStyle: input.voiceStyle });
-  const baseResult = {
-    voiceProvider: miniMaxApiKey ? "minimax" as const : "openai" as const,
-    voiceModel: miniMaxApiKey ? "speech-02-turbo" as const : "gpt-4o-mini-tts" as const,
-    voiceVoice: voice,
-  };
-
-  if (!dialogueText) {
-    return {
-      ...baseResult,
-      voiceUrl: "",
-      voiceIsFallback: true,
-      voiceErrorMessage: "dialogueText is required",
-    };
-  }
-  if (!miniMaxApiKey && !env.openaiApiKey) {
-    return {
-      ...baseResult,
-      voiceUrl: "",
-      voiceIsFallback: true,
-      voiceErrorMessage: "MINIMAX_API_KEY or OPENAI_API_KEY is not configured",
-    };
-  }
-
   try {
-    if (miniMaxApiKey) {
-      const body: Record<string, any> = {
-        model: "speech-02-turbo",
-        text: dialogueText,
-        stream: false,
-        language_boost: "Chinese",
-        output_format: "hex",
-        voice_setting: {
-          voice_id: miniMaxVoice.voiceId,
-          speed: miniMaxVoice.speed,
-          vol: miniMaxVoice.vol,
-          pitch: miniMaxVoice.pitch,
-        },
-        audio_setting: {
-          sample_rate: 32000,
-          bitrate: 128000,
-          format: "mp3",
-          channel: 1,
-        },
-      };
-      if (voicePrompt) {
-        body.pronunciation_dict = { tone: [voicePrompt.slice(0, 180)] };
-      }
-
-      const r = await fetch(`${miniMaxBase.replace(/\/$/, "")}/v1/t2a_v2`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${miniMaxApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      const json = await r.json().catch(() => null);
-      const hexAudio = s(json?.data?.audio).trim();
-      const baseRespCode = Number(json?.base_resp?.status_code ?? -1);
-      if (!r.ok || baseRespCode !== 0 || !hexAudio) {
-        return {
-          ...baseResult,
-          voiceProvider: "minimax" as const,
-          voiceModel: "speech-02-turbo" as const,
-          voiceVoice: miniMaxVoice.voiceId,
-          voiceUrl: "",
-          voiceIsFallback: true,
-          voiceErrorMessage: `minimax_tts_failed:${r.status}:${s(json?.base_resp?.status_msg || json?.message || "missing_audio").trim() || "missing_audio"}`,
-        };
-      }
-
-      const audioBuffer = Buffer.from(hexAudio, "hex");
-      if (!audioBuffer.length) {
-        return {
-          ...baseResult,
-          voiceProvider: "minimax" as const,
-          voiceModel: "speech-02-turbo" as const,
-          voiceVoice: miniMaxVoice.voiceId,
-          voiceUrl: "",
-          voiceIsFallback: true,
-          voiceErrorMessage: "minimax_tts_empty_audio",
-        };
-      }
-
-      const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
-      const blob = env.mvspReadWriteToken
-        ? await put(blobKey, audioBuffer, {
-            access: "public",
-            contentType: "audio/mpeg",
-            token: env.mvspReadWriteToken,
-          })
-        : await put(blobKey, audioBuffer, {
-            access: "public",
-            contentType: "audio/mpeg",
-          });
-
+    const synthesized = await synthesizeVoiceAudio(input);
+    if (!synthesized.audioBuffer.length) {
       return {
-        ...baseResult,
-        voiceProvider: "minimax" as const,
-        voiceModel: "speech-02-turbo" as const,
-        voiceVoice: miniMaxVoice.voiceId,
-        voiceUrl: buildBlobMediaUrlFromPath(s(blob.pathname).trim()),
-        voiceIsFallback: false,
-        voiceErrorMessage: "",
-      };
-    }
-
-    const body: Record<string, any> = {
-      model: "gpt-4o-mini-tts",
-      voice,
-      input: dialogueText,
-      format: "mp3",
-    };
-    if (voicePrompt) body.instructions = voicePrompt;
-
-    const r = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.openaiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      const msg = (await r.text()).slice(0, 600);
-      return {
-        ...baseResult,
+        voiceProvider: synthesized.provider,
+        voiceModel: synthesized.model,
+        voiceVoice: synthesized.voice,
         voiceUrl: "",
         voiceIsFallback: true,
-        voiceErrorMessage: `openai_tts_failed:${r.status}:${msg}`,
+        voiceErrorMessage: synthesized.errorMessage,
       };
     }
 
-    const audioBuffer = Buffer.from(await r.arrayBuffer());
-    if (!audioBuffer.length) {
-      return {
-        ...baseResult,
-        voiceUrl: "",
-        voiceIsFallback: true,
-        voiceErrorMessage: "openai_tts_empty_audio",
-      };
-    }
-
-    const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+    const blobKey = `voices/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${synthesized.extension}`;
     const blob = env.mvspReadWriteToken
-      ? await put(blobKey, audioBuffer, {
+      ? await put(blobKey, synthesized.audioBuffer, {
           access: "public",
-          contentType: "audio/mpeg",
+          contentType: synthesized.contentType,
           token: env.mvspReadWriteToken,
         })
-      : await put(blobKey, audioBuffer, {
+      : await put(blobKey, synthesized.audioBuffer, {
           access: "public",
-          contentType: "audio/mpeg",
+          contentType: synthesized.contentType,
         });
 
     return {
-      ...baseResult,
+      voiceProvider: synthesized.provider,
+      voiceModel: synthesized.model,
+      voiceVoice: synthesized.voice,
       voiceUrl: buildBlobMediaUrlFromPath(s(blob.pathname).trim()),
-      voiceIsFallback: false,
+      voiceIsFallback: synthesized.isFallback,
       voiceErrorMessage: "",
     };
   } catch (error: any) {
     return {
-      ...baseResult,
+      voiceProvider: "vertex" as const,
+      voiceModel: s(process.env.VERTEX_TTS_MODEL || "gemini-2.5-flash-preview-tts") as string,
+      voiceVoice: s(process.env.VERTEX_TTS_VOICE_FEMALE || "Kore") as string,
       voiceUrl: "",
       voiceIsFallback: true,
       voiceErrorMessage: error?.message || String(error),
