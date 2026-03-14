@@ -189,7 +189,7 @@ async function tryVertexTts(input: VoiceSynthesisInput): Promise<VoiceSynthesisR
         "x-goog-user-project": projectId,
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: textPrompt }] }],
+        contents: [{ role: "user", parts: [{ text: textPrompt }] }],
         generation_config: {
           response_modalities: ["AUDIO"],
           speechConfig: {

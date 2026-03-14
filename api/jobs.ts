@@ -2151,7 +2151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
 
-      const dialogueText = s(b.dialogueText).trim();
+      const dialogueText = s(b.dialogueText || b.text).trim();
       const voicePrompt = buildVoicePrompt({
         dialogueText,
         style: [s(b.voicePrompt).trim(), s(b.voiceStyle).trim()].filter(Boolean).join("，"),
