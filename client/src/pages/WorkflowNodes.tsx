@@ -253,6 +253,10 @@ export default function WorkflowNodes() {
   const [sceneVoiceTextMap, setSceneVoiceTextMap] = useState<Record<string, string>>({});
   const [sceneVoiceTypeMap, setSceneVoiceTypeMap] = useState<Record<string, string>>({});
   const [sceneVoiceStyleMap, setSceneVoiceStyleMap] = useState<Record<string, string>>({});
+  const [voiceLabText, setVoiceLabText] = useState("你好，這是一段獨立語音測試，不依賴分鏡或腳本。");
+  const [voiceLabType, setVoiceLabType] = useState("female");
+  const [voiceLabStyle, setVoiceLabStyle] = useState("warm");
+  const [voiceLabResult, setVoiceLabResult] = useState<{ voiceUrl: string; voiceProvider: string; voiceModel: string; voiceVoice: string } | null>(null);
   const [renderStillPromptMap, setRenderStillPromptMap] = useState<Record<string, string>>({});
   const [musicPrompt, setMusicPrompt] = useState("cinematic trailer soundtrack, hybrid orchestral + modern electronic pulse, no vocal");
   const [musicProvider, setMusicProvider] = useState("suno");
@@ -966,6 +970,59 @@ export default function WorkflowNodes() {
   function renderVoicePanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
+          <div className="mb-2 text-sm font-semibold text-white">Voice Lab</div>
+          <div className="mb-3 text-sm text-white/70">直接輸入文字生成語音，不依賴 scene、storyboard 或 script。</div>
+          <textarea
+            value={voiceLabText}
+            onChange={(e) => setVoiceLabText(e.target.value)}
+            rows={4}
+            placeholder="直接輸入你要測試的旁白文字"
+            className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
+          />
+          <div className="grid gap-3 md:grid-cols-2">
+            <select value={voiceLabType} onChange={(e) => setVoiceLabType(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
+              <option value="female">Female</option>
+              <option value="male">Male</option>
+              <option value="cartoon">Cartoon</option>
+            </select>
+            <select value={voiceLabStyle} onChange={(e) => setVoiceLabStyle(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
+              <option value="">Normal</option>
+              <option value="warm">Warm</option>
+              <option value="calm">Calm</option>
+              <option value="energetic">Energetic</option>
+              <option value="cinematic">Cinematic</option>
+            </select>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              disabled={auxBusyKey === "voice-lab" || !voiceLabText.trim()}
+              onClick={() => void runAuxStep("voice-lab", "generateVoice", {
+                text: voiceLabText.trim(),
+                voiceType: voiceLabType,
+                voiceStyle: voiceLabStyle,
+                voice: mapSceneVoiceTypeToVoice(voiceLabType),
+                voicePrompt: DEFAULT_SCENE_VOICE_PROMPT,
+              }, (json) => {
+                setVoiceLabResult({
+                  voiceUrl: s(json?.voiceUrl).trim(),
+                  voiceProvider: s(json?.voiceProvider).trim(),
+                  voiceModel: s(json?.voiceModel).trim(),
+                  voiceVoice: s(json?.voiceVoice).trim(),
+                });
+              })}
+              className="rounded-xl bg-primary px-5"
+            >
+              {auxBusyKey === "voice-lab" ? "Generating..." : "Generate Voice"}
+            </Button>
+            {voiceLabResult ? (
+              <div className="text-xs text-white/60">
+                {voiceLabResult.voiceProvider} / {voiceLabResult.voiceModel} / {voiceLabResult.voiceVoice}
+              </div>
+            ) : null}
+          </div>
+          {voiceLabResult?.voiceUrl ? <audio key={voiceLabResult.voiceUrl} className="mt-3 w-full" controls src={toMediaUrl(voiceLabResult.voiceUrl)} /> : null}
+        </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
           旁白以 scene 為單位生成。勾選 <span className="font-semibold text-white">Include in render</span> 的 scene 才會在最終 Render 中混入。
         </div>
