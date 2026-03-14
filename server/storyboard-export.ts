@@ -27,6 +27,7 @@ interface StoryboardScene {
   visualElements: string[];
   transition?: string;
   previewImageUrl?: string | null;
+  previewImageUrls?: string[];
 }
 
 interface StoryboardData {
@@ -65,12 +66,22 @@ function getBlobPathname(url: string) {
 // ─── Font Management ────────────────────────────────────
 async function ensureFonts(): Promise<{ regular: string | null; bold: string | null }> {
   const regularCandidates = [
+    path.resolve(process.cwd(), "assets/fonts/NotoSansCJKsc-Regular.otf"),
     "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
     "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
   ];
   const boldCandidates = [
+    path.resolve(process.cwd(), "assets/fonts/NotoSansCJKsc-Bold.otf"),
     "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
     "/usr/share/fonts/truetype/noto/NotoSansSC-Bold.ttf",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Songti.ttc",
   ];
 
   const regular = regularCandidates.find((fontPath) => fs.existsSync(fontPath)) ?? null;
@@ -81,6 +92,14 @@ async function ensureFonts(): Promise<{ regular: string | null; bold: string | n
   }
 
   return { regular, bold };
+}
+
+function getSceneExportImageUrls(scene: StoryboardScene) {
+  const list = Array.isArray(scene.previewImageUrls) ? scene.previewImageUrls : [];
+  const normalized = list.map((value) => String(value || "").trim()).filter(Boolean);
+  if (normalized.length) return normalized;
+  const single = String(scene.previewImageUrl || "").trim();
+  return single ? [single] : [];
 }
 
 // ─── Image Helper ──────────────────────────────────────
@@ -295,24 +314,23 @@ export async function exportToPDF(
     doc.moveDown();
 
     // Preview image with watermark
-    if (scene.previewImageUrl) {
+    const previewImageUrls = getSceneExportImageUrls(scene);
+    for (const previewImageUrl of previewImageUrls) {
       try {
-        const imgData = await downloadImageWithDimensions(scene.previewImageUrl);
+        const imgData = await downloadImageWithDimensions(previewImageUrl);
         let imageBuffer = imgData.buffer;
-        
-        // Add watermark to image if free tier
+
         if (addWatermark) {
           imageBuffer = await addExportWatermark(imageBuffer);
         }
-        
-        // Use actual aspect ratio for PDF
+
         const pdfMaxWidth = Math.min(pageWidth, 500);
         const aspectRatio = imgData.height / imgData.width;
         const pdfHeight = Math.round(pdfMaxWidth * aspectRatio);
-        
-        doc.image(imageBuffer, { 
-          fit: [pdfMaxWidth, Math.min(pdfHeight, 350)], 
-          align: "center" 
+
+        doc.image(imageBuffer, {
+          fit: [pdfMaxWidth, Math.min(pdfHeight, 350)],
+          align: "center",
         });
         doc.moveDown();
       } catch (error) {
@@ -473,23 +491,23 @@ export async function exportToWord(
     );
 
     // Preview image - FIXED: preserve aspect ratio
-    if (scene.previewImageUrl) {
+    const previewImageUrls = getSceneExportImageUrls(scene);
+    for (const previewImageUrl of previewImageUrls) {
       try {
-        const imgData = await downloadImageWithDimensions(scene.previewImageUrl);
+        const imgData = await downloadImageWithDimensions(previewImageUrl);
         let imageBuffer = imgData.buffer;
-        
-        // Add watermark to image if free tier
+
         if (addWatermark) {
           imageBuffer = await addExportWatermark(imageBuffer);
         }
-        
+
         children.push(
           new Paragraph({
             children: [
               new ImageRun({
                 data: imageBuffer,
-                transformation: { 
-                  width: imgData.scaledWidth, 
+                transformation: {
+                  width: imgData.scaledWidth,
                   height: imgData.scaledHeight,
                 },
                 type: "png",

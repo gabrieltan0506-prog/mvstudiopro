@@ -798,9 +798,9 @@ function buildSceneVoiceStyleText(scene: any, overrideStyle?: string) {
   const descriptors = [
     `旁白角色类型：${voiceType}`,
     baseStyle ? `情绪风格：${baseStyle}` : "",
-    voiceType === "male" ? "音色：成熟男声，低沉、有力、克制" : "",
-    voiceType === "cartoon" ? "音色：夸张卡通感，轻快、明亮、活泼" : "",
-    voiceType === "female" ? "音色：清晰女声，明亮、柔和、带电影感" : "",
+    voiceType === "male" ? "音色：成年男性旁白，低沉、有力、克制，明确避免女性音色" : "",
+    voiceType === "cartoon" ? "音色：夸张卡通感，轻快、明亮、活泼，非写实播报腔" : "",
+    voiceType === "female" ? "音色：成年女性旁白，明亮、柔和、带电影感，明确避免男性低沉音色" : "",
   ].filter(Boolean);
   return descriptors.join("，");
 }
@@ -1969,7 +1969,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           voiceVoice: voiceResult.voiceVoice,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVoiceUrl: voiceResult.voiceUrl });
+      return res.status(200).json({
+        ok: true,
+        workflow: next,
+        sceneVoiceUrl: voiceResult.voiceUrl,
+        sceneVoiceVoice: voiceResult.voiceVoice,
+        sceneVoiceType: voiceType,
+        sceneVoiceStyle: voiceStyle,
+      });
     }
 
     if (opNormalized === "workflowgeneratemusic") {
@@ -2067,6 +2074,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
+      const includeSceneVoiceIndexes = Array.isArray(b.includeSceneVoiceIndexes)
+        ? b.includeSceneVoiceIndexes.map((value: any) => Number(value || 0)).filter((value: number) => value > 0)
+        : [];
+      const includeSceneVoiceSet = new Set(includeSceneVoiceIndexes);
       const sceneVideos = storyboardImages
         .filter((item: any) => s(item?.sceneVideoUrl).trim())
         .sort((a: any, b: any) => Number(a?.sceneIndex || 0) - Number(b?.sceneIndex || 0))
@@ -2076,13 +2087,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           duration: "8s",
           stillImageUrl: s(item?.renderStillImageUrl).trim() || undefined,
           stillDuration: sceneNeedsRenderStill(storyboard.find((scene: any) => Number(scene?.sceneIndex) === Number(item?.sceneIndex || 0))) ? "1.5s" : undefined,
-          voiceUrl: s(item?.sceneVoiceUrl).trim() || undefined,
+          voiceUrl: includeSceneVoiceSet.size === 0 || includeSceneVoiceSet.has(Number(item?.sceneIndex || 0))
+            ? s(item?.sceneVoiceUrl).trim() || undefined
+            : undefined,
+          includeVoice: includeSceneVoiceSet.size === 0 || includeSceneVoiceSet.has(Number(item?.sceneIndex || 0)),
         }));
       if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
+      const musicStartSec = Number(b.musicStartSec || 0);
+      const musicEndSec = Number(b.musicEndSec || 0);
       const finalVideoUrl = await renderWorkflowFinalVideo({
         sceneVideos,
         musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || "").trim() || undefined,
         voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || "").trim() || undefined,
+        musicStartSec: Number.isFinite(musicStartSec) && musicStartSec >= 0 ? musicStartSec : undefined,
+        musicEndSec: Number.isFinite(musicEndSec) && musicEndSec > 0 ? musicEndSec : undefined,
       });
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
@@ -2090,6 +2108,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         outputs: {
           finalVideoUrl,
           sceneVideos,
+          musicStartSec: Number.isFinite(musicStartSec) && musicStartSec >= 0 ? musicStartSec : 0,
+          musicEndSec: Number.isFinite(musicEndSec) && musicEndSec > 0 ? musicEndSec : 0,
+          includeSceneVoiceIndexes,
           renderProvider: "workflow-render",
           renderIsFallback: false,
           renderErrorMessage: "",

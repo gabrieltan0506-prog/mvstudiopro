@@ -50,6 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ].filter(Boolean),
           transition: s(scene?.transition).trim() || undefined,
           previewImageUrl: s(imageUrls[0]).trim() || null,
+          previewImageUrls: imageUrls.map((value: any) => s(value).trim()).filter(Boolean),
         };
       }),
       summary: s(b.script).trim() || "Storyboard export generated from workflow.",

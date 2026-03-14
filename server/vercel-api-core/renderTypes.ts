@@ -7,12 +7,15 @@ export interface SceneVideoInput {
   stillImageUrl?: string;
   stillDuration?: string | number;
   voiceUrl?: string;
+  includeVoice?: boolean;
 }
 
 export interface RenderWorkflowInput {
   sceneVideos: SceneVideoInput[];
   musicUrl?: string;
   voiceUrl?: string;
+  musicStartSec?: number;
+  musicEndSec?: number;
   transition?: RenderTransition | string;
   resolution?: string;
 }

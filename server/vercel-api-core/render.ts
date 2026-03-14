@@ -156,6 +156,7 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   const musicUrl = String(input.musicUrl || "").trim();
   const voiceUrl = String(input.voiceUrl || "").trim();
   const sceneVoiceUrls = input.sceneVideos
+    .filter((scene) => scene.includeVoice !== false)
     .map((scene) => String(scene?.voiceUrl || "").trim())
     .filter(Boolean);
   let effectiveVoiceUrl = voiceUrl;
@@ -197,7 +198,22 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   if (musicUrl) {
     const musicPath = path.join(tmpDir, "music.mp3");
     await downloadFileToPath(musicUrl, musicPath);
-    cmd.push("-i", musicPath);
+    const musicStartSec = Number.isFinite(Number(input.musicStartSec)) ? Math.max(0, Number(input.musicStartSec)) : 0;
+    const musicEndSec = Number.isFinite(Number(input.musicEndSec)) ? Math.max(0, Number(input.musicEndSec)) : 0;
+    if (musicStartSec > 0 || musicEndSec > 0) {
+      const trimmedMusicPath = path.join(tmpDir, "music-trim.mp3");
+      const trimArgs = ["-y"];
+      if (musicStartSec > 0) trimArgs.push("-ss", String(musicStartSec));
+      trimArgs.push("-i", musicPath);
+      if (musicEndSec > 0 && musicEndSec > musicStartSec) {
+        trimArgs.push("-t", String(musicEndSec - musicStartSec));
+      }
+      trimArgs.push("-c:a", "mp3", trimmedMusicPath);
+      await runFfmpeg(trimArgs);
+      cmd.push("-i", trimmedMusicPath);
+    } else {
+      cmd.push("-i", musicPath);
+    }
   }
 
   if (effectiveVoiceUrl) {

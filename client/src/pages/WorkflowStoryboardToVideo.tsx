@@ -248,10 +248,13 @@ export default function WorkflowStoryboardToVideo() {
   const [musicMood, setMusicMood] = useState("cinematic");
   const [musicBpm, setMusicBpm] = useState("110");
   const [musicDuration, setMusicDuration] = useState("30");
+  const [musicStartSec, setMusicStartSec] = useState("0");
+  const [musicEndSec, setMusicEndSec] = useState("0");
 
   const [renderStillPromptMap, setRenderStillPromptMap] = useState<Record<string, string>>({});
   const [sceneVoiceTypeMap, setSceneVoiceTypeMap] = useState<Record<string, string>>({});
   const [sceneVoiceStyleMap, setSceneVoiceStyleMap] = useState<Record<string, string>>({});
+  const [renderVoiceSceneMap, setRenderVoiceSceneMap] = useState<Record<string, boolean>>({});
   const [scriptDirty, setScriptDirty] = useState(false);
   const [storyboardDirty, setStoryboardDirty] = useState(false);
   const [auxBusyKey, setAuxBusyKey] = useState("");
@@ -308,6 +311,14 @@ export default function WorkflowStoryboardToVideo() {
         }
         return next;
       });
+      setRenderVoiceSceneMap((prev) => {
+        const next = { ...prev };
+        for (const scene of normalizedStoryboard) {
+          const key = String(scene.sceneIndex || "");
+          if (!(key in next)) next[key] = true;
+        }
+        return next;
+      });
     }
     if (typeof outputs.dialogueText === "string" && !dialogueText) setDialogueText(outputs.dialogueText);
     if (typeof outputs.voicePrompt === "string" && !voicePrompt) setVoicePrompt(outputs.voicePrompt);
@@ -359,6 +370,10 @@ export default function WorkflowStoryboardToVideo() {
 
   const anyMainStepLoading = Object.values(stepStates).some((s) => s.loading);
   const hasAnySceneVideo = storyboardImages.some((item) => String(item?.sceneVideoUrl || "").trim());
+  const scenesWithVoice = scenes.filter((scene) => {
+    const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
+    return Boolean(String(bundle?.sceneVoiceUrl || "").trim());
+  });
 
   function setStepState(step: MainStepKey, patch: Partial<StepState>) {
     setStepStates((prev) => ({
@@ -500,7 +515,9 @@ export default function WorkflowStoryboardToVideo() {
     setExportError("");
     const scenesPayload = scenes.map((scene) => {
       const bundle = sceneBundlesByIndex[Number(scene.sceneIndex || 0)];
-      const imageUrls = getCombinedAssetUrls(bundle).map((value) => toAbsoluteAssetUrl(value)).filter(Boolean);
+      const characterUrls = getCharacterImageUrls(bundle).map((value) => toAbsoluteAssetUrl(value)).filter(Boolean);
+      const sceneUrls = getSceneImageUrls(bundle).map((value) => toAbsoluteAssetUrl(value)).filter(Boolean);
+      const imageUrls = [...characterUrls, ...sceneUrls].filter(Boolean);
       return {
         ...scene,
         imageUrls,
@@ -910,7 +927,7 @@ export default function WorkflowStoryboardToVideo() {
                 ) : null}
                 {item.sceneVideoUrl ? (
                   <div style={{ marginTop: 10 }}>
-                    <video controls src={String(item.sceneVideoUrl)} style={{ width: "100%", maxWidth: 720, borderRadius: 12, border: "1px solid #333" }} />
+                    <video key={String(item.sceneVideoUrl)} controls src={toAssetDisplayUrl(String(item.sceneVideoUrl))} style={{ width: "100%", maxWidth: 720, borderRadius: 12, border: "1px solid #333" }} />
                   </div>
                 ) : null}
                 {item.renderStillImageUrl ? (
@@ -980,13 +997,18 @@ export default function WorkflowStoryboardToVideo() {
                   </select>
                 </div>
                 {item.sceneVoiceUrl ? (
-                  <audio
-                    key={String(item.sceneVoiceUrl)}
-                    controls
-                    preload="metadata"
-                    src={toAssetDisplayUrl(String(item.sceneVoiceUrl))}
-                    style={{ width: "100%", marginTop: 8 }}
-                  />
+                  <>
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
+                      Voice Used: <code>{String(item.sceneVoiceVoice || mapSceneVoiceTypeToVoice(getSceneVoiceTypeValue(scene)))}</code>
+                    </div>
+                    <audio
+                      key={String(item.sceneVoiceUrl)}
+                      controls
+                      preload="metadata"
+                      src={toAssetDisplayUrl(String(item.sceneVoiceUrl))}
+                      style={{ width: "100%", marginTop: 8 }}
+                    />
+                  </>
                 ) : null}
                 <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
@@ -1227,8 +1249,37 @@ export default function WorkflowStoryboardToVideo() {
 
       <div style={sectionStyle()}>
         <h2 style={{ marginTop: 0 }}>H. Render</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <input value={musicStartSec} onChange={(e) => setMusicStartSec(e.target.value)} placeholder="Music Start (sec)" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+          <input value={musicEndSec} onChange={(e) => setMusicEndSec(e.target.value)} placeholder="Music End (sec, optional)" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.35)", color: "white" }} />
+        </div>
+        {scenesWithVoice.length ? (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 8, fontWeight: 600 }}>Voice Scenes In Final Render</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {scenesWithVoice.map((scene) => (
+                <label key={`render-voice-${scene.sceneIndex}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.15)" }}>
+                  <input
+                    type="checkbox"
+                    checked={renderVoiceSceneMap[String(scene.sceneIndex)] !== false}
+                    onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.checked }))}
+                  />
+                  <span>Scene {scene.sceneIndex}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <button
-          onClick={() => runMainStep("renderFinalVideo", "workflowRenderVideo", { workflowId })}
+          onClick={() => runMainStep("renderFinalVideo", "workflowRenderVideo", {
+            workflowId,
+            musicStartSec: Number(musicStartSec || 0) || 0,
+            musicEndSec: Number(musicEndSec || 0) || 0,
+            includeSceneVoiceIndexes: scenes
+              .filter((scene) => renderVoiceSceneMap[String(scene.sceneIndex)] !== false)
+              .map((scene) => Number(scene.sceneIndex || 0))
+              .filter((value) => value > 0),
+          })}
           disabled={anyMainStepLoading || !workflowId || !hasAnySceneVideo}
           style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 800 }}
         >
