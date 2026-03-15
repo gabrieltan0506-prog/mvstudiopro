@@ -15,7 +15,7 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const BURST_INTERVAL_MS = 30 * 60 * 1000;
+const BURST_INTERVAL_MS = 20 * 60 * 1000;
 const BURST_TRIGGER_MIN_COUNT = Math.max(8, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 16) || 16);
 const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.15, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.35) || 0.35);
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.18) || 0.18);
@@ -43,7 +43,36 @@ function getSchedulerHour(now = new Date()) {
   return Number(hourPart || 0);
 }
 
+function getShanghaiDateParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SCHEDULER_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).formatToParts(now);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    weekday: get("weekday"),
+    isoDate: `${get("year")}-${get("month")}-${get("day")}`,
+  };
+}
+
+function isWeekendOrHoliday(now = new Date()) {
+  const { weekday, isoDate } = getShanghaiDateParts(now);
+  if (weekday === "Sat" || weekday === "Sun") return true;
+  const configured = String(process.env.GROWTH_HOLIDAY_DATES || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return configured.includes(isoDate);
+}
+
 function getSchedulerIntervalMinutes(now = new Date()) {
+  if (isWeekendOrHoliday(now)) return 60;
   const hour = getSchedulerHour(now);
   if (hour >= 17 && hour < 22) return 120;
   if (hour >= 22 || hour < 6) return 180;
@@ -56,6 +85,7 @@ function nextScheduledRunIso(now = new Date()) {
 
 function getSchedulerFrequencyLabel(now = new Date()) {
   const interval = getSchedulerIntervalMinutes(now);
+  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 1 小时一次";
   return `${interval / 60} 小时一次`;
 }
 
@@ -84,7 +114,7 @@ function resolveNextRunPlan(params: {
     return {
       burstMode: true,
       nextRunAt: nextRunIso(BURST_INTERVAL_MS),
-      frequencyLabel: "0.5 小时一次",
+      frequencyLabel: "20 分钟一次",
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
       burstEvent: "stay" as const,
     };
@@ -94,7 +124,7 @@ function resolveNextRunPlan(params: {
     return {
       burstMode: true,
       nextRunAt: nextRunIso(BURST_INTERVAL_MS),
-      frequencyLabel: "0.5 小时一次",
+      frequencyLabel: "20 分钟一次",
       burstStableRuns: 0,
       burstEvent: "enter" as const,
     };

@@ -467,6 +467,7 @@ export const appRouter = router({
           success: true,
           currentTotal: stats.totals.currentItems,
           historicalTotal: stats.totals.archivedItems,
+          coverage: stats.coverage,
           platforms: stats.platforms,
           buckets: stats.buckets,
           industries: stats.industries,

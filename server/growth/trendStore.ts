@@ -106,6 +106,17 @@ export type GrowthTrendStatsSummary = {
   references: {
     schedulerIntervals: Array<{ label: string; intervalHours: number }>;
     perPlatform: Partial<Record<GrowthPlatform, { min: number; max: number }>>;
+    lookbackWindows: number[];
+  };
+  coverage: {
+    selectedWindowDays: number;
+    reason: string;
+    windows: Array<{
+      days: number;
+      archivedItems: number;
+      archivedRuns: number;
+      activePlatforms: number;
+    }>;
   };
   platforms: TrendCollectionStatsSummary[];
   buckets: TrendBucketStatsSummary[];
@@ -121,7 +132,8 @@ const STORE_FILE = path.join(STORE_DIR, "current.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
-const RETENTION_DAYS = 60;
+const RETENTION_DAYS = 180;
+const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180];
 
 async function ensureStoreDir() {
   await fs.mkdir(STORE_DIR, { recursive: true });
@@ -205,8 +217,8 @@ function getBucketCounts(items: TrendItem[]) {
 
 function getReferenceRange(collection?: PlatformTrendCollection) {
   return {
-    min: collection?.stats.referenceMinItems || 0,
-    max: collection?.stats.referenceMaxItems || 0,
+    min: collection?.stats?.referenceMinItems || 0,
+    max: collection?.stats?.referenceMaxItems || 0,
   };
 }
 
@@ -566,6 +578,22 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const platforms = Array.from(platformMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
   const buckets = Array.from(bucketMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
   const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
+  const coverageWindows = LOOKBACK_WINDOWS.map((days) => {
+    const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
+    const entries = (store.archiveIndex || []).filter((item) => {
+      const time = new Date(item.archivedAt).getTime();
+      return Number.isFinite(time) && time >= threshold;
+    });
+    return {
+      days,
+      archivedItems: entries.reduce((sum, item) => sum + item.itemCount, 0),
+      archivedRuns: entries.length,
+      activePlatforms: new Set(entries.map((item) => item.platform)).size,
+    };
+  });
+  const selectedCoverage =
+    coverageWindows.find((window) => window.archivedItems >= Math.max(200, window.activePlatforms * 50)) ||
+    coverageWindows[coverageWindows.length - 1];
 
   return {
     updatedAt: store.updatedAt,
@@ -581,10 +609,13 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     },
     references: {
       schedulerIntervals: [
+        { label: "周末 / 节假日", intervalHours: 1 },
         { label: "17:00-22:00", intervalHours: 2 },
         { label: "22:00-06:00", intervalHours: 3 },
         { label: "06:00-17:00", intervalHours: 4 },
+        { label: "高波动 burst", intervalHours: 0.33 },
       ],
+      lookbackWindows: LOOKBACK_WINDOWS,
       perPlatform: Object.fromEntries(
         platforms.map((item) => [
           item.platform,
@@ -594,6 +625,14 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
           },
         ]),
       ) as Partial<Record<GrowthPlatform, { min: number; max: number }>>,
+    },
+    coverage: {
+      selectedWindowDays: selectedCoverage.days,
+      reason:
+        selectedCoverage.days === 30
+          ? "30 天窗口样本量已达到基础分析阈值，优先使用 30 天。"
+          : `${selectedCoverage.days} 天窗口被启用，因为 30 天窗口样本偏少，系统已自动扩展回翻周期。`,
+      windows: coverageWindows,
     },
     platforms,
     buckets,

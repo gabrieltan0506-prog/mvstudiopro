@@ -251,8 +251,8 @@ function buildTopicLibrary(
         platformLabel: PLATFORM_LABELS[platform],
         title: template.title,
         rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号，平台人群也更接近「${platformTemplate.audienceProfile}」`,
-        executionHint: `${template.executionHint} 平台处理规则：${platformTemplate.packagingRule}`,
-        commercialAngle: `${template.commercialAngle} ${platformTemplate.conversionRule} ${carryRule}`,
+        executionHint: `${template.executionHint} 平台处理规则：${platformTemplate.packagingRule} 标题建议：${platformTemplate.headlineStyle}`,
+        commercialAngle: `${template.commercialAngle} ${platformTemplate.conversionRule} 信任触发：${platformTemplate.trustTrigger}。${carryRule}`,
         confidence,
       } satisfies GrowthTopicLibraryItem;
     });
@@ -614,28 +614,28 @@ function buildPlatformRecommendations(
           ? `当前画面冲击力较强，适合先在高分发效率的平台验证强钩子和转化动作。${platformTemplate.contentPreference}`
           : `适合先测试更强开场，但需要把开头刺激和结果感再往前提。${platformTemplate.contentPreference}`,
         action: index === 0
-          ? `先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。${platformTemplate.actionRule}`
-          : `补一版更强标题和对比封面，再做第二轮测试。${platformTemplate.actionRule}`,
+          ? `先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`
+          : `补一版更强标题和对比封面，再做第二轮测试。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
       };
     }
     if (platform === "xiaohongshu") {
       return {
         name: PLATFORM_LABELS[platform],
         reason: `适合放大审美、方法感和可收藏的结构，尤其适合做拆解版和模板版。${platformTemplate.contentPreference}`,
-        action: `补一段创作思路或场景拆解，并强化封面主信息和收藏理由。${platformTemplate.actionRule}`,
+        action: `补一段创作思路或场景拆解，并强化封面主信息和收藏理由。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
       };
     }
     if (platform === "bilibili") {
       return {
         name: PLATFORM_LABELS[platform],
         reason: `适合承接完整叙事、幕后复盘和创作过程，更利于延长内容生命周期。${platformTemplate.contentPreference}`,
-        action: `把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。${platformTemplate.actionRule}`,
+        action: `把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
       };
     }
     return {
       name: snapshot?.displayName || PLATFORM_LABELS[platform as GrowthPlatform],
       reason: `适合作为次分发渠道，验证不同标题、封面和叙事强度的版本差异。${platformTemplate.contentPreference}`,
-      action: `保留核心卖点，输出一版平台适配文案后再投放。${platformTemplate.actionRule}`,
+      action: `保留核心卖点，输出一版平台适配文案后再投放。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
     };
   });
 }

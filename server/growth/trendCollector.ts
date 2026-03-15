@@ -68,6 +68,42 @@ const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; m
   xiaohongshu: { min: 20, max: 60 },
 };
 
+const DEFAULT_WINDOW_DAYS = 30;
+const WINDOW_FALLBACKS = [60, 90, 120, 180];
+const MIN_PLATFORM_ITEM_TARGET = 10_000;
+
+function parseNumberEnv(name: string, fallback: number) {
+  const value = Number(process.env[name] || fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function getTargetWindowDays() {
+  return Math.max(7, parseNumberEnv("GROWTH_TARGET_WINDOW_DAYS", DEFAULT_WINDOW_DAYS));
+}
+
+function getFallbackWindowDays() {
+  const configured = parseCsvEnv("GROWTH_WINDOW_FALLBACK_DAYS")
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > getTargetWindowDays() && item <= 180)
+    .sort((left, right) => left - right);
+  return configured.length ? configured : WINDOW_FALLBACKS;
+}
+
+function getWindowCandidates() {
+  return [getTargetWindowDays(), ...getFallbackWindowDays()];
+}
+
+function getMaxWindowDays() {
+  return getWindowCandidates().slice(-1)[0] || DEFAULT_WINDOW_DAYS;
+}
+
+function getPlatformTargetItemCount(platform: GrowthPlatform) {
+  return Math.max(
+    MIN_PLATFORM_ITEM_TARGET,
+    parseNumberEnv(`${platform.toUpperCase()}_TREND_MIN_ITEMS`, MIN_PLATFORM_ITEM_TARGET),
+  );
+}
+
 function parseChineseCount(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const raw = String(value ?? "").trim();
@@ -113,6 +149,34 @@ function getBucketCounts(items: TrendItem[]) {
   }, {});
 }
 
+function getAgeDays(iso?: string) {
+  if (!iso) return undefined;
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return undefined;
+  return Math.max(0, Math.floor((Date.now() - timestamp) / (24 * 60 * 60 * 1000)));
+}
+
+function getItemsWithinDays(items: TrendItem[], days: number) {
+  return items.filter((item) => {
+    const ageDays = getAgeDays(item.publishedAt);
+    return ageDays === undefined || ageDays <= days;
+  });
+}
+
+function resolveCollectionWindow(items: TrendItem[], referenceMinItems: number, platform: GrowthPlatform) {
+  const windows = getWindowCandidates().map((days) => ({
+    days,
+    count: getItemsWithinDays(items, days).length,
+  }));
+  const threshold = Math.max(referenceMinItems, Math.min(500, getPlatformTargetItemCount(platform)));
+  const preferred = windows.find((window) => window.count >= threshold) || windows[windows.length - 1];
+  return {
+    windowDays: preferred?.days || getTargetWindowDays(),
+    selectedCount: preferred?.count || items.length,
+    windows,
+  };
+}
+
 function finalizeCollection(
   platform: GrowthPlatform,
   source: TrendSource,
@@ -125,24 +189,36 @@ function finalizeCollection(
     bucket: normalizeTrendBucket(platform, item.bucket, item.contentType),
     ...classifyTrendItem(item),
   }));
+  const resolvedWindow = resolveCollectionWindow(
+    normalizedItems,
+    statsInput.referenceMinItems,
+    platform,
+  );
+  const windowFilteredItems = getItemsWithinDays(normalizedItems, resolvedWindow.windowDays);
   const uniqueAuthorCount = new Set(
-    normalizedItems.map((item) => String(item.author || "").trim()).filter(Boolean),
+    windowFilteredItems.map((item) => String(item.author || "").trim()).filter(Boolean),
   ).size;
+  const enrichedNotes = [
+    ...notes,
+    `Target lookback: ${getTargetWindowDays()} days; fallback windows: ${getFallbackWindowDays().join(", ")} days.`,
+    `Selected ${resolvedWindow.windowDays}-day window for ${platform}; sample counts by window: ${resolvedWindow.windows.map((item) => `${item.days}d=${item.count}`).join(", ")}.`,
+    `Target item floor for ${platform}: ${getPlatformTargetItemCount(platform)}.`,
+  ];
   return {
     platform,
     source,
     collectedAt: new Date().toISOString(),
-    windowDays: 30,
-    items: normalizedItems,
-    notes,
+    windowDays: resolvedWindow.windowDays,
+    items: windowFilteredItems,
+    notes: enrichedNotes,
     stats: {
       platform,
-      itemCount: normalizedItems.length,
+      itemCount: windowFilteredItems.length,
       uniqueAuthorCount,
-      bucketCounts: getBucketCounts(normalizedItems),
-      industryCounts: countLabels(normalizedItems, "industryLabels"),
-      ageCounts: countLabels(normalizedItems, "ageLabels"),
-      contentCounts: countLabels(normalizedItems, "contentLabels"),
+      bucketCounts: getBucketCounts(windowFilteredItems),
+      industryCounts: countLabels(windowFilteredItems, "industryLabels"),
+      ageCounts: countLabels(windowFilteredItems, "ageLabels"),
+      contentCounts: countLabels(windowFilteredItems, "contentLabels"),
       ...statsInput,
     },
   };
@@ -152,9 +228,9 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
-  const popularPages = Math.max(1, Math.min(5, Number(process.env.BILIBILI_TREND_PAGES || 3) || 3));
-  const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 20) || 20));
-  const authPageSize = Math.max(6, Math.min(30, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 10) || 10));
+  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 20) || 20));
+  const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
+  const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
 
   const pushBilibiliItem = (item: Record<string, any>) => {
     const title = String(item.title ?? "").trim();
@@ -215,7 +291,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     collectorMode: cookie ? "hybrid" : "public_feed",
     requestCount: popularPages + (cookie ? 1 : 0),
     pageDepth: popularPages,
-    targetPerRun: popularPages * popularPageSize + (cookie ? authPageSize : 0),
+    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0), getPlatformTargetItemCount("bilibili")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.bilibili?.min || 40,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.bilibili?.max || 80,
   });
@@ -224,7 +300,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
   if (cookie) {
-    const pageLimit = Math.max(1, Math.min(4, Number(process.env.DOUYIN_TREND_PAGES || 2) || 2));
+    const pageLimit = Math.max(1, Math.min(200, Number(process.env.DOUYIN_TREND_PAGES || 60) || 60));
     const pageSize = Math.max(8, Math.min(20, Number(process.env.DOUYIN_TREND_PAGE_SIZE || 12) || 12));
     const items: TrendItem[] = [];
     const notes: string[] = [];
@@ -298,7 +374,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
         collectorMode: "authenticated_feed",
         requestCount,
         pageDepth: requestCount,
-        targetPerRun: pageLimit * pageSize,
+    targetPerRun: Math.max(pageLimit * pageSize, getPlatformTargetItemCount("douyin")),
         referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
         referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
       });
@@ -330,7 +406,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     collectorMode: "hot_topics",
     requestCount: 1,
     pageDepth: 1,
-    targetPerRun: 20,
+    targetPerRun: Math.max(20, getPlatformTargetItemCount("douyin")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
   });
@@ -346,7 +422,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.fashion_v3",
     ];
-  const pageLimit = Math.max(1, Math.min(4, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
+  const pageLimit = Math.max(1, Math.min(20, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
@@ -397,7 +473,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     collectorMode: cookie ? "authenticated_feed" : "public_feed",
     requestCount: Math.min(pageLimit, explorePaths.length),
     pageDepth: Math.min(pageLimit, explorePaths.length),
-    targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length)),
+    targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length), getPlatformTargetItemCount("xiaohongshu")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.max || 60,
   });
@@ -407,8 +483,8 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.KUAISHOU_COOKIE || "").trim();
   const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
-  const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 12) || 12));
-  const publicPages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_TREND_PAGES || 2) || 2));
+  const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
+  const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
@@ -554,7 +630,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     collectorMode: cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
     requestCount: (cookie ? 1 : 0) + publicRequestCount,
     pageDepth: Math.max(cookie ? 1 : 0, publicPages),
-    targetPerRun: publicTargetCount + (cookie ? count : 0),
+    targetPerRun: Math.max(publicTargetCount + (cookie ? count : 0), getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
   });
