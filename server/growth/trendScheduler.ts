@@ -15,6 +15,7 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
+const BURST_INTERVAL_MS = 30 * 60 * 1000;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -54,6 +55,46 @@ function getSchedulerFrequencyLabel(now = new Date()) {
   return `${interval / 60} 小时一次`;
 }
 
+function isClearlyHigherThanPrevious(currentCount: number, previousCount: number) {
+  if (previousCount <= 0) return currentCount >= 12;
+  return currentCount >= previousCount + Math.max(5, Math.ceil(previousCount * 0.3));
+}
+
+function resolveNextRunPlan(params: {
+  currentCount: number;
+  previousCount: number;
+  burstMode: boolean;
+}) {
+  if (params.burstMode) {
+    if (params.currentCount < params.previousCount) {
+      return {
+        burstMode: false,
+        nextRunAt: nextScheduledRunIso(),
+        frequencyLabel: getSchedulerFrequencyLabel(),
+      };
+    }
+    return {
+      burstMode: true,
+      nextRunAt: nextRunIso(BURST_INTERVAL_MS),
+      frequencyLabel: "0.5 小时一次",
+    };
+  }
+
+  if (isClearlyHigherThanPrevious(params.currentCount, params.previousCount)) {
+    return {
+      burstMode: true,
+      nextRunAt: nextRunIso(BURST_INTERVAL_MS),
+      frequencyLabel: "0.5 小时一次",
+    };
+  }
+
+  return {
+    burstMode: false,
+    nextRunAt: nextScheduledRunIso(),
+    frequencyLabel: getSchedulerFrequencyLabel(),
+  };
+}
+
 function buildRetryDelayMs(failureCount: number) {
   return Math.min(60 * 60 * 1000, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
@@ -65,6 +106,7 @@ async function notifyCollectionUpdate(params: {
   mergedCount: number;
   collectedAt: string;
   nextRunAt: string;
+  frequencyLabel: string;
   live: boolean;
 }) {
   const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
@@ -84,7 +126,7 @@ async function notifyCollectionUpdate(params: {
       `本次合并数量：${params.mergedCount}\n` +
       `当前总样本数：${params.itemCount}\n` +
       `下次计划抓取：${params.nextRunAt}\n` +
-      `当前调度频率：${getSchedulerFrequencyLabel()}\n` +
+      `当前调度频率：${params.frequencyLabel}\n` +
       `是否真实 live：${params.live ? "是" : "否"}\n` +
       `总导出行数：${exported.rows}\n` +
       `清单：${exported.manifestPath}`,
@@ -107,7 +149,7 @@ async function notifyCollectionUpdate(params: {
       `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
       `<p><strong>当前总样本数：</strong>${params.itemCount}</p>` +
       `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +
-      `<p><strong>当前调度频率：</strong>${getSchedulerFrequencyLabel()}</p>` +
+      `<p><strong>当前调度频率：</strong>${params.frequencyLabel}</p>` +
       `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
       `<p><strong>总导出行数：</strong>${exported.rows}</p>` +
       (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
@@ -116,6 +158,8 @@ async function notifyCollectionUpdate(params: {
 
 async function runPlatform(platform: GrowthPlatform) {
   const startedAt = new Date().toISOString();
+  const startedAtMs = Date.now();
+  const currentState = (await readTrendSchedulerState())[platform];
   await updateTrendSchedulerState(platform, {
     lastRunAt: startedAt,
   });
@@ -124,11 +168,27 @@ async function runPlatform(platform: GrowthPlatform) {
     const collection = await collectPlatformTrends(platform);
     const mergedStore = await mergeTrendCollections({ [platform]: collection });
     const mergedCollection = mergedStore.collections[platform];
-    const nextRunAt = nextScheduledRunIso();
+    const currentCount = collection.stats?.itemCount || collection.items.length;
+    const previousCount = currentState?.lastCollectedCount || 0;
+    const plan = resolveNextRunPlan({
+      currentCount,
+      previousCount,
+      burstMode: Boolean(currentState?.burstMode),
+    });
     await updateTrendSchedulerState(platform, {
       lastSuccessAt: collection.collectedAt,
-      nextRunAt,
+      nextRunAt: plan.nextRunAt,
       failureCount: 0,
+      totalRuns: (currentState?.totalRuns || 0) + 1,
+      successCount: (currentState?.successCount || 0) + 1,
+      lastDurationMs: Date.now() - startedAtMs,
+      lastCollectedCount: currentCount,
+      lastAddedCount: mergedStore.mergeStats?.[platform]?.addedCount || 0,
+      lastMergedCount: mergedStore.mergeStats?.[platform]?.mergedCount || 0,
+      burstMode: plan.burstMode,
+      burstTriggeredAt: plan.burstMode
+        ? (currentState?.burstMode ? currentState?.burstTriggeredAt : collection.collectedAt)
+        : undefined,
       lastError: undefined,
     });
     if (collection.source === "live" && (mergedCollection?.items.length || 0) > 0) {
@@ -139,7 +199,8 @@ async function runPlatform(platform: GrowthPlatform) {
         addedCount: mergeStat?.addedCount || 0,
         mergedCount: mergeStat?.mergedCount || 0,
         collectedAt: collection.collectedAt,
-        nextRunAt,
+        nextRunAt: plan.nextRunAt,
+        frequencyLabel: plan.frequencyLabel,
         live: collection.source === "live",
       }).catch((error) => {
         console.warn(`[growth.scheduler] email notify skipped for ${platform}:`, error);
@@ -151,7 +212,12 @@ async function runPlatform(platform: GrowthPlatform) {
     const failureCount = (current?.failureCount || 0) + 1;
     await updateTrendSchedulerState(platform, {
       failureCount,
+      totalRuns: (current?.totalRuns || 0) + 1,
+      totalFailures: (current?.totalFailures || 0) + 1,
+      lastDurationMs: Date.now() - startedAtMs,
       lastError: message,
+      burstMode: false,
+      burstTriggeredAt: undefined,
       nextRunAt: nextRunIso(buildRetryDelayMs(failureCount)),
     });
     console.warn(`[growth.scheduler] ${platform} failed:`, message);

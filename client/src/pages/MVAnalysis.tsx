@@ -13,6 +13,7 @@ import type {
   GrowthPlanStep,
   GrowthPlatformRecommendation,
   GrowthSnapshot,
+  GrowthTopicLibraryItem,
 } from "@shared/growth";
 import {
   ArrowLeft,
@@ -53,7 +54,7 @@ type AnalysisResult = {
 };
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
-type InputKind = "image" | "document" | "video";
+type InputKind = "document" | "video";
 type DebugInfo = Record<string, unknown> | null;
 
 type CommercialTrack = {
@@ -110,6 +111,7 @@ type TrendTableRow = {
   topic: string;
   reason: string;
   action: string;
+  highlight?: string;
 };
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
@@ -393,36 +395,15 @@ function buildContentAnalysisRows(analysis: AnalysisResult): InsightTableRow[] {
 
 function buildTrendRows(
   growthSnapshot: GrowthSnapshot | null,
-  context: string,
-  platforms: GrowthPlatformRecommendation[],
+  _context: string,
+  _platforms: GrowthPlatformRecommendation[],
 ): TrendTableRow[] {
-  const lower = String(context || "").toLowerCase();
-  const isBeautyFashion = /美妆|穿搭|形象|妆|护肤|造型|时尚/.test(context);
-  const wantedKeywords = isBeautyFashion
-    ? ["穿搭", "妆", "护肤", "造型", "时尚", "审美", "运动穿搭", "网球穿搭", "防晒", "发型"]
-    : Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 6);
-  const allTopics = (growthSnapshot?.platformSnapshots || [])
-    .filter((item) => platforms.some((platform) => platform.name === item.displayName))
-    .flatMap((item) =>
-      item.sampleTopics.map((topic) => ({
-        platform: item.displayName,
-        topic,
-      })),
-    );
-
-  const relevant = allTopics.filter((item) => {
-    if (!wantedKeywords.length) return true;
-    const title = item.topic.toLowerCase();
-    return wantedKeywords.some((keyword) => title.includes(keyword.toLowerCase())) || lower.includes(title);
-  });
-
-  return relevant.slice(0, 4).map((item) => ({
-    platform: item.platform,
-    topic: compactText(item.topic, 28),
-    reason: isBeautyFashion
-      ? "优先保留和穿搭、妆容、审美、运动场景相关的话题，避免无关热点稀释定位。"
-      : "只保留和你当前受众、场景、成交目标相关的话题。",
-    action: `把这个话题改写成 ${item.platform} 可发布的标题与封面，不直接照搬热点。`,
+  return (growthSnapshot?.topicLibrary || []).slice(0, 6).map((item: GrowthTopicLibraryItem) => ({
+    platform: item.platformLabel,
+    topic: compactText(item.title, 30),
+    reason: compactText(item.rationale, 72),
+    action: compactText(item.executionHint, 72),
+    highlight: compactText(item.commercialAngle, 60),
   }));
 }
 
@@ -579,7 +560,6 @@ export default function MVAnalysisPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
 
-  const analyzeMutation = trpc.mvAnalysis.analyzeFrame.useMutation();
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
   const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -651,7 +631,6 @@ export default function MVAnalysisPage() {
     const file = e.target?.files?.[0];
     if (!file) return;
 
-    const isImage = file.type.startsWith("image/");
     const isVideo = file.type.startsWith("video/");
     const isDocument =
       file.type === "application/pdf" ||
@@ -659,15 +638,15 @@ export default function MVAnalysisPage() {
       /\.pdf$/i.test(file.name) ||
       /\.docx$/i.test(file.name);
 
-    if (!isImage && !isVideo && !isDocument) {
-      setError("请上传图片、Word、PDF 或 MP4 文件");
+    if (!isVideo && !isDocument) {
+      setError("请上传图文档案（Word、PDF）或 MP4 视频文件");
       return;
     }
 
     setFileName(file.name);
     setFileSize(file.size);
     setFileMimeType(file.type || "");
-    setInputKind(isImage ? "image" : isVideo ? "video" : "document");
+    setInputKind(isVideo ? "video" : "document");
     setUploadStage("reading");
     setUploadProgress(0);
     setError(null);
@@ -682,13 +661,6 @@ export default function MVAnalysisPage() {
       try {
         const dataUrl = await readFileAsDataUrl(file);
         setFileBase64(dataUrl.split(",")[1] || "");
-
-        if (isImage) {
-          setPreviewUrl(dataUrl);
-          setUploadStage("idle");
-          setUploadProgress(100);
-          return;
-        }
 
         if (isDocument) {
           setUploadStage("idle");
@@ -760,13 +732,7 @@ export default function MVAnalysisPage() {
     setEstimatedTime(Math.max(12, Math.round(fileSize / (1024 * 1024) * 1.5 + 12)));
 
     try {
-      const result = inputKind === "image"
-        ? await analyzeMutation.mutateAsync({
-            imageBase64: fileBase64,
-            mimeType: fileMimeType || "image/jpeg",
-            context: context || undefined,
-          })
-        : inputKind === "document"
+      const result = inputKind === "document"
           ? await analyzeDocumentMutation.mutateAsync({
               fileBase64,
               mimeType: fileMimeType || "application/octet-stream",
@@ -796,7 +762,7 @@ export default function MVAnalysisPage() {
       setError(analysisError.message || "分析失败，请稍后再试");
       setUploadStage("error");
     }
-  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeMutation, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, usageStatsQuery]);
+  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -1006,7 +972,7 @@ export default function MVAnalysisPage() {
                   </div>
                   <div className="mt-5 text-2xl font-bold">上傳圖文檔案或視頻素材</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    支援圖片、Word、PDF、MP4。上傳後會直接幫你找出內容賣點、轉化缺口與可放大的商業方向，讓分析結果值得你採用。
+                    支援 Word、PDF、MP4。上傳後會直接幫你找出內容賣點、轉化缺口與可放大的商業方向，讓分析結果值得你採用。
                   </p>
                 </button>
               ) : (
@@ -1051,7 +1017,7 @@ export default function MVAnalysisPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,.docx,application/pdf,video/mp4"
+                accept=".docx,application/pdf,video/mp4"
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -1158,6 +1124,9 @@ export default function MVAnalysisPage() {
                         <div>{String(item.platform)} last success: {String(item.lastSuccessAt || "-")}</div>
                         <div>{String(item.platform)} next run: {String(item.nextRunAt || "-")}</div>
                         <div>{String(item.platform)} failures: {String(item.failureCount ?? 0)}</div>
+                        <div>{String(item.platform)} burst mode: {String(item.burstMode ?? false)}</div>
+                        <div>{String(item.platform)} last count: {String(item.lastCollectedCount ?? 0)}</div>
+                        <div>{String(item.platform)} burst since: {String(item.burstTriggeredAt || "-")}</div>
                         <div>{String(item.platform)} error: {String(item.lastError || "-")}</div>
                       </div>
                     ))}
@@ -1352,6 +1321,7 @@ export default function MVAnalysisPage() {
                                   <td className="px-4 py-4 text-[#9dd0ff]">{row.topic}</td>
                                   <td className="px-4 py-4">{row.reason}</td>
                                   <td className="px-4 py-4 text-white/65">{row.action}</td>
+                                  <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
                                 </tr>
                               ))}
                             </tbody>

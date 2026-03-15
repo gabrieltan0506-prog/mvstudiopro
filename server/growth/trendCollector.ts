@@ -22,6 +22,19 @@ export type TrendItem = {
   tags?: string[];
 };
 
+export type TrendCollectionStats = {
+  platform: GrowthPlatform;
+  itemCount: number;
+  uniqueAuthorCount: number;
+  bucketCounts: Record<string, number>;
+  requestCount: number;
+  pageDepth: number;
+  targetPerRun: number;
+  referenceMinItems: number;
+  referenceMaxItems: number;
+  collectorMode: "authenticated_feed" | "public_feed" | "hot_topics" | "hybrid" | "seed";
+};
+
 export type PlatformTrendCollection = {
   platform: GrowthPlatform;
   source: TrendSource;
@@ -29,6 +42,23 @@ export type PlatformTrendCollection = {
   windowDays: number;
   items: TrendItem[];
   notes: string[];
+  stats: TrendCollectionStats;
+};
+
+const PLATFORM_BUCKET_DEFAULTS: Partial<Record<GrowthPlatform, string>> = {
+  douyin: "douyin_feed",
+  kuaishou: "kuaishou_feed",
+  bilibili: "bilibili_feed",
+  xiaohongshu: "xiaohongshu_feed",
+  weixin_channels: "weixin_channels_feed",
+  toutiao: "toutiao_feed",
+};
+
+const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; max: number }>> = {
+  douyin: { min: 12, max: 30 },
+  kuaishou: { min: 12, max: 36 },
+  bilibili: { min: 40, max: 80 },
+  xiaohongshu: { min: 20, max: 60 },
 };
 
 function parseChineseCount(value: unknown): number | undefined {
@@ -61,10 +91,59 @@ function parseCsvEnv(name: string) {
     .filter(Boolean);
 }
 
+function normalizeTrendBucket(platform: GrowthPlatform, bucket?: string, contentType?: TrendItem["contentType"]) {
+  const raw = String(bucket || "").trim();
+  if (raw) return raw;
+  if (platform === "douyin" && contentType === "topic") return "douyin_topics";
+  return PLATFORM_BUCKET_DEFAULTS[platform] || `${platform}_${contentType || "feed"}`;
+}
+
+function getBucketCounts(items: TrendItem[]) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
+    acc[bucket] = (acc[bucket] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function finalizeCollection(
+  platform: GrowthPlatform,
+  source: TrendSource,
+  items: TrendItem[],
+  notes: string[],
+  statsInput: Omit<TrendCollectionStats, "platform" | "itemCount" | "uniqueAuthorCount" | "bucketCounts">,
+): PlatformTrendCollection {
+  const normalizedItems = items.map((item) => ({
+    ...item,
+    bucket: normalizeTrendBucket(platform, item.bucket, item.contentType),
+  }));
+  const uniqueAuthorCount = new Set(
+    normalizedItems.map((item) => String(item.author || "").trim()).filter(Boolean),
+  ).size;
+  return {
+    platform,
+    source,
+    collectedAt: new Date().toISOString(),
+    windowDays: 30,
+    items: normalizedItems,
+    notes,
+    stats: {
+      platform,
+      itemCount: normalizedItems.length,
+      uniqueAuthorCount,
+      bucketCounts: getBucketCounts(normalizedItems),
+      ...statsInput,
+    },
+  };
+}
+
 async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
+  const popularPages = Math.max(1, Math.min(5, Number(process.env.BILIBILI_TREND_PAGES || 3) || 3));
+  const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 20) || 20));
+  const authPageSize = Math.max(6, Math.min(30, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 10) || 10));
 
   const pushBilibiliItem = (item: Record<string, any>) => {
     const title = String(item.title ?? "").trim();
@@ -87,7 +166,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   };
 
   if (cookie) {
-    const response = await fetch("https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=10&fresh_type=4&fresh_idx=1&fresh_idx_1h=1", {
+    const response = await fetch(`https://api.bilibili.com/x/web-interface/index/top/feed/rcmd?ps=${authPageSize}&fresh_type=4&fresh_idx=1&fresh_idx_1h=1`, {
       headers: {
         accept: "application/json,text/plain,*/*",
         cookie,
@@ -106,8 +185,8 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     notes.push(`Fetched ${list.length} authenticated Bilibili recommended videos.`);
   }
 
-  for (const page of [1, 2, 3]) {
-    const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=20`, {
+  for (const page of Array.from({ length: popularPages }, (_, index) => index + 1)) {
+    const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=${popularPageSize}`, {
       headers: { "user-agent": "mvstudiopro-growth-collector/1.0" },
     });
     if (!response.ok) {
@@ -121,14 +200,14 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   }
 
   notes.push(`Fetched ${items.length} total Bilibili videos after merging popular and authenticated feed.`);
-  return {
-    platform: "bilibili",
-    source: "live",
-    collectedAt: new Date().toISOString(),
-    windowDays: 30,
-    items,
-    notes,
-  };
+  return finalizeCollection("bilibili", "live", items, notes, {
+    collectorMode: cookie ? "hybrid" : "public_feed",
+    requestCount: popularPages + (cookie ? 1 : 0),
+    pageDepth: popularPages,
+    targetPerRun: popularPages * popularPageSize + (cookie ? authPageSize : 0),
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.bilibili?.min || 40,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.bilibili?.max || 80,
+  });
 }
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
@@ -185,17 +264,17 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       .filter(Boolean) as TrendItem[];
 
     if (items.length) {
-      return {
-        platform: "douyin",
-        source: "live",
-        collectedAt: new Date().toISOString(),
-        windowDays: 30,
-        items,
-        notes: [
-          `Fetched ${items.length} Douyin authenticated feed videos.`,
-          `Douyin has_more: ${payload.has_more ?? 0}`,
-        ],
-      };
+      return finalizeCollection("douyin", "live", items, [
+        `Fetched ${items.length} Douyin authenticated feed videos.`,
+        `Douyin has_more: ${payload.has_more ?? 0}`,
+      ], {
+        collectorMode: "authenticated_feed",
+        requestCount: 1,
+        pageDepth: 1,
+        targetPerRun: Math.max(items.length, 12),
+        referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
+        referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
+      });
     }
   }
 
@@ -220,14 +299,14 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     tags: [String(item.word_type ?? "").trim()].filter(Boolean),
   }));
 
-  return {
-    platform: "douyin",
-    source: "live",
-    collectedAt: new Date().toISOString(),
-    windowDays: 30,
-    items,
-    notes: [`Fetched ${items.length} Douyin hot search topics.`],
-  };
+  return finalizeCollection("douyin", "live", items, [`Fetched ${items.length} Douyin hot search topics.`], {
+    collectorMode: "hot_topics",
+    requestCount: 1,
+    pageDepth: 1,
+    targetPerRun: 20,
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
+  });
 }
 
 async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
@@ -271,16 +350,16 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     })
     .filter(Boolean) as TrendItem[];
 
-  return {
-    platform: "xiaohongshu",
-    source: "live",
-    collectedAt: new Date().toISOString(),
-    windowDays: 30,
-    items,
-    notes: [
-      `Fetched ${items.length} Xiaohongshu explore notes${cookie ? " with authenticated cookie" : ""}.`,
-    ],
-  };
+  return finalizeCollection("xiaohongshu", "live", items, [
+    `Fetched ${items.length} Xiaohongshu explore notes${cookie ? " with authenticated cookie" : ""}.`,
+  ], {
+    collectorMode: cookie ? "authenticated_feed" : "public_feed",
+    requestCount: 1,
+    pageDepth: 1,
+    targetPerRun: Math.max(items.length, 20),
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.min || 20,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.max || 60,
+  });
 }
 
 async function collectKuaishou(): Promise<PlatformTrendCollection> {
@@ -420,14 +499,14 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     throw new Error("Kuaishou collector returned 0 items. 请配置 KUAISHOU_COOKIE 或 KUAISHOU_TREND_PRINCIPALS。");
   }
 
-  return {
-    platform: "kuaishou",
-    source: "live",
-    collectedAt: new Date().toISOString(),
-    windowDays: 30,
-    items,
-    notes,
-  };
+  return finalizeCollection("kuaishou", "live", items, notes, {
+    collectorMode: cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
+    requestCount: (cookie ? 1 : 0) + principals.length,
+    pageDepth: Math.max(1, principals.length),
+    targetPerRun: count * Math.max(1, principals.length) + (cookie ? count : 0),
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
+  });
 }
 
 export async function collectPlatformTrends(platform: GrowthPlatform): Promise<PlatformTrendCollection> {
@@ -441,14 +520,14 @@ export async function collectPlatformTrends(platform: GrowthPlatform): Promise<P
     case "xiaohongshu":
       return collectXiaohongshu();
     default:
-      return {
-        platform,
-        source: "seed",
-        collectedAt: new Date().toISOString(),
-        windowDays: 30,
-        items: [],
-        notes: [`No live collector configured for ${platform}.`],
-      };
+      return finalizeCollection(platform, "seed", [], [`No live collector configured for ${platform}.`], {
+        collectorMode: "seed",
+        requestCount: 0,
+        pageDepth: 0,
+        targetPerRun: 0,
+        referenceMinItems: 0,
+        referenceMaxItems: 0,
+      });
   }
 }
 

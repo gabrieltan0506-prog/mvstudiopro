@@ -9,16 +9,31 @@ export type TrendSchedulerState = {
   lastSuccessAt?: string;
   nextRunAt?: string;
   failureCount: number;
+  totalRuns?: number;
+  totalFailures?: number;
+  successCount?: number;
+  lastDurationMs?: number;
+  lastCollectedCount?: number;
+  lastAddedCount?: number;
+  lastMergedCount?: number;
+  burstMode?: boolean;
+  burstTriggeredAt?: string;
   lastError?: string;
 };
 
 export type TrendArchiveEntry = {
   platform: GrowthPlatform;
   bucket: string;
+  bucketCounts: Record<string, number>;
   archivedAt: string;
   source: PlatformTrendCollection["source"];
   itemCount: number;
   dedupedCount: number;
+  requestCount?: number;
+  pageDepth?: number;
+  targetPerRun?: number;
+  referenceMinItems?: number;
+  referenceMaxItems?: number;
   file: string;
 };
 
@@ -40,6 +55,48 @@ type TrendStoreFile = {
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   archiveIndex: TrendArchiveEntry[];
+};
+
+export type TrendCollectionStatsSummary = {
+  platform: GrowthPlatform;
+  source?: PlatformTrendCollection["source"];
+  currentTotal: number;
+  lastCollectedAt?: string;
+  singleRunCount: number;
+  singleRunTarget: number;
+  pageDepth: number;
+  requestCount: number;
+  uniqueAuthors: number;
+  archivedRuns: number;
+  archivedItems: number;
+  referenceMinItems: number;
+  referenceMaxItems: number;
+  bucketCounts: Record<string, number>;
+};
+
+export type TrendBucketStatsSummary = {
+  bucket: string;
+  currentTotal: number;
+  archivedItems: number;
+  archivedRuns: number;
+};
+
+export type GrowthTrendStatsSummary = {
+  updatedAt: string;
+  totals: {
+    currentItems: number;
+    currentPlatforms: number;
+    archiveRuns: number;
+    archivedItems: number;
+    schedulerTrackedPlatforms: number;
+  };
+  references: {
+    schedulerIntervals: Array<{ label: string; intervalHours: number }>;
+    perPlatform: Partial<Record<GrowthPlatform, { min: number; max: number }>>;
+  };
+  platforms: TrendCollectionStatsSummary[];
+  buckets: TrendBucketStatsSummary[];
+  scheduler: Array<TrendSchedulerState>;
 };
 
 const LEGACY_STORE_FILE = path.resolve(process.cwd(), ".cache", "growth-trends.json");
@@ -130,6 +187,13 @@ function getBucketCounts(items: TrendItem[]) {
   }, {});
 }
 
+function getReferenceRange(collection?: PlatformTrendCollection) {
+  return {
+    min: collection?.stats.referenceMinItems || 0,
+    max: collection?.stats.referenceMaxItems || 0,
+  };
+}
+
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
   try {
     const raw = await fs.readFile(filePath, "utf8");
@@ -138,7 +202,10 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
       updatedAt: parsed.updatedAt || new Date(0).toISOString(),
       collections: parsed.collections || {},
       scheduler: parsed.scheduler || {},
-      archiveIndex: parsed.archiveIndex || [],
+      archiveIndex: (parsed.archiveIndex || []).map((entry) => ({
+        ...entry,
+        bucketCounts: entry.bucketCounts || {},
+      })),
     };
   } catch {
     return null;
@@ -268,7 +335,8 @@ async function archiveCollection(
 ): Promise<TrendArchiveEntry> {
   await ensureStoreDir();
   const datePrefix = collection.collectedAt.slice(0, 10);
-  const bucket = Object.keys(getBucketCounts(collection.items)).sort().join("+") || "default";
+  const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
+  const bucket = Object.keys(bucketCounts).sort().join("+") || "default";
   const fileName = `${platform}-${bucket}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
   const absoluteFile = path.join(ARCHIVE_DIR, datePrefix, fileName);
   await fs.mkdir(path.dirname(absoluteFile), { recursive: true });
@@ -276,10 +344,16 @@ async function archiveCollection(
   return {
     platform,
     bucket,
+    bucketCounts,
     archivedAt: collection.collectedAt,
     source: collection.source,
     itemCount: collection.items.length,
     dedupedCount,
+    requestCount: collection.stats?.requestCount,
+    pageDepth: collection.stats?.pageDepth,
+    targetPerRun: collection.stats?.targetPerRun,
+    referenceMinItems: collection.stats?.referenceMinItems,
+    referenceMaxItems: collection.stats?.referenceMaxItems,
     file: absoluteFile,
   };
 }
@@ -353,6 +427,114 @@ export async function updateTrendSchedulerState(
 export async function readTrendSchedulerState() {
   const store = await readTrendStore();
   return store.scheduler;
+}
+
+export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
+  const store = await readTrendStore();
+  const platformMap = new Map<GrowthPlatform, TrendCollectionStatsSummary>();
+  const bucketMap = new Map<string, TrendBucketStatsSummary>();
+
+  for (const collection of Object.values(store.collections)) {
+    if (!collection) continue;
+    const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
+    const reference = getReferenceRange(collection);
+    platformMap.set(collection.platform, {
+      platform: collection.platform,
+      source: collection.source,
+      currentTotal: collection.items.length,
+      lastCollectedAt: collection.collectedAt,
+      singleRunCount: collection.stats?.itemCount || collection.items.length,
+      singleRunTarget: collection.stats?.targetPerRun || collection.items.length,
+      pageDepth: collection.stats?.pageDepth || 0,
+      requestCount: collection.stats?.requestCount || 0,
+      uniqueAuthors: collection.stats?.uniqueAuthorCount || 0,
+      archivedRuns: 0,
+      archivedItems: 0,
+      referenceMinItems: reference.min,
+      referenceMaxItems: reference.max,
+      bucketCounts,
+    });
+
+    for (const [bucket, count] of Object.entries(bucketCounts)) {
+      const current = bucketMap.get(bucket) || {
+        bucket,
+        currentTotal: 0,
+        archivedItems: 0,
+        archivedRuns: 0,
+      };
+      current.currentTotal += count;
+      bucketMap.set(bucket, current);
+    }
+  }
+
+  for (const entry of store.archiveIndex || []) {
+    const platformStats = platformMap.get(entry.platform) || {
+      platform: entry.platform,
+      currentTotal: 0,
+      source: entry.source,
+      singleRunCount: 0,
+      singleRunTarget: entry.targetPerRun || 0,
+      pageDepth: entry.pageDepth || 0,
+      requestCount: entry.requestCount || 0,
+      uniqueAuthors: 0,
+      archivedRuns: 0,
+      archivedItems: 0,
+      referenceMinItems: entry.referenceMinItems || 0,
+      referenceMaxItems: entry.referenceMaxItems || 0,
+      bucketCounts: {},
+    };
+    platformStats.archivedRuns += 1;
+    platformStats.archivedItems += entry.itemCount;
+    platformStats.referenceMinItems ||= entry.referenceMinItems || 0;
+    platformStats.referenceMaxItems ||= entry.referenceMaxItems || 0;
+    platformMap.set(entry.platform, platformStats);
+
+    for (const [bucket, count] of Object.entries(entry.bucketCounts || {})) {
+      const current = bucketMap.get(bucket) || {
+        bucket,
+        currentTotal: 0,
+        archivedItems: 0,
+        archivedRuns: 0,
+      };
+      current.archivedItems += count;
+      current.archivedRuns += 1;
+      bucketMap.set(bucket, current);
+    }
+  }
+
+  const platforms = Array.from(platformMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
+  const buckets = Array.from(bucketMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
+  const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
+
+  return {
+    updatedAt: store.updatedAt,
+    totals: {
+      currentItems: platforms.reduce((sum, item) => sum + item.currentTotal, 0),
+      currentPlatforms: platforms.filter((item) => item.currentTotal > 0).length,
+      archiveRuns: (store.archiveIndex || []).length,
+      archivedItems: (store.archiveIndex || []).reduce((sum, item) => sum + item.itemCount, 0),
+      schedulerTrackedPlatforms: scheduler.length,
+    },
+    references: {
+      schedulerIntervals: [
+        { label: "17:00-22:00", intervalHours: 2 },
+        { label: "22:00-06:00", intervalHours: 3 },
+        { label: "06:00-17:00", intervalHours: 4 },
+      ],
+      perPlatform: Object.fromEntries(
+        platforms.map((item) => [
+          item.platform,
+          {
+            min: item.referenceMinItems,
+            max: item.referenceMaxItems,
+          },
+        ]),
+      ) as Partial<Record<GrowthPlatform, { min: number; max: number }>>,
+    },
+    platforms,
+    buckets,
+    scheduler,
+  };
 }
 
 export async function exportTrendCollectionsCsv() {

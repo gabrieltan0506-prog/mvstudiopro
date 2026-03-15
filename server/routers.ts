@@ -26,7 +26,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -452,8 +452,20 @@ export const appRouter = router({
             lastSuccessAt: item?.lastSuccessAt,
             nextRunAt: item?.nextRunAt,
             failureCount: item?.failureCount ?? 0,
+            burstMode: item?.burstMode ?? false,
+            burstTriggeredAt: item?.burstTriggeredAt,
+            lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastError: item?.lastError,
           })),
+        };
+      }),
+
+    getGrowthTrendStats: publicProcedure
+      .query(async () => {
+        const stats = await getGrowthTrendStats();
+        return {
+          success: true,
+          stats,
         };
       }),
 

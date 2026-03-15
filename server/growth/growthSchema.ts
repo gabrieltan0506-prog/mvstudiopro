@@ -7,6 +7,7 @@ import {
   type GrowthPlatformSnapshot,
   type GrowthPlanStep,
   type GrowthSnapshot,
+  type GrowthTopicLibraryItem,
   growthSnapshotSchema,
 } from "@shared/growth";
 import type { PlatformTrendCollection } from "./trendCollector";
@@ -52,17 +53,210 @@ function isBeautyFashionContext(text: string) {
   return /美妆|穿搭|形象|妆|护肤|造型|时尚/.test(text);
 }
 
+function extractContextKeywords(context: string) {
+  return Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 10);
+}
+
 function filterRelevantTopics(topics: string[], context: string) {
   const text = String(context || "").trim();
   if (!text) return topics.slice(0, 3);
   const beautyKeywords = ["穿搭", "妆", "护肤", "造型", "时尚", "审美", "运动穿搭", "网球穿搭", "防晒", "发型"];
   const wanted = isBeautyFashionContext(text)
     ? beautyKeywords
-    : Array.from(new Set(text.match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 6);
+    : extractContextKeywords(text).slice(0, 6);
   const relevant = topics.filter((topic) =>
     wanted.some((keyword) => String(topic).toLowerCase().includes(keyword.toLowerCase())),
   );
   return (relevant.length ? relevant : topics).slice(0, 3);
+}
+
+function inferCommercialIntent(context: string) {
+  if (/课程|教学|知识|教程|陪跑|训练营/.test(context)) return "课程 / 服务转化";
+  if (/商品|带货|橱窗|单品|电商/.test(context)) return "产品转化";
+  if (/品牌|招商|合作|案例页/.test(context)) return "品牌合作";
+  if (/咨询|顾问|预约|私信/.test(context)) return "咨询预约";
+  if (/社群|会员|社群运营|私域/.test(context)) return "社群承接";
+  return "内容放大后的商业承接";
+}
+
+function inferAudienceArchetype(context: string) {
+  if (isBeautyFashionContext(context)) return "美妆 / 穿搭 / 形象受众";
+  if (/教育|老师|知识|课程|咨询/.test(context)) return "愿意为方法和结果付费的知识型受众";
+  if (/品牌|创业|老板|客户/.test(context)) return "关心案例和商业结果的决策人";
+  return "与你当前内容主题高度相关的精准受众";
+}
+
+function buildBeautyFashionTopicTemplates(context: string) {
+  const intent = inferCommercialIntent(context);
+  const audience = inferAudienceArchetype(context);
+  return [
+    {
+      key: "sports_makeup",
+      matchers: ["网球", "比赛", "运动", "赛场", "发型", "防晒", "妆", "穿搭"],
+      title: "把运动赛场拆成可复制的妆容与穿搭方案",
+      rationale: `你的素材里有运动场景、人物状态和审美元素，这类内容对 ${audience} 的相关度远高于泛热点。`,
+      executionHint: "用“赛场场景 + 妆容细节 + 穿搭解决方案”三段写法，不讲比赛输赢，讲用户能拿走什么。",
+      commercialAngle: `${intent} 可优先落到防晒、持妆、功能护肤、运动穿搭或造型服务。`,
+    },
+    {
+      key: "tennis_style",
+      matchers: ["网球", "比赛", "球员", "穿搭", "造型", "时尚"],
+      title: "把网球风格改写成日常可执行的形象模板",
+      rationale: "赛场素材天然带有风格识别度，适合改写成普通人也能照着做的形象方案。",
+      executionHint: "直接输出“什么人适合、怎么穿、怎么避坑”，不要停留在赛事解说。",
+      commercialAngle: `${intent} 可承接运动服饰、配件、美妆、防晒和形象咨询。`,
+    },
+    {
+      key: "sun_protection",
+      matchers: ["防晒", "户外", "赛场", "阳光", "汗", "持妆"],
+      title: "从高强度户外场景切入防晒与持妆痛点",
+      rationale: "户外运动画面天然强化了出汗、暴晒、脱妆这些真实痛点，比空讲产品更容易建立信任。",
+      executionHint: "先抛一个具体痛点，再给一套防晒 / 底妆 / 补妆组合建议。",
+      commercialAngle: `${intent} 更适合功能护肤、防晒、底妆和随身补妆产品。`,
+    },
+    {
+      key: "body_language",
+      matchers: ["表情", "镜头", "气质", "姿态", "近景", "特写"],
+      title: "把镜头里的气质、姿态和表情管理拆成形象表达课",
+      rationale: "人物表情和动作能直接转成形象管理内容，这比泛泛谈审美更有可执行性。",
+      executionHint: "用“镜头里哪里有效 / 为什么 / 普通人怎么借用”来写，不要长篇主观感受。",
+      commercialAngle: `${intent} 可延展到形象咨询、课程、训练营或高客单服务。`,
+    },
+  ];
+}
+
+function buildGenericTopicTemplates(context: string) {
+  const keywords = extractContextKeywords(context);
+  const intent = inferCommercialIntent(context);
+  const audience = inferAudienceArchetype(context);
+  const head = keywords[0] || "当前主题";
+  return [
+    {
+      key: "pain_solution",
+      matchers: keywords,
+      title: `围绕「${head}」做痛点到方案的直接表达`,
+      rationale: `这类话题更容易让 ${audience} 立刻理解内容价值，而不是被无关热点分散注意力。`,
+      executionHint: "先点出用户最痛的问题，再给一套可执行方案，结尾只保留一个动作。",
+      commercialAngle: `${intent} 要用单一路径承接，不要同时推多个方向。`,
+    },
+    {
+      key: "case_breakdown",
+      matchers: keywords,
+      title: `把「${head}」讲成案例拆解，而不是泛分享`,
+      rationale: "案例化表达更容易同时建立可信度和成交意图。",
+      executionHint: "按“结果 -> 关键步骤 -> 常见误区”组织，不再平铺过程。",
+      commercialAngle: `${intent} 更适合接咨询、课程、服务或案例转化。`,
+    },
+  ];
+}
+
+function scoreTopicTemplate(
+  template: { matchers: string[] },
+  titles: string[],
+  contextKeywords: string[],
+) {
+  const titleHits = titles.reduce((sum, title) => (
+    sum + (template.matchers.some((matcher) => matcher && title.includes(matcher)) ? 1 : 0)
+  ), 0);
+  const contextHits = contextKeywords.reduce((sum, keyword) => (
+    sum + (template.matchers.some((matcher) => matcher && matcher.includes(keyword)) || template.matchers.includes(keyword) ? 1 : 0)
+  ), 0);
+  return titleHits * 16 + contextHits * 10;
+}
+
+function countKeywordHits(values: string[], keywords: string[]) {
+  return values.reduce((sum, value) => (
+    sum + keywords.reduce((matched, keyword) => matched + (keyword && value.includes(keyword) ? 1 : 0), 0)
+  ), 0);
+}
+
+function buildPlatformSignalCluster(collection?: PlatformTrendCollection) {
+  const contentItems = (collection?.items || []).filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+  const topicItems = (collection?.items || []).filter((item) => item.bucket === "douyin_topics" || item.contentType === "topic");
+  const tags = contentItems.flatMap((item) => item.tags || []).filter(Boolean);
+  const avgLikes = contentItems.length
+    ? contentItems.reduce((sum, item) => sum + (item.likes || item.hotValue || 0), 0) / contentItems.length
+    : 0;
+  const avgComments = contentItems.length
+    ? contentItems.reduce((sum, item) => sum + (item.comments || 0), 0) / contentItems.length
+    : 0;
+  const avgShares = contentItems.length
+    ? contentItems.reduce((sum, item) => sum + (item.shares || 0), 0) / contentItems.length
+    : 0;
+
+  const signalLabel =
+    topicItems.length > contentItems.length * 0.5 ? "热点牵引" :
+    avgShares > avgComments * 1.3 && avgShares > 0 ? "扩散传播" :
+    avgComments > avgLikes * 0.08 && avgComments > 0 ? "讨论互动" :
+    "稳定内容";
+
+  return {
+    label: signalLabel,
+    keywords: Array.from(new Set(tags)).slice(0, 8),
+    contentRatio: contentItems.length / Math.max(contentItems.length + topicItems.length, 1),
+  };
+}
+
+function inferCarryRule(collection?: PlatformTrendCollection) {
+  if (!collection?.items.length) return "默认承接到单一 CTA，不要同时挂多个转化动作。";
+  const avgComments = collection.items.reduce((sum, item) => sum + (item.comments || 0), 0) / Math.max(collection.items.length, 1);
+  const avgShares = collection.items.reduce((sum, item) => sum + (item.shares || 0), 0) / Math.max(collection.items.length, 1);
+  const avgLikes = collection.items.reduce((sum, item) => sum + (item.likes || 0), 0) / Math.max(collection.items.length, 1);
+
+  if (avgComments >= Math.max(avgShares, 1) * 1.1) {
+    return "优先引导评论区或私信互动承接，再做后续服务转化。";
+  }
+  if (avgShares >= Math.max(avgComments, 1) * 1.2) {
+    return "更适合把案例、结果和服务页放在主承接位，放大转发扩散。";
+  }
+  if (avgLikes >= Math.max(avgComments + avgShares, 1) * 2) {
+    return "更适合用模板、清单或可领取资料做轻承接，不要过早重销售。";
+  }
+  return "默认承接到单一 CTA，不要同时挂多个转化动作。";
+}
+
+function buildTopicLibrary(
+  requestedPlatforms: GrowthPlatform[],
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+  context: string,
+): GrowthTopicLibraryItem[] {
+  const contextKeywords = extractContextKeywords(context);
+  const templates = isBeautyFashionContext(context)
+    ? buildBeautyFashionTopicTemplates(context)
+    : buildGenericTopicTemplates(context);
+
+  const platformPriority: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["xiaohongshu", "douyin", "bilibili"];
+
+  const library = platformPriority.flatMap((platform) => {
+    const collection = collections[platform];
+    const titles = (collections[platform]?.items || [])
+      .filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic")
+      .map((item) => item.title);
+    const signalCluster = buildPlatformSignalCluster(collection);
+    const carryRule = inferCarryRule(collection);
+
+    return templates.map((template, index) => {
+      const score = scoreTopicTemplate(template, titles, contextKeywords);
+      const tagScore = countKeywordHits(signalCluster.keywords, template.matchers);
+      const signalBoost = signalCluster.contentRatio >= 0.6 ? 6 : 0;
+      const confidence = clamp(58 + score + tagScore * 4 + signalBoost + (titles.length ? 6 : 0), 52, 95);
+      return {
+        id: `${platform}-${template.key}-${index}`,
+        platform,
+        platformLabel: PLATFORM_LABELS[platform],
+        title: template.title,
+        rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号。`,
+        executionHint: template.executionHint,
+        commercialAngle: `${template.commercialAngle} ${carryRule}`,
+        confidence,
+      } satisfies GrowthTopicLibraryItem;
+    });
+  });
+
+  return library
+    .sort((a, b) => b.confidence - a.confidence)
+    .filter((item, index, list) => index === list.findIndex((candidate) => candidate.title === item.title))
+    .slice(0, 6);
 }
 
 function median(values: number[]) {
@@ -637,6 +831,7 @@ export function buildMockGrowthSnapshot(params: {
     requestedPlatforms,
     overview,
     trendLayers: buildTrendLayers(requestedPlatforms, {}),
+    topicLibrary: buildTopicLibrary(requestedPlatforms, {}, context),
     platformSnapshots,
     contentPatterns: [
       {
@@ -763,6 +958,7 @@ export function buildGrowthSnapshotFromCollections(params: {
       nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 30 天趋势库。",
     },
     trendLayers: buildTrendLayers(requestedPlatforms, params.collections),
+    topicLibrary: buildTopicLibrary(requestedPlatforms, params.collections, context),
     platformSnapshots,
     contentPatterns: buildContentPatternsFromCollections(activeCollections),
     opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),
