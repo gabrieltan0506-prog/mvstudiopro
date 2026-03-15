@@ -339,8 +339,6 @@ export default function WorkflowNodes() {
       if (!cancelled && resp.ok && json?.workflow && json.workflow.status !== "not_found") {
         setWorkflow(json.workflow);
       } else if (!cancelled && resp.ok && json?.workflow?.status === "not_found") {
-        setWorkflow(null);
-        setWorkflowId("");
         setGlobalStep({ loading: false, error: "workflow_not_found", success: false });
       }
       if (!cancelled) timer = setTimeout(poll, 2000);
@@ -453,7 +451,7 @@ export default function WorkflowNodes() {
   function buildRequestBody(body: Record<string, any>) {
     return {
       ...body,
-      workflowId: body.workflowId || workflowId || undefined,
+      workflowId: body.workflowId || workflowId || workflowIdInput || undefined,
       workflow: body.workflow || workflow || undefined,
       script: body.script ?? scriptText,
       storyboard: body.storyboard ?? storyboard,
@@ -469,8 +467,6 @@ export default function WorkflowNodes() {
       setWorkflow(json.workflow);
       setWorkflowId(nextId);
     } else if (resp.ok && json?.workflow?.status === "not_found") {
-      setWorkflow(null);
-      setWorkflowId("");
       setGlobalStep({ loading: false, error: "workflow_not_found", success: false });
     }
   }
