@@ -22,6 +22,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import sharp from "sharp";
 
 const execAsync = promisify(exec);
 
@@ -202,7 +203,24 @@ async function uploadFrame(
   framePath: string,
   index: number
 ): Promise<{ url: string; dataUrl: string }> {
-  const buffer = await fs.promises.readFile(framePath);
+  const originalBuffer = await fs.promises.readFile(framePath);
+  let buffer = originalBuffer;
+  try {
+    buffer = await sharp(originalBuffer, { failOnError: false })
+      .resize({
+        width: 1280,
+        height: 1280,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .jpeg({
+        quality: 72,
+        mozjpeg: true,
+      })
+      .toBuffer();
+  } catch {
+    buffer = originalBuffer;
+  }
   const key = `video-frames/${Date.now()}_frame_${index}.jpg`;
   const { url } = await storagePut(key, buffer, "image/jpeg");
   return {
