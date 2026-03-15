@@ -213,65 +213,81 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
   if (cookie) {
-    const response = await fetch(
-      "https://www.douyin.com/aweme/v1/web/tab/feed/?publish_video_strategy_type=2&aid=6383&channel=channel_pc_web&cookie_enabled=true&screen_width=1280&screen_height=800&browser_online=true&cpu_core_num=8&device_memory=8&downlink=10&effective_type=4g&round_trip_time=200",
-      {
-        headers: {
-          accept: "application/json,text/plain,*/*",
-          cookie,
-          referer: "https://www.douyin.com/",
-          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-        },
-      },
-    );
+    const pageLimit = Math.max(1, Math.min(4, Number(process.env.DOUYIN_TREND_PAGES || 2) || 2));
+    const pageSize = Math.max(8, Math.min(20, Number(process.env.DOUYIN_TREND_PAGE_SIZE || 12) || 12));
+    const items: TrendItem[] = [];
+    const notes: string[] = [];
+    let maxCursor = "0";
+    let hasMore = 0;
+    let requestCount = 0;
 
-    if (!response.ok) {
-      throw new Error(`Douyin feed responded with ${response.status}`);
+    for (let page = 0; page < pageLimit; page += 1) {
+      const response = await fetch(
+        `https://www.douyin.com/aweme/v1/web/tab/feed/?publish_video_strategy_type=2&aid=6383&channel=channel_pc_web&cookie_enabled=true&count=${pageSize}&max_cursor=${maxCursor}&screen_width=1280&screen_height=800&browser_online=true&cpu_core_num=8&device_memory=8&downlink=10&effective_type=4g&round_trip_time=200`,
+        {
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            cookie,
+            referer: "https://www.douyin.com/",
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(`Douyin feed responded with ${response.status}`);
+      }
+
+      const payload = await response.json() as {
+        aweme_list?: Array<Record<string, any>>;
+        has_more?: number;
+        max_cursor?: number | string;
+      };
+
+      const pageItems = (payload.aweme_list ?? [])
+        .map((item) => {
+          const title = String(item.desc ?? item.caption ?? "").trim();
+          if (!title) return null;
+          const stats = item.statistics ?? {};
+          const author = item.author ?? {};
+          const tags = Array.isArray(item.text_extra)
+            ? item.text_extra
+              .map((entry) => String(entry?.hashtag_name ?? "").trim())
+              .filter(Boolean)
+            : [];
+          return {
+            id: String(item.aweme_id ?? item.group_id ?? ""),
+            title,
+            bucket: "douyin_feed",
+            author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
+            url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
+            publishedAt: safeDateFromUnix(Number(item.create_time)),
+            likes: Number(stats.digg_count ?? 0) || undefined,
+            comments: Number(stats.comment_count ?? 0) || undefined,
+            shares: Number(stats.share_count ?? 0) || undefined,
+            views: Number(stats.play_count ?? 0) || undefined,
+            hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
+            contentType: "video" as const,
+            tags,
+          } satisfies TrendItem;
+        })
+        .filter(Boolean) as TrendItem[];
+
+      items.push(...pageItems);
+      requestCount += 1;
+      hasMore = Number(payload.has_more ?? 0);
+      maxCursor = String(payload.max_cursor ?? maxCursor);
+      notes.push(`Fetched ${pageItems.length} Douyin authenticated feed videos on page ${page + 1}.`);
+      if (!hasMore || !pageItems.length) break;
     }
 
-    const payload = await response.json() as {
-      aweme_list?: Array<Record<string, any>>;
-      has_more?: number;
-    };
-
-    const items = (payload.aweme_list ?? [])
-      .map((item) => {
-        const title = String(item.desc ?? item.caption ?? "").trim();
-        if (!title) return null;
-        const stats = item.statistics ?? {};
-        const author = item.author ?? {};
-        const tags = Array.isArray(item.text_extra)
-          ? item.text_extra
-            .map((entry) => String(entry?.hashtag_name ?? "").trim())
-            .filter(Boolean)
-          : [];
-        return {
-          id: String(item.aweme_id ?? item.group_id ?? ""),
-          title,
-          bucket: "douyin_feed",
-          author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
-          url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
-          publishedAt: safeDateFromUnix(Number(item.create_time)),
-          likes: Number(stats.digg_count ?? 0) || undefined,
-          comments: Number(stats.comment_count ?? 0) || undefined,
-          shares: Number(stats.share_count ?? 0) || undefined,
-          views: Number(stats.play_count ?? 0) || undefined,
-          hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
-          contentType: "video" as const,
-          tags,
-        } satisfies TrendItem;
-      })
-      .filter(Boolean) as TrendItem[];
-
     if (items.length) {
-      return finalizeCollection("douyin", "live", items, [
-        `Fetched ${items.length} Douyin authenticated feed videos.`,
-        `Douyin has_more: ${payload.has_more ?? 0}`,
-      ], {
+      notes.push(`Douyin has_more: ${hasMore}`);
+      return finalizeCollection("douyin", "live", items, notes, {
         collectorMode: "authenticated_feed",
-        requestCount: 1,
-        pageDepth: 1,
-        targetPerRun: Math.max(items.length, 12),
+        requestCount,
+        pageDepth: requestCount,
+        targetPerRun: pageLimit * pageSize,
         referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
         referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
       });
@@ -311,52 +327,66 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
 
 async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.XHS_COOKIE || "").trim();
-  const response = await fetch("https://www.xiaohongshu.com/explore", {
-    headers: {
-      "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-      ...(cookie ? { cookie } : {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Xiaohongshu page responded with ${response.status}`);
-  }
-  const html = await response.text();
-  const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
-  if (!match) {
-    throw new Error("Xiaohongshu initial state not found");
+  const paths = parseCsvEnv("XHS_EXPLORE_PATHS");
+  const explorePaths = paths.length
+    ? paths
+    : [
+      "https://www.xiaohongshu.com/explore",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.fashion_v3",
+    ];
+  const pageLimit = Math.max(1, Math.min(4, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+
+  for (const pageUrl of explorePaths.slice(0, pageLimit)) {
+    const response = await fetch(pageUrl, {
+      headers: {
+        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+        ...(cookie ? { cookie } : {}),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Xiaohongshu page responded with ${response.status}`);
+    }
+    const html = await response.text();
+    const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
+    if (!match) {
+      throw new Error("Xiaohongshu initial state not found");
+    }
+
+    const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+      feed?: { feeds?: Array<Record<string, any>> };
+    };
+    const feeds = state.feed?.feeds ?? [];
+    const pageItems = feeds
+      .map((feed, index) => {
+        const noteCard = feed.noteCard;
+        if (!noteCard) return null;
+        const title = String(noteCard.displayTitle ?? "").trim();
+        if (!title) return null;
+        return {
+          id: String(feed.id ?? `${pageUrl}-${index}`),
+          title,
+          bucket: "xiaohongshu_feed",
+          author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
+          url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
+          likes: parseChineseCount(noteCard.interactInfo?.likedCount),
+          comments: parseChineseCount(noteCard.interactInfo?.commentCount),
+          shares: parseChineseCount(noteCard.interactInfo?.shareCount),
+          contentType: noteCard.video ? "video" : "note",
+        } satisfies TrendItem;
+      })
+      .filter(Boolean) as TrendItem[];
+    items.push(...pageItems);
+    notes.push(`Fetched ${pageItems.length} Xiaohongshu items from ${pageUrl}.`);
   }
 
-  const state = vm.runInNewContext(`(${match[1]})`, {}) as {
-    feed?: { feeds?: Array<Record<string, any>> };
-  };
-  const feeds = state.feed?.feeds ?? [];
-  const items: TrendItem[] = feeds
-    .map((feed, index) => {
-      const noteCard = feed.noteCard;
-      if (!noteCard) return null;
-      const title = String(noteCard.displayTitle ?? "").trim();
-      if (!title) return null;
-      return {
-        id: String(feed.id ?? index),
-        title,
-        bucket: "xiaohongshu_feed",
-        author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
-        url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
-        likes: parseChineseCount(noteCard.interactInfo?.likedCount),
-        comments: parseChineseCount(noteCard.interactInfo?.commentCount),
-        shares: parseChineseCount(noteCard.interactInfo?.shareCount),
-        contentType: noteCard.video ? "video" : "note",
-      } satisfies TrendItem;
-    })
-    .filter(Boolean) as TrendItem[];
-
-  return finalizeCollection("xiaohongshu", "live", items, [
-    `Fetched ${items.length} Xiaohongshu explore notes${cookie ? " with authenticated cookie" : ""}.`,
-  ], {
+  return finalizeCollection("xiaohongshu", "live", items, notes, {
     collectorMode: cookie ? "authenticated_feed" : "public_feed",
-    requestCount: 1,
-    pageDepth: 1,
-    targetPerRun: Math.max(items.length, 20),
+    requestCount: Math.min(pageLimit, explorePaths.length),
+    pageDepth: Math.min(pageLimit, explorePaths.length),
+    targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length)),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.max || 60,
   });
@@ -367,6 +397,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 12) || 12));
+  const publicPages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_TREND_PAGES || 2) || 2));
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
@@ -454,46 +485,55 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     `;
 
     for (const principalId of principals) {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-          ...(cookie ? { cookie } : {}),
-        },
-        body: JSON.stringify({
-          operationName: "publicFeeds",
-          query,
-          variables: {
-            principalId,
-            pcursor: "",
-            count,
+      let pcursor = "";
+      for (let page = 0; page < publicPages; page += 1) {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            ...(cookie ? { cookie } : {}),
           },
-        }),
-      });
+          body: JSON.stringify({
+            operationName: "publicFeeds",
+            query,
+            variables: {
+              principalId,
+              pcursor,
+              count,
+            },
+          }),
+        });
 
-      if (!response.ok) {
-        throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
-      }
+        if (!response.ok) {
+          throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
+        }
 
-      const payload = await response.json() as {
-        data?: {
-          publicFeeds?: {
-            list?: Array<Record<string, any>>;
+        const payload = await response.json() as {
+          data?: {
+            publicFeeds?: {
+              list?: Array<Record<string, any>>;
+              pcursor?: string;
+            };
           };
+          errors?: Array<{ message?: string }>;
         };
-        errors?: Array<{ message?: string }>;
-      };
 
-      if (payload.errors?.length) {
-        throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+        if (payload.errors?.length) {
+          throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+        }
+
+        const list = payload.data?.publicFeeds?.list ?? [];
+        list.forEach((item) => pushKuaishouItem(item, principalId));
+        notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId} page ${page + 1}.`);
+        pcursor = String(payload.data?.publicFeeds?.pcursor || "").trim();
+        if (!pcursor || !list.length) break;
       }
-
-      const list = payload.data?.publicFeeds?.list ?? [];
-      list.forEach((item) => pushKuaishouItem(item, principalId));
-      notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId}.`);
     }
   }
+
+  const publicRequestCount = principals.length * publicPages;
+  const publicTargetCount = principals.length * publicPages * count;
 
   if (!items.length) {
     throw new Error("Kuaishou collector returned 0 items. 请配置 KUAISHOU_COOKIE 或 KUAISHOU_TREND_PRINCIPALS。");
@@ -501,9 +541,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
 
   return finalizeCollection("kuaishou", "live", items, notes, {
     collectorMode: cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
-    requestCount: (cookie ? 1 : 0) + principals.length,
-    pageDepth: Math.max(1, principals.length),
-    targetPerRun: count * Math.max(1, principals.length) + (cookie ? count : 0),
+    requestCount: (cookie ? 1 : 0) + publicRequestCount,
+    pageDepth: Math.max(cookie ? 1 : 0, publicPages),
+    targetPerRun: publicTargetCount + (cookie ? count : 0),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
   });

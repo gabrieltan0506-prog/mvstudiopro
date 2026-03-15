@@ -18,6 +18,10 @@ export type TrendSchedulerState = {
   lastMergedCount?: number;
   burstMode?: boolean;
   burstTriggeredAt?: string;
+  burstEnterCount?: number;
+  burstExitCount?: number;
+  burstStableRuns?: number;
+  lastFrequencyLabel?: string;
   lastError?: string;
 };
 
@@ -89,6 +93,9 @@ export type GrowthTrendStatsSummary = {
     archiveRuns: number;
     archivedItems: number;
     schedulerTrackedPlatforms: number;
+    burstEnterCount: number;
+    burstExitCount: number;
+    burstActivePlatforms: number;
   };
   references: {
     schedulerIntervals: Array<{ label: string; intervalHours: number }>;
@@ -514,6 +521,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       archiveRuns: (store.archiveIndex || []).length,
       archivedItems: (store.archiveIndex || []).reduce((sum, item) => sum + item.itemCount, 0),
       schedulerTrackedPlatforms: scheduler.length,
+      burstEnterCount: scheduler.reduce((sum, item) => sum + (item.burstEnterCount || 0), 0),
+      burstExitCount: scheduler.reduce((sum, item) => sum + (item.burstExitCount || 0), 0),
+      burstActivePlatforms: scheduler.filter((item) => item.burstMode).length,
     },
     references: {
       schedulerIntervals: [

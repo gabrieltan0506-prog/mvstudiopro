@@ -460,11 +460,22 @@ export const appRouter = router({
         };
       }),
 
-    getGrowthTrendStats: publicProcedure
+    getGrowthTrendStats: adminProcedure
       .query(async () => {
         const stats = await getGrowthTrendStats();
         return {
           success: true,
+          currentTotal: stats.totals.currentItems,
+          historicalTotal: stats.totals.archivedItems,
+          platforms: stats.platforms,
+          buckets: stats.buckets,
+          references: stats.references,
+          scheduler: stats.scheduler,
+          burst: {
+            activePlatforms: stats.totals.burstActivePlatforms,
+            enterCount: stats.totals.burstEnterCount,
+            exitCount: stats.totals.burstExitCount,
+          },
           stats,
         };
       }),
