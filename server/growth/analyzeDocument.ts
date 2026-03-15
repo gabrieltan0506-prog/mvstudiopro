@@ -78,11 +78,11 @@ export async function analyzeDocument(params: {
       },
     ];
 
-    if (params.mimeType === "application/pdf" && !fileUrl.startsWith("data:")) {
+    if (params.mimeType === "application/pdf") {
       userContent.push({
         type: "file_url",
         file_url: {
-          url: fileUrl,
+          url: `data:application/pdf;base64,${params.fileBase64}`,
           mime_type: "application/pdf",
         },
       });
