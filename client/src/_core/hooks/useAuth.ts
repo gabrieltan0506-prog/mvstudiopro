@@ -107,14 +107,19 @@ export function useAuth(options?: UseAuthOptions) {
       JSON.stringify(user)
     );
 
+    const authQueriesPending = autoFetch
+      ? (meQuery.isPending || apiMeQuery.isPending)
+      : false;
+
     return {
       user,
       loading:
-        meQuery.isPending || apiMeQuery.isPending || logoutMutation.isPending,
+        authQueriesPending || logoutMutation.isPending,
       error: apiMeQuery.error ?? meQuery.error ?? logoutMutation.error ?? null,
       isAuthenticated: Boolean(user),
     };
   }, [
+    autoFetch,
     apiMeQuery.data,
     apiMeQuery.error,
     apiMeQuery.isPending,
@@ -127,7 +132,7 @@ export function useAuth(options?: UseAuthOptions) {
 
   useEffect(() => {
     if (!redirectOnUnauthenticated) return;
-    if (meQuery.isPending || apiMeQuery.isPending || logoutMutation.isPending) {
+    if ((autoFetch && (meQuery.isPending || apiMeQuery.isPending)) || logoutMutation.isPending) {
       return;
     }
     if (state.user) return;
@@ -138,6 +143,7 @@ export function useAuth(options?: UseAuthOptions) {
   }, [
     redirectOnUnauthenticated,
     redirectPath,
+    autoFetch,
     apiMeQuery.isPending,
     logoutMutation.isPending,
     meQuery.isPending,
