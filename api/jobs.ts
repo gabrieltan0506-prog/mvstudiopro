@@ -86,6 +86,8 @@ function imageContentTypeToExtension(contentType: string) {
   return "jpg";
 }
 
+const WORKFLOW_VIDEO_REF_MAX_EDGE = 1280;
+
 async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workflow-scene", options?: { mode?: "original" | "video" }) {
   const sourceUrl = s(imageUrl).trim();
   if (!sourceUrl) throw new Error("missing_image_url");
@@ -102,13 +104,27 @@ async function uploadWorkflowImageToBlob(imageUrl: string, filenameBase = "workf
   if (options?.mode === "video") {
     out = await sharp(asset.buffer, { failOnError: false })
       .rotate()
-      .resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true })
+      .resize({
+        width: WORKFLOW_VIDEO_REF_MAX_EDGE,
+        height: WORKFLOW_VIDEO_REF_MAX_EDGE,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
       .jpeg({ quality: 84, mozjpeg: true })
       .toBuffer();
     contentType = "image/jpeg";
     ext = "jpg";
     if (out.length > 10 * 1024 * 1024) {
       out = await sharp(out, { failOnError: false }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
+    }
+    const meta = await sharp(out, { failOnError: false }).metadata();
+    const width = Number(meta.width || 0);
+    const height = Number(meta.height || 0);
+    if (!width || !height) {
+      throw new Error("invalid_video_reference_metadata");
+    }
+    if (Math.max(width, height) > WORKFLOW_VIDEO_REF_MAX_EDGE) {
+      throw new Error(`video_reference_edge_exceeds_${WORKFLOW_VIDEO_REF_MAX_EDGE}`);
     }
     if (out.length > 10 * 1024 * 1024) {
       throw new Error("image_too_large_after_compress");
