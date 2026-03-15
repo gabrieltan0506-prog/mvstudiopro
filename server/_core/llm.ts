@@ -73,6 +73,7 @@ export type InvokeParams = {
   output_schema?: OutputSchema;
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
+  provider?: Provider;
 };
 
 export type ToolCall = {
@@ -267,8 +268,8 @@ async function getVertexAccessToken() {
   return String(json.access_token);
 }
 
-const resolveTarget = (modelTier: ModelTier | undefined): LlmTarget => {
-  if (modelTier === "gpt5") {
+const resolveTarget = (modelTier: ModelTier | undefined, preferredProvider?: Provider): LlmTarget => {
+  if (preferredProvider === "cometapi" || modelTier === "gpt5") {
     const cometApiKey = getCometApiKey();
     if (!cometApiKey) {
       throw new Error("COMET_API_KEY is not configured");
@@ -279,6 +280,32 @@ const resolveTarget = (modelTier: ModelTier | undefined): LlmTarget => {
       apiUrl: `${getCometApiBaseUrl()}/v1/chat/completions`,
       apiKey: cometApiKey,
       modelName: COMETAPI_GPT_5_1_MODEL_ID,
+    };
+  }
+
+  if (preferredProvider === "vertex") {
+    if (!hasVertexEnv()) {
+      throw new Error("VERTEX environment is not configured");
+    }
+    const location = String(process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
+    const modelName = String(process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
+    const projectId = String(process.env.VERTEX_PROJECT_ID || "").trim();
+    return {
+      provider: "vertex",
+      apiKey: projectId,
+      apiUrl: `${baseUrlForVertex(location)}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`,
+      modelName,
+    };
+  }
+
+  if (preferredProvider === "gemini") {
+    if (!ENV.geminiApiKey) {
+      throw new Error("GEMINI_API_KEY is not configured");
+    }
+    return {
+      provider: "gemini",
+      apiKey: ENV.geminiApiKey,
+      modelName: getGeminiModelName(modelTier),
     };
   }
 
@@ -548,7 +575,7 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
-  const target = resolveTarget(params.model);
+  const target = resolveTarget(params.model, params.provider);
 
   if (target.provider === "vertex") {
     return invokeVertex(params, target);

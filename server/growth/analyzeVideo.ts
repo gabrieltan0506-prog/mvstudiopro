@@ -126,6 +126,7 @@ export async function analyzeVideo(params: {
   try {
     const response = await invokeLLM({
       model: "pro",
+      provider: "vertex",
       messages: [
         {
           role: "system",

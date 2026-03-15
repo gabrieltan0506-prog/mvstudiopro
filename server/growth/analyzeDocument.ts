@@ -90,6 +90,7 @@ export async function analyzeDocument(params: {
 
     const response = await invokeLLM({
       model: "pro",
+      provider: "vertex",
       messages: [
         {
           role: "system",
