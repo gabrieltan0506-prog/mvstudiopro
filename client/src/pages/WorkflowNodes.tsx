@@ -299,6 +299,7 @@ export default function WorkflowNodes() {
   const nodeMap = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const current = nodeMap.get(selected) || nodes[0];
   const outputs = workflow?.outputs || {};
+  const effectiveWorkflowId = s(workflowId || workflow?.workflowId || workflowIdInput).trim();
   const storyboardImages: SceneImages[] = Array.isArray(outputs.storyboardImages) ? outputs.storyboardImages : [];
   const storyboardImageWarnings: string[] = Array.isArray(outputs.storyboardImageWarnings) ? outputs.storyboardImageWarnings : [];
   const sceneBundlesByIndex = useMemo(
@@ -318,23 +319,23 @@ export default function WorkflowNodes() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (workflowId) {
-      window.localStorage.setItem("workflowNodes:workflowId", workflowId);
-      setWorkflowIdInput(workflowId);
+    if (effectiveWorkflowId) {
+      window.localStorage.setItem("workflowNodes:workflowId", effectiveWorkflowId);
+      setWorkflowIdInput(effectiveWorkflowId);
       const nextUrl = new URL(window.location.href);
-      nextUrl.searchParams.set("workflowId", workflowId);
+      nextUrl.searchParams.set("workflowId", effectiveWorkflowId);
       window.history.replaceState({}, "", nextUrl.toString());
       return;
     }
     window.localStorage.removeItem("workflowNodes:workflowId");
-  }, [workflowId]);
+  }, [effectiveWorkflowId]);
 
   useEffect(() => {
-    if (!workflowId) return;
+    if (!effectiveWorkflowId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const poll = async () => {
-      const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(workflowId)}`);
+      const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(effectiveWorkflowId)}`);
       const json = await resp.json().catch(() => null);
       if (!cancelled && resp.ok && json?.workflow && json.workflow.status !== "not_found") {
         setWorkflow(json.workflow);
@@ -348,7 +349,7 @@ export default function WorkflowNodes() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [workflowId]);
+  }, [effectiveWorkflowId]);
 
   useEffect(() => {
     if (!debugMode) return;
@@ -441,7 +442,7 @@ export default function WorkflowNodes() {
   }, [outputs.musicStartSec, outputs.musicEndSec, outputs.musicVolume, outputs.voiceVolume, outputs.musicFadeInSec, outputs.musicFadeOutSec]);
 
   function writeBackWorkflow(json: any) {
-    const nextId = s(json?.workflow?.workflowId || json?.workflowId || workflowId).trim();
+    const nextId = s(json?.workflow?.workflowId || json?.workflowId || effectiveWorkflowId).trim();
     if (nextId) setWorkflowId(nextId);
     if (json?.workflow) setWorkflow(json.workflow);
     setScriptDirty(false);
@@ -451,7 +452,7 @@ export default function WorkflowNodes() {
   function buildRequestBody(body: Record<string, any>) {
     return {
       ...body,
-      workflowId: body.workflowId || workflowId || workflowIdInput || undefined,
+      workflowId: body.workflowId || effectiveWorkflowId || undefined,
       workflow: body.workflow || workflow || undefined,
       script: body.script ?? scriptText,
       storyboard: body.storyboard ?? storyboard,
@@ -459,7 +460,7 @@ export default function WorkflowNodes() {
   }
 
   async function refreshWorkflow(targetWorkflowId?: string) {
-    const nextId = s(targetWorkflowId || workflowId || workflowIdInput).trim();
+    const nextId = s(targetWorkflowId || effectiveWorkflowId).trim();
     if (!nextId) return;
     const resp = await fetch(`/api/jobs?op=workflowStatus&workflowId=${encodeURIComponent(nextId)}`);
     const json = await resp.json().catch(() => null);
@@ -1727,7 +1728,7 @@ export default function WorkflowNodes() {
                       <div className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${badgeClass(current.status)}`}>接入：{current.status}</div>
                       <div className="inline-flex rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">运行：{selectedNodeRuntimeStatus()}</div>
                     </div>
-                    <div className="text-sm text-white/60">workflowId: {workflowId || "未开始"}</div>
+                    <div className="text-sm text-white/60">workflowId: {effectiveWorkflowId || "未开始"}</div>
                   </div>
 
                   <div className="mb-4 grid gap-3 sm:grid-cols-2">
@@ -1784,7 +1785,7 @@ export default function WorkflowNodes() {
                         variant="outline"
                         className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
                         onClick={() => void refreshWorkflow()}
-                        disabled={!workflowId}
+                        disabled={!effectiveWorkflowId}
                       >
                         <RefreshCcw className="mr-2 h-4 w-4" />
                         刷新
