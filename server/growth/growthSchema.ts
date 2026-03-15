@@ -569,7 +569,7 @@ function buildMonetizationTracks(
   return [
     {
       name: "品牌合作",
-      fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0) + (/品牌合作|合作提案/.test(industryTemplate.primaryConversion) ? 6 : 0)), 36, 96),
+      fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0) + (/品牌合作|合作提案/.test(industryTemplate.primaryConversion) ? 6 : 0)) - (analysis.viralPotential < 45 ? 18 : 0), 12, 96),
       reason: isBeautyFashionContext(text)
         ? "更适合承接运动美妆、防晒、功能护肤、运动服饰和生活方式品牌，而不是泛泛而谈的品牌合作。"
         : `只有当表达统一、案例清楚、服务说明完整时，品牌或商单合作才有承接价值。当前更适合围绕「${industryTemplate.commercialFocus}」来组织合作说法。`,
@@ -579,19 +579,19 @@ function buildMonetizationTracks(
     },
     {
       name: "电商带货",
-      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 36, 96),
+      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
       reason: `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
       nextStep: `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
     },
     {
       name: "知识付费",
-      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 36, 96),
+      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
       reason: `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
       nextStep: `把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。可先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`,
     },
     {
       name: "社群会员",
-      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0)), 36, 96),
+      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
       reason: "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
       nextStep: `先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。核心权益建议围绕：${industryTemplate.offerExamples.slice(0, 2).join("、") || "固定答疑与模板"}`,
     },
@@ -604,7 +604,7 @@ function buildPlatformRecommendations(
   platformSnapshots: GrowthPlatformSnapshot[],
 ): GrowthPlatformRecommendation[] {
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
-  return selectedPlatforms.slice(0, 3).map((platform, index) => {
+  return selectedPlatforms.slice(0, 1).map((platform, index) => {
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const platformTemplate = getPlatformTemplate(platform);
     if (platform === "douyin") {
@@ -646,7 +646,7 @@ function buildBusinessInsights(
   monetizationTracks: GrowthMonetizationTrack[],
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthBusinessInsight[] {
-  const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
+  const primaryTrack = monetizationTracks.find((track) => track.fit >= 60)?.name || "暂不主打变现";
   const beautyFashion = isBeautyFashionContext(context);
   const bookingStyle = /咨询|顾问|预约|服务|方案/.test(context);
   const commerceStyle = /带货|商品|单品|橱窗|电商/.test(context);
@@ -660,20 +660,24 @@ function buildBusinessInsights(
       ? "先把内容改写成“结果前置 + 利益点 + 单一购买动作”，不要继续做泛讨论。"
       : primaryTrack === "知识付费"
         ? "先把内容整理成一套可重复讲述的方法，再把入口统一指向课程、模板或陪跑。"
-        : "先验证你是否真的具备固定主题、固定更新和固定权益，再决定要不要做长期社群。";
+        : primaryTrack === "暂不主打变现"
+          ? "先解决内容入口、受众痛点、案例表达和结尾动作，不要急着在一条内容里塞进所有商业方向。"
+          : "先验证你是否真的具备固定主题、固定更新和固定权益，再决定要不要做长期社群。";
   return [
     {
       title: "行业判断",
       detail: `当前内容更接近「${industryTemplate.name}」模板。核心人群是：${industryTemplate.audience}。真正要解决的问题不是泛曝光，而是：${industryTemplate.painPoint}`,
     },
     {
-      title: "商业判断",
-      detail: analysis.viralPotential >= 75
-        ? "这条内容已经不是“要不要发”的问题，而是“发出去以后把用户带到哪里”。先定唯一承接动作，再决定标题、封面和结尾。"
-        : "当前先别急着讲太多商业化，先把内容变成一个明确的入口：让用户在 3 秒内知道你解决什么问题、为什么值得继续看、下一步该做什么。",
+      title: "中长期商业判断",
+      detail: primaryTrack === "暂不主打变现"
+        ? "当前商业闭环还不成熟。不是说商业价值为零，而是还没形成让用户和合作方一眼看懂的承接方式。先把内容入口、角色和案例表达补起来。"
+        : analysis.viralPotential >= 75
+          ? "这条内容已经不是“要不要发”的问题，而是“发出去以后把用户带到哪里”。先定唯一承接动作，再决定标题、封面和结尾。"
+          : "当前先别急着讲太多商业化，先把内容变成一个明确的入口：让用户在 3 秒内知道你解决什么问题、为什么值得继续看、下一步该做什么。",
     },
     {
-      title: "主承接动作",
+      title: "中长期主承接动作",
       detail: bookingStyle
         ? "你的内容更适合把用户导向预约、咨询或方案沟通页，重点不是讲理念，而是让用户快速判断“你能不能帮我”。"
         : commerceStyle
@@ -685,15 +689,17 @@ function buildBusinessInsights(
               : `${primaryAction} 先围绕「${industryTemplate.primaryConversion}」组织承接。`,
     },
     {
-      title: "成交说法",
-      detail: beautyFashion
-        ? "不要只写“品牌合作”或“可商业化”。应该直接写成：适合运动美妆、防晒、功能护肤、服饰配件、造型服务这几类合作或转化。"
+      title: "中长期成交说法",
+      detail: primaryTrack === "品牌合作" && beautyFashion
+        ? "不要只写“品牌合作”。应该直接写成：适合运动美妆、防晒、功能护肤、运动服饰、配件工具、造型服务这几类品牌合作。"
+        : primaryTrack === "暂不主打变现"
+          ? "先不要对外写品牌合作、带货或社群。先把内容价值说明成：你解决什么问题、能给用户什么结果、为什么值得持续关注。"
         : context.trim()
           ? `你现在的业务背景更适合先验证「${primaryTrack}」这一条成交路径，别同时混合多个方向。`
           : `先围绕「${primaryTrack}」做单一路径验证，先跑通再扩。`,
     },
     {
-      title: "下一步落地",
+      title: "中长期下一步落地",
       detail: `${primaryAction} 内容表达上优先补「${industryTemplate.trustAsset}」，承接上优先验证「${industryTemplate.offerExamples[0] || industryTemplate.primaryConversion}」。`,
     },
   ];
@@ -703,11 +709,11 @@ function buildGrowthPlan(
   analysis: GrowthAnalysisScores,
   platformRecommendations: GrowthPlatformRecommendation[],
 ): GrowthPlanStep[] {
-  const topPlatform = platformRecommendations[0]?.name || "抖音";
+  const topPlatform = platformRecommendations[0]?.name || "小红书";
   return [
     { day: 1, title: "聚焦卖点", action: "重新定义这条内容的单一目标，只保留一个最强卖点，并重写开头 3 秒。" },
     { day: 2, title: "准备测试素材", action: "基于当前画面生成 2 个封面版本和 2 个标题版本，准备 A/B 测试。" },
-    { day: 3, title: "首发验证", action: `先在 ${topPlatform} 发第一版，重点观察停留、完播和评论关键词。` },
+    { day: 3, title: "首发验证", action: `先在 ${topPlatform} 发第一版，重点观察收藏、停留、完读和评论关键词。` },
     { day: 4, title: "节奏重写", action: "根据反馈重写中段节奏，把弱镜头删掉，强化转折点。" },
     { day: 5, title: "矩阵延展", action: "补一版幕后、拆解或教学内容，让单条内容变成内容矩阵。" },
     { day: 6, title: "模板沉淀", action: "将表现最好的表达方式整理成模板，开始做系列化发布。" },
@@ -715,7 +721,7 @@ function buildGrowthPlan(
       day: 7,
       title: "商业承接",
       action: analysis.viralPotential >= 75
-        ? "加入明确商业转化动作，比如咨询入口、服务介绍和预约表单。"
+        ? "复盘数据，确定这一版是否值得继续放大，并补下一轮小红书标题、封面和收藏理由。"
         : "复盘数据，确认下一轮优先优化的是开头冲击力还是画面统一性。",
     },
   ];
@@ -724,11 +730,11 @@ function buildGrowthPlan(
 function buildCreationAssist(
   analysis: GrowthAnalysisScores,
   context: string,
-  requestedPlatforms: GrowthPlatform[],
+  platformRecommendations: GrowthPlatformRecommendation[],
   monetizationTracks: GrowthMonetizationTrack[],
 ) {
   const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
-  const primaryPlatform = PLATFORM_LABELS[requestedPlatforms[0] || "douyin"] || "抖音";
+  const primaryPlatform = platformRecommendations[0]?.name || "小红书";
   const backgroundLine = context.trim()
     ? `业务背景：${context.trim()}`
     : "业务背景：未填写，建议补充目标受众、成交方式和想放大的内容主题。";
@@ -749,6 +755,7 @@ function buildCreationAssist(
 function buildGrowthHandoff(
   context: string,
   requestedPlatforms: GrowthPlatform[],
+  platformRecommendations: GrowthPlatformRecommendation[],
   monetizationTracks: GrowthMonetizationTrack[],
   creationAssist: ReturnType<typeof buildCreationAssist>,
 ) {
@@ -758,7 +765,7 @@ function buildGrowthHandoff(
     storyboardPrompt: creationAssist.storyboardPrompt,
     workflowPrompt: creationAssist.workflowPrompt,
     recommendedTrack,
-    recommendedPlatforms: requestedPlatforms.slice(0, 3),
+    recommendedPlatforms: requestedPlatforms.slice(0, 1),
     businessGoal: context.trim() || `优先验证「${recommendedTrack}」这条商业承接路径。`,
   };
 }
@@ -838,7 +845,7 @@ export function buildMockGrowthSnapshot(params: {
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
-  const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
+  const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
   const today = new Date();
   const generatedAt = today.toISOString();
@@ -916,7 +923,7 @@ export function buildMockGrowthSnapshot(params: {
     businessInsights,
     growthPlan,
     creationAssist,
-    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, monetizationTracks, creationAssist),
+    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
@@ -976,7 +983,7 @@ export function buildGrowthSnapshotFromCollections(params: {
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
-  const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
+  const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
   const snapshot = {
     status: {
@@ -1016,7 +1023,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     businessInsights,
     growthPlan,
     creationAssist,
-    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, monetizationTracks, creationAssist),
+    growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);

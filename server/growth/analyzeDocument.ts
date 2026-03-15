@@ -97,6 +97,7 @@ export async function analyzeDocument(params: {
           content: `你是一位创作者商业增长顾问。请分析用户上传的文档，并返回 Creator Growth Camp 所需的统一评分结构。
 
 注意：
+0. 必须优先依据“已抽取正文”做判断，不能只根据业务背景或文件名给建议。summary、strengths、improvements 里至少要有一半内容直接来自正文主题、结构或具体信息。
 1. 这不是视觉审美评分，而是文档内容的增长可执行性评分。
 2. 评分字段语义改写如下：
 - composition: 结构质量

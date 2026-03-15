@@ -137,6 +137,10 @@ function compactText(text: string, maxLength = 72) {
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
 }
 
+function normalizeText(text: string) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
 function replaceTerms(text: string) {
   return String(text || "")
     .replace(/\bCTA\b/g, "行动引导（CTA）")
@@ -216,35 +220,46 @@ function buildPositioningRows(
   platforms: GrowthPlatformRecommendation[],
   industryTemplate?: GrowthIndustryTemplate | null,
 ): InsightTableRow[] {
-  const audience = compactText(
+  const audience = normalizeText(
     industryTemplate?.audience || context || "当前没有明确写出受众与成交目标，建议后续补全。",
-    64,
   );
-  const bestTrack = tracks[0]?.name || "服务咨询";
+  const bestTrack = tracks.find((track) => track.fit >= 60);
   const firstPlatform = platforms[0]?.name || "小红书";
+  const primaryDirection = bestTrack?.name || "先不主打变现";
+  const roleFixPlan = industryTemplate?.positioningHint
+    ? `先把内容角色改成「${industryTemplate.positioningHint}」，再统一脚本、封面和结尾动作。`
+    : "先把这条内容定义成引流内容、信任内容或成交内容中的一个，再写脚本和结尾动作。";
   return [
     {
       label: "受众痛点",
       insight: audience,
-      action: compactText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。", 64),
+      action: normalizeText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。"),
       highlight: "没有明确受众时，后面所有商业判断都会发散。",
     },
     {
-      label: "內容角色",
-      insight: compactText(industryTemplate?.positioningHint || analysis.summary || "这条内容更适合作为后续放大的素材，而不是直接当成成交内容。"),
-      action: "把这条内容定义成引流内容、信任内容或成交内容中的一个，不要混用。",
+      label: "内容角色",
+      insight: normalizeText(analysis.summary || "这条内容当前更像素材，不是可以直接成交的完整内容。"),
+      action: roleFixPlan,
       highlight: "先定角色，再定脚本和平台。",
     },
     {
       label: "首发路径",
-      insight: `先用 ${firstPlatform} 验证表达，再按平台拆版本。`,
-      action: "只做一个首发版本，不要一稿通发。",
+      insight: `先用 ${firstPlatform} 验证表达，不再同时谈多个平台。`,
+      action: firstPlatform === "小红书"
+        ? "先做一版适合小红书的图文/笔记结构：封面主标题、收藏理由、方法拆解、结尾行动。"
+        : "只做一个首发版本，不要一稿通发。",
     },
     {
       label: "主商业方向",
-      insight: `当前优先承接「${bestTrack}」路径。`,
-      action: compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 64),
-      highlight: "单一路径比多方向堆叠更容易转化。",
+      insight: primaryDirection === "先不主打变现"
+        ? "当前商业闭环不成熟，先不要把品牌合作、带货、社群同时写上去。"
+        : `当前优先验证「${primaryDirection}」这一条路径。`,
+      action: primaryDirection === "先不主打变现"
+        ? "先把内容角色、受众痛点、首发平台和结尾动作统一，再去谈商业承接。"
+        : normalizeText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。"),
+      highlight: primaryDirection === "先不主打变现"
+        ? "先跑通内容入口，再谈后续商业化。"
+        : "单一路径比多方向堆叠更容易转化。",
     },
   ];
 }
@@ -253,25 +268,25 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
   return [
     {
       label: "当前优势",
-      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。"),
-      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。"),
+      insight: normalizeText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。"),
+      action: normalizeText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。"),
       highlight: "先固定可复用优势，不要每条都重来。",
     },
     {
       label: "优先优化点",
-      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。"),
-      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
+      insight: normalizeText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。"),
+      action: normalizeText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
       highlight: "先修最影响停留的问题。",
     },
     {
       label: "表达问题",
-      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
-      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 64),
+      insight: normalizeText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
+      action: normalizeText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。"),
     },
     {
       label: "建议方向",
-      insight: compactText(analysis.summary || industryTemplate?.commercialFocus || "当前内容有基础，但需要更强的结构和承接动作。"),
-      action: compactText(industryTemplate?.commercialFocus || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 64),
+      insight: normalizeText(analysis.summary || industryTemplate?.commercialFocus || "当前内容有基础，但需要更强的结构和承接动作。"),
+      action: normalizeText(industryTemplate?.commercialFocus || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。"),
       highlight: "说明越短，行动越清楚。",
     },
   ];
@@ -295,26 +310,35 @@ function buildPlatformRecommendationRows(
   recommendations: GrowthPlatformRecommendation[],
   growthSnapshot: GrowthSnapshot | null,
 ): InsightTableRow[] {
-  return recommendations.map((platform) => {
+  return recommendations.slice(0, 1).map((platform) => {
     const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
     return {
       label: platform.name,
-      insight: compactText(platform.reason, 56),
-      action: compactText(platform.action, 60),
-      highlight: snapshot?.watchouts?.[0] ? `避免：${compactText(snapshot.watchouts[0], 36)}` : undefined,
+      insight: normalizeText(platform.reason),
+      action: normalizeText(platform.action),
+      highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
   });
 }
 
 function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
-  return tracks.slice(0, 3).map((track) => ({
+  const viableTracks = tracks.filter((track) => track.fit >= 60).slice(0, 2);
+  if (!viableTracks.length) {
+    return [{
+      label: "当前阶段",
+      insight: "这条内容现在还不适合直接讲品牌合作、带货或社群。先把入口、角色、案例表达和结尾动作跑通。",
+      action: "先用 7 天计划把小红书首发版本做出来，验证收藏、停留、评论关键词，再决定后续承接方式。",
+      highlight: "中长期商业化先放后面，短期先把内容入口做成熟。",
+    }];
+  }
+  return viableTracks.map((track) => ({
     label: `${track.name} ${track.fit}%`,
-    insight: compactText(replaceTerms(track.reason), 72),
-    action: compactText(replaceTerms(track.nextStep), 72),
+    insight: normalizeText(replaceTerms(track.reason)),
+    action: normalizeText(replaceTerms(track.nextStep)),
     highlight: /品牌合作/.test(track.name) && /美妆|穿搭|形象|妆|护肤|造型/.test(context)
-      ? "更适合运动美妆、防晒、功能护肤、运动服饰与生活方式品牌，不是泛泛而谈的品牌合作。"
+      ? "合作类别优先看运动美妆、防晒、功能护肤、运动服饰、造型工具与生活方式品牌。"
       : track.name === "社群会员"
-        ? "社群要围绕固定主题、固定更新节奏和固定服务权益来运营。"
+        ? "只有固定主题、固定更新和固定权益三件事都成立，社群才值得做。"
         : industryTemplate?.offerExamples?.[0]
           ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
           : undefined,
@@ -422,8 +446,8 @@ function buildCreationAssistBrief(
 
 export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
-  const { isAuthenticated, loading } = useAuth();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
+  const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
@@ -1110,26 +1134,6 @@ export default function MVAnalysisPage() {
                   </div>
                 </div>
 
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#ffcf92]">
-                    <Compass className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">内容定位</h2>
-                  </div>
-                  <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                    <table className="w-full border-collapse text-sm leading-7 text-white/75">
-                      <tbody>
-                        {positioningRows.map((row) => (
-                          <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                            <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                            <td className="px-4 py-4">{row.insight}</td>
-                            <td className="px-4 py-4 text-white/65">{row.action}</td>
-                            <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
@@ -1185,26 +1189,28 @@ export default function MVAnalysisPage() {
             )}
 
             <div className="space-y-6">
+              {!showPremiumReport ? (
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffb37f]">
                   <Sparkles className="h-5 w-5" />
                   <h2 className="text-2xl font-bold">内容分析</h2>
                 </div>
                 <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                  <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                  <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
                     <tbody>
                       {contentAnalysisRows.map((row) => (
                         <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                           <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                          <td className="px-4 py-4">{row.insight}</td>
-                          <td className="px-4 py-4 text-white/65">{row.action}</td>
-                          <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
+                          <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                          <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                          <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
+              ) : null}
 
               {showPremiumReport ? (
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -1280,49 +1286,19 @@ export default function MVAnalysisPage() {
 
               {showPremiumReport ? (
                 <>
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
                     <div className="flex items-center gap-3 text-[#ffd08f]">
-                      <Send className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">推荐发布平台</h2>
+                      <Rocket className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">创作执行简报</h2>
                     </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                    <p className="mt-3 text-sm leading-7 text-white/60">先看这部分。这里是你这一条内容最该立刻执行的判断和改法。</p>
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/72">
                         <tbody>
-                          {platformRecommendationRows.map((row) => (
+                          {executionBriefRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                              <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4">{row.insight}</td>
-                              <td className="px-4 py-4 text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                    <div className="flex items-center gap-3 text-[#f5b7ff]">
-                      <BriefcaseBusiness className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">商业洞察</h2>
-                    </div>
-                    <div className="mt-5 space-y-4">
-                      {businessInsights.map((item) => (
-                        <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">{item.title}</div>
-                          <p className="mt-2 text-sm leading-7 text-white/70">{replaceTerms(item.detail)}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
-                        <tbody>
-                          {businessTrackRows.map((row) => (
-                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                              <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4">{row.insight}</td>
-                              <td className="px-4 py-4 text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 text-[#f5b7ff]">{row.highlight || "-"}</td>
+                              <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="px-4 py-4 whitespace-pre-wrap break-words">{row.content}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1333,7 +1309,10 @@ export default function MVAnalysisPage() {
                   <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                     <div className="flex items-center gap-3 text-[#9df6c0]">
                       <LineChartIcon className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">7 天增长规划</h2>
+                      <div>
+                        <h2 className="text-2xl font-bold">7 天增长规划</h2>
+                        <div className="mt-1 text-sm text-white/55">短期执行方案，目标是在 7 天内先把第一轮结果跑出来。</div>
+                      </div>
                     </div>
                     <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
@@ -1348,33 +1327,114 @@ export default function MVAnalysisPage() {
                         </tbody>
                       </table>
                     </div>
+                    <div className="mt-4">
+                      <a
+                        href="/storyboard?supervisor=1"
+                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
+                        className="block rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
+                      >
+                        进入分镜创作
+                      </a>
+                    </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                     <div className="flex items-center gap-3 text-[#ffd08f]">
-                      <Rocket className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">创作执行简报</h2>
+                      <Send className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">推荐发布平台</h2>
                     </div>
-                    <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full border-collapse text-sm leading-7 text-white/72">
+                    <p className="mt-3 text-sm leading-7 text-white/60">当前只围绕首发平台展开，不再把多个平台方案混在一起。</p>
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
                         <tbody>
-                          {executionBriefRows.map((row) => (
+                          {platformRecommendationRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                              <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 whitespace-pre-wrap">{row.content}</td>
+                              <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    <div className="mt-4 flex flex-col gap-3">
-                      <a
-                        href="/storyboard?supervisor=1"
-                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
-                        className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
-                      >
-                        进入分镜创作
-                      </a>
+                  </div>
+                </>
+              ) : null}
+
+              {showPremiumReport ? (
+                <>
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#ffcf92]">
+                      <Compass className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">内容定位</h2>
+                    </div>
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {positioningRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#ffb37f]">
+                      <Sparkles className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">内容分析</h2>
+                    </div>
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {contentAnalysisRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#f5b7ff]">
+                      <BriefcaseBusiness className="h-5 w-5" />
+                      <div>
+                        <h2 className="text-2xl font-bold">商业洞察</h2>
+                        <div className="mt-1 text-sm text-white/55">中长期发展方案，不和 7 天短期执行混在一起。</div>
+                      </div>
+                    </div>
+                    <div className="mt-5 space-y-4">
+                      {businessInsights.map((item) => (
+                        <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                          <p className="mt-2 text-sm leading-7 text-white/70">{replaceTerms(item.detail)}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {businessTrackRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </>
