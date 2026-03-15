@@ -71,10 +71,22 @@ type ExecutionBriefRow = {
 };
 
 type DashboardMetric = {
+  id: string;
   label: string;
   value: string;
   note: string;
   tone: string;
+};
+
+type DashboardPanel = {
+  id: string;
+  eyebrow: string;
+  title: string;
+  summary: string;
+  detail: string;
+  action: string;
+  accent: string;
+  glow: string;
 };
 
 type InsightTableRow = {
@@ -180,24 +192,28 @@ function buildDashboardMetrics(
 
   return [
     {
+      id: "readiness",
       label: "综合成熟度",
       value: `${averageScore}%`,
       note: "基于五个独立维度的平均值，只用于快速判断当前整体成熟度。",
       tone: "from-[#ff8a3d]/30 via-[#ff8a3d]/10 to-transparent",
     },
     {
+      id: "monetization",
       label: "高匹配商业方向",
       value: `${highConfidenceTracks.length}`,
       note: "只统计匹配度达到 80% 以上的方向，避免给用户空泛结论。",
       tone: "from-[#f5b7ff]/30 via-[#f5b7ff]/10 to-transparent",
     },
     {
+      id: "positioning",
       label: "内容角色",
       value: averageScore >= 80 ? "可放大" : averageScore >= 65 ? "可优化" : "需重构",
       note: "先判断当前内容该直接放大、重剪，还是需要先重写定位与钩子。",
       tone: "from-[#9df6c0]/30 via-[#9df6c0]/10 to-transparent",
     },
     {
+      id: "platforms",
       label: "首发建议",
       value: platformRecommendations[0]?.name || "待生成",
       note: "首发平台优先用于验证第一版表达，后续再做多平台拆分和分发。",
@@ -211,6 +227,13 @@ function buildScoreDistributionData(scoreItems: { label: string; value: number }
     name: item.label,
     value: item.value,
   }));
+}
+
+function getScorePanelId(label: string) {
+  if (/结构|叙事/.test(label)) return "positioning";
+  if (/包装|色彩|光线/.test(label)) return "content";
+  if (/钩子|节奏|冲击/.test(label)) return "platforms";
+  return "monetization";
 }
 
 function buildPositioningRows(
@@ -445,6 +468,86 @@ function buildCreationAssistBrief(
   ].join("\n");
 }
 
+function buildDashboardPanels(
+  dashboardMetrics: DashboardMetric[],
+  positioningRows: InsightTableRow[],
+  contentAnalysisRows: InsightTableRow[],
+  platformRecommendationRows: InsightTableRow[],
+  businessInsights: GrowthBusinessInsight[],
+  growthPlan: GrowthPlanStep[],
+  commercialTracks: CommercialTrack[],
+): DashboardPanel[] {
+  const maturity = dashboardMetrics.find((item) => item.id === "readiness");
+  const role = dashboardMetrics.find((item) => item.id === "positioning");
+  const platform = dashboardMetrics.find((item) => item.id === "platforms");
+  const monetization = dashboardMetrics.find((item) => item.id === "monetization");
+  const topTrack = commercialTracks[0];
+  const dayOne = growthPlan[0];
+
+  return [
+    {
+      id: "readiness",
+      eyebrow: maturity?.label || "总体准备度",
+      title: maturity?.value || "待生成",
+      summary: maturity?.note || "先看整体成熟度，再决定先修哪里。",
+      detail: `这块不是给用户看分数本身，而是让用户先知道当前内容更像“能直接放大”，还是“需要重写一版”。${role?.value ? ` 当前判断：${role.value}。` : ""}`,
+      action: dayOne?.action || "先把单一卖点和开头 3 秒收紧，再进入平台验证。",
+      accent: "text-[#ffcf92]",
+      glow: "from-[#ff8a3d]/30 via-[#ffcf92]/12 to-transparent",
+    },
+    {
+      id: "positioning",
+      eyebrow: "内容定位",
+      title: positioningRows[0]?.insight || "先定受众",
+      summary: positioningRows[1]?.insight || "先定内容角色，再定平台和脚本。",
+      detail: `${positioningRows[0]?.action || ""} ${positioningRows[1]?.action || ""}`.trim(),
+      action: positioningRows[2]?.action || "先做一版首发验证稿，再拆成多平台版本。",
+      accent: "text-[#9df6c0]",
+      glow: "from-[#15ff9b]/20 via-[#9df6c0]/10 to-transparent",
+    },
+    {
+      id: "content",
+      eyebrow: "内容分析",
+      title: contentAnalysisRows[0]?.insight || "先找可复用优势",
+      summary: contentAnalysisRows[1]?.insight || "先修最影响停留的问题。",
+      detail: `${contentAnalysisRows[2]?.insight || ""} ${contentAnalysisRows[3]?.action || ""}`.trim(),
+      action: contentAnalysisRows[1]?.action || "先重写开头和信息顺序。",
+      accent: "text-[#ffb37f]",
+      glow: "from-[#ff8a3d]/25 via-[#ffb37f]/10 to-transparent",
+    },
+    {
+      id: "platforms",
+      eyebrow: "平台矩阵",
+      title: platformRecommendationRows[0]?.label || "待生成",
+      summary: platformRecommendationRows[0]?.insight || "先给首发顺序，再告诉用户每个平台怎么发。",
+      detail: platformRecommendationRows.slice(0, 3).map((item) => `${item.label}：${item.action}`).join(" "),
+      action: "图文先跑验证，视频再做扩量。平台不是单选题，而是按同一主题拆不同版本。",
+      accent: "text-[#90c4ff]",
+      glow: "from-[#2684ff]/24 via-[#90c4ff]/12 to-transparent",
+    },
+    {
+      id: "monetization",
+      eyebrow: "商业洞察",
+      title: topTrack ? `${topTrack.name} ${topTrack.fit}%` : "暂不主打变现",
+      summary: businessInsights[0]?.detail || "先把内容入口讲清楚，再谈商业承接。",
+      detail: businessInsights.slice(1, 4).map((item) => `${item.title}：${item.detail}`).join(" "),
+      action: topTrack?.nextStep || "先补一版案例或服务说明，再决定主承接方式。",
+      accent: "text-[#f5b7ff]",
+      glow: "from-[#f5b7ff]/24 via-[#ff8cf0]/10 to-transparent",
+    },
+    {
+      id: "execution",
+      eyebrow: "7天执行",
+      title: dayOne?.title || "先跑第一轮结果",
+      summary: dayOne?.action || "先做一版能验证结果的首发稿。",
+      detail: growthPlan.slice(1, 4).map((item) => `Day ${item.day} ${item.title}：${item.action}`).join(" "),
+      action: "先把短期结果做出来，再把同主题延展到分镜、视频和商业承接。",
+      accent: "text-[#d7ff7f]",
+      glow: "from-[#8effb1]/18 via-[#d7ff7f]/10 to-transparent",
+    },
+  ];
+}
+
 export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
@@ -470,6 +573,7 @@ export default function MVAnalysisPage() {
     return new URLSearchParams(window.location.search).get("debug") === "1";
   });
   const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
+  const [activeDashboardPanel, setActiveDashboardPanel] = useState("readiness");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -791,11 +895,30 @@ export default function MVAnalysisPage() {
     () => buildDashboardMetrics(scoreItems, highConfidenceTracks, platformRecommendations),
     [scoreItems, highConfidenceTracks, platformRecommendations],
   );
+  const dashboardPanels = useMemo(
+    () => buildDashboardPanels(
+      dashboardMetrics,
+      positioningRows,
+      contentAnalysisRows,
+      platformRecommendationRows,
+      businessInsights,
+      growthPlan,
+      commercialTracks,
+    ),
+    [dashboardMetrics, positioningRows, contentAnalysisRows, platformRecommendationRows, businessInsights, growthPlan, commercialTracks],
+  );
   const scoreDistributionData = useMemo(
     () => buildScoreDistributionData(scoreItems),
     [scoreItems],
   );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
+
+  useEffect(() => {
+    if (!dashboardPanels.length) return;
+    if (!dashboardPanels.some((item) => item.id === activeDashboardPanel)) {
+      setActiveDashboardPanel(dashboardPanels[0].id);
+    }
+  }, [dashboardPanels, activeDashboardPanel]);
 
   if (loading) {
     return (
@@ -1094,44 +1217,98 @@ export default function MVAnalysisPage() {
                     <h2 className="text-2xl font-bold">商业分析总览</h2>
                   </div>
                   <p className="mt-4 text-sm leading-7 text-white/62">
-                    先看能不能做、先做哪裡、先修哪一段，再决定后面怎么放大。
+                    先给用户一眼能懂的全局概览。点到哪一块，就同步高亮对应解说和行动方案，不再让人埋在长文本里找重点。
                   </p>
                   <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                     {dashboardMetrics.map((item) => (
-                      <div key={item.label} className={`rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${item.tone} p-4`}>
+                      <button
+                        type="button"
+                        key={item.label}
+                        onClick={() => setActiveDashboardPanel(item.id)}
+                        className={`relative overflow-hidden rounded-2xl border p-4 text-left transition ${
+                          activeDashboardPanel === item.id
+                            ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                            : `border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${item.tone}`
+                        }`}
+                      >
+                        {activeDashboardPanel === item.id ? (
+                          <div className="pointer-events-none absolute inset-0 opacity-100">
+                            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
+                          </div>
+                        ) : null}
                         <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
                         <div className="mt-3 text-3xl font-black text-white">{item.value}</div>
                         <p className="mt-3 text-sm leading-6 text-white/62">{item.note}</p>
-                      </div>
+                      </button>
                     ))}
                   </div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center justify-between">
-                    <div className="text-lg font-bold text-white">五维度成熟度</div>
-                    <div className="text-xs text-white/45">满分 100</div>
-                  </div>
-                  <div className="mt-4 h-[300px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={scoreDistributionData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
-                        <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={true} vertical={false} />
-                        <XAxis type="number" domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <YAxis dataKey="name" type="category" width={88} tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 12 }} axisLine={false} tickLine={false} />
-                        <Tooltip
-                          contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                          formatter={(value: number) => [`${value}%`, "成熟度"]}
-                        />
-                        <Bar dataKey="value" radius={[0, 10, 10, 0]}>
-                          {scoreDistributionData.map((entry) => (
-                            <Cell
-                              key={entry.name}
-                              fill={entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
+                  <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
+                    <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
+                      <div className="flex items-center justify-between">
+                        <div className="text-lg font-bold text-white">五维度成熟度</div>
+                        <div className="text-xs text-white/45">点柱状图联动右侧解说</div>
+                      </div>
+                      <div className="mt-4 h-[320px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={scoreDistributionData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                            <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={true} vertical={false} />
+                            <XAxis type="number" domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                            <YAxis dataKey="name" type="category" width={88} tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 12 }} axisLine={false} tickLine={false} />
+                            <Tooltip
+                              contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
+                              formatter={(value: number) => [`${value}%`, "成熟度"]}
                             />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
+                            <Bar dataKey="value" radius={[0, 10, 10, 0]} onClick={(entry: any) => setActiveDashboardPanel(getScorePanelId(entry?.name || ""))}>
+                              {scoreDistributionData.map((entry) => {
+                                const linkedPanel = getScorePanelId(entry.name);
+                                const isActive = linkedPanel === activeDashboardPanel;
+                                return (
+                                  <Cell
+                                    key={entry.name}
+                                    fill={isActive ? "#7CFFB2" : entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
+                                    stroke={isActive ? "#d8ffe9" : "transparent"}
+                                    strokeWidth={isActive ? 2 : 0}
+                                    style={{ cursor: "pointer" }}
+                                  />
+                                );
+                              })}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      {dashboardPanels.map((panel) => {
+                        const isActive = activeDashboardPanel === panel.id;
+                        return (
+                          <button
+                            type="button"
+                            key={panel.id}
+                            onClick={() => setActiveDashboardPanel(panel.id)}
+                            className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
+                              isActive
+                                ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                                : "border-white/10 bg-black/15"
+                            }`}
+                          >
+                            {isActive ? (
+                              <div className="pointer-events-none absolute inset-0 opacity-100">
+                                <div className={`absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${panel.glow}`} />
+                                <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
+                              </div>
+                            ) : null}
+                            <div className={`relative text-xs uppercase tracking-[0.2em] ${panel.accent}`}>{panel.eyebrow}</div>
+                            <div className="relative mt-2 text-xl font-black text-white">{panel.title}</div>
+                            <p className="relative mt-3 text-sm leading-6 text-white/78">{panel.summary}</p>
+                            <p className="relative mt-3 text-sm leading-7 text-white/60">{panel.detail}</p>
+                            <div className={`relative mt-4 inline-flex rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs ${panel.accent}`}>
+                              {panel.action}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
