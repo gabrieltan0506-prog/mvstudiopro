@@ -40,6 +40,24 @@ async function transcribeVideoAudio(videoBuffer: Buffer): Promise<string> {
     const audioPath = videoPath.replace(/\.mp4$/, ".mp3");
 
     try {
+      const probe = await execFileAsync("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "json",
+        videoPath,
+      ]).catch(() => ({ stdout: "{\"streams\":[]}" }));
+      const probeJson = JSON.parse(String(probe.stdout || "{\"streams\":[]}"));
+      const hasAudio = Array.isArray(probeJson.streams) && probeJson.streams.length > 0;
+      if (!hasAudio) {
+        console.info("[growth.analyzeVideo] no audio stream detected, skip transcription");
+        return "";
+      }
+
       await execFileAsync("ffmpeg", [
         "-y",
         "-i",
@@ -125,6 +143,11 @@ export async function analyzeVideo(params: {
         {
           role: "system",
           content: `你是一位创作者商业增长顾问。请根据视频多帧分析结果和转写内容，返回 Creator Growth Camp 的统一分析结构。
+
+注意：
+0. 必须优先依据“多帧综合摘要 / 亮点 / 改进 / 帧细节 / 转写”做判断，不能只根据业务背景给建议。summary、strengths、improvements 里至少要有一半内容直接来自画面或转写证据。
+1. 如果没有音轨或转写为空，只能依据关键帧和画面结构做判断，不能编造口播内容。
+2. 不要输出互相矛盾的建议。低成熟度阶段先给短期验证路径，不要同时堆多个商业化方向。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
