@@ -6,9 +6,7 @@ import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
-import { GrowthHandoffActions } from "@/components/growth/GrowthHandoffActions";
-import { GrowthSectionCard } from "@/components/growth/GrowthSectionCard";
-import { getGrowthHandoffStatus, saveGrowthHandoff } from "@/lib/growthHandoff";
+import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import type {
   GrowthBusinessInsight,
   GrowthHandoff,
@@ -19,12 +17,9 @@ import type {
 import {
   ArrowLeft,
   BriefcaseBusiness,
-  CheckCircle2,
   Compass,
-  FileText,
   FileUp,
   Film,
-  Lightbulb,
   LineChart as LineChartIcon,
   Loader2,
   Rocket,
@@ -38,8 +33,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -105,6 +98,20 @@ type DashboardMetric = {
   tone: string;
 };
 
+type InsightTableRow = {
+  label: string;
+  insight: string;
+  action: string;
+  highlight?: string;
+};
+
+type TrendTableRow = {
+  platform: string;
+  topic: string;
+  reason: string;
+  action: string;
+};
+
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
@@ -144,35 +151,18 @@ function formatPercent(value: number) {
   return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
 }
 
+function compactText(text: string, maxLength = 72) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+}
+
 function replaceTerms(text: string) {
   return String(text || "")
     .replace(/\bCTA\b/g, "行动引导（CTA）")
     .replace(/live sample/gi, "实时样本")
     .replace(/hybrid/gi, "混合")
     .replace(/fallback/gi, "补位");
-}
-
-function translateTrendSource(source: GrowthSnapshot["status"]["source"]) {
-  if (source === "live") return "实时样本";
-  if (source === "hybrid") return "实时样本 + 结构补位";
-  if (source === "fallback") return "结构补位";
-  return "模拟样本";
-}
-
-function localizeTrendNote(note: string) {
-  return replaceTerms(note)
-    .replace(/^Live collectors ready for (.+)\.$/i, (_match, platforms) => {
-      const names = String(platforms || "")
-        .split(",")
-        .map((item) => PLATFORM_LABELS[String(item).trim()] || String(item).trim())
-        .filter(Boolean)
-        .join("、");
-      return names ? `已接入真实抓取平台：${names}。` : "当前没有已接入的真实抓取平台。";
-    })
-    .replace(/^No live collector configured for kuaishou\.$/i, "快手暂未接入真实抓取，仅提供结构建议。")
-    .replace(/^No live collector configured for weixin_channels\.$/i, "视频号暂未接入真实抓取，仅提供结构建议。")
-    .replace(/^Fetched (\d+) Douyin hot search topics\.$/i, "已抓取抖音实时样本：$1 条。")
-    .replace(/^Fetched (\d+) popular Bilibili videos\.$/i, "已抓取 B 站实时样本：$1 条。");
 }
 
 function normalizeAnalysisScale(result: AnalysisResult): AnalysisResult {
@@ -280,17 +270,12 @@ function buildPlatformOptimizationCards(
 
 function buildDashboardMetrics(
   scoreItems: { label: string; value: number }[],
-  growthSnapshot: GrowthSnapshot | null,
   highConfidenceTracks: CommercialTrack[],
   platformRecommendations: GrowthPlatformRecommendation[],
 ): DashboardMetric[] {
   const averageScore = scoreItems.length
     ? Math.round(scoreItems.reduce((sum, item) => sum + item.value, 0) / scoreItems.length)
     : 0;
-
-  const livePlatformCount = growthSnapshot?.platformSnapshots.filter(
-    (item) => item.last30d.sampleSizeLabel === "live-sample-30d",
-  ).length ?? 0;
 
   return [
     {
@@ -306,9 +291,9 @@ function buildDashboardMetrics(
       tone: "from-[#f5b7ff]/30 via-[#f5b7ff]/10 to-transparent",
     },
     {
-      label: "真实平台样本",
-      value: `${livePlatformCount}`,
-      note: "仅统计当前已抓到真实 collector 样本的平台，不含结构补位。",
+      label: "内容角色",
+      value: averageScore >= 80 ? "可放大" : averageScore >= 65 ? "可优化" : "需重构",
+      note: "先判断当前内容该直接放大、重剪，还是需要先重写定位与钩子。",
       tone: "from-[#9df6c0]/30 via-[#9df6c0]/10 to-transparent",
     },
     {
@@ -339,6 +324,133 @@ function buildCommercialTrackData(tracks: CommercialTrack[]) {
   return tracks.slice(0, 4).map((item) => ({
     name: item.name,
     value: item.fit,
+  }));
+}
+
+function buildPositioningRows(
+  analysis: AnalysisResult,
+  context: string,
+  tracks: CommercialTrack[],
+  platforms: GrowthPlatformRecommendation[],
+): InsightTableRow[] {
+  const audience = compactText(context || "当前没有明确写出受众与成交目标，建议后续补全。", 64);
+  const bestTrack = tracks[0]?.name || "社群会员";
+  const firstPlatform = platforms[0]?.name || "小红书";
+  return [
+    {
+      label: "受众痛点",
+      insight: audience,
+      action: "先明确你要吸引哪类人，以及最终要导向什么成交动作。",
+      highlight: "没有明确受众时，后面所有商业判断都会发散。",
+    },
+    {
+      label: "內容角色",
+      insight: compactText(analysis.summary || "这条内容更适合作为后续放大的素材，而不是直接当成成交内容。"),
+      action: "把这条内容定义成引流内容、信任内容或成交内容中的一个，不要混用。",
+      highlight: "先定角色，再定脚本和平台。",
+    },
+    {
+      label: "首发路径",
+      insight: `先用 ${firstPlatform} 验证表达，再按平台拆版本。`,
+      action: "只做一个首发版本，不要一稿通发。",
+    },
+    {
+      label: "主商业方向",
+      insight: `当前优先承接「${bestTrack}」路径。`,
+      action: "结尾只保留一个明确承接动作，避免同时推多个变现方向。",
+      highlight: "单一路径比多方向堆叠更容易转化。",
+    },
+  ];
+}
+
+function buildContentAnalysisRows(analysis: AnalysisResult): InsightTableRow[] {
+  return [
+    {
+      label: "当前优势",
+      insight: compactText(analysis.strengths[0] || "素材真实、有可延展的内容基础。"),
+      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。"),
+      highlight: "先固定可复用优势，不要每条都重来。",
+    },
+    {
+      label: "优先优化点",
+      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。"),
+      action: compactText(analysis.improvements[1] || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
+      highlight: "先修最影响停留的问题。",
+    },
+    {
+      label: "表达问题",
+      insight: compactText(analysis.improvements[2] || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
+      action: "把一句核心结论放到最前面，剩下内容只服务这一句。",
+    },
+    {
+      label: "建议方向",
+      insight: compactText(analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。"),
+      action: "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。",
+      highlight: "说明越短，行动越清楚。",
+    },
+  ];
+}
+
+function buildTrendRows(
+  growthSnapshot: GrowthSnapshot | null,
+  context: string,
+  platforms: GrowthPlatformRecommendation[],
+): TrendTableRow[] {
+  const lower = String(context || "").toLowerCase();
+  const isBeautyFashion = /美妆|穿搭|形象|妆|护肤|造型|时尚/.test(context);
+  const wantedKeywords = isBeautyFashion
+    ? ["穿搭", "妆", "护肤", "造型", "时尚", "审美", "运动穿搭", "网球穿搭", "防晒", "发型"]
+    : Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 6);
+  const allTopics = (growthSnapshot?.platformSnapshots || [])
+    .filter((item) => platforms.some((platform) => platform.name === item.displayName))
+    .flatMap((item) =>
+      item.sampleTopics.map((topic) => ({
+        platform: item.displayName,
+        topic,
+      })),
+    );
+
+  const relevant = allTopics.filter((item) => {
+    if (!wantedKeywords.length) return true;
+    const title = item.topic.toLowerCase();
+    return wantedKeywords.some((keyword) => title.includes(keyword.toLowerCase())) || lower.includes(title);
+  });
+
+  return relevant.slice(0, 4).map((item) => ({
+    platform: item.platform,
+    topic: compactText(item.topic, 28),
+    reason: isBeautyFashion
+      ? "优先保留和穿搭、妆容、审美、运动场景相关的话题，避免无关热点稀释定位。"
+      : "只保留和你当前受众、场景、成交目标相关的话题。",
+    action: `把这个话题改写成 ${item.platform} 可发布的标题与封面，不直接照搬热点。`,
+  }));
+}
+
+function buildPlatformRecommendationRows(
+  recommendations: GrowthPlatformRecommendation[],
+  growthSnapshot: GrowthSnapshot | null,
+): InsightTableRow[] {
+  return recommendations.map((platform) => {
+    const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
+    return {
+      label: platform.name,
+      insight: compactText(platform.reason, 56),
+      action: compactText(platform.action, 60),
+      highlight: snapshot?.watchouts?.[0] ? `避免：${compactText(snapshot.watchouts[0], 36)}` : undefined,
+    };
+  });
+}
+
+function buildBusinessTrackRows(tracks: CommercialTrack[], context: string): InsightTableRow[] {
+  return tracks.slice(0, 3).map((track) => ({
+    label: `${track.name} ${track.fit}%`,
+    insight: compactText(replaceTerms(track.reason), 72),
+    action: compactText(replaceTerms(track.nextStep), 72),
+    highlight: /品牌合作/.test(track.name) && /美妆|穿搭|形象|妆|护肤|造型/.test(context)
+      ? "更适合运动美妆、防晒、功能护肤、运动服饰与生活方式品牌，不是泛泛而谈的品牌合作。"
+      : track.name === "社群会员"
+        ? "社群要围绕固定主题、固定更新节奏和固定服务权益来运营。"
+        : undefined,
   }));
 }
 
@@ -714,15 +826,6 @@ export default function MVAnalysisPage() {
     }
   }, [refreshGrowthMutation, growthSnapshotQuery]);
 
-  const handleCopyText = useCallback(async (text: string, successMessage: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(successMessage);
-    } catch (copyError: any) {
-      toast.error(copyError.message || "复制失败");
-    }
-  }, []);
-
   const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "handoff 已暂存") => {
     if (!handoff) return;
     saveGrowthHandoff(handoff);
@@ -774,60 +877,42 @@ export default function MVAnalysisPage() {
     },
     [analysis, context, growthSnapshot],
   );
-  const creationAssistBrief = useMemo(
-    () => {
-      if (!analysis) return "";
-      return growthSnapshot?.creationAssist?.brief
-        ? growthSnapshot.creationAssist.brief
-        : buildCreationAssistBrief(analysis, context, platformRecommendations, commercialTracks);
-    },
-    [analysis, context, platformRecommendations, commercialTracks, growthSnapshot],
-  );
   const growthHandoff = growthSnapshot?.growthHandoff ?? null;
-  const growthHandoffStatus = useMemo(() => getGrowthHandoffStatus(growthHandoff), [growthHandoff]);
-  const strategyPillars = useMemo(
-    () => analysis ? buildStrategyPillars(analysis, platformRecommendations, commercialTracks) : [],
-    [analysis, platformRecommendations, commercialTracks],
+  const positioningRows = useMemo(
+    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, platformRecommendations) : [],
+    [analysis, context, commercialTracks, platformRecommendations],
   );
-  const contentInsightBlocks = useMemo(
-    () => analysis ? buildContentInsightBlocks(analysis) : [],
+  const contentAnalysisRows = useMemo(
+    () => analysis ? buildContentAnalysisRows(analysis) : [],
     [analysis],
   );
-  const platformOptimizationCards = useMemo(
-    () => buildPlatformOptimizationCards(growthSnapshot, platformRecommendations),
-    [growthSnapshot, platformRecommendations],
+  const trendRows = useMemo(
+    () => buildTrendRows(growthSnapshot, context, platformRecommendations),
+    [growthSnapshot, context, platformRecommendations],
   );
-  const trendLayerGroups = useMemo(() => {
-    const layers = growthSnapshot?.trendLayers || [];
-    return {
-      topics: layers.filter((item) => item.layerType === "topic"),
-      content: layers.filter((item) => item.layerType === "content"),
-      structure: layers.filter((item) => item.layerType === "structure"),
-    };
-  }, [growthSnapshot]);
+  const platformRecommendationRows = useMemo(
+    () => buildPlatformRecommendationRows(platformRecommendations, growthSnapshot),
+    [platformRecommendations, growthSnapshot],
+  );
   const highConfidenceTracks = useMemo(
     () => commercialTracks.filter((track) => track.fit >= 80),
     [commercialTracks],
+  );
+  const businessTrackRows = useMemo(
+    () => buildBusinessTrackRows(highConfidenceTracks.length ? highConfidenceTracks : commercialTracks, context),
+    [highConfidenceTracks, commercialTracks, context],
   );
   const executionBriefRows = useMemo(
     () => analysis ? buildExecutionBriefRows(analysis, context) : [],
     [analysis, context],
   );
   const dashboardMetrics = useMemo(
-    () => buildDashboardMetrics(scoreItems, growthSnapshot, highConfidenceTracks, platformRecommendations),
-    [scoreItems, growthSnapshot, highConfidenceTracks, platformRecommendations],
-  );
-  const platformComparisonData = useMemo(
-    () => buildPlatformComparisonData(platformOptimizationCards),
-    [platformOptimizationCards],
+    () => buildDashboardMetrics(scoreItems, highConfidenceTracks, platformRecommendations),
+    [scoreItems, highConfidenceTracks, platformRecommendations],
   );
   const scoreDistributionData = useMemo(
     () => buildScoreDistributionData(scoreItems),
     [scoreItems],
-  );
-  const commercialTrackData = useMemo(
-    () => buildCommercialTrackData(highConfidenceTracks),
-    [highConfidenceTracks],
   );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
 
@@ -889,18 +974,17 @@ export default function MVAnalysisPage() {
         </div>
 
         <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,138,61,0.2),transparent_28%),radial-gradient(circle_at_top_right,rgba(38,132,255,0.15),transparent_24%),linear-gradient(180deg,#101d31_0%,#08111f_72%)] p-6 md:p-10">
-          <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-8">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
                 創作商業成長營
               </div>
               <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
-                从一张画面开始，直接产出你的内容增长与商业化行动方案。
+                讓你的圖文與視頻創意，發揮它們的商業價值。
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-8 text-white/70">
-                这不是单纯的画面打分页。系统会结合素材分析、近 30 天平台样本、商业承接路径和发布建议，
-                输出一份可以立刻执行的成长营报告。
+                直接指出內容卡在哪裡、該先修什麼、先發哪裡，以及怎麼把流量接到可成交的商業動作。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
@@ -915,14 +999,14 @@ export default function MVAnalysisPage() {
               {!fileBase64 ? (
                 <button
                   onClick={handleSelectFile}
-                  className="flex min-h-[360px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
+                  className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
                 >
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
-                  <div className="mt-5 text-2xl font-bold">上传图片、Word、PDF 或 MP4</div>
+                  <div className="mt-5 text-2xl font-bold">上傳圖文檔案或視頻素材</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    成长营现在支持图片、`.docx`、`.pdf`、`.mp4`，会按文件类型自动选择分析链路并统一产出报告。
+                    支援圖片、Word、PDF、MP4。上傳後會直接幫你找出內容賣點、轉化缺口與可放大的商業方向，讓分析結果值得你採用。
                   </p>
                 </button>
               ) : (
@@ -933,14 +1017,14 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : (
                     <div className="flex min-h-[220px] flex-col items-center justify-center rounded-[24px] border border-white/10 bg-black/30 px-6 text-center">
-                      {inputKind === "document" ? <FileText className="h-12 w-12 text-[#ffb37f]" /> : <Film className="h-12 w-12 text-[#ffb37f]" />}
+                      {inputKind === "document" ? <FileUp className="h-12 w-12 text-[#ffb37f]" /> : <Film className="h-12 w-12 text-[#ffb37f]" />}
                       <div className="mt-4 text-xl font-bold text-white">
                         {inputKind === "document" ? "文档已就绪" : "视频文件已就绪"}
                       </div>
                       <p className="mt-2 text-sm leading-7 text-white/60">
                         {inputKind === "document"
-                          ? "将先抽取正文或页面内容，再输出统一的成长营报告。"
-                          : "将先抽帧并尝试转写音频，再输出统一的成长营报告。"}
+                          ? "會先提取內容，再輸出定位、平台與商業建議。"
+                          : "會先抽幀與理解節奏，再輸出可直接執行的分析報告。"}
                       </p>
                     </div>
                   )}
@@ -980,7 +1064,7 @@ export default function MVAnalysisPage() {
                   value={context}
                   onChange={(e) => setContext(e.target.value)}
                   rows={4}
-                  placeholder="例如：这是给餐饮品牌做的招商内容；或这是想转化课程报名的短视频。"
+                  placeholder="例如：我是形象穿搭美妝博主，想知道這支素材能承接什麼商業價值，以及該先發哪個平台。"
                   className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white placeholder:text-white/30"
                 />
               </div>
@@ -1083,16 +1167,16 @@ export default function MVAnalysisPage() {
             ) : null}
 
             {showPremiumReport ? (
-              <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
+              <div className="space-y-6">
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center gap-3 text-[#ffcf92]">
                     <Sparkles className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">商业分析总览</h2>
                   </div>
                   <p className="mt-4 text-sm leading-7 text-white/62">
-                    这一块不是静态摘要，而是把内容成熟度、商业方向、样本覆盖和首发建议压成 dashboard 入口，方便客户先看重点再读说明。
+                    先看能不能做、先做哪裡、先修哪一段，再决定后面怎么放大。
                   </p>
-                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                     {dashboardMetrics.map((item) => (
                       <div key={item.label} className={`rounded-2xl border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${item.tone} p-4`}>
                         <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
@@ -1101,78 +1185,54 @@ export default function MVAnalysisPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="mt-5 grid gap-4 lg:grid-cols-[1.2fr_0.8fr_0.8fr]">
-                    {strategyPillars.map((item) => (
-                      <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className={`text-sm font-semibold ${item.accent}`}>{item.title}</div>
-                        <p className={`mt-3 text-sm leading-7 text-white/68 ${item.title === "内容定位" ? "min-h-[220px]" : "min-h-[120px]"}`}>{item.description}</p>
-                      </div>
-                    ))}
+                </div>
+
+                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="text-lg font-bold text-white">五维度成熟度</div>
+                    <div className="text-xs text-white/45">满分 100</div>
+                  </div>
+                  <div className="mt-4 h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={scoreDistributionData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
+                        <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={true} vertical={false} />
+                        <XAxis type="number" domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                        <YAxis dataKey="name" type="category" width={88} tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 12 }} axisLine={false} tickLine={false} />
+                        <Tooltip
+                          contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
+                          formatter={(value: number) => [`${value}%`, "成熟度"]}
+                        />
+                        <Bar dataKey="value" radius={[0, 10, 10, 0]}>
+                          {scoreDistributionData.map((entry) => (
+                            <Cell
+                              key={entry.name}
+                              fill={entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                    <div className="flex items-center justify-between">
-                      <div className="text-lg font-bold text-white">五维度成熟度</div>
-                      <div className="text-xs text-white/45">满分 100</div>
-                    </div>
-                    <div className="mt-4 h-[260px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={scoreDistributionData} margin={{ top: 12, right: 8, left: -24, bottom: 8 }}>
-                          <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                          <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                          <YAxis domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                          <Tooltip
-                            cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                            contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                          />
-                          <Bar dataKey="value" radius={[10, 10, 0, 0]}>
-                            {scoreDistributionData.map((entry) => (
-                              <Cell
-                                key={entry.name}
-                                fill={entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <p className="mt-4 text-sm leading-7 text-white/60">
-                      说明：以上 5 个维度是独立评分，满分均为 100 分，数值越高代表该维度越成熟，并不是综合总分。
-                    </p>
+                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className="flex items-center gap-3 text-[#ffcf92]">
+                    <Compass className="h-5 w-5" />
+                    <h2 className="text-2xl font-bold">内容定位</h2>
                   </div>
-
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                    <div className="flex items-center justify-between">
-                      <div className="text-lg font-bold text-white">商业方向匹配度</div>
-                      <div className="text-xs text-white/45">仅展示高匹配项</div>
-                    </div>
-                    <div className="mt-4 h-[260px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={commercialTrackData.length ? commercialTrackData : [{ name: "暂无高匹配项", value: 100 }]}
-                            dataKey="value"
-                            nameKey="name"
-                            innerRadius={58}
-                            outerRadius={92}
-                            paddingAngle={3}
-                          >
-                            {(commercialTrackData.length ? commercialTrackData : [{ name: "暂无高匹配项", value: 100 }]).map((entry, index) => (
-                              <Cell key={entry.name} fill={["#ff8a3d", "#f5b7ff", "#90c4ff", "#9df6c0"][index % 4]} />
-                            ))}
-                          </Pie>
-                          <Tooltip
-                            contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                            formatter={(value: number) => [`${value}%`, "匹配度"]}
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <p className="mt-4 text-sm leading-7 text-white/60">
-                      商业洞察只保留高分方向，低于 80% 的方向不直接给客户，避免制造“看起来很多、其实不可做”的误导。
-                    </p>
+                  <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                    <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                      <tbody>
+                        {positioningRows.map((row) => (
+                          <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                            <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                            <td className="px-4 py-4">{row.insight}</td>
+                            <td className="px-4 py-4 text-white/65">{row.action}</td>
+                            <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
@@ -1229,52 +1289,29 @@ export default function MVAnalysisPage() {
               </div>
             )}
 
-            <div className={`grid gap-6 ${showPremiumReport ? "xl:grid-cols-[1.2fr_0.8fr]" : ""}`}>
-              <div className="space-y-6">
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#ffb37f]">
-                    <Sparkles className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">内容分析</h2>
-                  </div>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    {contentInsightBlocks.map((item) => (
-                      <div
-                        key={item.title}
-                        className={`rounded-2xl border p-4 ${
-                          item.tone === "highlight"
-                            ? "border-[#ff8a3d]/20 bg-[#ff8a3d]/10"
-                            : item.tone === "warning"
-                              ? "border-amber-300/15 bg-amber-400/8"
-                              : "border-white/10 bg-black/15"
-                        }`}
-                      >
-                        <div className="text-sm font-semibold text-white">{item.title}</div>
-                        <p className="mt-3 text-sm leading-7 text-white/75">{item.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-emerald-300/10 bg-emerald-400/5 p-4">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
-                        <CheckCircle2 className="h-4 w-4" />
-                        当前优势
-                      </div>
-                      <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
-                        {analysis.strengths.map((item, index) => <li key={index}>• {item}</li>)}
-                      </ul>
-                    </div>
-                    <div className="rounded-2xl border border-amber-300/10 bg-amber-400/5 p-4">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
-                        <Lightbulb className="h-4 w-4" />
-                        优先优化点
-                      </div>
-                      <ul className="mt-3 space-y-2 text-sm leading-7 text-white/70">
-                        {analysis.improvements.map((item, index) => <li key={index}>• {item}</li>)}
-                      </ul>
-                    </div>
-                  </div>
+            <div className="space-y-6">
+              <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                <div className="flex items-center gap-3 text-[#ffb37f]">
+                  <Sparkles className="h-5 w-5" />
+                  <h2 className="text-2xl font-bold">内容分析</h2>
                 </div>
-                {showPremiumReport ? (
+                <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                  <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                    <tbody>
+                      {contentAnalysisRows.map((row) => (
+                        <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                          <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                          <td className="px-4 py-4">{row.insight}</td>
+                          <td className="px-4 py-4 text-white/65">{row.action}</td>
+                          <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {showPremiumReport ? (
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 text-[#90c4ff]">
@@ -1286,12 +1323,12 @@ export default function MVAnalysisPage() {
                       disabled={refreshGrowthMutation.isPending}
                       className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/75 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {refreshGrowthMutation.isPending ? "刷新中..." : "刷新 30 天样本"}
+                      {refreshGrowthMutation.isPending ? "刷新中..." : "刷新趋势"}
                     </button>
                   </div>
                   {growthSnapshotQuery.isLoading ? (
-                    <div className="mt-5 grid gap-4 md:grid-cols-3">
-                      {[0, 1, 2].map((item) => (
+                    <div className="mt-5 grid gap-4 md:grid-cols-2">
+                      {[0, 1].map((item) => (
                         <div key={item} className="animate-pulse rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="h-4 w-24 rounded bg-white/10" />
                           <div className="mt-4 h-20 rounded bg-white/5" />
@@ -1300,243 +1337,32 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
                   {growthSnapshot ? (
-                    <>
-                      <div className="mt-4 flex flex-wrap gap-2 text-xs text-white/60">
-                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          数据来源：{translateTrendSource(growthSnapshot.status.source)}
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          数据时效：{replaceTerms(growthSnapshot.status.freshnessLabel)}
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1">
-                          样本窗口：{growthSnapshot.status.windowDays} 天
-                        </div>
-                      </div>
-                      <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
-                        <div className="font-semibold text-white">数据口径说明</div>
-                        <p className="mt-2">
-                          当前这里展示的是<strong>实时抓取样本 + 结构化补位</strong>，不是完整的 30 天历史数据库。
-                          其中抖音、快手、B站、小红书以真实 collector 为准；若某个平台当前未抓到真实样本，只会降级为结构建议，不会作为真实趋势证据使用。
-                        </p>
-                      </div>
-                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
-                        <div className="font-semibold text-white">趋势摘要</div>
+                    <div className="mt-5 space-y-4">
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
+                        <div className="font-semibold text-white">趋势判断</div>
                         <p className="mt-2">{replaceTerms(growthSnapshot.overview.trendNarrative)}</p>
-                        <p className="mt-2 text-white/55">{replaceTerms(growthSnapshot.overview.nextCollectionPlan)}</p>
                       </div>
-                      <div className="mt-5 grid gap-4 xl:grid-cols-3">
-                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">热榜趋势</div>
-                          <p className="mt-2 text-sm leading-7 text-white/58">
-                            这里只放热榜/热点词样本，不和真实内容样本混写。
-                          </p>
-                          <div className="mt-4 space-y-3">
-                            {trendLayerGroups.topics.length ? trendLayerGroups.topics.map((layer) => (
-                              <div key={layer.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-semibold text-white">{layer.platformLabel}</div>
-                                  <div className="rounded-full border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-2 py-1 text-[11px] text-[#ffd4b7]">
-                                    {layer.sampleLabel}
-                                  </div>
-                                </div>
-                                <p className="mt-2 text-sm leading-6 text-white/65">{layer.summary}</p>
-                                <div className="mt-2 text-xs text-white/45">样本数：{layer.sampleCount}</div>
-                                {layer.items.length ? (
-                                  <div className="mt-2 space-y-1 text-xs leading-6 text-white/55">
-                                    {layer.items.map((item) => (
-                                      <div key={item}>• {item}</div>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            )) : (
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/55">当前没有可展示的热榜趋势样本。</div>
-                            )}
-                          </div>
+                      {trendRows.length ? (
+                        <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                          <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                            <tbody>
+                              {trendRows.map((row) => (
+                                <tr key={`${row.platform}-${row.topic}`} className="border-b border-white/10 last:border-b-0">
+                                  <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.platform}</td>
+                                  <td className="px-4 py-4 text-[#9dd0ff]">{row.topic}</td>
+                                  <td className="px-4 py-4">{row.reason}</td>
+                                  <td className="px-4 py-4 text-white/65">{row.action}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">真实内容样本</div>
-                          <p className="mt-2 text-sm leading-7 text-white/58">
-                            这里只放平台真实内容样本，用来判断标题、叙事和素材表达，不和热榜热点混在一起。
-                          </p>
-                          <div className="mt-4 space-y-3">
-                            {trendLayerGroups.content.length ? trendLayerGroups.content.map((layer) => (
-                              <div key={layer.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-semibold text-white">{layer.platformLabel}</div>
-                                  <div className="rounded-full border border-emerald-300/20 bg-emerald-400/10 px-2 py-1 text-[11px] text-emerald-200">
-                                    {layer.sampleLabel}
-                                  </div>
-                                </div>
-                                <p className="mt-2 text-sm leading-6 text-white/65">{layer.summary}</p>
-                                <div className="mt-2 text-xs text-white/45">样本数：{layer.sampleCount}</div>
-                                {layer.items.length ? (
-                                  <div className="mt-2 space-y-1 text-xs leading-6 text-white/55">
-                                    {layer.items.map((item) => (
-                                      <div key={item}>• {item}</div>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </div>
-                            )) : (
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/55">当前没有可展示的真实内容样本。</div>
-                            )}
-                          </div>
+                      ) : (
+                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/65">
+                          当前没有足够高相关度的话题可直接展示，所以不把无关热词硬塞给用户。
                         </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">结构补位</div>
-                          <p className="mt-2 text-sm leading-7 text-white/58">
-                            这里只放没有真实 collector 时的结构建议，不能写成真实趋势结论。
-                          </p>
-                          <div className="mt-4 space-y-3">
-                            {trendLayerGroups.structure.length ? trendLayerGroups.structure.map((layer) => (
-                              <div key={layer.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-sm font-semibold text-white">{layer.platformLabel}</div>
-                                  <div className="rounded-full border border-amber-300/20 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-100">
-                                    {layer.sampleLabel}
-                                  </div>
-                                </div>
-                                <p className="mt-2 text-sm leading-6 text-white/65">{layer.summary}</p>
-                              </div>
-                            )) : (
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/55">当前所有展示平台都已有可用样本，没有额外结构补位说明。</div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">平台动量与适配对比</div>
-                          <p className="mt-2 text-sm leading-7 text-white/58">
-                            这张图把真实样本或结构建议统一拉到一个可比视图里，客户能先看平台差异，再看下面每个平台的文字建议。
-                          </p>
-                          <div className="mt-4 h-[280px]">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={platformComparisonData} margin={{ top: 12, right: 12, left: -24, bottom: 8 }}>
-                                <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                                <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                                <YAxis domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                                <Tooltip
-                                  contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                                  formatter={(value: number) => [`${value}%`, ""]}
-                                />
-                                <Bar dataKey="热度动量" fill="#ff8a3d" radius={[8, 8, 0, 0]} />
-                                <Bar dataKey="受众适配" fill="#90c4ff" radius={[8, 8, 0, 0]} />
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="text-sm font-semibold text-white">结构模式占比</div>
-                          <p className="mt-2 text-sm leading-7 text-white/58">
-                            这里不是“真实市场份额”，而是当前抓到的高频结构模式，方便客户理解什么样的叙事与钩子更值得优先复用。
-                          </p>
-                          <div className="mt-4 h-[280px]">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <PieChart>
-                                <Pie
-                                  data={growthSnapshot.structurePatterns.slice(0, 4).map((item, index) => ({
-                                    name: item.title,
-                                    value: Math.max(12, 40 - index * 7),
-                                  }))}
-                                  dataKey="value"
-                                  nameKey="name"
-                                  innerRadius={54}
-                                  outerRadius={96}
-                                  paddingAngle={3}
-                                >
-                                  {growthSnapshot.structurePatterns.slice(0, 4).map((item, index) => (
-                                    <Cell key={item.id} fill={["#ffd08f", "#90c4ff", "#9df6c0", "#f5b7ff"][index % 4]} />
-                                  ))}
-                                </Pie>
-                                <Tooltip
-                                  contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                                  formatter={(value: number) => [`${value}%`, "结构占比"]}
-                                />
-                              </PieChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {platformOptimizationCards.map((platform) => (
-                          <div key={platform.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold text-white">{platform.name}</div>
-                              <div className={`rounded-full border px-2 py-1 text-[11px] ${platform.sourceTone === "live" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" : "border-amber-300/20 bg-amber-400/10 text-amber-100"}`}>
-                                {platform.sourceLabel}
-                              </div>
-                            </div>
-                            <p className="mt-3 text-sm leading-7 text-white/65">{platform.summary}</p>
-                            <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-white/70">
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="text-white/45">热度动量</div>
-                                <div className="mt-1 text-xl font-bold text-white">{formatPercent(platform.percentageMomentum)}</div>
-                              </div>
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="text-white/45">受众适配</div>
-                                <div className="mt-1 text-xl font-bold text-white">{formatPercent(platform.percentageFit)}</div>
-                              </div>
-                            </div>
-                            <div className="mt-4 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
-                              平台优化建议：{platform.action}
-                            </div>
-                            <div className="mt-3 text-xs leading-6 text-white/60">
-                              {platform.note}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-2">
-                        {growthSnapshot.contentPatterns.map((pattern) => (
-                          <div key={pattern.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-sm font-semibold text-white">{pattern.title}</div>
-                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
-                                {pattern.momentum}
-                              </div>
-                            </div>
-                            <p className="mt-3 text-sm leading-7 text-white/65">{pattern.description}</p>
-                          <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
-                              内容切口：{pattern.hookTemplate}
-                          </div>
-                          <div className="mt-3 text-xs text-white/60">
-                              商业提示：{replaceTerms(pattern.monetizationHint)}
-                          </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        {growthSnapshot.structurePatterns.map((pattern) => (
-                          <div key={pattern.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="text-sm font-semibold text-white">{pattern.title}</div>
-                            <p className="mt-3 text-sm leading-7 text-white/65">{pattern.angle}</p>
-                            <div className="mt-3 rounded-xl border border-[#90c4ff]/15 bg-[#90c4ff]/10 p-3 text-sm text-[#d5e8ff]">
-                              钩子：{pattern.hook}
-                            </div>
-                            <div className="mt-3 text-sm leading-7 text-white/60">行动引导（CTA）：{pattern.cta}</div>
-                            <div className="mt-2 text-xs text-white/40">依据：{pattern.evidence}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className="text-sm font-semibold text-white">平台化优化原则</div>
-                        <div className="mt-3 space-y-2 text-sm leading-7 text-white/68">
-                          <div>• 抖音、快手优先参考强钩子和结果前置版本。</div>
-                          <div>• 小红书优先参考拆解感、收藏理由和封面主信息版本。</div>
-                          <div>• B站优先参考幕后复盘、案例拆解和长尾讨论版本。</div>
-                          <div>• 如果不同平台建议重复，直接沿用已验证平台的方案，不重复重做。</div>
-                        </div>
-                      </div>
-                      {growthSnapshot.status.notes.length ? (
-                        <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/60">
-                          {growthSnapshot.status.notes.map((note, index) => (
-                            <div key={index}>• {localizeTrendNote(note)}</div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </>
+                      )}
+                    </div>
                   ) : null}
                   {growthSnapshotQuery.error ? (
                     <div className="mt-5 rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-100">
@@ -1544,195 +1370,118 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
                 </div>
-                ) : (
-                  <div className="rounded-[28px] border border-[#ff8a3d]/15 bg-[#0f1a2c] p-6">
-                    <div className="flex items-center gap-3 text-[#ffcf92]">
-                      <BriefcaseBusiness className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">付费版可解锁内容</h2>
+              ) : (
+                <div className="rounded-[28px] border border-[#ff8a3d]/15 bg-[#0f1a2c] p-6">
+                  <div className="flex items-center gap-3 text-[#ffcf92]">
+                    <BriefcaseBusiness className="h-5 w-5" />
+                    <h2 className="text-2xl font-bold">付费版可解锁内容</h2>
+                  </div>
+                  <p className="mt-4 text-sm leading-7 text-white/65">
+                    趋势判断、平台建议、商业承接和 7 天计划都属于付费版内容，不在免费版展示范围内。
+                  </p>
+                </div>
+              )}
+
+              {showPremiumReport ? (
+                <>
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#ffd08f]">
+                      <Send className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">推荐发布平台</h2>
                     </div>
-                    <p className="mt-4 text-sm leading-7 text-white/65">
-                      当前免费版到这里为止。后续的趋势判断、平台优化方案、商业方向、增长规划和创作执行简报，都会直接影响内容放大与商业转化，属于付费服务。
-                    </p>
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      {[
-                        "趋势洞察与真实平台样本",
-                        "平台优化方案与首发渠道建议",
-                        "商业分析与高匹配变现方向",
-                        "7 天增长规划与执行简报",
-                      ].map((item) => (
-                        <div key={item} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm text-white/72">
-                          {item}
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {platformRecommendationRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="px-4 py-4">{row.insight}</td>
+                              <td className="px-4 py-4 text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 text-[#ffd08f]">{row.highlight || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#f5b7ff]">
+                      <BriefcaseBusiness className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">商业洞察</h2>
+                    </div>
+                    <div className="mt-5 space-y-4">
+                      {businessInsights.map((item) => (
+                        <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                          <p className="mt-2 text-sm leading-7 text-white/70">{replaceTerms(item.detail)}</p>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-                {showPremiumReport ? (
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#f5b7ff]">
-                    <BriefcaseBusiness className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">商业洞察</h2>
-                  </div>
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
-                    <div className="text-sm font-semibold text-white">可执行商业方向总览</div>
-                    <p className="mt-2 text-sm leading-7 text-white/58">
-                      这部分改成 dashboard 视图后，客户会先看到“哪些方向真的值得做”，再往下看每个方向的文字解释、第一动作和包装建议。
-                    </p>
-                    <div className="mt-4 h-[240px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={commercialTrackData} layout="vertical" margin={{ top: 12, right: 12, left: 8, bottom: 8 }}>
-                          <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={true} vertical={false} />
-                          <XAxis type="number" domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                          <YAxis dataKey="name" type="category" tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 11 }} axisLine={false} tickLine={false} width={84} />
-                          <Tooltip
-                            contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                            formatter={(value: number) => [`${value}%`, "匹配度"]}
-                          />
-                          <Bar dataKey="value" fill="#f5b7ff" radius={[0, 8, 8, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {businessTrackRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="px-4 py-4">{row.insight}</td>
+                              <td className="px-4 py-4 text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 text-[#f5b7ff]">{row.highlight || "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                  <div className="mt-5 space-y-3">
-                    {businessInsights.map((item) => (
-                      <GrowthSectionCard
-                        key={item.title}
-                        title={item.title}
-                        description={replaceTerms(item.detail)}
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/68">
-                    术语说明：行动引导（CTA）指的是你希望用户下一步做什么，比如咨询、留言、进入社群、预约服务或点击商品入口。
-                  </div>
-                  <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    {highConfidenceTracks.map((track) => {
-                      const tone = getScoreTone(track.fit);
-                      return (
-                        <div key={track.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-sm font-semibold text-white">{track.name}</div>
-                            <div className={`rounded-full border px-3 py-1 text-xs ${tone.chip}`}>匹配度 {track.fit}%</div>
-                          </div>
-                          <p className="mt-3 text-sm leading-7 text-white/65">{replaceTerms(track.reason)}</p>
-                          <div className="mt-3 rounded-xl border border-[#f5b7ff]/15 bg-[#f5b7ff]/10 p-3 text-sm text-[#fbe1ff]">
-                            第一动作：{replaceTerms(track.nextStep)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {!highConfidenceTracks.length ? (
-                    <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
-                      当前没有达到 80% 以上匹配度的商业方向。此时不应该直接给出“品牌合作”或“带货”结论，而应该继续先优化内容包装、结构和承接入口。
+
+                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center gap-3 text-[#9df6c0]">
+                      <LineChartIcon className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">7 天增长规划</h2>
                     </div>
-                  ) : null}
-                </div>
-                ) : null}
-              </div>
-
-              {showPremiumReport ? (
-              <div className="space-y-6">
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#ffd08f]">
-                    <Send className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">推荐发布平台</h2>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-white/60">
-                    先跑最适合的首发渠道，再把同一条内容拆成不同标题、封面和叙事强度做二次分发。
-                  </p>
-                  <div className="mt-5 space-y-4">
-                    {platformRecommendations.map((platform, index) => (
-                      <div key={platform.name} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="text-lg font-bold text-white">{platform.name}</div>
-                          <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/70">
-                            #{index + 1}
-                          </div>
-                        </div>
-                        <p className="mt-2 text-sm leading-7 text-white/70">{platform.reason}</p>
-                        <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 p-3 text-sm text-[#ffd4b7]">
-                          建议动作：{platform.action}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#9df6c0]">
-                    <LineChartIcon className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">7 天增长规划</h2>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-white/60">
-                    这 7 天不是泛泛建议，而是按“先验证，再放大，再承接商业动作”的顺序推进。
-                  </p>
-                  <div className="mt-5 space-y-3">
-                    {growthPlan.map((item) => (
-                      <div key={item.day} className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9df6c0]">Day {item.day}</div>
-                        <div className="mt-2 text-base font-semibold text-white">{item.title}</div>
-                        <div className="mt-2">{item.action}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
-                  <div className="flex items-center gap-3 text-[#ffd08f]">
-                    <Rocket className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">创作执行简报</h2>
-                  </div>
-                  <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                    <table className="w-full border-collapse text-sm leading-7 text-white/72">
-                      <tbody>
-                        {executionBriefRows.map((row) => (
-                          <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                            <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                            <td className="px-4 py-4 whitespace-pre-wrap">{row.content}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <GrowthHandoffActions
-                    handoff={growthHandoff}
-                    growthPlan={growthPlan}
-                    fallbackBrief={creationAssistBrief}
-                    onCopyText={handleCopyText}
-                    onStoreHandoff={handleStoreHandoff}
-                  />
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/68">
-                    <div className="font-semibold text-white">handoff 交接状态</div>
-                    <div className="mt-2">
-                      {growthHandoffStatus.ready
-                        ? "当前 payload 已包含创作简报、分镜提示词、工作流提示词、商业目标、推荐方向与推荐平台，可直接交给 storyboard / workflow。"
-                        : `当前 payload 还缺少：${growthHandoffStatus.missing.join("、")}。这会影响后续创作流接收。`}
+                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
+                        <tbody>
+                          {growthPlan.map((item) => (
+                            <tr key={item.day} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-24 bg-white/5 px-4 py-4 align-top font-semibold text-[#9df6c0]">Day {item.day}</td>
+                              <td className="w-40 px-4 py-4 font-semibold text-white">{item.title}</td>
+                              <td className="px-4 py-4">{item.action}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    {growthHandoff?.recommendedPlatforms?.length ? (
-                      <div className="mt-2 text-white/55">
-                        当前推荐平台：{growthHandoff.recommendedPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}
-                      </div>
-                    ) : null}
                   </div>
-                  <div className="mt-3 grid gap-3">
-                    <a
-                      href="/storyboard"
-                      onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
-                      className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
-                    >
-                      进入分镜创作
-                    </a>
-                    <a
-                      href="/workflow"
-                      onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 workflow")}
-                      className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/10"
-                    >
-                      进入工作流执行
-                    </a>
+
+                  <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
+                    <div className="flex items-center gap-3 text-[#ffd08f]">
+                      <Rocket className="h-5 w-5" />
+                      <h2 className="text-2xl font-bold">创作执行简报</h2>
+                    </div>
+                    <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/72">
+                        <tbody>
+                          {executionBriefRows.map((row) => (
+                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
+                              <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
+                              <td className="px-4 py-4 whitespace-pre-wrap">{row.content}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3">
+                      <a
+                        href="/storyboard?supervisor=1"
+                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
+                        className="rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
+                      >
+                        进入分镜创作
+                      </a>
+                    </div>
                   </div>
-                </div>
-              </div>
+                </>
               ) : null}
             </div>
           </section>

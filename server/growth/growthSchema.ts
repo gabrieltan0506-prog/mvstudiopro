@@ -48,6 +48,23 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function isBeautyFashionContext(text: string) {
+  return /美妆|穿搭|形象|妆|护肤|造型|时尚/.test(text);
+}
+
+function filterRelevantTopics(topics: string[], context: string) {
+  const text = String(context || "").trim();
+  if (!text) return topics.slice(0, 3);
+  const beautyKeywords = ["穿搭", "妆", "护肤", "造型", "时尚", "审美", "运动穿搭", "网球穿搭", "防晒", "发型"];
+  const wanted = isBeautyFashionContext(text)
+    ? beautyKeywords
+    : Array.from(new Set(text.match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 6);
+  const relevant = topics.filter((topic) =>
+    wanted.some((keyword) => String(topic).toLowerCase().includes(keyword.toLowerCase())),
+  );
+  return (relevant.length ? relevant : topics).slice(0, 3);
+}
+
 function median(values: number[]) {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -113,12 +130,14 @@ function buildPlatformSummaryFromCollection(
   platform: GrowthPlatform,
   analysis: GrowthAnalysisScores,
   collection: PlatformTrendCollection,
+  context = "",
 ) {
   const contentItems = collection.items.filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
-  const topItem = contentItems[0] || collection.items[0];
+  const relevantItems = filterRelevantTopics(contentItems.map((item) => item.title), context);
+  const topItem = relevantItems[0];
   const baseSummary = buildPlatformSummary(platform, analysis);
   if (!topItem) return baseSummary;
-  return `${baseSummary} 当前样本里最强势的话题/内容是「${topItem.title}」，说明最近分发仍然偏向更直接、更高可读性的表达。`;
+  return `${baseSummary} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。`;
 }
 
 function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection) {
@@ -351,8 +370,12 @@ function buildMonetizationTracks(
     {
       name: "品牌合作",
       fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0)), 36, 96),
-      reason: "视觉包装和表达统一性更强时，更容易承接品牌合作、案例展示和商业合作页。",
-      nextStep: "补一版案例导向标题和服务说明，让合作方快速理解你擅长的商业结果。",
+      reason: isBeautyFashionContext(text)
+        ? "更适合承接运动美妆、防晒、功能护肤、运动服饰和生活方式品牌，而不是泛泛而谈的品牌合作。"
+        : "只有当表达统一、案例清楚、服务说明完整时，品牌或商单合作才有承接价值。",
+      nextStep: isBeautyFashionContext(text)
+        ? "补一版“运动场景妆容 / 穿搭解决方案”案例页，让品牌一眼看懂你能解决什么问题。"
+        : "补一版案例导向标题和服务说明，让合作方快速理解你擅长的商业结果。",
     },
     {
       name: "电商带货",
@@ -369,8 +392,8 @@ function buildMonetizationTracks(
     {
       name: "社群会员",
       fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4), 36, 96),
-      reason: "只要能持续输出同主题内容和过程感，就更容易建立陪伴感并承接社群或会员。",
-      nextStep: "连续发布 3 条同主题内容，并在结尾加入系列承诺和进群/订阅理由。",
+      reason: "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
+      nextStep: "先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。",
     },
   ].sort((a, b) => b.fit - a.fit);
 }
@@ -422,6 +445,7 @@ function buildBusinessInsights(
   monetizationTracks: GrowthMonetizationTrack[],
 ): GrowthBusinessInsight[] {
   const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
+  const beautyFashion = isBeautyFashionContext(context);
   return [
     {
       title: "商业判断",
@@ -430,16 +454,18 @@ function buildBusinessInsights(
         : "当前仍应先把内容结构、信息顺序和包装一致性做稳，再补上行动引导（CTA）和承接入口。",
     },
     {
-      title: "包装能力",
-      detail: analysis.color + analysis.composition >= 145
-        ? "视觉包装已具备系列化潜力，适合尽快固定封面模板、标题句式和栏目识别。"
-        : "视觉统一性还不够，建议先固定封面模板、标题句式、字幕样式和片头格式。",
+      title: "社群承接",
+      detail: primaryTrack === "社群会员"
+        ? "社群不要做成泛聊天群，而要做成固定主题、固定更新、固定权益的小型运营产品。先明确群内每周给什么、用户为什么续留、群外内容怎样导流进群。"
+        : "即便当前不是主打社群，也应该先设计一个私域承接动作，比如预约、关键词领取、私信咨询或小群试运营。",
     },
     {
-      title: "承接路径",
-      detail: context.trim()
-        ? `你给出的业务背景「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」适合先验证「${primaryTrack}」方向。`
-        : `建议先围绕「${primaryTrack}」验证一条最短商业路径，而不是同时试多个承接方向。`,
+      title: "合作品类",
+      detail: beautyFashion
+        ? "如果要谈合作，优先讲运动美妆、防晒、功能护肤、运动服饰、配件和健康生活方式品牌，不要只写“品牌合作”这种没有筛选力的词。"
+        : context.trim()
+          ? `你给出的业务背景「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」更适合先验证「${primaryTrack}」这一条承接路径。`
+          : `建议先围绕「${primaryTrack}」验证一条最短商业路径，而不是同时试多个承接方向。`,
     },
   ];
 }
@@ -690,7 +716,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     const metricWindow = buildMetricWindowFromCollection(platform, params.analysis, collection);
     return {
       ...base,
-      summary: buildPlatformSummaryFromCollection(platform, params.analysis, collection),
+      summary: buildPlatformSummaryFromCollection(platform, params.analysis, collection, context),
       last30d: metricWindow,
       momentumScore: clamp(Math.round(metricWindow.growthRate * 3 + 60), 35, 96),
       audienceFitScore: clamp(Math.round((base.audienceFitScore + metricWindow.engagementRateMedian * 4) / 2), 38, 95),
@@ -698,7 +724,7 @@ export function buildGrowthSnapshotFromCollections(params: {
         metricWindow.avgLikes >= 30_000 ? "high" :
         metricWindow.avgLikes >= 8_000 ? "medium" :
         "low",
-      sampleTopics: collection.items.slice(0, 3).map((item) => item.title),
+      sampleTopics: filterRelevantTopics(collection.items.map((item) => item.title), context),
     } satisfies GrowthPlatformSnapshot;
   });
 

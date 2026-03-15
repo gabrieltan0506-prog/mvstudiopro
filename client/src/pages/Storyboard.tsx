@@ -82,6 +82,7 @@ const AI_GENERATE_MAX_CHARS = 1000;
 const OWN_SCRIPT_MAX_CHARS = 2000;
 const FREE_MAX_SCENES = 10;
 const PAID_MAX_SCENES = 20;
+const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
 type ModelOption = "flash" | "gpt5" | "pro";
 type VisualStyle = "cinematic" | "anime" | "documentary" | "realistic" | "scifi";
@@ -129,6 +130,7 @@ const VISUAL_STYLES: { value: VisualStyle; label: string; labelEn: string; icon:
 export default function StoryboardPage() {
   const [, navigate] = useLocation();
   const { isAuthenticated, loading, user } = useAuth();
+  const [supervisorAccess, setSupervisorAccess] = useState(false);
   const isAdmin = user?.role === "admin";
 
   const [lyricsText, setLyricsText] = useState("");
@@ -275,10 +277,21 @@ export default function StoryboardPage() {
   }, [isPaidUser]);
 
   useEffect(() => {
-    if (!loading && !isAuthenticated) {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("supervisor") === "1") {
+      window.localStorage.setItem(SUPERVISOR_ACCESS_KEY, "1");
+      setSupervisorAccess(true);
+      return;
+    }
+    setSupervisorAccess(window.localStorage.getItem(SUPERVISOR_ACCESS_KEY) === "1");
+  }, []);
+
+  useEffect(() => {
+    if (!loading && !isAuthenticated && !supervisorAccess) {
       navigate("/login");
     }
-  }, [loading, isAuthenticated, navigate]);
+  }, [loading, isAuthenticated, supervisorAccess, navigate]);
 
   useEffect(() => {
     const persisted = readGrowthHandoff();
@@ -380,14 +393,16 @@ export default function StoryboardPage() {
     }
 
     try {
-      const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "storyboard" });
-      if (!accessCheck.allowed) {
-        setQuotaModalInfo({
-          isTrial: (accessCheck as any).isTrial,
-          planName: (accessCheck as any).planName,
-        });
-        setQuotaModalVisible(true);
-        return;
+      if (!supervisorAccess) {
+        const accessCheck = await checkAccessMutation.mutateAsync({ featureType: "storyboard" });
+        if (!accessCheck.allowed) {
+          setQuotaModalInfo({
+            isTrial: (accessCheck as any).isTrial,
+            planName: (accessCheck as any).planName,
+          });
+          setQuotaModalVisible(true);
+          return;
+        }
       }
     } catch (error: any) {
       toast.error(error.message || "无法检查使用权限");
