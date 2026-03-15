@@ -423,6 +423,14 @@ function sleep(ms: number) {
 
 function normalizeWorkflowForResponse(input: any, fallbackId = "") {
   const workflowId = s(input?.workflowId || fallbackId).trim();
+  if (!input) {
+    return {
+      workflowId,
+      status: "not_found",
+      currentStep: "input",
+      outputs: {},
+    };
+  }
   return {
     workflowId,
     status: s(input?.status).trim() || (workflowId ? "running" : "not_found"),
@@ -1260,10 +1268,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const targetScenes = Number(b.targetScenes || 0) || undefined;
       const sceneDuration = Number(b.sceneDuration || 0) || 5;
 
-      const task = workflowId
-        ? readWorkflow(workflowId, b.workflow)
-        : createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
-      if (!workflowId) saveCoreWorkflow(task);
+      let task: WorkflowTask;
+      if (workflowId) {
+        try {
+          task = readWorkflow(workflowId, b.workflow);
+        } catch (error: any) {
+          if ((error?.message || "") !== "workflow not found") throw error;
+          task = createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
+          saveCoreWorkflow(task);
+        }
+      } else {
+        task = createServerWorkflowTask({ sourceType: "workflow", prompt, targetWords, targetScenes });
+        saveCoreWorkflow(task);
+      }
 
       let generated: { script: string; storyboard: WorkflowStoryboardScene[]; provider: string; model: string };
       try {
@@ -2122,12 +2139,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!sceneVideos.length) return res.status(400).json(fail("sceneVideos are required before render"));
       const musicStartSec = Number(b.musicStartSec || 0);
       const musicEndSec = Number(b.musicEndSec || 0);
+      const musicVolume = Number(b.musicVolume);
+      const voiceVolume = Number(b.voiceVolume);
+      const musicFadeInSec = Number(b.musicFadeInSec || 0);
+      const musicFadeOutSec = Number(b.musicFadeOutSec || 0);
       const finalVideoUrl = await renderWorkflowFinalVideo({
         sceneVideos,
         musicUrl: s(b.musicUrl || workflow.outputs?.musicUrl || workflow.outputs?.generatedMusicUrl || "").trim() || undefined,
         voiceUrl: s(b.voiceUrl || workflow.outputs?.voiceUrl || workflow.outputs?.generatedVoiceUrl || "").trim() || undefined,
         musicStartSec: Number.isFinite(musicStartSec) && musicStartSec >= 0 ? musicStartSec : undefined,
         musicEndSec: Number.isFinite(musicEndSec) && musicEndSec > 0 ? musicEndSec : undefined,
+        musicVolume: Number.isFinite(musicVolume) ? Math.max(0, musicVolume) : undefined,
+        voiceVolume: Number.isFinite(voiceVolume) ? Math.max(0, voiceVolume) : undefined,
+        musicFadeInSec: Number.isFinite(musicFadeInSec) && musicFadeInSec >= 0 ? musicFadeInSec : undefined,
+        musicFadeOutSec: Number.isFinite(musicFadeOutSec) && musicFadeOutSec >= 0 ? musicFadeOutSec : undefined,
       });
       const next = saveWorkflowPatch(workflow, {
         currentStep: "render",
@@ -2137,6 +2162,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           sceneVideos,
           musicStartSec: Number.isFinite(musicStartSec) && musicStartSec >= 0 ? musicStartSec : 0,
           musicEndSec: Number.isFinite(musicEndSec) && musicEndSec > 0 ? musicEndSec : 0,
+          musicVolume: Number.isFinite(musicVolume) ? Math.max(0, musicVolume) : 0.35,
+          voiceVolume: Number.isFinite(voiceVolume) ? Math.max(0, voiceVolume) : 1,
+          musicFadeInSec: Number.isFinite(musicFadeInSec) && musicFadeInSec >= 0 ? musicFadeInSec : 0,
+          musicFadeOutSec: Number.isFinite(musicFadeOutSec) && musicFadeOutSec >= 0 ? musicFadeOutSec : 0,
           includeSceneVoiceIndexes,
           renderProvider: "workflow-render",
           renderIsFallback: false,

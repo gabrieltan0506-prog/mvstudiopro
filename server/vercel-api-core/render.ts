@@ -155,6 +155,10 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
 
   const musicUrl = String(input.musicUrl || "").trim();
   const voiceUrl = String(input.voiceUrl || "").trim();
+  const musicVolume = Number.isFinite(Number(input.musicVolume)) ? Math.max(0, Number(input.musicVolume)) : 0.35;
+  const voiceVolume = Number.isFinite(Number(input.voiceVolume)) ? Math.max(0, Number(input.voiceVolume)) : 1;
+  const musicFadeInSec = Number.isFinite(Number(input.musicFadeInSec)) ? Math.max(0, Number(input.musicFadeInSec)) : 0;
+  const musicFadeOutSec = Number.isFinite(Number(input.musicFadeOutSec)) ? Math.max(0, Number(input.musicFadeOutSec)) : 0;
   const sceneVoiceUrls = input.sceneVideos
     .filter((scene) => scene.includeVoice !== false)
     .map((scene) => String(scene?.voiceUrl || "").trim())
@@ -223,9 +227,36 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
   }
 
   if (musicUrl && effectiveVoiceUrl) {
+    const musicFilters = [`volume=${musicVolume}`];
+    if (musicFadeInSec > 0) musicFilters.push(`afade=t=in:st=0:d=${musicFadeInSec}`);
+    if (musicFadeOutSec > 0) {
+      const fadeOutStart = Math.max(0, durations.reduce((sum, value) => sum + value, 0) - musicFadeOutSec);
+      musicFilters.push(`afade=t=out:st=${fadeOutStart}:d=${musicFadeOutSec}`);
+    }
     cmd.push(
       "-filter_complex",
-      "[1:a]volume=0.35[m];[2:a]volume=1.0[v];[m][v]amix=inputs=2:duration=longest[aout]",
+      `[1:a]${musicFilters.join(",")}[m];[2:a]volume=${voiceVolume}[v];[m][v]amix=inputs=2:duration=longest[aout]`,
+      "-map",
+      "0:v",
+      "-map",
+      "[aout]",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-shortest",
+      finalPath,
+    );
+  } else if (musicUrl) {
+    const musicFilters = [`volume=${musicVolume}`];
+    if (musicFadeInSec > 0) musicFilters.push(`afade=t=in:st=0:d=${musicFadeInSec}`);
+    if (musicFadeOutSec > 0) {
+      const fadeOutStart = Math.max(0, durations.reduce((sum, value) => sum + value, 0) - musicFadeOutSec);
+      musicFilters.push(`afade=t=out:st=${fadeOutStart}:d=${musicFadeOutSec}`);
+    }
+    cmd.push(
+      "-filter_complex",
+      `[1:a]${musicFilters.join(",")}[aout]`,
       "-map",
       "0:v",
       "-map",
@@ -239,10 +270,12 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
     );
   } else {
     cmd.push(
+      "-filter_complex",
+      `[1:a]volume=${voiceVolume}[aout]`,
       "-map",
       "0:v",
       "-map",
-      "1:a",
+      "[aout]",
       "-c:v",
       "copy",
       "-c:a",

@@ -16,6 +16,10 @@ export interface RenderWorkflowInput {
   voiceUrl?: string;
   musicStartSec?: number;
   musicEndSec?: number;
+  musicVolume?: number;
+  voiceVolume?: number;
+  musicFadeInSec?: number;
+  musicFadeOutSec?: number;
   transition?: RenderTransition | string;
   resolution?: string;
 }

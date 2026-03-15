@@ -237,7 +237,7 @@ export default function WorkflowNodes() {
   const [workflowIdInput, setWorkflowIdInput] = useState<string>("");
   const [workflow, setWorkflow] = useState<any>(null);
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
-  const [debugMode, setDebugMode] = useState(true);
+  const [debugMode, setDebugMode] = useState(false);
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
@@ -254,7 +254,7 @@ export default function WorkflowNodes() {
   const [sceneVoiceTextMap, setSceneVoiceTextMap] = useState<Record<string, string>>({});
   const [sceneVoiceTypeMap, setSceneVoiceTypeMap] = useState<Record<string, string>>({});
   const [sceneVoiceStyleMap, setSceneVoiceStyleMap] = useState<Record<string, string>>({});
-  const [voiceLabText, setVoiceLabText] = useState("你好，這是一段獨立語音測試，不依賴分鏡或腳本。");
+  const [voiceLabText, setVoiceLabText] = useState("你好，这是一段独立语音测试，不依赖分镜或脚本。");
   const [voiceLabType, setVoiceLabType] = useState("female");
   const [voiceLabStyle, setVoiceLabStyle] = useState("warm");
   const [voiceLabResult, setVoiceLabResult] = useState<{ voiceUrl: string; voiceProvider: string; voiceModel: string; voiceVoice: string } | null>(null);
@@ -266,6 +266,10 @@ export default function WorkflowNodes() {
   const [musicDuration, setMusicDuration] = useState("30");
   const [musicStartSec, setMusicStartSec] = useState("0");
   const [musicEndSec, setMusicEndSec] = useState("0");
+  const [musicVolume, setMusicVolume] = useState("0.35");
+  const [voiceVolume, setVoiceVolume] = useState("1");
+  const [musicFadeInSec, setMusicFadeInSec] = useState("0");
+  const [musicFadeOutSec, setMusicFadeOutSec] = useState("0");
   const [renderVoiceSceneMap, setRenderVoiceSceneMap] = useState<Record<string, boolean>>({});
   const [reuseCharacterSceneMap, setReuseCharacterSceneMap] = useState<Record<string, string>>({});
   const [reuseSceneImageMap, setReuseSceneImageMap] = useState<Record<string, string>>({});
@@ -280,7 +284,7 @@ export default function WorkflowNodes() {
         : prev,
     );
     setVoiceLabText((prev) =>
-      !prev.trim() || prev === "你好，這是一段獨立語音測試，不依賴分鏡或腳本。"
+      !prev.trim() || prev === "你好，这是一段独立语音测试，不依赖分镜或脚本。"
         ? handoff.brief || prev
         : prev,
     );
@@ -334,6 +338,10 @@ export default function WorkflowNodes() {
       const json = await resp.json().catch(() => null);
       if (!cancelled && resp.ok && json?.workflow && json.workflow.status !== "not_found") {
         setWorkflow(json.workflow);
+      } else if (!cancelled && resp.ok && json?.workflow?.status === "not_found") {
+        setWorkflow(null);
+        setWorkflowId("");
+        setGlobalStep({ loading: false, error: "workflow_not_found", success: false });
       }
       if (!cancelled) timer = setTimeout(poll, 2000);
     };
@@ -425,6 +433,15 @@ export default function WorkflowNodes() {
     if (nextProvider === "suno" || nextProvider === "udio") setMusicProvider(nextProvider);
   }, [outputs.musicProvider]);
 
+  useEffect(() => {
+    if (outputs.musicStartSec != null) setMusicStartSec(String(outputs.musicStartSec));
+    if (outputs.musicEndSec != null) setMusicEndSec(String(outputs.musicEndSec));
+    if (outputs.musicVolume != null) setMusicVolume(String(outputs.musicVolume));
+    if (outputs.voiceVolume != null) setVoiceVolume(String(outputs.voiceVolume));
+    if (outputs.musicFadeInSec != null) setMusicFadeInSec(String(outputs.musicFadeInSec));
+    if (outputs.musicFadeOutSec != null) setMusicFadeOutSec(String(outputs.musicFadeOutSec));
+  }, [outputs.musicStartSec, outputs.musicEndSec, outputs.musicVolume, outputs.voiceVolume, outputs.musicFadeInSec, outputs.musicFadeOutSec]);
+
   function writeBackWorkflow(json: any) {
     const nextId = s(json?.workflow?.workflowId || json?.workflowId || workflowId).trim();
     if (nextId) setWorkflowId(nextId);
@@ -452,6 +469,8 @@ export default function WorkflowNodes() {
       setWorkflow(json.workflow);
       setWorkflowId(nextId);
     } else if (resp.ok && json?.workflow?.status === "not_found") {
+      setWorkflow(null);
+      setWorkflowId("");
       setGlobalStep({ loading: false, error: "workflow_not_found", success: false });
     }
   }
@@ -740,7 +759,7 @@ export default function WorkflowNodes() {
           if (Array.isArray(json?.storyboard)) setStoryboard(normalizeSceneList(json.storyboard));
           setSelected("script");
         })} className="rounded-xl bg-primary px-5">
-          {globalStep.loading ? "Generating..." : "Generate Script"}
+          {globalStep.loading ? "生成中..." : "生成脚本"}
         </Button>
       </div>
     );
@@ -766,9 +785,9 @@ export default function WorkflowNodes() {
             }
             setSelected("storyboard");
           })} className="rounded-xl bg-primary px-5">
-            {globalStep.loading ? "Updating..." : "Load Storyboard Stage"}
+            {globalStep.loading ? "更新中..." : "载入分镜阶段"}
           </Button>
-          <div className="text-sm text-white/60">這一步沿用現有後端 contract，將 workflow 切到 storyboard stage。分鏡內容的編修與保存在下一個節點完成。</div>
+          <div className="text-sm text-white/60">这一步沿用现有后端协议，将 workflow 切到 storyboard 阶段。分镜内容的编辑与保存会在下一个节点完成。</div>
         </div>
       </div>
     );
@@ -788,7 +807,7 @@ export default function WorkflowNodes() {
           >
             {globalStep.loading ? "Saving..." : "Confirm Storyboard"}
           </Button>
-          <div className="text-sm text-white/60">把目前 inspector 裡修改過的 scenes 寫回 workflow，後續節點直接使用這份 storyboard。</div>
+          <div className="text-sm text-white/60">把当前编辑过的 scenes 写回 workflow，后续节点会直接使用这份 storyboard。</div>
         </div>
         {storyboard.length ? storyboard.map((scene) => (
           <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -820,7 +839,7 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          這個節點是 scene 級素材工作台。每個分鏡保留 1 張角色圖與 1 張場景圖，並在這裡決定目前用哪張素材進入後續 Scene Video。
+          这个节点是 scene 级素材工作台。每个分镜保留 1 张角色图和 1 张场景图，并在这里决定当前用哪张素材进入后续 Scene Video。
         </div>
         <div className="flex flex-wrap gap-3">
           <Button disabled={globalStep.loading || !storyboard.length} onClick={() => void runOp("workflowGenerateStoryboardImages", {
@@ -828,7 +847,7 @@ export default function WorkflowNodes() {
             workflow,
             storyboard,
           }, () => setSelected("renderStill"))} className="rounded-xl bg-primary px-5">
-            {globalStep.loading ? "Generating..." : "Generate All Scene Assets"}
+            {globalStep.loading ? "生成中..." : "生成全部分镜资产"}
           </Button>
           <div className="text-sm text-white/60">每个 scene 会生成 1 张人物图 + 1 张场景图，视频节点直接吃这里当前这一组。</div>
         </div>
@@ -851,7 +870,7 @@ export default function WorkflowNodes() {
                     })}
                     className="rounded-xl bg-primary px-4"
                   >
-                    {auxBusyKey === `scene-assets-${bundle.sceneIndex}` ? "Generating..." : "Generate Scene Assets"}
+                    {auxBusyKey === `scene-assets-${bundle.sceneIndex}` ? "生成中..." : "生成分镜资产"}
                   </Button>
                   <Button
                     variant="outline"
@@ -942,7 +961,7 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-100">
-          多人場景建議走 Render Still，再在 Final Render 中插入，避免直接用 scene video 造成角色不穩定。
+          多人场景建议走 Render Still，再在 Final Render 中插入，避免直接用 scene video 造成角色不稳定。
         </div>
         {storyboard.map((scene) => (
           <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -978,7 +997,7 @@ export default function WorkflowNodes() {
                     storyboard,
                     sceneIndex: scene.sceneIndex,
                     renderStillPrompt: renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? scene.scenePrompt,
-                  })} className="rounded-xl bg-primary px-5">{auxBusyKey === `render-still-${scene.sceneIndex}` ? "Generating..." : "Generate Render Still"}</Button>
+                  })} className="rounded-xl bg-primary px-5">{auxBusyKey === `render-still-${scene.sceneIndex}` ? "生成中..." : "生成静帧"}</Button>
                   <div className="text-xs text-white/60 break-all">{s(storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex)?.renderStillImageUrl) || "no render still yet"}</div>
                 </div>
               </>
@@ -993,13 +1012,13 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
-          <div className="mb-2 text-sm font-semibold text-white">Voice Lab</div>
-          <div className="mb-3 text-sm text-white/70">直接輸入文字生成語音，不依賴 scene、storyboard 或 script。</div>
+          <div className="mb-2 text-sm font-semibold text-white">语音实验室</div>
+          <div className="mb-3 text-sm text-white/70">直接输入文字生成语音，不依赖 scene、storyboard 或 script。</div>
           <textarea
             value={voiceLabText}
             onChange={(e) => setVoiceLabText(e.target.value)}
             rows={4}
-            placeholder="直接輸入你要測試的旁白文字"
+            placeholder="直接输入你要测试的旁白文字"
             className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
           />
           <div className="grid gap-3 md:grid-cols-2">
@@ -1035,7 +1054,7 @@ export default function WorkflowNodes() {
               })}
               className="rounded-xl bg-primary px-5"
             >
-              {auxBusyKey === "voice-lab" ? "Generating..." : "Generate Voice"}
+              {auxBusyKey === "voice-lab" ? "生成中..." : "生成语音"}
             </Button>
             {voiceLabResult ? (
               <div className="text-xs text-white/60">
@@ -1046,7 +1065,7 @@ export default function WorkflowNodes() {
           {voiceLabResult?.voiceUrl ? <audio key={voiceLabResult.voiceUrl} className="mt-3 w-full" controls src={toMediaUrl(voiceLabResult.voiceUrl)} /> : null}
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          旁白以 scene 為單位生成。勾選 <span className="font-semibold text-white">Include in render</span> 的 scene 才會在最終 Render 中混入。
+          旁白以 scene 为单位生成。勾选 <span className="font-semibold text-white">加入成片</span> 的 scene 才会在最终 Render 中混入。
         </div>
         {storyboard.map((scene) => {
           const key = String(scene.sceneIndex);
@@ -1060,7 +1079,7 @@ export default function WorkflowNodes() {
                 value={manualVoiceText}
                 onChange={(e) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: e.target.value }))}
                 rows={4}
-                placeholder="直接輸入你要生成的旁白文字"
+                placeholder="直接输入你要生成的旁白文字"
                 className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
               />
               <div className="grid gap-3 md:grid-cols-2">
@@ -1091,9 +1110,9 @@ export default function WorkflowNodes() {
                   })}
                   className="rounded-xl bg-primary px-5"
                 >
-                  {auxBusyKey === `scene-voice-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Voice"}
+                  {auxBusyKey === `scene-voice-${scene.sceneIndex}` ? "生成中..." : "生成场景旁白"}
                 </Button>
-                <label className="inline-flex items-center gap-2 text-sm text-white/70"><input type="checkbox" checked={Boolean(renderVoiceSceneMap[key])} onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [key]: e.target.checked }))} /> Include in render</label>
+                <label className="inline-flex items-center gap-2 text-sm text-white/70"><input type="checkbox" checked={Boolean(renderVoiceSceneMap[key])} onChange={(e) => setRenderVoiceSceneMap((prev) => ({ ...prev, [key]: e.target.checked }))} /> 加入成片</label>
               </div>
               {bundle?.sceneVoiceUrl ? <audio key={bundle.sceneVoiceUrl} className="mt-3 w-full" controls src={toMediaUrl(bundle.sceneVoiceUrl)} /> : null}
             </div>
@@ -1107,7 +1126,7 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          音樂節點只負責生成與保存穩定 URL；真正的截取區間與混音在 Final Render。
+          音乐节点只负责生成与保存稳定 URL；真正的截取区间与混音在 Final Render。
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <select value={musicProvider} onChange={(e) => setMusicProvider(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
@@ -1120,7 +1139,7 @@ export default function WorkflowNodes() {
         <div className="grid gap-3 md:grid-cols-3">
           <input value={musicBpm} onChange={(e) => setMusicBpm(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="BPM" />
           <input value={musicDuration} onChange={(e) => setMusicDuration(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Duration" />
-          <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setMusicPrompt(buildMusicPromptSeedFromScenes(storyboard))}>Auto Fill From Scenes</Button>
+          <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10" onClick={() => setMusicPrompt(buildMusicPromptSeedFromScenes(storyboard))}>根据分镜自动填充</Button>
         </div>
         <Button disabled={globalStep.loading} onClick={() => void runOp("workflowGenerateMusic", {
           workflowId,
@@ -1129,7 +1148,7 @@ export default function WorkflowNodes() {
           musicMood,
           musicBpm: Number(musicBpm || 0) || undefined,
           musicDuration: Number(musicDuration || 0) || undefined,
-        })} className="rounded-xl bg-primary px-5">{globalStep.loading ? "Generating..." : "Generate Music"}</Button>
+        })} className="rounded-xl bg-primary px-5">{globalStep.loading ? "生成中..." : "生成配乐"}</Button>
         {outputs.musicUrl ? <audio key={outputs.musicUrl} className="w-full" controls src={toMediaUrl(outputs.musicUrl)} /> : null}
       </div>
     );
@@ -1139,7 +1158,7 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-          Scene Video 會讀取這個 workflow 裡目前已選定的角色圖與場景圖。如果 scene 被標記為多人場景，建議回 Render Still 節點處理。
+          Scene Video 会读取这个 workflow 里当前已选定的角色图与场景图。如果 scene 被标记为多人场景，建议回 Render Still 节点处理。
         </div>
         {storyboard.map((scene) => {
           const bundle = storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex);
@@ -1165,7 +1184,7 @@ export default function WorkflowNodes() {
                   lighting: scene.lighting,
                   voiceType: sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female",
                   voiceStyle: sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "",
-                })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-video-${scene.sceneIndex}` ? "Generating..." : "Generate Scene Video"}</Button>
+                })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-video-${scene.sceneIndex}` ? "生成中..." : "生成场景视频"}</Button>
               </div>
               {bundle?.sceneVideoUrl ? <video key={bundle.sceneVideoUrl} className="mt-3 w-full rounded-xl border border-white/10" controls src={toMediaUrl(bundle.sceneVideoUrl)} /> : null}
             </div>
@@ -1178,17 +1197,51 @@ export default function WorkflowNodes() {
   function renderFinalPanel() {
     return (
       <div className="space-y-4">
+        <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+          <div className="mb-3 text-sm font-semibold text-white">配乐截取区间</div>
+          <div className="mb-3 text-xs text-white/60">这里控制配乐从第几秒开始，到第几秒结束。留空或填 0 表示从头开始或不限制结束时间。</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-2 text-sm text-white/80">
+              <span>配乐开始秒数</span>
+              <input value={musicStartSec} onChange={(e) => setMusicStartSec(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#11162a] p-3 text-sm text-white" placeholder="例如 10" />
+            </label>
+            <label className="space-y-2 text-sm text-white/80">
+              <span>配乐结束秒数</span>
+              <input value={musicEndSec} onChange={(e) => setMusicEndSec(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#11162a] p-3 text-sm text-white" placeholder="例如 40" />
+            </label>
+          </div>
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
-          <input value={musicStartSec} onChange={(e) => setMusicStartSec(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Music Start Sec" />
-          <input value={musicEndSec} onChange={(e) => setMusicEndSec(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Music End Sec" />
+          <label className="space-y-2 text-sm text-white/80">
+            <span>配乐音量</span>
+            <input value={musicVolume} onChange={(e) => setMusicVolume(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="0.35" />
+          </label>
+          <label className="space-y-2 text-sm text-white/80">
+            <span>旁白音量</span>
+            <input value={voiceVolume} onChange={(e) => setVoiceVolume(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="1.0" />
+          </label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-2 text-sm text-white/80">
+            <span>配乐淡入秒数</span>
+            <input value={musicFadeInSec} onChange={(e) => setMusicFadeInSec(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="例如 2" />
+          </label>
+          <label className="space-y-2 text-sm text-white/80">
+            <span>配乐淡出秒数</span>
+            <input value={musicFadeOutSec} onChange={(e) => setMusicFadeOutSec(e.target.value)} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="例如 2" />
+          </label>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/70">
-          Render 会自动拼接已生成的 scene video、勾选的 scene voice，以及指定区间内的音乐片段，并统一输出 finalVideoUrl。
+          Render 会自动拼接已生成的 scene video、你勾选加入成片的 scene voice，以及指定区间内的音乐片段，并统一输出 finalVideoUrl。
         </div>
         <Button disabled={globalStep.loading} onClick={() => void runOp("workflowRenderVideo", {
           workflowId,
           musicStartSec: Number(musicStartSec || 0) || 0,
           musicEndSec: Number(musicEndSec || 0) || 0,
+          musicVolume: Number(musicVolume || 0),
+          voiceVolume: Number(voiceVolume || 0),
+          musicFadeInSec: Number(musicFadeInSec || 0) || 0,
+          musicFadeOutSec: Number(musicFadeOutSec || 0) || 0,
           includeSceneVoiceIndexes: selectedScenesForRender().map((scene) => scene.sceneIndex),
         })} className="rounded-xl bg-primary px-5">{globalStep.loading ? "Rendering..." : "Final Render"}</Button>
         {outputs.finalVideoUrl ? <video key={outputs.finalVideoUrl} className="w-full rounded-xl border border-white/10" controls src={toMediaUrl(outputs.finalVideoUrl)} /> : null}
@@ -1292,7 +1345,7 @@ export default function WorkflowNodes() {
     if (!storyboard.length) {
       return (
         <div className="rounded-[28px] border border-dashed border-white/15 bg-white/[0.03] p-8 text-sm text-white/55">
-          先生成 script 與 storyboard，左側畫布才會展開真正的 scene 創作工作區。
+          先生成 script 和 storyboard，左侧画布才会展开真正的 scene 创作工作区。
         </div>
       );
     }
@@ -1301,8 +1354,8 @@ export default function WorkflowNodes() {
       <div className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
           <div>
-            <div className="text-lg font-bold text-white">Scene Canvas</div>
-            <div className="mt-1 text-sm text-white/60">左側畫布現在是創作主工作區。分鏡文案、角色圖、場景圖、旁白、場景視頻與生成操作都在這裡完成。</div>
+            <div className="text-lg font-bold text-white">分镜画布</div>
+            <div className="mt-1 text-sm text-white/60">左侧画布现在是创作主工作区。分镜文案、角色图、场景图、旁白、场景视频与生成操作都在这里完成。</div>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -1412,7 +1465,7 @@ export default function WorkflowNodes() {
                         />
                       </label>
                       <Button className="rounded-xl bg-primary px-4" disabled={busyAssets} onClick={() => void runAuxStep(`scene-character-${scene.sceneIndex}`, "workflowRegenerateSceneAsset", { workflowId, workflow, storyboard, sceneIndex: scene.sceneIndex, assetType: "character" })}>
-                        {busyAssets ? "Generating..." : "Regenerate Character"}
+                        {busyAssets ? "生成中..." : "重生角色图"}
                       </Button>
                       {characterUrl ? (
                         <a href={toMediaUrl(characterUrl)} download>
@@ -1463,7 +1516,7 @@ export default function WorkflowNodes() {
                         />
                       </label>
                       <Button className="rounded-xl bg-primary px-4" disabled={busyAssets} onClick={() => void runAuxStep(`scene-environment-${scene.sceneIndex}`, "workflowRegenerateSceneAsset", { workflowId, workflow, storyboard, sceneIndex: scene.sceneIndex, assetType: "scene" })}>
-                        {busyAssets ? "Generating..." : "Regenerate Scene"}
+                        {busyAssets ? "生成中..." : "重生场景图"}
                       </Button>
                       {sceneUrl ? (
                         <>
@@ -1498,11 +1551,11 @@ export default function WorkflowNodes() {
                           <video key={sceneVideoUrl} controls className="max-h-[220px] w-full rounded-xl object-contain" src={toMediaUrl(sceneVideoUrl)} />
                         </div>
                       ) : (
-                        <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 text-sm text-white/35">No scene video yet</div>
+                        <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 text-sm text-white/35">暂未生成场景视频</div>
                       )}
                       {scene.renderStillNeeded ? (
                         <div className="mt-3 rounded-xl border border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                          This scene is marked as render still. Open Render Still only when needed.
+                          这个 scene 已标记为 Render Still，需要时再到 Render Still 节点处理。
                         </div>
                       ) : null}
                       <div className="mt-4 flex flex-wrap gap-2">
@@ -1520,7 +1573,7 @@ export default function WorkflowNodes() {
                           voiceType: getSceneVoiceTypeValue(scene),
                           voiceStyle: getSceneVoiceStyleValue(scene),
                         })}>
-                          {busyVideo ? "Generating..." : "Generate Video"}
+                          {busyVideo ? "生成中..." : "生成视频"}
                         </Button>
                       </div>
                     </div>
@@ -1535,12 +1588,12 @@ export default function WorkflowNodes() {
   }
 
   function renderCanvasSurface() {
-    if (selected === "prompt" || selected === "script") {
+    if (selected === "prompt" || selected === "script" || selected === "voice") {
       return (
         <div className="space-y-5">
           {renderWorkflowRibbon()}
           <div className="rounded-[28px] border border-white/10 bg-white/[0.03] p-6">
-            {selected === "prompt" ? renderPromptPanel() : renderScriptPanel()}
+            {selected === "prompt" ? renderPromptPanel() : selected === "script" ? renderScriptPanel() : renderVoicePanel()}
           </div>
         </div>
       );
@@ -1562,10 +1615,10 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4 text-sm text-white/70">
-          這個節點的主要創作操作已經搬到左側畫布。右側只保留節點說明、狀態與輸出快照，方便你對照驗收。
+          这个节点的主要创作操作已经搬到左侧画布。右侧只保留节点说明、状态与输出快照，方便你快速对照。
         </div>
         <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4 text-sm text-white/72">
-          <div className="text-xs uppercase tracking-[0.18em] text-white/45">Node Focus</div>
+          <div className="text-xs uppercase tracking-[0.18em] text-white/45">当前节点概览</div>
           <div className="mt-3 space-y-2">
             <div>selected: <code>{selected}</code></div>
             <div>runtime: <code>{selectedNodeRuntimeStatus()}</code></div>
@@ -1600,9 +1653,9 @@ export default function WorkflowNodes() {
           <div className="mb-4 overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(236,72,153,0.22),transparent_32%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6 md:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">画布式工作流 <span className="ml-2 text-xs text-white/45">Canvas Workflow</span></div>
-                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 第一、二阶段验收版</h1>
-                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/72 md:text-base">保留旧版 <span className="text-white">/workflow</span> 作为 fallback，这里负责真实执行、调试、节点检查与 scene 级编辑。现在的目标是让 Prompt 到 Final Render 全链可验收。</p>
+                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">画布式工作流 <span className="ml-2 text-xs text-white/45">Workflow Canvas</span></div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 节点工作流</h1>
+                <p className="mt-3 max-w-4xl text-sm leading-7 text-white/72 md:text-base">保留旧版 <span className="text-white">/workflow</span> 作为 fallback，这里负责真实执行、节点检查与 scene 级编辑，目标是让 Prompt 到 Final Render 的链路更清晰。</p>
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button className="rounded-xl bg-primary px-5 text-primary-foreground hover:bg-primary/90" onClick={() => setSelected(nextRecommendedNode())}>
@@ -1610,18 +1663,18 @@ export default function WorkflowNodes() {
                   打开建议节点
                 </Button>
                 <a href="/workflow">
-                  <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">查看旧版页面</Button>
+                  <Button variant="outline" className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10">查看旧版工作流</Button>
                 </a>
               </div>
             </div>
             <div className="mt-6 flex flex-wrap items-center gap-3 text-sm text-white/60">
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                 <ArrowRight className="h-4 w-4" />
-                Recommended: <span className="font-semibold text-white">{nextRecommendedNode()}</span>
+                建议节点: <span className="font-semibold text-white">{nextRecommendedNode()}</span>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
                 <LoaderCircle className={`h-4 w-4 ${globalStep.loading || !!auxBusyKey ? "animate-spin text-primary" : "text-white/45"}`} />
-                Runtime: <span className="font-semibold text-white">{globalStep.loading || !!auxBusyKey ? "busy" : "idle"}</span>
+                当前状态: <span className="font-semibold text-white">{globalStep.loading || !!auxBusyKey ? "处理中" : "空闲"}</span>
               </div>
             </div>
           </div>
@@ -1633,7 +1686,7 @@ export default function WorkflowNodes() {
           <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-lg font-bold text-white">验收导航</div>
-              <div className="mt-1 text-sm text-white/55">Phase 1 + Phase 2 一次看完，十個節點在上方同步高亮，左側畫布負責真正創作。</div>
+              <div className="mt-1 text-sm text-white/55">十个节点在上方同步高亮，左侧画布负责真正的创作与执行。</div>
             </div>
             <div className="flex flex-wrap gap-2">
               {["prompt", "script", "storyboard", "assets", "renderStill", "removebg", "video", "voice", "music", "render"].map((nodeId) => (
@@ -1654,11 +1707,11 @@ export default function WorkflowNodes() {
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-lg font-bold">节点画布 <span className="ml-2 text-xs text-white/45">Node Canvas</span></div>
-                  <div className="mt-1 text-sm text-white/55">左側是主創作區，不再只是示意圖。你可以直接在 scene 卡片裡完成素材、旁白、視頻與靜幀操作。</div>
+                  <div className="mt-1 text-sm text-white/55">左侧是主创作区，不再只是示意图。你可以直接在 scene 卡片里完成素材、旁白、视频与静帧操作。</div>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/60">
                   <Move className="h-4 w-4" />
-                  Canvas-first creation
+                  画布优先创作
                 </div>
               </div>
               {renderCanvasSurface()}
@@ -1678,18 +1731,18 @@ export default function WorkflowNodes() {
                       <div className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${badgeClass(current.status)}`}>接入：{current.status}</div>
                       <div className="inline-flex rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs text-primary">运行：{selectedNodeRuntimeStatus()}</div>
                     </div>
-                    <div className="text-sm text-white/60">workflowId: {workflowId || "not started"}</div>
+                    <div className="text-sm text-white/60">workflowId: {workflowId || "未开始"}</div>
                   </div>
 
                   <div className="mb-4 grid gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">Inspector</div>
-                      <div className="mt-2 text-sm text-white/70">這裡編輯的是當前所選節點的真實輸入，不是靜態 mock UI。</div>
+                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">当前编辑区</div>
+                      <div className="mt-2 text-sm text-white/70">这里编辑的是当前所选节点的真实输入，不是静态 mock UI。</div>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-[#0b1020] p-4">
-                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">Next Step</div>
+                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">下一步</div>
                       <div className="mt-2 text-sm font-semibold text-white">{nextRecommendedNode()}</div>
-                      <div className="mt-1 text-xs text-white/55">你可以直接跳到建議節點繼續流程。</div>
+                      <div className="mt-1 text-xs text-white/55">你可以直接跳到建议节点继续流程。</div>
                     </div>
                   </div>
 
@@ -1699,45 +1752,51 @@ export default function WorkflowNodes() {
 
                   {renderCompactInspector()}
 
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-[#0b1020] p-4">
-                    <div className="mb-2 text-sm font-semibold text-white">Latest Output Snapshot</div>
-                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs text-white/70">{JSON.stringify(selectedNodeSnapshot(), null, 2)}</pre>
-                  </div>
+                  {debugMode ? (
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-[#0b1020] p-4">
+                      <div className="mb-2 text-sm font-semibold text-white">最新输出快照</div>
+                      <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs text-white/70">{JSON.stringify(selectedNodeSnapshot(), null, 2)}</pre>
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
 
               <Card className="border-white/10 bg-white/5">
                 <CardContent className="p-5">
                   <div className="mb-3 text-lg font-bold">运行状态</div>
-                  <div className="mb-4 flex flex-wrap gap-2">
-                    <input
-                      value={workflowIdInput}
-                      onChange={(e) => setWorkflowIdInput(e.target.value)}
-                      placeholder="Paste workflowId"
-                      className="min-w-[220px] flex-1 rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
-                    />
-                    <Button
-                      variant="outline"
-                      className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
-                      onClick={() => {
-                        const nextId = s(workflowIdInput).trim();
-                        if (!nextId) return;
-                        setWorkflowId(nextId);
-                        void refreshWorkflow(nextId);
-                      }}
-                    >
-                      Load Workflow
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
-                      onClick={() => void refreshWorkflow()}
-                      disabled={!workflowId}
-                    >
-                      <RefreshCcw className="mr-2 h-4 w-4" />
-                      Refresh
-                    </Button>
-                  </div>
+                  {debugMode ? (
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      <input
+                        value={workflowIdInput}
+                        onChange={(e) => setWorkflowIdInput(e.target.value)}
+                        placeholder="粘贴 workflowId"
+                        className="min-w-[220px] flex-1 rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
+                      />
+                      <Button
+                        variant="outline"
+                        className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
+                        onClick={() => {
+                          const nextId = s(workflowIdInput).trim();
+                          if (!nextId) return;
+                          setWorkflowId(nextId);
+                          void refreshWorkflow(nextId);
+                        }}
+                      >
+                        载入 workflow
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-xl border-white/15 bg-white/5 text-white hover:bg-white/10"
+                        onClick={() => void refreshWorkflow()}
+                        disabled={!workflowId}
+                      >
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        刷新
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="mb-4 text-sm text-white/60">需要查看 workflowId、输出快照或手动载入时，可以打开右上角 Debug。</div>
+                  )}
                   <div className="space-y-2 text-sm text-white/72">
                     <div>currentStep: <code>{s(workflow?.currentStep) || "--"}</code></div>
                     <div>status: <code>{s(workflow?.status) || "--"}</code></div>
