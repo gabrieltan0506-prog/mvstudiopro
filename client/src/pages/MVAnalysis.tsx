@@ -64,29 +64,6 @@ type CommercialTrack = {
   nextStep: string;
 };
 
-type StrategyPillar = {
-  title: string;
-  description: string;
-  accent: string;
-};
-
-type ContentInsightBlock = {
-  title: string;
-  text: string;
-  tone: "highlight" | "warning" | "neutral";
-};
-
-type PlatformOptimizationCard = {
-  name: string;
-  sourceLabel: string;
-  sourceTone: "live" | "reference";
-  summary: string;
-  percentageMomentum: number;
-  percentageFit: number;
-  action: string;
-  note: string;
-};
-
 type ExecutionBriefRow = {
   label: string;
   content: string;
@@ -187,89 +164,6 @@ function normalizeAnalysisScale(result: AnalysisResult): AnalysisResult {
   };
 }
 
-function buildStrategyPillars(
-  analysis: AnalysisResult,
-  recommendations: GrowthPlatformRecommendation[],
-  tracks: CommercialTrack[],
-): StrategyPillar[] {
-  const bestPlatform = recommendations[0]?.name || "抖音";
-  const bestTrack = tracks[0]?.name || "品牌合作";
-  return [
-    {
-      title: "内容定位",
-      description: analysis.summary,
-      accent: "text-[#ffcf92]",
-    },
-    {
-      title: "首发渠道",
-      description: `优先在 ${bestPlatform} 验证第一版表达，再按平台节奏拆成标题、封面和结构变体。`,
-      accent: "text-[#9dd0ff]",
-    },
-    {
-      title: "商业方向",
-      description: `这条内容当前最适合承接「${bestTrack}」路径，报告下方会给出第一动作。`,
-      accent: "text-[#b8ffcf]",
-    },
-  ];
-}
-
-function buildContentInsightBlocks(analysis: AnalysisResult): ContentInsightBlock[] {
-  return [
-    {
-      title: "核心定位",
-      text: analysis.summary,
-      tone: "highlight",
-    },
-    {
-      title: "当前优势",
-      text: analysis.strengths.slice(0, 2).join("；") || "当前优势还不够稳定，建议先把可复用的表达亮点固定下来。",
-      tone: "neutral",
-    },
-    {
-      title: "高优先级问题",
-      text: analysis.improvements.slice(0, 2).join("；") || "当前没有识别到明确问题，但建议继续做钩子、节奏和信息顺序的优化。",
-      tone: "warning",
-    },
-    {
-      title: "第一优先动作",
-      text: analysis.improvements[0] || "先把开头 2-3 秒重写成结果前置版本，再进入平台测试。",
-      tone: "highlight",
-    },
-  ];
-}
-
-function buildPlatformOptimizationCards(
-  growthSnapshot: GrowthSnapshot | null,
-  recommendations: GrowthPlatformRecommendation[],
-): PlatformOptimizationCard[] {
-  const recommendationMap = new Map(recommendations.map((item) => [item.name, item]));
-  return FULL_PLATFORM_ORDER.map((platformKey) => {
-    const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.platform === platformKey);
-    const displayName = PLATFORM_LABELS[platformKey];
-    const recommendation = recommendationMap.get(displayName);
-    const hasLiveSample = snapshot?.last30d.sampleSizeLabel === "live-sample-30d";
-    const referencePlatform =
-      platformKey === "kuaishou" ? "抖音" :
-      platformKey === "bilibili" ? "B站" :
-      displayName;
-
-    return {
-      name: displayName,
-      sourceLabel: hasLiveSample ? "当前实时样本" : "仅结构建议",
-      sourceTone: hasLiveSample ? "live" : "reference",
-      percentageMomentum: snapshot?.momentumScore ?? 0,
-      percentageFit: snapshot?.audienceFitScore ?? 0,
-      summary: snapshot?.summary || `${displayName} 当前还没有接入真实抓取，先按结构适配给出参考建议。`,
-      action: recommendation?.action || (hasLiveSample
-        ? `优先参考 ${displayName} 当前更匹配的表达结构做首轮测试。`
-        : `当前未接入真实抓取，先参考${referencePlatform}的优化方案做结构适配。`),
-      note: hasLiveSample
-        ? `当前展示的是实时抓取样本，不应表述为完整 30 天历史库。`
-        : `当前没有 ${displayName} 的真实抓取数据，这里只提供结构性建议，不提供真实趋势结论。`,
-    };
-  });
-}
-
 function buildDashboardMetrics(
   scoreItems: { label: string; value: number }[],
   highConfidenceTracks: CommercialTrack[],
@@ -307,25 +201,10 @@ function buildDashboardMetrics(
   ];
 }
 
-function buildPlatformComparisonData(platforms: PlatformOptimizationCard[]) {
-  return platforms.map((item) => ({
-    name: item.name,
-    热度动量: item.percentageMomentum,
-    受众适配: item.percentageFit,
-  }));
-}
-
 function buildScoreDistributionData(scoreItems: { label: string; value: number }[]) {
   return scoreItems.map((item) => ({
     name: item.label,
     value: item.value,
-  }));
-}
-
-function buildCommercialTrackData(tracks: CommercialTrack[]) {
-  return tracks.slice(0, 4).map((item) => ({
-    name: item.name,
-    value: item.fit,
   }));
 }
 
@@ -336,7 +215,7 @@ function buildPositioningRows(
   platforms: GrowthPlatformRecommendation[],
 ): InsightTableRow[] {
   const audience = compactText(context || "当前没有明确写出受众与成交目标，建议后续补全。", 64);
-  const bestTrack = tracks[0]?.name || "社群会员";
+  const bestTrack = tracks[0]?.name || "服务咨询";
   const firstPlatform = platforms[0]?.name || "小红书";
   return [
     {
@@ -489,8 +368,12 @@ function buildCommercialTracks(
     {
       name: "品牌合作",
       fit: Math.min(96, Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0))),
-      reason: "视觉包装和表达统一性较强时，更容易承接品牌合作、案例展示和商业合作页。",
-      nextStep: "补一版案例导向标题和服务说明，让合作方能快速理解你擅长的商业结果。",
+      reason: /美妆|穿搭|形象|妆|护肤|造型/.test(text)
+        ? "只有当你能把审美表达直接翻译成“适合什么场景、解决什么问题、能给品牌带来什么结果”时，品牌合作才成立。"
+        : "品牌合作只适合那些表达统一、案例清楚、服务说明完整的内容，不适合泛泛谈曝光。",
+      nextStep: /美妆|穿搭|形象|妆|护肤|造型/.test(text)
+        ? "先补一版“场景问题 -> 解决方案 -> 可合作品类”的案例页，聚焦运动美妆、防晒、功能护肤、服饰与配件。"
+        : "补一版案例导向标题和服务说明，让合作方能快速理解你擅长的商业结果。",
     },
     {
       name: "电商带货",
@@ -507,8 +390,8 @@ function buildCommercialTracks(
     {
       name: "社群会员",
       fit: Math.min(96, Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4)),
-      reason: "如果能持续输出同主题内容和过程感，最容易建立陪伴感并承接社群或会员。",
-      nextStep: "连续发布 3 条同主题内容，并在结尾加入系列承诺和进群/订阅理由。",
+      reason: "社群不是默认答案，只有当你能稳定更新同主题内容、持续交付群内价值时，才值得做会员或长期社群。",
+      nextStep: "先验证是否存在固定主题、固定更新节奏和固定权益，再决定要不要把社群作为主承接方式。",
     },
   ].sort((a, b) => b.fit - a.fit);
 }
@@ -1059,15 +942,15 @@ export default function MVAnalysisPage() {
 
         {!analysis ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
-            <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-              <div className="flex items-center gap-3 text-[#ffb37f]">
-                <Compass className="h-5 w-5" />
-                <span className="font-semibold">趋势洞察</span>
+              <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                <div className="flex items-center gap-3 text-[#ffb37f]">
+                  <Compass className="h-5 w-5" />
+                  <span className="font-semibold">趋势洞察</span>
+                </div>
+                <p className="mt-4 text-sm leading-7 text-white/65">
+                生成後會只保留和你身份、題材與商業目標高度相關的內容方向，不把無關熱點硬塞給你。
+                </p>
               </div>
-              <p className="mt-4 text-sm leading-7 text-white/65">
-                接下来会接入 30 天平台趋势快照、热门题材变化和内容结构数据库，这一版先把承接结构搭起来。
-              </p>
-            </div>
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#90c4ff]">
                 <BriefcaseBusiness className="h-5 w-5" />

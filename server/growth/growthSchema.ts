@@ -640,26 +640,49 @@ function buildBusinessInsights(
 ): GrowthBusinessInsight[] {
   const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
   const beautyFashion = isBeautyFashionContext(context);
+  const bookingStyle = /咨询|顾问|预约|服务|方案/.test(context);
+  const commerceStyle = /带货|商品|单品|橱窗|电商/.test(context);
+  const educationStyle = /课程|教学|知识|教程|训练营|陪跑/.test(context);
+  const communityStyle = /社群|会员|私域/.test(context);
+  const primaryAction = primaryTrack === "品牌合作"
+    ? (beautyFashion
+        ? "先把你的内容改写成“场景痛点 + 解决方案 + 合作品类”的提案型表达，让品牌知道你能承接哪类问题。"
+        : "先补一页案例或服务结果说明，让合作方一眼看懂你解决什么问题。")
+    : primaryTrack === "电商带货"
+      ? "先把内容改写成“结果前置 + 利益点 + 单一购买动作”，不要继续做泛讨论。"
+      : primaryTrack === "知识付费"
+        ? "先把内容整理成一套可重复讲述的方法，再把入口统一指向课程、模板或陪跑。"
+        : "先验证你是否真的具备固定主题、固定更新和固定权益，再决定要不要做长期社群。";
   return [
     {
       title: "商业判断",
       detail: analysis.viralPotential >= 75
-        ? "内容已有放大基础，下一步不是继续堆信息，而是把流量导向可复制的服务、课程、案例页或咨询入口。"
-        : "当前仍应先把内容结构、信息顺序和包装一致性做稳，再补上行动引导（CTA）和承接入口。",
+        ? "这条内容已经不是“要不要发”的问题，而是“发出去以后把用户带到哪里”。先定唯一承接动作，再决定标题、封面和结尾。"
+        : "当前先别急着讲太多商业化，先把内容变成一个明确的入口：让用户在 3 秒内知道你解决什么问题、为什么值得继续看、下一步该做什么。",
     },
     {
-      title: "社群承接",
-      detail: primaryTrack === "社群会员"
-        ? "社群不要做成泛聊天群，而要做成固定主题、固定更新、固定权益的小型运营产品。先明确群内每周给什么、用户为什么续留、群外内容怎样导流进群。"
-        : "即便当前不是主打社群，也应该先设计一个私域承接动作，比如预约、关键词领取、私信咨询或小群试运营。",
+      title: "主承接动作",
+      detail: bookingStyle
+        ? "你的内容更适合把用户导向预约、咨询或方案沟通页，重点不是讲理念，而是让用户快速判断“你能不能帮我”。"
+        : commerceStyle
+          ? "你的内容更适合把用户导向商品页或单品推荐，重点不是讲完整故事，而是把利益点、适用场景和购买动作说清楚。"
+          : educationStyle
+            ? "你的内容更适合把用户导向课程、模板或陪跑入口，重点不是讲灵感，而是讲方法、步骤和结果。"
+            : communityStyle || primaryTrack === "社群会员"
+              ? "只有当你能长期输出同主题内容并提供稳定权益时，社群才值得做；否则先用轻量私域或预约动作测试承接。"
+              : primaryAction,
     },
     {
-      title: "合作品类",
+      title: "成交说法",
       detail: beautyFashion
-        ? "如果要谈合作，优先讲运动美妆、防晒、功能护肤、运动服饰、配件和健康生活方式品牌，不要只写“品牌合作”这种没有筛选力的词。"
+        ? "不要只写“品牌合作”或“可商业化”。应该直接写成：适合运动美妆、防晒、功能护肤、服饰配件、造型服务这几类合作或转化。"
         : context.trim()
-          ? `你给出的业务背景「${context.trim().slice(0, 36)}${context.trim().length > 36 ? "..." : ""}」更适合先验证「${primaryTrack}」这一条承接路径。`
-          : `建议先围绕「${primaryTrack}」验证一条最短商业路径，而不是同时试多个承接方向。`,
+          ? `你现在的业务背景更适合先验证「${primaryTrack}」这一条成交路径，别同时混合多个方向。`
+          : `先围绕「${primaryTrack}」做单一路径验证，先跑通再扩。`,
+    },
+    {
+      title: "下一步落地",
+      detail: primaryAction,
     },
   ];
 }
