@@ -244,10 +244,11 @@ function buildPositioningRows(
     },
     {
       label: "首发路径",
-      insight: `先用 ${firstPlatform} 验证表达，不再同时谈多个平台。`,
+      insight: `先用 ${firstPlatform} 验证第一版表达，再把同一主题拆成多平台版本。`,
       action: firstPlatform === "小红书"
-        ? "先做一版适合小红书的图文/笔记结构：封面主标题、收藏理由、方法拆解、结尾行动。"
-        : "只做一个首发版本，不要一稿通发。",
+        ? "先做一版适合小红书的图文/笔记结构：封面主标题、收藏理由、方法拆解、结尾行动，再把这版延展成视频脚本。"
+        : "先跑通首发版本，再拆成图文版和视频版，不要一稿通发。",
+      highlight: "首发是验证顺序，不是只发一个平台。",
     },
     {
       label: "主商业方向",
@@ -285,9 +286,9 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
     },
     {
       label: "建议方向",
-      insight: normalizeText(analysis.summary || industryTemplate?.commercialFocus || "当前内容有基础，但需要更强的结构和承接动作。"),
-      action: normalizeText(industryTemplate?.commercialFocus || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。"),
-      highlight: "说明越短，行动越清楚。",
+      insight: normalizeText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。"),
+      action: normalizeText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。"),
+      highlight: "结论更短，方案更具体，用户才知道下一步怎么做。",
     },
   ];
 }
@@ -299,10 +300,10 @@ function buildTrendRows(
 ): TrendTableRow[] {
   return (growthSnapshot?.topicLibrary || []).slice(0, 6).map((item: GrowthTopicLibraryItem) => ({
     platform: item.platformLabel,
-    topic: compactText(item.title, 30),
-    reason: compactText(item.rationale, 72),
-    action: compactText(item.executionHint, 72),
-    highlight: compactText(item.commercialAngle, 60),
+    topic: normalizeText(item.title),
+    reason: normalizeText(item.rationale),
+    action: normalizeText(item.executionHint),
+    highlight: normalizeText(item.commercialAngle),
   }));
 }
 
@@ -310,7 +311,7 @@ function buildPlatformRecommendationRows(
   recommendations: GrowthPlatformRecommendation[],
   growthSnapshot: GrowthSnapshot | null,
 ): InsightTableRow[] {
-  return recommendations.slice(0, 1).map((platform) => {
+  return recommendations.map((platform) => {
     const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
     return {
       label: platform.name,
@@ -1195,15 +1196,15 @@ export default function MVAnalysisPage() {
                   <Sparkles className="h-5 w-5" />
                   <h2 className="text-2xl font-bold">内容分析</h2>
                 </div>
-                <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                  <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                  <table className="w-full border-collapse text-sm leading-7 text-white/75">
                     <tbody>
                       {contentAnalysisRows.map((row) => (
                         <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                           <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                          <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                          <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                          <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                          <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                          <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                          <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1292,8 +1293,8 @@ export default function MVAnalysisPage() {
                       <h2 className="text-2xl font-bold">创作执行简报</h2>
                     </div>
                     <p className="mt-3 text-sm leading-7 text-white/60">先看这部分。这里是你这一条内容最该立刻执行的判断和改法。</p>
-                    <div className="mt-4 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/72">
+                    <div className="mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/72">
                         <tbody>
                           {executionBriefRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
@@ -1343,16 +1344,16 @@ export default function MVAnalysisPage() {
                       <Send className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">推荐发布平台</h2>
                     </div>
-                    <p className="mt-3 text-sm leading-7 text-white/60">当前只围绕首发平台展开，不再把多个平台方案混在一起。</p>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                    <p className="mt-3 text-sm leading-7 text-white/60">先给首发顺序，再告诉你每个平台该怎么发、怎么改，以及如何把图文继续延展成视频。</p>
+                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {platformRecommendationRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1369,15 +1370,15 @@ export default function MVAnalysisPage() {
                       <Compass className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">内容定位</h2>
                     </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {positioningRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1390,15 +1391,15 @@ export default function MVAnalysisPage() {
                       <Sparkles className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">内容分析</h2>
                     </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {contentAnalysisRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[22%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1422,15 +1423,15 @@ export default function MVAnalysisPage() {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full table-fixed border-collapse text-sm leading-7 text-white/75">
+                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                      <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {businessTrackRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[32%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>

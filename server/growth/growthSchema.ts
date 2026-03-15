@@ -598,44 +598,103 @@ function buildMonetizationTracks(
   ].sort((a, b) => b.fit - a.fit);
 }
 
+function deriveContentStrategySignals(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  snapshot?: GrowthPlatformSnapshot,
+  industryTemplate?: GrowthIndustryTemplate,
+) {
+  const text = `${context} ${snapshot?.summary || ""} ${(snapshot?.sampleTopics || []).join(" ")}`.trim();
+  const lower = text.toLowerCase();
+  const visualStory = analysis.composition >= 68 && analysis.color >= 62;
+  const strongHook = analysis.impact >= 70 || analysis.viralPotential >= 70;
+  const educational = /教程|教学|方法|攻略|步骤|清单|复盘|避坑|经验|模板|知识|分析/.test(text);
+  const lifestyle = /旅行|探店|穿搭|妆容|vlog|美食|生活方式|居家|情侣|日常/.test(text);
+  const serviceDriven = /咨询|顾问|方案|服务|预约|陪跑|训练营|课程/.test(text) || /咨询|顾问|服务|陪跑|课程/.test(industryTemplate?.primaryConversion || "");
+  const commerceDriven = /商品|带货|单品|开箱|好物|购买|下单|橱窗|电商/.test(text) || /商品|带货|电商/.test(industryTemplate?.primaryConversion || "");
+  const caseDriven = /案例|客户|合作|改造|前后对比|结果|项目|经验谈/.test(text) || /案例|结果/.test(industryTemplate?.trustAsset || "");
+  const narrativeDriven = /故事|经历|纪录|日记|挑战|过程|旅程|人物/.test(text);
+  const noteFirst = educational || lifestyle || caseDriven;
+  const videoExpansion = strongHook || narrativeDriven || commerceDriven;
+  const shortVideoFirst = strongHook || commerceDriven;
+  const longVideoFirst = educational || caseDriven || (analysis.composition >= 60 && analysis.viralPotential < 65);
+
+  return {
+    text,
+    visualStory,
+    strongHook,
+    educational,
+    lifestyle,
+    serviceDriven,
+    commerceDriven,
+    caseDriven,
+    narrativeDriven,
+    noteFirst,
+    videoExpansion,
+    shortVideoFirst,
+    longVideoFirst,
+    summaryLabel: noteFirst
+      ? "先做可收藏、可复用的图文结构"
+      : shortVideoFirst
+        ? "先做结果前置的短视频版本"
+        : "先做能讲清问题和方案的首发版本",
+  };
+}
+
 function buildPlatformRecommendations(
   requestedPlatforms: GrowthPlatform[],
   analysis: GrowthAnalysisScores,
   platformSnapshots: GrowthPlatformSnapshot[],
+  context: string,
+  industryTemplate: GrowthIndustryTemplate,
 ): GrowthPlatformRecommendation[] {
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
-  return selectedPlatforms.slice(0, 1).map((platform, index) => {
+  return selectedPlatforms.map((platform, index) => {
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const platformTemplate = getPlatformTemplate(platform);
+    const signals = deriveContentStrategySignals(analysis, context, snapshot, industryTemplate);
+    const watchouts = snapshot?.watchouts?.slice(0, 2).join("、") || platformTemplate.avoidance;
+    const topicHint = snapshot?.sampleTopics?.[0] || industryTemplate.trustAsset;
     if (platform === "douyin") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: analysis.impact >= 70
-          ? `当前画面冲击力较强，适合先在高分发效率的平台验证强钩子和转化动作。${platformTemplate.contentPreference}`
-          : `适合先测试更强开场，但需要把开头刺激和结果感再往前提。${platformTemplate.contentPreference}`,
+        reason: signals.shortVideoFirst
+          ? `这条内容在抖音不能按原稿平铺，要改成“结果先出现、冲突马上讲清、镜头尽快推进”的短视频表达。重点不是重复小红书文案，而是把「${topicHint}」压成前 2 秒就能懂的开场。`
+          : `抖音更适合作为第二阶段视频放大平台。先把图文里最值得传播的一句结论抽出来，再围绕它做强钩子短视频，不要直接搬运原稿。`,
         action: index === 0
-          ? `先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`
-          : `补一版更强标题和对比封面，再做第二轮测试。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
+          ? `做 1 版 9:16 结果前置短视频：开头先讲结论，中段只保留 2 到 3 个关键画面，结尾只留一个动作。${signals.commerceDriven ? "如果要转化，就把商品利益点或预约动作直接说出来。" : "如果先做增长，就把评论互动问题放在结尾。"} 注意避免：${watchouts}`
+          : `把首发图文改写成抖音视频版：删掉解释型段落，保留冲突、结果和一个行动指令。${platformTemplate.actionRule} 注意避免：${watchouts}`,
       };
     }
     if (platform === "xiaohongshu") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: `适合放大审美、方法感和可收藏的结构，尤其适合做拆解版和模板版。${platformTemplate.contentPreference}`,
-        action: `补一段创作思路或场景拆解，并强化封面主信息和收藏理由。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
+        reason: signals.noteFirst
+          ? `小红书适合先做首发验证，但不是因为平台固定模板，而是因为这条内容更适合被整理成“适合谁、解决什么、怎么做”的笔记结构。先让用户愿意收藏，再把它延展成视频。`
+          : `如果这条内容先上小红书，不能只发感受或流水账。要把故事线拆成清单、路线、避坑、前后对比或场景建议，让用户一眼知道为什么值得存。`,
+        action: `先写 1 版小红书笔记：封面只讲一个结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。${signals.videoExpansion ? "首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。" : "先把这版笔记跑通，再抽最强一段改成短视频脚本。"} 注意避免：${watchouts}`,
       };
     }
     if (platform === "bilibili") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: `适合承接完整叙事、幕后复盘和创作过程，更利于延长内容生命周期。${platformTemplate.contentPreference}`,
-        action: `把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
+        reason: signals.longVideoFirst
+          ? `B站更适合把这条内容讲完整，尤其是方法、案例、复盘和幕后拆解。这里不是简单“多发一个平台”，而是把同一内容升级成更长尾、更能建立信任的版本。`
+          : `如果你要把这条内容继续放大，B站适合承接“为什么这样做、踩了什么坑、如何复用”的后续版，不适合只上传短版切片。`,
+        action: `做 1 版 60 到 120 秒复盘或案例拆解视频：先讲结果，再讲步骤和误区，最后告诉用户可以继续看哪一版内容。${signals.serviceDriven ? "如果你卖的是咨询、课程或服务，就把案例结果和方法论说透。" : "如果你做的是内容增长，就重点讲结构、节奏和可复制的方法。"} 注意避免：${watchouts}`,
+      };
+    }
+    if (platform === "kuaishou") {
+      return {
+        name: PLATFORM_LABELS[platform],
+        reason: `快手更适合做直给型版本。不要讲平台分析，不要讲抽象定位，只要直接告诉用户“这件事值不值、适不适合、怎么做更省事”。同一主题到快手必须换成更生活化、更结果导向的表达。`,
+        action: `把内容改成生活场景口播或真实演示版：开头先讲能解决什么，中段只保留 2 个最实用步骤，结尾留一个最直接的动作。${signals.commerceDriven ? "如果有商品或服务承接，就把价格感、结果感和适用人群讲清楚。" : "如果先做增长，就用一个最直白的问题把评论引出来。"} 注意避免：${watchouts}`,
       };
     }
     return {
       name: snapshot?.displayName || PLATFORM_LABELS[platform as GrowthPlatform],
-      reason: `适合作为次分发渠道，验证不同标题、封面和叙事强度的版本差异。${platformTemplate.contentPreference}`,
-      action: `保留核心卖点，输出一版平台适配文案后再投放。${platformTemplate.actionRule} 注意避免：${platformTemplate.avoidance}`,
+      reason: `这个平台不该拿来重复发同一份稿，而是拿来验证“同一主题换表达后，哪种结构更容易被接受”。核心是按内容本身改写，不是按平台套模板。`,
+      action: `保留同一个核心卖点，单独改写标题、结构和行动指令后再发。当前最该保留的是「${topicHint}」，最该删掉的是平台内部推理和冗长解释。注意避免：${watchouts}`,
     };
   });
 }
@@ -665,8 +724,8 @@ function buildBusinessInsights(
           : "先验证你是否真的具备固定主题、固定更新和固定权益，再决定要不要做长期社群。";
   return [
     {
-      title: "行业判断",
-      detail: `当前内容更接近「${industryTemplate.name}」模板。核心人群是：${industryTemplate.audience}。真正要解决的问题不是泛曝光，而是：${industryTemplate.painPoint}`,
+      title: "当前更该解决的问题",
+      detail: `这条内容现在不是缺灵感，而是缺一个让用户和合作方都能立刻看懂的入口。优先围绕「${industryTemplate.painPoint}」重写，而不是继续堆更多信息。`,
     },
     {
       title: "中长期商业判断",
@@ -700,7 +759,7 @@ function buildBusinessInsights(
     },
     {
       title: "中长期下一步落地",
-      detail: `${primaryAction} 内容表达上优先补「${industryTemplate.trustAsset}」，承接上优先验证「${industryTemplate.offerExamples[0] || industryTemplate.primaryConversion}」。`,
+      detail: `${primaryAction} 内容表达上优先补「${industryTemplate.trustAsset}」，承接上优先验证「${industryTemplate.offerExamples[0] || industryTemplate.primaryConversion}」。如果首发是图文，下一步就把同主题改写成分镜脚本和短视频版本。`,
     },
   ];
 }
@@ -842,7 +901,7 @@ export function buildMockGrowthSnapshot(params: {
     buildPlatformSnapshot(platform, params.analysis, context),
   );
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
-  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
@@ -980,7 +1039,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     ...activeCollections.flatMap((collection) => collection.items.slice(0, 6).map((item) => item.title)),
   ]);
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
-  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
