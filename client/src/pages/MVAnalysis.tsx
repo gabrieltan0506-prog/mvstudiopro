@@ -979,10 +979,9 @@ export default function MVAnalysisPage() {
           </section>
         ) : null}
 
-        {analysis ? (
+        {debugMode ? (
           <section className="mt-8 space-y-6">
-            {debugMode ? (
-              <div className="rounded-[24px] border border-cyan-300/20 bg-cyan-400/10 p-5">
+            <div className="rounded-[24px] border border-cyan-300/20 bg-cyan-400/10 p-5">
                 <div className="text-sm font-semibold text-cyan-100">Debug 面板</div>
                 <div className="mt-3 grid gap-2 text-sm text-white/75 md:grid-cols-2">
                   <div>input: {String(debugInfo?.inputKind || inputKind || "-")}</div>
@@ -1057,8 +1056,11 @@ export default function MVAnalysisPage() {
                   </div>
                 ) : null}
               </div>
-            ) : null}
+          </section>
+        ) : null}
 
+        {analysis ? (
+          <section className="mt-8 space-y-6">
             {showPremiumReport ? (
               <div className="space-y-6">
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
