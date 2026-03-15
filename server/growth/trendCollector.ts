@@ -608,8 +608,13 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
+  const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(8, Math.min(40, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20)));
+  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 12) || 12));
+  const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
   const items: TrendItem[] = [];
   const notes: string[] = [];
+  let searchRequestCount = 0;
+  let searchPageDepth = 0;
 
   const pushKuaishouItem = (item: Record<string, any>, sourceLabel: string) => {
     const photo = item.photo ?? item;
@@ -645,6 +650,31 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     });
   };
 
+  const extractKuaishouSearchList = (payload: Record<string, any>) => {
+    const candidates = [
+      payload?.data?.list,
+      payload?.data?.feeds,
+      payload?.data?.items,
+      payload?.feeds,
+      payload?.list,
+      payload?.items,
+      payload?.data?.searchFeedInfo?.list,
+    ];
+    const list = candidates.find((entry) => Array.isArray(entry));
+    return Array.isArray(list) ? list as Array<Record<string, any>> : [];
+  };
+
+  const extractKuaishouSearchCursor = (payload: Record<string, any>) => {
+    return String(
+      payload?.data?.pcursor
+      ?? payload?.pcursor
+      ?? payload?.data?.cursor
+      ?? payload?.cursor
+      ?? payload?.data?.searchFeedInfo?.pcursor
+      ?? "",
+    ).trim();
+  };
+
   if (cookie) {
     const response = await fetch("https://www.kuaishou.com/rest/v/profile/private/list", {
       headers: {
@@ -667,6 +697,47 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     if (payload.pcursor) {
       notes.push(`Kuaishou next cursor: ${payload.pcursor}`);
     }
+  }
+
+  if (searchKeywords.length) {
+    const searchTasks = searchKeywords.map((keyword) => async () => {
+      let pcursor = "";
+      for (let page = 0; page < searchPages; page += 1) {
+        const response = await fetch("https://www.kuaishou.com/rest/v/search/feed", {
+          method: "POST",
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            "content-type": "application/json",
+            referer: `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(keyword)}`,
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            ...(cookie ? { cookie } : {}),
+          },
+          body: JSON.stringify({
+            keyword,
+            page: page + 1,
+            pcursor,
+            webPageArea: "searchResult",
+          }),
+        });
+
+        searchRequestCount += 1;
+        searchPageDepth = Math.max(searchPageDepth, page + 1);
+
+        if (!response.ok) {
+          notes.push(`Kuaishou search/feed ${keyword} page ${page + 1} responded with ${response.status}.`);
+          break;
+        }
+
+        const payload = await response.json() as Record<string, any>;
+        const list = extractKuaishouSearchList(payload);
+        list.forEach((item) => pushKuaishouItem(item, `search:${keyword}`));
+        notes.push(`Fetched ${list.length} Kuaishou search feed items for ${keyword} page ${page + 1}.`);
+        pcursor = extractKuaishouSearchCursor(payload);
+        if (!pcursor || !list.length) break;
+      }
+    });
+
+    await runBatches(searchTasks, searchConcurrency);
   }
 
   if (principals.length) {
@@ -744,16 +815,17 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
 
   const publicRequestCount = principals.length * publicPages;
   const publicTargetCount = principals.length * publicPages * count;
+  const searchTargetCount = searchKeywords.length * searchPages * count;
 
   if (!items.length) {
     throw new Error("Kuaishou collector returned 0 items. 请配置 KUAISHOU_COOKIE 或 KUAISHOU_TREND_PRINCIPALS。");
   }
 
   return finalizeCollection("kuaishou", "live", items, notes, {
-    collectorMode: cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
-    requestCount: (cookie ? 1 : 0) + publicRequestCount,
-    pageDepth: Math.max(cookie ? 1 : 0, publicPages),
-    targetPerRun: Math.max(publicTargetCount + (cookie ? count : 0), getPlatformTargetItemCount("kuaishou")),
+    collectorMode: searchRequestCount ? "warehouse" : cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
+    requestCount: (cookie ? 1 : 0) + publicRequestCount + searchRequestCount,
+    pageDepth: Math.max(cookie ? 1 : 0, publicPages, searchPageDepth),
+    targetPerRun: Math.max(publicTargetCount + searchTargetCount + (cookie ? count : 0), getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
   });
