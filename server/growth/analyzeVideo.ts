@@ -4,7 +4,6 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
-import { storagePut } from "../storage";
 import { analyzeVideoMultiFrameFromLocalFile } from "../videoAnalysis";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
@@ -56,14 +55,9 @@ async function transcribeVideoAudio(videoBuffer: Buffer): Promise<string> {
       ]);
 
       const audioBuffer = await fs.readFile(audioPath);
-      const { url: audioUrl } = await storagePut(
-        `growth-camp/audio/${Date.now()}-${path.basename(audioPath)}`,
-        audioBuffer,
-        "audio/mpeg",
-      );
-
       const transcription = await transcribeAudio({
-        audioUrl,
+        audioBase64: audioBuffer.toString("base64"),
+        mimeType: "audio/mpeg",
         language: "zh",
         prompt: "请转写视频里的口播、字幕或关键信息。",
       });
@@ -114,7 +108,7 @@ export async function analyzeVideo(params: {
 }): Promise<VideoAnalysisResult> {
   const buffer = Buffer.from(params.fileBase64, "base64");
   const keyName = params.fileName || `video-${Date.now()}.mp4`;
-  const { url: videoUrl } = await storagePut(`growth-camp/videos/${Date.now()}-${keyName}`, buffer, params.mimeType);
+  const videoUrl = `data:${params.mimeType};base64,${params.fileBase64}`;
   const multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
   const transcript = await transcribeVideoAudio(buffer).catch(() => "");
   const frameHighlights = multiFrame.frameAnalyses

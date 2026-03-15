@@ -28,7 +28,9 @@
 import { ENV } from "./env";
 
 export type TranscribeOptions = {
-  audioUrl: string; // URL to the audio file (e.g., S3 URL)
+  audioUrl?: string; // URL to the audio file (e.g., S3 URL)
+  audioBase64?: string;
+  mimeType?: string;
   language?: string; // Optional: specify language code (e.g., "en", "es", "zh")
   prompt?: string; // Optional: custom prompt for the transcription
 };
@@ -83,22 +85,33 @@ export async function transcribeAudio(
       };
     }
 
-    // Step 2: Download audio from URL
+    // Step 2: Load audio from inline payload or URL
     let audioBuffer: Buffer;
     let mimeType: string;
     try {
-      const response = await fetch(options.audioUrl);
-      if (!response.ok) {
+      if (options.audioBase64) {
+        audioBuffer = Buffer.from(options.audioBase64, "base64");
+        mimeType = options.mimeType || "audio/mpeg";
+      } else if (options.audioUrl) {
+        const response = await fetch(options.audioUrl);
+        if (!response.ok) {
+          return {
+            error: "Failed to download audio file",
+            code: "INVALID_FORMAT",
+            details: `HTTP ${response.status}: ${response.statusText}`
+          };
+        }
+
+        audioBuffer = Buffer.from(await response.arrayBuffer());
+        mimeType = response.headers.get('content-type') || options.mimeType || 'audio/mpeg';
+      } else {
         return {
-          error: "Failed to download audio file",
+          error: "Audio source is missing",
           code: "INVALID_FORMAT",
-          details: `HTTP ${response.status}: ${response.statusText}`
+          details: "audioUrl or audioBase64 is required"
         };
       }
-      
-      audioBuffer = Buffer.from(await response.arrayBuffer());
-      mimeType = response.headers.get('content-type') || 'audio/mpeg';
-      
+
       // Check file size (16MB limit)
       const sizeMB = audioBuffer.length / (1024 * 1024);
       if (sizeMB > 16) {

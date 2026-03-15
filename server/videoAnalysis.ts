@@ -197,20 +197,24 @@ async function downloadVideo(
   return tmpPath;
 }
 
-// ─── 上传帧图片到存储 ──────────────────────────────
+// ─── 上传帧图片到存储，并生成内联数据供 Vertex 使用 ──────────────────────────────
 async function uploadFrame(
   framePath: string,
   index: number
-): Promise<string> {
+): Promise<{ url: string; dataUrl: string }> {
   const buffer = await fs.promises.readFile(framePath);
   const key = `video-frames/${Date.now()}_frame_${index}.jpg`;
   const { url } = await storagePut(key, buffer, "image/jpeg");
-  return url;
+  return {
+    url,
+    dataUrl: `data:image/jpeg;base64,${buffer.toString("base64")}`,
+  };
 }
 
 // ─── AI 分析单帧 ───────────────────────────────────
 async function analyzeFrame(
   imageUrl: string,
+  imageDataUrl: string,
   frameIndex: number,
   totalFrames: number,
   timestamp: number,
@@ -261,7 +265,7 @@ async function analyzeFrame(
           },
           {
             type: "image_url",
-            image_url: { url: imageUrl, detail: "high" },
+            image_url: { url: imageDataUrl, detail: "high" },
           },
         ],
       },
@@ -592,16 +596,16 @@ async function analyzeVideoMultiFrameFromPath(
     onProgress?.("extracting", 100, `成功抽取 ${framePaths.length} 帧`);
 
     onProgress?.("uploading", 0, "正在上传帧图片...");
-    const frameUrls: { path: string; url: string; timestamp: number }[] = [];
+    const frameUrls: { path: string; url: string; dataUrl: string; timestamp: number }[] = [];
 
     for (let i = 0; i < framePaths.length; i++) {
-      const url = await uploadFrame(framePaths[i], i);
+      const uploaded = await uploadFrame(framePaths[i], i);
       const startOffset = Math.min(0.5, duration * 0.02);
       const usableDuration = duration - startOffset * 2;
       const interval = usableDuration / (framePaths.length - 1);
       const timestamp = startOffset + interval * i;
 
-      frameUrls.push({ path: framePaths[i], url, timestamp });
+      frameUrls.push({ path: framePaths[i], url: uploaded.url, dataUrl: uploaded.dataUrl, timestamp });
       onProgress?.(
         "uploading",
         Math.round(((i + 1) / framePaths.length) * 100),
@@ -612,7 +616,7 @@ async function analyzeVideoMultiFrameFromPath(
     const rawFrameAnalyses: FrameAnalysis[] = [];
 
     for (let i = 0; i < frameUrls.length; i++) {
-      const { url, timestamp } = frameUrls[i];
+      const { url, dataUrl, timestamp } = frameUrls[i];
 
       onProgress?.(
         "analyzing",
@@ -622,7 +626,7 @@ async function analyzeVideoMultiFrameFromPath(
 
       try {
         const analysis = await analyzeFrame(
-          url, i, frameUrls.length, timestamp, duration
+          url, dataUrl, i, frameUrls.length, timestamp, duration
         );
 
         rawFrameAnalyses.push({
