@@ -607,12 +607,15 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
+  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 12) || 12));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
   const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(8, Math.min(40, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20)));
   const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 12) || 12));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
   const items: TrendItem[] = [];
   const notes: string[] = [];
+  let privateRequestCount = 0;
+  let privatePageDepth = 0;
   let searchRequestCount = 0;
   let searchPageDepth = 0;
 
@@ -676,26 +679,33 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   };
 
   if (cookie) {
-    const response = await fetch("https://www.kuaishou.com/rest/v/profile/private/list", {
-      headers: {
-        accept: "application/json,text/plain,*/*",
-        cookie,
-        referer: "https://www.kuaishou.com/new-reco",
-        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Kuaishou private list responded with ${response.status}`);
-    }
-    const payload = await response.json() as {
-      feeds?: Array<Record<string, any>>;
-      pcursor?: string;
-    };
-    const list = payload.feeds ?? [];
-    list.forEach((item) => pushKuaishouItem(item, "private-list"));
-    notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from private/list.`);
-    if (payload.pcursor) {
-      notes.push(`Kuaishou next cursor: ${payload.pcursor}`);
+    let pcursor = "";
+    for (let page = 0; page < privatePages; page += 1) {
+      const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
+      if (pcursor) url.searchParams.set("pcursor", pcursor);
+      const response = await fetch(url.toString(), {
+        headers: {
+          accept: "application/json,text/plain,*/*",
+          cookie,
+          referer: "https://www.kuaishou.com/new-reco",
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+        },
+      });
+      privateRequestCount += 1;
+      privatePageDepth = Math.max(privatePageDepth, page + 1);
+      if (!response.ok) {
+        notes.push(`Kuaishou private/list page ${page + 1} responded with ${response.status}.`);
+        break;
+      }
+      const payload = await response.json() as {
+        feeds?: Array<Record<string, any>>;
+        pcursor?: string;
+      };
+      const list = payload.feeds ?? [];
+      list.forEach((item) => pushKuaishouItem(item, `private-list:${page + 1}`));
+      notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from private/list page ${page + 1}.`);
+      pcursor = String(payload.pcursor || "").trim();
+      if (!pcursor || !list.length) break;
     }
   }
 
@@ -768,47 +778,54 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     for (const principalId of principals) {
       let pcursor = "";
       for (let page = 0; page < publicPages; page += 1) {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-            ...(cookie ? { cookie } : {}),
-          },
-          body: JSON.stringify({
-            operationName: "publicFeeds",
-            query,
-            variables: {
-              principalId,
-              pcursor,
-              count,
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              ...(cookie ? { cookie } : {}),
             },
-          }),
-        });
+            body: JSON.stringify({
+              operationName: "publicFeeds",
+              query,
+              variables: {
+                principalId,
+                pcursor,
+                count,
+              },
+            }),
+          });
 
-        if (!response.ok) {
-          throw new Error(`Kuaishou GraphQL responded with ${response.status}`);
-        }
+          if (!response.ok) {
+            notes.push(`Kuaishou publicFeeds ${principalId} page ${page + 1} responded with ${response.status}.`);
+            break;
+          }
 
-        const payload = await response.json() as {
-          data?: {
-            publicFeeds?: {
-              list?: Array<Record<string, any>>;
-              pcursor?: string;
+          const payload = await response.json() as {
+            data?: {
+              publicFeeds?: {
+                list?: Array<Record<string, any>>;
+                pcursor?: string;
+              };
             };
+            errors?: Array<{ message?: string }>;
           };
-          errors?: Array<{ message?: string }>;
-        };
 
-        if (payload.errors?.length) {
-          throw new Error(payload.errors.map((item) => item.message || "unknown error").join("; "));
+          if (payload.errors?.length) {
+            notes.push(`Kuaishou publicFeeds ${principalId} page ${page + 1} errored: ${payload.errors.map((item) => item.message || "unknown error").join("; ")}`);
+            break;
+          }
+
+          const list = payload.data?.publicFeeds?.list ?? [];
+          list.forEach((item) => pushKuaishouItem(item, principalId));
+          notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId} page ${page + 1}.`);
+          pcursor = String(payload.data?.publicFeeds?.pcursor || "").trim();
+          if (!pcursor || !list.length) break;
+        } catch (error) {
+          notes.push(`Kuaishou publicFeeds ${principalId} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+          break;
         }
-
-        const list = payload.data?.publicFeeds?.list ?? [];
-        list.forEach((item) => pushKuaishouItem(item, principalId));
-        notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId} page ${page + 1}.`);
-        pcursor = String(payload.data?.publicFeeds?.pcursor || "").trim();
-        if (!pcursor || !list.length) break;
       }
     }
   }
@@ -823,9 +840,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
 
   return finalizeCollection("kuaishou", "live", items, notes, {
     collectorMode: searchRequestCount ? "warehouse" : cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
-    requestCount: (cookie ? 1 : 0) + publicRequestCount + searchRequestCount,
-    pageDepth: Math.max(cookie ? 1 : 0, publicPages, searchPageDepth),
-    targetPerRun: Math.max(publicTargetCount + searchTargetCount + (cookie ? count : 0), getPlatformTargetItemCount("kuaishou")),
+    requestCount: privateRequestCount + publicRequestCount + searchRequestCount,
+    pageDepth: Math.max(privatePageDepth, publicPages, searchPageDepth),
+    targetPerRun: Math.max((cookie ? privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
   });
