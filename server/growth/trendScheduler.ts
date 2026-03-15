@@ -318,11 +318,11 @@ export async function bootstrapGrowthTrendScheduler() {
     }
   }
 
-  await runDuePlatforms().catch((error) => {
-    console.warn("[growth.scheduler] initial bootstrap failed:", error);
-  });
-  await bootstrapGrowthTrendBackfillWorker().catch((error) => {
+  bootstrapGrowthTrendBackfillWorker().catch((error) => {
     console.warn("[growth.backfill] bootstrap failed:", error);
+  });
+  runDuePlatforms().catch((error) => {
+    console.warn("[growth.scheduler] initial bootstrap failed:", error);
   });
 
   tickTimer = setInterval(() => {
