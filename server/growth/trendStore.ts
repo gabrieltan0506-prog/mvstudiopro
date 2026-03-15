@@ -14,11 +14,25 @@ export type TrendSchedulerState = {
 
 export type TrendArchiveEntry = {
   platform: GrowthPlatform;
+  bucket: string;
   archivedAt: string;
   source: PlatformTrendCollection["source"];
   itemCount: number;
   dedupedCount: number;
   file: string;
+};
+
+export type TrendMergeStats = {
+  platform: GrowthPlatform;
+  source: PlatformTrendCollection["source"];
+  incomingCount: number;
+  addedCount: number;
+  mergedCount: number;
+  dedupedCount: number;
+  currentTotal: number;
+  live: boolean;
+  buckets: Record<string, number>;
+  collectedAt: string;
 };
 
 type TrendStoreFile = {
@@ -57,6 +71,7 @@ function normalizeItem(item: TrendItem): TrendItem {
     ...item,
     id: String(item.id || "").trim(),
     title: String(item.title || "").trim(),
+    bucket: item.bucket ? String(item.bucket).trim() : undefined,
     author: item.author ? String(item.author).trim() : undefined,
     url: item.url ? String(item.url).trim() : undefined,
     tags: Array.from(new Set((item.tags || []).map((tag) => String(tag || "").trim()).filter(Boolean))),
@@ -99,6 +114,20 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
     });
   }
   return sortItems(Array.from(bucket.values()));
+}
+
+function getItemKey(item: TrendItem) {
+  const id = String(item.id || "").trim();
+  if (id) return id;
+  return `${String(item.title || "").trim()}::${String(item.author || "").trim()}::${String(item.bucket || "").trim()}`;
+}
+
+function getBucketCounts(items: TrendItem[]) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
+    acc[bucket] = (acc[bucket] || 0) + 1;
+    return acc;
+  }, {});
 }
 
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
@@ -150,6 +179,35 @@ async function writeStore(next: TrendStoreFile) {
         ),
         "utf8",
       );
+      const bucketDir = path.join(PLATFORM_DIR, platform);
+      await fs.mkdir(bucketDir, { recursive: true });
+      const buckets = Object.entries(
+        collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
+          const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
+          (acc[bucket] ||= []).push(item);
+          return acc;
+        }, {}),
+      );
+      await Promise.all(
+        buckets.map(async ([bucket, items]) => {
+          await fs.writeFile(
+            path.join(bucketDir, `${bucket}.json`),
+            JSON.stringify(
+              {
+                updatedAt: next.updatedAt,
+                platform,
+                bucket,
+                source: collection.source,
+                collectedAt: collection.collectedAt,
+                items,
+              },
+              null,
+              2,
+            ),
+            "utf8",
+          );
+        }),
+      );
     }),
   );
   return next;
@@ -176,7 +234,18 @@ async function pruneOldArchives(entries: TrendArchiveEntry[]) {
 function mergeCollection(
   current: PlatformTrendCollection | undefined,
   incoming: PlatformTrendCollection,
-): { collection: PlatformTrendCollection; dedupedCount: number } {
+): { collection: PlatformTrendCollection; dedupedCount: number; addedCount: number; mergedCount: number } {
+  const existingKeys = new Set((current?.items || []).map((item) => getItemKey(item)));
+  const seenIncoming = new Set<string>();
+  let addedCount = 0;
+  let mergedCount = 0;
+  for (const raw of incoming.items || []) {
+    const key = getItemKey(normalizeItem(raw));
+    if (!key || seenIncoming.has(key)) continue;
+    seenIncoming.add(key);
+    if (existingKeys.has(key)) mergedCount += 1;
+    else addedCount += 1;
+  }
   const mergedItems = dedupeTrendItems(current?.items || [], incoming.items || []);
   return {
     collection: {
@@ -187,6 +256,8 @@ function mergeCollection(
       windowDays: Math.max(current?.windowDays || 0, incoming.windowDays || 0),
     },
     dedupedCount: mergedItems.length,
+    addedCount,
+    mergedCount,
   };
 }
 
@@ -197,12 +268,14 @@ async function archiveCollection(
 ): Promise<TrendArchiveEntry> {
   await ensureStoreDir();
   const datePrefix = collection.collectedAt.slice(0, 10);
-  const fileName = `${platform}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
+  const bucket = Object.keys(getBucketCounts(collection.items)).sort().join("+") || "default";
+  const fileName = `${platform}-${bucket}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
   const absoluteFile = path.join(ARCHIVE_DIR, datePrefix, fileName);
   await fs.mkdir(path.dirname(absoluteFile), { recursive: true });
   await fs.writeFile(absoluteFile, JSON.stringify(collection, null, 2), "utf8");
   return {
     platform,
+    bucket,
     archivedAt: collection.collectedAt,
     source: collection.source,
     itemCount: collection.items.length,
@@ -226,6 +299,7 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     scheduler: current.scheduler || {},
     archiveIndex: [...(current.archiveIndex || [])],
   };
+  const mergeStats: Partial<Record<GrowthPlatform, TrendMergeStats>> = {};
 
   for (const [platformKey, incoming] of Object.entries(collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
     if (!incoming) continue;
@@ -233,13 +307,29 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     next.collections[platformKey] = merged.collection;
     const archiveEntry = await archiveCollection(platformKey, incoming, merged.dedupedCount);
     next.archiveIndex.push(archiveEntry);
+    mergeStats[platformKey] = {
+      platform: platformKey,
+      source: incoming.source,
+      incomingCount: incoming.items.length,
+      addedCount: merged.addedCount,
+      mergedCount: merged.mergedCount,
+      dedupedCount: merged.dedupedCount,
+      currentTotal: merged.collection.items.length,
+      live: incoming.source === "live",
+      buckets: getBucketCounts(merged.collection.items),
+      collectedAt: incoming.collectedAt,
+    };
   }
 
   next.archiveIndex = (await pruneOldArchives(next.archiveIndex))
     .sort((left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime())
     .slice(0, 5000);
 
-  return writeStore(next);
+  const written = await writeStore(next);
+  return {
+    ...written,
+    mergeStats,
+  };
 }
 
 export async function updateTrendSchedulerState(
@@ -289,44 +379,53 @@ export async function exportTrendCollectionsCsv() {
   ].join(",");
 
   const createdAt = new Date().toISOString().replace(/[:.]/g, "-");
-  const files: Array<{ platform: GrowthPlatform; filePath: string; rows: number }> = [];
+  const files: Array<{ platform: GrowthPlatform; bucket: string; filePath: string; rows: number }> = [];
   let totalRows = 0;
 
   for (const collection of Object.values(store.collections)) {
     if (!collection?.items.length) continue;
-    const lines = [header];
-    for (const item of collection.items) {
-      const row = [
-        collection.platform,
-        collection.source,
-        collection.collectedAt,
-        String(collection.windowDays),
-        item.id,
-        item.title,
-        item.author || "",
-        item.url || "",
-        item.publishedAt || "",
-        String(item.likes || ""),
-        String(item.comments || ""),
-        String(item.shares || ""),
-        String(item.views || ""),
-        String(item.hotValue || ""),
-        item.contentType || "",
-        (item.tags || []).join("|"),
-      ]
-        .map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`)
-        .join(",");
-      lines.push(row);
-    }
+    const buckets = collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
+      const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
+      (acc[bucket] ||= []).push(item);
+      return acc;
+    }, {});
 
-    const filePath = path.join(EXPORT_DIR, `${collection.platform}-growth-trends-${createdAt}.csv`);
-    await fs.writeFile(filePath, lines.join("\n"), "utf8");
-    files.push({
-      platform: collection.platform,
-      filePath,
-      rows: Math.max(0, lines.length - 1),
-    });
-    totalRows += Math.max(0, lines.length - 1);
+    for (const [bucket, bucketItems] of Object.entries(buckets)) {
+      const lines = [header];
+      for (const item of bucketItems) {
+        const row = [
+          collection.platform,
+          collection.source,
+          collection.collectedAt,
+          String(collection.windowDays),
+          item.id,
+          item.title,
+          item.author || "",
+          item.url || "",
+          item.publishedAt || "",
+          String(item.likes || ""),
+          String(item.comments || ""),
+          String(item.shares || ""),
+          String(item.views || ""),
+          String(item.hotValue || ""),
+          item.contentType || "",
+          (item.tags || []).join("|"),
+        ]
+          .map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`)
+          .join(",");
+        lines.push(row);
+      }
+
+      const filePath = path.join(EXPORT_DIR, `${collection.platform}-${bucket}-growth-trends-${createdAt}.csv`);
+      await fs.writeFile(filePath, lines.join("\n"), "utf8");
+      files.push({
+        platform: collection.platform,
+        bucket,
+        filePath,
+        rows: Math.max(0, lines.length - 1),
+      });
+      totalRows += Math.max(0, lines.length - 1);
+    }
   }
 
   const manifest = path.join(EXPORT_DIR, `growth-trends-manifest-${createdAt}.json`);

@@ -43,7 +43,7 @@ export function getSmtpStatus() {
   };
 }
 
-function getConfig(): SmtpConfig {
+function getConfig(options?: { requireResend?: boolean }): SmtpConfig {
   const resendMissing = getResendMissingVars();
   if (resendMissing.length === 0) {
     return {
@@ -54,6 +54,10 @@ function getConfig(): SmtpConfig {
       from: String(process.env.RESEND_FROM),
       provider: "resend",
     };
+  }
+
+  if (options?.requireResend) {
+    throw new Error(`邮件配置缺失，当前任务要求使用 Resend。当前缺少：${resendMissing.join("、")}`);
   }
 
   const missing = getMissingVars();
@@ -107,6 +111,7 @@ export async function sendMailWithAttachments(params: {
   subject: string;
   text: string;
   html?: string;
+  requireResend?: boolean;
   attachments?: Array<{
     filename: string;
     path?: string;
@@ -114,7 +119,7 @@ export async function sendMailWithAttachments(params: {
     contentType?: string;
   }>;
 }): Promise<void> {
-  const config = getConfig();
+  const config = getConfig({ requireResend: params.requireResend });
   if (config.host === "console") {
     console.log(`[Mail] to=${params.to} subject=${params.subject}`);
     return;

@@ -474,6 +474,7 @@ export const appRouter = router({
             source: item?.source,
             count: item?.items.length ?? 0,
           })),
+          mergeStats: store.mergeStats || {},
           errors: collected.errors,
         };
       }),
@@ -493,6 +494,7 @@ export const appRouter = router({
             await sendMailWithAttachments({
               to: targetEmail,
               subject: "Creator Growth Camp 趋势抓取 CSV",
+              requireResend: true,
               text: `最新趋势抓取 CSV 已按平台分别导出，共 ${exported.rows} 行。\n清单：${exported.manifestPath}`,
               attachments: exported.files.map((file) => ({
                 filename: file.filePath.split("/").pop() || `${file.platform}-growth-trends.csv`,

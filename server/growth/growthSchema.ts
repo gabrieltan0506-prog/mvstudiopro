@@ -114,7 +114,8 @@ function buildPlatformSummaryFromCollection(
   analysis: GrowthAnalysisScores,
   collection: PlatformTrendCollection,
 ) {
-  const topItem = collection.items[0];
+  const contentItems = collection.items.filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+  const topItem = contentItems[0] || collection.items[0];
   const baseSummary = buildPlatformSummary(platform, analysis);
   if (!topItem) return baseSummary;
   return `${baseSummary} 当前样本里最强势的话题/内容是「${topItem.title}」，说明最近分发仍然偏向更直接、更高可读性的表达。`;
@@ -246,6 +247,94 @@ function buildStructurePatterns(
       evidence: "当单条内容已有基础反馈，系列化通常比继续单发更容易形成商业承接。",
     },
   ];
+}
+
+function buildTrendLayers(
+  requestedPlatforms: GrowthPlatform[],
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+) {
+  return requestedPlatforms.flatMap((platform) => {
+    const label = PLATFORM_LABELS[platform];
+    const collection = collections[platform];
+    const items = collection?.items || [];
+    const topicItems = items.filter((item) => item.bucket === "douyin_topics" || item.contentType === "topic");
+    const contentItems = items.filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+
+    if (!collection || !items.length) {
+      return [{
+        id: `${platform}-structure`,
+        platform,
+        platformLabel: label,
+        layerType: "structure" as const,
+        sourceType: "structure" as const,
+        title: `${label} 结构建议`,
+        summary: `${label} 当前没有可用的真实内容样本，这里只保留结构建议，不能当成真实趋势结论。`,
+        sampleCount: 0,
+        sampleLabel: "结构建议",
+        items: [],
+      }];
+    }
+
+    const layers: Array<{
+      id: string;
+      platform: GrowthPlatform;
+      platformLabel: string;
+      layerType: "topic" | "content" | "structure";
+      sourceType: "live" | "structure";
+      title: string;
+      summary: string;
+      sampleCount: number;
+      sampleLabel: string;
+      items: string[];
+    }> = [];
+
+    if (platform === "douyin" && topicItems.length) {
+      layers.push({
+        id: "douyin-topics",
+        platform,
+        platformLabel: label,
+        layerType: "topic",
+        sourceType: "live",
+        title: "抖音热榜趋势",
+        summary: `这部分来自抖音热榜/热点词样本，只反映当前热点话题，不等同于真实内容表现。`,
+        sampleCount: topicItems.length,
+        sampleLabel: "实时热榜样本",
+        items: topicItems.slice(0, 5).map((item) => item.title),
+      });
+    }
+
+    if (contentItems.length) {
+      layers.push({
+        id: `${platform}-content`,
+        platform,
+        platformLabel: label,
+        layerType: "content",
+        sourceType: collection.source === "live" ? "live" : "structure",
+        title: `${label} 真实内容样本`,
+        summary: collection.source === "live"
+          ? `这部分来自 ${label} 当前抓到的真实内容样本，可用于判断最近内容表达、标题结构和素材方向。`
+          : `${label} 当前没有稳定 live 样本，这里只能作为结构补位参考。`,
+        sampleCount: contentItems.length,
+        sampleLabel: collection.source === "live" ? "真实内容样本" : "结构补位",
+        items: contentItems.slice(0, 5).map((item) => item.title),
+      });
+    } else if (platform !== "douyin") {
+      layers.push({
+        id: `${platform}-structure`,
+        platform,
+        platformLabel: label,
+        layerType: "structure",
+        sourceType: "structure",
+        title: `${label} 结构建议`,
+        summary: `${label} 当前没有独立的真实内容样本，这里只保留结构建议，不能写成真实趋势。`,
+        sampleCount: 0,
+        sampleLabel: "结构建议",
+        items: [],
+      });
+    }
+
+    return layers;
+  });
 }
 
 function buildMonetizationTracks(
@@ -521,6 +610,7 @@ export function buildMockGrowthSnapshot(params: {
     },
     requestedPlatforms,
     overview,
+    trendLayers: buildTrendLayers(requestedPlatforms, {}),
     platformSnapshots,
     contentPatterns: [
       {
@@ -646,6 +736,7 @@ export function buildGrowthSnapshotFromCollections(params: {
           : "当前内容更适合先做结构重写、封面测试和平台化版本，再逐步扩大投放。",
       nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 30 天趋势库。",
     },
+    trendLayers: buildTrendLayers(requestedPlatforms, params.collections),
     platformSnapshots,
     contentPatterns: buildContentPatternsFromCollections(activeCollections),
     opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),

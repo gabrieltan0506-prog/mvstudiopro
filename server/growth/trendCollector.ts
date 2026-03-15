@@ -9,6 +9,7 @@ export type TrendSource = "live" | "seed";
 export type TrendItem = {
   id: string;
   title: string;
+  bucket?: string;
   author?: string;
   url?: string;
   publishedAt?: string;
@@ -71,6 +72,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     items.push({
       id: String(item.aid ?? item.id ?? item.bvid ?? `bili-${items.length}`),
       title,
+      bucket: "bilibili_feed",
       author: String(item.owner?.name ?? "").trim() || undefined,
       url: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : undefined,
       publishedAt: safeDateFromUnix(Number(item.pubdate)),
@@ -167,6 +169,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
         return {
           id: String(item.aweme_id ?? item.group_id ?? ""),
           title,
+          bucket: "douyin_feed",
           author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
           url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
           publishedAt: safeDateFromUnix(Number(item.create_time)),
@@ -209,6 +212,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
   const items = (payload.word_list ?? []).map((item, index) => ({
     id: String(item.sentence_id ?? item.word ?? index),
     title: String(item.word ?? "").trim(),
+    bucket: "douyin_topics",
     hotValue: Number(item.hot_value ?? 0) || undefined,
     url: item.word ? `https://www.douyin.com/hot/${encodeURIComponent(String(item.word))}` : undefined,
     publishedAt: payload.active_time ? new Date(String(payload.active_time).replace(" ", "T") + "+08:00").toISOString() : undefined,
@@ -256,6 +260,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       return {
         id: String(feed.id ?? index),
         title,
+        bucket: "xiaohongshu_feed",
         author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
         url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
         likes: parseChineseCount(noteCard.interactInfo?.likedCount),
@@ -307,6 +312,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     items.push({
       id,
       title,
+      bucket: "kuaishou_feed",
       author: authorName || authorId || undefined,
       url: id ? `https://www.kuaishou.com/short-video/${id}` : undefined,
       publishedAt: safeDateFromTimestamp(Number(photo.timestamp ?? item.timestamp)),

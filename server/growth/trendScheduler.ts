@@ -11,19 +11,11 @@ import {
 } from "./trendStore";
 import { sendMailWithAttachments } from "../services/smtp-mailer";
 
-const PLATFORM_INTERVAL_MINUTES: Record<GrowthPlatform, number> = {
-  douyin: 180,
-  kuaishou: 240,
-  bilibili: 240,
-  xiaohongshu: 360,
-  weixin_channels: 720,
-  toutiao: 720,
-};
-
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
+const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -36,6 +28,32 @@ function nextRunIso(baseMs: number) {
   return new Date(Date.now() + withJitter(baseMs)).toISOString();
 }
 
+function getSchedulerHour(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: SCHEDULER_TIMEZONE,
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hourPart = parts.find((part) => part.type === "hour")?.value;
+  return Number(hourPart || 0);
+}
+
+function getSchedulerIntervalMinutes(now = new Date()) {
+  const hour = getSchedulerHour(now);
+  if (hour >= 17 && hour < 22) return 120;
+  if (hour >= 22 || hour < 6) return 180;
+  return 240;
+}
+
+function nextScheduledRunIso(now = new Date()) {
+  return nextRunIso(getSchedulerIntervalMinutes(now) * 60 * 1000);
+}
+
+function getSchedulerFrequencyLabel(now = new Date()) {
+  const interval = getSchedulerIntervalMinutes(now);
+  return `${interval / 60} 小时一次`;
+}
+
 function buildRetryDelayMs(failureCount: number) {
   return Math.min(60 * 60 * 1000, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
@@ -43,8 +61,11 @@ function buildRetryDelayMs(failureCount: number) {
 async function notifyCollectionUpdate(params: {
   platform: GrowthPlatform;
   itemCount: number;
+  addedCount: number;
+  mergedCount: number;
   collectedAt: string;
   nextRunAt: string;
+  live: boolean;
 }) {
   const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
   if (!recipient) return;
@@ -55,11 +76,16 @@ async function notifyCollectionUpdate(params: {
   await sendMailWithAttachments({
     to: recipient,
     subject: `Creator Growth Camp 抓取更新 - ${params.platform}`,
+    requireResend: true,
     text:
       `平台：${params.platform}\n` +
       `抓取时间：${params.collectedAt}\n` +
-      `新增/合并后样本数：${params.itemCount}\n` +
+      `本次新增数量：${params.addedCount}\n` +
+      `本次合并数量：${params.mergedCount}\n` +
+      `当前总样本数：${params.itemCount}\n` +
       `下次计划抓取：${params.nextRunAt}\n` +
+      `当前调度频率：${getSchedulerFrequencyLabel()}\n` +
+      `是否真实 live：${params.live ? "是" : "否"}\n` +
       `总导出行数：${exported.rows}\n` +
       `清单：${exported.manifestPath}`,
     attachments: [
@@ -77,8 +103,12 @@ async function notifyCollectionUpdate(params: {
     html:
       `<p><strong>平台：</strong>${params.platform}</p>` +
       `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
-      `<p><strong>样本数：</strong>${params.itemCount}</p>` +
+      `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
+      `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
+      `<p><strong>当前总样本数：</strong>${params.itemCount}</p>` +
       `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +
+      `<p><strong>当前调度频率：</strong>${getSchedulerFrequencyLabel()}</p>` +
+      `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
       `<p><strong>总导出行数：</strong>${exported.rows}</p>` +
       (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
   });
@@ -94,7 +124,7 @@ async function runPlatform(platform: GrowthPlatform) {
     const collection = await collectPlatformTrends(platform);
     const mergedStore = await mergeTrendCollections({ [platform]: collection });
     const mergedCollection = mergedStore.collections[platform];
-    const nextRunAt = nextRunIso(PLATFORM_INTERVAL_MINUTES[platform] * 60 * 1000);
+    const nextRunAt = nextScheduledRunIso();
     await updateTrendSchedulerState(platform, {
       lastSuccessAt: collection.collectedAt,
       nextRunAt,
@@ -102,11 +132,15 @@ async function runPlatform(platform: GrowthPlatform) {
       lastError: undefined,
     });
     if (collection.source === "live" && (mergedCollection?.items.length || 0) > 0) {
+      const mergeStat = mergedStore.mergeStats?.[platform];
       await notifyCollectionUpdate({
         platform,
         itemCount: mergedCollection?.items.length || 0,
+        addedCount: mergeStat?.addedCount || 0,
+        mergedCount: mergeStat?.mergedCount || 0,
         collectedAt: collection.collectedAt,
         nextRunAt,
+        live: collection.source === "live",
       }).catch((error) => {
         console.warn(`[growth.scheduler] email notify skipped for ${platform}:`, error);
       });
@@ -134,7 +168,7 @@ async function runDuePlatforms() {
       const nextRunAt = scheduler[platform]?.nextRunAt;
       if (!nextRunAt) {
         const lastCollectedAt = store.collections[platform]?.collectedAt;
-        return isTrendCollectionStale(lastCollectedAt, PLATFORM_INTERVAL_MINUTES[platform] / 60);
+        return isTrendCollectionStale(lastCollectedAt, getSchedulerIntervalMinutes() / 60);
       }
       return new Date(nextRunAt).getTime() <= Date.now();
     });
