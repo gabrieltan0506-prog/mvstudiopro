@@ -5,17 +5,37 @@ import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress
 const TARGET = Math.max(10_000, Number(process.env.GROWTH_PLATFORM_MIN_ITEMS || 10_000) || 10_000);
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
-const HISTORY_INTERVAL_MS = 60 * 1000;
+const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
+const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
 const HISTORY_STEP_TARGET = Math.max(10, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 10) || 10);
 const HISTORY_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 5) || 5);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili"];
 
 let backfillStarted = false;
-let backfillTimer: ReturnType<typeof setInterval> | null = null;
+let backfillTimer: ReturnType<typeof setTimeout> | null = null;
 let backfillInFlight = false;
 const plateau = new Map<GrowthPlatform, number>();
 const previous = new Map<GrowthPlatform, number>();
 let startedAt = "";
+
+function nextHistoryDelayMs() {
+  const span = Math.max(0, HISTORY_MAX_INTERVAL_MS - HISTORY_MIN_INTERVAL_MS);
+  return HISTORY_MIN_INTERVAL_MS + Math.floor(Math.random() * (span + 1));
+}
+
+function scheduleNextBackfillStep() {
+  if (!backfillStarted) return;
+  if (backfillTimer) clearTimeout(backfillTimer);
+  backfillTimer = setTimeout(() => {
+    runGrowthTrendBackfillStep()
+      .catch((error) => {
+        console.warn("[growth.backfill] periodic tick failed:", error);
+      })
+      .finally(() => {
+        scheduleNextBackfillStep();
+      });
+  }, nextHistoryDelayMs());
+}
 
 function getPendingPlatforms(stats: Awaited<ReturnType<typeof getGrowthTrendStats>>) {
   return PLATFORMS.filter((platform) => {
@@ -61,7 +81,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsBefore.coverage.selectedWindowDays,
       status: "running",
-      note: `历史 burst 模式运行中：每 1 分钟一轮，目标步长 10，受限时回落到 5。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史 burst 模式运行中：按 30-60 秒真人节奏抖动抓取，目标步长 10，受限时回落到 5。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -99,7 +119,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsAfter.coverage.selectedWindowDays,
       status: "running",
-      note: `历史 burst 模式运行中：每 1 分钟一轮，目标步长 10，受限时回落到 5。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史 burst 模式运行中：按 30-60 秒真人节奏抖动抓取，目标步长 10，受限时回落到 5。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -133,16 +153,12 @@ export async function bootstrapGrowthTrendBackfillWorker() {
   if (backfillStarted) return;
   backfillStarted = true;
   await runGrowthTrendBackfillStep();
-  backfillTimer = setInterval(() => {
-    runGrowthTrendBackfillStep().catch((error) => {
-      console.warn("[growth.backfill] periodic tick failed:", error);
-    });
-  }, HISTORY_INTERVAL_MS);
+  scheduleNextBackfillStep();
 }
 
 export function stopGrowthTrendBackfillWorker() {
   if (backfillTimer) {
-    clearInterval(backfillTimer);
+    clearTimeout(backfillTimer);
     backfillTimer = null;
   }
   backfillStarted = false;
