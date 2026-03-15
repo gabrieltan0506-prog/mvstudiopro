@@ -1,6 +1,7 @@
 import {
   type GrowthAnalysisScores,
   type GrowthBusinessInsight,
+  type GrowthIndustryTemplate,
   type GrowthMonetizationTrack,
   type GrowthPlatform,
   type GrowthPlatformRecommendation,
@@ -10,6 +11,7 @@ import {
   type GrowthTopicLibraryItem,
   growthSnapshotSchema,
 } from "@shared/growth";
+import { matchIndustryTemplate } from "./industryTemplates";
 import type { PlatformTrendCollection } from "./trendCollector";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
@@ -125,7 +127,7 @@ function buildBeautyFashionTopicTemplates(context: string) {
   ];
 }
 
-function buildGenericTopicTemplates(context: string) {
+function buildGenericTopicTemplates(context: string, industryTemplate: GrowthIndustryTemplate) {
   const keywords = extractContextKeywords(context);
   const intent = inferCommercialIntent(context);
   const audience = inferAudienceArchetype(context);
@@ -135,17 +137,17 @@ function buildGenericTopicTemplates(context: string) {
       key: "pain_solution",
       matchers: keywords,
       title: `围绕「${head}」做痛点到方案的直接表达`,
-      rationale: `这类话题更容易让 ${audience} 立刻理解内容价值，而不是被无关热点分散注意力。`,
-      executionHint: "先点出用户最痛的问题，再给一套可执行方案，结尾只保留一个动作。",
-      commercialAngle: `${intent} 要用单一路径承接，不要同时推多个方向。`,
+      rationale: `这类话题更容易让 ${audience} 立刻理解内容价值。当前更该围绕「${industryTemplate.painPoint}」组织表达，而不是被无关热点分散注意力。`,
+      executionHint: `先点出用户最痛的问题，再给一套可执行方案。${industryTemplate.analysisHint}`,
+      commercialAngle: `${intent} 要用单一路径承接。优先考虑：${industryTemplate.offerExamples.slice(0, 2).join("、") || industryTemplate.primaryConversion}。`,
     },
     {
       key: "case_breakdown",
       matchers: keywords,
       title: `把「${head}」讲成案例拆解，而不是泛分享`,
       rationale: "案例化表达更容易同时建立可信度和成交意图。",
-      executionHint: "按“结果 -> 关键步骤 -> 常见误区”组织，不再平铺过程。",
-      commercialAngle: `${intent} 更适合接咨询、课程、服务或案例转化。`,
+      executionHint: `按“结果 -> 关键步骤 -> 常见误区”组织，不再平铺过程。优先展示：${industryTemplate.trustAsset}`,
+      commercialAngle: `${intent} 更适合接${industryTemplate.primaryConversion}。`,
     },
   ];
 }
@@ -219,11 +221,12 @@ function buildTopicLibrary(
   requestedPlatforms: GrowthPlatform[],
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
   context: string,
+  industryTemplate: GrowthIndustryTemplate,
 ): GrowthTopicLibraryItem[] {
   const contextKeywords = extractContextKeywords(context);
   const templates = isBeautyFashionContext(context)
     ? buildBeautyFashionTopicTemplates(context)
-    : buildGenericTopicTemplates(context);
+    : buildGenericTopicTemplates(context, industryTemplate);
 
   const platformPriority: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["xiaohongshu", "douyin", "bilibili"];
 
@@ -554,6 +557,7 @@ function buildMonetizationTracks(
   analysis: GrowthAnalysisScores,
   context: string,
   platformSnapshots: GrowthPlatformSnapshot[],
+  industryTemplate: GrowthIndustryTemplate,
 ): GrowthMonetizationTrack[] {
   const text = context.trim();
   const xiaohongshuFit = platformSnapshots.find((item) => item.platform === "xiaohongshu")?.audienceFitScore || 0;
@@ -563,31 +567,31 @@ function buildMonetizationTracks(
   return [
     {
       name: "品牌合作",
-      fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0)), 36, 96),
+      fit: clamp(Math.round((analysis.color + analysis.composition + xiaohongshuFit) / 3 + (/品牌|招商|案例|客户|服务/.test(text) ? 6 : 0) + (/品牌合作|合作提案/.test(industryTemplate.primaryConversion) ? 6 : 0)), 36, 96),
       reason: isBeautyFashionContext(text)
         ? "更适合承接运动美妆、防晒、功能护肤、运动服饰和生活方式品牌，而不是泛泛而谈的品牌合作。"
-        : "只有当表达统一、案例清楚、服务说明完整时，品牌或商单合作才有承接价值。",
+        : `只有当表达统一、案例清楚、服务说明完整时，品牌或商单合作才有承接价值。当前更适合围绕「${industryTemplate.commercialFocus}」来组织合作说法。`,
       nextStep: isBeautyFashionContext(text)
         ? "补一版“运动场景妆容 / 穿搭解决方案”案例页，让品牌一眼看懂你能解决什么问题。"
-        : "补一版案例导向标题和服务说明，让合作方快速理解你擅长的商业结果。",
+        : `补一版案例导向标题和服务说明，让合作方快速理解你擅长的商业结果。优先展示：${industryTemplate.trustAsset}`,
     },
     {
       name: "电商带货",
-      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0)), 36, 96),
-      reason: "冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。",
-      nextStep: "把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。",
+      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 36, 96),
+      reason: `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
+      nextStep: `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
     },
     {
       name: "知识付费",
-      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0)), 36, 96),
-      reason: "适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。",
-      nextStep: "把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。",
+      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 36, 96),
+      reason: `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
+      nextStep: `把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。可先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`,
     },
     {
       name: "社群会员",
-      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4), 36, 96),
+      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0)), 36, 96),
       reason: "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
-      nextStep: "先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。",
+      nextStep: `先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。核心权益建议围绕：${industryTemplate.offerExamples.slice(0, 2).join("、") || "固定答疑与模板"}`,
     },
   ].sort((a, b) => b.fit - a.fit);
 }
@@ -637,6 +641,7 @@ function buildBusinessInsights(
   analysis: GrowthAnalysisScores,
   context: string,
   monetizationTracks: GrowthMonetizationTrack[],
+  industryTemplate: GrowthIndustryTemplate,
 ): GrowthBusinessInsight[] {
   const primaryTrack = monetizationTracks[0]?.name || "品牌合作";
   const beautyFashion = isBeautyFashionContext(context);
@@ -655,6 +660,10 @@ function buildBusinessInsights(
         : "先验证你是否真的具备固定主题、固定更新和固定权益，再决定要不要做长期社群。";
   return [
     {
+      title: "行业判断",
+      detail: `当前内容更接近「${industryTemplate.name}」模板。核心人群是：${industryTemplate.audience}。真正要解决的问题不是泛曝光，而是：${industryTemplate.painPoint}`,
+    },
+    {
       title: "商业判断",
       detail: analysis.viralPotential >= 75
         ? "这条内容已经不是“要不要发”的问题，而是“发出去以后把用户带到哪里”。先定唯一承接动作，再决定标题、封面和结尾。"
@@ -669,8 +678,8 @@ function buildBusinessInsights(
           : educationStyle
             ? "你的内容更适合把用户导向课程、模板或陪跑入口，重点不是讲灵感，而是讲方法、步骤和结果。"
             : communityStyle || primaryTrack === "社群会员"
-              ? "只有当你能长期输出同主题内容并提供稳定权益时，社群才值得做；否则先用轻量私域或预约动作测试承接。"
-              : primaryAction,
+            ? "只有当你能长期输出同主题内容并提供稳定权益时，社群才值得做；否则先用轻量私域或预约动作测试承接。"
+              : `${primaryAction} 先围绕「${industryTemplate.primaryConversion}」组织承接。`,
     },
     {
       title: "成交说法",
@@ -682,7 +691,7 @@ function buildBusinessInsights(
     },
     {
       title: "下一步落地",
-      detail: primaryAction,
+      detail: `${primaryAction} 内容表达上优先补「${industryTemplate.trustAsset}」，承接上优先验证「${industryTemplate.offerExamples[0] || industryTemplate.primaryConversion}」。`,
     },
   ];
 }
@@ -814,12 +823,17 @@ export function buildMockGrowthSnapshot(params: {
 }): GrowthSnapshot {
   const requestedPlatforms = normalizePlatforms(params.requestedPlatforms || params.analysis.platforms);
   const context = String(params.context || "").trim();
+  const industryTemplate = matchIndustryTemplate(context, [
+    params.analysis.summary,
+    ...params.analysis.strengths,
+    ...params.analysis.improvements,
+  ]);
   const platformSnapshots = requestedPlatforms.map((platform) =>
     buildPlatformSnapshot(platform, params.analysis, context),
   );
-  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots);
+  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
-  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks);
+  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
 
@@ -852,9 +866,10 @@ export function buildMockGrowthSnapshot(params: {
       ],
     },
     requestedPlatforms,
+    industryTemplate,
     overview,
     trendLayers: buildTrendLayers(requestedPlatforms, {}),
-    topicLibrary: buildTopicLibrary(requestedPlatforms, {}, context),
+    topicLibrary: buildTopicLibrary(requestedPlatforms, {}, context, industryTemplate),
     platformSnapshots,
     contentPatterns: [
       {
@@ -948,9 +963,15 @@ export function buildGrowthSnapshotFromCollections(params: {
 
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
-  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots);
+  const industryTemplate = matchIndustryTemplate(context, [
+    params.analysis.summary,
+    ...params.analysis.strengths,
+    ...params.analysis.improvements,
+    ...activeCollections.flatMap((collection) => collection.items.slice(0, 6).map((item) => item.title)),
+  ]);
+  const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots);
-  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks);
+  const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, requestedPlatforms, monetizationTracks);
 
@@ -972,6 +993,7 @@ export function buildGrowthSnapshotFromCollections(params: {
       ],
     },
     requestedPlatforms,
+    industryTemplate,
     overview: {
       summary: "趋势模块已经开始消费真实平台实时样本，并保留 fallback 结构；当前仍是样本级参考，不应表述为完整 30 天历史库。",
       trendNarrative:
@@ -981,7 +1003,7 @@ export function buildGrowthSnapshotFromCollections(params: {
       nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 30 天趋势库。",
     },
     trendLayers: buildTrendLayers(requestedPlatforms, params.collections),
-    topicLibrary: buildTopicLibrary(requestedPlatforms, params.collections, context),
+    topicLibrary: buildTopicLibrary(requestedPlatforms, params.collections, context, industryTemplate),
     platformSnapshots,
     contentPatterns: buildContentPatternsFromCollections(activeCollections),
     opportunities: buildOpportunitiesFromCollections(activeCollections, requestedPlatforms),

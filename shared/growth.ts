@@ -76,6 +76,19 @@ export const growthTopicLibraryItemSchema = z.object({
   confidence: z.number().min(0).max(100),
 });
 
+export const growthIndustryTemplateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  audience: z.string(),
+  painPoint: z.string(),
+  positioningHint: z.string(),
+  analysisHint: z.string(),
+  trustAsset: z.string(),
+  primaryConversion: z.string(),
+  commercialFocus: z.string(),
+  offerExamples: z.array(z.string()).default([]),
+});
+
 export const growthContentPatternSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -156,6 +169,7 @@ export const growthSnapshotStatusSchema = z.object({
 export const growthSnapshotSchema = z.object({
   status: growthSnapshotStatusSchema,
   requestedPlatforms: z.array(growthPlatformSchema),
+  industryTemplate: growthIndustryTemplateSchema,
   overview: z.object({
     summary: z.string(),
     trendNarrative: z.string(),
@@ -181,6 +195,7 @@ export type GrowthMetricWindow = z.infer<typeof growthMetricWindowSchema>;
 export type GrowthPlatformSnapshot = z.infer<typeof growthPlatformSnapshotSchema>;
 export type GrowthTrendLayer = z.infer<typeof growthTrendLayerSchema>;
 export type GrowthTopicLibraryItem = z.infer<typeof growthTopicLibraryItemSchema>;
+export type GrowthIndustryTemplate = z.infer<typeof growthIndustryTemplateSchema>;
 export type GrowthContentPattern = z.infer<typeof growthContentPatternSchema>;
 export type GrowthOpportunity = z.infer<typeof growthOpportunitySchema>;
 export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema>;

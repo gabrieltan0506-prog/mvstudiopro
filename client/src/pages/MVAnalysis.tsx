@@ -10,6 +10,7 @@ import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import type {
   GrowthBusinessInsight,
   GrowthHandoff,
+  GrowthIndustryTemplate,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
   GrowthSnapshot,
@@ -213,20 +214,24 @@ function buildPositioningRows(
   context: string,
   tracks: CommercialTrack[],
   platforms: GrowthPlatformRecommendation[],
+  industryTemplate?: GrowthIndustryTemplate | null,
 ): InsightTableRow[] {
-  const audience = compactText(context || "当前没有明确写出受众与成交目标，建议后续补全。", 64);
+  const audience = compactText(
+    industryTemplate?.audience || context || "当前没有明确写出受众与成交目标，建议后续补全。",
+    64,
+  );
   const bestTrack = tracks[0]?.name || "服务咨询";
   const firstPlatform = platforms[0]?.name || "小红书";
   return [
     {
       label: "受众痛点",
       insight: audience,
-      action: "先明确你要吸引哪类人，以及最终要导向什么成交动作。",
+      action: compactText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。", 64),
       highlight: "没有明确受众时，后面所有商业判断都会发散。",
     },
     {
       label: "內容角色",
-      insight: compactText(analysis.summary || "这条内容更适合作为后续放大的素材，而不是直接当成成交内容。"),
+      insight: compactText(industryTemplate?.positioningHint || analysis.summary || "这条内容更适合作为后续放大的素材，而不是直接当成成交内容。"),
       action: "把这条内容定义成引流内容、信任内容或成交内容中的一个，不要混用。",
       highlight: "先定角色，再定脚本和平台。",
     },
@@ -238,35 +243,35 @@ function buildPositioningRows(
     {
       label: "主商业方向",
       insight: `当前优先承接「${bestTrack}」路径。`,
-      action: "结尾只保留一个明确承接动作，避免同时推多个变现方向。",
+      action: compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 64),
       highlight: "单一路径比多方向堆叠更容易转化。",
     },
   ];
 }
 
-function buildContentAnalysisRows(analysis: AnalysisResult): InsightTableRow[] {
+function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
   return [
     {
       label: "当前优势",
-      insight: compactText(analysis.strengths[0] || "素材真实、有可延展的内容基础。"),
+      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。"),
       action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。"),
       highlight: "先固定可复用优势，不要每条都重来。",
     },
     {
       label: "优先优化点",
       insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。"),
-      action: compactText(analysis.improvements[1] || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
+      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
       highlight: "先修最影响停留的问题。",
     },
     {
       label: "表达问题",
-      insight: compactText(analysis.improvements[2] || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
-      action: "把一句核心结论放到最前面，剩下内容只服务这一句。",
+      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
+      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 64),
     },
     {
       label: "建议方向",
-      insight: compactText(analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。"),
-      action: "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。",
+      insight: compactText(analysis.summary || industryTemplate?.commercialFocus || "当前内容有基础，但需要更强的结构和承接动作。"),
+      action: compactText(industryTemplate?.commercialFocus || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 64),
       highlight: "说明越短，行动越清楚。",
     },
   ];
@@ -301,7 +306,7 @@ function buildPlatformRecommendationRows(
   });
 }
 
-function buildBusinessTrackRows(tracks: CommercialTrack[], context: string): InsightTableRow[] {
+function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
   return tracks.slice(0, 3).map((track) => ({
     label: `${track.name} ${track.fit}%`,
     insight: compactText(replaceTerms(track.reason), 72),
@@ -310,7 +315,9 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string): Ins
       ? "更适合运动美妆、防晒、功能护肤、运动服饰与生活方式品牌，不是泛泛而谈的品牌合作。"
       : track.name === "社群会员"
         ? "社群要围绕固定主题、固定更新节奏和固定服务权益来运营。"
-        : undefined,
+        : industryTemplate?.offerExamples?.[0]
+          ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
+          : undefined,
   }));
 }
 
@@ -728,12 +735,12 @@ export default function MVAnalysisPage() {
   );
   const growthHandoff = growthSnapshot?.growthHandoff ?? null;
   const positioningRows = useMemo(
-    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, platformRecommendations) : [],
-    [analysis, context, commercialTracks, platformRecommendations],
+    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, platformRecommendations, growthSnapshot?.industryTemplate) : [],
+    [analysis, context, commercialTracks, platformRecommendations, growthSnapshot?.industryTemplate],
   );
   const contentAnalysisRows = useMemo(
-    () => analysis ? buildContentAnalysisRows(analysis) : [],
-    [analysis],
+    () => analysis ? buildContentAnalysisRows(analysis, growthSnapshot?.industryTemplate) : [],
+    [analysis, growthSnapshot?.industryTemplate],
   );
   const trendRows = useMemo(
     () => buildTrendRows(growthSnapshot, context, platformRecommendations),
@@ -748,8 +755,8 @@ export default function MVAnalysisPage() {
     [commercialTracks],
   );
   const businessTrackRows = useMemo(
-    () => buildBusinessTrackRows(highConfidenceTracks.length ? highConfidenceTracks : commercialTracks, context),
-    [highConfidenceTracks, commercialTracks, context],
+    () => buildBusinessTrackRows(highConfidenceTracks.length ? highConfidenceTracks : commercialTracks, context, growthSnapshot?.industryTemplate),
+    [highConfidenceTracks, commercialTracks, context, growthSnapshot?.industryTemplate],
   );
   const executionBriefRows = useMemo(
     () => analysis ? buildExecutionBriefRows(analysis, context) : [],
