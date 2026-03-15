@@ -446,6 +446,7 @@ export const appRouter = router({
           success: true,
           targetEmail,
           smtp,
+          backfill: scheduler.backfill || null,
           scheduler: Object.values(scheduler.scheduler || {}).map((item) => ({
             platform: item?.platform,
             lastRunAt: item?.lastRunAt,

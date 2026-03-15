@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
+import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
 import {
   exportTrendCollectionsCsv,
   isTrendCollectionStale,
@@ -13,7 +14,7 @@ import { sendMailWithAttachments } from "../services/smtp-mailer";
 
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
 const BURST_INTERVAL_MS = 20 * 60 * 1000;
 const BURST_TRIGGER_MIN_COUNT = Math.max(8, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 16) || 16);
@@ -72,7 +73,7 @@ function isWeekendOrHoliday(now = new Date()) {
 }
 
 function getSchedulerIntervalMinutes(now = new Date()) {
-  if (isWeekendOrHoliday(now)) return 60;
+  if (isWeekendOrHoliday(now)) return 20;
   const hour = getSchedulerHour(now);
   if (hour >= 17 && hour < 22) return 120;
   if (hour >= 22 || hour < 6) return 180;
@@ -85,7 +86,7 @@ function nextScheduledRunIso(now = new Date()) {
 
 function getSchedulerFrequencyLabel(now = new Date()) {
   const interval = getSchedulerIntervalMinutes(now);
-  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 1 小时一次";
+  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 20 分钟一次";
   return `${interval / 60} 小时一次`;
 }
 
@@ -320,6 +321,9 @@ export async function bootstrapGrowthTrendScheduler() {
   await runDuePlatforms().catch((error) => {
     console.warn("[growth.scheduler] initial bootstrap failed:", error);
   });
+  await bootstrapGrowthTrendBackfillWorker().catch((error) => {
+    console.warn("[growth.backfill] bootstrap failed:", error);
+  });
 
   tickTimer = setInterval(() => {
     runDuePlatforms().catch((error) => {
@@ -333,5 +337,6 @@ export function stopGrowthTrendScheduler() {
     clearInterval(tickTimer);
     tickTimer = null;
   }
+  stopGrowthTrendBackfillWorker();
   schedulerStarted = false;
 }

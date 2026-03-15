@@ -487,7 +487,7 @@ export default function MVAnalysisPage() {
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
     enabled: debugMode,
     staleTime: 30_000,
-    refetchInterval: debugMode ? 30_000 : false,
+    refetchInterval: debugMode ? 10_000 : false,
   });
 
   useEffect(() => {
@@ -1005,11 +1005,12 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-cyan-100">抓取调度状态</div>
                     <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
-                      <div>周末 / 节假日：每 1 小时抓取一次</div>
+                      <div>周末 / 节假日 live：每 20 分钟抓取一次</div>
                       <div>17:00 - 22:00：每 2 小时抓取一次</div>
                       <div>22:00 - 06:00：每 3 小时抓取一次</div>
                       <div>06:00 - 17:00：每 4 小时抓取一次</div>
                       <div>数据量明显放大：立即切到每 20 分钟一次</div>
+                      <div>历史回填 burst：每 1 分钟一轮，目标步长 10，受限时回落到 5</div>
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
                       <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
@@ -1022,6 +1023,37 @@ export default function MVAnalysisPage() {
                         <div>{String(item.platform)} error: {String(item.lastError || "-")}</div>
                       </div>
                     ))}
+                  </div>
+                ) : null}
+                {growthSystemStatusQuery.data?.backfill ? (
+                  <div className="mt-4 space-y-2 rounded-2xl border border-amber-200/15 bg-black/15 p-4 text-xs text-white/72">
+                    <div className="font-semibold text-amber-100">数据仓回填进度</div>
+                    <div className="grid gap-1 md:grid-cols-2">
+                      <div>status: {String(growthSystemStatusQuery.data.backfill.status || "-")}</div>
+                      <div>active: {String(growthSystemStatusQuery.data.backfill.active ?? false)}</div>
+                      <div>round: {String(growthSystemStatusQuery.data.backfill.currentRound || 0)} / {String(growthSystemStatusQuery.data.backfill.maxRounds || 0)}</div>
+                      <div>target / platform: {String(growthSystemStatusQuery.data.backfill.targetPerPlatform || 0)}</div>
+                      <div>window days: {String(growthSystemStatusQuery.data.backfill.selectedWindowDays || "-")}</div>
+                      <div>started: {String(growthSystemStatusQuery.data.backfill.startedAt || "-")}</div>
+                      <div>updated: {String(growthSystemStatusQuery.data.backfill.updatedAt || "-")}</div>
+                      <div>finished: {String(growthSystemStatusQuery.data.backfill.finishedAt || "-")}</div>
+                    </div>
+                    <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
+                      {String(growthSystemStatusQuery.data.backfill.note || "-")}
+                    </div>
+                    <div className="space-y-2">
+                      {growthSystemStatusQuery.data.backfill.platforms?.map((item) => (
+                        <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
+                          <div>{String(item.platform)} status: {String(item.status || "-")}</div>
+                          <div>{String(item.platform)} total: {String(item.currentTotal || 0)} / {String(item.target || 0)}</div>
+                          <div>{String(item.platform)} archived: {String(item.archivedTotal || 0)}</div>
+                          <div>{String(item.platform)} added: {String(item.addedCount || 0)}</div>
+                          <div>{String(item.platform)} merged: {String(item.mergedCount || 0)}</div>
+                          <div>{String(item.platform)} plateau: {String(item.plateauCount || 0)}</div>
+                          <div className="md:col-span-2">{String(item.platform)} error: {String(item.error || "-")}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>

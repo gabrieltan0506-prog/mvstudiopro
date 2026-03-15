@@ -4,6 +4,7 @@ import {
   type GrowthPlatform,
 } from "@shared/growth";
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
+import { getPlatformSeeds } from "./trendSeedLibrary";
 
 export type TrendSource = "live" | "seed";
 
@@ -36,7 +37,7 @@ export type TrendCollectionStats = {
   targetPerRun: number;
   referenceMinItems: number;
   referenceMaxItems: number;
-  collectorMode: "authenticated_feed" | "public_feed" | "hot_topics" | "hybrid" | "seed";
+  collectorMode: "authenticated_feed" | "public_feed" | "hot_topics" | "hybrid" | "warehouse" | "seed";
   industryCounts: Record<string, number>;
   ageCounts: Record<string, number>;
   contentCounts: Record<string, number>;
@@ -149,6 +150,28 @@ function getBucketCounts(items: TrendItem[]) {
   }, {});
 }
 
+function dedupeById(items: TrendItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.id || ""}::${item.title || ""}::${item.author || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number) {
+  const results: T[] = [];
+  for (let index = 0; index < tasks.length; index += concurrency) {
+    const batch = tasks.slice(index, index + concurrency);
+    const settled = await Promise.allSettled(batch.map((task) => task()));
+    for (const item of settled) {
+      if (item.status === "fulfilled") results.push(item.value);
+    }
+  }
+  return results;
+}
+
 function getAgeDays(iso?: string) {
   if (!iso) return undefined;
   const timestamp = new Date(iso).getTime();
@@ -231,6 +254,10 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 20) || 20));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
+  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 5) || 5));
+  const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
+  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(6, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 12) || 12));
+  const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
 
   const pushBilibiliItem = (item: Record<string, any>) => {
     const title = String(item.title ?? "").trim();
@@ -272,26 +299,73 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     notes.push(`Fetched ${list.length} authenticated Bilibili recommended videos.`);
   }
 
-  for (const page of Array.from({ length: popularPages }, (_, index) => index + 1)) {
-    const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=${popularPageSize}`, {
-      headers: { "user-agent": "mvstudiopro-growth-collector/1.0" },
-    });
-    if (!response.ok) {
-      throw new Error(`Bilibili API responded with ${response.status}`);
-    }
-    const payload = await response.json() as {
-      data?: { list?: Array<Record<string, any>> };
-    };
-    const list = payload.data?.list ?? [];
-    list.forEach(pushBilibiliItem);
+  const popularResults = await runBatches(
+    Array.from({ length: popularPages }, (_, index) => index + 1).map((page) => async () => {
+      const response = await fetch(`https://api.bilibili.com/x/web-interface/popular?pn=${page}&ps=${popularPageSize}`, {
+        headers: { "user-agent": "mvstudiopro-growth-collector/1.0" },
+      });
+      if (!response.ok) return { page, list: [] as Array<Record<string, any>> };
+      const payload = await response.json() as {
+        data?: { list?: Array<Record<string, any>> };
+      };
+      return { page, list: payload.data?.list ?? [] };
+    }),
+    concurrency,
+  );
+  for (const result of popularResults) {
+    result.list.forEach(pushBilibiliItem);
+    notes.push(`Fetched ${result.list.length} Bilibili popular videos on page ${result.page}.`);
   }
 
-  notes.push(`Fetched ${items.length} total Bilibili videos after merging popular and authenticated feed.`);
-  return finalizeCollection("bilibili", "live", items, notes, {
-    collectorMode: cookie ? "hybrid" : "public_feed",
-    requestCount: popularPages + (cookie ? 1 : 0),
-    pageDepth: popularPages,
-    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0), getPlatformTargetItemCount("bilibili")),
+  const searchTasks = searchKeywords.flatMap((keyword) =>
+    Array.from({ length: searchPages }, (_, index) => index + 1).map((page) => async () => {
+      const response = await fetch(
+        `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(keyword)}&page=${page}&page_size=${searchPageSize}`,
+        {
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            referer: "https://search.bilibili.com/",
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            ...(cookie ? { cookie } : {}),
+          },
+        },
+      );
+      if (!response.ok) return { keyword, page, list: [] as Array<Record<string, any>> };
+      const payload = await response.json() as {
+        data?: { result?: Array<Record<string, any>> };
+      };
+      return { keyword, page, list: payload.data?.result ?? [] };
+    }),
+  );
+  const searchResults = await runBatches(searchTasks, concurrency);
+  for (const result of searchResults) {
+    result.list.forEach((item) => {
+      pushBilibiliItem({
+        aid: item.aid,
+        id: item.aid,
+        bvid: item.bvid,
+        title: String(item.title || "").replace(/<[^>]+>/g, ""),
+        pubdate: Number(item.pubdate),
+        owner: { name: item.author },
+        stat: {
+          like: parseChineseCount(item.like) || 0,
+          reply: parseChineseCount(item.review) || 0,
+          view: parseChineseCount(item.play) || 0,
+          share: 0,
+        },
+        tname: item.tag,
+      });
+    });
+    notes.push(`Fetched ${result.list.length} Bilibili search videos for keyword ${result.keyword} page ${result.page}.`);
+  }
+
+  const dedupedItems = dedupeById(items);
+  notes.push(`Fetched ${dedupedItems.length} total Bilibili videos after merging feed, popular, and search.`);
+  return finalizeCollection("bilibili", "live", dedupedItems, notes, {
+    collectorMode: "warehouse",
+    requestCount: popularPages + (cookie ? 1 : 0) + searchKeywords.length * searchPages,
+    pageDepth: Math.max(popularPages, searchPages),
+    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0) + searchKeywords.length * searchPages * searchPageSize, getPlatformTargetItemCount("bilibili")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.bilibili?.min || 40,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.bilibili?.max || 80,
   });
@@ -299,10 +373,32 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
+  const topicItems: TrendItem[] = [];
+  const topicResponse = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
+    headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
+  });
+  if (topicResponse.ok) {
+    const payload = await topicResponse.json() as {
+      active_time?: string;
+      word_list?: Array<Record<string, any>>;
+    };
+    topicItems.push(
+      ...(payload.word_list ?? []).map((item, index) => ({
+        id: String(item.sentence_id ?? item.word ?? index),
+        title: String(item.word ?? "").trim(),
+        bucket: "douyin_topics",
+        hotValue: Number(item.hot_value ?? 0) || undefined,
+        url: item.word ? `https://www.douyin.com/hot/${encodeURIComponent(String(item.word))}` : undefined,
+        publishedAt: payload.active_time ? new Date(String(payload.active_time).replace(" ", "T") + "+08:00").toISOString() : undefined,
+        contentType: "topic" as const,
+        tags: [String(item.word_type ?? "").trim()].filter(Boolean),
+      })),
+    );
+  }
   if (cookie) {
     const pageLimit = Math.max(1, Math.min(200, Number(process.env.DOUYIN_TREND_PAGES || 60) || 60));
     const pageSize = Math.max(8, Math.min(20, Number(process.env.DOUYIN_TREND_PAGE_SIZE || 12) || 12));
-    const items: TrendItem[] = [];
+    const items: TrendItem[] = [...topicItems];
     const notes: string[] = [];
     let maxCursor = "0";
     let hasMore = 0;
@@ -370,39 +466,18 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
 
     if (items.length) {
       notes.push(`Douyin has_more: ${hasMore}`);
-      return finalizeCollection("douyin", "live", items, notes, {
-        collectorMode: "authenticated_feed",
+      return finalizeCollection("douyin", "live", dedupeById(items), notes, {
+        collectorMode: "warehouse",
         requestCount,
         pageDepth: requestCount,
-    targetPerRun: Math.max(pageLimit * pageSize, getPlatformTargetItemCount("douyin")),
+        targetPerRun: Math.max(pageLimit * pageSize, getPlatformTargetItemCount("douyin")),
         referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
         referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
       });
     }
   }
 
-  const response = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
-    headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
-  });
-  if (!response.ok) {
-    throw new Error(`Douyin API responded with ${response.status}`);
-  }
-  const payload = await response.json() as {
-    active_time?: string;
-    word_list?: Array<Record<string, any>>;
-  };
-  const items = (payload.word_list ?? []).map((item, index) => ({
-    id: String(item.sentence_id ?? item.word ?? index),
-    title: String(item.word ?? "").trim(),
-    bucket: "douyin_topics",
-    hotValue: Number(item.hot_value ?? 0) || undefined,
-    url: item.word ? `https://www.douyin.com/hot/${encodeURIComponent(String(item.word))}` : undefined,
-    publishedAt: payload.active_time ? new Date(String(payload.active_time).replace(" ", "T") + "+08:00").toISOString() : undefined,
-    contentType: "topic" as const,
-    tags: [String(item.word_type ?? "").trim()].filter(Boolean),
-  }));
-
-  return finalizeCollection("douyin", "live", items, [`Fetched ${items.length} Douyin hot search topics.`], {
+  return finalizeCollection("douyin", "live", topicItems, [`Fetched ${topicItems.length} Douyin hot search topics.`], {
     collectorMode: "hot_topics",
     requestCount: 1,
     pageDepth: 1,
@@ -423,55 +498,103 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.fashion_v3",
     ];
   const pageLimit = Math.max(1, Math.min(20, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
+  const searchKeywords = getPlatformSeeds("xiaohongshu").slice(0, Math.max(6, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 12) || 12));
+  const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
-  for (const pageUrl of explorePaths.slice(0, pageLimit)) {
-    const response = await fetch(pageUrl, {
-      headers: {
-        "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-        ...(cookie ? { cookie } : {}),
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Xiaohongshu page responded with ${response.status}`);
-    }
-    const html = await response.text();
-    const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
-    if (!match) {
-      throw new Error("Xiaohongshu initial state not found");
-    }
-
-    const state = vm.runInNewContext(`(${match[1]})`, {}) as {
-      feed?: { feeds?: Array<Record<string, any>> };
-    };
-    const feeds = state.feed?.feeds ?? [];
-    const pageItems = feeds
-      .map((feed, index) => {
-        const noteCard = feed.noteCard;
-        if (!noteCard) return null;
-        const title = String(noteCard.displayTitle ?? "").trim();
-        if (!title) return null;
-        return {
-          id: String(feed.id ?? `${pageUrl}-${index}`),
-          title,
-          bucket: "xiaohongshu_feed",
-          author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
-          url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
-          likes: parseChineseCount(noteCard.interactInfo?.likedCount),
-          comments: parseChineseCount(noteCard.interactInfo?.commentCount),
-          shares: parseChineseCount(noteCard.interactInfo?.shareCount),
-          contentType: noteCard.video ? "video" : "note",
-        } satisfies TrendItem;
-      })
-      .filter(Boolean) as TrendItem[];
-    items.push(...pageItems);
-    notes.push(`Fetched ${pageItems.length} Xiaohongshu items from ${pageUrl}.`);
+  const exploreResults = await runBatches(
+    explorePaths.slice(0, pageLimit).map((pageUrl) => async () => {
+      const response = await fetch(pageUrl, {
+        headers: {
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          ...(cookie ? { cookie } : {}),
+        },
+      });
+      if (!response.ok) return { pageUrl, items: [] as TrendItem[] };
+      const html = await response.text();
+      const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
+      if (!match) return { pageUrl, items: [] as TrendItem[] };
+      const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+        feed?: { feeds?: Array<Record<string, any>> };
+      };
+      const feeds = state.feed?.feeds ?? [];
+      const pageItems = feeds
+        .map((feed, index) => {
+          const noteCard = feed.noteCard;
+          if (!noteCard) return null;
+          const title = String(noteCard.displayTitle ?? "").trim();
+          if (!title) return null;
+          return {
+            id: String(feed.id ?? `${pageUrl}-${index}`),
+            title,
+            bucket: "xiaohongshu_feed",
+            author: String(noteCard.user?.nickname ?? noteCard.user?.nickName ?? "").trim() || undefined,
+            url: feed.id ? `https://www.xiaohongshu.com/explore/${feed.id}` : undefined,
+            likes: parseChineseCount(noteCard.interactInfo?.likedCount),
+            comments: parseChineseCount(noteCard.interactInfo?.commentCount),
+            shares: parseChineseCount(noteCard.interactInfo?.shareCount),
+            contentType: noteCard.video ? "video" : "note",
+          } satisfies TrendItem;
+        })
+        .filter(Boolean) as TrendItem[];
+      return { pageUrl, items: pageItems };
+    }),
+    concurrency,
+  );
+  for (const result of exploreResults) {
+    items.push(...result.items);
+    notes.push(`Fetched ${result.items.length} Xiaohongshu items from ${result.pageUrl}.`);
   }
 
-  return finalizeCollection("xiaohongshu", "live", items, notes, {
-    collectorMode: cookie ? "authenticated_feed" : "public_feed",
-    requestCount: Math.min(pageLimit, explorePaths.length),
+  const searchResults = await runBatches(
+    searchKeywords.map((keyword) => async () => {
+      const pageUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_explore_feed`;
+      const response = await fetch(pageUrl, {
+        headers: {
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          ...(cookie ? { cookie } : {}),
+        },
+      });
+      if (!response.ok) return { keyword, items: [] as TrendItem[] };
+      const html = await response.text();
+      const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
+      if (!match) return { keyword, items: [] as TrendItem[] };
+      const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+        searchResult?: { notes?: Array<Record<string, any>> };
+        note?: { notes?: Array<Record<string, any>> };
+      };
+      const notesList = state.searchResult?.notes ?? state.note?.notes ?? [];
+      const pageItems = notesList
+        .map((note, index) => {
+          const title = String(note.displayTitle ?? note.title ?? "").trim();
+          if (!title) return null;
+          return {
+            id: String(note.id ?? `${keyword}-${index}`),
+            title,
+            bucket: "xiaohongshu_feed",
+            author: String(note.user?.nickname ?? note.user?.nickName ?? "").trim() || undefined,
+            url: note.id ? `https://www.xiaohongshu.com/explore/${note.id}` : undefined,
+            likes: parseChineseCount(note.interactInfo?.likedCount ?? note.likedCount),
+            comments: parseChineseCount(note.interactInfo?.commentCount ?? note.commentCount),
+            shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),
+            contentType: note.video ? "video" : "note",
+            tags: [keyword],
+          } satisfies TrendItem;
+        })
+        .filter(Boolean) as TrendItem[];
+      return { keyword, items: pageItems };
+    }),
+    concurrency,
+  );
+  for (const result of searchResults) {
+    items.push(...result.items);
+    notes.push(`Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword}.`);
+  }
+
+  return finalizeCollection("xiaohongshu", "live", dedupeById(items), notes, {
+    collectorMode: "warehouse",
+    requestCount: Math.min(pageLimit, explorePaths.length) + searchKeywords.length,
     pageDepth: Math.min(pageLimit, explorePaths.length),
     targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length), getPlatformTargetItemCount("xiaohongshu")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.min || 20,

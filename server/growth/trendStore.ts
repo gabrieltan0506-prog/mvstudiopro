@@ -57,11 +57,38 @@ export type TrendMergeStats = {
   collectedAt: string;
 };
 
+export type TrendBackfillPlatformProgress = {
+  platform: GrowthPlatform;
+  target: number;
+  currentTotal: number;
+  archivedTotal: number;
+  addedCount?: number;
+  mergedCount?: number;
+  plateauCount?: number;
+  status: "pending" | "running" | "done" | "plateau" | "error";
+  error?: string;
+};
+
+export type TrendBackfillProgress = {
+  active: boolean;
+  startedAt?: string;
+  updatedAt?: string;
+  finishedAt?: string;
+  currentRound: number;
+  maxRounds: number;
+  targetPerPlatform: number;
+  selectedWindowDays?: number;
+  status: "idle" | "running" | "completed" | "partial" | "failed";
+  platforms: TrendBackfillPlatformProgress[];
+  note?: string;
+};
+
 type TrendStoreFile = {
   updatedAt: string;
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   archiveIndex: TrendArchiveEntry[];
+  backfill?: TrendBackfillProgress;
 };
 
 export type TrendCollectionStatsSummary = {
@@ -148,6 +175,14 @@ function createEmptyStore(): TrendStoreFile {
     collections: {},
     scheduler: {},
     archiveIndex: [],
+    backfill: {
+      active: false,
+      currentRound: 0,
+      maxRounds: 0,
+      targetPerPlatform: 0,
+      status: "idle",
+      platforms: [],
+    },
   };
 }
 
@@ -237,6 +272,7 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
         ageCounts: entry.ageCounts || {},
         contentCounts: entry.contentCounts || {},
       })),
+      backfill: parsed.backfill || createEmptyStore().backfill,
     };
   } catch {
     return null;
@@ -396,6 +432,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
   const next = createEmptyStore();
   next.updatedAt = new Date().toISOString();
   next.collections = collections;
+  next.backfill = (await readTrendStore()).backfill || next.backfill;
   return writeStore(next);
 }
 
@@ -406,6 +443,7 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     collections: { ...current.collections },
     scheduler: current.scheduler || {},
     archiveIndex: [...(current.archiveIndex || [])],
+    backfill: current.backfill || createEmptyStore().backfill,
   };
   const mergeStats: Partial<Record<GrowthPlatform, TrendMergeStats>> = {};
 
@@ -461,6 +499,20 @@ export async function updateTrendSchedulerState(
 export async function readTrendSchedulerState() {
   const store = await readTrendStore();
   return store.scheduler;
+}
+
+export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
+  const store = await readTrendStore();
+  const current = store.backfill || createEmptyStore().backfill!;
+  store.backfill = {
+    ...current,
+    ...progress,
+    platforms: progress.platforms || current.platforms || [],
+    updatedAt: new Date().toISOString(),
+  };
+  store.updatedAt = new Date().toISOString();
+  await writeStore(store);
+  return store.backfill;
 }
 
 export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
@@ -609,11 +661,12 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     },
     references: {
       schedulerIntervals: [
-        { label: "周末 / 节假日", intervalHours: 1 },
+        { label: "周末 / 节假日 live", intervalHours: 0.33 },
         { label: "17:00-22:00", intervalHours: 2 },
         { label: "22:00-06:00", intervalHours: 3 },
         { label: "06:00-17:00", intervalHours: 4 },
         { label: "高波动 burst", intervalHours: 0.33 },
+        { label: "历史回填 burst", intervalHours: 0.0167 },
       ],
       lookbackWindows: LOOKBACK_WINDOWS,
       perPlatform: Object.fromEntries(
