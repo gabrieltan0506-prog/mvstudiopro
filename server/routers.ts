@@ -469,6 +469,9 @@ export const appRouter = router({
           historicalTotal: stats.totals.archivedItems,
           platforms: stats.platforms,
           buckets: stats.buckets,
+          industries: stats.industries,
+          ages: stats.ages,
+          contentTypes: stats.contentTypes,
           references: stats.references,
           scheduler: stats.scheduler,
           burst: {

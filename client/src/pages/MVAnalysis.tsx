@@ -834,13 +834,13 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                創作商業成長營
+                创作商业成长营
               </div>
               <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
-                讓你的圖文與視頻創意，發揮它們的商業價值。
+                让你的图文与视频创意，发挥它们的商业价值。
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-8 text-white/70">
-                直接指出內容卡在哪裡、該先修什麼、先發哪裡，以及怎麼把流量接到可成交的商業動作。
+                直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
@@ -860,9 +860,9 @@ export default function MVAnalysisPage() {
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
-                  <div className="mt-5 text-2xl font-bold">上傳圖文檔案或視頻素材</div>
+                  <div className="mt-5 text-2xl font-bold">上传图文档案或视频素材</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    支援 Word、PDF、MP4。上傳後會直接幫你找出內容賣點、轉化缺口與可放大的商業方向，讓分析結果值得你採用。
+                    支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。
                   </p>
                 </button>
               ) : (
@@ -879,8 +879,8 @@ export default function MVAnalysisPage() {
                       </div>
                       <p className="mt-2 text-sm leading-7 text-white/60">
                         {inputKind === "document"
-                          ? "會先提取內容，再輸出定位、平台與商業建議。"
-                          : "會先抽幀與理解節奏，再輸出可直接執行的分析報告。"}
+                          ? "会先提取内容，再输出定位、平台与商业建议。"
+                          : "会先抽帧与理解节奏，再输出可直接执行的分析报告。"}
                       </p>
                     </div>
                   )}
@@ -920,7 +920,7 @@ export default function MVAnalysisPage() {
                   value={context}
                   onChange={(e) => setContext(e.target.value)}
                   rows={4}
-                  placeholder="例如：我是形象穿搭美妝博主，想知道這支素材能承接什麼商業價值，以及該先發哪個平台。"
+                  placeholder="例如：我是形象穿搭美妆博主，想知道这支素材能承接什么商业价值，以及该先发哪个平台。"
                   className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white placeholder:text-white/30"
                 />
               </div>
@@ -955,7 +955,7 @@ export default function MVAnalysisPage() {
                   <span className="font-semibold">趋势洞察</span>
                 </div>
                 <p className="mt-4 text-sm leading-7 text-white/65">
-                生成後會只保留和你身份、題材與商業目標高度相關的內容方向，不把無關熱點硬塞給你。
+                生成后会只保留和你身份、题材与商业目标高度相关的内容方向，不把无关热点硬塞给你。
                 </p>
               </div>
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -1005,9 +1005,11 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-cyan-100">抓取调度状态</div>
                     <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
+                      <div>周末 / 节假日：每 1 小时抓取一次</div>
                       <div>17:00 - 22:00：每 2 小时抓取一次</div>
                       <div>22:00 - 06:00：每 3 小时抓取一次</div>
                       <div>06:00 - 17:00：每 4 小时抓取一次</div>
+                      <div>数据量明显放大：立即切到每 20 分钟一次</div>
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
                       <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">

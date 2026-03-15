@@ -29,6 +29,9 @@ export type TrendArchiveEntry = {
   platform: GrowthPlatform;
   bucket: string;
   bucketCounts: Record<string, number>;
+  industryCounts?: Record<string, number>;
+  ageCounts?: Record<string, number>;
+  contentCounts?: Record<string, number>;
   archivedAt: string;
   source: PlatformTrendCollection["source"];
   itemCount: number;
@@ -76,6 +79,9 @@ export type TrendCollectionStatsSummary = {
   referenceMinItems: number;
   referenceMaxItems: number;
   bucketCounts: Record<string, number>;
+  industryCounts: Record<string, number>;
+  ageCounts: Record<string, number>;
+  contentCounts: Record<string, number>;
 };
 
 export type TrendBucketStatsSummary = {
@@ -103,6 +109,9 @@ export type GrowthTrendStatsSummary = {
   };
   platforms: TrendCollectionStatsSummary[];
   buckets: TrendBucketStatsSummary[];
+  industries: Array<{ label: string; currentTotal: number; archivedItems: number }>;
+  ages: Array<{ label: string; currentTotal: number; archivedItems: number }>;
+  contentTypes: Array<{ label: string; currentTotal: number; archivedItems: number }>;
   scheduler: Array<TrendSchedulerState>;
 };
 
@@ -212,6 +221,9 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
       archiveIndex: (parsed.archiveIndex || []).map((entry) => ({
         ...entry,
         bucketCounts: entry.bucketCounts || {},
+        industryCounts: entry.industryCounts || {},
+        ageCounts: entry.ageCounts || {},
+        contentCounts: entry.contentCounts || {},
       })),
     };
   } catch {
@@ -352,6 +364,9 @@ async function archiveCollection(
     platform,
     bucket,
     bucketCounts,
+    industryCounts: collection.stats?.industryCounts || {},
+    ageCounts: collection.stats?.ageCounts || {},
+    contentCounts: collection.stats?.contentCounts || {},
     archivedAt: collection.collectedAt,
     source: collection.source,
     itemCount: collection.items.length,
@@ -440,6 +455,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const store = await readTrendStore();
   const platformMap = new Map<GrowthPlatform, TrendCollectionStatsSummary>();
   const bucketMap = new Map<string, TrendBucketStatsSummary>();
+  const industryMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
+  const ageMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
+  const contentMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
 
   for (const collection of Object.values(store.collections)) {
     if (!collection) continue;
@@ -460,6 +478,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       referenceMinItems: reference.min,
       referenceMaxItems: reference.max,
       bucketCounts,
+      industryCounts: collection.stats?.industryCounts || {},
+      ageCounts: collection.stats?.ageCounts || {},
+      contentCounts: collection.stats?.contentCounts || {},
     });
 
     for (const [bucket, count] of Object.entries(bucketCounts)) {
@@ -471,6 +492,21 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       };
       current.currentTotal += count;
       bucketMap.set(bucket, current);
+    }
+    for (const [label, count] of Object.entries(collection.stats?.industryCounts || {})) {
+      const current = industryMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.currentTotal += count;
+      industryMap.set(label, current);
+    }
+    for (const [label, count] of Object.entries(collection.stats?.ageCounts || {})) {
+      const current = ageMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.currentTotal += count;
+      ageMap.set(label, current);
+    }
+    for (const [label, count] of Object.entries(collection.stats?.contentCounts || {})) {
+      const current = contentMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.currentTotal += count;
+      contentMap.set(label, current);
     }
   }
 
@@ -489,6 +525,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       referenceMinItems: entry.referenceMinItems || 0,
       referenceMaxItems: entry.referenceMaxItems || 0,
       bucketCounts: {},
+      industryCounts: {},
+      ageCounts: {},
+      contentCounts: {},
     };
     platformStats.archivedRuns += 1;
     platformStats.archivedItems += entry.itemCount;
@@ -506,6 +545,21 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       current.archivedItems += count;
       current.archivedRuns += 1;
       bucketMap.set(bucket, current);
+    }
+    for (const [label, count] of Object.entries(entry.industryCounts || {})) {
+      const current = industryMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.archivedItems += count;
+      industryMap.set(label, current);
+    }
+    for (const [label, count] of Object.entries(entry.ageCounts || {})) {
+      const current = ageMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.archivedItems += count;
+      ageMap.set(label, current);
+    }
+    for (const [label, count] of Object.entries(entry.contentCounts || {})) {
+      const current = contentMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
+      current.archivedItems += count;
+      contentMap.set(label, current);
     }
   }
 
@@ -543,6 +597,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     },
     platforms,
     buckets,
+    industries: Array.from(industryMap.values()).sort((left, right) => right.currentTotal - left.currentTotal || right.archivedItems - left.archivedItems),
+    ages: Array.from(ageMap.values()).sort((left, right) => right.currentTotal - left.currentTotal || right.archivedItems - left.archivedItems),
+    contentTypes: Array.from(contentMap.values()).sort((left, right) => right.currentTotal - left.currentTotal || right.archivedItems - left.archivedItems),
     scheduler,
   };
 }

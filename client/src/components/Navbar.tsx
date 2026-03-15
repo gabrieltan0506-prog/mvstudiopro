@@ -14,7 +14,7 @@ import {
 
 const NAV_ITEMS = [
   { label: "节点工作流", href: "/workflow-nodes" },
-  { label: "創作商業成長營", href: "/creator-growth-camp" },
+  { label: "创作商业成长营", href: "/creator-growth-camp" },
   { label: "可灵工作室", href: "/remix" },
   { label: "虚拟偶像", href: "/idol" },
   { label: "2D转3D", href: "/3d-studio" },

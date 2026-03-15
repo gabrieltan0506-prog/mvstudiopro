@@ -3,6 +3,7 @@ import {
   growthPlatformValues,
   type GrowthPlatform,
 } from "@shared/growth";
+import { classifyTrendItem, countLabels } from "./trendTaxonomy";
 
 export type TrendSource = "live" | "seed";
 
@@ -20,6 +21,9 @@ export type TrendItem = {
   hotValue?: number;
   contentType?: "video" | "note" | "topic";
   tags?: string[];
+  industryLabels?: string[];
+  ageLabels?: string[];
+  contentLabels?: string[];
 };
 
 export type TrendCollectionStats = {
@@ -33,6 +37,9 @@ export type TrendCollectionStats = {
   referenceMinItems: number;
   referenceMaxItems: number;
   collectorMode: "authenticated_feed" | "public_feed" | "hot_topics" | "hybrid" | "seed";
+  industryCounts: Record<string, number>;
+  ageCounts: Record<string, number>;
+  contentCounts: Record<string, number>;
 };
 
 export type PlatformTrendCollection = {
@@ -111,11 +118,12 @@ function finalizeCollection(
   source: TrendSource,
   items: TrendItem[],
   notes: string[],
-  statsInput: Omit<TrendCollectionStats, "platform" | "itemCount" | "uniqueAuthorCount" | "bucketCounts">,
+  statsInput: Omit<TrendCollectionStats, "platform" | "itemCount" | "uniqueAuthorCount" | "bucketCounts" | "industryCounts" | "ageCounts" | "contentCounts">,
 ): PlatformTrendCollection {
   const normalizedItems = items.map((item) => ({
     ...item,
     bucket: normalizeTrendBucket(platform, item.bucket, item.contentType),
+    ...classifyTrendItem(item),
   }));
   const uniqueAuthorCount = new Set(
     normalizedItems.map((item) => String(item.author || "").trim()).filter(Boolean),
@@ -132,6 +140,9 @@ function finalizeCollection(
       itemCount: normalizedItems.length,
       uniqueAuthorCount,
       bucketCounts: getBucketCounts(normalizedItems),
+      industryCounts: countLabels(normalizedItems, "industryLabels"),
+      ageCounts: countLabels(normalizedItems, "ageLabels"),
+      contentCounts: countLabels(normalizedItems, "contentLabels"),
       ...statsInput,
     },
   };

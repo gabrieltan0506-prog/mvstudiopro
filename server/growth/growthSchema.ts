@@ -12,6 +12,7 @@ import {
   growthSnapshotSchema,
 } from "@shared/growth";
 import { matchIndustryTemplate } from "./industryTemplates";
+import { getPlatformTemplate } from "./platformTemplates";
 import type { PlatformTrendCollection } from "./trendCollector";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
@@ -232,6 +233,7 @@ function buildTopicLibrary(
 
   const library = platformPriority.flatMap((platform) => {
     const collection = collections[platform];
+    const platformTemplate = getPlatformTemplate(platform);
     const titles = (collections[platform]?.items || [])
       .filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic")
       .map((item) => item.title);
@@ -248,9 +250,9 @@ function buildTopicLibrary(
         platform,
         platformLabel: PLATFORM_LABELS[platform],
         title: template.title,
-        rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号。`,
-        executionHint: template.executionHint,
-        commercialAngle: `${template.commercialAngle} ${carryRule}`,
+        rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号，平台人群也更接近「${platformTemplate.audienceProfile}」`,
+        executionHint: `${template.executionHint} 平台处理规则：${platformTemplate.packagingRule}`,
+        commercialAngle: `${template.commercialAngle} ${platformTemplate.conversionRule} ${carryRule}`,
         confidence,
       } satisfies GrowthTopicLibraryItem;
     });
@@ -604,35 +606,36 @@ function buildPlatformRecommendations(
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
   return selectedPlatforms.slice(0, 3).map((platform, index) => {
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
+    const platformTemplate = getPlatformTemplate(platform);
     if (platform === "douyin") {
       return {
         name: PLATFORM_LABELS[platform],
         reason: analysis.impact >= 70
-          ? "当前画面冲击力较强，适合先在高分发效率的平台验证强钩子和转化动作。"
-          : "适合先测试更强开场，但需要把开头刺激和结果感再往前提。",
+          ? `当前画面冲击力较强，适合先在高分发效率的平台验证强钩子和转化动作。${platformTemplate.contentPreference}`
+          : `适合先测试更强开场，但需要把开头刺激和结果感再往前提。${platformTemplate.contentPreference}`,
         action: index === 0
-          ? "先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。"
-          : "补一版更强标题和对比封面，再做第二轮测试。",
+          ? `先发 9:16 强钩子版，前 2 秒直接给结果或冲突点。${platformTemplate.actionRule}`
+          : `补一版更强标题和对比封面，再做第二轮测试。${platformTemplate.actionRule}`,
       };
     }
     if (platform === "xiaohongshu") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: "适合放大审美、方法感和可收藏的结构，尤其适合做拆解版和模板版。",
-        action: "补一段创作思路或场景拆解，并强化封面主信息和收藏理由。",
+        reason: `适合放大审美、方法感和可收藏的结构，尤其适合做拆解版和模板版。${platformTemplate.contentPreference}`,
+        action: `补一段创作思路或场景拆解，并强化封面主信息和收藏理由。${platformTemplate.actionRule}`,
       };
     }
     if (platform === "bilibili") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: "适合承接完整叙事、幕后复盘和创作过程，更利于延长内容生命周期。",
-        action: "把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。",
+        reason: `适合承接完整叙事、幕后复盘和创作过程，更利于延长内容生命周期。${platformTemplate.contentPreference}`,
+        action: `把当前内容扩成幕后讲解版或案例复盘版，提高完播和评论讨论。${platformTemplate.actionRule}`,
       };
     }
     return {
       name: snapshot?.displayName || PLATFORM_LABELS[platform as GrowthPlatform],
-      reason: "适合作为次分发渠道，验证不同标题、封面和叙事强度的版本差异。",
-      action: "保留核心卖点，输出一版平台适配文案后再投放。",
+      reason: `适合作为次分发渠道，验证不同标题、封面和叙事强度的版本差异。${platformTemplate.contentPreference}`,
+      action: `保留核心卖点，输出一版平台适配文案后再投放。${platformTemplate.actionRule}`,
     };
   });
 }
