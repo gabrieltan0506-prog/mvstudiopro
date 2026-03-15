@@ -169,8 +169,26 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
     const concatVoiceList = path.join(tmpDir, "voice-concat.txt");
     const voiceFiles: string[] = [];
     for (let i = 0; i < sceneVoiceUrls.length; i += 1) {
+      const voiceSourcePath = path.join(tmpDir, `voice-${String(i + 1).padStart(2, "0")}-src`);
       const voicePath = path.join(tmpDir, `voice-${String(i + 1).padStart(2, "0")}.mp3`);
-      await downloadFileToPath(sceneVoiceUrls[i], voicePath);
+      await downloadFileToPath(sceneVoiceUrls[i], voiceSourcePath);
+      // Normalize each scene voice track first. Some providers return WAV/PCM
+      // payloads even when the URL or upstream metadata looks like MP3.
+      await runFfmpeg([
+        "-y",
+        "-i",
+        voiceSourcePath,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        "-c:a",
+        "libmp3lame",
+        "-b:a",
+        "128k",
+        voicePath,
+      ]);
       voiceFiles.push(voicePath);
     }
     await fs.writeFile(
@@ -186,8 +204,15 @@ export async function renderWorkflowFinalVideo(input: RenderWorkflowInput) {
       "0",
       "-i",
       concatVoiceList,
-      "-c",
-      "copy",
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "24000",
+      "-c:a",
+      "libmp3lame",
+      "-b:a",
+      "128k",
       mergedVoicePath,
     ]);
     effectiveVoiceUrl = await uploadFileToPublicBlob(mergedVoicePath, "scene-voice-track.mp3", "audio/mpeg");
