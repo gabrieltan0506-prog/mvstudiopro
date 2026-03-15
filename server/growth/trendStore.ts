@@ -83,12 +83,19 @@ export type TrendBackfillProgress = {
   note?: string;
 };
 
+export type TrendMailDigestState = {
+  lastSentAt?: string;
+  lastManifestPath?: string;
+  lastWindowMinutes?: number;
+};
+
 type TrendStoreFile = {
   updatedAt: string;
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   archiveIndex: TrendArchiveEntry[];
   backfill?: TrendBackfillProgress;
+  mailDigest?: TrendMailDigestState;
 };
 
 export type TrendCollectionStatsSummary = {
@@ -183,6 +190,7 @@ function createEmptyStore(): TrendStoreFile {
       status: "idle",
       platforms: [],
     },
+    mailDigest: {},
   };
 }
 
@@ -273,6 +281,7 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
         contentCounts: entry.contentCounts || {},
       })),
       backfill: parsed.backfill || createEmptyStore().backfill,
+      mailDigest: parsed.mailDigest || {},
     };
   } catch {
     return null;
@@ -432,7 +441,9 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
   const next = createEmptyStore();
   next.updatedAt = new Date().toISOString();
   next.collections = collections;
-  next.backfill = (await readTrendStore()).backfill || next.backfill;
+  const current = await readTrendStore();
+  next.backfill = current.backfill || next.backfill;
+  next.mailDigest = current.mailDigest || next.mailDigest;
   return writeStore(next);
 }
 
@@ -444,6 +455,7 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     scheduler: current.scheduler || {},
     archiveIndex: [...(current.archiveIndex || [])],
     backfill: current.backfill || createEmptyStore().backfill,
+    mailDigest: current.mailDigest || createEmptyStore().mailDigest,
   };
   const mergeStats: Partial<Record<GrowthPlatform, TrendMergeStats>> = {};
 
@@ -694,6 +706,21 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     contentTypes: Array.from(contentMap.values()).sort((left, right) => right.currentTotal - left.currentTotal || right.archivedItems - left.archivedItems),
     scheduler,
   };
+}
+
+export async function readTrendMailDigestState(): Promise<TrendMailDigestState> {
+  const store = await readTrendStore();
+  return store.mailDigest || {};
+}
+
+export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestState>) {
+  const store = await readTrendStore();
+  store.mailDigest = {
+    ...(store.mailDigest || {}),
+    ...patch,
+  };
+  store.updatedAt = new Date().toISOString();
+  return writeStore(store);
 }
 
 export async function exportTrendCollectionsCsv() {

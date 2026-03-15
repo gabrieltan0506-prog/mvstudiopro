@@ -447,6 +447,9 @@ export const appRouter = router({
           targetEmail,
           smtp,
           backfill: scheduler.backfill || null,
+          mailDigest: scheduler.mailDigest || {
+            lastWindowMinutes: 30,
+          },
           scheduler: Object.values(scheduler.scheduler || {}).map((item) => ({
             platform: item?.platform,
             lastRunAt: item?.lastRunAt,

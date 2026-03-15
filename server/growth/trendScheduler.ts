@@ -6,8 +6,10 @@ import {
   exportTrendCollectionsCsv,
   isTrendCollectionStale,
   mergeTrendCollections,
+  readTrendMailDigestState,
   readTrendSchedulerState,
   readTrendStore,
+  updateTrendMailDigestState,
   updateTrendSchedulerState,
 } from "./trendStore";
 import { sendMailWithAttachments } from "../services/smtp-mailer";
@@ -21,6 +23,7 @@ const BURST_TRIGGER_MIN_COUNT = Math.max(8, Number(process.env.GROWTH_BURST_TRIG
 const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.15, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.35) || 0.35);
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.18) || 0.18);
 const BURST_MIN_STABLE_RUNS = Math.max(1, Number(process.env.GROWTH_BURST_MIN_STABLE_RUNS || 2) || 2);
+const MAIL_DIGEST_INTERVAL_MS = 30 * 60 * 1000;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -157,25 +160,37 @@ async function notifyCollectionUpdate(params: {
 }) {
   const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
   if (!recipient) return;
+  const digestState = await readTrendMailDigestState();
+  const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
+  if (lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS) {
+    return;
+  }
 
+  const store = await readTrendStore();
   const exported = await exportTrendCollectionsCsv();
   const platformFile = exported.files.find((file) => file.platform === params.platform);
+  const schedulerSummary = Object.values(store.scheduler || {})
+    .map((item) =>
+      `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
+    )
+    .join("\n");
 
   await sendMailWithAttachments({
     to: recipient,
-    subject: `Creator Growth Camp 抓取更新 - ${params.platform}`,
+    subject: `Creator Growth Camp 数据汇总 - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
     requireResend: true,
     text:
-      `[Growth Trend Scheduler]\n` +
-      `平台：${params.platform}\n` +
-      `抓取时间：${params.collectedAt}\n` +
-      `本次新增数量：${params.addedCount}\n` +
-      `本次合并数量：${params.mergedCount}\n` +
-      `当前总样本数：${params.itemCount}\n` +
-      `下次计划抓取：${params.nextRunAt}\n` +
-      `当前调度频率：${params.frequencyLabel}\n` +
+      `[Growth Trend Scheduler 半小时汇总]\n` +
+      `最新触发平台：${params.platform}\n` +
+      `最新抓取时间：${params.collectedAt}\n` +
+      `最新新增数量：${params.addedCount}\n` +
+      `最新合并数量：${params.mergedCount}\n` +
+      `该平台当前总样本数：${params.itemCount}\n` +
+      `当前 live 调度频率：${params.frequencyLabel}\n` +
       `当前 burst mode：${params.burstMode ? "ON" : "OFF"}\n` +
       `是否真实 live：${params.live ? "是" : "否"}\n` +
+      `下次计划抓取：${params.nextRunAt}\n` +
+      `\n[当前调度概览]\n${schedulerSummary}\n` +
       `总导出行数：${exported.rows}\n` +
       `清单：${exported.manifestPath}`,
     attachments: [
@@ -191,17 +206,23 @@ async function notifyCollectionUpdate(params: {
       },
     ],
     html:
-      `<p><strong>平台：</strong>${params.platform}</p>` +
+      `<p><strong>半小时汇总窗口：</strong>30 分钟</p>` +
+      `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
       `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
       `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
       `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
-      `<p><strong>当前总样本数：</strong>${params.itemCount}</p>` +
+      `<p><strong>该平台当前总样本数：</strong>${params.itemCount}</p>` +
       `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +
-      `<p><strong>当前调度频率：</strong>${params.frequencyLabel}</p>` +
+      `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
       `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
       `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
       `<p><strong>总导出行数：</strong>${exported.rows}</p>` +
       (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
+  });
+  await updateTrendMailDigestState({
+    lastSentAt: new Date().toISOString(),
+    lastManifestPath: exported.manifestPath,
+    lastWindowMinutes: 30,
   });
 }
 
