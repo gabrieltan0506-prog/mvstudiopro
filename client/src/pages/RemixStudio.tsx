@@ -577,6 +577,10 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
       setDebug({ ok: false, error: "图片上传中，请稍后再试" });
       return;
     }
+    if (!props.refImageUrl) {
+      setDebug({ ok: false, error: "缺少参考图，请先上传图片或使用上方生图结果。" });
+      return;
+    }
     setBusy(true);
     setTaskId("");
     setWorkflowId("");
@@ -585,16 +589,13 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
     setDebug({ ok: true, message: "clicked: workflowTest" });
 
     try {
-      const workflowInputType = props.refImageUrl ? "image" : "script";
       const trimmedPrompt = prompt.trim();
-      const payload = props.refImageUrl
-        ? { imageUrl: props.refImageUrl, ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}) }
-        : { prompt: trimmedPrompt };
+      const payload = { imageUrl: props.refImageUrl, ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}) };
 
       const resp = await fetchJsonish("/api/jobs?op=workflowTest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceType: "remix", inputType: workflowInputType, payload }),
+        body: JSON.stringify({ sourceType: "remix", inputType: "image", payload }),
       });
       setDebug(resp);
 
@@ -668,6 +669,11 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
               {props.refImageUrl ? "当前参考图已接入" : "当前还没有参考图"}
             </span>
           </div>
+          {!props.refImageUrl ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "#fda4af", fontWeight: 700 }}>
+              当前节点只支持 image to video，请先上传参考图或使用上方生图结果。
+            </div>
+          ) : null}
           <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginTop: 12, marginBottom: 8 }}>镜头描述</div>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} style={{ ...INPUT_STYLE, marginTop: 0 }} />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>

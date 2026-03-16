@@ -1280,8 +1280,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (inputType !== "script" && inputType !== "image") {
         return res.status(400).json({ ok: false, error: "inputType must be script or image" });
       }
+      if (sourceType === "remix" && inputType !== "image") {
+        return res.status(400).json({ ok: false, error: "remix only supports image workflow" });
+      }
       if (inputType === "script" && !s(payload.prompt).trim()) {
         return res.status(400).json({ ok: false, error: "payload.prompt is required for script workflow" });
+      }
+      if (sourceType === "remix" && !s(payload.imageUrl).trim()) {
+        return res.status(400).json({ ok: false, error: "payload.imageUrl is required for remix workflow" });
       }
       if (inputType === "image" && !s(payload.imageUrl).trim() && !s(payload.prompt).trim()) {
         return res.status(400).json({ ok: false, error: "payload.imageUrl or payload.prompt is required for image workflow" });
