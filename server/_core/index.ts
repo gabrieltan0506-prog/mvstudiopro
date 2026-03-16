@@ -22,6 +22,7 @@ import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
 import workflowJobsHandler from "../../api/jobs";
 import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
+import klingImageHandler from "../../api/kling-image";
 
 function buildRoutingMap() {
   return {
@@ -89,6 +90,10 @@ async function startServer() {
 
   app.all("/api/export", async (req, res) => {
     return exportHandler(req as any, res as any);
+  });
+
+  app.all("/api/kling-image", async (req, res) => {
+    return klingImageHandler(req as any, res as any);
   });
 
   app.all("/api/jobs", async (req, res) => {
