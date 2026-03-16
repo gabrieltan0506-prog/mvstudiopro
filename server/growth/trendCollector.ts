@@ -135,6 +135,23 @@ function parseCsvEnv(name: string) {
     .filter(Boolean);
 }
 
+function parseCookiePool(primaryName: string, backupName?: string) {
+  const raw = [
+    String(process.env[primaryName] || "").trim(),
+    backupName ? String(process.env[backupName] || "").trim() : "",
+    ...String(process.env[`${primaryName}_POOL`] || "")
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ].filter(Boolean);
+  const deduped = Array.from(new Set(raw));
+  const rotateOffset = Math.max(0, Number(process.env.GROWTH_BACKFILL_COOKIE_OFFSET || 0) || 0);
+  const shouldRotate = process.env.GROWTH_BACKFILL_ACTIVE === "1" && deduped.length > 1 && rotateOffset > 0;
+  if (!shouldRotate) return deduped;
+  const offset = rotateOffset % deduped.length;
+  return [...deduped.slice(offset), ...deduped.slice(0, offset)];
+}
+
 function normalizeTrendBucket(platform: GrowthPlatform, bucket?: string, contentType?: TrendItem["contentType"]) {
   const raw = String(bucket || "").trim();
   if (raw) return raw;
@@ -372,7 +389,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 }
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
-  const cookie = String(process.env.DOUYIN_COOKIE || "").trim();
+  const cookies = parseCookiePool("DOUYIN_COOKIE", "DOUYIN_COOKIE_BACKUP");
   const topicItems: TrendItem[] = [];
   const topicResponse = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
     headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
@@ -395,82 +412,91 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       })),
     );
   }
-  if (cookie) {
+  if (cookies.length) {
     const pageLimit = Math.max(1, Math.min(200, Number(process.env.DOUYIN_TREND_PAGES || 60) || 60));
     const pageSize = Math.max(8, Math.min(20, Number(process.env.DOUYIN_TREND_PAGE_SIZE || 12) || 12));
     const items: TrendItem[] = [...topicItems];
     const notes: string[] = [];
-    let maxCursor = "0";
-    let hasMore = 0;
     let requestCount = 0;
-
-    for (let page = 0; page < pageLimit; page += 1) {
-      const response = await fetch(
-        `https://www.douyin.com/aweme/v1/web/tab/feed/?publish_video_strategy_type=2&aid=6383&channel=channel_pc_web&cookie_enabled=true&count=${pageSize}&max_cursor=${maxCursor}&screen_width=1280&screen_height=800&browser_online=true&cpu_core_num=8&device_memory=8&downlink=10&effective_type=4g&round_trip_time=200`,
-        {
-          headers: {
-            accept: "application/json,text/plain,*/*",
-            cookie,
-            referer: "https://www.douyin.com/",
-            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+    const cookieTasks = cookies.map((cookie, cookieIndex) => async () => {
+      let maxCursor = "0";
+      let hasMore = 0;
+      const cookieItems: TrendItem[] = [];
+      for (let page = 0; page < pageLimit; page += 1) {
+        const response = await fetch(
+          `https://www.douyin.com/aweme/v1/web/tab/feed/?publish_video_strategy_type=2&aid=6383&channel=channel_pc_web&cookie_enabled=true&count=${pageSize}&max_cursor=${maxCursor}&screen_width=1280&screen_height=800&browser_online=true&cpu_core_num=8&device_memory=8&downlink=10&effective_type=4g&round_trip_time=200`,
+          {
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              cookie,
+              referer: "https://www.douyin.com/",
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            },
           },
-        },
-      );
+        );
 
-      if (!response.ok) {
-        throw new Error(`Douyin feed responded with ${response.status}`);
+        requestCount += 1;
+        if (!response.ok) {
+          throw new Error(`Douyin feed cookie ${cookieIndex + 1} responded with ${response.status}`);
+        }
+
+        const payload = await response.json() as {
+          aweme_list?: Array<Record<string, any>>;
+          has_more?: number;
+          max_cursor?: number | string;
+        };
+
+        const pageItems = (payload.aweme_list ?? [])
+          .map((item) => {
+            const title = String(item.desc ?? item.caption ?? "").trim();
+            if (!title) return null;
+            const stats = item.statistics ?? {};
+            const author = item.author ?? {};
+            const tags = Array.isArray(item.text_extra)
+              ? item.text_extra
+                .map((entry) => String(entry?.hashtag_name ?? "").trim())
+                .filter(Boolean)
+              : [];
+            return {
+              id: String(item.aweme_id ?? item.group_id ?? ""),
+              title,
+              bucket: "douyin_feed",
+              author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
+              url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
+              publishedAt: safeDateFromUnix(Number(item.create_time)),
+              likes: Number(stats.digg_count ?? 0) || undefined,
+              comments: Number(stats.comment_count ?? 0) || undefined,
+              shares: Number(stats.share_count ?? 0) || undefined,
+              views: Number(stats.play_count ?? 0) || undefined,
+              hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
+              contentType: "video" as const,
+              tags,
+            } satisfies TrendItem;
+          })
+          .filter(Boolean) as TrendItem[];
+
+        cookieItems.push(...pageItems);
+        hasMore = Number(payload.has_more ?? 0);
+        maxCursor = String(payload.max_cursor ?? maxCursor);
+        notes.push(`Fetched ${pageItems.length} Douyin authenticated feed videos on cookie ${cookieIndex + 1} page ${page + 1}.`);
+        if (!hasMore || !pageItems.length) break;
       }
+      notes.push(`Douyin cookie ${cookieIndex + 1} has_more: ${hasMore}`);
+      return cookieItems;
+    });
 
-      const payload = await response.json() as {
-        aweme_list?: Array<Record<string, any>>;
-        has_more?: number;
-        max_cursor?: number | string;
-      };
-
-      const pageItems = (payload.aweme_list ?? [])
-        .map((item) => {
-          const title = String(item.desc ?? item.caption ?? "").trim();
-          if (!title) return null;
-          const stats = item.statistics ?? {};
-          const author = item.author ?? {};
-          const tags = Array.isArray(item.text_extra)
-            ? item.text_extra
-              .map((entry) => String(entry?.hashtag_name ?? "").trim())
-              .filter(Boolean)
-            : [];
-          return {
-            id: String(item.aweme_id ?? item.group_id ?? ""),
-            title,
-            bucket: "douyin_feed",
-            author: String(author.nickname ?? author.uid ?? "").trim() || undefined,
-            url: item.aweme_id ? `https://www.douyin.com/video/${item.aweme_id}` : undefined,
-            publishedAt: safeDateFromUnix(Number(item.create_time)),
-            likes: Number(stats.digg_count ?? 0) || undefined,
-            comments: Number(stats.comment_count ?? 0) || undefined,
-            shares: Number(stats.share_count ?? 0) || undefined,
-            views: Number(stats.play_count ?? 0) || undefined,
-            hotValue: Number(stats.digg_count ?? 0) + Number(stats.comment_count ?? 0),
-            contentType: "video" as const,
-            tags,
-          } satisfies TrendItem;
-        })
-        .filter(Boolean) as TrendItem[];
-
-      items.push(...pageItems);
-      requestCount += 1;
-      hasMore = Number(payload.has_more ?? 0);
-      maxCursor = String(payload.max_cursor ?? maxCursor);
-      notes.push(`Fetched ${pageItems.length} Douyin authenticated feed videos on page ${page + 1}.`);
-      if (!hasMore || !pageItems.length) break;
-    }
+    const concurrency = Math.max(1, Math.min(4, cookies.length));
+    const cookieResults = await runBatches(cookieTasks, concurrency);
+    cookieResults.forEach((cookieItems) => {
+      items.push(...cookieItems);
+    });
 
     if (items.length) {
-      notes.push(`Douyin has_more: ${hasMore}`);
       return finalizeCollection("douyin", "live", dedupeById(items), notes, {
         collectorMode: "warehouse",
         requestCount,
         pageDepth: requestCount,
-        targetPerRun: Math.max(pageLimit * pageSize, getPlatformTargetItemCount("douyin")),
+        targetPerRun: Math.max(cookies.length * pageLimit * pageSize, getPlatformTargetItemCount("douyin")),
         referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
         referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
       });
@@ -603,7 +629,8 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
 }
 
 async function collectKuaishou(): Promise<PlatformTrendCollection> {
-  const cookie = String(process.env.KUAISHOU_COOKIE || "").trim();
+  const primaryKuaishouCookie = String(process.env.KUAISHOU_COOKIE || "").trim();
+  const cookies = primaryKuaishouCookie ? [primaryKuaishouCookie] : [];
   const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
@@ -678,74 +705,81 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     ).trim();
   };
 
-  if (cookie) {
-    let pcursor = "";
-    for (let page = 0; page < privatePages; page += 1) {
-      const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
-      if (pcursor) url.searchParams.set("pcursor", pcursor);
-      const response = await fetch(url.toString(), {
-        headers: {
-          accept: "application/json,text/plain,*/*",
-          cookie,
-          referer: "https://www.kuaishou.com/new-reco",
-          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-        },
-      });
-      privateRequestCount += 1;
-      privatePageDepth = Math.max(privatePageDepth, page + 1);
-      if (!response.ok) {
-        notes.push(`Kuaishou private/list page ${page + 1} responded with ${response.status}.`);
-        break;
-      }
-      const payload = await response.json() as {
-        feeds?: Array<Record<string, any>>;
-        pcursor?: string;
-      };
-      const list = payload.feeds ?? [];
-      list.forEach((item) => pushKuaishouItem(item, `private-list:${page + 1}`));
-      notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from private/list page ${page + 1}.`);
-      pcursor = String(payload.pcursor || "").trim();
-      if (!pcursor || !list.length) break;
-    }
-  }
-
-  if (searchKeywords.length) {
-    const searchTasks = searchKeywords.map((keyword) => async () => {
+  if (cookies.length) {
+    const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
       let pcursor = "";
-      for (let page = 0; page < searchPages; page += 1) {
-        const response = await fetch("https://www.kuaishou.com/rest/v/search/feed", {
-          method: "POST",
+      for (let page = 0; page < privatePages; page += 1) {
+        const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
+        if (pcursor) url.searchParams.set("pcursor", pcursor);
+        const response = await fetch(url.toString(), {
           headers: {
             accept: "application/json,text/plain,*/*",
-            "content-type": "application/json",
-            referer: `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(keyword)}`,
+            cookie,
+            referer: "https://www.kuaishou.com/new-reco",
             "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-            ...(cookie ? { cookie } : {}),
           },
-          body: JSON.stringify({
-            keyword,
-            page: page + 1,
-            pcursor,
-            webPageArea: "searchResult",
-          }),
         });
-
-        searchRequestCount += 1;
-        searchPageDepth = Math.max(searchPageDepth, page + 1);
-
+        privateRequestCount += 1;
+        privatePageDepth = Math.max(privatePageDepth, page + 1);
         if (!response.ok) {
-          notes.push(`Kuaishou search/feed ${keyword} page ${page + 1} responded with ${response.status}.`);
+          notes.push(`Kuaishou private/list cookie ${cookieIndex + 1} page ${page + 1} responded with ${response.status}.`);
           break;
         }
-
-        const payload = await response.json() as Record<string, any>;
-        const list = extractKuaishouSearchList(payload);
-        list.forEach((item) => pushKuaishouItem(item, `search:${keyword}`));
-        notes.push(`Fetched ${list.length} Kuaishou search feed items for ${keyword} page ${page + 1}.`);
-        pcursor = extractKuaishouSearchCursor(payload);
+        const payload = await response.json() as {
+          feeds?: Array<Record<string, any>>;
+          pcursor?: string;
+        };
+        const list = payload.feeds ?? [];
+        list.forEach((item) => pushKuaishouItem(item, `private-list:${cookieIndex + 1}:${page + 1}`));
+        notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from cookie ${cookieIndex + 1} private/list page ${page + 1}.`);
+        pcursor = String(payload.pcursor || "").trim();
         if (!pcursor || !list.length) break;
       }
     });
+
+    await runBatches(privateTasks, Math.max(1, Math.min(4, cookies.length)));
+  }
+
+  if (searchKeywords.length) {
+    const cookiePool = cookies.length ? cookies : [""];
+    const searchTasks = cookiePool.flatMap((cookie, cookieIndex) =>
+      searchKeywords.map((keyword) => async () => {
+        let pcursor = "";
+        for (let page = 0; page < searchPages; page += 1) {
+          const response = await fetch("https://www.kuaishou.com/rest/v/search/feed", {
+            method: "POST",
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              "content-type": "application/json",
+              referer: `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(keyword)}`,
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              ...(cookie ? { cookie } : {}),
+            },
+            body: JSON.stringify({
+              keyword,
+              page: page + 1,
+              pcursor,
+              webPageArea: "searchResult",
+            }),
+          });
+
+          searchRequestCount += 1;
+          searchPageDepth = Math.max(searchPageDepth, page + 1);
+
+          if (!response.ok) {
+            notes.push(`Kuaishou search/feed cookie ${cookieIndex + 1} ${keyword} page ${page + 1} responded with ${response.status}.`);
+            break;
+          }
+
+          const payload = await response.json() as Record<string, any>;
+          const list = extractKuaishouSearchList(payload);
+          list.forEach((item) => pushKuaishouItem(item, `search:${cookieIndex + 1}:${keyword}`));
+          notes.push(`Fetched ${list.length} Kuaishou search feed items for cookie ${cookieIndex + 1} keyword ${keyword} page ${page + 1}.`);
+          pcursor = extractKuaishouSearchCursor(payload);
+          if (!pcursor || !list.length) break;
+        }
+      }),
+    );
 
     await runBatches(searchTasks, searchConcurrency);
   }
@@ -784,7 +818,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
             headers: {
               "content-type": "application/json",
               "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-              ...(cookie ? { cookie } : {}),
+              ...(cookies[0] ? { cookie: cookies[0] } : {}),
             },
             body: JSON.stringify({
               operationName: "publicFeeds",
@@ -839,10 +873,16 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   }
 
   return finalizeCollection("kuaishou", "live", items, notes, {
-    collectorMode: searchRequestCount ? "warehouse" : cookie && principals.length ? "hybrid" : cookie ? "authenticated_feed" : "public_feed",
+    collectorMode: searchRequestCount
+      ? "warehouse"
+      : cookies.length && principals.length
+        ? "hybrid"
+        : cookies.length
+          ? "authenticated_feed"
+          : "public_feed",
     requestCount: privateRequestCount + publicRequestCount + searchRequestCount,
     pageDepth: Math.max(privatePageDepth, publicPages, searchPageDepth),
-    targetPerRun: Math.max((cookie ? privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
+    targetPerRun: Math.max((cookies.length ? cookies.length * privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
   });
