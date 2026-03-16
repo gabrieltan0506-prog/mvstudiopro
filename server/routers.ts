@@ -374,7 +374,25 @@ export const appRouter = router({
         context: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const result = await analyzeVideo(input);
+        let result;
+        try {
+          result = await analyzeVideo(input);
+        } catch (error) {
+          console.warn("[mvAnalysis.analyzeVideo] route fallback:", error);
+          result = {
+            analysis: growthAnalysisScoresSchema.parse(buildFallbackFrameAnalysis(input.context)),
+            videoMeta: {
+              videoUrl: `data:${input.mimeType};base64,${input.fileBase64}`,
+              transcript: "",
+              videoDuration: 0,
+              provider: "fallback",
+              model: "deterministic",
+              fallback: true,
+              failureStage: "route",
+              failureReason: error instanceof Error ? error.message : String(error || "未知错误"),
+            },
+          };
+        }
         return {
           success: true,
           analysis: result.analysis,
@@ -388,6 +406,8 @@ export const appRouter = router({
             fallback: result.videoMeta.fallback,
             transcriptChars: result.videoMeta.transcript.length,
             videoDuration: result.videoMeta.videoDuration,
+            failureStage: result.videoMeta.failureStage || null,
+            failureReason: result.videoMeta.failureReason || null,
           },
         };
       }),

@@ -19,8 +19,17 @@ type VideoAnalysisResult = {
     provider: string;
     model: string;
     fallback: boolean;
+    failureStage?: string;
+    failureReason?: string;
   };
 };
+
+type VideoFailureStage =
+  | "decode"
+  | "frame_extraction"
+  | "transcription"
+  | "llm"
+  | "unknown";
 
 async function withTempVideo<T>(buffer: Buffer, fn: (videoPath: string) => Promise<T>): Promise<T> {
   const videoPath = path.join(
@@ -118,24 +127,71 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
   });
 }
 
+function normalizeFailureReason(error: unknown) {
+  if (error instanceof Error) {
+    return error.message || error.name || "未知错误";
+  }
+  return String(error || "未知错误");
+}
+
+function buildVideoFallbackResult(params: {
+  mimeType: string;
+  fileBase64?: string;
+  context?: string;
+  summary?: string;
+  transcript?: string;
+  videoDuration?: number;
+  failureStage: VideoFailureStage;
+  failureReason: string;
+}): VideoAnalysisResult {
+  return {
+    analysis: buildFallbackVideoAnalysis(params.summary || "", params.context || ""),
+    videoMeta: {
+      videoUrl: params.fileBase64 ? `data:${params.mimeType};base64,${params.fileBase64}` : "",
+      transcript: params.transcript || "",
+      videoDuration: params.videoDuration || 0,
+      provider: "fallback",
+      model: "deterministic",
+      fallback: true,
+      failureStage: params.failureStage,
+      failureReason: params.failureReason,
+    },
+  };
+}
+
 export async function analyzeVideo(params: {
   fileBase64: string;
   mimeType: string;
   fileName?: string;
   context?: string;
 }): Promise<VideoAnalysisResult> {
-  const buffer = Buffer.from(params.fileBase64, "base64");
-  const keyName = params.fileName || `video-${Date.now()}.mp4`;
-  const videoUrl = `data:${params.mimeType};base64,${params.fileBase64}`;
-  const multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
-  const transcript = await transcribeVideoAudio(buffer).catch(() => "");
-  const frameHighlights = multiFrame.frameAnalyses
-    .filter((item) => !item.dropped)
-    .slice(0, 6)
-    .map((item) => `第${item.frameIndex + 1}帧 ${item.timestamp.toFixed(1)}s：${item.analysis.detail}`)
-    .join("\n");
-
   try {
+    const buffer = Buffer.from(params.fileBase64, "base64");
+    const videoUrl = `data:${params.mimeType};base64,${params.fileBase64}`;
+    let multiFrame;
+    try {
+      multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
+    } catch (error) {
+      console.warn("[growth.analyzeVideo] frame extraction fallback:", error);
+      return buildVideoFallbackResult({
+        mimeType: params.mimeType,
+        fileBase64: params.fileBase64,
+        context: params.context,
+        failureStage: "frame_extraction",
+        failureReason: normalizeFailureReason(error),
+      });
+    }
+
+    const transcript = await transcribeVideoAudio(buffer).catch((error) => {
+      console.warn("[growth.analyzeVideo] transcript fallback:", error);
+      return "";
+    });
+    const frameHighlights = multiFrame.frameAnalyses
+      .filter((item) => !item.dropped)
+      .slice(0, 6)
+      .map((item) => `第${item.frameIndex + 1}帧 ${item.timestamp.toFixed(1)}s：${item.analysis.detail}`)
+      .join("\n");
+
     const response = await invokeLLM({
       model: "pro",
       provider: "vertex",
@@ -214,16 +270,12 @@ summary 必须覆盖：
     };
   } catch (error) {
     console.warn("[growth.analyzeVideo] Falling back to deterministic analysis:", error);
-    return {
-      analysis: buildFallbackVideoAnalysis(multiFrame.summary, params.context || ""),
-      videoMeta: {
-        videoUrl,
-        transcript,
-        videoDuration: multiFrame.videoDuration,
-        provider: "fallback",
-        model: "deterministic",
-        fallback: true,
-      },
-    };
+    return buildVideoFallbackResult({
+      mimeType: params.mimeType,
+      fileBase64: params.fileBase64,
+      context: params.context,
+      failureStage: "unknown",
+      failureReason: normalizeFailureReason(error),
+    });
   }
 }

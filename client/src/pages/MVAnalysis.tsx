@@ -168,6 +168,17 @@ function normalizeText(text: string) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+function mapAnalysisError(error: unknown) {
+  const message = String((error as any)?.message || "");
+  if (message.includes("Unexpected end of JSON input") || message.includes("Failed to fetch") || message.includes("502")) {
+    return "视频预处理失败，请重试或更换文件。";
+  }
+  if (message.includes("frame") || message.includes("抽取")) {
+    return "关键帧提取失败，已跳过视频深度分析，请重试或更换文件。";
+  }
+  return message || "分析失败，请稍后再试";
+}
+
 function replaceTerms(text: string) {
   return String(text || "")
     .replace(/\bCTA\b/g, "行动引导（CTA）")
@@ -822,7 +833,7 @@ export default function MVAnalysisPage() {
         usageStatsQuery.refetch();
       }
     } catch (analysisError: any) {
-      setError(analysisError.message || "分析失败，请稍后再试");
+      setError(mapAnalysisError(analysisError));
       setUploadStage("error");
     }
   }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, usageStatsQuery]);
@@ -1247,6 +1258,8 @@ export default function MVAnalysisPage() {
                   {debugInfo?.extractionMethod ? <div>extract: {String(debugInfo.extractionMethod)}</div> : null}
                   {debugInfo?.videoDuration ? <div>video sec: {String(debugInfo.videoDuration)}</div> : null}
                   {debugInfo?.transcriptChars ? <div>transcript chars: {String(debugInfo.transcriptChars)}</div> : null}
+                  {debugInfo?.failureStage ? <div>failure stage: {String(debugInfo.failureStage)}</div> : null}
+                  {debugInfo?.failureReason ? <div>failure reason: {String(debugInfo.failureReason)}</div> : null}
                 </div>
                 {growthSystemStatusQuery.data?.scheduler?.length ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
