@@ -159,7 +159,7 @@ function compactText(text: string, maxLength = 72) {
     .split(/(?<=[。！？!?.])/)
     .map((item) => item.trim())
     .filter(Boolean);
-  const concise = segments.slice(0, 2).join("");
+  const concise = segments.slice(0, 1).join("");
   const basis = concise || normalized;
   return basis.length > maxLength ? `${basis.slice(0, maxLength - 1)}…` : basis;
 }
@@ -266,7 +266,6 @@ function buildPositioningRows(
   analysis: AnalysisResult,
   context: string,
   tracks: CommercialTrack[],
-  platforms: GrowthPlatformRecommendation[],
   industryTemplate?: GrowthIndustryTemplate | null,
 ): InsightTableRow[] {
   const audience = normalizeText(
@@ -274,36 +273,28 @@ function buildPositioningRows(
   );
   const bestTrack = tracks.find((track) => track.fit >= 60);
   const primaryDirection = bestTrack?.name || "先不主打变现";
-  const roleFixPlan = industryTemplate?.positioningHint
-    ? `先把内容角色改成「${industryTemplate.positioningHint}」，再统一脚本、封面和结尾动作。`
-    : "先把这条内容定义成引流内容、信任内容或成交内容中的一个，再写脚本和结尾动作。";
+  const roleHint = industryTemplate?.positioningHint
+    || (/AIGC|开发者|平台|工具|工作流|自动化/.test(`${analysis.summary}\n${context}`)
+      ? "结果导向的案例型顾问内容"
+      : "先给结果、再给做法的解决方案内容");
   return [
     {
       label: "🎯 受众痛点",
-      insight: compactText(audience, 42),
-      action: compactText(industryTemplate?.painPoint || "先写清楚用户卡在哪里，再决定这条内容是引流、信任还是成交。", 38),
-      highlight: "先锁定一个痛点，不要一条内容想解决所有问题。",
+      insight: compactText(audience, 22),
+      action: compactText(industryTemplate?.painPoint || "先只解决一个最痛的问题，不要一条内容想包办全部。", 20),
+      highlight: "先锁一个痛点",
     },
     {
       label: "🧭 内容角色",
-      insight: compactText(
-        industryTemplate?.positioningHint || analysis.summary || "这条内容当前更像素材，不是可以直接成交的完整内容。",
-        50,
-      ),
-      action: compactText(roleFixPlan, 40),
-      highlight: "先定角色，再定脚本和平台。",
+      insight: compactText(roleHint, 20),
+      action: compactText("先把角色写清楚，再统一标题、脚本、结尾动作。", 20),
+      highlight: "先定角色",
     },
     {
-      label: "💼 主商业方向",
-      insight: primaryDirection === "先不主打变现"
-        ? "当前先把入口内容做成熟，不要急着同时写品牌合作、带货和社群。"
-        : `当前优先验证「${primaryDirection}」这一条路径。`,
-      action: primaryDirection === "先不主打变现"
-        ? "先把受众痛点、角色表达、案例证明和结尾动作做顺，再谈商业承接。"
-        : compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 40),
-      highlight: primaryDirection === "先不主打变现"
-        ? "先跑通内容入口，再谈后续商业化。"
-        : "单一路径比多方向堆叠更容易转化。",
+      label: "💼 当前重点",
+      insight: primaryDirection === "先不主打变现" ? "先把入口做成熟。" : `先主攻「${primaryDirection}」。`,
+      action: compactText(industryTemplate?.primaryConversion || "给一个明确承接动作，不同时推多个方向。", 20),
+      highlight: "只留一个主方向",
     },
   ];
 }
@@ -312,26 +303,26 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
   return [
     {
       label: "✅ 当前优势",
-      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。", 40),
-      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。", 36),
-      highlight: "先固定可复用优势，不要每条都重来。",
+      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。", 22),
+      action: compactText(analysis.strengths[1] || "把优势固定成标题、封面或镜头模板。", 20),
+      highlight: "先固定优势",
     },
     {
       label: "⚠️ 优先优化点",
-      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 40),
-      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。", 36),
-      highlight: "先修最影响停留的问题。",
+      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 22),
+      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。", 20),
+      highlight: "先修停留",
     },
     {
       label: "🧩 表达问题",
-      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。", 40),
-      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 36),
+      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。", 22),
+      action: compactText("先给一句结论，后面所有内容都服务这句。", 20),
     },
     {
       label: "🚀 建议方向",
-      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。", 40),
-      action: compactText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 36),
-      highlight: "结论更短，方案更具体，用户才知道下一步怎么做。",
+      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。", 22),
+      action: compactText("按“痛点 -> 做法 -> 动作”重写。", 20),
+      highlight: "方案要短、能执行",
     },
   ];
 }
@@ -430,18 +421,20 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
   if (isMedicalSports) {
     return [
       {
-        label: "A. 核心分析",
-        content: [
-          "画面节奏与视觉：原始素材节奏平缓，无亮点。二次创作应通过关键击球慢放、运动员表情特写、关键信息字幕和数据图表来制造节奏与视觉焦点。",
-          "叙事结构与口播/字幕：核心是打造“医生看比赛”的独特视角。可以做三种结构：1. 运动损伤科普。2. 慢性病管理关联。3. 励志故事与心理健康。",
-        ].join("\n"),
+        label: "🔥 先锁主题",
+        content: "先只做一个主题：运动损伤、慢病管理或医生视角解读，不要三条线一起讲。",
       },
       {
-        label: "B. 商业转化潜力",
-        content: [
-          "潜力巨大。通过上述内容，可将抽象医学知识具象化，塑造“懂健康、懂生活”的专家形象。",
-          "转化路径：吸引精准用户 -> 建立信任 -> 导流到线上咨询、付费健康管理社群、相关课程或线下门诊。",
-        ].join("\n"),
+        label: "✨ 现有亮点",
+        content: "比赛画面真实、专业身份可信，天然有“专业视角看热点”的差异感，适合先做专家型内容入口。",
+      },
+      {
+        label: "🛠 立刻改法",
+        content: "开头直接抛一个风险或误区，补字幕和慢放标注，把关键动作解释清楚，不要只放比赛画面。",
+      },
+      {
+        label: "💰 承接方式",
+        content: "先承接咨询、评估、专题课或健康管理服务，不先同时讲品牌、社群和多个变现方向。",
       },
     ];
   }
@@ -547,7 +540,7 @@ function buildDashboardPanels(
       eyebrow: maturity?.label || "总体准备度",
       title: maturity?.value || "待生成",
       summary: maturity?.note || "先看整体成熟度，再决定先修哪里。",
-      detail: `这块不是给用户看分数本身，而是让用户先知道当前内容更像“能直接放大”，还是“需要重写一版”。${role?.value ? ` 当前判断：${role.value}。` : ""}`,
+      detail: `先判断这条内容是“能直接放大”，还是“要先重写一版”。${role?.value ? ` 当前判断：${role.value}。` : ""}`,
       action: dayOne?.action || "先把单一卖点和开头 3 秒收紧，再进入平台验证。",
       accent: "text-[#ffcf92]",
       glow: "from-[#ff8a3d]/30 via-[#ffcf92]/12 to-transparent",
@@ -577,7 +570,7 @@ function buildDashboardPanels(
       eyebrow: "平台矩阵",
       title: platformRecommendationRows[0]?.label || "待生成",
       summary: platformRecommendationRows[0]?.insight || "先给首发顺序，再告诉用户每个平台怎么发。",
-      detail: platformRecommendationRows.slice(0, 3).map((item) => `${item.label}：${item.action}`).join(" "),
+      detail: platformRecommendationRows.slice(0, 3).map((item) => `${item.label}：${compactText(item.action, 28)}`).join(" "),
       action: "图文先跑验证，视频再做扩量。平台不是单选题，而是按同一主题拆不同版本。",
       accent: "text-[#90c4ff]",
       glow: "from-[#2684ff]/24 via-[#90c4ff]/12 to-transparent",
@@ -586,9 +579,9 @@ function buildDashboardPanels(
       id: "monetization",
       eyebrow: "商业洞察",
       title: topTrack ? `${topTrack.name} ${topTrack.fit}%` : "暂不主打变现",
-      summary: businessInsights[0]?.detail || "先把内容入口讲清楚，再谈商业承接。",
-      detail: businessInsights.slice(1, 4).map((item) => `${item.title}：${item.detail}`).join(" "),
-      action: topTrack?.nextStep || "先补一版案例或服务说明，再决定主承接方式。",
+      summary: compactText(businessInsights[0]?.detail || "先把内容入口讲清楚，再谈商业承接。", 32),
+      detail: compactText(businessInsights.slice(1, 4).map((item) => `${item.title}：${item.detail}`).join(" "), 48),
+      action: compactText(topTrack?.nextStep || "先补一版案例或服务说明，再决定主承接方式。", 42),
       accent: "text-[#f5b7ff]",
       glow: "from-[#f5b7ff]/24 via-[#ff8cf0]/10 to-transparent",
     },
@@ -635,6 +628,7 @@ export default function MVAnalysisPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startTimeRef = useRef(0);
+  const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
   const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
@@ -921,8 +915,8 @@ export default function MVAnalysisPage() {
   );
   const growthHandoff = growthSnapshot?.growthHandoff ?? null;
   const positioningRows = useMemo(
-    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, platformRecommendations, growthSnapshot?.industryTemplate) : [],
-    [analysis, context, commercialTracks, platformRecommendations, growthSnapshot?.industryTemplate],
+    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, growthSnapshot?.industryTemplate) : [],
+    [analysis, context, commercialTracks, growthSnapshot?.industryTemplate],
   );
   const contentAnalysisRows = useMemo(
     () => analysis ? buildContentAnalysisRows(analysis, growthSnapshot?.industryTemplate) : [],
@@ -1028,6 +1022,18 @@ export default function MVAnalysisPage() {
       setActiveDashboardPanel(dashboardPanels[0].id);
     }
   }, [dashboardPanels, activeDashboardPanel]);
+
+  const activateDashboardPanel = useCallback((panelId: string) => {
+    setActiveDashboardPanel(panelId);
+    const target = sectionRefs.current[panelId];
+    if (target) {
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, []);
+
+  const activePanelDetail = dashboardPanels.find((item) => item.id === activeDashboardPanel) || dashboardPanels[0];
 
   if (loading) {
     return (
@@ -1332,16 +1338,15 @@ export default function MVAnalysisPage() {
                     <h2 className="text-2xl font-bold">商业数据仪表盘</h2>
                   </div>
                   <p className="mt-4 text-sm leading-7 text-white/62">
-                    这里不是静态柱状图。上面的图块负责给你全局判断，下面对应的分析区块会同步高亮，告诉你该先动哪里、怎么改、怎么承接。
+                    这里先给你全局判断，再联动下面的重点分析。点击任一图块，右侧解说和下方区块会同步高亮。
                   </p>
-                  <div className="mt-6 grid gap-5 xl:grid-cols-12">
-                    <div className="space-y-5 xl:col-span-7">
-                      <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="mt-6 space-y-5">
+                    <div className="grid gap-4 xl:grid-cols-4">
                         {dashboardMetrics.map((item) => (
                           <button
                             type="button"
                             key={item.label}
-                            onClick={() => setActiveDashboardPanel(item.id)}
+                            onClick={() => activateDashboardPanel(item.id)}
                             className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
                               activeDashboardPanel === item.id
                                 ? "border-white/30 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
@@ -1363,12 +1368,12 @@ export default function MVAnalysisPage() {
                             <p className="relative mt-3 text-sm leading-6 text-white/62">{item.note}</p>
                           </button>
                         ))}
-                      </div>
+                    </div>
 
-                      <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
+                    <div className="grid gap-4 xl:grid-cols-[1.1fr_1.15fr_1.15fr]">
                         <button
                           type="button"
-                          onClick={() => setActiveDashboardPanel("readiness")}
+                          onClick={() => activateDashboardPanel("readiness")}
                           className={`relative overflow-hidden rounded-[24px] border p-5 text-left transition ${
                             activeDashboardPanel === "readiness" ? "border-white/25 bg-white/10" : "border-white/10 bg-black/15"
                           }`}
@@ -1389,7 +1394,7 @@ export default function MVAnalysisPage() {
                                   innerRadius={58}
                                   outerRadius={90}
                                   paddingAngle={2}
-                                  onClick={(_, index) => setActiveDashboardPanel(dashboardDonutData[index]?.panelId || "readiness")}
+                                  onClick={(_, index) => activateDashboardPanel(dashboardDonutData[index]?.panelId || "readiness")}
                                 >
                                   {dashboardDonutData.map((entry) => (
                                     <Cell key={entry.name} fill={entry.fill} style={{ cursor: "pointer" }} />
@@ -1413,7 +1418,7 @@ export default function MVAnalysisPage() {
                                 type="button"
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  setActiveDashboardPanel(entry.panelId || "readiness");
+                                  activateDashboardPanel(entry.panelId || "readiness");
                                 }}
                                 className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs transition ${
                                   activeDashboardPanel === entry.panelId
@@ -1441,7 +1446,7 @@ export default function MVAnalysisPage() {
                               <button
                                 type="button"
                                 key={row.label}
-                                onClick={() => setActiveDashboardPanel("platforms")}
+                                onClick={() => activateDashboardPanel("platforms")}
                                 className={`relative overflow-hidden rounded-2xl border p-4 text-left transition ${
                                   activeDashboardPanel === "platforms" ? "border-[#90c4ff]/35 bg-[#10233e]" : "border-white/10 bg-white/5"
                                 }`}
@@ -1458,70 +1463,95 @@ export default function MVAnalysisPage() {
                             ))}
                           </div>
                         </div>
-                      </div>
+
+                        <button
+                          type="button"
+                          onClick={() => activateDashboardPanel("monetization")}
+                          className={`relative overflow-hidden rounded-[24px] border p-5 text-left transition ${
+                            activeDashboardPanel === "monetization" ? "border-[#f5b7ff]/35 bg-black/20" : "border-white/10 bg-black/15"
+                          }`}
+                        >
+                          {activeDashboardPanel === "monetization" ? (
+                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.18),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                          ) : null}
+                          <div className="relative flex items-center gap-2 text-white">
+                            <Workflow className="h-4 w-4 text-[#f5b7ff]" />
+                            <span className="text-sm font-semibold">业务转化漏斗</span>
+                          </div>
+                          <div className="relative mt-4 space-y-3">
+                            {businessFunnelSteps.map((step, index) => (
+                              <button
+                                key={`dashboard-${step.label}`}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  activateDashboardPanel("monetization");
+                                }}
+                                className="block w-full text-left"
+                              >
+                                <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
+                                  <span>{step.label}</span>
+                                  <span>{step.value}%</span>
+                                </div>
+                                <div className="flex justify-center">
+                                  <div
+                                    className="rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#081423] shadow-[0_12px_24px_rgba(255,140,240,0.12)]"
+                                    style={{
+                                      width: `${94 - index * 16}%`,
+                                      background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
+                                    }}
+                                  >
+                                    {compactText(step.detail, 28)}
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </button>
                     </div>
 
-                    <div className="space-y-5 xl:col-span-5">
-                      <button
-                        type="button"
-                        onClick={() => setActiveDashboardPanel("monetization")}
-                        className={`relative overflow-hidden rounded-[24px] border p-5 text-left transition ${
-                          activeDashboardPanel === "monetization" ? "border-white/25 bg-white/10" : "border-white/10 bg-black/15"
-                        }`}
-                      >
-                        {activeDashboardPanel === "monetization" ? (
-                          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.22),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
-                        ) : null}
-                        <div className="relative flex items-center gap-2 text-white">
-                          <CircleDollarSign className="h-4 w-4 text-[#f5b7ff]" />
-                          <span className="text-sm font-semibold">商业转化漏斗</span>
+                    <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+                      <div className="relative overflow-hidden rounded-[24px] border border-white/10 bg-black/15 p-5">
+                        <div className={`pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${activePanelDetail.glow}`} />
+                        <div className="pointer-events-none absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
+                        <div className="relative flex items-center justify-between gap-3">
+                          <div>
+                            <div className={`text-xs uppercase tracking-[0.2em] ${activePanelDetail.accent}`}>{activePanelDetail.eyebrow}</div>
+                            <div className="mt-2 text-2xl font-black text-white">{activePanelDetail.title}</div>
+                          </div>
+                          <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">联动解说台</div>
                         </div>
-                        <div className="relative mt-5 space-y-3">
-                          {businessFunnelSteps.map((step, index) => (
-                            <div key={step.label} className="space-y-2">
-                              <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
-                                <span>{step.label}</span>
-                                <span>{step.value}%</span>
-                              </div>
-                              <div className="flex justify-center">
-                                <div
-                                  className="rounded-xl bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)] px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)]"
-                                  style={{ width: `${92 - index * 18}%` }}
-                                >
-                                  {step.detail}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                        <div className="relative mt-4 grid gap-3 lg:grid-cols-3">
+                          <div className="rounded-2xl border border-white/10 bg-[#111f32] p-4">
+                            <div className="text-sm font-semibold text-white">现在先做什么</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{activePanelDetail.summary}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-[#0d1828] p-4">
+                            <div className="text-sm font-semibold text-white">为什么先做</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{activePanelDetail.detail}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-[#10233e] p-4">
+                            <div className={`text-sm font-semibold ${activePanelDetail.accent}`}>立刻动作</div>
+                            <div className="mt-2 text-sm leading-7 text-white">{activePanelDetail.action}</div>
+                          </div>
                         </div>
-                      </button>
+                      </div>
 
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="grid gap-3 sm:grid-cols-2">
                         {dashboardPanels.map((panel) => {
                           const isActive = activeDashboardPanel === panel.id;
                           return (
                             <button
                               type="button"
                               key={panel.id}
-                              onClick={() => setActiveDashboardPanel(panel.id)}
-                              className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
-                                isActive
-                                  ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] lg:col-span-2"
-                                  : "border-white/10 bg-black/15"
+                              onClick={() => activateDashboardPanel(panel.id)}
+                              className={`rounded-2xl border p-4 text-left transition ${
+                                isActive ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" : "border-white/10 bg-white/5"
                               }`}
                             >
-                              {isActive ? (
-                                <div className="pointer-events-none absolute inset-0 opacity-100">
-                                  <div className={`absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${panel.glow}`} />
-                                  <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
-                                </div>
-                              ) : null}
-                              <div className={`relative text-xs uppercase tracking-[0.2em] ${panel.accent}`}>{panel.eyebrow}</div>
-                              <div className="relative mt-2 text-xl font-black text-white">{panel.title}</div>
-                              <p className="relative mt-3 text-sm leading-6 text-white/78">{panel.summary}</p>
-                              <div className={`relative mt-4 inline-flex rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs ${panel.accent}`}>
-                                {panel.action}
-                              </div>
+                              <div className={`text-[11px] uppercase tracking-[0.18em] ${panel.accent}`}>{panel.eyebrow}</div>
+                              <div className="mt-2 text-lg font-black text-white">{panel.title}</div>
+                              <p className="mt-2 text-sm leading-6 text-white/72">{compactText(panel.summary, 28)}</p>
                             </button>
                           );
                         })}
@@ -1682,7 +1712,7 @@ export default function MVAnalysisPage() {
 
               {showPremiumReport ? (
                 <>
-                  <div className={getSectionCardClass("execution", "border-[#ffd08f]/30 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))]")}>
+                  <div ref={(node) => { sectionRefs.current.execution = node; }} className={getSectionCardClass("execution", "border-[#ffd08f]/30 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))]")}>
                     {activeDashboardPanel === "execution" ? (
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,208,143,0.18),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
                     ) : null}
@@ -1707,7 +1737,7 @@ export default function MVAnalysisPage() {
                               {index === 0 ? "先执行" : "补充"}
                             </div>
                           </div>
-                          <p className={`mt-3 text-sm leading-7 ${index === 0 ? "font-semibold text-white" : "text-white/76"}`}>
+                          <p className={`mt-3 text-sm leading-7 ${index <= 1 ? "font-semibold text-white" : "text-white/76"}`}>
                             {row.content}
                           </p>
                         </div>
@@ -1750,23 +1780,28 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className={getSectionCardClass("platforms", "border-[#90c4ff]/30")}>
+                  <div ref={(node) => { sectionRefs.current.platforms = node; }} className={getSectionCardClass("platforms", "border-[#90c4ff]/30")}>
                     {activeDashboardPanel === "platforms" ? (
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.16),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
                     ) : null}
-                    <div className="flex items-center gap-3 text-[#ffd08f]">
+                    <div className="flex items-center justify-between gap-3 text-[#ffd08f]">
+                      <div className="flex items-center gap-3">
                       <Send className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">推荐发布平台</h2>
+                      </div>
+                      <div className="rounded-full border border-[#90c4ff]/20 bg-[#90c4ff]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#b9dbff]">
+                        平台打法
+                      </div>
                     </div>
-                    <p className="mt-3 text-sm leading-7 text-white/60">先给首发顺序，再告诉你每个平台该怎么发、怎么改，以及如何把图文继续延展成视频。</p>
+                    <p className="mt-3 text-sm leading-7 text-white/60">先定首发，再把同一主题拆成图文版、短视频版和长视频版，不让用户只停在一个平台。</p>
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {platformRecommendationRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[42%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[24%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 22)}</td>
+                              <td className="w-[48%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 36)}</td>
                               <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
@@ -1779,23 +1814,28 @@ export default function MVAnalysisPage() {
 
               {showPremiumReport ? (
                 <>
-                  <div className={getSectionCardClass("positioning", "border-[#ffcf92]/30")}>
+                  <div ref={(node) => { sectionRefs.current.positioning = node; }} className={getSectionCardClass("positioning", "border-[#ffcf92]/30")}>
                     {activeDashboardPanel === "positioning" ? (
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
                     ) : null}
-                    <div className="flex items-center gap-3 text-[#ffcf92]">
-                      <Compass className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">内容定位</h2>
+                    <div className="flex items-center justify-between gap-3 text-[#ffcf92]">
+                      <div className="flex items-center gap-3">
+                        <Compass className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">内容定位</h2>
+                      </div>
+                      <div className="rounded-full border border-[#ffcf92]/20 bg-[#ffcf92]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#ffd8a5]">
+                        痛点先行
+                      </div>
                     </div>
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
-                          {positioningRows.filter((row) => row.label !== "首发路径").map((row) => (
+                          {positioningRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[30%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 18)}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 20)}</td>
+                              <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1803,13 +1843,18 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className={getSectionCardClass("content", "border-[#ffb37f]/30")}>
+                  <div ref={(node) => { sectionRefs.current.content = node; }} className={getSectionCardClass("content", "border-[#ffb37f]/30")}>
                     {activeDashboardPanel === "content" ? (
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,179,127,0.14),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
                     ) : null}
-                    <div className="flex items-center gap-3 text-[#ffb37f]">
-                      <Sparkles className="h-5 w-5" />
-                      <h2 className="text-2xl font-bold">内容分析</h2>
+                    <div className="flex items-center justify-between gap-3 text-[#ffb37f]">
+                      <div className="flex items-center gap-3">
+                        <Sparkles className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">内容分析</h2>
+                      </div>
+                      <div className="rounded-full border border-[#ffb37f]/20 bg-[#ffb37f]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#ffc18f]">
+                        先给方案
+                      </div>
                     </div>
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
@@ -1817,9 +1862,9 @@ export default function MVAnalysisPage() {
                           {contentAnalysisRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[30%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 18)}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 20)}</td>
+                              <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1827,7 +1872,7 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className={getSectionCardClass("monetization", "border-[#f5b7ff]/30")}>
+                  <div ref={(node) => { sectionRefs.current.monetization = node; }} className={getSectionCardClass("monetization", "border-[#f5b7ff]/30")}>
                     {activeDashboardPanel === "monetization" ? (
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
                     ) : null}
@@ -1842,44 +1887,11 @@ export default function MVAnalysisPage() {
                       {businessInsights.map((item) => (
                         <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-sm font-semibold text-white">{item.title}</div>
-                          <p className="mt-2 text-sm leading-7 text-white/70">{replaceTerms(item.detail)}</p>
+                          <p className="mt-2 text-sm leading-7 text-white/70">{compactText(replaceTerms(item.detail), 26)}</p>
                         </div>
                       ))}
                     </div>
-                    <div className="relative mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
-                      <div className="flex items-center gap-2 text-white">
-                        <Workflow className="h-4 w-4 text-[#f5b7ff]" />
-                        <span className="text-sm font-semibold">业务转化漏斗</span>
-                      </div>
-                      <div className="mt-4 space-y-3">
-                        {businessFunnelSteps.map((step, index) => (
-                          <button
-                            key={`business-${step.label}`}
-                            type="button"
-                            onClick={() => setActiveDashboardPanel("monetization")}
-                            className="block w-full text-left"
-                          >
-                            <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
-                              <span>{step.label}</span>
-                              <span>{step.value}%</span>
-                            </div>
-                            <div className="flex justify-center">
-                              <div
-                                className={`rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)] transition ${
-                                  activeDashboardPanel === "monetization"
-                                    ? "bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)]"
-                                    : "bg-[linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e)] opacity-85"
-                                }`}
-                                style={{ width: `${92 - index * 18}%` }}
-                              >
-                                {step.detail}
-                              </div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="relative mt-4 grid gap-4 lg:grid-cols-3">
+                    <div className="relative mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                         <div className="flex items-center gap-2 text-white">
                           <ScanSearch className="h-4 w-4 text-[#ffd08f]" />
@@ -1914,9 +1926,9 @@ export default function MVAnalysisPage() {
                           {businessTrackRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="w-[36%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="w-[16%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
+                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 22)}</td>
+                              <td className="w-[40%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 28)}</td>
+                              <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{compactText(row.highlight || "-", 12)}</td>
                             </tr>
                           ))}
                         </tbody>
