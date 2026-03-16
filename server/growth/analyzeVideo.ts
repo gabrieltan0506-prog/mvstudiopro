@@ -10,6 +10,10 @@ import { invokeLLM } from "../_core/llm";
 
 const execFileAsync = promisify(execFile);
 
+const GROWTH_CAMP_FINAL_MODEL =
+  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-3.1-pro").trim()
+  || "gemini-3.1-pro";
+
 type VideoAnalysisResult = {
   analysis: GrowthAnalysisScores;
   videoMeta: {
@@ -193,6 +197,7 @@ export async function analyzeVideo(params: {
     const response = await invokeLLM({
       model: "pro",
       provider: "vertex",
+      modelName: GROWTH_CAMP_FINAL_MODEL,
       messages: [
         {
           role: "system",

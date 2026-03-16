@@ -74,6 +74,7 @@ export type InvokeParams = {
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
   provider?: Provider;
+  modelName?: string;
 };
 
 export type ToolCall = {
@@ -268,7 +269,11 @@ async function getVertexAccessToken() {
   return String(json.access_token);
 }
 
-const resolveTarget = (modelTier: ModelTier | undefined, preferredProvider?: Provider): LlmTarget => {
+const resolveTarget = (
+  modelTier: ModelTier | undefined,
+  preferredProvider?: Provider,
+  explicitModelName?: string,
+): LlmTarget => {
   if (preferredProvider === "cometapi" || modelTier === "gpt5") {
     const cometApiKey = getCometApiKey();
     if (!cometApiKey) {
@@ -288,7 +293,7 @@ const resolveTarget = (modelTier: ModelTier | undefined, preferredProvider?: Pro
       throw new Error("VERTEX environment is not configured");
     }
     const location = String(process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
-    const modelName = String(process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
+    const modelName = String(explicitModelName || process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
     const projectId = String(process.env.VERTEX_PROJECT_ID || "").trim();
     return {
       provider: "vertex",
@@ -305,13 +310,13 @@ const resolveTarget = (modelTier: ModelTier | undefined, preferredProvider?: Pro
     return {
       provider: "gemini",
       apiKey: ENV.geminiApiKey,
-      modelName: getGeminiModelName(modelTier),
+      modelName: String(explicitModelName || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier),
     };
   }
 
   if (hasVertexEnv()) {
     const location = String(process.env.VERTEX_GEMINI_LOCATION || "global").trim() || "global";
-    const modelName = String(process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
+    const modelName = String(explicitModelName || process.env.VERTEX_GEMINI_MODEL || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier);
     const projectId = String(process.env.VERTEX_PROJECT_ID || "").trim();
     return {
       provider: "vertex",
@@ -328,7 +333,7 @@ const resolveTarget = (modelTier: ModelTier | undefined, preferredProvider?: Pro
   return {
     provider: "gemini",
     apiKey: ENV.geminiApiKey,
-    modelName: getGeminiModelName(modelTier),
+    modelName: String(explicitModelName || getGeminiModelName(modelTier)).trim() || getGeminiModelName(modelTier),
   };
 };
 
@@ -575,7 +580,7 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
 }
 
 export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): Promise<InvokeResult> {
-  const target = resolveTarget(params.model, params.provider);
+  const target = resolveTarget(params.model, params.provider, params.modelName);
 
   if (target.provider === "vertex") {
     return invokeVertex(params, target);
