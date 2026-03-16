@@ -222,7 +222,12 @@ async function runImageWorkflow(workflowId: string) {
   let imageIsFallback = false;
   let imageErrorMessage: string | undefined;
 
-  if (prompt) {
+  // When a reference image already exists, treat this as true image-to-video.
+  // Do not run an extra text-to-image step first and then fallback back to the upload.
+  if (originalImageUrl) {
+    preparedImageUrl = originalImageUrl;
+    imageUrls = [originalImageUrl];
+  } else if (prompt) {
     try {
       const imageResp = await callWorkflowModelApi({ op: "bananaGenerate", prompt, numImages: 1, aspectRatio: "auto" });
       if (!imageResp.ok || !Array.isArray(imageResp.imageUrls) || !imageResp.imageUrls[0]) {
@@ -232,19 +237,8 @@ async function runImageWorkflow(workflowId: string) {
       preparedImageUrl = imageUrls[0];
     } catch (error) {
       imageErrorMessage = error instanceof Error ? error.message : String(error);
-      if (originalImageUrl) {
-        preparedImageUrl = originalImageUrl;
-        imageUrls = [originalImageUrl];
-        imageIsFallback = true;
-      } else {
-        throw error;
-      }
+      throw error;
     }
-  } else if (originalImageUrl) {
-    preparedImageUrl = originalImageUrl;
-    imageUrls = [originalImageUrl];
-    imageIsFallback = true;
-    imageErrorMessage = "payload.prompt is missing, use payload.imageUrl as fallback";
   }
 
   updateWorkflow(workflowId, {

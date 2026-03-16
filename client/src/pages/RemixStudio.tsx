@@ -76,7 +76,7 @@ type NodeItem = {
 
 const PAGE_STYLE: React.CSSProperties = {
   minHeight: "100vh",
-  background: "linear-gradient(180deg, #f4f7fb 0%, #eef4ff 100%)",
+  background: "radial-gradient(circle at top left, rgba(103,64,255,0.16), transparent 24%), linear-gradient(180deg, #060b18 0%, #0a1222 100%)",
   padding: 20,
 };
 
@@ -89,10 +89,10 @@ const PANEL_STYLE: React.CSSProperties = {
   marginTop: 18,
   padding: 20,
   borderRadius: 24,
-  border: "1px solid #dbe4f0",
-  background: "#ffffff",
-  color: "#0f172a",
-  boxShadow: "0 18px 50px rgba(15, 23, 42, 0.08)",
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "linear-gradient(180deg, rgba(17,24,39,0.92), rgba(10,15,28,0.96))",
+  color: "#f8fafc",
+  boxShadow: "0 18px 50px rgba(2,6,23,0.35)",
 };
 
 const INPUT_STYLE: React.CSSProperties = {
@@ -100,16 +100,16 @@ const INPUT_STYLE: React.CSSProperties = {
   marginTop: 10,
   padding: 12,
   borderRadius: 14,
-  border: "1px solid #cbd5e1",
-  background: "#f8fafc",
-  color: "#0f172a",
+  border: "1px solid rgba(255,255,255,0.14)",
+  background: "rgba(15,23,42,0.75)",
+  color: "#f8fafc",
 };
 
 const PRIMARY_BUTTON: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
-  border: "1px solid #111827",
-  background: "#111827",
+  border: "1px solid rgba(255,148,99,0.42)",
+  background: "linear-gradient(135deg, #ff8a5b, #ff6b3d)",
   color: "#ffffff",
   fontWeight: 900,
 };
@@ -117,18 +117,44 @@ const PRIMARY_BUTTON: React.CSSProperties = {
 const SECONDARY_BUTTON: React.CSSProperties = {
   padding: "10px 14px",
   borderRadius: 12,
-  border: "1px solid #cbd5e1",
-  background: "#ffffff",
-  color: "#0f172a",
+  border: "1px solid rgba(255,255,255,0.14)",
+  background: "rgba(255,255,255,0.06)",
+  color: "#f8fafc",
   fontWeight: 800,
 };
 
 const CODE_STYLE: React.CSSProperties = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   fontSize: 12,
-  background: "#eff6ff",
+  background: "rgba(148,163,184,0.14)",
   borderRadius: 8,
   padding: "2px 6px",
+  color: "#e2e8f0",
+};
+
+const HEADER_BADGE: React.CSSProperties = {
+  borderRadius: 14,
+  background: "rgba(255,255,255,0.08)",
+  padding: "10px 12px",
+  color: "#f8fafc",
+  fontWeight: 800,
+};
+
+const MUTED_TEXT: React.CSSProperties = {
+  color: "rgba(226,232,240,0.72)",
+  fontSize: 13,
+};
+
+const SUB_PANEL: React.CSSProperties = {
+  borderRadius: 18,
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "rgba(15,23,42,0.62)",
+  padding: 16,
+};
+
+const GHOST_BUTTON: React.CSSProperties = {
+  ...SECONDARY_BUTTON,
+  background: "transparent",
 };
 
 const nodeItems: NodeItem[] = [
@@ -197,7 +223,7 @@ function edgePath(from: NodeItem, to: NodeItem) {
 function ResultBanner(props: { stage: NodeStage; error?: string; okText: string; runningText: string }) {
   if (props.stage === "error" && props.error) {
     return (
-      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: 12 }}>
+      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(248,113,113,0.32)", background: "rgba(127,29,29,0.24)", color: "#fecaca", padding: 12 }}>
         <div style={{ fontWeight: 800 }}>执行失败</div>
         <div style={{ marginTop: 4 }}>{normalizeUiError(props.error)}</div>
       </div>
@@ -205,14 +231,14 @@ function ResultBanner(props: { stage: NodeStage; error?: string; okText: string;
   }
   if (props.stage === "running") {
     return (
-      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", padding: 12 }}>
+      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(251,191,36,0.32)", background: "rgba(120,53,15,0.24)", color: "#fde68a", padding: 12 }}>
         {props.runningText}
       </div>
     );
   }
   if (props.stage === "done") {
     return (
-      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #bbf7d0", background: "#f0fdf4", color: "#166534", padding: 12 }}>
+      <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid rgba(74,222,128,0.28)", background: "rgba(20,83,45,0.24)", color: "#bbf7d0", padding: 12 }}>
         {props.okText}
       </div>
     );
@@ -251,17 +277,17 @@ function WorkflowCanvas(props: {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 900 }}>Kling Studio 节点工作流</div>
-          <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>
+          <div style={MUTED_TEXT}>
             把生图、图生视频和音乐合并到同一张画布上，先产出参考图，再推进视频和配乐。
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ borderRadius: 14, background: "#eff6ff", padding: "10px 12px", minWidth: 150 }}>
-            <div style={{ fontSize: 12, color: "#64748b", fontWeight: 800 }}>参考图状态</div>
+          <div style={{ ...SUB_PANEL, minWidth: 150, padding: "10px 12px" }}>
+            <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800 }}>参考图状态</div>
             <div style={{ marginTop: 3, fontSize: 13, fontWeight: 900 }}>{props.refImageUrl ? "已接入画布" : "未设置"}</div>
           </div>
-          <div style={{ borderRadius: 14, background: "#eff6ff", padding: "10px 12px", minWidth: 150 }}>
-            <div style={{ fontSize: 12, color: "#64748b", fontWeight: 800 }}>视频输出</div>
+          <div style={{ ...SUB_PANEL, minWidth: 150, padding: "10px 12px" }}>
+            <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800 }}>视频输出</div>
             <div style={{ marginTop: 3, fontSize: 13, fontWeight: 900 }}>{props.videoState.assetUrl ? "已生成" : "等待执行"}</div>
           </div>
         </div>
@@ -417,27 +443,32 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
   return (
     <div style={PANEL_STYLE}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
-        <div>
+        <div style={{ maxWidth: 620 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>节点一：图文生图</div>
-          <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>先产出一张质量足够的参考图，再把它送入图生视频节点。</div>
+          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>先产出一张质量足够的参考图，再把它送入图生视频节点。</div>
         </div>
-        <div style={{ borderRadius: 14, background: "#eff6ff", padding: "10px 12px", color: "#1d4ed8", fontWeight: 800 }}>
+        <div style={HEADER_BADGE}>
           Kling Image
         </div>
       </div>
 
-      <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} style={INPUT_STYLE} />
-
-      <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <select value={size} onChange={(e) => setSize(e.target.value)} style={{ ...INPUT_STYLE, width: 220, marginTop: 0 }}>
-          <option value="1024x576">1024x576（横屏）</option>
-          <option value="576x1024">576x1024（竖屏）</option>
-          <option value="1024x1024">1024x1024（方形）</option>
-        </select>
-        <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.7 : 1 }}>
-          {busy ? "生成中…" : "开始生成"}
-        </button>
-        {taskId ? <span style={{ fontSize: 12, color: "#475569" }}>任务：<code style={CODE_STYLE}>{taskId}</code></span> : null}
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.2fr 260px", gap: 16 }}>
+        <div style={SUB_PANEL}>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>提示词</div>
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} style={{ ...INPUT_STYLE, marginTop: 0 }} />
+        </div>
+        <div style={SUB_PANEL}>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>输出设置</div>
+          <select value={size} onChange={(e) => setSize(e.target.value)} style={{ ...INPUT_STYLE, marginTop: 0 }}>
+            <option value="1024x576">1024x576（横屏）</option>
+            <option value="576x1024">576x1024（竖屏）</option>
+            <option value="1024x1024">1024x1024（方形）</option>
+          </select>
+          <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.7 : 1, marginTop: 12, width: "100%" }}>
+            {busy ? "生成中…" : "开始生成"}
+          </button>
+          {taskId ? <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.72)" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
+        </div>
       </div>
 
       <ResultBanner stage={busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle"} error={debug?.error} okText="参考图已生成，可直接设为图生视频输入。" runningText="正在轮询可灵生图任务，请稍候。" />
@@ -446,7 +477,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           <img src={imageUrl} alt="generated" style={{ width: "100%", borderRadius: 18, background: "#0f172a" }} />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <a href={imageUrl} target="_blank" rel="noreferrer" style={{ ...SECONDARY_BUTTON, textDecoration: "none" }}>
+            <a href={imageUrl} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, textDecoration: "none" }}>
               打开图片
             </a>
             <button onClick={() => props.onUseAsRef(imageUrl)} style={PRIMARY_BUTTON}>
@@ -599,19 +630,23 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
   return (
     <div style={PANEL_STYLE}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
-        <div>
+        <div style={{ maxWidth: 620 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>节点二：图生视频</div>
-          <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>上传参考图或接收上方生图结果，直接推进可灵图生视频工作流。</div>
+          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>上传参考图或接收上方生图结果，直接推进可灵图生视频工作流。</div>
         </div>
-        <div style={{ borderRadius: 14, background: "#eff6ff", padding: "10px 12px", color: "#1d4ed8", fontWeight: 800 }}>
+        <div style={HEADER_BADGE}>
           Kling Video
         </div>
       </div>
 
       <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
-        <div>
+        <div style={SUB_PANEL}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800 }}>参考图输入</div>
+            {props.refImageUrl ? <span style={{ ...CODE_STYLE, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{props.refImageUrl}</span> : null}
+          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ ...SECONDARY_BUTTON, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <label style={{ ...GHOST_BUTTON, display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
               <UploadCloud size={16} />
               上传参考图
               <input
@@ -629,16 +664,19 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
                 }}
               />
             </label>
-            <span style={{ fontSize: 12, color: "#475569" }}>
-              {props.refImageUrl ? <>当前参考图：<code style={CODE_STYLE}>{props.refImageUrl}</code></> : "当前还没有参考图"}
+            <span style={{ fontSize: 12, color: "rgba(226,232,240,0.72)" }}>
+              {props.refImageUrl ? "当前参考图已接入" : "当前还没有参考图"}
             </span>
           </div>
-          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} style={INPUT_STYLE} />
-          <button onClick={start} disabled={busy || uploading} style={{ ...PRIMARY_BUTTON, marginTop: 12, opacity: busy || uploading ? 0.7 : 1 }}>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginTop: 12, marginBottom: 8 }}>镜头描述</div>
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} style={{ ...INPUT_STYLE, marginTop: 0 }} />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            <button onClick={start} disabled={busy || uploading} style={{ ...PRIMARY_BUTTON, opacity: busy || uploading ? 0.7 : 1 }}>
             {busy ? "生成中…" : uploading ? "上传中…" : "启动工作流"}
-          </button>
-          {taskId ? <div style={{ marginTop: 10, fontSize: 12, color: "#475569" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
-          {workflowResult?.workflowId ? <div style={{ marginTop: 6, fontSize: 12, color: "#475569" }}>workflowId：<code style={CODE_STYLE}>{workflowResult.workflowId}</code></div> : null}
+            </button>
+            {taskId ? <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "rgba(226,232,240,0.72)" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
+          </div>
+          {workflowResult?.workflowId ? <div style={{ marginTop: 6, fontSize: 12, color: "rgba(226,232,240,0.72)" }}>workflowId：<code style={CODE_STYLE}>{workflowResult.workflowId}</code></div> : null}
 
           <ResultBanner
             stage={stage}
@@ -648,19 +686,19 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
           />
         </div>
 
-        <div style={{ borderRadius: 18, border: "1px solid #dbe4f0", background: "#f8fafc", padding: 14 }}>
+        <div style={SUB_PANEL}>
           <div style={{ fontWeight: 900, marginBottom: 10 }}>当前产出</div>
           {displayVideoUrl ? (
             <div>
               <video controls src={displayVideoUrl} style={{ width: "100%", borderRadius: 14, background: "#0f172a" }} />
-              <a href={displayVideoUrl} target="_blank" rel="noreferrer" style={{ ...SECONDARY_BUTTON, display: "inline-block", marginTop: 10, textDecoration: "none" }}>
+              <a href={displayVideoUrl} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, display: "inline-block", marginTop: 10, textDecoration: "none" }}>
                 下载 MP4
               </a>
             </div>
           ) : props.refImageUrl ? (
-            <img src={props.refImageUrl} alt="reference" style={{ width: "100%", borderRadius: 14, background: "#e2e8f0" }} />
+            <img src={props.refImageUrl} alt="reference" style={{ width: "100%", borderRadius: 14, background: "#0f172a" }} />
           ) : (
-            <div style={{ borderRadius: 14, minHeight: 180, display: "grid", placeItems: "center", background: "#e2e8f0", color: "#64748b", fontWeight: 700 }}>
+            <div style={{ borderRadius: 14, minHeight: 180, display: "grid", placeItems: "center", background: "rgba(148,163,184,0.12)", color: "rgba(226,232,240,0.72)", fontWeight: 700 }}>
               等待参考图或视频结果
             </div>
           )}
@@ -760,12 +798,12 @@ function MusicPanel(props: { onStateChange: (state: PanelState) => void }) {
   return (
     <div style={PANEL_STYLE}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
-        <div>
+        <div style={{ maxWidth: 620 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>节点三：音乐生成</div>
-          <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>独立生成配乐，后续可以和视频结果一起交给主线做更深的成片整合。</div>
+          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>独立生成配乐，后续可以和视频结果一起交给主线做更深的成片整合。</div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <div style={{ borderRadius: 14, background: "#eff6ff", padding: "10px 12px", color: "#1d4ed8", fontWeight: 800 }}>Music</div>
+          <div style={HEADER_BADGE}>Music</div>
           <select value={provider} onChange={(e) => setProvider(e.target.value as MusicProvider)} style={{ ...INPUT_STYLE, width: 180, marginTop: 0 }}>
             <option value="suno">Suno</option>
             <option value="udio">Udio</option>
@@ -773,18 +811,31 @@ function MusicPanel(props: { onStateChange: (state: PanelState) => void }) {
         </div>
       </div>
 
-      <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} style={INPUT_STYLE} />
-      <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, marginTop: 12, opacity: busy ? 0.7 : 1 }}>
-        {busy ? "生成中…" : "开始生成"}
-      </button>
-      {taskId ? <div style={{ marginTop: 10, fontSize: 12, color: "#475569" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
+      <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 16 }}>
+        <div style={SUB_PANEL}>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>配乐提示词</div>
+          <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} style={{ ...INPUT_STYLE, marginTop: 0 }} />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+            <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.7 : 1 }}>
+              {busy ? "生成中…" : "开始生成"}
+            </button>
+            {taskId ? <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "rgba(226,232,240,0.72)" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
+          </div>
+        </div>
 
-      <ResultBanner
-        stage={busy ? "running" : selected?.audio_url ? "done" : debug?.ok === false ? "error" : "idle"}
-        error={debug?.error}
-        okText="音乐已生成，可直接试听和下载。"
-        runningText="音乐任务正在轮询，请稍候。"
-      />
+        <div style={SUB_PANEL}>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>当前说明</div>
+          <div style={{ ...MUTED_TEXT, lineHeight: 1.7 }}>
+            当前节点负责生成可直接试听的配乐成品。你可以先出视频，再回到这里补音乐。
+          </div>
+          <ResultBanner
+            stage={busy ? "running" : selected?.audio_url ? "done" : debug?.ok === false ? "error" : "idle"}
+            error={debug?.error}
+            okText="音乐已生成，可直接试听和下载。"
+            runningText="音乐任务正在轮询，请稍候。"
+          />
+        </div>
+      </div>
 
       {Array.isArray(clips) && clips.length ? (
         <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "280px 1fr", gap: 16 }}>
@@ -803,30 +854,30 @@ function MusicPanel(props: { onStateChange: (state: PanelState) => void }) {
                     textAlign: "left",
                     padding: "12px 14px",
                     borderRadius: 14,
-                    border: "1px solid #dbe4f0",
-                    background: active ? "#eff6ff" : "#ffffff",
-                    color: "#0f172a",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: active ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.04)",
+                    color: "#f8fafc",
                     cursor: clip?.audio_url ? "pointer" : "not-allowed",
                     opacity: clip?.audio_url ? 1 : 0.6,
                   }}
                 >
                   <div style={{ fontWeight: 800 }}>{clip?.title || "未命名片段"}</div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: "#64748b" }}>{clip?.state || ""}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: "rgba(226,232,240,0.62)" }}>{clip?.state || ""}</div>
                 </button>
               );
             })}
           </div>
-          <div style={{ borderRadius: 18, border: "1px solid #dbe4f0", background: "#f8fafc", padding: 14 }}>
+          <div style={SUB_PANEL}>
             {selected?.audio_url ? (
               <>
                 <div style={{ fontWeight: 900 }}>{selected?.title || "当前音乐"}</div>
                 <audio controls autoPlay src={selected.audio_url} style={{ width: "100%", marginTop: 12 }} />
-                <a href={selected.audio_url} target="_blank" rel="noreferrer" style={{ ...SECONDARY_BUTTON, display: "inline-block", marginTop: 12, textDecoration: "none" }}>
+                <a href={selected.audio_url} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, display: "inline-block", marginTop: 12, textDecoration: "none" }}>
                   下载音频
                 </a>
               </>
             ) : (
-              <div style={{ minHeight: 160, display: "grid", placeItems: "center", color: "#64748b", fontWeight: 700 }}>
+              <div style={{ minHeight: 160, display: "grid", placeItems: "center", color: "rgba(226,232,240,0.72)", fontWeight: 700 }}>
                 等待可试听的音乐结果
               </div>
             )}
@@ -854,17 +905,17 @@ export default function RemixStudio() {
         <BuildBadge />
         <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <div>
-            <div style={{ fontSize: 34, fontWeight: 900, color: "#0f172a", letterSpacing: "-0.03em" }}>Kling Studio</div>
-            <div style={{ marginTop: 6, color: "#475569", fontSize: 14 }}>
+            <div style={{ fontSize: 34, fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>Kling Studio</div>
+            <div style={{ marginTop: 6, color: "rgba(226,232,240,0.72)", fontSize: 14 }}>
               节点工作流已经迁到这里：先生成参考图，再推进可灵图生视频，并补充配乐能力。
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ ...CODE_STYLE, background: "#dbeafe", color: "#1d4ed8" }}>1. 生图</span>
+            <span style={{ ...CODE_STYLE, background: "rgba(255,255,255,0.10)", color: "#f8fafc" }}>1. 生图</span>
             <ArrowRight size={16} color="#94a3b8" />
-            <span style={{ ...CODE_STYLE, background: "#dbeafe", color: "#1d4ed8" }}>2. 图生视频</span>
+            <span style={{ ...CODE_STYLE, background: "rgba(255,255,255,0.10)", color: "#f8fafc" }}>2. 图生视频</span>
             <ArrowRight size={16} color="#94a3b8" />
-            <span style={{ ...CODE_STYLE, background: "#dbeafe", color: "#1d4ed8" }}>3. 音乐</span>
+            <span style={{ ...CODE_STYLE, background: "rgba(255,255,255,0.10)", color: "#f8fafc" }}>3. 音乐</span>
           </div>
         </div>
 
