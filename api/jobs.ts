@@ -9,6 +9,7 @@ import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
 import {
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
+  startWorkflow as startCoreWorkflow,
   type WorkflowTask,
 } from "../server/vercel-api-core/workflow.js";
 import { generateVideoWithVeo } from "../server/models/veo.js";
@@ -1128,21 +1129,25 @@ async function generateScriptOnlyViaPromptBuilder(input: {
 
 function createServerWorkflowTask(input: {
   sourceType: string;
+  inputType?: "script" | "image";
   prompt: string;
+  imageUrl?: string;
   targetWords?: number;
   targetScenes?: number;
 }) {
+  const inputType = input.inputType === "image" ? "image" : "script";
   const now = Date.now();
   const task: WorkflowTask = {
     workflowId: randomUUID(),
     sourceType: input.sourceType || "workflow",
-    inputType: "script",
+    inputType,
     payload: {
       prompt: input.prompt,
+      imageUrl: s(input.imageUrl).trim(),
       targetWords: input.targetWords,
       targetScenes: input.targetScenes,
     },
-    currentStep: "script",
+    currentStep: inputType === "image" ? "image" : "script",
     status: "pending",
     outputs: {},
     createdAt: now,
@@ -1231,23 +1236,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ ok: false, error: "Method not allowed" });
       }
       const sourceType = b.sourceType;
+      const inputType = s(b.inputType || "script").trim().toLowerCase();
       const payload = b.payload ?? {};
 
       if (sourceType !== "direct" && sourceType !== "remix" && sourceType !== "showcase" && sourceType !== "workflow") {
         return res.status(400).json({ ok: false, error: "sourceType must be direct/remix/showcase/workflow" });
       }
+      if (inputType !== "script" && inputType !== "image") {
+        return res.status(400).json({ ok: false, error: "inputType must be script or image" });
+      }
+      if (inputType === "script" && !s(payload.prompt).trim()) {
+        return res.status(400).json({ ok: false, error: "payload.prompt is required for script workflow" });
+      }
+      if (inputType === "image" && !s(payload.imageUrl).trim() && !s(payload.prompt).trim()) {
+        return res.status(400).json({ ok: false, error: "payload.imageUrl or payload.prompt is required for image workflow" });
+      }
       const task = createServerWorkflowTask({
         sourceType,
+        inputType: inputType as "script" | "image",
         prompt: s(payload.prompt).trim(),
+        imageUrl: s(payload.imageUrl).trim(),
         targetWords: Number(payload.targetWords || 0) || undefined,
         targetScenes: Number(payload.targetScenes || 0) || undefined,
       });
       saveCoreWorkflow(task);
+      void startCoreWorkflow(task).catch(() => {
+        // startWorkflow persists its own failed status/error path
+      });
       return res.status(200).json({
         ok: true,
         workflowId: task.workflowId,
-        status: "pending",
-        currentStep: "script",
+        status: task.status,
+        currentStep: task.currentStep,
         workflow: task,
       });
     }

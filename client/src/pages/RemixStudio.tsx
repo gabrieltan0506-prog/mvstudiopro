@@ -218,11 +218,10 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
           }
         : { prompt: trimmedPrompt };
 
-      const wf = await fetchJsonish("/api/jobs", {
+      const wf = await fetchJsonish("/api/jobs?op=workflowTest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          op: "workflowTest",
           sourceType: "remix",
           inputType: workflowInputType,
           payload: workflowPayload,
