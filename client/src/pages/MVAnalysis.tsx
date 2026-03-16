@@ -1717,9 +1717,9 @@ export default function MVAnalysisPage() {
                           {platformRecommendationRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[42%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1745,9 +1745,9 @@ export default function MVAnalysisPage() {
                           {positioningRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[30%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1769,9 +1769,9 @@ export default function MVAnalysisPage() {
                           {contentAnalysisRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
+                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[30%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1798,15 +1798,70 @@ export default function MVAnalysisPage() {
                         </div>
                       ))}
                     </div>
+                    <div className="relative mt-5 grid gap-4 xl:grid-cols-[1.12fr_0.88fr]">
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <div className="flex items-center gap-2 text-white">
+                          <Workflow className="h-4 w-4 text-[#f5b7ff]" />
+                          <span className="text-sm font-semibold">业务转化漏斗</span>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {businessFunnelSteps.map((step, index) => (
+                            <button
+                              key={`business-${step.label}`}
+                              type="button"
+                              onClick={() => setActiveDashboardPanel("monetization")}
+                              className="block w-full text-left"
+                            >
+                              <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
+                                <span>{step.label}</span>
+                                <span>{step.value}%</span>
+                              </div>
+                              <div className="flex justify-center">
+                                <div
+                                  className={`rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)] transition ${
+                                    activeDashboardPanel === "monetization"
+                                      ? "bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)]"
+                                      : "bg-[linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e)] opacity-85"
+                                  }`}
+                                  style={{ width: `${92 - index * 18}%` }}
+                                >
+                                  {step.detail}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <div className="flex items-center gap-2 text-white">
+                          <ScanSearch className="h-4 w-4 text-[#ffd08f]" />
+                          <span className="text-sm font-semibold">转化决策说明</span>
+                        </div>
+                        <div className="mt-4 grid gap-3">
+                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">短期目标</div>
+                            <div className="mt-2 text-sm leading-6 text-white/78">先让用户看懂你解决什么，再看愿不愿意继续看和咨询。短期先验证收藏、完播、咨询，不先重投流。</div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">中长期路径</div>
+                            <div className="mt-2 text-sm leading-6 text-white/78">把内容沉淀成案例页、方法页、训练营页或咨询页，再决定知识付费、品牌合作还是高客单服务主承接。</div>
+                          </div>
+                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">投放建议</div>
+                            <div className="mt-2 text-sm leading-6 text-white/78">只有当标题、前 3 秒、承接页都跑出正反馈，再用小预算放大高完播版。不要在路径没定清楚时先烧曝光。</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {businessTrackRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                              <td className="px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
+                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[36%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[16%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>
