@@ -382,7 +382,7 @@ export const appRouter = router({
           result = {
             analysis: growthAnalysisScoresSchema.parse(buildFallbackFrameAnalysis(input.context)),
             videoMeta: {
-              videoUrl: `data:${input.mimeType};base64,${input.fileBase64}`,
+              videoUrl: "",
               transcript: "",
               videoDuration: 0,
               provider: "fallback",

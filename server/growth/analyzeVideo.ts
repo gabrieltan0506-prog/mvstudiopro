@@ -136,7 +136,6 @@ function normalizeFailureReason(error: unknown) {
 
 function buildVideoFallbackResult(params: {
   mimeType: string;
-  fileBase64?: string;
   context?: string;
   summary?: string;
   transcript?: string;
@@ -147,7 +146,7 @@ function buildVideoFallbackResult(params: {
   return {
     analysis: buildFallbackVideoAnalysis(params.summary || "", params.context || ""),
     videoMeta: {
-      videoUrl: params.fileBase64 ? `data:${params.mimeType};base64,${params.fileBase64}` : "",
+      videoUrl: "",
       transcript: params.transcript || "",
       videoDuration: params.videoDuration || 0,
       provider: "fallback",
@@ -175,7 +174,6 @@ export async function analyzeVideo(params: {
       console.warn("[growth.analyzeVideo] frame extraction fallback:", error);
       return buildVideoFallbackResult({
         mimeType: params.mimeType,
-        fileBase64: params.fileBase64,
         context: params.context,
         failureStage: "frame_extraction",
         failureReason: normalizeFailureReason(error),
@@ -272,7 +270,6 @@ summary 必须覆盖：
     console.warn("[growth.analyzeVideo] Falling back to deterministic analysis:", error);
     return buildVideoFallbackResult({
       mimeType: params.mimeType,
-      fileBase64: params.fileBase64,
       context: params.context,
       failureStage: "unknown",
       failureReason: normalizeFailureReason(error),
