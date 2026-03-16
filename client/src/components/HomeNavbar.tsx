@@ -2,7 +2,7 @@ import React from "react";
 
 const nav = [
   ["首页", "Home", "/"],
-  ["创作", "Create", "/remix"],
+  ["创作", "Create", "/kling-studio"],
   ["工作流", "Workflow", "/workflow"],
   ["爆款案例", "Showcase", "/showcase"],
   ["创作者", "Creators", "/actor"],

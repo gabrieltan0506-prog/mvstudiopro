@@ -2,7 +2,7 @@ import WorkflowStoryboardToVideo from "./pages/WorkflowStoryboardToVideo";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazy, Suspense } from "react";
@@ -38,6 +38,16 @@ function PageLoader() {
   );
 }
 
+function LegacyRemixRedirect() {
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    navigate("/kling-studio", { replace: true });
+  }, [navigate]);
+
+  return <PageLoader />;
+}
+
 function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -55,7 +65,8 @@ function Router() {
         <Route path={"/dashboard"} component={LayoutDashboard} />
         <Route path={"/admin"} component={AdminPanel} />
         <Route path={"/payments"} component={PaymentHistory} />
-        <Route path={"/remix"} component={RemixStudio} />
+        <Route path={"/kling-studio"} component={RemixStudio} />
+        <Route path={"/remix"} component={LegacyRemixRedirect} />
         <Route path={"/workflow"} component={WorkflowStoryboardToVideo} />
         <Route path={"/workspace"} component={WorkspaceStudio} />
         <Route path={"/templates"} component={TemplatesLibrary} />

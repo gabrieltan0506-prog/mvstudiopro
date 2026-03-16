@@ -177,7 +177,7 @@ export default function HomeHero() {
                 </div>
 
                 <a
-                  href="/remix"
+                  href="/kling-studio"
                   style={{
                     padding: "12px 18px",
                     borderRadius: 14,
@@ -294,7 +294,7 @@ export default function HomeHero() {
 
             <div style={{ display: "flex", gap: 12, marginTop: 22, flexWrap: "wrap" }}>
               <a
-                href="/remix"
+                href="/kling-studio"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,

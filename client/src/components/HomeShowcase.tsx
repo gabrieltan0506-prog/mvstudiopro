@@ -64,7 +64,7 @@ fontSize:12
 
 <div style={{display:"flex",gap:10,marginTop:14}}>
 
-<a href="/remix"
+<a href="/kling-studio"
 style={{
 padding:"8px 14px",
 borderRadius:10,
