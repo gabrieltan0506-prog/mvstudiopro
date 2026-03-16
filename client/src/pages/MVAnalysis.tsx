@@ -294,19 +294,19 @@ function buildPositioningRows(
     {
       label: "🎯 受众痛点",
       insight: compactText(audience, 22),
-      action: compactText(industryTemplate?.painPoint || "先只解决一个最痛的问题，不要一条内容想包办全部。", 20),
+      action: compactText(industryTemplate?.painPoint || "先只解决一个最痛的问题。", 14),
       highlight: "先锁一个痛点",
     },
     {
       label: "🧭 内容角色",
       insight: compactText(roleHint, 20),
-      action: compactText("先把角色写清楚，再统一标题、脚本、结尾动作。", 20),
+      action: compactText("先写清角色，再统一标题和脚本。", 14),
       highlight: "先定角色",
     },
     {
       label: "💼 当前重点",
       insight: primaryDirection === "先不主打变现" ? "先把入口做成熟。" : `先主攻「${primaryDirection}」。`,
-      action: compactText(industryTemplate?.primaryConversion || "给一个明确承接动作，不同时推多个方向。", 20),
+      action: compactText(industryTemplate?.primaryConversion || "只留一个承接动作。", 14),
       highlight: "只留一个主方向",
     },
   ];
@@ -317,24 +317,24 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
     {
       label: "✅ 当前优势",
       insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。", 22),
-      action: compactText(analysis.strengths[1] || "把优势固定成标题、封面或镜头模板。", 20),
+      action: compactText(analysis.strengths[1] || "把优势固定成标题或封面。", 14),
       highlight: "先固定优势",
     },
     {
       label: "⚠️ 优先优化点",
       insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 22),
-      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。", 20),
+      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。", 14),
       highlight: "先修停留",
     },
     {
       label: "🧩 表达问题",
       insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。", 22),
-      action: compactText("先给一句结论，后面所有内容都服务这句。", 20),
+      action: compactText("先给一句结论，再补细节。", 14),
     },
     {
       label: "🚀 建议方向",
       insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。", 22),
-      action: compactText("按“痛点 -> 做法 -> 动作”重写。", 20),
+      action: compactText("按“痛点 -> 做法 -> 动作”重写。", 14),
       highlight: "方案要短、能执行",
     },
   ];
@@ -361,15 +361,15 @@ function buildPlatformRecommendationRows(
   return recommendations.map((platform) => {
     const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
     const publishAction = platform.name === "小红书"
-      ? "先发一版可收藏笔记：封面只讲结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。"
+      ? "先发收藏型笔记：封面讲结果，正文只保留痛点、做法、收藏理由。"
       : platform.name === "抖音"
-        ? "做一版 9:16 结果前置短视频：开头 2 秒先给结论，中段只保留 2 到 3 个关键画面，结尾只留一个动作。需要放量时先小预算测标题和前 2 秒停留，再决定投流。"
+        ? "做结果前置短视频：开头先给结论，中段只留关键画面，结尾只留一个动作。"
         : platform.name === "快手"
-          ? "改成更生活化、更结果导向的直给版：先说这件事值不值、适不适合、怎么做更省事。不要讲平台分析，只讲用户能立刻拿走的做法。"
-          : "做一版 60 到 120 秒的案例拆解或复盘：先讲结果，再讲步骤和误区，最后告诉用户下一版还能看什么。需要建立信任时，优先放长尾搜索和案例页承接。";
+          ? "改成直给版：先说值不值、适不适合、怎么做更省事。"
+          : "做案例拆解版：先讲结果，再讲步骤和误区。";
     return {
       label: platform.name,
-      insight: compactText(platform.reason, 56),
+      insight: compactText(platform.reason, 34),
       action: publishAction,
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
@@ -429,9 +429,9 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
     if (track.name === "知识付费") {
       return {
         label: `${track.name} ${track.fit}%`,
-        insight: "适合做「案例拆解 + 方法复盘 + 工具模板」的内容包，不适合只讲观点。先把一个可重复的结果方法讲清楚，再沉淀成训练营、陪跑或模板库。",
-        action: "平台先用 B站做完整案例版，再把核心结论拆成小红书收藏笔记和抖音短视频。前期不建议重投流，先用自然流量验证收藏率、完播率和咨询率；只有转化入口清楚后，再小预算放大高完播版本。",
-        highlight: "内容题型优先：诊断框架、复盘案例、三步方法、常见误区、模板演示。",
+        insight: "适合做案例拆解、方法复盘和工具模板，不适合只讲观点。",
+        action: "先用完整案例验证，再拆成收藏笔记和短视频。",
+        highlight: "优先：诊断框架、复盘案例、三步方法。",
       };
     }
     if (track.name === "品牌合作") {
@@ -441,25 +441,25 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
           ? "不是泛写“可接品牌合作”，而是要围绕场景问题、解决方案和合作品类展开。先让品牌看懂你能替它卖什么场景。"
           : "品牌合作只在表达统一、案例清楚、服务结果讲透时才成立。没有案例页和结果说明时，不要把品牌合作写成主卖点。",
         action: /美妆|穿搭|形象|妆|护肤|造型/.test(context)
-          ? "先补一版“场景问题 -> 解决方案 -> 可合作品类”的案例页，优先看运动美妆、防晒、功能护肤、运动服饰、造型工具和生活方式品牌。"
-          : "先做一页行业案例说明：你解决什么问题、做出过什么结果、适合哪类品牌合作，再把内容里所有动作统一到这条承接页。",
-        highlight: "只在合作类别、服务结果、承接页三件事都清楚时，品牌合作才值得主打。",
+          ? "先补场景案例页，写清问题、方案、合作品类。"
+          : "先做行业案例页，写清问题、结果和合作对象。",
+        highlight: "先清合作类别、结果证明、承接页。",
       };
     }
     if (track.name === "电商带货") {
       return {
         label: `${track.name} ${track.fit}%`,
-        insight: "适合做结果前置、利益点直接、动作明确的转化型表达。先讲“这东西值不值、解决什么、怎么买”，再讲过程。",
-        action: "先做一版强 CTA 的短视频或图文，验证点击和咨询。前期只小额测试 1 到 2 个结果前置版本，不先烧大预算投流。",
-        highlight: "优先做单品转化，不要一上来混多个商品和多个动作。",
+        insight: "适合结果前置和利益点直接的转化表达。",
+        action: "先测 1 到 2 个强 CTA 版本，只保留一个购买动作。",
+        highlight: "先做单品，不要混多个商品。",
       };
     }
     return {
       label: `${track.name} ${track.fit}%`,
-      insight: compactText(replaceTerms(track.reason), 72),
-      action: compactText(replaceTerms(track.nextStep), 96),
+      insight: compactText(replaceTerms(track.reason), 34),
+      action: compactText(replaceTerms(track.nextStep), 36),
       highlight: track.name === "社群会员"
-        ? "只有固定主题、固定更新和固定权益三件事都成立，社群才值得做。"
+        ? "先有固定主题、固定更新、固定权益。"
         : industryTemplate?.offerExamples?.[0]
           ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
           : undefined,

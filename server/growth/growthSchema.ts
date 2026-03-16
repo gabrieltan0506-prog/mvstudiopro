@@ -216,10 +216,52 @@ function inferCarryRule(collection?: PlatformTrendCollection) {
   if (avgShares >= Math.max(avgComments, 1) * 1.2) {
     return "更适合把案例、结果和服务页放在主承接位，放大转发扩散。";
   }
-  if (avgLikes >= Math.max(avgComments + avgShares, 1) * 2) {
-    return "更适合用模板、清单或可领取资料做轻承接，不要过早重销售。";
+  return avgLikes >= Math.max(avgComments, avgShares, 1) * 1.4
+    ? "适合先用结果和案例建立信任，再把单一路径转化动作收紧。"
+    : "承接动作要尽量单一，先把主问题讲透，再推进后续转化。";
+}
+
+function buildTrackPlaybook(
+  trackName: string,
+  context: string,
+  industryTemplate: GrowthIndustryTemplate,
+  analysis: GrowthAnalysisScores,
+) {
+  const offerA = industryTemplate.offerExamples[0] || industryTemplate.primaryConversion;
+  const offerB = industryTemplate.offerExamples[1] || industryTemplate.trustAsset;
+  if (trackName === "社群会员") {
+    return {
+      why: "只有当主题固定、更新固定、群内权益固定时，社群才成立；否则用户没有留下来的理由。",
+      action: `先把社群主题锁到「${industryTemplate.painPoint}」，每周固定 1 次更新与 1 个群内权益，先用「${offerA}」测试进群理由。`,
+      avoid: "不要先写“欢迎进群”或直接做重运营，先验证有没有稳定的同主题内容和明确权益。",
+    };
   }
-  return "默认承接到单一 CTA，不要同时挂多个转化动作。";
+  if (trackName === "知识付费") {
+    return {
+      why: "用户不是为观点付费，而是为更短路径、更稳结果和可复制方法付费。",
+      action: `先把内容整理成“结果 + 3 步方法 + 常见误区”，再用「${offerA} / ${offerB}」测试付费意愿。`,
+      avoid: "不要一开始就卖完整课程，先用单主题案例、清单或模板验证成交理由。",
+    };
+  }
+  if (trackName === "电商带货") {
+    return {
+      why: "这条内容的冲击力更适合结果前置和利益点表达，能直接承接单一购买动作。",
+      action: `先把前 3 秒改成结果和痛点，再只挂一个产品动作，优先测「${offerA}」。`,
+      avoid: "不要同一条内容同时挂多个商品、多个动作和多个理由。",
+    };
+  }
+  if (trackName === "品牌合作") {
+    return {
+      why: "品牌不会为泛流量买单，而是为可对接场景、可展示结果和明确合作品类买单。",
+      action: `先补一页“场景痛点 -> 解决方案 -> 合作品类 -> 结果证明”，优先围绕「${industryTemplate.trustAsset}」展开。`,
+      avoid: "不要只写“可接品牌合作”，要写清你替品牌解决什么问题。",
+    };
+  }
+  return {
+    why: analysis.viralPotential >= 70 ? "当前内容已有放大基础，但承接路径还没收紧。" : "当前更像内容入口，还不是完整商业入口。",
+    action: `先围绕「${industryTemplate.primaryConversion}」做单一路径验证，重点展示「${offerA}」。`,
+    avoid: "不要同时堆多个商业方向，先只跑一条最短转化路径。",
+  };
 }
 
 function assessCollectionReliability(platform: GrowthPlatform, collection?: PlatformTrendCollection) {
@@ -783,6 +825,7 @@ function buildBusinessInsights(
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthBusinessInsight[] {
   const primaryTrack = monetizationTracks.find((track) => track.fit >= 60)?.name || "暂不主打变现";
+  const playbook = buildTrackPlaybook(primaryTrack, context, industryTemplate, analysis);
   const beautyFashion = isBeautyFashionContext(context);
   const bookingStyle = /咨询|顾问|预约|服务|方案/.test(context);
   const commerceStyle = /带货|商品|单品|橱窗|电商/.test(context);
@@ -802,41 +845,47 @@ function buildBusinessInsights(
   return [
     {
       title: "当前更该解决的问题",
-      detail: `这条内容现在不是缺灵感，而是缺一个让用户和合作方都能立刻看懂的入口。优先围绕「${industryTemplate.painPoint}」重写，而不是继续堆更多信息。`,
+      detail: `先把「${industryTemplate.painPoint}」讲成一句用户一看就懂的结果，不要继续堆解释。`,
     },
     {
       title: "中长期商业判断",
       detail: primaryTrack === "暂不主打变现"
-        ? "当前商业闭环还不成熟。不是说商业价值为零，而是还没形成让用户和合作方一眼看懂的承接方式。先把内容入口、角色和案例表达补起来。"
+        ? "当前不是不能变现，而是入口还不够清楚。先补角色、案例和承接动作。"
         : analysis.viralPotential >= 75
-          ? "这条内容已经不是“要不要发”的问题，而是“发出去以后把用户带到哪里”。先定唯一承接动作，再决定标题、封面和结尾。"
-          : "当前先别急着讲太多商业化，先把内容变成一个明确的入口：让用户在 3 秒内知道你解决什么问题、为什么值得继续看、下一步该做什么。",
+          ? `优先主打「${primaryTrack}」，因为现在更缺承接路径，不缺内容题材。`
+          : `可以做「${primaryTrack}」，但要先把入口和成交理由说清。`,
+    },
+    {
+      title: "为什么先做",
+      detail: playbook.why,
     },
     {
       title: "中长期主承接动作",
       detail: bookingStyle
-        ? "你的内容更适合把用户导向预约、咨询或方案沟通页，重点不是讲理念，而是让用户快速判断“你能不能帮我”。"
+        ? "优先导向预约、咨询或方案沟通页，让用户快速判断你能不能帮他。"
         : commerceStyle
-          ? "你的内容更适合把用户导向商品页或单品推荐，重点不是讲完整故事，而是把利益点、适用场景和购买动作说清楚。"
+          ? "优先导向商品页或单品推荐，只保留一个购买动作。"
           : educationStyle
-            ? "你的内容更适合把用户导向课程、模板或陪跑入口，重点不是讲灵感，而是讲方法、步骤和结果。"
+            ? "优先导向课程、模板或陪跑入口，重点讲方法、步骤和结果。"
             : communityStyle || primaryTrack === "社群会员"
-            ? "只有当你能长期输出同主题内容并提供稳定权益时，社群才值得做；否则先用轻量私域或预约动作测试承接。"
+            ? "只有你能稳定输出同主题内容并提供固定权益时，社群才值得做；否则先做轻私域测试。"
               : `${primaryAction} 先围绕「${industryTemplate.primaryConversion}」组织承接。`,
     },
     {
       title: "中长期成交说法",
       detail: primaryTrack === "品牌合作" && beautyFashion
-        ? "不要只写“品牌合作”。应该直接写成：适合运动美妆、防晒、功能护肤、运动服饰、配件工具、造型服务这几类品牌合作。"
+        ? "不要写泛品牌合作，要直接写成可合作场景和品类。"
         : primaryTrack === "暂不主打变现"
-          ? "先不要对外写品牌合作、带货或社群。先把内容价值说明成：你解决什么问题、能给用户什么结果、为什么值得持续关注。"
-        : context.trim()
-          ? `你现在的业务背景更适合先验证「${primaryTrack}」这一条成交路径，别同时混合多个方向。`
-          : `先围绕「${primaryTrack}」做单一路径验证，先跑通再扩。`,
+          ? "先讲清你解决什么问题和能给什么结果，再谈商业化。"
+        : `先只验证「${primaryTrack}」这一条路径，不要同时混多个方向。`,
     },
     {
       title: "中长期下一步落地",
-      detail: `${primaryAction} 内容表达上优先补「${industryTemplate.trustAsset}」，承接上优先验证「${industryTemplate.offerExamples[0] || industryTemplate.primaryConversion}」。如果首发是图文，下一步就把同主题改写成分镜脚本和短视频版本。`,
+      detail: playbook.action,
+    },
+    {
+      title: "当前不要做",
+      detail: playbook.avoid,
     },
   ];
 }
