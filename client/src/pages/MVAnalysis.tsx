@@ -281,26 +281,26 @@ function buildPositioningRows(
     {
       label: "🎯 受众痛点",
       insight: compactText(audience, 42),
-      action: compactText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。", 34),
-      highlight: "没有明确受众时，后面所有商业判断都会发散。",
+      action: compactText(industryTemplate?.painPoint || "先写清楚用户卡在哪里，再决定这条内容是引流、信任还是成交。", 38),
+      highlight: "先锁定一个痛点，不要一条内容想解决所有问题。",
     },
     {
       label: "🧭 内容角色",
       insight: compactText(
         industryTemplate?.positioningHint || analysis.summary || "这条内容当前更像素材，不是可以直接成交的完整内容。",
-        60,
+        50,
       ),
-      action: compactText(roleFixPlan, 42),
+      action: compactText(roleFixPlan, 40),
       highlight: "先定角色，再定脚本和平台。",
     },
     {
       label: "💼 主商业方向",
       insight: primaryDirection === "先不主打变现"
-        ? "当前商业闭环不成熟，先不要把品牌合作、带货、社群同时写上去。"
+        ? "当前先把入口内容做成熟，不要急着同时写品牌合作、带货和社群。"
         : `当前优先验证「${primaryDirection}」这一条路径。`,
       action: primaryDirection === "先不主打变现"
-        ? "先把内容角色、受众痛点、首发平台和结尾动作统一，再去谈商业承接。"
-        : compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 42),
+        ? "先把受众痛点、角色表达、案例证明和结尾动作做顺，再谈商业承接。"
+        : compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 40),
       highlight: primaryDirection === "先不主打变现"
         ? "先跑通内容入口，再谈后续商业化。"
         : "单一路径比多方向堆叠更容易转化。",
@@ -312,25 +312,25 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
   return [
     {
       label: "✅ 当前优势",
-      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。", 48),
-      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。", 42),
+      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。", 40),
+      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。", 36),
       highlight: "先固定可复用优势，不要每条都重来。",
     },
     {
       label: "⚠️ 优先优化点",
-      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 48),
-      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。", 42),
+      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 40),
+      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。", 36),
       highlight: "先修最影响停留的问题。",
     },
     {
       label: "🧩 表达问题",
-      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。", 48),
-      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 42),
+      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。", 40),
+      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 36),
     },
     {
       label: "🚀 建议方向",
-      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。", 48),
-      action: compactText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 42),
+      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。", 40),
+      action: compactText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 36),
       highlight: "结论更短，方案更具体，用户才知道下一步怎么做。",
     },
   ];
@@ -365,7 +365,7 @@ function buildPlatformRecommendationRows(
           : "做一版 60 到 120 秒的案例拆解或复盘：先讲结果，再讲步骤和误区，最后告诉用户下一版还能看什么。需要建立信任时，优先放长尾搜索和案例页承接。";
     return {
       label: platform.name,
-      insight: compactText(platform.reason, 74),
+      insight: compactText(platform.reason, 56),
       action: publishAction,
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
@@ -448,18 +448,20 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
 
   return [
     {
-      label: "A. 核心分析",
-      content: [
-        `画面节奏与视觉：${analysis.summary}`,
-        `叙事结构与口播/字幕：优先围绕“${analysis.improvements[0] || "结果前置"}”重写表达顺序，并把关键信息做成字幕层级。`,
-      ].join("\n"),
+      label: "🔥 先做什么",
+      content: `先把这条内容改成“一个结果 + 一个痛点 + 一个动作”的版本，优先修：${analysis.improvements[0] || "结果前置"}。`,
     },
     {
-      label: "B. 商业转化潜力",
-      content: [
-        "商业转化路径：先吸引精准受众，再通过稳定栏目感建立信任，最后承接到咨询、产品、课程或服务入口。",
-        "当前建议：只保留一条最清晰的商业路径，不要同时混合多个变现方向。",
-      ].join("\n"),
+      label: "✨ 现有亮点",
+      content: compactText(analysis.strengths[0] || analysis.summary || "视觉上已经有亮点，但表达和承接还不够完整。", 120),
+    },
+    {
+      label: "🛠 立刻改法",
+      content: `把开头前三秒改成结论前置，结尾补一个明确动作；中段只保留服务于主结论的画面和字幕。`,
+    },
+    {
+      label: "💰 商业延展",
+      content: "先跑出收藏、停留或咨询，再把同主题内容延展成图文、分镜脚本和视频版本，不要一开始同时写多个变现方向。",
     },
   ];
 }
@@ -1040,7 +1042,7 @@ export default function MVAnalysisPage() {
 
   return (
     <div className="min-h-screen bg-[#08111f] text-[#f7f4ef]">
-      <div className="mx-auto max-w-7xl px-4 py-8">
+      <div className="mx-auto max-w-[1760px] px-4 py-8">
         <UsageQuotaBanner
           featureType="analysis"
           currentCount={usageStatsQuery.data?.features.analysis.currentCount ?? 0}
@@ -1332,8 +1334,8 @@ export default function MVAnalysisPage() {
                   <p className="mt-4 text-sm leading-7 text-white/62">
                     这里不是静态柱状图。上面的图块负责给你全局判断，下面对应的分析区块会同步高亮，告诉你该先动哪里、怎么改、怎么承接。
                   </p>
-                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.95fr]">
-                    <div className="space-y-4">
+                  <div className="mt-6 grid gap-5 xl:grid-cols-12">
+                    <div className="space-y-5 xl:col-span-7">
                       <div className="grid gap-4 sm:grid-cols-2">
                         {dashboardMetrics.map((item) => (
                           <button
@@ -1363,7 +1365,7 @@ export default function MVAnalysisPage() {
                         ))}
                       </div>
 
-                      <div className="grid gap-4 lg:grid-cols-[0.88fr_1.12fr]">
+                      <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
                         <button
                           type="button"
                           onClick={() => setActiveDashboardPanel("readiness")}
@@ -1404,6 +1406,29 @@ export default function MVAnalysisPage() {
                               <div className="mt-2 text-4xl font-black text-white">{dashboardScoreAverage}%</div>
                             </div>
                           </div>
+                          <div className="relative mt-4 grid gap-2">
+                            {dashboardDonutData.map((entry) => (
+                              <button
+                                key={entry.name}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setActiveDashboardPanel(entry.panelId || "readiness");
+                                }}
+                                className={`flex items-center justify-between rounded-xl border px-3 py-2 text-left text-xs transition ${
+                                  activeDashboardPanel === entry.panelId
+                                    ? "border-white/20 bg-white/10 text-white"
+                                    : "border-white/10 bg-white/5 text-white/70"
+                                }`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.fill }} />
+                                  {entry.name}
+                                </span>
+                                <span>{entry.value}%</span>
+                              </button>
+                            ))}
+                          </div>
                         </button>
 
                         <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
@@ -1436,7 +1461,7 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="space-y-5 xl:col-span-5">
                       <button
                         type="button"
                         onClick={() => setActiveDashboardPanel("monetization")}
@@ -1471,7 +1496,7 @@ export default function MVAnalysisPage() {
                         </div>
                       </button>
 
-                      <div className="grid gap-3">
+                      <div className="grid gap-3 lg:grid-cols-2">
                         {dashboardPanels.map((panel) => {
                           const isActive = activeDashboardPanel === panel.id;
                           return (
@@ -1481,7 +1506,7 @@ export default function MVAnalysisPage() {
                               onClick={() => setActiveDashboardPanel(panel.id)}
                               className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
                                 isActive
-                                  ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                                  ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] lg:col-span-2"
                                   : "border-white/10 bg-black/15"
                               }`}
                             >
@@ -1666,17 +1691,27 @@ export default function MVAnalysisPage() {
                       <h2 className="text-2xl font-bold">创作执行简报</h2>
                     </div>
                     <p className="relative mt-3 text-sm leading-7 text-white/60">先看这部分。这里是你这一条内容最该立刻执行的判断和改法。</p>
-                    <div className="relative mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
-                      <table className="w-full border-collapse text-sm leading-7 text-white/72">
-                        <tbody>
-                          {executionBriefRows.map((row) => (
-                            <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                              <td className="w-40 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="px-4 py-4 whitespace-pre-wrap break-words">{row.content}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="relative mt-4 grid gap-4 lg:grid-cols-2">
+                      {executionBriefRows.map((row, index) => (
+                        <div
+                          key={row.label}
+                          className={`rounded-2xl border p-4 ${
+                            index === 0
+                              ? "border-[#ffd08f]/30 bg-[linear-gradient(135deg,rgba(255,208,143,0.16),rgba(255,255,255,0.04))]"
+                              : "border-white/10 bg-black/15"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-sm font-black text-white">{row.label}</div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] uppercase tracking-[0.16em] text-[#ffd08f]">
+                              {index === 0 ? "先执行" : "补充"}
+                            </div>
+                          </div>
+                          <p className={`mt-3 text-sm leading-7 ${index === 0 ? "font-semibold text-white" : "text-white/76"}`}>
+                            {row.content}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -1755,7 +1790,7 @@ export default function MVAnalysisPage() {
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
-                          {positioningRows.map((row) => (
+                          {positioningRows.filter((row) => row.label !== "首发路径").map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
                               <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
@@ -1803,7 +1838,7 @@ export default function MVAnalysisPage() {
                         <div className="mt-1 text-sm text-white/55">中长期发展方案，不和 7 天短期执行混在一起。</div>
                       </div>
                     </div>
-                    <div className="relative mt-5 space-y-4">
+                    <div className="relative mt-5 grid gap-4">
                       {businessInsights.map((item) => (
                         <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-sm font-semibold text-white">{item.title}</div>
@@ -1811,58 +1846,65 @@ export default function MVAnalysisPage() {
                         </div>
                       ))}
                     </div>
-                    <div className="relative mt-5 grid gap-4 xl:grid-cols-[1.12fr_0.88fr]">
+                    <div className="relative mt-5 rounded-2xl border border-white/10 bg-black/15 p-4">
+                      <div className="flex items-center gap-2 text-white">
+                        <Workflow className="h-4 w-4 text-[#f5b7ff]" />
+                        <span className="text-sm font-semibold">业务转化漏斗</span>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {businessFunnelSteps.map((step, index) => (
+                          <button
+                            key={`business-${step.label}`}
+                            type="button"
+                            onClick={() => setActiveDashboardPanel("monetization")}
+                            className="block w-full text-left"
+                          >
+                            <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
+                              <span>{step.label}</span>
+                              <span>{step.value}%</span>
+                            </div>
+                            <div className="flex justify-center">
+                              <div
+                                className={`rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)] transition ${
+                                  activeDashboardPanel === "monetization"
+                                    ? "bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)]"
+                                    : "bg-[linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e)] opacity-85"
+                                }`}
+                                style={{ width: `${92 - index * 18}%` }}
+                              >
+                                {step.detail}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="relative mt-4 grid gap-4 lg:grid-cols-3">
                       <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                         <div className="flex items-center gap-2 text-white">
-                          <Workflow className="h-4 w-4 text-[#f5b7ff]" />
-                          <span className="text-sm font-semibold">业务转化漏斗</span>
+                          <ScanSearch className="h-4 w-4 text-[#ffd08f]" />
+                          <span className="text-sm font-semibold">短期目标</span>
                         </div>
-                        <div className="mt-4 space-y-3">
-                          {businessFunnelSteps.map((step, index) => (
-                            <button
-                              key={`business-${step.label}`}
-                              type="button"
-                              onClick={() => setActiveDashboardPanel("monetization")}
-                              className="block w-full text-left"
-                            >
-                              <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
-                                <span>{step.label}</span>
-                                <span>{step.value}%</span>
-                              </div>
-                              <div className="flex justify-center">
-                                <div
-                                  className={`rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)] transition ${
-                                    activeDashboardPanel === "monetization"
-                                      ? "bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)]"
-                                      : "bg-[linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e)] opacity-85"
-                                  }`}
-                                  style={{ width: `${92 - index * 18}%` }}
-                                >
-                                  {step.detail}
-                                </div>
-                              </div>
-                            </button>
-                          ))}
+                        <div className="mt-3 text-sm leading-7 text-white/78">
+                          先把用户看懂的入口做出来，再验证收藏、停留、评论和咨询。短期先用低预算试错，不先重投流。
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                         <div className="flex items-center gap-2 text-white">
                           <ScanSearch className="h-4 w-4 text-[#ffd08f]" />
-                          <span className="text-sm font-semibold">转化决策说明</span>
+                          <span className="text-sm font-semibold">中长期路径</span>
                         </div>
-                        <div className="mt-4 grid gap-3">
-                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">短期目标</div>
-                            <div className="mt-2 text-sm leading-6 text-white/78">先让用户看懂你解决什么，再看愿不愿意继续看和咨询。短期先验证收藏、完播、咨询，不先重投流。</div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">中长期路径</div>
-                            <div className="mt-2 text-sm leading-6 text-white/78">把内容沉淀成案例页、方法页、训练营页或咨询页，再决定知识付费、品牌合作还是高客单服务主承接。</div>
-                          </div>
-                          <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                            <div className="text-xs uppercase tracking-[0.18em] text-white/45">投放建议</div>
-                            <div className="mt-2 text-sm leading-6 text-white/78">只有当标题、前 3 秒、承接页都跑出正反馈，再用小预算放大高完播版。不要在路径没定清楚时先烧曝光。</div>
-                          </div>
+                        <div className="mt-3 text-sm leading-7 text-white/78">
+                          把内容沉淀成案例页、方法页、训练营页或咨询页，再决定知识付费、品牌合作还是高客单服务主承接。
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <div className="flex items-center gap-2 text-white">
+                          <ScanSearch className="h-4 w-4 text-[#ffd08f]" />
+                          <span className="text-sm font-semibold">投放建议</span>
+                        </div>
+                        <div className="mt-3 text-sm leading-7 text-white/78">
+                          只有当标题、前 3 秒、承接页都跑出正反馈，再用小预算放大高完播版。不要在路径没定清楚时先烧曝光。
                         </div>
                       </div>
                     </div>
