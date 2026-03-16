@@ -87,7 +87,7 @@ function routeModel(type: "script" | "image" | "video" | "music") {
     case "image":
       return { provider: "fal", model: "fal-ai/nano-banana-2" };
     case "video":
-      return { provider: "kling", model: "kling-video" };
+      return { provider: "kling", model: "kling-v2-6" };
     default:
       return { provider: "suno", model: "suno" };
   }
