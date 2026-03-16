@@ -19,22 +19,31 @@ import type {
 import {
   ArrowLeft,
   BriefcaseBusiness,
+  CircleDollarSign,
   Compass,
   FileUp,
   Film,
+  LayoutDashboard,
   LineChart as LineChartIcon,
   Loader2,
+  Orbit,
+  PanelsTopLeft,
   Rocket,
+  ScanSearch,
   Send,
   Sparkles,
+  Target,
   TrendingUp,
   Upload,
+  Workflow,
 } from "lucide-react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -146,7 +155,13 @@ function formatPercent(value: number) {
 function compactText(text: string, maxLength = 72) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "";
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
+  const segments = normalized
+    .split(/(?<=[。！？!?.])/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const concise = segments.slice(0, 2).join("");
+  const basis = concise || normalized;
+  return basis.length > maxLength ? `${basis.slice(0, maxLength - 1)}…` : basis;
 }
 
 function normalizeText(text: string) {
@@ -247,40 +262,34 @@ function buildPositioningRows(
     industryTemplate?.audience || context || "当前没有明确写出受众与成交目标，建议后续补全。",
   );
   const bestTrack = tracks.find((track) => track.fit >= 60);
-  const firstPlatform = platforms[0]?.name || "小红书";
   const primaryDirection = bestTrack?.name || "先不主打变现";
   const roleFixPlan = industryTemplate?.positioningHint
     ? `先把内容角色改成「${industryTemplate.positioningHint}」，再统一脚本、封面和结尾动作。`
     : "先把这条内容定义成引流内容、信任内容或成交内容中的一个，再写脚本和结尾动作。";
   return [
     {
-      label: "受众痛点",
-      insight: audience,
-      action: normalizeText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。"),
+      label: "🎯 受众痛点",
+      insight: compactText(audience, 42),
+      action: compactText(industryTemplate?.painPoint || "先明确你要吸引哪类人，以及最终要导向什么成交动作。", 34),
       highlight: "没有明确受众时，后面所有商业判断都会发散。",
     },
     {
-      label: "内容角色",
-      insight: normalizeText(analysis.summary || "这条内容当前更像素材，不是可以直接成交的完整内容。"),
-      action: roleFixPlan,
+      label: "🧭 内容角色",
+      insight: compactText(
+        industryTemplate?.positioningHint || analysis.summary || "这条内容当前更像素材，不是可以直接成交的完整内容。",
+        60,
+      ),
+      action: compactText(roleFixPlan, 42),
       highlight: "先定角色，再定脚本和平台。",
     },
     {
-      label: "首发路径",
-      insight: `先用 ${firstPlatform} 验证第一版表达，再把同一主题拆成多平台版本。`,
-      action: firstPlatform === "小红书"
-        ? "先做一版适合小红书的图文/笔记结构：封面主标题、收藏理由、方法拆解、结尾行动，再把这版延展成视频脚本。"
-        : "先跑通首发版本，再拆成图文版和视频版，不要一稿通发。",
-      highlight: "首发是验证顺序，不是只发一个平台。",
-    },
-    {
-      label: "主商业方向",
+      label: "💼 主商业方向",
       insight: primaryDirection === "先不主打变现"
         ? "当前商业闭环不成熟，先不要把品牌合作、带货、社群同时写上去。"
         : `当前优先验证「${primaryDirection}」这一条路径。`,
       action: primaryDirection === "先不主打变现"
         ? "先把内容角色、受众痛点、首发平台和结尾动作统一，再去谈商业承接。"
-        : normalizeText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。"),
+        : compactText(industryTemplate?.primaryConversion || "结尾只保留一个明确承接动作，避免同时推多个变现方向。", 42),
       highlight: primaryDirection === "先不主打变现"
         ? "先跑通内容入口，再谈后续商业化。"
         : "单一路径比多方向堆叠更容易转化。",
@@ -291,26 +300,26 @@ function buildPositioningRows(
 function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
   return [
     {
-      label: "当前优势",
-      insight: normalizeText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。"),
-      action: normalizeText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。"),
+      label: "✅ 当前优势",
+      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展的内容基础。", 48),
+      action: compactText(analysis.strengths[1] || "把现有优势固定成可复用的标题、封面或镜头模板。", 42),
       highlight: "先固定可复用优势，不要每条都重来。",
     },
     {
-      label: "优先优化点",
-      insight: normalizeText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。"),
-      action: normalizeText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。"),
+      label: "⚠️ 优先优化点",
+      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 48),
+      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒，再处理字幕、节奏和转场。", 42),
       highlight: "先修最影响停留的问题。",
     },
     {
-      label: "表达问题",
-      insight: normalizeText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。"),
-      action: normalizeText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。"),
+      label: "🧩 表达问题",
+      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中，用户很难快速理解卖点。", 48),
+      action: compactText(industryTemplate?.positioningHint || "把一句核心结论放到最前面，剩下内容只服务这一句。", 42),
     },
     {
-      label: "建议方向",
-      insight: normalizeText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。"),
-      action: normalizeText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。"),
+      label: "🚀 建议方向",
+      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但需要更强的结构和承接动作。", 48),
+      action: compactText(industryTemplate?.analysisHint || "按“痛点 -> 方案 -> 行动”三段重写，不再堆砌过程描述。", 42),
       highlight: "结论更短，方案更具体，用户才知道下一步怎么做。",
     },
   ];
@@ -336,17 +345,24 @@ function buildPlatformRecommendationRows(
 ): InsightTableRow[] {
   return recommendations.map((platform) => {
     const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
+    const publishAction = platform.name === "小红书"
+      ? "先发一版可收藏笔记：封面只讲结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。"
+      : platform.name === "抖音"
+        ? "做一版 9:16 结果前置短视频：开头 2 秒先给结论，中段只保留 2 到 3 个关键画面，结尾只留一个动作。需要放量时先小预算测标题和前 2 秒停留，再决定投流。"
+        : platform.name === "快手"
+          ? "改成更生活化、更结果导向的直给版：先说这件事值不值、适不适合、怎么做更省事。不要讲平台分析，只讲用户能立刻拿走的做法。"
+          : "做一版 60 到 120 秒的案例拆解或复盘：先讲结果，再讲步骤和误区，最后告诉用户下一版还能看什么。需要建立信任时，优先放长尾搜索和案例页承接。";
     return {
       label: platform.name,
-      insight: normalizeText(platform.reason),
-      action: normalizeText(platform.action),
+      insight: compactText(platform.reason, 74),
+      action: publishAction,
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
   });
 }
 
 function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
-  const viableTracks = tracks.filter((track) => track.fit >= 60).slice(0, 2);
+  const viableTracks = tracks.filter((track) => track.fit >= 45).slice(0, 3);
   if (!viableTracks.length) {
     return [{
       label: "当前阶段",
@@ -355,18 +371,46 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
       highlight: "中长期商业化先放后面，短期先把内容入口做成熟。",
     }];
   }
-  return viableTracks.map((track) => ({
-    label: `${track.name} ${track.fit}%`,
-    insight: normalizeText(replaceTerms(track.reason)),
-    action: normalizeText(replaceTerms(track.nextStep)),
-    highlight: /品牌合作/.test(track.name) && /美妆|穿搭|形象|妆|护肤|造型/.test(context)
-      ? "合作类别优先看运动美妆、防晒、功能护肤、运动服饰、造型工具与生活方式品牌。"
-      : track.name === "社群会员"
+  return viableTracks.map((track) => {
+    if (track.name === "知识付费") {
+      return {
+        label: `${track.name} ${track.fit}%`,
+        insight: "适合做「案例拆解 + 方法复盘 + 工具模板」的内容包，不适合只讲观点。先把一个可重复的结果方法讲清楚，再沉淀成训练营、陪跑或模板库。",
+        action: "平台先用 B站做完整案例版，再把核心结论拆成小红书收藏笔记和抖音短视频。前期不建议重投流，先用自然流量验证收藏率、完播率和咨询率；只有转化入口清楚后，再小预算放大高完播版本。",
+        highlight: "内容题型优先：诊断框架、复盘案例、三步方法、常见误区、模板演示。",
+      };
+    }
+    if (track.name === "品牌合作") {
+      return {
+        label: `${track.name} ${track.fit}%`,
+        insight: /美妆|穿搭|形象|妆|护肤|造型/.test(context)
+          ? "不是泛写“可接品牌合作”，而是要围绕场景问题、解决方案和合作品类展开。先让品牌看懂你能替它卖什么场景。"
+          : "品牌合作只在表达统一、案例清楚、服务结果讲透时才成立。没有案例页和结果说明时，不要把品牌合作写成主卖点。",
+        action: /美妆|穿搭|形象|妆|护肤|造型/.test(context)
+          ? "先补一版“场景问题 -> 解决方案 -> 可合作品类”的案例页，优先看运动美妆、防晒、功能护肤、运动服饰、造型工具和生活方式品牌。"
+          : "先做一页行业案例说明：你解决什么问题、做出过什么结果、适合哪类品牌合作，再把内容里所有动作统一到这条承接页。",
+        highlight: "只在合作类别、服务结果、承接页三件事都清楚时，品牌合作才值得主打。",
+      };
+    }
+    if (track.name === "电商带货") {
+      return {
+        label: `${track.name} ${track.fit}%`,
+        insight: "适合做结果前置、利益点直接、动作明确的转化型表达。先讲“这东西值不值、解决什么、怎么买”，再讲过程。",
+        action: "先做一版强 CTA 的短视频或图文，验证点击和咨询。前期只小额测试 1 到 2 个结果前置版本，不先烧大预算投流。",
+        highlight: "优先做单品转化，不要一上来混多个商品和多个动作。",
+      };
+    }
+    return {
+      label: `${track.name} ${track.fit}%`,
+      insight: compactText(replaceTerms(track.reason), 72),
+      action: compactText(replaceTerms(track.nextStep), 96),
+      highlight: track.name === "社群会员"
         ? "只有固定主题、固定更新和固定权益三件事都成立，社群才值得做。"
         : industryTemplate?.offerExamples?.[0]
           ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
           : undefined,
-  }));
+    };
+  });
 }
 
 function buildExecutionBriefRows(analysis: AnalysisResult, context: string): ExecutionBriefRow[] {
@@ -911,7 +955,59 @@ export default function MVAnalysisPage() {
     () => buildScoreDistributionData(scoreItems),
     [scoreItems],
   );
+  const dashboardScoreAverage = useMemo(
+    () => scoreItems.length ? Math.round(scoreItems.reduce((sum, item) => sum + item.value, 0) / scoreItems.length) : 0,
+    [scoreItems],
+  );
+  const dashboardDonutData = useMemo(
+    () => scoreItems.map((item, index) => ({
+      name: item.label,
+      value: Math.max(1, item.value),
+      fill: ["#7CFFB2", "#8AB8FF", "#FFD68E", "#FF9BC5", "#CFA5FF"][index % 5],
+      panelId: getScorePanelId(item.label),
+    })),
+    [scoreItems],
+  );
+  const businessFunnelSteps = useMemo(() => {
+    const primary = commercialTracks[0];
+    const secondary = commercialTracks[1];
+    return [
+      {
+        label: "看懂问题",
+        value: Math.max(28, dashboardScoreAverage),
+        detail: positioningRows[0]?.action || "先说用户现在卡在哪里。",
+      },
+      {
+        label: "建立信任",
+        value: Math.max(22, Math.round((commercialTracks[0]?.fit || dashboardScoreAverage) * 0.82)),
+        detail: contentAnalysisRows[0]?.action || "先让用户愿意继续看和收藏。",
+      },
+      {
+        label: "承接动作",
+        value: Math.max(16, primary?.fit || 18),
+        detail: primary?.nextStep || "先只保留一个主承接动作。",
+      },
+      {
+        label: "放大成交",
+        value: Math.max(10, secondary?.fit || Math.round((primary?.fit || 0) * 0.72)),
+        detail: businessTrackRows[0]?.action || "跑出转化后再考虑投流和放大。",
+      },
+    ];
+  }, [commercialTracks, businessTrackRows, positioningRows, contentAnalysisRows, dashboardScoreAverage]);
+  const platformDashboardCards = useMemo(
+    () => platformRecommendationRows.slice(0, 4).map((row) => ({
+      ...row,
+      panelId: "platforms",
+    })),
+    [platformRecommendationRows],
+  );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
+  const getSectionCardClass = useCallback(
+    (panelId: string, accent: string) => activeDashboardPanel === panelId
+      ? `relative overflow-hidden rounded-[28px] border ${accent} bg-[#0f1a2c] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]`
+      : "rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6",
+    [activeDashboardPanel],
+  );
 
   useEffect(() => {
     if (!dashboardPanels.length) return;
@@ -984,10 +1080,14 @@ export default function MVAnalysisPage() {
                 <Sparkles className="h-3.5 w-3.5" />
                 创作商业成长营
               </div>
-              <h1 className="mt-4 max-w-3xl text-4xl font-black leading-tight text-white md:text-6xl">
-                让你的图文与视频创意，发挥它们的商业价值。
+              <h1 className="mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]">
+                <span className="block whitespace-nowrap">让你的图文与视频创意，发挥它们的</span>
+                <span className="mt-3 inline-block rounded-[24px] border border-[#ffcf92]/45 bg-[#ffcf92]/8 px-5 py-2 text-[#fff6e7] shadow-[0_0_0_1px_rgba(255,207,146,0.12)]">
+                  商业价值
+                </span>
+                <span className="ml-2 inline-block text-white/90">。</span>
               </h1>
-              <p className="mt-4 max-w-2xl text-base leading-8 text-white/70">
+              <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
                 直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
@@ -1213,101 +1313,181 @@ export default function MVAnalysisPage() {
               <div className="space-y-6">
                 <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center gap-3 text-[#ffcf92]">
-                    <Sparkles className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">商业分析总览</h2>
+                    <LayoutDashboard className="h-5 w-5" />
+                    <h2 className="text-2xl font-bold">商业数据仪表盘</h2>
                   </div>
                   <p className="mt-4 text-sm leading-7 text-white/62">
-                    先给用户一眼能懂的全局概览。点到哪一块，就同步高亮对应解说和行动方案，不再让人埋在长文本里找重点。
+                    这里不是静态柱状图。上面的图块负责给你全局判断，下面对应的分析区块会同步高亮，告诉你该先动哪里、怎么改、怎么承接。
                   </p>
-                  <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {dashboardMetrics.map((item) => (
-                      <button
-                        type="button"
-                        key={item.label}
-                        onClick={() => setActiveDashboardPanel(item.id)}
-                        className={`relative overflow-hidden rounded-2xl border p-4 text-left transition ${
-                          activeDashboardPanel === item.id
-                            ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
-                            : `border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${item.tone}`
-                        }`}
-                      >
-                        {activeDashboardPanel === item.id ? (
-                          <div className="pointer-events-none absolute inset-0 opacity-100">
-                            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
-                          </div>
-                        ) : null}
-                        <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
-                        <div className="mt-3 text-3xl font-black text-white">{item.value}</div>
-                        <p className="mt-3 text-sm leading-6 text-white/62">{item.note}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-6 grid gap-6 xl:grid-cols-[1.08fr_0.92fr]">
-                    <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
-                      <div className="flex items-center justify-between">
-                        <div className="text-lg font-bold text-white">五维度成熟度</div>
-                        <div className="text-xs text-white/45">点柱状图联动右侧解说</div>
-                      </div>
-                      <div className="mt-4 h-[320px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={scoreDistributionData} layout="vertical" margin={{ top: 8, right: 12, left: 8, bottom: 8 }}>
-                            <CartesianGrid stroke="rgba(255,255,255,0.08)" horizontal={true} vertical={false} />
-                            <XAxis type="number" domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                            <YAxis dataKey="name" type="category" width={88} tick={{ fill: "rgba(255,255,255,0.6)", fontSize: 12 }} axisLine={false} tickLine={false} />
-                            <Tooltip
-                              contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                              formatter={(value: number) => [`${value}%`, "成熟度"]}
-                            />
-                            <Bar dataKey="value" radius={[0, 10, 10, 0]} onClick={(entry: any) => setActiveDashboardPanel(getScorePanelId(entry?.name || ""))}>
-                              {scoreDistributionData.map((entry) => {
-                                const linkedPanel = getScorePanelId(entry.name);
-                                const isActive = linkedPanel === activeDashboardPanel;
-                                return (
-                                  <Cell
-                                    key={entry.name}
-                                    fill={isActive ? "#7CFFB2" : entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
-                                    stroke={isActive ? "#d8ffe9" : "transparent"}
-                                    strokeWidth={isActive ? 2 : 0}
-                                    style={{ cursor: "pointer" }}
-                                  />
-                                );
-                              })}
-                            </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3">
-                      {dashboardPanels.map((panel) => {
-                        const isActive = activeDashboardPanel === panel.id;
-                        return (
+                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.95fr]">
+                    <div className="space-y-4">
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        {dashboardMetrics.map((item) => (
                           <button
                             type="button"
-                            key={panel.id}
-                            onClick={() => setActiveDashboardPanel(panel.id)}
+                            key={item.label}
+                            onClick={() => setActiveDashboardPanel(item.id)}
                             className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
-                              isActive
-                                ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
-                                : "border-white/10 bg-black/15"
+                              activeDashboardPanel === item.id
+                                ? "border-white/30 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                                : `border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02)),radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${item.tone}`
                             }`}
                           >
-                            {isActive ? (
-                              <div className="pointer-events-none absolute inset-0 opacity-100">
-                                <div className={`absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${panel.glow}`} />
+                            {activeDashboardPanel === item.id ? (
+                              <div className="pointer-events-none absolute inset-0">
                                 <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
                               </div>
                             ) : null}
-                            <div className={`relative text-xs uppercase tracking-[0.2em] ${panel.accent}`}>{panel.eyebrow}</div>
-                            <div className="relative mt-2 text-xl font-black text-white">{panel.title}</div>
-                            <p className="relative mt-3 text-sm leading-6 text-white/78">{panel.summary}</p>
-                            <p className="relative mt-3 text-sm leading-7 text-white/60">{panel.detail}</p>
-                            <div className={`relative mt-4 inline-flex rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs ${panel.accent}`}>
-                              {panel.action}
+                            <div className="relative flex items-center justify-between">
+                              <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
+                              <div className={`rounded-full border px-2 py-0.5 text-xs ${getScoreTone(item.id === "readiness" ? dashboardScoreAverage : 80).chip}`}>
+                                {item.id === "positioning" ? "角色判断" : "点击联动"}
+                              </div>
                             </div>
+                            <div className="relative mt-3 text-3xl font-black text-white">{item.value}</div>
+                            <p className="relative mt-3 text-sm leading-6 text-white/62">{item.note}</p>
                           </button>
-                        );
-                      })}
+                        ))}
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-[0.88fr_1.12fr]">
+                        <button
+                          type="button"
+                          onClick={() => setActiveDashboardPanel("readiness")}
+                          className={`relative overflow-hidden rounded-[24px] border p-5 text-left transition ${
+                            activeDashboardPanel === "readiness" ? "border-white/25 bg-white/10" : "border-white/10 bg-black/15"
+                          }`}
+                        >
+                          {activeDashboardPanel === "readiness" ? (
+                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.26),transparent_55%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                          ) : null}
+                          <div className="relative flex items-center gap-2 text-white">
+                            <Orbit className="h-4 w-4 text-[#9df6c0]" />
+                            <span className="text-sm font-semibold">成熟度分布</span>
+                          </div>
+                          <div className="relative mt-4 h-[240px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={dashboardDonutData}
+                                  dataKey="value"
+                                  innerRadius={58}
+                                  outerRadius={90}
+                                  paddingAngle={2}
+                                  onClick={(_, index) => setActiveDashboardPanel(dashboardDonutData[index]?.panelId || "readiness")}
+                                >
+                                  {dashboardDonutData.map((entry) => (
+                                    <Cell key={entry.name} fill={entry.fill} style={{ cursor: "pointer" }} />
+                                  ))}
+                                </Pie>
+                                <Tooltip
+                                  contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
+                                  formatter={(value: number) => [`${value}%`, "维度强度"]}
+                                />
+                              </PieChart>
+                            </ResponsiveContainer>
+                            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                              <div className="text-xs uppercase tracking-[0.2em] text-white/45">准备度</div>
+                              <div className="mt-2 text-4xl font-black text-white">{dashboardScoreAverage}%</div>
+                            </div>
+                          </div>
+                        </button>
+
+                        <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
+                          <div className="flex items-center gap-2 text-white">
+                            <PanelsTopLeft className="h-4 w-4 text-[#90c4ff]" />
+                            <span className="text-sm font-semibold">平台打法矩阵</span>
+                          </div>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                            {platformDashboardCards.map((row) => (
+                              <button
+                                type="button"
+                                key={row.label}
+                                onClick={() => setActiveDashboardPanel("platforms")}
+                                className={`relative overflow-hidden rounded-2xl border p-4 text-left transition ${
+                                  activeDashboardPanel === "platforms" ? "border-[#90c4ff]/35 bg-[#10233e]" : "border-white/10 bg-white/5"
+                                }`}
+                              >
+                                {activeDashboardPanel === "platforms" ? (
+                                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.18),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                                ) : null}
+                                <div className="relative flex items-center justify-between">
+                                  <span className="text-lg font-black text-white">{row.label}</span>
+                                  <Send className="h-4 w-4 text-[#90c4ff]" />
+                                </div>
+                                <p className="relative mt-3 text-sm leading-6 text-white/75">{compactText(row.insight, 78)}</p>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <button
+                        type="button"
+                        onClick={() => setActiveDashboardPanel("monetization")}
+                        className={`relative overflow-hidden rounded-[24px] border p-5 text-left transition ${
+                          activeDashboardPanel === "monetization" ? "border-white/25 bg-white/10" : "border-white/10 bg-black/15"
+                        }`}
+                      >
+                        {activeDashboardPanel === "monetization" ? (
+                          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.22),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                        ) : null}
+                        <div className="relative flex items-center gap-2 text-white">
+                          <CircleDollarSign className="h-4 w-4 text-[#f5b7ff]" />
+                          <span className="text-sm font-semibold">商业转化漏斗</span>
+                        </div>
+                        <div className="relative mt-5 space-y-3">
+                          {businessFunnelSteps.map((step, index) => (
+                            <div key={step.label} className="space-y-2">
+                              <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-white/45">
+                                <span>{step.label}</span>
+                                <span>{step.value}%</span>
+                              </div>
+                              <div className="flex justify-center">
+                                <div
+                                  className="rounded-xl bg-[linear-gradient(90deg,#ff8cf0,#ffd68e,#7cffb2)] px-4 py-3 text-center text-sm font-semibold text-[#0b1628] shadow-[0_10px_30px_rgba(255,140,240,0.12)]"
+                                  style={{ width: `${92 - index * 18}%` }}
+                                >
+                                  {step.detail}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </button>
+
+                      <div className="grid gap-3">
+                        {dashboardPanels.map((panel) => {
+                          const isActive = activeDashboardPanel === panel.id;
+                          return (
+                            <button
+                              type="button"
+                              key={panel.id}
+                              onClick={() => setActiveDashboardPanel(panel.id)}
+                              className={`relative overflow-hidden rounded-[24px] border p-4 text-left transition ${
+                                isActive
+                                  ? "border-white/25 bg-white/10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                                  : "border-white/10 bg-black/15"
+                              }`}
+                            >
+                              {isActive ? (
+                                <div className="pointer-events-none absolute inset-0 opacity-100">
+                                  <div className={`absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${panel.glow}`} />
+                                  <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
+                                </div>
+                              ) : null}
+                              <div className={`relative text-xs uppercase tracking-[0.2em] ${panel.accent}`}>{panel.eyebrow}</div>
+                              <div className="relative mt-2 text-xl font-black text-white">{panel.title}</div>
+                              <p className="relative mt-3 text-sm leading-6 text-white/78">{panel.summary}</p>
+                              <div className={`relative mt-4 inline-flex rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs ${panel.accent}`}>
+                                {panel.action}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1464,13 +1644,16 @@ export default function MVAnalysisPage() {
 
               {showPremiumReport ? (
                 <>
-                  <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))] p-6">
+                  <div className={getSectionCardClass("execution", "border-[#ffd08f]/30 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))]")}>
+                    {activeDashboardPanel === "execution" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,208,143,0.18),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#ffd08f]">
                       <Rocket className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">创作执行简报</h2>
                     </div>
-                    <p className="mt-3 text-sm leading-7 text-white/60">先看这部分。这里是你这一条内容最该立刻执行的判断和改法。</p>
-                    <div className="mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                    <p className="relative mt-3 text-sm leading-7 text-white/60">先看这部分。这里是你这一条内容最该立刻执行的判断和改法。</p>
+                    <div className="relative mt-4 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/72">
                         <tbody>
                           {executionBriefRows.map((row) => (
@@ -1484,7 +1667,10 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className={getSectionCardClass("execution", "border-[#9df6c0]/30")}>
+                    {activeDashboardPanel === "execution" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(157,246,192,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#9df6c0]">
                       <LineChartIcon className="h-5 w-5" />
                       <div>
@@ -1492,7 +1678,7 @@ export default function MVAnalysisPage() {
                         <div className="mt-1 text-sm text-white/55">短期执行方案，目标是在 7 天内先把第一轮结果跑出来。</div>
                       </div>
                     </div>
-                    <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
+                    <div className="relative mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {growthPlan.map((item) => (
@@ -1516,13 +1702,16 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className={getSectionCardClass("platforms", "border-[#90c4ff]/30")}>
+                    {activeDashboardPanel === "platforms" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.16),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#ffd08f]">
                       <Send className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">推荐发布平台</h2>
                     </div>
                     <p className="mt-3 text-sm leading-7 text-white/60">先给首发顺序，再告诉你每个平台该怎么发、怎么改，以及如何把图文继续延展成视频。</p>
-                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                    <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {platformRecommendationRows.map((row) => (
@@ -1542,12 +1731,15 @@ export default function MVAnalysisPage() {
 
               {showPremiumReport ? (
                 <>
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className={getSectionCardClass("positioning", "border-[#ffcf92]/30")}>
+                    {activeDashboardPanel === "positioning" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#ffcf92]">
                       <Compass className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">内容定位</h2>
                     </div>
-                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                    <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {positioningRows.map((row) => (
@@ -1563,12 +1755,15 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className={getSectionCardClass("content", "border-[#ffb37f]/30")}>
+                    {activeDashboardPanel === "content" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,179,127,0.14),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#ffb37f]">
                       <Sparkles className="h-5 w-5" />
                       <h2 className="text-2xl font-bold">内容分析</h2>
                     </div>
-                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                    <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {contentAnalysisRows.map((row) => (
@@ -1584,7 +1779,10 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                  <div className={getSectionCardClass("monetization", "border-[#f5b7ff]/30")}>
+                    {activeDashboardPanel === "monetization" ? (
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                    ) : null}
                     <div className="flex items-center gap-3 text-[#f5b7ff]">
                       <BriefcaseBusiness className="h-5 w-5" />
                       <div>
@@ -1592,7 +1790,7 @@ export default function MVAnalysisPage() {
                         <div className="mt-1 text-sm text-white/55">中长期发展方案，不和 7 天短期执行混在一起。</div>
                       </div>
                     </div>
-                    <div className="mt-5 space-y-4">
+                    <div className="relative mt-5 space-y-4">
                       {businessInsights.map((item) => (
                         <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-sm font-semibold text-white">{item.title}</div>
@@ -1600,7 +1798,7 @@ export default function MVAnalysisPage() {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
+                    <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
                           {businessTrackRows.map((row) => (
