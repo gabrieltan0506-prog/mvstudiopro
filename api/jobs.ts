@@ -6,6 +6,7 @@ import { get, put } from "@vercel/blob";
 import { env, getEnvStatus } from "../server/vercel-api-core/env.js";
 import { renderWorkflowFinalVideo } from "../server/vercel-api-core/render.js";
 import { generateImageWithBanana } from "../server/vercel-api-core/banana.js";
+import { getCometApiBaseUrl, getCometApiKey } from "../server/services/cometapi.js";
 import {
   getWorkflow as getCoreWorkflow,
   saveWorkflow as saveCoreWorkflow,
@@ -188,10 +189,19 @@ function computeScaledSize(w0:number,h0:number,maxEdge:number){
 }
 
 async function klingGenerateSceneBackground(klingBase:string, imageToken:string, prompt:string): Promise<Buffer> {
-  const r = await fetchJson(`${klingBase}/v1/images/generations`,{
+  const cometKey = getCometApiKey();
+  const useComet = Boolean(cometKey);
+  const baseUrl = useComet ? `${getCometApiBaseUrl()}/v1` : `${klingBase}/v1`;
+  const headers = useComet
+    ? { "Authorization":"Bearer "+cometKey, "Content-Type":"application/json", "Accept":"application/json" }
+    : { "Authorization":"Bearer "+imageToken, "Content-Type":"application/json", "Accept":"application/json" };
+  const body = useComet
+    ? { model: "nano-banana-pro", prompt, size: "1280x720", n: 1 }
+    : { prompt, n: 1, image_size: "1024x576" };
+  const r = await fetchJson(`${baseUrl}/images/generations`,{
     method:"POST",
-    headers:{ "Authorization":"Bearer "+imageToken, "Content-Type":"application/json", "Accept":"application/json" },
-    body: JSON.stringify({ prompt, n: 1, image_size: "1024x576" })
+    headers,
+    body: JSON.stringify(body)
   });
   if(!r.ok) throw new Error(`kling_image_generation_failed:${r.status}`);
   const sceneUrl = r.json?.data?.[0]?.url || r.json?.data?.[0]?.image_url || "";
@@ -255,9 +265,15 @@ async function createKlingI2VTask(
 ) {
   const { buffer: buf } = await fetchImageAsset(imageUrl);
   const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
-  const r = await fetchJson(`${klingBase}/v1/videos/image2video`, {
+  const cometKey = getCometApiKey();
+  const useComet = Boolean(cometKey);
+  const baseUrl = useComet ? `${getCometApiBaseUrl()}/kling/v1` : `${klingBase}/v1`;
+  const headers = useComet
+    ? { Authorization: "Bearer " + cometKey, "Content-Type": "application/json", Accept: "application/json" }
+    : { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" };
+  const r = await fetchJson(`${baseUrl}/videos/image2video`, {
     method: "POST",
-    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    headers,
     body: JSON.stringify({
       model_name: model || "kling-v2-6",
       image: first.jpeg.toString("base64"),
@@ -273,11 +289,17 @@ async function createKlingI2VTask(
 async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 240_000) {
   const pollMs = 5_000;
   const startedAt = Date.now();
+  const cometKey = getCometApiKey();
+  const useComet = Boolean(cometKey);
+  const baseUrl = useComet ? `${getCometApiBaseUrl()}/kling/v1` : `${klingBase}/v1`;
+  const headers = useComet
+    ? { Authorization: "Bearer " + cometKey, Accept: "application/json" }
+    : { Authorization: "Bearer " + videoToken, Accept: "application/json" };
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const r = await fetchJson(`${klingBase}/v1/videos/image2video/${encodeURIComponent(taskId)}`, {
+    const r = await fetchJson(`${baseUrl}/videos/image2video/${encodeURIComponent(taskId)}`, {
       method: "GET",
-      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+      headers,
     });
     const taskStatus = s(r.json?.data?.task_status || "");
     if (taskStatus === "succeed") {
@@ -293,9 +315,15 @@ async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: s
 }
 
 async function createKlingT2VTask(klingBase: string, videoToken: string, prompt: string, model: string) {
-  const r = await fetchJson(`${klingBase}/v1/videos/text2video`, {
+  const cometKey = getCometApiKey();
+  const useComet = Boolean(cometKey);
+  const baseUrl = useComet ? `${getCometApiBaseUrl()}/kling/v1` : `${klingBase}/v1`;
+  const headers = useComet
+    ? { Authorization: "Bearer " + cometKey, "Content-Type": "application/json", Accept: "application/json" }
+    : { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" };
+  const r = await fetchJson(`${baseUrl}/videos/text2video`, {
     method: "POST",
-    headers: { Authorization: "Bearer " + videoToken, "Content-Type": "application/json", Accept: "application/json" },
+    headers,
     body: JSON.stringify({
       model_name: model || "kling-v2-6",
       prompt,
@@ -311,11 +339,17 @@ async function createKlingT2VTask(klingBase: string, videoToken: string, prompt:
 async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 240_000) {
   const pollMs = 5_000;
   const startedAt = Date.now();
+  const cometKey = getCometApiKey();
+  const useComet = Boolean(cometKey);
+  const baseUrl = useComet ? `${getCometApiBaseUrl()}/kling/v1` : `${klingBase}/v1`;
+  const headers = useComet
+    ? { Authorization: "Bearer " + cometKey, Accept: "application/json" }
+    : { Authorization: "Bearer " + videoToken, Accept: "application/json" };
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, pollMs));
-    const r = await fetchJson(`${klingBase}/v1/videos/text2video/${encodeURIComponent(taskId)}`, {
+    const r = await fetchJson(`${baseUrl}/videos/text2video/${encodeURIComponent(taskId)}`, {
       method: "GET",
-      headers: { Authorization: "Bearer " + videoToken, Accept: "application/json" },
+      headers,
     });
     const taskStatus = s(r.json?.data?.task_status || "");
     if (taskStatus === "succeed") {
@@ -1180,6 +1214,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!op) return res.status(400).json({ ok: false, error: "missing_op" });
 
     const KLING_BASE = (s(process.env.KLING_CN_BASE_URL) || "https://api-beijing.klingai.com").replace(/\/+$/, "");
+    const COMET_KEY = getCometApiKey();
     const VAK = s(process.env.KLING_CN_VIDEO_ACCESS_KEY).trim();
     const VSK = s(process.env.KLING_CN_VIDEO_SECRET_KEY).trim();
     const IAK = s(process.env.KLING_CN_IMAGE_ACCESS_KEY).trim();
@@ -1814,8 +1849,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (opNormalized === "workflowgeneratevideo") {
       if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
-      if (!VAK || !VSK || !IAK || !ISK) {
-        return res.status(500).json(fail("KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
+      if (!COMET_KEY && (!VAK || !VSK || !IAK || !ISK)) {
+        return res.status(500).json(fail("COMETAPI_KEY or KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY and KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY are required"));
       }
       const storyboard = Array.isArray(workflow.outputs?.storyboard) ? workflow.outputs.storyboard : [];
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
@@ -2333,8 +2368,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const model = s(b.model || "kling-video").trim();
       const prompt = s(b.prompt).trim();
 
-      if (!VAK || !VSK) {
-        return res.status(500).json({ ok: false, error: "KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
+      if (!COMET_KEY && (!VAK || !VSK)) {
+        return res.status(500).json({ ok: false, error: "COMETAPI_KEY or KLING_CN_VIDEO_ACCESS_KEY/KLING_CN_VIDEO_SECRET_KEY is not configured" });
       }
       const videoToken = jwtHS256(VAK, VSK);
 
@@ -2346,8 +2381,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (op === "klingI2V") {
-        if (!IAK || !ISK) {
-          return res.status(500).json({ ok: false, error: "KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY is not configured" });
+        if (!COMET_KEY && (!IAK || !ISK)) {
+          return res.status(500).json({ ok: false, error: "COMETAPI_KEY or KLING_CN_IMAGE_ACCESS_KEY/KLING_CN_IMAGE_SECRET_KEY is not configured" });
         }
         const imageToken = jwtHS256(IAK, ISK);
         const created = await createKlingI2VTask(
@@ -2431,8 +2466,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (op === "klingCreate") {
-      if (!VAK || !VSK) return res.status(500).json({ ok:false, error:"missing_env", detail:"KLING_CN_VIDEO_ACCESS_KEY/SECRET_KEY" });
-      if (!IAK || !ISK) return res.status(500).json({ ok:false, error:"missing_env", detail:"KLING_CN_IMAGE_ACCESS_KEY/SECRET_KEY" });
+      if (!COMET_KEY && (!VAK || !VSK)) return res.status(500).json({ ok:false, error:"missing_env", detail:"COMETAPI_KEY or KLING_CN_VIDEO_ACCESS_KEY/SECRET_KEY" });
+      if (!COMET_KEY && (!IAK || !ISK)) return res.status(500).json({ ok:false, error:"missing_env", detail:"COMETAPI_KEY or KLING_CN_IMAGE_ACCESS_KEY/SECRET_KEY" });
 
       const videoToken = jwtHS256(VAK, VSK);
       const imageToken = jwtHS256(IAK, ISK);
@@ -2458,7 +2493,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (op === "klingTask") {
-      if (!VAK || !VSK) return res.status(500).json({ ok:false, error:"missing_env", detail:"KLING_CN_VIDEO_ACCESS_KEY/SECRET_KEY" });
+      if (!COMET_KEY && (!VAK || !VSK)) return res.status(500).json({ ok:false, error:"missing_env", detail:"COMETAPI_KEY or KLING_CN_VIDEO_ACCESS_KEY/SECRET_KEY" });
       const videoToken = jwtHS256(VAK, VSK);
       const taskId = s(q.taskId || q.task_id || b.taskId || b.task_id).trim();
       if (!taskId) return res.status(400).json({ ok:false, error:"missing_task_id" });
