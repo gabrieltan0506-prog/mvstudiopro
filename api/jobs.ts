@@ -270,7 +270,7 @@ async function createKlingI2VTask(
   return { taskId: r.json?.data?.task_id || null, raw: r };
 }
 
-async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+async function pollKlingI2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 240_000) {
   const pollMs = 5_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -308,7 +308,7 @@ async function createKlingT2VTask(klingBase: string, videoToken: string, prompt:
   return { taskId: r.json?.data?.task_id || null, raw: r };
 }
 
-async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 90_000) {
+async function pollKlingT2VTask(klingBase: string, videoToken: string, taskId: string, timeoutMs = 240_000) {
   const pollMs = 5_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
