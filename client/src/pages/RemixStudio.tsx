@@ -49,7 +49,12 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void }) {
       });
       setDebug(cj);
 
-      const tid = (cj as any)?.json?.raw?.data?.task_id || (cj as any)?.json?.data?.task_id || (cj as any)?.json?.task_id || null;
+      const tid =
+        (cj as any)?.json?.taskId ||
+        (cj as any)?.json?.task_id ||
+        (cj as any)?.json?.raw?.data?.task_id ||
+        (cj as any)?.json?.data?.task_id ||
+        null;
       if (!tid) throw new Error("missing task_id. resp=" + JSON.stringify(cj));
       setTaskId(String(tid));
 
