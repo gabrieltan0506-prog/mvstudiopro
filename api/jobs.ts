@@ -251,7 +251,7 @@ async function createKlingI2VTask(
   imageUrl: string,
   prompt: string,
   model: string,
-  duration = "8"
+  duration = "5"
 ) {
   const { buffer: buf } = await fetchImageAsset(imageUrl);
   const first = await buildFirstFrameJpeg(buf, prompt, klingBase, imageToken);
@@ -1873,7 +1873,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         referenceImageUrl,
         prompt,
         model,
-        "8"
+        "5"
       );
       if (!created.taskId) {
         return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
