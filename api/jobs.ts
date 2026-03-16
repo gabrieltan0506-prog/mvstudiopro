@@ -1876,7 +1876,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         "5"
       );
       if (!created.taskId) {
-        return res.status(502).json(fail("kling i2v task creation failed", "kling i2v task creation failed", { raw: created.raw.json ?? created.raw.rawText }));
+        const rawDetail = created.raw.json ?? created.raw.rawText;
+        const rawMessage =
+          s((created.raw.json as any)?.message).trim() ||
+          s((created.raw.json as any)?.error).trim() ||
+          s((created.raw.json as any)?.detail).trim() ||
+          "";
+        const detailMessage = rawMessage || "kling i2v task creation failed";
+        return res.status(502).json(fail("kling i2v task creation failed", detailMessage, { raw: rawDetail }));
       }
       const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
       if (!polled.ok) return res.status(502).json(fail(String(polled.error || "video generation failed")));
@@ -2351,7 +2358,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           prompt || "Cinematic motion shot with stable camera and rich detail.",
           model
         );
-        if (!created.taskId) return res.status(502).json({ ok: false, error: "kling i2v task creation failed", raw: created.raw.json ?? created.raw.rawText });
+        if (!created.taskId) {
+          const rawDetail = created.raw.json ?? created.raw.rawText;
+          const rawMessage =
+            s((created.raw.json as any)?.message).trim() ||
+            s((created.raw.json as any)?.error).trim() ||
+            s((created.raw.json as any)?.detail).trim() ||
+            "kling i2v task creation failed";
+          return res.status(502).json({ ok: false, error: rawMessage, raw: rawDetail });
+        }
         const polled = await pollKlingI2VTask(KLING_BASE, videoToken, created.taskId);
         if (!polled.ok) return res.status(502).json({ ok: false, error: polled.error });
         return res.status(200).json({ ok: true, videoUrl: polled.videoUrl, provider: "kling", model });
