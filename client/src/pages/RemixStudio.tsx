@@ -1,6 +1,70 @@
 import React, { useEffect, useRef, useState } from "react";
 import BuildBadge from "../components/BuildBadge";
 
+const pageStyle: React.CSSProperties = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)",
+  padding: 20,
+};
+
+const panelStyle: React.CSSProperties = {
+  marginTop: 16,
+  padding: 20,
+  borderRadius: 20,
+  border: "1px solid #dbe4f0",
+  background: "#ffffff",
+  color: "#0f172a",
+  boxShadow: "0 18px 40px rgba(15, 23, 42, 0.08)",
+};
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  marginTop: 10,
+  padding: 12,
+  borderRadius: 14,
+  border: "1px solid #cbd5e1",
+  background: "#f8fafc",
+  color: "#0f172a",
+};
+
+const buttonStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #cbd5e1",
+  background: "#0f172a",
+  color: "#ffffff",
+  fontWeight: 900,
+};
+
+const buttonMutedStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 12,
+  border: "1px solid #cbd5e1",
+  background: "#ffffff",
+  color: "#0f172a",
+  fontWeight: 900,
+};
+
+const codeStyle: React.CSSProperties = {
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontSize: 12,
+  background: "#eff6ff",
+  borderRadius: 8,
+  padding: "2px 6px",
+};
+
+function normalizeUiError(detail: unknown) {
+  const raw = String(detail || "").trim();
+  if (!raw) return "";
+  if (/Account balance not enough/i.test(raw)) return "可灵视频当前账户余额不足，请先充值后再试。";
+  if (/missing imageUrl/i.test(raw)) return "缺少参考图，请先上传图片或使用上方生图结果。";
+  if (/missing_prompt/i.test(raw)) return "缺少提示词，请先填写提示词。";
+  if (/upload failed/i.test(raw)) return "参考图上传失败，请重新上传。";
+  if (/timeout/i.test(raw)) return "生成等待超时，可稍后重试一次。";
+  if (/server_error/i.test(raw)) return "服务端暂时不可用，请稍后再试。";
+  return raw;
+}
+
 async function fetchJsonish(url: string, init?: RequestInit) {
   const resp = await fetch(url, init);
   const rawText = await resp.text();
@@ -87,43 +151,49 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void }) {
   }
 
   return (
-    <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
+    <div style={panelStyle}>
       <div style={{ fontSize: 18, fontWeight: 900 }}>可灵生图（Kling Image）</div>
-      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 6 }}>
-        接口：<code>/api/kling-image</code>（异步任务 → 自动轮询拿 <code>imageUrl</code>）
+      <div style={{ fontSize: 12, color: "#475569", marginTop: 6 }}>
+        图文生图，异步任务会自动轮询并返回图片结果。
       </div>
 
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={3}
-        style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
+        style={inputStyle} />
 
       <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center" }}>
-        <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 800 }}>尺寸</div>
+        <div style={{ fontSize: 12, color: "#475569", fontWeight: 800 }}>尺寸</div>
         <select value={size} onChange={(e) => setSize(e.target.value)}
-          style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.25)", color: "white", fontWeight: 900 }}>
+          style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#f8fafc", color: "#0f172a", fontWeight: 900 }}>
           <option value="1024x576">1024x576（横屏）</option>
           <option value="576x1024">576x1024（竖屏）</option>
           <option value="1024x1024">1024x1024（方形）</option>
         </select>
 
         <button onClick={start} disabled={busy}
-          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
+          style={{ ...buttonStyle, opacity: busy ? 0.7 : 1 }}>
           {busy ? "生成中…" : "开始生成"}
         </button>
 
-        {taskId ? <span style={{ fontSize: 12, opacity: 0.85 }}>task: <code>{taskId}</code></span> : null}
+        {taskId ? <span style={{ fontSize: 12, color: "#475569" }}>任务：<code style={codeStyle}>{taskId}</code></span> : null}
       </div>
 
+      {debug?.ok === false && debug?.error ? (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: 12, fontWeight: 700 }}>
+          {normalizeUiError(debug.error)}
+        </div>
+      ) : null}
+
       {imageUrl ? (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 16, border: "1px solid #dbe4f0", background: "#f8fafc" }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（图片）</div>
           <img src={imageUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
           <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href={imageUrl} target="_blank" rel="noreferrer"
-              style={{ display: "inline-block", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900, textDecoration: "none" }}>
+              style={{ ...buttonMutedStyle, display: "inline-block", textDecoration: "none" }}>
               打开图片
             </a>
             <button onClick={() => props.onUseAsRef(imageUrl)}
-              style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
+              style={buttonMutedStyle}>
               设为参考图（用于上方视频）
             </button>
           </div>
@@ -278,7 +348,7 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
   const displayVideoUrl = workflowVideoUrl || videoUrl;
 
   return (
-    <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
+    <div style={panelStyle}>
       <div style={{ fontSize: 18, fontWeight: 900 }}>可灵视频（Kling CN）</div>
       <div style={{ marginTop: 10, display: "flex", gap: 12, alignItems: "center" }}>
         <input type="file" accept="image/*"
@@ -288,84 +358,104 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (u: 
             try { await upload(f); } catch (err: any) { setDebug({ ok: false, error: err?.message || String(err) }); }
           }}
         />
-        <div style={{ fontSize: 12, opacity: 0.85 }}>
-          {props.refImageUrl ? <>参考图：<code>{props.refImageUrl}</code></> : "未设置参考图"}
+        <div style={{ fontSize: 12, color: "#475569" }}>
+          {props.refImageUrl ? <>参考图：<code style={codeStyle}>{props.refImageUrl}</code></> : "未设置参考图"}
         </div>
       </div>
 
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
-        style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
+        style={inputStyle} />
 
       <button onClick={start} disabled={busy || uploading}
-        style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
-        {busy ? "生成中…" : uploading ? "上传中…" : "开始生成（10秒）"}
+        style={{ ...buttonStyle, marginTop: 10, opacity: busy || uploading ? 0.7 : 1 }}>
+        {busy ? "生成中…" : uploading ? "上传中…" : "开始生成"}
       </button>
 
-      {taskId ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div> : null}
+      {taskId ? <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>任务：<code style={codeStyle}>{taskId}</code></div> : null}
+
+      {workflowResult?.status === "failed" || (debug?.ok === false && debug?.error) ? (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: 12 }}>
+          <div style={{ fontWeight: 800 }}>生成失败</div>
+          <div style={{ marginTop: 4 }}>
+            {normalizeUiError(
+              workflowResult?.outputs?.videoErrorMessage ||
+              workflowResult?.outputs?.renderErrorMessage ||
+              debug?.error
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {workflowResult?.status && workflowResult.status !== "failed" ? (
+        <div style={{ marginTop: 12, borderRadius: 14, border: "1px solid #dbe4f0", background: "#f8fafc", padding: 12, color: "#334155" }}>
+          当前状态：<b>{workflowResult.status}</b> / 步骤：<b>{workflowResult.currentStep}</b>
+        </div>
+      ) : null}
+
       {workflowResult ? (
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.9 }}>
-          <div>workflowId: <code>{workflowResult.workflowId}</code></div>
-          <div>status: <code>{workflowResult.status}</code> / step: <code>{workflowResult.currentStep}</code></div>
+        <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>
+          <div>workflowId: <code style={codeStyle}>{workflowResult.workflowId}</code></div>
+          <div>status: <code style={codeStyle}>{workflowResult.status}</code> / step: <code style={codeStyle}>{workflowResult.currentStep}</code></div>
           <div>
             script engine:
-            <code>{String(workflowResult?.outputs?.scriptProvider || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.scriptProvider || "-")}</code>
             /
-            <code>{String(workflowResult?.outputs?.scriptModel || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.scriptModel || "-")}</code>
             {" "}fallback:
-            <code>{String(Boolean(workflowResult?.outputs?.scriptIsFallback))}</code>
+            <code style={codeStyle}>{String(Boolean(workflowResult?.outputs?.scriptIsFallback))}</code>
           </div>
           {workflowResult?.outputs?.scriptErrorMessage ? (
-            <div>script error: <code>{workflowResult.outputs.scriptErrorMessage}</code></div>
+            <div>script error: <code style={codeStyle}>{workflowResult.outputs.scriptErrorMessage}</code></div>
           ) : null}
           <div>
             video engine:
-            <code>{String(workflowResult?.outputs?.videoProvider || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.videoProvider || "-")}</code>
             /
-            <code>{String(workflowResult?.outputs?.videoModel || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.videoModel || "-")}</code>
             {" "}fallback:
-            <code>{String(Boolean(workflowResult?.outputs?.videoIsFallback))}</code>
+            <code style={codeStyle}>{String(Boolean(workflowResult?.outputs?.videoIsFallback))}</code>
           </div>
           {workflowResult?.outputs?.videoErrorMessage ? (
-            <div>video error: <code>{workflowResult.outputs.videoErrorMessage}</code></div>
+            <div>video error: <code style={codeStyle}>{workflowResult.outputs.videoErrorMessage}</code></div>
           ) : null}
           <div>
             image engine:
-            <code>{String(workflowResult?.outputs?.imageProvider || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.imageProvider || "-")}</code>
             /
-            <code>{String(workflowResult?.outputs?.imageModel || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.imageModel || "-")}</code>
             {" "}fallback:
-            <code>{String(Boolean(workflowResult?.outputs?.imageIsFallback))}</code>
+            <code style={codeStyle}>{String(Boolean(workflowResult?.outputs?.imageIsFallback))}</code>
           </div>
           {workflowResult?.outputs?.imageErrorMessage ? (
-            <div>image error: <code>{workflowResult.outputs.imageErrorMessage}</code></div>
+            <div>image error: <code style={codeStyle}>{workflowResult.outputs.imageErrorMessage}</code></div>
           ) : null}
           <div>
             render engine:
-            <code>{String(workflowResult?.outputs?.renderProvider || "-")}</code>
+            <code style={codeStyle}>{String(workflowResult?.outputs?.renderProvider || "-")}</code>
             {" "}fallback:
-            <code>{String(Boolean(workflowResult?.outputs?.renderIsFallback))}</code>
+            <code style={codeStyle}>{String(Boolean(workflowResult?.outputs?.renderIsFallback))}</code>
           </div>
           {workflowResult?.outputs?.renderErrorMessage ? (
-            <div>render error: <code>{workflowResult.outputs.renderErrorMessage}</code></div>
+            <div>render error: <code style={codeStyle}>{workflowResult.outputs.renderErrorMessage}</code></div>
           ) : null}
-          {workflowResult?.outputs?.script ? <div>script: <code>{workflowResult.outputs.script}</code></div> : null}
+          {workflowResult?.outputs?.script ? <div>script: <code style={codeStyle}>{workflowResult.outputs.script}</code></div> : null}
           {Array.isArray(workflowResult?.outputs?.storyboard) ? (
-            <div>storyboard: <code>{workflowResult.outputs.storyboard.length}</code></div>
+            <div>storyboard: <code style={codeStyle}>{workflowResult.outputs.storyboard.length}</code></div>
           ) : null}
           {Array.isArray(workflowResult?.outputs?.imageUrls) ? (
-            <div>imageUrls: <code>{workflowResult.outputs.imageUrls.length}</code></div>
+            <div>imageUrls: <code style={codeStyle}>{workflowResult.outputs.imageUrls.length}</code></div>
           ) : null}
-          {workflowResult?.outputs?.finalVideoUrl ? <div>finalVideoUrl: <code>{workflowResult.outputs.finalVideoUrl}</code></div> : null}
+          {workflowResult?.outputs?.finalVideoUrl ? <div>finalVideoUrl: <code style={codeStyle}>{workflowResult.outputs.finalVideoUrl}</code></div> : null}
         </div>
       ) : null}
 
       {displayVideoUrl ? (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 16, border: "1px solid #dbe4f0", background: "#f8fafc" }}>
           <div style={{ fontWeight: 900, marginBottom: 8 }}>生成结果（视频）</div>
           <video controls src={displayVideoUrl} style={{ width: "100%", borderRadius: 12, background: "black" }} />
           <div style={{ marginTop: 8 }}>
             <a href={displayVideoUrl} download target="_blank" rel="noreferrer"
-              style={{ display: "inline-block", padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900, textDecoration: "none" }}>
+              style={{ ...buttonMutedStyle, display: "inline-block", textDecoration: "none" }}>
               下载 MP4
             </a>
           </div>
@@ -449,25 +539,25 @@ function MusicPanel() {
   }
 
   return (
-    <div style={{ marginTop: 16, padding: 16, borderRadius: 16, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.25)", color: "white" }}>
+    <div style={panelStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <div style={{ fontSize: 18, fontWeight: 900 }}>音乐生成</div>
         <select value={provider} onChange={(e) => setProvider(e.target.value as MusicProvider)}
-          style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(0,0,0,0.25)", color: "white", fontWeight: 900 }}>
+          style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#f8fafc", color: "#0f172a", fontWeight: 900 }}>
           <option value="suno">Suno（高质量）</option>
           <option value="udio">Udio（更便宜）</option>
         </select>
       </div>
 
       <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4}
-        style={{ width: "100%", marginTop: 10, padding: 10, borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.25)", color: "white" }} />
+        style={inputStyle} />
 
       <button onClick={start} disabled={busy}
-        style={{ marginTop: 10, padding: "10px 14px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: busy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}>
+        style={{ ...buttonStyle, marginTop: 10, opacity: busy ? 0.7 : 1 }}>
         {busy ? "生成中…" : "开始生成"}
       </button>
 
-      {taskId ? <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>任务：<code>{taskId}</code></div> : null}
+      {taskId ? <div style={{ marginTop: 8, fontSize: 12, color: "#475569" }}>任务：<code style={codeStyle}>{taskId}</code></div> : null}
 
       {Array.isArray(clips) && clips.length ? (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.20)" }}>
@@ -486,7 +576,7 @@ function MusicPanel() {
                     borderRadius: 12,
                     border: "1px solid rgba(255,255,255,0.12)",
                     background: active ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.06)",
-                    color: "white",
+                    color: "#0f172a",
                     cursor: c?.audio_url ? "pointer" : "not-allowed",
                     opacity: c?.audio_url ? 1 : 0.6,
                     fontWeight: 800,
@@ -498,7 +588,7 @@ function MusicPanel() {
                   {c?.image_url ? (
                     <img src={c.image_url} alt="cover" style={{ width: 44, height: 44, borderRadius: 10, objectFit: "cover" }} />
                   ) : (
-                    <div style={{ width: 44, height: 44, borderRadius: 10, background: "rgba(255,255,255,0.08)" }} />
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: "#e2e8f0" }} />
                   )}
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
@@ -538,16 +628,18 @@ export default function RemixStudio() {
   const [refImageUrl, setRefImageUrl] = useState<string>("");
 
   return (
-    <div style={{ maxWidth: 980, margin: "0 auto", padding: 20 }}>
+    <div style={pageStyle}>
+      <div style={{ maxWidth: 980, margin: "0 auto" }}>
       <BuildBadge />
-      <h1 style={{ color: "white", fontSize: 22, fontWeight: 900, margin: 0 }}>Remix Studio</h1>
-      <div style={{ color: "rgba(255,255,255,0.75)", marginTop: 6, fontSize: 13 }}>
-        视频：Kling（后端）｜生图：Kling Image（/api/kling-image）｜音乐：Suno/Udio（AIMusicAPI）｜上传统一走 /api/blob-put-image。
+      <h1 style={{ color: "#0f172a", fontSize: 22, fontWeight: 900, margin: 0 }}>Remix Studio</h1>
+      <div style={{ color: "#475569", marginTop: 6, fontSize: 13 }}>
+        视频：Kling ｜生图：Kling Image ｜音乐：Suno/Udio ｜上传统一走 /api/blob-put-image
       </div>
 
       <KlingImagePanel onUseAsRef={(u) => setRefImageUrl(u)} />
       <KlingVideoPanel refImageUrl={refImageUrl} onRefImageUrlChange={(u) => setRefImageUrl(u)} />
       <MusicPanel />
+      </div>
     </div>
   );
 }
