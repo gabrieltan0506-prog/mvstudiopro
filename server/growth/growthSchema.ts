@@ -40,6 +40,10 @@ export const PLATFORM_ALIASES = Object.fromEntries([
   ["今日头条", "toutiao"],
 ]) as Record<string, GrowthPlatform>;
 
+const PLATFORM_BY_LABEL = Object.fromEntries(
+  Object.entries(PLATFORM_LABELS).map(([platform, label]) => [label, platform as GrowthPlatform]),
+) as Record<string, GrowthPlatform>;
+
 export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
   const mapped = (input || [])
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
@@ -892,12 +896,16 @@ function buildGrowthHandoff(
   creationAssist: ReturnType<typeof buildCreationAssist>,
 ) {
   const recommendedTrack = monetizationTracks[0]?.name || "品牌合作";
+  const recommendedPlatform =
+    PLATFORM_BY_LABEL[platformRecommendations[0]?.name || ""]
+    || requestedPlatforms[0]
+    || "xiaohongshu";
   return {
     brief: creationAssist.brief,
     storyboardPrompt: creationAssist.storyboardPrompt,
     workflowPrompt: creationAssist.workflowPrompt,
     recommendedTrack,
-    recommendedPlatforms: requestedPlatforms.slice(0, 1),
+    recommendedPlatforms: [recommendedPlatform],
     businessGoal: context.trim() || `优先验证「${recommendedTrack}」这条商业承接路径。`,
   };
 }
