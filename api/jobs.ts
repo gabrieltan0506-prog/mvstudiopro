@@ -1260,6 +1260,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         targetScenes: Number(payload.targetScenes || 0) || undefined,
       });
       saveCoreWorkflow(task);
+      if (sourceType === "remix") {
+        try {
+          const completedWorkflow = await startCoreWorkflow(task);
+          return res.status(200).json({
+            ok: true,
+            workflowId: completedWorkflow?.workflowId || task.workflowId,
+            status: completedWorkflow?.status || task.status,
+            currentStep: completedWorkflow?.currentStep || task.currentStep,
+            workflow: completedWorkflow || task,
+          });
+        } catch {
+          const failedWorkflow = getCoreWorkflow(task.workflowId) || task;
+          return res.status(200).json({
+            ok: true,
+            workflowId: failedWorkflow.workflowId,
+            status: failedWorkflow.status,
+            currentStep: failedWorkflow.currentStep,
+            workflow: failedWorkflow,
+          });
+        }
+      }
       void startCoreWorkflow(task).catch(() => {
         // startWorkflow persists its own failed status/error path
       });
