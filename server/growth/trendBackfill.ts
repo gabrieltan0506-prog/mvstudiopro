@@ -9,7 +9,7 @@ const HISTORY_MIN_INTERVAL_MS = 60 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
 const HISTORY_STEP_TARGET = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 2) || 2);
 const HISTORY_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 2) || 2);
-const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili"];
+const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 
 let backfillStarted = false;
 let backfillTimer: ReturnType<typeof setTimeout> | null = null;

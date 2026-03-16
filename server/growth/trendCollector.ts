@@ -67,6 +67,7 @@ const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; m
   kuaishou: { min: 12, max: 36 },
   bilibili: { min: 40, max: 80 },
   xiaohongshu: { min: 20, max: 60 },
+  toutiao: { min: 20, max: 60 },
 };
 
 const DEFAULT_WINDOW_DAYS = 30;
@@ -204,6 +205,224 @@ function extractEmbeddedState(html: string) {
     }
   }
   return null;
+}
+
+type ToutiaoAcrawler = {
+  init: (config: Record<string, any>) => void;
+  sign: (payload: { url: string; body?: string }) => string;
+};
+
+function createToutiaoSigner(script: string): ToutiaoAcrawler | null {
+  const context = {
+    window: {} as Record<string, any>,
+    global: null as Record<string, any> | null,
+    self: null as Record<string, any> | null,
+    location: {
+      protocol: "https:",
+      host: "www.toutiao.com",
+      href: "https://www.toutiao.com/",
+    },
+    navigator: {
+      userAgent: "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+      language: "zh-CN",
+      languages: ["zh-CN", "zh"],
+      platform: "MacIntel",
+      webdriver: false,
+    },
+    document: {
+      cookie: "",
+      referrer: "",
+      createElement() {
+        return {
+          style: {},
+          setAttribute() { return undefined; },
+          getContext() { return {}; },
+          appendChild() { return undefined; },
+          removeChild() { return undefined; },
+          src: "",
+          href: "",
+        };
+      },
+      documentElement: { clientWidth: 1440, clientHeight: 900 },
+      body: {
+        appendChild() { return undefined; },
+        removeChild() { return undefined; },
+        clientWidth: 1440,
+        clientHeight: 900,
+      },
+      addEventListener() { return undefined; },
+      removeEventListener() { return undefined; },
+      getElementsByTagName() {
+        return [{ appendChild() { return undefined; }, removeChild() { return undefined; } }];
+      },
+      querySelector() {
+        return null;
+      },
+    },
+    screen: {
+      width: 1440,
+      height: 900,
+      availWidth: 1440,
+      availHeight: 900,
+      colorDepth: 24,
+      pixelDepth: 24,
+    },
+    history: { length: 2 },
+    performance: { now: () => Date.now(), timing: {} },
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    Math,
+    Date,
+    JSON,
+    Array,
+    Object,
+    String,
+    Number,
+    Boolean,
+    RegExp,
+    Error,
+    TypeError,
+    parseInt,
+    parseFloat,
+    isNaN,
+    encodeURIComponent,
+    decodeURIComponent,
+    escape,
+    unescape,
+    atob: (value: string) => Buffer.from(value, "base64").toString("binary"),
+    btoa: (value: string) => Buffer.from(value, "binary").toString("base64"),
+    console,
+  };
+  context.window = context as unknown as Record<string, any>;
+  context.global = context.window;
+  context.self = context.window;
+  try {
+    vm.runInNewContext(script, context, { timeout: 5_000 });
+    const acrawler = context.window.byted_acrawler as ToutiaoAcrawler | undefined;
+    if (!acrawler || typeof acrawler.init !== "function" || typeof acrawler.sign !== "function") return null;
+    acrawler.init({ aid: 24, dfp: true });
+    return acrawler;
+  } catch {
+    return null;
+  }
+}
+
+function parseToutiaoFeedItems(payload: Record<string, any>, category: string) {
+  const list = Array.isArray(payload?.data) ? payload.data as Array<Record<string, any>> : [];
+  return list.map((entry, index) => {
+    const streamCell = entry.stream_cell ?? {};
+    const baseCell = entry.base_cell ?? {};
+    const parsedRawData = (() => {
+      const raw = String(streamCell.raw_data ?? "").trim();
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as Record<string, any>;
+      } catch {
+        return null;
+      }
+    })();
+    const article = parsedRawData?.itemCell ?? parsedRawData ?? {};
+    const user = article.user ?? {};
+    const title = String(
+      article.title
+      ?? article.content
+      ?? streamCell.abstract
+      ?? streamCell.title
+      ?? baseCell.title
+      ?? "",
+    ).trim();
+    if (!title) return null;
+    const id = String(
+      streamCell.id
+      ?? article.group_id
+      ?? article.thread_id
+      ?? article.item_id
+      ?? `${category}-${index}`,
+    ).trim();
+    const author = String(
+      user.screen_name
+      ?? user.name
+      ?? streamCell.source
+      ?? "",
+    ).trim();
+    const likes = parseChineseCount(article.digg_count ?? baseCell.digg_count);
+    const comments = parseChineseCount(article.comment_count ?? baseCell.comment_count);
+    const shares = parseChineseCount(article.forward_info?.forward_count ?? baseCell.share_count);
+    const views = parseChineseCount(article.read_count ?? article.display_count ?? baseCell.read_count);
+    const tags = [
+      String(parsedRawData?.forum?.forum_name ?? "").trim(),
+      String(article.publish_loc_info ?? "").trim(),
+    ].filter(Boolean);
+    return {
+      id,
+      title,
+      bucket: category === "profile_all" ? "toutiao_feed" : `toutiao_${category}`,
+      author: author || undefined,
+      url: article.share_url || streamCell.share_url || undefined,
+      publishedAt: safeDateFromUnix(Number(article.publish_time ?? article.create_time ?? baseCell.behot_time)),
+      likes,
+      comments,
+      shares,
+      views,
+      hotValue: (likes || 0) + (comments || 0),
+      contentType: category === "pc_profile_video" ? "video" : "note",
+      tags,
+    } satisfies TrendItem;
+  }).filter(Boolean) as TrendItem[];
+}
+
+function parseToutiaoVideoItems(payload: Record<string, any>) {
+  const list = Array.isArray(payload?.data) ? payload.data as Array<Record<string, any>> : [];
+  return list.map((entry, index) => {
+    const title = String(entry.title ?? "").trim();
+    if (!title) return null;
+    const id = String(entry.group_id ?? entry.item_id ?? `${index}`).trim();
+    const views = parseChineseCount(entry.go_detail_count ?? entry.detail_play_effective_count);
+    return {
+      id,
+      title,
+      bucket: "toutiao_video",
+      author: String(entry.source ?? "").trim() || undefined,
+      url: String(entry.display_url ?? entry.source_url ?? "").trim() || undefined,
+      publishedAt: undefined,
+      likes: undefined,
+      comments: parseChineseCount(entry.comments_count),
+      shares: undefined,
+      views,
+      hotValue: views,
+      contentType: "video",
+      tags: [String(entry.article_genre ?? "").trim()].filter(Boolean),
+    } satisfies TrendItem;
+  }).filter(Boolean) as TrendItem[];
+}
+
+function parseToutiaoMediaHotItems(payload: Record<string, any>) {
+  const list = Array.isArray(payload?.data) ? payload.data as Array<Record<string, any>> : [];
+  return list.map((entry, index) => {
+    const title = String(entry.title ?? entry.name ?? entry.keyword ?? "").trim();
+    if (!title) return null;
+    const id = String(entry.group_id ?? entry.item_id ?? entry.id ?? `media-hot-${index}`).trim();
+    const views = parseChineseCount(entry.read_count ?? entry.show_count ?? entry.play_count);
+    const likes = parseChineseCount(entry.digg_count ?? entry.like_count);
+    const comments = parseChineseCount(entry.comment_count);
+    return {
+      id,
+      title,
+      bucket: "toutiao_media_hot",
+      author: String(entry.source ?? entry.media_name ?? "").trim() || undefined,
+      url: String(entry.display_url ?? entry.share_url ?? "").trim() || undefined,
+      publishedAt: safeDateFromUnix(Number(entry.publish_time ?? entry.create_time)),
+      likes,
+      comments,
+      shares: parseChineseCount(entry.share_count),
+      views,
+      hotValue: (views || 0) + (likes || 0) + (comments || 0),
+      contentType: String(entry.article_genre ?? "").includes("video") ? "video" : "note",
+      tags: [String(entry.chinese_tag ?? "").trim()].filter(Boolean),
+    } satisfies TrendItem;
+  }).filter(Boolean) as TrendItem[];
 }
 
 function extractDouyinCreatorItems(state: unknown) {
@@ -1368,6 +1587,130 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   });
 }
 
+async function collectToutiao(): Promise<PlatformTrendCollection> {
+  const cookie = String(process.env.TOUTIAO_COOKIE || "").trim();
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+  let requestCount = 0;
+
+  if (!cookie) {
+    throw new Error("Toutiao collector requires TOUTIAO_COOKIE.");
+  }
+
+  const antiToken = parseCookieValue(cookie, "tt_anti_token");
+  const csrfToken = parseCookieValue(cookie, "csrftoken");
+  const userToken = String(process.env.TOUTIAO_USER_TOKEN || "").trim();
+  const mediaId = String(process.env.TOUTIAO_MEDIA_ID || "").trim();
+
+  if (!userToken) {
+    throw new Error("Toutiao collector requires TOUTIAO_USER_TOKEN.");
+  }
+
+  const acrawlerResponse = await fetch("https://lf3-cdn-tos.bytescm.com/obj/rc-web-sdk/acrawler.js", {
+    headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
+  });
+  requestCount += 1;
+  if (!acrawlerResponse.ok) {
+    throw new Error(`Toutiao acrawler script responded with ${acrawlerResponse.status}`);
+  }
+  const signer = createToutiaoSigner(await acrawlerResponse.text());
+  if (!signer) {
+    throw new Error("Toutiao acrawler signer could not be initialized.");
+  }
+
+  const categoriesResponse = await fetch("https://www.toutiao.com/api/pc/user/tabs_info?aid=24&app_name=toutiao_web", {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "content-type": "application/x-www-form-urlencoded",
+      cookie,
+      referer: "https://www.toutiao.com/",
+      origin: "https://www.toutiao.com",
+      "x-csrftoken": csrfToken,
+      "tt-anti-token": antiToken,
+      "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+    },
+    body: `token=${encodeURIComponent(userToken)}`,
+  });
+  requestCount += 1;
+  if (!categoriesResponse.ok) {
+    throw new Error(`Toutiao tabs_info responded with ${categoriesResponse.status}`);
+  }
+  const categoriesPayload = await categoriesResponse.json() as Record<string, any>;
+  const categories = Array.isArray(categoriesPayload?.data) ? categoriesPayload.data as Array<Record<string, any>> : [];
+  const selectedCategories = categories
+    .map((item) => String(item.category ?? "").trim())
+    .filter((item) => ["profile_all", "pc_profile_video", "pc_profile_ugc"].includes(item));
+  notes.push(`Fetched ${selectedCategories.length} Toutiao profile tabs: ${selectedCategories.join(", ")}.`);
+
+  const baseHeaders = {
+    accept: "application/json, text/plain, */*",
+    cookie,
+    referer: "https://www.toutiao.com/",
+    origin: "https://www.toutiao.com",
+    "x-csrftoken": csrfToken,
+    "tt-anti-token": antiToken,
+    "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+  };
+
+  for (const category of selectedCategories) {
+    const pageUrl = new URL("https://www.toutiao.com/api/pc/feed/");
+    pageUrl.searchParams.set("category", category);
+    pageUrl.searchParams.set("utm_source", "toutiao");
+    pageUrl.searchParams.set("visit_user_token", userToken);
+    pageUrl.searchParams.set("max_behot_time", "0");
+    pageUrl.searchParams.set("aid", "24");
+    pageUrl.searchParams.set("app_name", "toutiao_web");
+    pageUrl.searchParams.set("_signature", signer.sign({ url: pageUrl.toString() }));
+    const response = await fetch(pageUrl.toString(), { headers: baseHeaders });
+    requestCount += 1;
+    if (!response.ok) {
+      notes.push(`Toutiao pc/feed ${category} responded with ${response.status}.`);
+      continue;
+    }
+    const payload = await response.json() as Record<string, any>;
+    const categoryItems = category === "pc_profile_video"
+      ? parseToutiaoVideoItems(payload)
+      : parseToutiaoFeedItems(payload, category);
+    items.push(...categoryItems);
+    notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category}.`);
+  }
+
+  if (mediaId) {
+    const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
+    mediaUrl.searchParams.set("media_id", mediaId);
+    mediaUrl.searchParams.set("user_token", userToken);
+    mediaUrl.searchParams.set("aid", "24");
+    mediaUrl.searchParams.set("app_name", "toutiao_web");
+    const mediaSignature = signer.sign({ url: mediaUrl.toString() });
+    mediaUrl.searchParams.set("_signature", mediaSignature);
+    const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
+    requestCount += 1;
+    if (response.ok) {
+      const payload = await response.json() as Record<string, any>;
+      const mediaItems = parseToutiaoMediaHotItems(payload);
+      items.push(...mediaItems);
+      notes.push(`Fetched ${mediaItems.length} Toutiao media hot items.`);
+    } else {
+      notes.push(`Toutiao media_hot responded with ${response.status}.`);
+    }
+  }
+
+  const dedupedItems = dedupeById(items);
+  if (!dedupedItems.length) {
+    throw new Error("Toutiao collector returned 0 items.");
+  }
+
+  return finalizeCollection("toutiao", "live", dedupedItems, notes, {
+    collectorMode: "warehouse",
+    requestCount,
+    pageDepth: selectedCategories.length,
+    targetPerRun: Math.max(500, getPlatformTargetItemCount("toutiao")),
+    referenceMinItems: PLATFORM_REFERENCE_RANGES.toutiao?.min || 20,
+    referenceMaxItems: PLATFORM_REFERENCE_RANGES.toutiao?.max || 60,
+  });
+}
+
 export async function collectPlatformTrends(platform: GrowthPlatform): Promise<PlatformTrendCollection> {
   switch (platform) {
     case "bilibili":
@@ -1376,6 +1719,8 @@ export async function collectPlatformTrends(platform: GrowthPlatform): Promise<P
       return collectDouyin();
     case "kuaishou":
       return collectKuaishou();
+    case "toutiao":
+      return collectToutiao();
     case "xiaohongshu":
       return collectXiaohongshu();
     default:
