@@ -113,6 +113,13 @@ type TrendTableRow = {
   highlight?: string;
 };
 
+type PlatformCompareRow = {
+  metric: string;
+  primaryValue: string;
+  compareValue: string;
+  verdict: string;
+};
+
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
 const PLATFORM_LABELS: Record<string, string> = {
@@ -150,6 +157,12 @@ function getScoreTone(score: number) {
 
 function formatPercent(value: number) {
   return `${Math.max(0, Math.min(100, Math.round(value)))}%`;
+}
+
+function formatCompactNumber(value: number) {
+  if (!Number.isFinite(value)) return "-";
+  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
+  return `${Math.round(value)}`;
 }
 
 function compactText(text: string, maxLength = 72) {
@@ -361,6 +374,45 @@ function buildPlatformRecommendationRows(
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
   });
+}
+
+function buildPlatformCompareRows(
+  growthSnapshot: GrowthSnapshot | null,
+  recommendations: GrowthPlatformRecommendation[],
+  comparePlatformName: string,
+): PlatformCompareRow[] {
+  const primaryName = recommendations[0]?.name || "";
+  const primary = growthSnapshot?.platformSnapshots.find((item) => item.displayName === primaryName);
+  const compare = growthSnapshot?.platformSnapshots.find((item) => item.displayName === comparePlatformName);
+  if (!primary || !compare) return [];
+
+  const rows = [
+    {
+      metric: "受众匹配",
+      primaryValue: `${primary.audienceFitScore}`,
+      compareValue: `${compare.audienceFitScore}`,
+      verdict: primary.audienceFitScore >= compare.audienceFitScore ? `${primary.displayName} 更适合先发` : `${compare.displayName} 更适合先发`,
+    },
+    {
+      metric: "平台动能",
+      primaryValue: `${primary.momentumScore}`,
+      compareValue: `${compare.momentumScore}`,
+      verdict: primary.momentumScore >= compare.momentumScore ? `${primary.displayName} 更容易借势` : `${compare.displayName} 当前更有势能`,
+    },
+    {
+      metric: "互动中位",
+      primaryValue: formatPercent(primary.last30d.engagementRateMedian),
+      compareValue: formatPercent(compare.last30d.engagementRateMedian),
+      verdict: primary.last30d.engagementRateMedian >= compare.last30d.engagementRateMedian ? `${primary.displayName} 更值得先测互动` : `${compare.displayName} 更值得先测互动`,
+    },
+    {
+      metric: "平均播放",
+      primaryValue: formatCompactNumber(primary.last30d.avgViews),
+      compareValue: formatCompactNumber(compare.last30d.avgViews),
+      verdict: primary.last30d.avgViews >= compare.last30d.avgViews ? `${primary.displayName} 更适合做放大版` : `${compare.displayName} 更适合做放大版`,
+    },
+  ];
+  return rows;
 }
 
 function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
@@ -590,7 +642,7 @@ function buildDashboardPanels(
       eyebrow: "7天执行",
       title: dayOne?.title || "先跑第一轮结果",
       summary: dayOne?.action || "先做一版能验证结果的首发稿。",
-      detail: growthPlan.slice(1, 4).map((item) => `Day ${item.day} ${item.title}：${item.action}`).join(" "),
+      detail: growthPlan.slice(1, 4).map((item) => `第 ${item.day} 天 ${item.title}：${item.action}`).join(" "),
       action: "先把短期结果做出来，再把同主题延展到分镜、视频和商业承接。",
       accent: "text-[#d7ff7f]",
       glow: "from-[#8effb1]/18 via-[#d7ff7f]/10 to-transparent",
@@ -624,6 +676,9 @@ export default function MVAnalysisPage() {
   });
   const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
   const [activeDashboardPanel, setActiveDashboardPanel] = useState("readiness");
+  const [selectedComparePlatform, setSelectedComparePlatform] = useState("");
+  const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
+  const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1008,6 +1063,24 @@ export default function MVAnalysisPage() {
     })),
     [platformRecommendationRows],
   );
+  const comparePlatformOptions = useMemo(
+    () => platformRecommendations.map((item) => item.name).filter(Boolean),
+    [platformRecommendations],
+  );
+  const filteredTrendRows = useMemo(
+    () => selectedTrendPlatform === "all"
+      ? trendRows
+      : trendRows.filter((row) => row.platform === selectedTrendPlatform),
+    [trendRows, selectedTrendPlatform],
+  );
+  const platformCompareRows = useMemo(
+    () => buildPlatformCompareRows(growthSnapshot, platformRecommendations, selectedComparePlatform),
+    [growthSnapshot, platformRecommendations, selectedComparePlatform],
+  );
+  const focusedBusinessTrack = useMemo(
+    () => commercialTracks.find((item) => item.name === selectedBusinessTrack) || commercialTracks[0] || null,
+    [commercialTracks, selectedBusinessTrack],
+  );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => activeDashboardPanel === panelId
@@ -1023,15 +1096,38 @@ export default function MVAnalysisPage() {
     }
   }, [dashboardPanels, activeDashboardPanel]);
 
+  useEffect(() => {
+    if (!comparePlatformOptions.length) return;
+    if (!selectedComparePlatform || !comparePlatformOptions.includes(selectedComparePlatform)) {
+      setSelectedComparePlatform(comparePlatformOptions[1] || comparePlatformOptions[0] || "");
+    }
+  }, [comparePlatformOptions, selectedComparePlatform]);
+
+  useEffect(() => {
+    if (!commercialTracks.length) return;
+    if (!selectedBusinessTrack || !commercialTracks.some((item) => item.name === selectedBusinessTrack)) {
+      setSelectedBusinessTrack(commercialTracks[0]?.name || "");
+    }
+  }, [commercialTracks, selectedBusinessTrack]);
+
   const activateDashboardPanel = useCallback((panelId: string) => {
     setActiveDashboardPanel(panelId);
+    if (panelId === "platforms" && comparePlatformOptions.length) {
+      setSelectedComparePlatform(comparePlatformOptions[1] || comparePlatformOptions[0] || "");
+    }
+    if (panelId === "monetization" && commercialTracks.length) {
+      setSelectedBusinessTrack(commercialTracks[0]?.name || "");
+    }
+    if (panelId === "positioning" || panelId === "content") {
+      setSelectedTrendPlatform("all");
+    }
     const target = sectionRefs.current[panelId];
     if (target) {
       requestAnimationFrame(() => {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     }
-  }, []);
+  }, [commercialTracks, comparePlatformOptions]);
 
   const activePanelDetail = dashboardPanels.find((item) => item.id === activeDashboardPanel) || dashboardPanels[0];
 
@@ -1522,6 +1618,71 @@ export default function MVAnalysisPage() {
                           <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">联动解说台</div>
                         </div>
                         <div className="relative mt-4 grid gap-3 lg:grid-cols-3">
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">趋势下钻</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {["all", ...Array.from(new Set(trendRows.map((row) => row.platform)))].map((platform) => (
+                                <button
+                                  key={platform}
+                                  type="button"
+                                  onClick={() => setSelectedTrendPlatform(platform)}
+                                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                                    selectedTrendPlatform === platform
+                                      ? "border-white/25 bg-white/12 text-white"
+                                      : "border-white/10 bg-black/20 text-white/65"
+                                  }`}
+                                >
+                                  {platform === "all" ? "全部平台" : platform}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">平台对比</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {comparePlatformOptions.map((platform) => (
+                                <button
+                                  key={platform}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedComparePlatform(platform);
+                                    setActiveDashboardPanel("platforms");
+                                  }}
+                                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                                    selectedComparePlatform === platform
+                                      ? "border-[#90c4ff]/35 bg-[#10233e] text-[#d8ebff]"
+                                      : "border-white/10 bg-black/20 text-white/65"
+                                  }`}
+                                >
+                                  对比 {platform}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                            <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">商业焦点</div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {commercialTracks.slice(0, 3).map((track) => (
+                                <button
+                                  key={track.name}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedBusinessTrack(track.name);
+                                    setActiveDashboardPanel("monetization");
+                                  }}
+                                  className={`rounded-full border px-3 py-1 text-xs transition ${
+                                    selectedBusinessTrack === track.name
+                                      ? "border-[#f5b7ff]/35 bg-[#2b1733] text-[#ffe3ff]"
+                                      : "border-white/10 bg-black/20 text-white/65"
+                                  }`}
+                                >
+                                  {track.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="relative mt-4 grid gap-3 lg:grid-cols-3">
                           <div className="rounded-2xl border border-white/10 bg-[#111f32] p-4">
                             <div className="text-sm font-semibold text-white">现在先做什么</div>
                             <div className="mt-2 text-sm leading-7 text-white/82">{activePanelDetail.summary}</div>
@@ -1669,11 +1830,11 @@ export default function MVAnalysisPage() {
                         <div className="font-semibold text-white">趋势判断</div>
                         <p className="mt-2">{replaceTerms(growthSnapshot.overview.trendNarrative)}</p>
                       </div>
-                      {trendRows.length ? (
+                      {filteredTrendRows.length ? (
                         <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/15">
                           <table className="w-full border-collapse text-sm leading-7 text-white/75">
                             <tbody>
-                              {trendRows.map((row) => (
+                              {filteredTrendRows.map((row) => (
                                 <tr key={`${row.platform}-${row.topic}`} className="border-b border-white/10 last:border-b-0">
                                   <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.platform}</td>
                                   <td className="px-4 py-4 text-[#9dd0ff]">{row.topic}</td>
@@ -1761,7 +1922,7 @@ export default function MVAnalysisPage() {
                         <tbody>
                           {growthPlan.map((item) => (
                             <tr key={item.day} className="border-b border-white/10 last:border-b-0">
-                              <td className="w-24 bg-white/5 px-4 py-4 align-top font-semibold text-[#9df6c0]">Day {item.day}</td>
+                              <td className="w-24 bg-white/5 px-4 py-4 align-top font-semibold text-[#9df6c0]">第 {item.day} 天</td>
                               <td className="w-40 px-4 py-4 font-semibold text-white">{item.title}</td>
                               <td className="px-4 py-4">{item.action}</td>
                             </tr>
@@ -1794,6 +1955,22 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
                     <p className="mt-3 text-sm leading-7 text-white/60">先定首发，再把同一主题拆成图文版、短视频版和长视频版，不让用户只停在一个平台。</p>
+                    {platformCompareRows.length ? (
+                      <div className="relative mt-4 overflow-hidden rounded-2xl border border-[#90c4ff]/20 bg-[#0d1b2f]">
+                        <table className="w-full border-collapse text-sm leading-6 text-white/78">
+                          <tbody>
+                            {platformCompareRows.map((row) => (
+                              <tr key={row.metric} className="border-b border-white/10 last:border-b-0">
+                                <td className="w-28 bg-white/5 px-4 py-3 font-semibold text-white">{row.metric}</td>
+                                <td className="w-24 px-4 py-3 text-[#d7ebff]">{platformRecommendations[0]?.name || "首发"} {row.primaryValue}</td>
+                                <td className="w-24 px-4 py-3 text-[#9dc8ff]">{selectedComparePlatform} {row.compareValue}</td>
+                                <td className="px-4 py-3 text-white/68">{row.verdict}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
                     <div className="relative mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
@@ -1891,6 +2068,29 @@ export default function MVAnalysisPage() {
                         </div>
                       ))}
                     </div>
+                    {focusedBusinessTrack ? (
+                      <div className="relative mt-4 grid gap-4 lg:grid-cols-3">
+                        <div className="rounded-2xl border border-[#f5b7ff]/20 bg-[#24142a] p-4">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-[#f5b7ff]">当前主打</div>
+                          <div className="mt-2 text-lg font-black text-white">{focusedBusinessTrack.name} {focusedBusinessTrack.fit}%</div>
+                          <p className="mt-2 text-sm leading-7 text-white/72">{compactText(replaceTerms(focusedBusinessTrack.reason), 48)}</p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">决策信号</div>
+                          <p className="mt-2 text-sm leading-7 text-white/78">
+                            {focusedBusinessTrack.fit >= 80
+                              ? "可直接围绕这条主方向做承接页和首发版本。"
+                              : focusedBusinessTrack.fit >= 60
+                                ? "先做验证稿，不要同时堆多个商业方向。"
+                                : "先补内容入口和案例，再决定是否把它当主变现方向。"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">下一步动作</div>
+                          <p className="mt-2 text-sm leading-7 text-white/78">{compactText(replaceTerms(focusedBusinessTrack.nextStep), 54)}</p>
+                        </div>
+                      </div>
+                    ) : null}
                     <div className="relative mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                         <div className="flex items-center gap-2 text-white">
