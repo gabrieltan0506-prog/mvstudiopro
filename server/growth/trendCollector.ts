@@ -705,41 +705,6 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     ).trim();
   };
 
-  if (cookies.length) {
-    const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
-      let pcursor = "";
-      for (let page = 0; page < privatePages; page += 1) {
-        const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
-        if (pcursor) url.searchParams.set("pcursor", pcursor);
-        const response = await fetch(url.toString(), {
-          headers: {
-            accept: "application/json,text/plain,*/*",
-            cookie,
-            referer: "https://www.kuaishou.com/new-reco",
-            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-          },
-        });
-        privateRequestCount += 1;
-        privatePageDepth = Math.max(privatePageDepth, page + 1);
-        if (!response.ok) {
-          notes.push(`Kuaishou private/list cookie ${cookieIndex + 1} page ${page + 1} responded with ${response.status}.`);
-          break;
-        }
-        const payload = await response.json() as {
-          feeds?: Array<Record<string, any>>;
-          pcursor?: string;
-        };
-        const list = payload.feeds ?? [];
-        list.forEach((item) => pushKuaishouItem(item, `private-list:${cookieIndex + 1}:${page + 1}`));
-        notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from cookie ${cookieIndex + 1} private/list page ${page + 1}.`);
-        pcursor = String(payload.pcursor || "").trim();
-        if (!pcursor || !list.length) break;
-      }
-    });
-
-    await runBatches(privateTasks, Math.max(1, Math.min(4, cookies.length)));
-  }
-
   if (searchKeywords.length) {
     const cookiePool = cookies.length ? cookies : [""];
     const searchTasks = cookiePool.flatMap((cookie, cookieIndex) =>
@@ -782,6 +747,41 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     );
 
     await runBatches(searchTasks, searchConcurrency);
+  }
+
+  if (cookies.length) {
+    const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
+      let pcursor = "";
+      for (let page = 0; page < privatePages; page += 1) {
+        const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
+        if (pcursor) url.searchParams.set("pcursor", pcursor);
+        const response = await fetch(url.toString(), {
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            cookie,
+            referer: "https://www.kuaishou.com/new-reco",
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          },
+        });
+        privateRequestCount += 1;
+        privatePageDepth = Math.max(privatePageDepth, page + 1);
+        if (!response.ok) {
+          notes.push(`Kuaishou private/list cookie ${cookieIndex + 1} page ${page + 1} responded with ${response.status}.`);
+          break;
+        }
+        const payload = await response.json() as {
+          feeds?: Array<Record<string, any>>;
+          pcursor?: string;
+        };
+        const list = payload.feeds ?? [];
+        list.forEach((item) => pushKuaishouItem(item, `private-list:${cookieIndex + 1}:${page + 1}`));
+        notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from cookie ${cookieIndex + 1} private/list page ${page + 1}.`);
+        pcursor = String(payload.pcursor || "").trim();
+        if (!pcursor || !list.length) break;
+      }
+    });
+
+    await runBatches(privateTasks, Math.max(1, Math.min(4, cookies.length)));
   }
 
   if (principals.length) {
@@ -874,14 +874,16 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
 
   return finalizeCollection("kuaishou", "live", items, notes, {
     collectorMode: searchRequestCount
-      ? "warehouse"
+      ? cookies.length || principals.length
+        ? "warehouse"
+        : "public_feed"
       : cookies.length && principals.length
         ? "hybrid"
         : cookies.length
           ? "authenticated_feed"
           : "public_feed",
     requestCount: privateRequestCount + publicRequestCount + searchRequestCount,
-    pageDepth: Math.max(privatePageDepth, publicPages, searchPageDepth),
+    pageDepth: Math.max(privatePageDepth, searchPageDepth, principals.length ? publicPages : 0),
     targetPerRun: Math.max((cookies.length ? cookies.length * privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
