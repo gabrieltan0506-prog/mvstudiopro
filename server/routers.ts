@@ -510,7 +510,7 @@ export const appRouter = router({
 
     refreshGrowthTrends: publicProcedure
       .input(z.object({
-        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),
       }))
       .mutation(async ({ input }) => {
         const collected = await collectTrendPlatforms(input.platforms);
