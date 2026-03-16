@@ -82,20 +82,35 @@ function getTargetWindowDays() {
   return Math.max(7, parseNumberEnv("GROWTH_TARGET_WINDOW_DAYS", DEFAULT_WINDOW_DAYS));
 }
 
-function getFallbackWindowDays() {
+function getPlatformWindowExtraDays(platform?: GrowthPlatform) {
+  const envName = platform ? `${platform.toUpperCase()}_WINDOW_EXTRA_DAYS` : "";
+  const configured = envName
+    ? String(process.env[envName] || "")
+      .split(",")
+      .map((item) => Number(item.trim()))
+      .filter((item) => Number.isFinite(item) && item > getTargetWindowDays() && item <= 365)
+      .sort((left, right) => left - right)
+    : [];
+  if (configured.length) return configured;
+  if (platform === "kuaishou") return [270, 365];
+  return [];
+}
+
+function getFallbackWindowDays(platform?: GrowthPlatform) {
   const configured = parseCsvEnv("GROWTH_WINDOW_FALLBACK_DAYS")
     .map((item) => Number(item))
-    .filter((item) => Number.isFinite(item) && item > getTargetWindowDays() && item <= 180)
+    .filter((item) => Number.isFinite(item) && item > getTargetWindowDays() && item <= 365)
     .sort((left, right) => left - right);
-  return configured.length ? configured : WINDOW_FALLBACKS;
+  const merged = configured.length ? configured : WINDOW_FALLBACKS;
+  return Array.from(new Set([...merged, ...getPlatformWindowExtraDays(platform)])).sort((left, right) => left - right);
 }
 
-function getWindowCandidates() {
-  return [getTargetWindowDays(), ...getFallbackWindowDays()];
+function getWindowCandidates(platform?: GrowthPlatform) {
+  return [getTargetWindowDays(), ...getFallbackWindowDays(platform)];
 }
 
-function getMaxWindowDays() {
-  return getWindowCandidates().slice(-1)[0] || DEFAULT_WINDOW_DAYS;
+function getMaxWindowDays(platform?: GrowthPlatform) {
+  return getWindowCandidates(platform).slice(-1)[0] || DEFAULT_WINDOW_DAYS;
 }
 
 function getPlatformTargetItemCount(platform: GrowthPlatform) {
@@ -152,6 +167,185 @@ function parseCookiePool(primaryName: string, backupName?: string) {
   return [...deduped.slice(offset), ...deduped.slice(0, offset)];
 }
 
+function parseCookieValue(rawCookie: string, key: string) {
+  const segments = String(rawCookie || "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  for (const segment of segments) {
+    const separator = segment.indexOf("=");
+    if (separator <= 0) continue;
+    const name = segment.slice(0, separator).trim();
+    if (name !== key) continue;
+    return segment.slice(separator + 1).trim();
+  }
+  return "";
+}
+
+function extractEmbeddedState(html: string) {
+  const patterns = [
+    /window\.__INITIAL_STATE__=(\{[\s\S]*?\})\s*<\/script>/,
+    /<script id="RENDER_DATA" type="application\/json">([\s\S]*?)<\/script>/,
+    /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match) continue;
+    const raw = String(match[1] || "").trim();
+    if (!raw) continue;
+    try {
+      if (pattern === patterns[0]) {
+        return vm.runInNewContext(`(${raw})`, {}) as Record<string, any>;
+      }
+      const decoded = pattern === patterns[1] ? decodeURIComponent(raw) : raw;
+      return JSON.parse(decoded) as Record<string, any>;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function extractDouyinCreatorItems(state: unknown) {
+  const items: TrendItem[] = [];
+  const visited = new Set<unknown>();
+
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (visited.has(value)) return;
+    visited.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const record = value as Record<string, any>;
+    const title = String(
+      record.desc
+      ?? record.title
+      ?? record.caption
+      ?? record.aweme_info?.desc
+      ?? record.item?.title
+      ?? "",
+    ).trim();
+    const awemeId = String(
+      record.aweme_id
+      ?? record.awemeId
+      ?? record.group_id
+      ?? record.item_id
+      ?? record.id
+      ?? record.aweme_info?.aweme_id
+      ?? "",
+    ).trim();
+    const stats = record.statistics ?? record.stats ?? record.aweme_info?.statistics ?? {};
+    const author = record.author ?? record.user ?? record.aweme_info?.author ?? {};
+
+    if (title && awemeId) {
+      items.push({
+        id: awemeId,
+        title,
+        bucket: "douyin_creator_center",
+        author: String(author.nickname ?? author.name ?? author.uid ?? "").trim() || undefined,
+        url: `https://www.douyin.com/video/${awemeId}`,
+        publishedAt: safeDateFromUnix(Number(record.create_time ?? record.aweme_info?.create_time)),
+        likes: Number(stats.digg_count ?? stats.like_count ?? 0) || undefined,
+        comments: Number(stats.comment_count ?? 0) || undefined,
+        shares: Number(stats.share_count ?? 0) || undefined,
+        views: Number(stats.play_count ?? stats.view_count ?? 0) || undefined,
+        hotValue: Number(stats.digg_count ?? stats.like_count ?? 0) + Number(stats.comment_count ?? 0),
+        contentType: "video",
+        tags: Array.isArray(record.text_extra)
+          ? record.text_extra
+            .map((entry) => String(entry?.hashtag_name ?? "").trim())
+            .filter(Boolean)
+          : [],
+      });
+    }
+
+    Object.values(record).forEach(visit);
+  };
+
+  visit(state);
+  return dedupeById(items);
+}
+
+function extractDouyinCreatorBillboardItems(payload: unknown, bucket: string) {
+  const records = Array.isArray((payload as any)?.item_list) ? (payload as any).item_list as Array<Record<string, any>> : [];
+  const items: TrendItem[] = [];
+
+  records.forEach((record) => {
+    const baseItemId = String(record.item_id ?? record.query_id ?? "").trim();
+    const awemeList = Array.isArray(record.aweme_list) ? record.aweme_list : [];
+
+    if (awemeList.length) {
+      awemeList.forEach((entry) => {
+        const awemeId = String(entry?.aweme_id ?? entry?.group_id ?? entry?.item_id ?? baseItemId).trim();
+        const title = String(entry?.desc ?? entry?.title ?? record.title ?? record.author_name ?? "").trim();
+        if (!awemeId || !title) return;
+        const author = entry?.author ?? {};
+        const stats = entry?.statistics ?? {};
+        items.push({
+          id: awemeId,
+          title,
+          bucket,
+          author: String(author.nickname ?? record.author_name ?? "").trim() || undefined,
+          url: `https://www.douyin.com/video/${awemeId}`,
+          publishedAt: safeDateFromUnix(Number(entry?.create_time)),
+          likes: Number(stats.digg_count ?? record.like_count ?? 0) || undefined,
+          comments: Number(stats.comment_count ?? record.comment_count ?? 0) || undefined,
+          shares: Number(stats.share_count ?? 0) || undefined,
+          views: Number(stats.play_count ?? record.play_count ?? 0) || undefined,
+          hotValue: Number(record.hot_score ?? stats.play_count ?? record.play_count ?? 0) || undefined,
+          contentType: "video",
+          tags: Array.isArray(record.key_words)
+            ? record.key_words.map((item) => String(item ?? "").trim()).filter(Boolean)
+            : [],
+        });
+      });
+      return;
+    }
+
+    const title = String(record.title ?? record.author_name ?? record.query_tag_name ?? "").trim();
+    if (!baseItemId || !title) return;
+    items.push({
+      id: baseItemId,
+      title,
+      bucket,
+      author: String(record.author_name ?? "").trim() || undefined,
+      url: record.query_id ? `https://www.douyin.com/hot/${record.query_id}` : undefined,
+      publishedAt: safeDateFromTimestamp(Number(record.hot_onboard_time)),
+      likes: Number(record.like_count ?? 0) || undefined,
+      comments: Number(record.comment_count ?? 0) || undefined,
+      shares: undefined,
+      views: Number(record.play_count ?? 0) || undefined,
+      hotValue: Number(record.hot_score ?? 0) || undefined,
+      contentType: "topic",
+      tags: Array.isArray(record.key_words)
+        ? record.key_words.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : [],
+    });
+  });
+
+  return dedupeById(items);
+}
+
+function parseKuaishouCookiePool() {
+  const primary = String(process.env.KUAISHOU_COOKIE || "").trim();
+  if (process.env.KUAISHOU_USE_COOKIE_POOL !== "1") {
+    return primary ? [primary] : [];
+  }
+  const cookies = parseCookiePool("KUAISHOU_COOKIE", "KUAISHOU_COOKIE_BACKUP");
+  const seen = new Set<string>();
+  return cookies.filter((cookie) => {
+    const userId = parseCookieValue(cookie, "userId");
+    const identity = userId || cookie;
+    if (seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
 function normalizeTrendBucket(platform: GrowthPlatform, bucket?: string, contentType?: TrendItem["contentType"]) {
   const raw = String(bucket || "").trim();
   if (raw) return raw;
@@ -189,6 +383,81 @@ async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number
   return results;
 }
 
+async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: string[]) {
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+  let requestCount = 0;
+
+  const creatorCookies = Array.from(new Set([
+    String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim(),
+    String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim(),
+    ...cookies,
+  ].filter(Boolean)));
+  const endpoint = String(
+    process.env.DOUYIN_CREATOR_CENTER_ENDPOINT
+    || "https://creator.douyin.com/web/api/creator/material/center/billboard/",
+  ).trim();
+  const billboardTypes = parseCsvEnv("DOUYIN_CREATOR_CENTER_BILLBOARD_TYPES")
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const selectedBillboardTypes = billboardTypes.length ? billboardTypes : [1, 3];
+
+  if (!creatorCookies.length || !endpoint) {
+    return { items, notes, requestCount };
+  }
+
+  const tasks = selectedBillboardTypes.map((billboardType) => async () => {
+    for (const cookie of creatorCookies) {
+      const pageUrl = new URL(endpoint);
+      pageUrl.searchParams.set("billboard_type", String(billboardType));
+      pageUrl.searchParams.set("billboard_tag", "0");
+      pageUrl.searchParams.set("order_key", "1");
+      pageUrl.searchParams.set("time_filter", "1");
+      pageUrl.searchParams.set("limit", String(parseNumberEnv("DOUYIN_CREATOR_CENTER_LIMIT", 10)));
+      pageUrl.searchParams.set("aweme_limit", String(parseNumberEnv("DOUYIN_CREATOR_CENTER_AWEME_LIMIT", 10)));
+      if (billboardType === 3) {
+        pageUrl.searchParams.set("hot_search_type", String(parseNumberEnv("DOUYIN_CREATOR_CENTER_HOT_SEARCH_TYPE", 1)));
+      }
+
+      try {
+        const response = await fetch(pageUrl.toString(), {
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            cookie,
+            referer: "https://creator.douyin.com/creator-micro/home",
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          },
+        });
+        requestCount += 1;
+        if (!response.ok) {
+          notes.push(`Douyin creator center billboard ${billboardType} responded with ${response.status}.`);
+          return;
+        }
+        const payload = await response.json() as Record<string, any>;
+        if (Number(payload?.status_code) !== 0) {
+          notes.push(`Douyin creator center billboard ${billboardType} returned status_code=${payload?.status_code ?? "unknown"} (${String(payload?.status_msg ?? payload?.status_message ?? "unknown")}).`);
+          return;
+        }
+        const bucket = billboardType === 1
+          ? "douyin_creator_center_hot_video"
+          : billboardType === 2
+            ? "douyin_creator_center_hot_topic"
+            : "douyin_creator_center_hot_search";
+        const pageItems = extractDouyinCreatorBillboardItems(payload, bucket);
+        items.push(...pageItems);
+        notes.push(`Fetched ${pageItems.length} Douyin creator center items for billboard ${billboardType}.`);
+        if (pageItems.length) return;
+      } catch (error) {
+        requestCount += 1;
+        notes.push(`Douyin creator center billboard ${billboardType} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  });
+
+  await runBatches(tasks, 1);
+  return { items: dedupeById(items), notes, requestCount };
+}
+
 function getAgeDays(iso?: string) {
   if (!iso) return undefined;
   const timestamp = new Date(iso).getTime();
@@ -204,7 +473,7 @@ function getItemsWithinDays(items: TrendItem[], days: number) {
 }
 
 function resolveCollectionWindow(items: TrendItem[], referenceMinItems: number, platform: GrowthPlatform) {
-  const windows = getWindowCandidates().map((days) => ({
+  const windows = getWindowCandidates(platform).map((days) => ({
     days,
     count: getItemsWithinDays(items, days).length,
   }));
@@ -240,7 +509,7 @@ function finalizeCollection(
   ).size;
   const enrichedNotes = [
     ...notes,
-    `Target lookback: ${getTargetWindowDays()} days; fallback windows: ${getFallbackWindowDays().join(", ")} days.`,
+    `Target lookback: ${getTargetWindowDays()} days; fallback windows: ${getFallbackWindowDays(platform).join(", ")} days.`,
     `Selected ${resolvedWindow.windowDays}-day window for ${platform}; sample counts by window: ${resolvedWindow.windows.map((item) => `${item.days}d=${item.count}`).join(", ")}.`,
     `Target item floor for ${platform}: ${getPlatformTargetItemCount(platform)}.`,
   ];
@@ -390,6 +659,7 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookies = parseCookiePool("DOUYIN_COOKIE", "DOUYIN_COOKIE_BACKUP");
+  const creatorKeywords = getPlatformSeeds("douyin");
   const topicItems: TrendItem[] = [];
   const topicResponse = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
     headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
@@ -490,6 +760,11 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     cookieResults.forEach((cookieItems) => {
       items.push(...cookieItems);
     });
+
+    const creatorCenter = await collectDouyinCreatorCenterItems(cookies, creatorKeywords);
+    items.push(...creatorCenter.items);
+    notes.push(...creatorCenter.notes);
+    requestCount += creatorCenter.requestCount;
 
     if (items.length) {
       return finalizeCollection("douyin", "live", dedupeById(items), notes, {
@@ -629,8 +904,8 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
 }
 
 async function collectKuaishou(): Promise<PlatformTrendCollection> {
-  const primaryKuaishouCookie = String(process.env.KUAISHOU_COOKIE || "").trim();
-  const cookies = primaryKuaishouCookie ? [primaryKuaishouCookie] : [];
+  const cookies = parseKuaishouCookiePool();
+  const primaryKuaishouCookie = cookies[0] || "";
   const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
@@ -705,50 +980,6 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     ).trim();
   };
 
-  if (searchKeywords.length) {
-    const cookiePool = cookies.length ? cookies : [""];
-    const searchTasks = cookiePool.flatMap((cookie, cookieIndex) =>
-      searchKeywords.map((keyword) => async () => {
-        let pcursor = "";
-        for (let page = 0; page < searchPages; page += 1) {
-          const response = await fetch("https://www.kuaishou.com/rest/v/search/feed", {
-            method: "POST",
-            headers: {
-              accept: "application/json,text/plain,*/*",
-              "content-type": "application/json",
-              referer: `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(keyword)}`,
-              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-              ...(cookie ? { cookie } : {}),
-            },
-            body: JSON.stringify({
-              keyword,
-              page: page + 1,
-              pcursor,
-              webPageArea: "searchResult",
-            }),
-          });
-
-          searchRequestCount += 1;
-          searchPageDepth = Math.max(searchPageDepth, page + 1);
-
-          if (!response.ok) {
-            notes.push(`Kuaishou search/feed cookie ${cookieIndex + 1} ${keyword} page ${page + 1} responded with ${response.status}.`);
-            break;
-          }
-
-          const payload = await response.json() as Record<string, any>;
-          const list = extractKuaishouSearchList(payload);
-          list.forEach((item) => pushKuaishouItem(item, `search:${cookieIndex + 1}:${keyword}`));
-          notes.push(`Fetched ${list.length} Kuaishou search feed items for cookie ${cookieIndex + 1} keyword ${keyword} page ${page + 1}.`);
-          pcursor = extractKuaishouSearchCursor(payload);
-          if (!pcursor || !list.length) break;
-        }
-      }),
-    );
-
-    await runBatches(searchTasks, searchConcurrency);
-  }
-
   if (cookies.length) {
     const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
       let pcursor = "";
@@ -782,6 +1013,62 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     });
 
     await runBatches(privateTasks, Math.max(1, Math.min(4, cookies.length)));
+  }
+
+  const kuaishouSearchThreshold = PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12;
+  const shouldRunSearch = searchKeywords.length > 0 && items.length < kuaishouSearchThreshold;
+
+  if (searchKeywords.length && !shouldRunSearch) {
+    notes.push(`Skipped Kuaishou search/feed because private/list already yielded ${items.length} items.`);
+  }
+
+  if (shouldRunSearch) {
+    const cookiePool = cookies.length ? cookies : [""];
+    const searchTasks = cookiePool.flatMap((cookie, cookieIndex) =>
+      searchKeywords.map((keyword) => async () => {
+        let pcursor = "";
+        for (let page = 0; page < searchPages; page += 1) {
+          try {
+            const response = await fetch("https://www.kuaishou.com/rest/v/search/feed", {
+              method: "POST",
+              headers: {
+                accept: "application/json,text/plain,*/*",
+                "content-type": "application/json",
+                referer: `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(keyword)}`,
+                "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+                ...(cookie ? { cookie } : {}),
+              },
+              body: JSON.stringify({
+                keyword,
+                page: page + 1,
+                pcursor,
+                webPageArea: "searchResult",
+              }),
+            });
+
+            searchRequestCount += 1;
+            searchPageDepth = Math.max(searchPageDepth, page + 1);
+
+            if (!response.ok) {
+              notes.push(`Kuaishou search/feed cookie ${cookieIndex + 1} ${keyword} page ${page + 1} responded with ${response.status}.`);
+              break;
+            }
+
+            const payload = await response.json() as Record<string, any>;
+            const list = extractKuaishouSearchList(payload);
+            list.forEach((item) => pushKuaishouItem(item, `search:${cookieIndex + 1}:${keyword}`));
+            notes.push(`Fetched ${list.length} Kuaishou search feed items for cookie ${cookieIndex + 1} keyword ${keyword} page ${page + 1}.`);
+            pcursor = extractKuaishouSearchCursor(payload);
+            if (!pcursor || !list.length) break;
+          } catch (error) {
+            notes.push(`Kuaishou search/feed cookie ${cookieIndex + 1} ${keyword} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+            break;
+          }
+        }
+      }),
+    );
+
+    await runBatches(searchTasks, searchConcurrency);
   }
 
   if (principals.length) {

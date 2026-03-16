@@ -5,10 +5,10 @@ import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress
 const TARGET = Math.max(10_000, Number(process.env.GROWTH_PLATFORM_MIN_ITEMS || 10_000) || 10_000);
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
-const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
+const HISTORY_MIN_INTERVAL_MS = 60 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
-const HISTORY_STEP_TARGET = Math.max(10, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 10) || 10);
-const HISTORY_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 5) || 5);
+const HISTORY_STEP_TARGET = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 2) || 2);
+const HISTORY_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 2) || 2);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili"];
 
 let backfillStarted = false;
@@ -81,7 +81,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsBefore.coverage.selectedWindowDays,
       status: "running",
-      note: `历史 burst 模式运行中：按 30-60 秒真人节奏抖动抓取，目标步长 10，受限时回落到 5。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 2，并按轮次轮换 cookie。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -101,6 +101,7 @@ export async function runGrowthTrendBackfillStep() {
     process.env.GROWTH_BACKFILL_ACTIVE = "1";
     process.env.GROWTH_BACKFILL_STEP_TARGET = String(HISTORY_STEP_TARGET);
     process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(HISTORY_STEP_FALLBACK);
+    process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
     const collected = await collectTrendPlatforms(pending);
     const merged = await mergeTrendCollections(collected.collections);
     const statsAfter = await getGrowthTrendStats();
@@ -119,7 +120,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsAfter.coverage.selectedWindowDays,
       status: "running",
-      note: `历史 burst 模式运行中：按 30-60 秒真人节奏抖动抓取，目标步长 10，受限时回落到 5。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 2，并按轮次轮换 cookie。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;
