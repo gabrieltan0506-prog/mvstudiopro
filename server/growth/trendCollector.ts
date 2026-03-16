@@ -4,7 +4,7 @@ import {
   type GrowthPlatform,
 } from "@shared/growth";
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
-import { getPlatformSeeds } from "./trendSeedLibrary";
+import { getKuaishouCreatorSeeds, getPlatformSeeds } from "./trendSeedLibrary";
 
 export type TrendSource = "live" | "seed";
 
@@ -912,14 +912,31 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 12) || 12));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
   const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(8, Math.min(40, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20)));
+  const creatorSeeds = getKuaishouCreatorSeeds();
   const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 12) || 12));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
+  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 2) || 2));
+  const searchUserLimit = Math.max(5, Math.min(100, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 20) || 20));
+  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 8) || 8));
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let privateRequestCount = 0;
   let privatePageDepth = 0;
   let searchRequestCount = 0;
   let searchPageDepth = 0;
+  let discoveryRequestCount = 0;
+  const discoveredCreators = new Map<string, { userId: string; keyword: string; name: string }>();
+
+  creatorSeeds.forEach((creator) => {
+    discoveredCreators.set(creator.userId, {
+      userId: creator.userId,
+      keyword: creator.keyword,
+      name: creator.name,
+    });
+  });
+  if (creatorSeeds.length) {
+    notes.push(`Loaded ${creatorSeeds.length} curated Kuaishou creator seeds for discovery fallback.`);
+  }
 
   const pushKuaishouItem = (item: Record<string, any>, sourceLabel: string) => {
     const photo = item.photo ?? item;
@@ -976,6 +993,48 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       ?? payload?.data?.cursor
       ?? payload?.cursor
       ?? payload?.data?.searchFeedInfo?.pcursor
+      ?? "",
+    ).trim();
+  };
+
+  const extractKuaishouSearchUsers = (payload: Record<string, any>) => {
+    const candidates = [
+      payload?.users,
+      payload?.data?.users,
+      payload?.data?.list,
+      payload?.list,
+    ];
+    const list = candidates.find((entry) => Array.isArray(entry));
+    return Array.isArray(list) ? list as Array<Record<string, any>> : [];
+  };
+
+  const extractKuaishouSearchUserCursor = (payload: Record<string, any>) => {
+    return String(
+      payload?.pcursor
+      ?? payload?.data?.pcursor
+      ?? payload?.cursor
+      ?? payload?.data?.cursor
+      ?? "",
+    ).trim();
+  };
+
+  const extractKuaishouProfileFeeds = (payload: Record<string, any>) => {
+    const candidates = [
+      payload?.feeds,
+      payload?.data?.feeds,
+      payload?.profileFeed?.feeds,
+      payload?.data?.profileFeed?.feeds,
+    ];
+    const list = candidates.find((entry) => Array.isArray(entry));
+    return Array.isArray(list) ? list as Array<Record<string, any>> : [];
+  };
+
+  const extractKuaishouProfileCursor = (payload: Record<string, any>) => {
+    return String(
+      payload?.pcursor
+      ?? payload?.data?.pcursor
+      ?? payload?.profileFeed?.pcursor
+      ?? payload?.data?.profileFeed?.pcursor
       ?? "",
     ).trim();
   };
@@ -1069,6 +1128,138 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     );
 
     await runBatches(searchTasks, searchConcurrency);
+  }
+
+  if (searchKeywords.length && cookies.length) {
+    const discoveryTasks = searchKeywords.slice(0, Math.min(searchKeywords.length, 8)).map((keyword) => async () => {
+      let pcursor = "";
+      for (let page = 0; page < searchUserPages; page += 1) {
+        try {
+          const response = await fetch("https://www.kuaishou.com/rest/v/search/user", {
+            method: "POST",
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              "content-type": "application/json",
+              cookie: cookies[0],
+              referer: `https://www.kuaishou.com/search/author?searchKey=${encodeURIComponent(keyword)}`,
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            },
+            body: JSON.stringify({
+              keyword,
+              page: page + 1,
+              pcursor,
+            }),
+          });
+
+          discoveryRequestCount += 1;
+          if (!response.ok) {
+            notes.push(`Kuaishou search/user ${keyword} page ${page + 1} responded with ${response.status}.`);
+            break;
+          }
+
+          const payload = await response.json() as Record<string, any>;
+          const users = extractKuaishouSearchUsers(payload);
+          users.forEach((user) => {
+            const userId = String(user.user_id ?? user.id ?? "").trim();
+            const name = String(user.user_name ?? user.name ?? "").trim();
+            if (!userId || !name || discoveredCreators.has(userId)) return;
+            discoveredCreators.set(userId, { userId, keyword, name });
+          });
+          notes.push(`Fetched ${users.length} Kuaishou search users for ${keyword} page ${page + 1}.`);
+          if (discoveredCreators.size >= searchUserLimit) break;
+          pcursor = extractKuaishouSearchUserCursor(payload);
+          if (!pcursor || !users.length) break;
+        } catch (error) {
+          notes.push(`Kuaishou search/user ${keyword} page ${page + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
+      }
+    });
+
+    await runBatches(discoveryTasks, Math.min(3, searchConcurrency));
+  }
+
+  if (discoveredCreators.size) {
+    const sample = Array.from(discoveredCreators.values())
+      .slice(0, 10)
+      .map((creator) => `${creator.name}(${creator.userId})<=${creator.keyword}`)
+      .join(", ");
+    notes.push(`Kuaishou discovery found ${discoveredCreators.size} searchable creators. Sample: ${sample}`);
+  }
+
+  if (discoveredCreators.size && primaryKuaishouCookie && items.length < kuaishouSearchThreshold) {
+    const publicProfileTargets = Array.from(discoveredCreators.values()).slice(0, publicProfileLimit);
+    for (const creator of publicProfileTargets) {
+      try {
+        const profileResponse = await fetch("https://www.kuaishou.com/rest/v/profile/user", {
+          method: "POST",
+          headers: {
+            accept: "application/json,text/plain,*/*",
+            "content-type": "application/json",
+            cookie: primaryKuaishouCookie,
+            referer: `https://www.kuaishou.com/profile/${creator.userId}`,
+            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          },
+          body: JSON.stringify({ user_id: creator.userId }),
+        });
+        discoveryRequestCount += 1;
+        if (!profileResponse.ok) {
+          notes.push(`Kuaishou profile/user ${creator.userId} responded with ${profileResponse.status}.`);
+          continue;
+        }
+
+        const profilePayload = await profileResponse.json() as Record<string, any>;
+        const userProfile = profilePayload.userProfile ?? profilePayload.data?.userProfile ?? {};
+        const ownerCount = userProfile.ownerCount ?? {};
+        const profile = userProfile.profile ?? {};
+        const canonicalName = String(profile.user_name ?? creator.name).trim();
+        const publicCount = Number(ownerCount.photo_public ?? 0) || 0;
+        const userDefineId = String(userProfile.userDefineId ?? "").trim();
+        notes.push(`Kuaishou profile/user ${creator.userId} => ${canonicalName || creator.name} public=${publicCount}${userDefineId ? ` uid=${userDefineId}` : ""}.`);
+
+        let profileCursor = "";
+        for (let page = 0; page < publicPages; page += 1) {
+          const feedResponse = await fetch("https://www.kuaishou.com/rest/v/profile/feed", {
+            method: "POST",
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              "content-type": "application/json",
+              cookie: primaryKuaishouCookie,
+              referer: `https://www.kuaishou.com/profile/${creator.userId}`,
+              profile_referer: `https://www.kuaishou.com/profile/${creator.userId}`,
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              kpn: "KUAISHOU_VISION",
+              kpf: "PC_WEB",
+            },
+            body: JSON.stringify({
+              user_id: creator.userId,
+              pcursor: profileCursor,
+              page: "profile",
+            }),
+          });
+          discoveryRequestCount += 1;
+          if (!feedResponse.ok) {
+            notes.push(`Kuaishou profile/feed ${creator.userId} page ${page + 1} responded with ${feedResponse.status}.`);
+            break;
+          }
+
+          const feedPayload = await feedResponse.json() as Record<string, any>;
+          const resultCode = Number(feedPayload.result ?? 0);
+          const feedList = extractKuaishouProfileFeeds(feedPayload);
+          if (resultCode !== 1) {
+            notes.push(`Kuaishou profile/feed ${creator.userId} page ${page + 1} blocked with result=${resultCode}${feedPayload.error_msg ? ` msg=${String(feedPayload.error_msg)}` : ""}.`);
+            break;
+          }
+
+          feedList.forEach((item) => pushKuaishouItem(item, `profile-feed:${creator.userId}:${page + 1}`));
+          notes.push(`Fetched ${feedList.length} Kuaishou profile/feed items for ${creator.userId} page ${page + 1}.`);
+          profileCursor = extractKuaishouProfileCursor(feedPayload);
+          if (!profileCursor || !feedList.length) break;
+        }
+      } catch (error) {
+        notes.push(`Kuaishou public profile fallback ${creator.userId} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   }
 
   if (principals.length) {
@@ -1169,7 +1360,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
         : cookies.length
           ? "authenticated_feed"
           : "public_feed",
-    requestCount: privateRequestCount + publicRequestCount + searchRequestCount,
+    requestCount: privateRequestCount + publicRequestCount + searchRequestCount + discoveryRequestCount,
     pageDepth: Math.max(privatePageDepth, searchPageDepth, principals.length ? publicPages : 0),
     targetPerRun: Math.max((cookies.length ? cookies.length * privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,

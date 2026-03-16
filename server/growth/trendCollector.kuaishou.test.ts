@@ -181,4 +181,141 @@ describe("collectPlatformTrends kuaishou", () => {
     expect(result.windowDays).toBe(365);
     expect(result.notes.some((note) => note.includes("365d=12"))).toBe(true);
   });
+
+  it("captures searchable creators through search/user discovery", async () => {
+    vi.resetModules();
+    fetchCalls.length = 0;
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ url, init });
+
+      if (url.includes("/rest/v/profile/private/list")) {
+        return {
+          ok: true,
+          json: async () => ({
+            feeds: Array.from({ length: 12 }, (_, index) => ({
+              id: `private-discovery-${index}`,
+              caption: `private item ${index}`,
+              timestamp: Date.now(),
+              likeCount: "10",
+              commentCount: "2",
+            })),
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/user")) {
+        return {
+          ok: true,
+          json: async () => ({
+            users: [
+              { user_id: "3xuser1", user_name: "creator one" },
+              { user_id: "3xuser2", user_name: "creator two" },
+            ],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/feed")) {
+        throw new Error("search/feed should not run when private feed is sufficient");
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const mod = await import("./trendCollector");
+    const result = await mod.collectPlatformTrends("kuaishou");
+
+    expect(fetchCalls.some((call) => call.url.includes("/rest/v/search/user"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("Kuaishou discovery found") && note.includes("creator one"))).toBe(true);
+  });
+
+  it("uses profile/user -> profile/feed fallback for discovered creators", async () => {
+    vi.resetModules();
+    fetchCalls.length = 0;
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ url, init });
+
+      if (url.includes("/rest/v/profile/private/list")) {
+        return {
+          ok: true,
+          json: async () => ({
+            feeds: [],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/feed")) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              list: [],
+              pcursor: "",
+            },
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/user")) {
+        return {
+          ok: true,
+          json: async () => ({
+            users: [{ user_id: "3xuser1", user_name: "creator one" }],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/profile/user")) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: 1,
+            userProfile: {
+              profile: { user_id: "3xuser1", user_name: "creator one" },
+              ownerCount: { photo_public: 32 },
+              userDefineId: "creator-one-id",
+            },
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/profile/feed")) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: 1,
+            feeds: [
+              {
+                id: "profile-feed-1",
+                caption: "creator fallback item",
+                timestamp: Date.now(),
+                likeCount: "9",
+                commentCount: "3",
+                author: { id: "3xuser1", name: "creator one" },
+              },
+            ],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const mod = await import("./trendCollector");
+    const result = await mod.collectPlatformTrends("kuaishou");
+
+    expect(fetchCalls.some((call) => call.url.includes("/rest/v/profile/user"))).toBe(true);
+    expect(fetchCalls.some((call) => call.url.includes("/rest/v/profile/feed"))).toBe(true);
+    expect(result.items.some((item) => item.id === "profile-feed-1")).toBe(true);
+    expect(result.notes.some((note) => note.includes("Kuaishou profile/user 3xuser1 => creator one public=32"))).toBe(true);
+  });
 });

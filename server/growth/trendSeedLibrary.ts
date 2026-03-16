@@ -95,6 +95,18 @@ const PLATFORM_SEEDS: Partial<Record<GrowthPlatform, string[]>> = {
   ],
 };
 
+type KuaishouCreatorSeed = {
+  userId: string;
+  name: string;
+  keyword: string;
+};
+
+const KUAISHOU_CREATOR_SEEDS: KuaishouCreatorSeed[] = [
+  { userId: "3x3t4yubwineeyc", name: "居家种草", keyword: "种草" },
+  { userId: "3x44js8xyu3q7a9", name: "添添种草", keyword: "种草" },
+  { userId: "3xqyfwg9w7seies", name: "種草", keyword: "种草" },
+];
+
 type CachedTrendItem = {
   title?: string;
   author?: string;
@@ -190,5 +202,24 @@ export function getPlatformSeeds(platform: GrowthPlatform) {
   const dynamicSeeds = buildCrossPlatformDynamicSeeds(platform);
   return Array.from(
     new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
+  );
+}
+
+export function getKuaishouCreatorSeeds() {
+  const envCreators = String(process.env.KUAISHOU_CREATOR_SEEDS || "")
+    .split(",")
+    .map((entry) => {
+      const [userId, name, keyword] = entry.split("|").map((item) => String(item || "").trim());
+      return { userId, name, keyword };
+    })
+    .filter((entry) => entry.userId && entry.name);
+
+  return Array.from(
+    new Map(
+      [...envCreators, ...KUAISHOU_CREATOR_SEEDS].map((entry) => [
+        entry.userId,
+        { userId: entry.userId, name: entry.name, keyword: entry.keyword || entry.name },
+      ]),
+    ).values(),
   );
 }

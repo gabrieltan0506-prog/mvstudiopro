@@ -218,6 +218,59 @@ function inferCarryRule(collection?: PlatformTrendCollection) {
   return "默认承接到单一 CTA，不要同时挂多个转化动作。";
 }
 
+function assessCollectionReliability(platform: GrowthPlatform, collection?: PlatformTrendCollection) {
+  if (!collection?.items.length) {
+    return {
+      label: "weak" as const,
+      multiplier: 0.45,
+      summary: "当前没有足够 live 样本，只能作为结构参考。",
+    };
+  }
+
+  const contentItems = collection.items.filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+  const itemCount = contentItems.length;
+  const uniqueAuthors = collection.stats.uniqueAuthorCount || new Set(contentItems.map((item) => item.author).filter(Boolean)).size;
+  const notes = collection.notes.join(" | ");
+  const blockedPublicWorks = /profile\/feed .*result=109|blocked with result=109/.test(notes);
+
+  if (platform === "kuaishou") {
+    if (blockedPublicWorks || itemCount < 18 || uniqueAuthors < 4) {
+      return {
+        label: "weak" as const,
+        multiplier: 0.52,
+        summary: "当前主要是弱样本与补充样本，先不要把它当成主判断依据。",
+      };
+    }
+    return {
+      label: "limited" as const,
+      multiplier: 0.72,
+      summary: "当前样本可做补充判断，但还不适合当唯一平台依据。",
+    };
+  }
+
+  if (platform === "bilibili") {
+    return itemCount >= 40 && uniqueAuthors >= 8
+      ? { label: "strong" as const, multiplier: 1, summary: "当前样本强度足够，可直接参与正式判断。" }
+      : { label: "limited" as const, multiplier: 0.82, summary: "当前样本可参考，但样本深度还可以继续补强。" };
+  }
+
+  if (platform === "xiaohongshu") {
+    return itemCount >= 20 && uniqueAuthors >= 6
+      ? { label: "strong" as const, multiplier: 1, summary: "当前样本强度足够，可直接参与正式判断。" }
+      : { label: "limited" as const, multiplier: 0.84, summary: "当前样本可参考，但更适合做结构判断。" };
+  }
+
+  if (platform === "douyin") {
+    return itemCount >= 18 && uniqueAuthors >= 5
+      ? { label: "strong" as const, multiplier: 1, summary: "当前样本足够看近期表达与放量方向。" }
+      : { label: "limited" as const, multiplier: 0.86, summary: "当前样本更适合看近期信号，不适合过度外推。" };
+  }
+
+  return itemCount >= 16
+    ? { label: "limited" as const, multiplier: 0.8, summary: "当前样本可作辅助判断。" }
+    : { label: "weak" as const, multiplier: 0.55, summary: "当前样本偏弱，只能作补充参考。" };
+}
+
 function buildTopicLibrary(
   requestedPlatforms: GrowthPlatform[],
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
@@ -233,6 +286,7 @@ function buildTopicLibrary(
 
   const library = platformPriority.flatMap((platform) => {
     const collection = collections[platform];
+    const reliability = assessCollectionReliability(platform, collection);
     const platformTemplate = getPlatformTemplate(platform);
     const titles = (collections[platform]?.items || [])
       .filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic")
@@ -244,13 +298,13 @@ function buildTopicLibrary(
       const score = scoreTopicTemplate(template, titles, contextKeywords);
       const tagScore = countKeywordHits(signalCluster.keywords, template.matchers);
       const signalBoost = signalCluster.contentRatio >= 0.6 ? 6 : 0;
-      const confidence = clamp(58 + score + tagScore * 4 + signalBoost + (titles.length ? 6 : 0), 52, 95);
+      const confidence = clamp(Math.round((58 + score + tagScore * 4 + signalBoost + (titles.length ? 6 : 0)) * reliability.multiplier), 38, 95);
       return {
         id: `${platform}-${template.key}-${index}`,
         platform,
         platformLabel: PLATFORM_LABELS[platform],
         title: template.title,
-        rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号，平台人群也更接近「${platformTemplate.audienceProfile}」`,
+        rationale: `${template.rationale} 当前 ${PLATFORM_LABELS[platform]} 更偏「${signalCluster.label}」信号，平台人群也更接近「${platformTemplate.audienceProfile}」。${reliability.summary}`,
         executionHint: `${template.executionHint} 平台处理规则：${platformTemplate.packagingRule} 标题建议：${platformTemplate.headlineStyle}`,
         commercialAngle: `${template.commercialAngle} ${platformTemplate.conversionRule} 信任触发：${platformTemplate.trustTrigger}。${carryRule}`,
         confidence,
@@ -335,8 +389,9 @@ function buildPlatformSummaryFromCollection(
   const relevantItems = filterRelevantTopics(contentItems.map((item) => item.title), context);
   const topItem = relevantItems[0];
   const baseSummary = buildPlatformSummary(platform, analysis);
-  if (!topItem) return baseSummary;
-  return `${baseSummary} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。`;
+  const reliability = assessCollectionReliability(platform, collection);
+  if (!topItem) return `${baseSummary} ${reliability.summary}`;
+  return `${baseSummary} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。${reliability.summary}`;
 }
 
 function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection) {
@@ -346,6 +401,7 @@ function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: Gro
   const views = collection.items.map((item) => item.views || 0).filter(Boolean);
   const creators = new Set(collection.items.map((item) => item.author).filter(Boolean));
   const engagementBase = median(likes) + median(comments) * 4 + median(shares) * 6;
+  const reliability = assessCollectionReliability(platform, collection);
   const engagementRateMedian = clamp(Number(((engagementBase || analysis.viralPotential * 100) / Math.max(median(views) || 50_000, 10_000) * 100).toFixed(1)), 1.6, 18.5);
   const growthRate = clamp(Number((analysis.impact * 0.18 + (median(shares) || 0) / 600 - 4).toFixed(1)), -10, 28);
   const saveRateMedian = clamp(Number((((median(likes) || analysis.color * 100) / Math.max(median(views) || 50_000, 10_000)) * 100).toFixed(1)), 0.6, 12.5);
@@ -353,15 +409,21 @@ function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: Gro
   return {
     postsAnalyzed: collection.items.length,
     creatorsTracked: creators.size || Math.round(collection.items.length * 0.65),
-    avgViews: Math.round(median(views) || (analysis.impact + analysis.viralPotential) * 900),
-    avgLikes: Math.round(median(likes) || analysis.color * 120),
-    avgComments: Math.round(median(comments) || analysis.composition * 3),
-    avgShares: Math.round(median(shares) || analysis.impact * 2),
-    engagementRateMedian,
-    growthRate,
-    saveRateMedian,
+    avgViews: Math.round((median(views) || (analysis.impact + analysis.viralPotential) * 900) * reliability.multiplier),
+    avgLikes: Math.round((median(likes) || analysis.color * 120) * reliability.multiplier),
+    avgComments: Math.round((median(comments) || analysis.composition * 3) * reliability.multiplier),
+    avgShares: Math.round((median(shares) || analysis.impact * 2) * reliability.multiplier),
+    engagementRateMedian: Number((engagementRateMedian * Math.max(reliability.multiplier, 0.6)).toFixed(1)),
+    growthRate: Number((growthRate * Math.max(reliability.multiplier, 0.65)).toFixed(1)),
+    saveRateMedian: Number((saveRateMedian * Math.max(reliability.multiplier, 0.65)).toFixed(1)),
     topDurationRange: topDurationRangeFor(platform),
-    sampleSizeLabel: collection.source === "live" ? "live-sample-30d" : "seed-sample-30d",
+    sampleSizeLabel: collection.source === "live"
+      ? reliability.label === "strong"
+        ? "live-sample-30d"
+        : reliability.label === "limited"
+          ? "limited-live-sample"
+          : "weak-live-sample"
+      : "seed-sample-30d",
   };
 }
 
@@ -645,12 +707,14 @@ function buildPlatformRecommendations(
   requestedPlatforms: GrowthPlatform[],
   analysis: GrowthAnalysisScores,
   platformSnapshots: GrowthPlatformSnapshot[],
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
   context: string,
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthPlatformRecommendation[] {
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
-  return selectedPlatforms.map((platform, index) => {
+  const recommendations = selectedPlatforms.map((platform, index) => {
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
+    const reliability = assessCollectionReliability(platform, collections[platform]);
     const platformTemplate = getPlatformTemplate(platform);
     const signals = deriveContentStrategySignals(analysis, context, snapshot, industryTemplate);
     const watchouts = snapshot?.watchouts?.slice(0, 2).join("、") || platformTemplate.avoidance;
@@ -697,6 +761,15 @@ function buildPlatformRecommendations(
       action: `保留同一个核心卖点，单独改写标题、结构和行动指令后再发。当前最该保留的是「${topicHint}」，最该删掉的是平台内部推理和冗长解释。注意避免：${watchouts}`,
     };
   });
+
+  const weightedScore = (item: GrowthPlatformRecommendation) => {
+    const platform = Object.entries(PLATFORM_LABELS).find(([, label]) => label === item.name)?.[0] as GrowthPlatform | undefined;
+    const snapshot = platform ? platformSnapshots.find((entry) => entry.platform === platform) : null;
+    const reliability = platform ? assessCollectionReliability(platform, collections[platform]) : { multiplier: 0.7 };
+    return Math.round(((snapshot?.audienceFitScore || 60) + (snapshot?.momentumScore || 60)) * reliability.multiplier);
+  };
+
+  return recommendations.sort((left, right) => weightedScore(right) - weightedScore(left));
 }
 
 function buildBusinessInsights(
@@ -901,7 +974,7 @@ export function buildMockGrowthSnapshot(params: {
     buildPlatformSnapshot(platform, params.analysis, context),
   );
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
-  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, context, industryTemplate);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, {}, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
@@ -1039,7 +1112,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     ...activeCollections.flatMap((collection) => collection.items.slice(0, 6).map((item) => item.title)),
   ]);
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
-  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, context, industryTemplate);
+  const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, params.collections, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
