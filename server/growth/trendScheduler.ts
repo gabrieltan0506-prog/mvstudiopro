@@ -18,10 +18,10 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const BURST_INTERVAL_MS = 20 * 60 * 1000;
-const BURST_TRIGGER_MIN_COUNT = Math.max(8, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 16) || 16);
-const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.15, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.35) || 0.35);
-const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.18) || 0.18);
+const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 10) || 10);
+const BURST_TRIGGER_MIN_COUNT = Math.max(6, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 10) || 10);
+const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.2) || 0.2);
+const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
 const BURST_MIN_STABLE_RUNS = Math.max(1, Number(process.env.GROWTH_BURST_MIN_STABLE_RUNS || 2) || 2);
 const MAIL_DIGEST_INTERVAL_MS = 30 * 60 * 1000;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
@@ -35,6 +35,33 @@ function withJitter(baseMs: number) {
 
 function nextRunIso(baseMs: number) {
   return new Date(Date.now() + withJitter(baseMs)).toISOString();
+}
+
+function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallbackMinutes: number) {
+  const value = Number(process.env[`${platform.toUpperCase()}_${suffix}`] || fallbackMinutes);
+  return Number.isFinite(value) ? Math.max(1, value) : fallbackMinutes;
+}
+
+function getPlatformBurstIntervalMinutes(platform: GrowthPlatform) {
+  return readPlatformMinutesEnv(platform, "BURST_INTERVAL_MINUTES", BURST_INTERVAL_MINUTES);
+}
+
+function getPlatformBurstIntervalMs(platform: GrowthPlatform) {
+  return getPlatformBurstIntervalMinutes(platform) * 60 * 1000;
+}
+
+function getPlatformBurstTriggerMinCount(platform: GrowthPlatform) {
+  return Math.max(1, readPlatformMinutesEnv(platform, "BURST_TRIGGER_MIN_COUNT", BURST_TRIGGER_MIN_COUNT));
+}
+
+function getPlatformBurstTriggerGrowthRatio(platform: GrowthPlatform) {
+  const value = Number(process.env[`${platform.toUpperCase()}_BURST_TRIGGER_GROWTH_RATIO`] || BURST_TRIGGER_GROWTH_RATIO);
+  return Number.isFinite(value) ? Math.max(0.05, value) : BURST_TRIGGER_GROWTH_RATIO;
+}
+
+function getPlatformBurstExitDropRatio(platform: GrowthPlatform) {
+  const value = Number(process.env[`${platform.toUpperCase()}_BURST_EXIT_DROP_RATIO`] || BURST_EXIT_DROP_RATIO);
+  return Number.isFinite(value) ? Math.max(0.05, value) : BURST_EXIT_DROP_RATIO;
 }
 
 function getSchedulerHour(now = new Date()) {
@@ -93,19 +120,24 @@ function getSchedulerFrequencyLabel(now = new Date()) {
   return `${interval / 60} 小时一次`;
 }
 
-function isClearlyHigherThanPrevious(currentCount: number, previousCount: number) {
-  if (previousCount <= 0) return currentCount >= BURST_TRIGGER_MIN_COUNT;
-  return currentCount >= previousCount + Math.max(5, Math.ceil(previousCount * BURST_TRIGGER_GROWTH_RATIO));
+function getBurstFrequencyLabel(platform: GrowthPlatform) {
+  return `${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
+}
+
+function isClearlyHigherThanPrevious(platform: GrowthPlatform, currentCount: number, previousCount: number) {
+  if (previousCount <= 0) return currentCount >= getPlatformBurstTriggerMinCount(platform);
+  return currentCount >= previousCount + Math.max(3, Math.ceil(previousCount * getPlatformBurstTriggerGrowthRatio(platform)));
 }
 
 function resolveNextRunPlan(params: {
+  platform: GrowthPlatform;
   currentCount: number;
   previousCount: number;
   burstMode: boolean;
   burstStableRuns: number;
 }) {
   if (params.burstMode) {
-    const exitThreshold = Math.max(0, Math.floor(params.previousCount * (1 - BURST_EXIT_DROP_RATIO)));
+    const exitThreshold = Math.max(0, Math.floor(params.previousCount * (1 - getPlatformBurstExitDropRatio(params.platform))));
     if (params.currentCount < exitThreshold && params.burstStableRuns >= BURST_MIN_STABLE_RUNS) {
       return {
         burstMode: false,
@@ -117,18 +149,18 @@ function resolveNextRunPlan(params: {
     }
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(BURST_INTERVAL_MS),
-      frequencyLabel: "20 分钟一次",
+      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
       burstEvent: "stay" as const,
     };
   }
 
-  if (isClearlyHigherThanPrevious(params.currentCount, params.previousCount)) {
+  if (isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)) {
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(BURST_INTERVAL_MS),
-      frequencyLabel: "20 分钟一次",
+      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: 0,
       burstEvent: "enter" as const,
     };
@@ -241,6 +273,7 @@ async function runPlatform(platform: GrowthPlatform) {
     const currentCount = collection.stats?.itemCount || collection.items.length;
     const previousCount = currentState?.lastCollectedCount || 0;
     const plan = resolveNextRunPlan({
+      platform,
       currentCount,
       previousCount,
       burstMode: Boolean(currentState?.burstMode),
