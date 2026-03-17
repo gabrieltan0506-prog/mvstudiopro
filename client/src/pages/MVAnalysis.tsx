@@ -166,6 +166,10 @@ function formatCompactNumber(value: number) {
   return `${Math.round(value)}`;
 }
 
+function isPanelLinked(activePanel: string, panelId: string) {
+  return (PANEL_SECTION_LINKS[activePanel] || [activePanel]).includes(panelId);
+}
+
 function compactText(text: string, maxLength = 72) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "";
@@ -227,16 +231,16 @@ function buildDashboardMetrics(
   return [
     {
       id: "readiness",
-      label: "内容可转化度",
+      label: "当前能不能卖",
       value: `${averageScore}%`,
-      note: "只回答一个问题：这条内容现在离“能带来生意”还有多远。",
+      note: "只回答一个问题：这条内容现在离“能带来成交”还有多远。",
       tone: "from-[#ff8a3d]/30 via-[#ff8a3d]/10 to-transparent",
     },
     {
       id: "monetization",
-      label: "可跑商业路径",
-      value: `${highConfidenceTracks.length}`,
-      note: "只保留当前真的值得先跑的方向，不把低相关路线硬塞给你。",
+      label: "先跑哪条路",
+      value: highConfidenceTracks[0]?.name || "待判断",
+      note: "只保留当前真的值得先跑的主方向，不把低相关路线硬塞给你。",
       tone: "from-[#f5b7ff]/30 via-[#f5b7ff]/10 to-transparent",
     },
     {
@@ -276,6 +280,7 @@ function buildPositioningRows(
   tracks: CommercialTrack[],
   industryTemplate?: GrowthIndustryTemplate | null,
 ): InsightTableRow[] {
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单|健身器材|体育用品|运动器材|器械/.test(context);
   const audience = normalizeText(
     industryTemplate?.audience || context || "当前没有明确写出受众与成交目标，建议后续补全。",
   );
@@ -289,19 +294,25 @@ function buildPositioningRows(
     {
       label: "🎯 受众痛点",
       insight: audience,
-      action: industryTemplate?.painPoint || "先只解决一个最痛的问题。",
+      action: commerceDriven
+        ? "把开头改成“这套器材适合谁、解决什么训练问题、为什么值得买”三连句，不再先拍氛围或人物状态。"
+        : industryTemplate?.painPoint || "先只解决一个最痛的问题。",
       highlight: "先锁一个痛点",
     },
     {
       label: "🧭 内容角色",
       insight: roleHint,
-      action: "先写清角色，再统一标题和脚本。",
+      action: commerceDriven
+        ? "角色不是“拍得很专业的人”，而是“帮用户快速完成购买判断的人”。标题、字幕和脚本都要围绕这个角色写。"
+        : "先写清角色，再统一标题和脚本。",
       highlight: "先定角色",
     },
     {
       label: "💼 当前重点",
       insight: primaryDirection === "先不主打变现" ? "先把入口做成熟。" : `先主攻「${primaryDirection}」。`,
-      action: industryTemplate?.primaryConversion || "只留一个承接动作。",
+      action: commerceDriven
+        ? "只留一个成交动作，统一导向商品页、橱窗或私聊，不要一条内容同时挂多个承接方式。"
+        : industryTemplate?.primaryConversion || "只留一个承接动作。",
       highlight: "只留一个主方向",
     },
   ];
@@ -309,28 +320,37 @@ function buildPositioningRows(
 
 function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null, context = ""): InsightTableRow[] {
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
+  const sportsCommerce = /健身器材|体育用品|运动器材|器械|哑铃|跑步机|壶铃|拉力器|护具|球拍/.test(context);
   return [
     {
       label: "✅ 当前优势",
       insight: analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。",
-      action: analysis.strengths[1] || "把优势固定成标题或封面。",
+      action: sportsCommerce
+        ? "把真实训练画面固定成信任证据：字幕直接点出训练场景、适用人群和器材差异，不要只让用户看运动氛围。"
+        : analysis.strengths[1] || "把优势固定成标题或封面。",
       highlight: "先固定优势",
     },
     {
       label: "⚠️ 优先优化点",
       insight: analysis.improvements[0] || "开头抓力不足，信息进入过慢。",
-      action: analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。",
+      action: sportsCommerce
+        ? "前 2 到 3 秒直接说“适合哪类训练人群 + 解决什么问题 + 一个最关键差异”，不要先展示运动漫镜头。"
+        : analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。",
       highlight: "先修停留",
     },
     {
       label: "🧩 表达问题",
       insight: analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。",
-      action: commerceDriven ? "先讲适合谁、值不值买、为什么值得看，再补细节。" : "先给一句结论，再补细节。",
+      action: sportsCommerce
+        ? "表达顺序改成“适合谁 -> 训练场景 -> 核心差异 -> 为什么值得买 -> 一个动作”。这样用户才知道该不该继续看。"
+        : commerceDriven ? "先讲适合谁、值不值买、为什么值得看，再补细节。" : "先给一句结论，再补细节。",
     },
     {
       label: "🚀 建议方向",
       insight: industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。",
-      action: commerceDriven ? "按“适用场景 -> 核心利益点 -> 信任证据 -> 一个动作”重写。" : "按“痛点 -> 做法 -> 动作”重写。",
+      action: sportsCommerce
+        ? "按“训练场景 -> 适用人群 -> 核心利益点 -> 信任证据 -> 成交动作”重写，目标是让用户能立刻判断值不值得买。"
+        : commerceDriven ? "按“适用场景 -> 核心利益点 -> 信任证据 -> 一个动作”重写。" : "按“痛点 -> 做法 -> 动作”重写。",
       highlight: "方案要短、能执行",
     },
   ];
@@ -350,17 +370,10 @@ function buildPlatformRecommendationRows(
 ): InsightTableRow[] {
   return recommendations.map((platform) => {
     const snapshot = growthSnapshot?.platformSnapshots.find((item) => item.displayName === platform.name);
-    const publishAction = platform.name === "小红书"
-      ? "先发收藏型笔记：封面讲结果，正文只保留痛点、做法、收藏理由。"
-      : platform.name === "抖音"
-        ? "做结果前置短视频：开头先给结论，中段只留关键画面，结尾只留一个动作。"
-        : platform.name === "快手"
-          ? "改成直给版：先说值不值、适不适合、怎么做更省事。"
-          : "做案例拆解版：先讲结果，再讲步骤和误区。";
     return {
       label: platform.name,
       insight: platform.reason,
-      action: publishAction,
+      action: platform.action,
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
   });
@@ -446,6 +459,14 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
         highlight: "先跑单品成交稿，不要一条内容卖多个东西。",
       };
     }
+    if (track.name === "社群会员") {
+      return {
+        label: `${track.name} ${track.fit}%`,
+        insight: "社群不是默认答案。只有你能持续输出同主题内容、固定更新并提供稳定权益时，社群才会成立。",
+        action: "当前不要先做社群。先把成交稿、案例页或商品页跑通，验证用户愿不愿意咨询、下单或复购，再考虑售后群或会员群。",
+        highlight: "先别做社群，先做成交验证。",
+      };
+    }
     return {
       label: `${track.name} ${track.fit}%`,
       insight: replaceTerms(track.reason),
@@ -492,7 +513,7 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
       },
       {
         label: "✨ 现有亮点",
-        content: compactText(analysis.strengths[0] || "素材本身有真实场景和产品感，适合往结果展示和利益点表达方向改。", 120),
+        content: analysis.strengths[0] || "素材本身有真实场景和产品感，适合往结果展示和利益点表达方向改。",
       },
       {
         label: "🛠 立刻改法",
@@ -510,9 +531,9 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
       label: "🔥 先做什么",
       content: `先把这条内容改成“一个结果 + 一个痛点 + 一个动作”的版本，优先修：${analysis.improvements[0] || "结果前置"}。`,
     },
-    {
-      label: "✨ 现有亮点",
-      content: compactText(analysis.strengths[0] || analysis.summary || "视觉上已经有亮点，但表达和承接还不够完整。", 120),
+      {
+        label: "✨ 现有亮点",
+        content: analysis.strengths[0] || analysis.summary || "视觉上已经有亮点，但表达和承接还不够完整。",
     },
     {
       label: "🛠 立刻改法",
@@ -640,10 +661,10 @@ function buildDashboardPanels(
     },
     {
       id: "platforms",
-      eyebrow: "平台矩阵",
+      eyebrow: "平台打法",
       title: platformRecommendationRows[0]?.label || "待生成",
       summary: platformRecommendationRows[0]?.insight || "先给首发顺序，再告诉用户每个平台怎么发。",
-      detail: platformRecommendationRows.slice(0, 3).map((item) => `${item.label}：${compactText(item.action, 28)}`).join(" "),
+      detail: platformRecommendationRows.slice(0, 3).map((item) => `${item.label}：${item.action}`).join(" "),
       action: "图文先跑验证，视频再做扩量。平台不是单选题，而是按同一主题拆不同版本。",
       accent: "text-[#90c4ff]",
       glow: "from-[#2684ff]/24 via-[#90c4ff]/12 to-transparent",
@@ -652,9 +673,9 @@ function buildDashboardPanels(
       id: "monetization",
       eyebrow: "商业洞察",
       title: topTrack ? `${topTrack.name} ${topTrack.fit}%` : "暂不主打变现",
-      summary: compactText(businessInsights[0]?.detail || "先把内容入口讲清楚，再谈商业承接。", 32),
-      detail: compactText(businessInsights.slice(1, 4).map((item) => `${item.title}：${item.detail}`).join(" "), 48),
-      action: compactText(topTrack?.nextStep || "先补一版案例或服务说明，再决定主承接方式。", 42),
+      summary: businessInsights[0]?.detail || "先把内容入口讲清楚，再谈商业承接。",
+      detail: businessInsights.slice(1, 4).map((item) => `${item.title}：${item.detail}`).join(" "),
+      action: topTrack?.nextStep || "先补一版案例或服务说明，再决定主承接方式。",
       accent: "text-[#f5b7ff]",
       glow: "from-[#f5b7ff]/24 via-[#ff8cf0]/10 to-transparent",
     },
@@ -756,13 +777,20 @@ export default function MVAnalysisPage() {
     },
     {
       enabled: Boolean(analysis && hasPaidGrowthAccess),
-      staleTime: 60_000,
+      staleTime: 300_000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      retry: false,
     },
   );
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
     enabled: debugMode,
     staleTime: 30_000,
     refetchInterval: debugMode ? 10_000 : false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
   });
 
   useEffect(() => {
@@ -1134,8 +1162,8 @@ export default function MVAnalysisPage() {
   );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
-    (panelId: string, accent: string) => (PANEL_SECTION_LINKS[activeDashboardPanel] || [activeDashboardPanel]).includes(panelId)
-      ? `relative overflow-hidden rounded-[28px] border ${accent} bg-[#0f1a2c] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]`
+    (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
+      ? `relative overflow-hidden rounded-[28px] border ${accent} bg-[#122039] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_18px_40px_rgba(7,14,26,0.32)]`
       : "rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6",
     [activeDashboardPanel],
   );
@@ -1182,7 +1210,11 @@ export default function MVAnalysisPage() {
     const target = sectionRefs.current[PANEL_SCROLL_TARGETS[panelId] || panelId];
     if (target) {
       requestAnimationFrame(() => {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        const rect = target.getBoundingClientRect();
+        const withinViewport = rect.top >= 80 && rect.top <= window.innerHeight * 0.55;
+        if (!withinViewport) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       });
     }
   }, [commercialTracks, comparePlatformOptions]);
@@ -1508,9 +1540,7 @@ export default function MVAnalysisPage() {
                             }`}
                           >
                             {activeDashboardPanel === item.id ? (
-                              <div className="pointer-events-none absolute inset-0">
-                                <div className="absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
-                              </div>
+                              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.08),transparent_52%)]" />
                             ) : null}
                             <div className="relative flex items-center justify-between">
                               <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
@@ -1537,9 +1567,16 @@ export default function MVAnalysisPage() {
                           </div>
                           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                             {dashboardConsole.stats.map((stat) => (
-                              <div key={stat.id} className="rounded-2xl border border-white/10 bg-[#101d31] p-4">
+                              <div
+                                key={stat.id}
+                                className={`rounded-2xl border p-4 transition ${
+                                  activeDashboardPanel === stat.id
+                                    ? "border-white/20 bg-[#162743] shadow-[0_0_0_1px_rgba(255,255,255,0.05)]"
+                                    : "border-white/10 bg-[#101d31]"
+                                }`}
+                              >
                                 <div className="text-xs uppercase tracking-[0.14em] text-white/45">{stat.label}</div>
-                                <div className="mt-3 text-3xl font-black text-white">{stat.value}</div>
+                                <div className="mt-3 text-2xl font-black text-white">{stat.value}</div>
                                 <div className="mt-2 text-sm text-[#8ef0b1]">{stat.delta}</div>
                                 <p className="mt-3 text-sm leading-6 text-white/62">{stat.note}</p>
                               </div>
@@ -1590,7 +1627,18 @@ export default function MVAnalysisPage() {
                                       ? "monetization"
                                       : "platforms",
                                 )}
-                                className="w-full rounded-2xl border border-white/10 bg-[#121a2a] p-4 text-left transition hover:border-white/20 hover:bg-[#162237]"
+                                className={`w-full rounded-2xl border p-4 text-left transition hover:border-white/20 hover:bg-[#162237] ${
+                                  isPanelLinked(
+                                    activeDashboardPanel,
+                                    card.id === "audience-core"
+                                      ? "positioning"
+                                      : card.id === "track-core"
+                                        ? "monetization"
+                                        : "platforms",
+                                  )
+                                    ? "border-white/20 bg-[#17253b]"
+                                    : "border-white/10 bg-[#121a2a]"
+                                }`}
                               >
                                 <div className="flex items-center justify-between gap-3">
                                   <div className="text-base font-bold text-white">{card.title}</div>
@@ -1619,11 +1667,11 @@ export default function MVAnalysisPage() {
                           }`}
                         >
                           {activeDashboardPanel === "readiness" ? (
-                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.26),transparent_55%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.22),transparent_58%)]" />
                           ) : null}
                           <div className="relative flex items-center gap-2 text-white">
                             <Orbit className="h-4 w-4 text-[#9df6c0]" />
-                            <span className="text-sm font-semibold">内容可转化度分布</span>
+                            <span className="text-sm font-semibold">内容诊断五维图</span>
                           </div>
                           <div className="relative mt-4 h-[240px]">
                             <ResponsiveContainer width="100%" height="100%">
@@ -1679,9 +1727,9 @@ export default function MVAnalysisPage() {
                         <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
                           <div className="flex items-center gap-2 text-white">
                             <PanelsTopLeft className="h-4 w-4 text-[#90c4ff]" />
-                            <span className="text-sm font-semibold">平台匹配与改写方向</span>
+                            <span className="text-sm font-semibold">平台打法与改写方式</span>
                           </div>
-                          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                          <div className="mt-4 grid gap-3">
                             {platformDashboardCards.map((row) => (
                               <button
                                 type="button"
@@ -1692,7 +1740,7 @@ export default function MVAnalysisPage() {
                                 }`}
                               >
                                 {activeDashboardPanel === "platforms" ? (
-                                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.18),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                                  <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.16),transparent_60%)]" />
                                 ) : null}
                                 <div className="relative flex items-center justify-between">
                                   <span className="text-lg font-black text-white">{row.label}</span>
@@ -1712,11 +1760,11 @@ export default function MVAnalysisPage() {
                           }`}
                         >
                           {activeDashboardPanel === "monetization" ? (
-                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.18),transparent_58%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.16),transparent_60%)]" />
                           ) : null}
                           <div className="relative flex items-center gap-2 text-white">
                             <Workflow className="h-4 w-4 text-[#f5b7ff]" />
-                            <span className="text-sm font-semibold">不同人群的转化路径</span>
+                            <span className="text-sm font-semibold">不同人群的成交路径</span>
                           </div>
                           {activeConversionFunnel ? (
                             <div className="relative mt-4 space-y-4">
@@ -1776,7 +1824,7 @@ export default function MVAnalysisPage() {
                                               background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
                                             }}
                                           >
-                                            {compactText(stage.detail, 18)}
+                                            {stage.detail}
                                           </div>
                                         </div>
                                       </div>
@@ -1840,7 +1888,6 @@ export default function MVAnalysisPage() {
                     <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
                       <div className="relative overflow-hidden rounded-[24px] border border-white/10 bg-black/15 p-5">
                         <div className={`pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,var(--tw-gradient-stops))] ${activePanelDetail.glow}`} />
-                        <div className="pointer-events-none absolute inset-0 animate-pulse bg-[linear-gradient(90deg,transparent_0%,rgba(255,255,255,0.08)_18%,transparent_36%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)] bg-[length:24px_24px,100%_100%]" />
                         <div className="relative flex items-center justify-between gap-3">
                           <div>
                             <div className={`text-xs uppercase tracking-[0.2em] ${activePanelDetail.accent}`}>{activePanelDetail.eyebrow}</div>
@@ -1916,15 +1963,15 @@ export default function MVAnalysisPage() {
                         <div className="relative mt-4 grid gap-3 lg:grid-cols-3">
                         <div className="rounded-2xl border border-white/10 bg-[#111f32] p-4">
                           <div className="text-sm font-semibold text-white">现在先做什么</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">{compactText(activePanelDetail.summary, 38)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{activePanelDetail.summary}</div>
                           </div>
                           <div className="rounded-2xl border border-white/10 bg-[#0d1828] p-4">
                             <div className="text-sm font-semibold text-white">为什么先做</div>
-                            <div className="mt-2 text-sm leading-7 text-white/72">{compactText(activePanelDetail.detail, 52)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{activePanelDetail.detail}</div>
                           </div>
                           <div className="rounded-2xl border border-white/10 bg-[#10233e] p-4">
                             <div className={`text-sm font-semibold ${activePanelDetail.accent}`}>立刻动作</div>
-                            <div className="mt-2 text-sm leading-7 text-white">{compactText(activePanelDetail.action, 40)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white">{activePanelDetail.action}</div>
                           </div>
                         </div>
                       </div>
@@ -1943,7 +1990,7 @@ export default function MVAnalysisPage() {
                             >
                               <div className={`text-[11px] uppercase tracking-[0.18em] ${panel.accent}`}>{panel.eyebrow}</div>
                               <div className="mt-2 text-lg font-black text-white">{panel.title}</div>
-                              <p className="mt-2 text-sm leading-6 text-white/72">{compactText(panel.summary, 28)}</p>
+                              <p className="mt-2 text-sm leading-6 text-white/72">{panel.summary}</p>
                             </button>
                           );
                         })}
@@ -2102,7 +2149,7 @@ export default function MVAnalysisPage() {
                 <>
                   <div ref={(node) => { sectionRefs.current.execution = node; }} className={getSectionCardClass("execution", "border-[#ffd08f]/30 bg-[linear-gradient(180deg,rgba(255,138,61,0.12),rgba(255,255,255,0.03))]")}>
                     {activeDashboardPanel === "execution" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,208,143,0.18),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,208,143,0.16),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center gap-3 text-[#ffd08f]">
                       <Rocket className="h-5 w-5" />
@@ -2135,7 +2182,7 @@ export default function MVAnalysisPage() {
 
                   <div className={getSectionCardClass("execution", "border-[#9df6c0]/30")}>
                     {activeDashboardPanel === "execution" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(157,246,192,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(157,246,192,0.14),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center gap-3 text-[#9df6c0]">
                       <LineChartIcon className="h-5 w-5" />
@@ -2170,7 +2217,7 @@ export default function MVAnalysisPage() {
 
                   <div ref={(node) => { sectionRefs.current.platforms = node; }} className={getSectionCardClass("platforms", "border-[#90c4ff]/30")}>
                     {activeDashboardPanel === "platforms" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.16),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(144,196,255,0.14),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center justify-between gap-3 text-[#ffd08f]">
                       <div className="flex items-center gap-3">
@@ -2273,7 +2320,7 @@ export default function MVAnalysisPage() {
                 <>
                   <div ref={(node) => { sectionRefs.current.positioning = node; }} className={getSectionCardClass("positioning", "border-[#ffcf92]/30")}>
                     {activeDashboardPanel === "positioning" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,207,146,0.14),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center justify-between gap-3 text-[#ffcf92]">
                       <div className="flex items-center gap-3">
@@ -2302,7 +2349,7 @@ export default function MVAnalysisPage() {
 
                   <div ref={(node) => { sectionRefs.current.content = node; }} className={getSectionCardClass("content", "border-[#ffb37f]/30")}>
                     {activeDashboardPanel === "content" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,179,127,0.14),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,179,127,0.14),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center justify-between gap-3 text-[#ffb37f]">
                       <div className="flex items-center gap-3">
@@ -2331,7 +2378,7 @@ export default function MVAnalysisPage() {
 
                   <div ref={(node) => { sectionRefs.current.monetization = node; }} className={getSectionCardClass("monetization", "border-[#f5b7ff]/30")}>
                     {activeDashboardPanel === "monetization" ? (
-                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.15),transparent_60%),repeating-linear-gradient(180deg,transparent_0_10px,rgba(255,255,255,0.03)_10px_11px)]" />
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(245,183,255,0.14),transparent_60%)]" />
                     ) : null}
                     <div className="flex items-center gap-3 text-[#f5b7ff]">
                       <BriefcaseBusiness className="h-5 w-5" />

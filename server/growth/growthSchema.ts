@@ -63,6 +63,10 @@ function isBeautyFashionContext(text: string) {
   return /美妆|穿搭|形象|妆|护肤|造型|时尚/.test(text);
 }
 
+function isSportsCommerceContext(text: string) {
+  return /健身器材|体育用品|运动器材|器械|哑铃|跑步机|壶铃|拉力器|护具|瑜伽垫|球拍|球类|训练器械|健身装备/.test(text);
+}
+
 function extractContextKeywords(context: string) {
   return Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 10);
 }
@@ -679,6 +683,7 @@ function buildMonetizationTracks(
   const bilibiliFit = platformSnapshots.find((item) => item.platform === "bilibili")?.audienceFitScore || 0;
   const douyinFit = platformSnapshots.find((item) => item.platform === "douyin")?.audienceFitScore || 0;
   const commerceDriven = /带货|商品|电商|转化|卖家|店铺|橱窗|陶瓷|瓷砖|家居|建材|下单/.test(text);
+  const sportsCommerce = isSportsCommerceContext(text);
   const educationDriven = /课程|教学|知识|教程|陪跑|训练营|方法论/.test(text);
   const serviceDriven = /咨询|顾问|预约|服务|方案/.test(text);
   const offlineDriven = /到店|门店|实体|本地|预约/.test(text);
@@ -696,21 +701,33 @@ function buildMonetizationTracks(
     },
     {
       name: "电商带货",
-      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 14 : 0) + (offlineDriven ? 4 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
-      reason: `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
-      nextStep: `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
+      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 24 : 0) + (sportsCommerce ? 12 : 0) + (offlineDriven ? 4 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
+      reason: sportsCommerce
+        ? "你是卖健身器材和体育用品，当前最值钱的不是讲氛围，而是让用户立刻判断“适不适合我、能解决什么训练问题、为什么现在值得买”。这就是标准的成交型内容。"
+        : `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
+      nextStep: sportsCommerce
+        ? "先做成交版：第 1 句讲适合谁，第 2 句讲训练场景，第 3 句讲和普通器材差在哪，结尾只留一个动作，统一导向商品页、橱窗或私聊。"
+        : `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
     },
     {
       name: "知识付费",
-      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -18) + (commerceDriven ? -22 : 0) + (serviceDriven ? 4 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
-      reason: `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
-      nextStep: `把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。可先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`,
+      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -18) + (commerceDriven ? -28 : 0) + (sportsCommerce ? -18 : 0) + (serviceDriven ? 4 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
+      reason: sportsCommerce
+        ? "当前不该先走知识付费。你最短的商业路径是先把器材卖出去，而不是先把训练方法讲成付费课。"
+        : `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
+      nextStep: sportsCommerce
+        ? "先不要卖课。先把单品成交稿、套装组合稿和场景对照稿跑通，再决定是否补训练方案内容。"
+        : `把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。可先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`,
     },
     {
       name: "社群会员",
-      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0) + (educationDriven ? 4 : 0) - (commerceDriven ? 14 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
-      reason: "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
-      nextStep: `先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。核心权益建议围绕：${industryTemplate.offerExamples.slice(0, 2).join("、") || "固定答疑与模板"}`,
+      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0) + (educationDriven ? 4 : 0) - (commerceDriven ? 18 : 0) - (sportsCommerce ? 18 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
+      reason: sportsCommerce
+        ? "当前不该先做社群。用户买健身器材先看适配、效果和价格，不会因为一句“欢迎进群”就留下。"
+        : "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
+      nextStep: sportsCommerce
+        ? "先不要把社群写成主路径。先把单品成交、套装组合和复购路径做出来，再考虑售后群或会员群。"
+        : `先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。核心权益建议围绕：${industryTemplate.offerExamples.slice(0, 2).join("、") || "固定答疑与模板"}`,
     },
   ].sort((a, b) => b.fit - a.fit);
 }
@@ -767,6 +784,8 @@ function buildPlatformRecommendations(
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthPlatformRecommendation[] {
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
+  const sportsCommerce = isSportsCommerceContext(context);
   const recommendations = selectedPlatforms.map((platform, index) => {
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const reliability = assessCollectionReliability(platform, collections[platform]);
@@ -777,10 +796,14 @@ function buildPlatformRecommendations(
     if (platform === "douyin") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: signals.shortVideoFirst
+        reason: commerceDriven
+          ? `抖音更适合先做成交验证，因为这里最快能测试“适合谁、解决什么、为什么值得买”这套表达是否成立。对卖健身器材和体育用品来说，先把训练场景、适用人群和一个主卖点讲透，比拍氛围更重要。`
+          : signals.shortVideoFirst
           ? `这条内容在抖音不能按原稿平铺，要改成“结果先出现、冲突马上讲清、镜头尽快推进”的短视频表达。重点不是重复小红书文案，而是把「${topicHint}」压成前 2 秒就能懂的开场。`
           : `抖音更适合作为第二阶段视频放大平台。先把图文里最值得传播的一句结论抽出来，再围绕它做强钩子短视频，不要直接搬运原稿。`,
-        action: index === 0
+        action: commerceDriven
+          ? "按成交稿来改：开头直接说这套器材适合谁；中段演示一个训练场景和一个核心差异；补一条真实证据；结尾只留商品页、橱窗或私聊其中一个动作。"
+          : index === 0
           ? `做 1 版 9:16 结果前置短视频：开头先讲结论，中段只保留 2 到 3 个关键画面，结尾只留一个动作。${signals.commerceDriven ? "如果要转化，就把商品利益点或预约动作直接说出来。" : "如果先做增长，就把评论互动问题放在结尾。"} 注意避免：${watchouts}`
           : `把首发图文改写成抖音视频版：删掉解释型段落，保留冲突、结果和一个行动指令。${platformTemplate.actionRule} 注意避免：${watchouts}`,
       };
@@ -788,10 +811,14 @@ function buildPlatformRecommendations(
     if (platform === "xiaohongshu") {
       return {
         name: PLATFORM_LABELS[platform],
-        reason: signals.noteFirst
+        reason: commerceDriven
+          ? `小红书更适合做买家决策笔记补充：把器材适合谁、使用场景、参数区别、避坑点和为什么值得买讲清楚，用来承接收藏和对比，不适合做主成交视频。`
+          : signals.noteFirst
           ? `小红书适合先做首发验证，但不是因为平台固定模板，而是因为这条内容更适合被整理成“适合谁、解决什么、怎么做”的笔记结构。先让用户愿意收藏，再把它延展成视频。`
           : `如果这条内容先上小红书，不能只发感受或流水账。要把故事线拆成清单、路线、避坑、前后对比或场景建议，让用户一眼知道为什么值得存。`,
-        action: `先写 1 版小红书笔记：封面只讲一个结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。${signals.videoExpansion ? "首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。" : "先把这版笔记跑通，再抽最强一段改成短视频脚本。"} 注意避免：${watchouts}`,
+        action: commerceDriven
+          ? "把它改成决策笔记：封面讲“适合哪类训练人群”，正文按“适用场景 -> 核心差异 -> 参数对比 -> 为什么值得买 -> 一个动作”排。"
+          : `先写 1 版小红书笔记：封面只讲一个结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。${signals.videoExpansion ? "首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。" : "先把这版笔记跑通，再抽最强一段改成短视频脚本。"} 注意避免：${watchouts}`,
       };
     }
     if (platform === "bilibili") {
@@ -821,7 +848,23 @@ function buildPlatformRecommendations(
     const platform = Object.entries(PLATFORM_LABELS).find(([, label]) => label === item.name)?.[0] as GrowthPlatform | undefined;
     const snapshot = platform ? platformSnapshots.find((entry) => entry.platform === platform) : null;
     const reliability = platform ? assessCollectionReliability(platform, collections[platform]) : { multiplier: 0.7 };
-    return Math.round(((snapshot?.audienceFitScore || 60) + (snapshot?.momentumScore || 60)) * reliability.multiplier);
+    const commerceBias =
+      commerceDriven && sportsCommerce
+        ? platform === "douyin"
+          ? 18
+          : platform === "kuaishou"
+            ? 10
+            : platform === "xiaohongshu"
+              ? -6
+              : 0
+        : commerceDriven
+          ? platform === "douyin"
+            ? 12
+            : platform === "xiaohongshu"
+              ? -4
+              : 0
+          : 0;
+    return Math.round((((snapshot?.audienceFitScore || 60) + (snapshot?.momentumScore || 60)) * reliability.multiplier) + commerceBias);
   };
 
   return recommendations.sort((left, right) => weightedScore(right) - weightedScore(left));
@@ -841,6 +884,7 @@ function buildBusinessInsights(
   const educationStyle = /课程|教学|知识|教程|训练营|陪跑/.test(context);
   const communityStyle = /社群|会员|私域/.test(context);
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
+  const sportsCommerce = isSportsCommerceContext(context);
   const primaryAction = primaryTrack === "品牌合作"
     ? (beautyFashion
         ? "先把你的内容改写成“场景痛点 + 解决方案 + 合作品类”的提案型表达，让品牌知道你能承接哪类问题。"
@@ -868,7 +912,9 @@ function buildBusinessInsights(
     {
       title: "为什么先做",
       detail: commerceDriven && primaryTrack === "电商带货"
-        ? "因为你当前是卖货场景，这条内容最缺的不是观点，而是让用户立刻判断“适不适合我、值不值得买、怎么买”。先把成交稿跑通，比先做知识付费或社群更直接。"
+        ? sportsCommerce
+          ? "因为你卖的是健身器材和体育用品，用户最先要判断的是“适不适合我的训练场景、和普通器材差在哪、为什么现在值得买”。先把这三个问题讲透，才会有成交。"
+          : "因为你当前是卖货场景，这条内容最缺的不是观点，而是让用户立刻判断“适不适合我、值不值得买、怎么买”。先把成交稿跑通，比先做知识付费或社群更直接。"
         : playbook.why,
     },
     {
@@ -886,7 +932,9 @@ function buildBusinessInsights(
     {
       title: "中长期成交说法",
       detail: commerceDriven && primaryTrack === "电商带货"
-        ? "先讲适合谁、解决什么、为什么值，再补一个真实使用证据，最后只留一个购买动作。不要再讲泛故事或空泛理念。"
+        ? sportsCommerce
+          ? "先讲哪类训练人群适合、能解决什么训练问题、和普通器材差在哪，再补一个真实演示或买家反馈，最后只留一个购买动作。"
+          : "先讲适合谁、解决什么、为什么值，再补一个真实使用证据，最后只留一个购买动作。不要再讲泛故事或空泛理念。"
         : primaryTrack === "品牌合作" && beautyFashion
         ? "不要写泛品牌合作，要直接写成可合作场景和品类。"
         : primaryTrack === "暂不主打变现"
@@ -896,7 +944,9 @@ function buildBusinessInsights(
     {
       title: "中长期下一步落地",
       detail: commerceDriven && primaryTrack === "电商带货"
-        ? "按四步落地：1. 开头 3 秒讲适合谁和结果；2. 中段只留 2 到 3 个利益点；3. 补一条信任证据；4. 结尾统一导向橱窗、评论区或私聊。"
+        ? sportsCommerce
+          ? "按四步落地：1. 开头 3 秒直接说适合哪类训练人群；2. 中段演示一个训练场景和一个核心差异；3. 补参数对照或买家反馈；4. 结尾统一导向商品页、橱窗或私聊。"
+          : "按四步落地：1. 开头 3 秒讲适合谁和结果；2. 中段只留 2 到 3 个利益点；3. 补一条信任证据；4. 结尾统一导向橱窗、评论区或私聊。"
         : playbook.action,
     },
     {
@@ -982,29 +1032,29 @@ function buildDashboardConsole(params: {
         id: "content_goal",
         label: "当前最该讲清",
         value: industryTemplate.painPoint,
-        note: "不要展示后台样本口径，前台只保留用户能理解的内容目标。",
-        delta: "先讲清问题",
+        note: "前台只保留用户能直接理解的内容目标，不展示后台统计口径。",
+        delta: "先讲用户会不会买",
       },
       {
         id: "readiness",
-        label: "当前可转化度",
-        value: `${readiness}%`,
-        note: `内容可承接 ${topTrack?.name || "主路径"}，但仍需压缩入口和动作。`,
-        delta: `主路径 ${topTrack?.fit || 0}%`,
+        label: "当前先改哪里",
+        value: businessInsights[0]?.detail || industryTemplate.painPoint,
+        note: "先把最影响成交判断的那一句讲透，不要继续堆背景和氛围。",
+        delta: "先改前三秒",
       },
       {
         id: "distribution",
         label: "首发平台",
         value: topPlatform,
         note: platformRecommendations[0]?.reason || "先用最匹配平台拿首轮反馈。",
-        delta: secondTrack ? `备选 ${secondTrack.name}` : "单路径推进",
+        delta: secondTrack ? `备选：${secondTrack.name}` : "单路径推进",
       },
       {
         id: "commercial",
         label: "当前主卖法",
         value: topTrack?.name || industryTemplate.primaryConversion,
-        note: `围绕「${industryTemplate.primaryConversion}」做单一路径，不把多个商业动作混在一条内容里。`,
-        delta: "只保留一条路径",
+        note: `围绕「${industryTemplate.primaryConversion}」只做一条主路径，不把多个商业动作混在同一条内容里。`,
+        delta: "先跑通一条成交路",
       },
     ],
     trendSeries: [
