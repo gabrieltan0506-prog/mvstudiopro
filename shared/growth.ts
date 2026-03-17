@@ -135,6 +135,60 @@ export const growthBusinessInsightSchema = z.object({
   detail: z.string(),
 });
 
+export const growthDashboardStatSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: z.string(),
+  note: z.string(),
+  delta: z.string(),
+});
+
+export const growthDashboardSeriesPointSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+});
+
+export const growthDashboardSeriesSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  points: z.array(growthDashboardSeriesPointSchema),
+});
+
+export const growthFunnelStageSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: z.number().min(0).max(100),
+  detail: z.string(),
+});
+
+export const growthUserSegmentFunnelSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  persona: z.string(),
+  conversionGoal: z.string(),
+  preferredPlatform: z.string(),
+  trigger: z.string(),
+  action: z.string(),
+  stages: z.array(growthFunnelStageSchema),
+});
+
+export const growthPersonalizedRecommendationSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  audience: z.string(),
+  why: z.string(),
+  action: z.string(),
+});
+
+export const growthDashboardConsoleSchema = z.object({
+  headline: z.string(),
+  summary: z.string(),
+  stats: z.array(growthDashboardStatSchema),
+  trendSeries: z.array(growthDashboardSeriesSchema),
+  conversionFunnels: z.array(growthUserSegmentFunnelSchema),
+  personalizedRecommendations: z.array(growthPersonalizedRecommendationSchema),
+});
+
 export const growthPlanStepSchema = z.object({
   day: z.number().int().min(1).max(30),
   title: z.string(),
@@ -184,6 +238,7 @@ export const growthSnapshotSchema = z.object({
   monetizationTracks: z.array(growthMonetizationTrackSchema),
   platformRecommendations: z.array(growthPlatformRecommendationSchema),
   businessInsights: z.array(growthBusinessInsightSchema),
+  dashboardConsole: growthDashboardConsoleSchema,
   growthPlan: z.array(growthPlanStepSchema),
   creationAssist: growthCreationAssistSchema,
   growthHandoff: growthHandoffSchema,
@@ -202,6 +257,12 @@ export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema
 export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSchema>;
 export type GrowthPlatformRecommendation = z.infer<typeof growthPlatformRecommendationSchema>;
 export type GrowthBusinessInsight = z.infer<typeof growthBusinessInsightSchema>;
+export type GrowthDashboardStat = z.infer<typeof growthDashboardStatSchema>;
+export type GrowthDashboardSeries = z.infer<typeof growthDashboardSeriesSchema>;
+export type GrowthFunnelStage = z.infer<typeof growthFunnelStageSchema>;
+export type GrowthUserSegmentFunnel = z.infer<typeof growthUserSegmentFunnelSchema>;
+export type GrowthPersonalizedRecommendation = z.infer<typeof growthPersonalizedRecommendationSchema>;
+export type GrowthDashboardConsole = z.infer<typeof growthDashboardConsoleSchema>;
 export type GrowthPlanStep = z.infer<typeof growthPlanStepSchema>;
 export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;
 export type GrowthHandoff = z.infer<typeof growthHandoffSchema>;

@@ -890,6 +890,200 @@ function buildBusinessInsights(
   ];
 }
 
+function buildDashboardConsole(params: {
+  analysis: GrowthAnalysisScores;
+  context: string;
+  requestedPlatforms: GrowthPlatform[];
+  platformSnapshots: GrowthPlatformSnapshot[];
+  monetizationTracks: GrowthMonetizationTrack[];
+  platformRecommendations: GrowthPlatformRecommendation[];
+  businessInsights: GrowthBusinessInsight[];
+  industryTemplate: GrowthIndustryTemplate;
+}) {
+  const { analysis, context, requestedPlatforms, platformSnapshots, monetizationTracks, platformRecommendations, businessInsights, industryTemplate } = params;
+  const totalCreators = platformSnapshots.reduce((sum, item) => sum + (item.last30d.creatorsTracked || 0), 0);
+  const totalPosts = platformSnapshots.reduce((sum, item) => sum + (item.last30d.postsAnalyzed || 0), 0);
+  const avgViews = platformSnapshots.length
+    ? Math.round(platformSnapshots.reduce((sum, item) => sum + (item.last30d.avgViews || 0), 0) / platformSnapshots.length)
+    : 0;
+  const topTrack = monetizationTracks[0];
+  const secondTrack = monetizationTracks[1];
+  const topPlatform = platformRecommendations[0]?.name || PLATFORM_LABELS[requestedPlatforms[0] || "douyin"];
+  const primaryAudience = industryTemplate.audience.split("、")[0] || industryTemplate.audience;
+  const readiness = Math.round((analysis.composition + analysis.impact + analysis.viralPotential) / 3);
+
+  const buildFunnelStages = (base: number, labels: string[], details: string[]) =>
+    labels.map((label, index) => ({
+      id: `${label}-${index}`,
+      label,
+      value: clamp(Math.round(base - index * (12 + index * 3)), 18, 100),
+      detail: details[index] || details[details.length - 1] || "保持单一路径推进。",
+    }));
+
+  const personalizedRecommendations = [
+    {
+      id: "audience-core",
+      title: `先拿下「${primaryAudience}」`,
+      audience: primaryAudience,
+      why: compactAudienceReason(context, industryTemplate, businessInsights[0]?.detail || industryTemplate.painPoint),
+      action: `先把内容改成“${industryTemplate.painPoint} -> ${industryTemplate.primaryConversion}”的单一转化稿。`,
+    },
+    {
+      id: "track-core",
+      title: `主打「${topTrack?.name || "知识付费"}」路径`,
+      audience: topTrack?.name || "高意向用户",
+      why: topTrack?.reason || "当前这条路径最容易把内容和成交动作接起来。",
+      action: topTrack?.nextStep || "先验证一个主承接动作，再决定是否扩量。",
+    },
+    {
+      id: "platform-core",
+      title: `${topPlatform} 先做首发验证`,
+      audience: `${topPlatform} 首发人群`,
+      why: platformRecommendations[0]?.reason || "当前平台匹配度最高，适合先用它拿反馈。",
+      action: platformRecommendations[0]?.action || "先做一版首发稿，再看是否扩到第二平台。",
+    },
+  ];
+
+  return {
+    headline: `${topPlatform} 先发，${topTrack?.name || "知识付费"} 先跑，重点拿下 ${primaryAudience}`,
+    summary: `${businessInsights[1]?.detail || "当前先把入口讲清楚。"} ${businessInsights[2]?.detail || ""}`.trim(),
+    stats: [
+      {
+        id: "creator_pool",
+        label: "样本总台",
+        value: `${formatCompactStat(totalCreators)} 位`,
+        note: `当前已纳入 ${requestedPlatforms.length} 个平台的人群样本池。`,
+        delta: `${formatCompactStat(totalPosts)} 条内容`,
+      },
+      {
+        id: "readiness",
+        label: "当前可转化度",
+        value: `${readiness}%`,
+        note: `内容可承接 ${topTrack?.name || "主路径"}，但仍需压缩入口和动作。`,
+        delta: `主路径 ${topTrack?.fit || 0}%`,
+      },
+      {
+        id: "distribution",
+        label: "首发平台",
+        value: topPlatform,
+        note: platformRecommendations[0]?.reason || "先用最匹配平台拿首轮反馈。",
+        delta: secondTrack ? `备选 ${secondTrack.name}` : "单路径推进",
+      },
+      {
+        id: "commercial",
+        label: "放大空间",
+        value: formatCompactStat(avgViews),
+        note: `按当前样本均值估算的平均播放体量，适合先跑轻量验证。`,
+        delta: `${requestedPlatforms.length} 平台联动`,
+      },
+    ],
+    trendSeries: [
+      {
+        id: "platform-fit",
+        label: "平台匹配总览",
+        points: platformSnapshots.slice(0, 4).map((snapshot) => ({
+          label: snapshot.displayName,
+          value: snapshot.audienceFitScore,
+        })),
+      },
+      {
+        id: "conversion-readiness",
+        label: "转化准备度",
+        points: [
+          { label: "内容入口", value: analysis.composition },
+          { label: "停留钩子", value: analysis.impact },
+          { label: "商业承接", value: topTrack?.fit || 0 },
+          { label: "放大空间", value: analysis.viralPotential },
+        ],
+      },
+      {
+        id: "track-comparison",
+        label: "转化路径对比",
+        points: monetizationTracks.slice(0, 4).map((track) => ({
+          label: track.name,
+          value: track.fit,
+        })),
+      },
+    ],
+    conversionFunnels: [
+      {
+        id: "cold-audience",
+        label: "冷流量转化漏斗",
+        persona: `首次刷到你的 ${primaryAudience}`,
+        conversionGoal: "先停留，再收藏，再产生咨询意愿",
+        preferredPlatform: topPlatform,
+        trigger: "结果先出、问题明确、能立刻看懂自己为什么要继续看",
+        action: "首屏只保留一个结果和一个动作，不解释行业背景。",
+        stages: buildFunnelStages(
+          Math.max(82, readiness),
+          ["刷到内容", "停留看完", "收藏 / 点赞", "评论 / 私信", "预约 / 咨询"],
+          [
+            "先让用户在 2 秒内看懂结果。",
+            "中段只保留最关键的 2 到 3 个证据。",
+            "结尾给收藏理由，而不是讲理念。",
+            "评论区只留一个问题，引导对话。",
+            "最后把动作统一到咨询或方案入口。",
+          ],
+        ),
+      },
+      {
+        id: "problem-aware",
+        label: "问题明确用户漏斗",
+        persona: `已经意识到「${industryTemplate.painPoint}」的人`,
+        conversionGoal: `从“知道问题”推进到「${topTrack?.name || "主承接"}」`,
+        preferredPlatform: platformRecommendations[1]?.name || topPlatform,
+        trigger: "用案例、对比和误区拆解建立信任，而不是泛讲观点",
+        action: topTrack?.nextStep || "先用单一路径验证转化动作。",
+        stages: buildFunnelStages(
+          Math.max(76, (topTrack?.fit || readiness) + 6),
+          ["看到问题", "认可方法", "索取案例", "进入私域 / 预约", "形成成交"],
+          [
+            "先点出他正在损失什么。",
+            "用框架和案例证明方法有效。",
+            "给出可领取资料或案例包。",
+            "引导进私域或预约诊断。",
+            "把成交理由统一成一个主方案。",
+          ],
+        ),
+      },
+      {
+        id: "high-intent",
+        label: "高意向客户漏斗",
+        persona: "已经在比较解决方案的高意向客户",
+        conversionGoal: "缩短决策时间，直接推进成交",
+        preferredPlatform: topPlatform,
+        trigger: "结果证明、案例可信、承接页清楚",
+        action: `重点补齐 ${industryTemplate.trustAsset}，并把承接页只留一个报价或预约动作。`,
+        stages: buildFunnelStages(
+          Math.max(70, (secondTrack?.fit || topTrack?.fit || readiness) + 4),
+          ["看到案例", "确认适配", "咨询方案", "比较报价", "成交 / 复购"],
+          [
+            "先让客户知道你做过什么结果。",
+            "明确适合谁，不适合谁。",
+            "咨询入口只留一个方案动作。",
+            "报价前先讲清服务边界。",
+            "把成交后的复购场景一起设计进去。",
+          ],
+        ),
+      },
+    ],
+    personalizedRecommendations,
+  };
+}
+
+function compactAudienceReason(context: string, industryTemplate: GrowthIndustryTemplate, fallback: string) {
+  const contextLabel = String(context || "").trim();
+  if (!contextLabel) return fallback;
+  const shortened = contextLabel.length > 20 ? `${contextLabel.slice(0, 19)}…` : contextLabel;
+  return `你的业务背景是「${shortened}」，所以推荐先集中服务最容易被 ${industryTemplate.primaryConversion} 打动的人群。`;
+}
+
+function formatCompactStat(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  if (value >= 10000) return `${Math.round(value / 1000)}k`;
+  return `${Math.round(value)}`;
+}
+
 function buildGrowthPlan(
   analysis: GrowthAnalysisScores,
   platformRecommendations: GrowthPlatformRecommendation[],
@@ -1033,6 +1227,16 @@ export function buildMockGrowthSnapshot(params: {
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, {}, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
+  const dashboardConsole = buildDashboardConsole({
+    analysis: params.analysis,
+    context,
+    requestedPlatforms,
+    platformSnapshots,
+    monetizationTracks,
+    platformRecommendations,
+    businessInsights,
+    industryTemplate,
+  });
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
@@ -1110,6 +1314,7 @@ export function buildMockGrowthSnapshot(params: {
     monetizationTracks,
     platformRecommendations,
     businessInsights,
+    dashboardConsole,
     growthPlan,
     creationAssist,
     growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),
@@ -1171,6 +1376,16 @@ export function buildGrowthSnapshotFromCollections(params: {
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, params.collections, context, industryTemplate);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
+  const dashboardConsole = buildDashboardConsole({
+    analysis: params.analysis,
+    context,
+    requestedPlatforms,
+    platformSnapshots,
+    monetizationTracks,
+    platformRecommendations,
+    businessInsights,
+    industryTemplate,
+  });
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
@@ -1210,6 +1425,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     monetizationTracks,
     platformRecommendations,
     businessInsights,
+    dashboardConsole,
     growthPlan,
     creationAssist,
     growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),

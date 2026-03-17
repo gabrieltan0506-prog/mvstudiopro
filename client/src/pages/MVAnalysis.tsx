@@ -679,6 +679,7 @@ export default function MVAnalysisPage() {
   const [selectedComparePlatform, setSelectedComparePlatform] = useState("");
   const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
+  const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -956,6 +957,7 @@ export default function MVAnalysisPage() {
   const remainingTime = Math.max(0, estimatedTime - elapsedTime);
 
   const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
+  const dashboardConsole = growthSnapshot?.dashboardConsole ?? null;
   const platformRecommendations = growthSnapshot?.platformRecommendations ?? [];
   const businessInsights: GrowthBusinessInsight[] = growthSnapshot?.businessInsights ?? [];
   const growthPlan: GrowthPlanStep[] = growthSnapshot?.growthPlan ?? [];
@@ -1056,6 +1058,12 @@ export default function MVAnalysisPage() {
       },
     ];
   }, [commercialTracks, businessTrackRows, positioningRows, contentAnalysisRows, dashboardScoreAverage]);
+  const conversionFunnels = dashboardConsole?.conversionFunnels ?? [];
+  const activeConversionFunnel = useMemo(
+    () => conversionFunnels.find((item) => item.id === selectedFunnelSegment) || conversionFunnels[0] || null,
+    [conversionFunnels, selectedFunnelSegment],
+  );
+  const personalizedRecommendationCards = dashboardConsole?.personalizedRecommendations ?? [];
   const platformDashboardCards = useMemo(
     () => platformRecommendationRows.slice(0, 4).map((row) => ({
       ...row,
@@ -1109,6 +1117,13 @@ export default function MVAnalysisPage() {
       setSelectedBusinessTrack(commercialTracks[0]?.name || "");
     }
   }, [commercialTracks, selectedBusinessTrack]);
+
+  useEffect(() => {
+    if (!conversionFunnels.length) return;
+    if (!selectedFunnelSegment || !conversionFunnels.some((item) => item.id === selectedFunnelSegment)) {
+      setSelectedFunnelSegment(conversionFunnels[0]?.id || "");
+    }
+  }, [conversionFunnels, selectedFunnelSegment]);
 
   const activateDashboardPanel = useCallback((panelId: string) => {
     setActiveDashboardPanel(panelId);
@@ -1466,6 +1481,78 @@ export default function MVAnalysisPage() {
                         ))}
                     </div>
 
+                    {dashboardConsole ? (
+                      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+                        <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-xs uppercase tracking-[0.18em] text-[#7ee7ff]">数据总台</div>
+                              <div className="mt-2 text-2xl font-black text-white">{dashboardConsole.headline}</div>
+                              <p className="mt-3 max-w-3xl text-sm leading-7 text-white/65">{dashboardConsole.summary}</p>
+                            </div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">用户分层总览</div>
+                          </div>
+                          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            {dashboardConsole.stats.map((stat) => (
+                              <div key={stat.id} className="rounded-2xl border border-white/10 bg-[#101d31] p-4">
+                                <div className="text-xs uppercase tracking-[0.14em] text-white/45">{stat.label}</div>
+                                <div className="mt-3 text-3xl font-black text-white">{stat.value}</div>
+                                <div className="mt-2 text-sm text-[#8ef0b1]">{stat.delta}</div>
+                                <p className="mt-3 text-sm leading-6 text-white/62">{stat.note}</p>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-5 grid gap-4 xl:grid-cols-3">
+                            {dashboardConsole.trendSeries.map((series, index) => (
+                              <div key={series.id} className="rounded-2xl border border-white/10 bg-[#0d1828] p-4">
+                                <div className="text-sm font-semibold text-white">{series.label}</div>
+                                <div className="mt-4 h-[220px]">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={series.points}>
+                                      <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                                      <XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 12 }} axisLine={false} tickLine={false} />
+                                      <YAxis tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                                      <Tooltip
+                                        contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
+                                        formatter={(value: number) => [`${value}%`, series.label]}
+                                      />
+                                      <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                                        {series.points.map((point, pointIndex) => (
+                                          <Cell
+                                            key={`${series.id}-${point.label}`}
+                                            fill={["#5fe3ff", "#c98cff", "#8ef0b1", "#ff9dc9"][Math.min(pointIndex + index, 3)]}
+                                          />
+                                        ))}
+                                      </Bar>
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
+                          <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">个性化推荐台</div>
+                          <div className="mt-2 text-2xl font-black text-white">先看人群，再定转化方式</div>
+                          <div className="mt-4 space-y-3">
+                            {personalizedRecommendationCards.map((card) => (
+                              <div key={card.id} className="rounded-2xl border border-white/10 bg-[#121a2a] p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-base font-bold text-white">{card.title}</div>
+                                  <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60">{card.audience}</div>
+                                </div>
+                                <p className="mt-3 text-sm leading-6 text-white/68">{card.why}</p>
+                                <div className="mt-3 rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/45 px-3 py-2 text-sm text-[#ffe3ff]">
+                                  {card.action}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
                     <div className="grid gap-4 xl:grid-cols-[1.1fr_1.15fr_1.15fr]">
                         <button
                           type="button"
@@ -1574,35 +1661,107 @@ export default function MVAnalysisPage() {
                             <Workflow className="h-4 w-4 text-[#f5b7ff]" />
                             <span className="text-sm font-semibold">业务转化漏斗</span>
                           </div>
-                          <div className="relative mt-4 space-y-3">
-                            {businessFunnelSteps.map((step, index) => (
-                              <button
-                                key={`dashboard-${step.label}`}
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  activateDashboardPanel("monetization");
-                                }}
-                                className="block w-full text-left"
-                              >
-                                <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
-                                  <span>{step.label}</span>
-                                  <span>{step.value}%</span>
-                                </div>
-                                <div className="flex justify-center">
-                                  <div
-                                    className="rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#081423] shadow-[0_12px_24px_rgba(255,140,240,0.12)]"
-                                    style={{
-                                      width: `${94 - index * 16}%`,
-                                      background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
+                          {activeConversionFunnel ? (
+                            <div className="relative mt-4 space-y-4">
+                              <div className="flex flex-wrap gap-2">
+                                {conversionFunnels.map((funnel) => (
+                                  <button
+                                    key={funnel.id}
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setSelectedFunnelSegment(funnel.id);
+                                      activateDashboardPanel("monetization");
                                     }}
+                                    className={`rounded-full border px-3 py-1 text-xs transition ${
+                                      activeConversionFunnel.id === funnel.id
+                                        ? "border-[#f5b7ff]/35 bg-[#2b1733] text-[#ffe3ff]"
+                                        : "border-white/10 bg-black/20 text-white/65"
+                                    }`}
                                   >
-                                    {compactText(step.detail, 28)}
+                                    {funnel.label}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="grid gap-3 rounded-2xl border border-white/10 bg-[#0d1828] p-4">
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  <div>
+                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">对应用户</div>
+                                    <div className="mt-1 text-base font-bold text-white">{activeConversionFunnel.persona}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">主转化目标</div>
+                                    <div className="mt-1 text-base font-bold text-white">{activeConversionFunnel.conversionGoal}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">优先平台</div>
+                                    <div className="mt-1 text-sm text-[#f5b7ff]">{activeConversionFunnel.preferredPlatform}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs uppercase tracking-[0.16em] text-white/45">触发条件</div>
+                                    <div className="mt-1 text-sm text-white/72">{activeConversionFunnel.trigger}</div>
                                   </div>
                                 </div>
-                              </button>
-                            ))}
-                          </div>
+                                <div className="space-y-3">
+                                  {activeConversionFunnel.stages.map((stage, index) => {
+                                    const width = `${Math.max(28, stage.value - index * 6)}%`;
+                                    return (
+                                      <div key={stage.id}>
+                                        <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
+                                          <span>{stage.label}</span>
+                                          <span>{stage.value}%</span>
+                                        </div>
+                                        <div className="flex justify-center">
+                                          <div
+                                            className="rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#081423] shadow-[0_12px_24px_rgba(255,140,240,0.12)]"
+                                            style={{
+                                              width,
+                                              background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
+                                            }}
+                                          >
+                                            {compactText(stage.detail, 24)}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/40 px-3 py-3 text-sm text-[#ffe3ff]">
+                                  {activeConversionFunnel.action}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="relative mt-4 space-y-3">
+                              {businessFunnelSteps.map((step, index) => (
+                                <button
+                                  key={`dashboard-${step.label}`}
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    activateDashboardPanel("monetization");
+                                  }}
+                                  className="block w-full text-left"
+                                >
+                                  <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-[0.16em] text-white/45">
+                                    <span>{step.label}</span>
+                                    <span>{step.value}%</span>
+                                  </div>
+                                  <div className="flex justify-center">
+                                    <div
+                                      className="rounded-xl px-4 py-3 text-center text-sm font-semibold text-[#081423] shadow-[0_12px_24px_rgba(255,140,240,0.12)]"
+                                      style={{
+                                        width: `${94 - index * 16}%`,
+                                        background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
+                                      }}
+                                    >
+                                      {compactText(step.detail, 28)}
+                                    </div>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </button>
                     </div>
 
