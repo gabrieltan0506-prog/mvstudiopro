@@ -151,6 +151,15 @@ function parseCsvEnv(name: string) {
     .filter(Boolean);
 }
 
+function parseColonPairCsvEnv(name: string) {
+  return parseCsvEnv(name)
+    .map((entry) => {
+      const [left, right] = entry.split(":").map((part) => part.trim());
+      return { left, right };
+    })
+    .filter((entry) => entry.left);
+}
+
 function parsePairPoolEnv(name: string) {
   return String(process.env[name] || "")
     .split(/[,\n]/)
@@ -699,6 +708,413 @@ async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: str
   return { items: dedupeById(items), notes, requestCount };
 }
 
+function buildDouyinCreatorIndexHeaders(cookie: string, csrfToken: string, referer: string) {
+  return {
+    accept: "application/json, text/plain, */*",
+    appsource: "PC",
+    "content-type": "application/json",
+    cookie,
+    origin: "https://creator.douyin.com",
+    referer,
+    "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+    "x-secsdk-csrf-token": csrfToken,
+  };
+}
+
+function parseDouyinCreatorBrandSeeds() {
+  return parseColonPairCsvEnv("DOUYIN_CREATOR_INDEX_BRANDS")
+    .map((entry) => ({
+      brandName: entry.left,
+      categoryId: entry.right,
+    }))
+    .filter((entry) => entry.brandName && entry.categoryId);
+}
+
+function extractDouyinCreatorKeywordSeeds(seedItems: TrendItem[]) {
+  const explicit = parseCsvEnv("DOUYIN_CREATOR_INDEX_KEYWORDS");
+  const derived = seedItems
+    .flatMap((item) => [item.title, ...(item.tags || [])])
+    .map((value) => String(value || "").trim())
+    .filter((value) => value && value.length <= 16 && !/^douyin[-_:]/i.test(value))
+    .slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
+  return Array.from(new Set([...explicit, ...derived])).slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
+}
+
+async function probeDouyinCreatorIndexEndpoint(
+  creatorCookies: string[],
+  csrfToken: string,
+  options: {
+    url: string;
+    referer: string;
+    label: string;
+    body: Record<string, any>;
+  },
+) {
+  for (const cookie of creatorCookies) {
+    const response = await fetch(options.url, {
+      method: "POST",
+      headers: buildDouyinCreatorIndexHeaders(cookie, csrfToken, options.referer),
+      body: JSON.stringify(options.body),
+    });
+    if (!response.ok) {
+      return {
+        requestCount: 1,
+        note: `${options.label} responded with ${response.status}.`,
+      };
+    }
+    const payload = await response.json() as Record<string, any>;
+    const status = Number(payload?.status ?? payload?.status_code ?? 0);
+    if (status !== 0) {
+      return {
+        requestCount: 1,
+        note: `${options.label} returned status=${payload?.status ?? payload?.status_code ?? "unknown"} (${String(payload?.msg ?? payload?.status_msg ?? "unknown")}).`,
+      };
+    }
+    const data = payload?.data;
+    if (typeof data === "string" && data.trim()) {
+      return {
+        requestCount: 1,
+        note: `${options.label} returned encrypted payload.`,
+      };
+    }
+    if (Array.isArray(data)) {
+      return {
+        requestCount: 1,
+        note: `${options.label} returned plain array payload (${data.length}).`,
+      };
+    }
+    if (data && typeof data === "object") {
+      return {
+        requestCount: 1,
+        note: `${options.label} returned plain object payload (${Object.keys(data).length} fields).`,
+      };
+    }
+    return {
+      requestCount: 1,
+      note: `${options.label} returned empty payload.`,
+    };
+  }
+
+  return {
+    requestCount: 0,
+    note: `${options.label} skipped (no creator index cookie available).`,
+  };
+}
+
+async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: TrendItem[]) {
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+  let requestCount = 0;
+
+  const creatorCookies = Array.from(new Set([
+    String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim(),
+    String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim(),
+    ...cookies,
+  ].filter(Boolean)));
+  const csrfToken = String(
+    process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN
+    || process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN
+    || "",
+  ).trim();
+  if (!creatorCookies.length || !csrfToken) {
+    return { items, notes, requestCount };
+  }
+
+  const seedVideoIds = Array.from(new Set([
+    ...parseCsvEnv("DOUYIN_CREATOR_INDEX_VIDEO_IDS"),
+    ...seedItems
+      .map((item) => String(item.id || "").trim())
+      .filter(Boolean)
+      .slice(0, Math.max(3, parseNumberEnv("DOUYIN_CREATOR_INDEX_VIDEO_LIMIT", 8))),
+  ])).slice(0, Math.max(3, parseNumberEnv("DOUYIN_CREATOR_INDEX_VIDEO_LIMIT", 8)));
+  const explicitAuthorIds = parseCsvEnv("DOUYIN_CREATOR_INDEX_AUTHOR_IDS");
+  const keywordSeeds = extractDouyinCreatorKeywordSeeds(seedItems);
+  const topicIds = parseCsvEnv("DOUYIN_CREATOR_INDEX_TOPIC_IDS");
+  const brandSeeds = parseDouyinCreatorBrandSeeds();
+  const discoveredAuthorIds: string[] = [];
+  const authorIds = new Set(explicitAuthorIds);
+
+  for (const cookie of creatorCookies) {
+    for (const itemId of seedVideoIds) {
+      try {
+        const baseResponse = await fetch("https://creator.douyin.com/api/v2/index/itemBase", {
+          method: "POST",
+          headers: buildDouyinCreatorIndexHeaders(
+            cookie,
+            csrfToken,
+            `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/videoanalysis?id=${encodeURIComponent(itemId)}&source=creator`,
+          ),
+          body: JSON.stringify({ itemId }),
+        });
+        requestCount += 1;
+        if (!baseResponse.ok) {
+          notes.push(`Douyin creator index itemBase ${itemId} responded with ${baseResponse.status}.`);
+          continue;
+        }
+        const basePayload = await baseResponse.json() as Record<string, any>;
+        const baseData = basePayload?.data as Record<string, any> | undefined;
+        if (!baseData?.itemId || !baseData?.title) {
+          notes.push(`Douyin creator index itemBase ${itemId} returned empty data.`);
+          continue;
+        }
+        const authorId = String(baseData.authorIdString ?? "").trim();
+        if (authorId && !authorIds.has(authorId)) {
+          authorIds.add(authorId);
+          discoveredAuthorIds.push(authorId);
+        }
+
+        const trendResponse = await fetch("https://creator.douyin.com/api/v2/index/itemIndex", {
+          method: "POST",
+          headers: buildDouyinCreatorIndexHeaders(
+            cookie,
+            csrfToken,
+            `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/videoanalysis?id=${encodeURIComponent(itemId)}&source=creator`,
+          ),
+          body: JSON.stringify({
+            itemId,
+            startDate: "",
+            endDate: "",
+          }),
+        });
+        requestCount += 1;
+        if (!trendResponse.ok) {
+          notes.push(`Douyin creator index itemIndex ${itemId} responded with ${trendResponse.status}.`);
+          continue;
+        }
+        const trendPayload = await trendResponse.json() as Record<string, any>;
+        const trendData = trendPayload?.data as Record<string, any> | undefined;
+        const trendList = Array.isArray(trendData?.trend) ? trendData.trend as Array<Record<string, any>> : [];
+        const latestTrend = trendList.slice(-1)[0] ?? {};
+        const views = parseChineseCount(latestTrend.value) ?? parseChineseCount(trendData?.avg);
+        const likes = parseChineseCount(baseData.likes);
+        items.push({
+          id: `douyin-index-video:${itemId}`,
+          title: String(baseData.title).trim(),
+          bucket: "douyin_creator_index_video",
+          author: String(baseData.nickname ?? "").trim() || undefined,
+          url: String(baseData.url ?? "").trim() || undefined,
+          publishedAt: safeDateFromTimestamp(Date.parse(String(baseData.createTime || "")) || undefined),
+          likes,
+          views,
+          hotValue: views || likes,
+          contentType: "video",
+          tags: [
+            String(baseData.categoryName ?? "").trim(),
+            String(baseData.douyinId ?? "").trim(),
+          ].filter(Boolean),
+        });
+      } catch (error) {
+        requestCount += 1;
+        notes.push(`Douyin creator index video ${itemId} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    break;
+  }
+
+  const authorLimit = Math.max(3, parseNumberEnv("DOUYIN_CREATOR_INDEX_AUTHOR_LIMIT", 6));
+  for (const cookie of creatorCookies) {
+    for (const userId of Array.from(authorIds).slice(0, authorLimit)) {
+      try {
+        const response = await fetch("https://creator.douyin.com/api/v2/daren/get_author_info", {
+          method: "POST",
+          headers: buildDouyinCreatorIndexHeaders(
+            cookie,
+            csrfToken,
+            `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/daren/detail?uid=${encodeURIComponent(userId)}&source=creator`,
+          ),
+          body: JSON.stringify({ user_id: userId }),
+        });
+        requestCount += 1;
+        if (!response.ok) {
+          notes.push(`Douyin creator index author ${userId} responded with ${response.status}.`);
+          continue;
+        }
+        const payload = await response.json() as Record<string, any>;
+        const data = payload?.data as Record<string, any> | undefined;
+        if (!data?.user_id || !data?.user_name) continue;
+        items.push({
+          id: `douyin-index-author:${String(data.user_id).trim()}`,
+          title: `${String(data.user_name).trim()} 达人画像`,
+          bucket: "douyin_creator_index_author",
+          author: String(data.user_name).trim(),
+          url: String(data.user_aweme_url ?? "").trim() || undefined,
+          likes: parseChineseCount(data.like_count),
+          views: parseChineseCount(data.fans_count),
+          hotValue: parseChineseCount(data.fans_count),
+          contentType: "topic",
+          tags: [
+            String(data.first_tag_name ?? "").trim(),
+            String(data.second_tag_name ?? "").trim(),
+          ].filter(Boolean),
+        });
+      } catch (error) {
+        requestCount += 1;
+        notes.push(`Douyin creator index author ${userId} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    break;
+  }
+
+  if (discoveredAuthorIds.length) {
+    notes.push(`Douyin creator index discovered ${discoveredAuthorIds.length} author ids from video seeds.`);
+  }
+
+  if (creatorCookies.length && keywordSeeds.length) {
+    const beginDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+    const startDate = `${beginDate.getUTCFullYear()}${String(beginDate.getUTCMonth() + 1).padStart(2, "0")}${String(beginDate.getUTCDate()).padStart(2, "0")}`;
+    const today = new Date();
+    const endDate = `${today.getUTCFullYear()}${String(today.getUTCMonth() + 1).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
+    const keywordWindow = keywordSeeds.slice(0, Math.max(1, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
+    notes.push(`Douyin creator index keyword probes: ${keywordWindow.join(", ")}.`);
+
+    for (const keyword of keywordWindow) {
+      const payload = { keyword_list: [keyword] };
+      const validDateProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+        url: "https://creator.douyin.com/api/v2/index/get_keyword_valid_date",
+        referer: "https://creator.douyin.com/creator-micro/creator-count/arithmetic-index",
+        label: `Douyin creator index keyword valid-date ${keyword}`,
+        body: payload,
+      });
+      requestCount += validDateProbe.requestCount;
+      notes.push(validDateProbe.note);
+
+      const hotTrendProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+        url: "https://creator.douyin.com/api/v2/index/get_multi_keyword_hot_trend",
+        referer: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&appName=aweme`,
+        label: `Douyin creator index keyword trend ${keyword}`,
+        body: {
+          keyword_list: [keyword],
+          start_date: startDate,
+          end_date: endDate,
+          app_name: "aweme",
+          region: [],
+        },
+      });
+      requestCount += hotTrendProbe.requestCount;
+      notes.push(hotTrendProbe.note);
+
+      const interpretationProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+        url: "https://creator.douyin.com/api/v2/index/get_multi_keyword_interpretation",
+        referer: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&appName=aweme`,
+        label: `Douyin creator index keyword interpretation ${keyword}`,
+        body: {
+          keyword_list: [keyword],
+          app_name: "aweme",
+          start_date: startDate,
+          end_date: endDate,
+          region: [],
+        },
+      });
+      requestCount += interpretationProbe.requestCount;
+      notes.push(interpretationProbe.note);
+    }
+
+    const hotWordProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+      url: "https://creator.douyin.com/api/v2/index/get_hot_trend_word",
+      referer: "https://creator.douyin.com/creator-micro/creator-count/arithmetic-index",
+      label: "Douyin creator index hot trend words",
+      body: {
+        app: "aweme",
+        type: 0,
+      },
+    });
+    requestCount += hotWordProbe.requestCount;
+    notes.push(hotWordProbe.note);
+  }
+
+  if (creatorCookies.length && topicIds.length) {
+    const beginDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const startDate = `${beginDate.getUTCFullYear()}${String(beginDate.getUTCMonth() + 1).padStart(2, "0")}${String(beginDate.getUTCDate()).padStart(2, "0")}`;
+    const today = new Date();
+    const endDate = `${today.getUTCFullYear()}${String(today.getUTCMonth() + 1).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
+    notes.push(`Douyin creator index topic probes: ${topicIds.join(", ")}.`);
+    const topicProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+      url: "https://creator.douyin.com/api/v2/index/get_multi_topic_list",
+      referer: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?topic=${encodeURIComponent(topicIds[0])}&source=creator`,
+      label: `Douyin creator index topics (${topicIds.length})`,
+      body: {
+        app_name: "aweme",
+        topic_ids: topicIds,
+        begin_date: startDate,
+        end_date: endDate,
+      },
+    });
+    requestCount += topicProbe.requestCount;
+    notes.push(topicProbe.note);
+  }
+
+  if (creatorCookies.length && brandSeeds.length) {
+    const beginDate = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+    const startDate = `${beginDate.getUTCFullYear()}${String(beginDate.getUTCMonth() + 1).padStart(2, "0")}${String(beginDate.getUTCDate()).padStart(2, "0")}`;
+    const today = new Date();
+    const endDate = `${today.getUTCFullYear()}${String(today.getUTCMonth() + 1).padStart(2, "0")}${String(today.getUTCDate()).padStart(2, "0")}`;
+    const brandList = brandSeeds.slice(0, Math.max(1, parseNumberEnv("DOUYIN_CREATOR_INDEX_BRAND_LIMIT", 4))).map((brand) => ({
+      brand_name: brand.brandName,
+      category_id: brand.categoryId,
+    }));
+    notes.push(`Douyin creator index brand probes: ${brandList.map((brand) => `${brand.brand_name}:${brand.category_id}`).join(", ")}.`);
+
+    const brandReferer = `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysisTheme?source=creator&keyword=${encodeURIComponent(brandList[0]?.brand_name || "")}&categoryId=${encodeURIComponent(brandList[0]?.category_id || "")}&appName=aweme`;
+    for (const probe of [
+      {
+        url: "https://creator.douyin.com/api/v2/index/get_multi_brand_index",
+        label: "Douyin creator index brands",
+        body: {
+          brand_list: brandList,
+          start_date: startDate,
+          end_date: endDate,
+          app_name: "aweme",
+        },
+      },
+      {
+        url: "https://creator.douyin.com/api/v2/index/getBrandLines",
+        label: "Douyin creator index brand lines",
+        body: {
+          brand_list: brandList,
+          app: "aweme",
+          start_date: startDate,
+          end_date: endDate,
+        },
+      },
+      {
+        url: "https://creator.douyin.com/api/v2/index/getBrandRadarChart",
+        label: "Douyin creator index brand radar",
+        body: {
+          brand_list: brandList,
+          app: "aweme",
+          start_date: startDate,
+          end_date: endDate,
+        },
+      },
+      {
+        url: "https://creator.douyin.com/api/v2/index/getBrandCycles",
+        label: "Douyin creator index brand cycles",
+        body: {
+          brand_list: brandList,
+          app: "aweme",
+          start_date: startDate,
+          end_date: endDate,
+        },
+      },
+    ]) {
+      const result = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
+        url: probe.url,
+        referer: brandReferer,
+        label: probe.label,
+        body: probe.body,
+      });
+      requestCount += result.requestCount;
+      notes.push(result.note);
+    }
+  }
+
+  if (creatorCookies.length) {
+    notes.push("Douyin creator index now ingests plain video/author analytics and probes keyword/topic/brand endpoints, marking encrypted payloads explicitly.");
+  }
+
+  return { items: dedupeById(items), notes, requestCount };
+}
+
 function getAgeDays(iso?: string) {
   if (!iso) return undefined;
   const timestamp = new Date(iso).getTime();
@@ -1016,6 +1432,11 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     items.push(...creatorCenter.items);
     notes.push(...creatorCenter.notes);
     requestCount += creatorCenter.requestCount;
+
+    const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items);
+    items.push(...creatorIndex.items);
+    notes.push(...creatorIndex.notes);
+    requestCount += creatorIndex.requestCount;
 
     if (items.length) {
       return finalizeCollection("douyin", "live", dedupeById(items), notes, {
