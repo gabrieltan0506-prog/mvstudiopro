@@ -9,6 +9,7 @@ import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import type {
   GrowthBusinessInsight,
+  GrowthCampModel,
   GrowthHandoff,
   GrowthIndustryTemplate,
   GrowthPlanStep,
@@ -740,6 +741,7 @@ export default function MVAnalysisPage() {
   const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
+  const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -762,6 +764,7 @@ export default function MVAnalysisPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
+      modelName: selectedGrowthModel,
       requestedPlatforms: analysis?.platforms?.length ? analysis.platforms : [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
@@ -931,12 +934,14 @@ export default function MVAnalysisPage() {
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
+              modelName: selectedGrowthModel,
             })
           : await analyzeVideoMutation.mutateAsync({
               fileBase64,
               mimeType: fileMimeType || "video/mp4",
               fileName,
               context: context || undefined,
+              modelName: selectedGrowthModel,
             });
       setAnalysis(normalizeAnalysisScale(result.analysis));
       setDebugInfo({
@@ -955,7 +960,7 @@ export default function MVAnalysisPage() {
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
     }
-  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, usageStatsQuery]);
+  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -1378,6 +1383,32 @@ export default function MVAnalysisPage() {
                 />
               </div>
 
+              <div className="mt-5">
+                <div className="mb-2 block text-sm font-semibold text-white/80">分析模型</div>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+                    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+                  ].map((option) => {
+                    const isActive = selectedGrowthModel === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setSelectedGrowthModel(option.value as GrowthCampModel)}
+                        className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+                          isActive
+                            ? "border-[#ff8a3d] bg-[#ff8a3d]/15 text-[#ffb37f]"
+                            : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleAnalyze}
@@ -1441,6 +1472,7 @@ export default function MVAnalysisPage() {
                   <div>route: {String(debugInfo?.route || "-")}</div>
                   <div>provider: {String(debugInfo?.provider || "-")}</div>
                   <div>model: {String(debugInfo?.model || "-")}</div>
+                  <div>selected model: {selectedGrowthModel}</div>
                   <div>fallback: {String(debugInfo?.fallback ?? "-")}</div>
                   <div>trend source: {String(growthSnapshot?.status.source || "-")}</div>
                   <div>mime: {String(debugInfo?.mimeType || fileMimeType || "-")}</div>

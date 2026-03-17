@@ -15,9 +15,14 @@ type DocumentAnalysisResult = {
   };
 };
 
-const GROWTH_CAMP_FINAL_MODEL =
-  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-2.5-pro").trim()
-  || "gemini-2.5-pro";
+function resolveGrowthCampFinalModel(modelName?: string): string {
+  return String(
+    modelName
+      || process.env.GROWTH_CAMP_FINAL_MODEL
+      || process.env.VERTEX_GROWTH_FINAL_MODEL
+      || "gemini-2.5-pro",
+  ).trim() || "gemini-2.5-pro";
+}
 
 function truncate(value: string, max = 6000) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
@@ -57,7 +62,9 @@ export async function analyzeDocument(params: {
   mimeType: string;
   fileName?: string;
   context?: string;
+  modelName?: string;
 }): Promise<DocumentAnalysisResult> {
+  const finalModel = resolveGrowthCampFinalModel(params.modelName);
   const buffer = Buffer.from(params.fileBase64, "base64");
   const keyName = params.fileName || `document-${Date.now()}.bin`;
   const { url: fileUrl } = await storagePut(`growth-camp/documents/${Date.now()}-${keyName}`, buffer, params.mimeType);
@@ -95,7 +102,7 @@ export async function analyzeDocument(params: {
     const response = await invokeLLM({
       model: "pro",
       provider: "vertex",
-      modelName: GROWTH_CAMP_FINAL_MODEL,
+      modelName: finalModel,
       messages: [
         {
           role: "system",

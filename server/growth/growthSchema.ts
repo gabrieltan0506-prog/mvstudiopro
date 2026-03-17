@@ -1275,6 +1275,7 @@ function buildCreationAssist(
     ].join("\n"),
     storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA。${backgroundLine}`,
     workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本。优先服务于 ${primaryTrack} 转化。`,
+    assetExtensions: [],
   };
 }
 

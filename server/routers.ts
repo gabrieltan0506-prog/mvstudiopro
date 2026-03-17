@@ -42,7 +42,7 @@ import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
-import { growthAnalysisScoresSchema } from "@shared/growth";
+import { growthAnalysisScoresSchema, growthCampModelSchema } from "@shared/growth";
 
 function buildFallbackFrameAnalysis(context?: string) {
   const text = String(context || "").trim();
@@ -347,6 +347,7 @@ export const appRouter = router({
         mimeType: z.string().min(1),
         fileName: z.string().optional(),
         context: z.string().optional(),
+        modelName: growthCampModelSchema.optional(),
       }))
       .mutation(async ({ input }) => {
         const result = await analyzeDocument(input);
@@ -372,6 +373,7 @@ export const appRouter = router({
         mimeType: z.string().min(1),
         fileName: z.string().optional(),
         context: z.string().optional(),
+        modelName: growthCampModelSchema.optional(),
       }))
       .mutation(async ({ input }) => {
         let result;
@@ -417,6 +419,7 @@ export const appRouter = router({
         context: z.string().optional(),
         requestedPlatforms: z.array(z.string()).optional(),
         analysis: growthAnalysisScoresSchema,
+        modelName: growthCampModelSchema.optional(),
       }))
       .query(async ({ input }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);

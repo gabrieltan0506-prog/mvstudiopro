@@ -11,6 +11,14 @@ export const growthPlatformValues = [
 
 export const growthPlatformSchema = z.enum(growthPlatformValues);
 
+export const growthCampModelValues = [
+  "gemini-2.5-pro",
+  "gemini-3.1-pro-preview",
+] as const;
+
+export const growthCampModelSchema = z.enum(growthCampModelValues);
+export type GrowthCampModel = z.infer<typeof growthCampModelSchema>;
+
 export const growthAnalysisScoresSchema = z.object({
   composition: z.number(),
   color: z.number(),
@@ -213,6 +221,17 @@ export const growthCreationAssistSchema = z.object({
   brief: z.string(),
   storyboardPrompt: z.string(),
   workflowPrompt: z.string(),
+  assetExtensions: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    scenario: z.string(),
+    commercialGoal: z.string(),
+    bridgeReason: z.string(),
+    transitionIdea: z.string(),
+    sourceCue: z.string(),
+    veoPrompt: z.string(),
+    executionNotes: z.string(),
+  })).default([]),
 });
 
 export const growthHandoffSchema = z.object({

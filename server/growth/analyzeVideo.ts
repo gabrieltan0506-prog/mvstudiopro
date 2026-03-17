@@ -10,9 +10,14 @@ import { invokeLLM } from "../_core/llm";
 
 const execFileAsync = promisify(execFile);
 
-const GROWTH_CAMP_FINAL_MODEL =
-  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-2.5-pro").trim()
-  || "gemini-2.5-pro";
+function resolveGrowthCampFinalModel(modelName?: string): string {
+  return String(
+    modelName
+      || process.env.GROWTH_CAMP_FINAL_MODEL
+      || process.env.VERTEX_GROWTH_FINAL_MODEL
+      || "gemini-2.5-pro",
+  ).trim() || "gemini-2.5-pro";
+}
 
 type VideoAnalysisResult = {
   analysis: GrowthAnalysisScores;
@@ -167,8 +172,10 @@ export async function analyzeVideo(params: {
   mimeType: string;
   fileName?: string;
   context?: string;
+  modelName?: string;
 }): Promise<VideoAnalysisResult> {
   try {
+    const finalModel = resolveGrowthCampFinalModel(params.modelName);
     const buffer = Buffer.from(params.fileBase64, "base64");
     const videoUrl = `data:${params.mimeType};base64,${params.fileBase64}`;
     let multiFrame;
@@ -197,7 +204,7 @@ export async function analyzeVideo(params: {
     const response = await invokeLLM({
       model: "pro",
       provider: "vertex",
-      modelName: GROWTH_CAMP_FINAL_MODEL,
+      modelName: finalModel,
       messages: [
         {
           role: "system",
