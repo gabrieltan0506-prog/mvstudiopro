@@ -1650,8 +1650,8 @@ export default function WorkflowNodes() {
           <div className="mb-4 overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(236,72,153,0.22),transparent_32%),radial-gradient(circle_at_top_right,rgba(56,189,248,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-6 md:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">画布式工作流 <span className="ml-2 text-xs text-white/45">Workflow Canvas</span></div>
-                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 节点工作流</h1>
+                <div className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-sm text-primary">创作画布 <span className="ml-2 text-xs text-white/45">Workflow Canvas</span></div>
+                <h1 className="mt-4 text-3xl font-black tracking-tight md:text-5xl">/workflow-nodes 创作画布</h1>
                 <p className="mt-3 max-w-4xl text-sm leading-7 text-white/72 md:text-base">保留旧版 <span className="text-white">/workflow</span> 作为 fallback，这里负责真实执行、节点检查与 scene 级编辑，目标是让 Prompt 到 Final Render 的链路更清晰。</p>
               </div>
               <div className="flex flex-wrap gap-3">

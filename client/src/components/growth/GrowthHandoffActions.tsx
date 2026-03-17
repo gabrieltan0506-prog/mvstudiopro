@@ -35,10 +35,10 @@ export function GrowthHandoffActions({
         复制 7 天增长规划
       </button>
       <button
-        onClick={() => void onCopyText(handoff?.storyboardPrompt || fallbackBrief, "分镜提示词已复制")}
+        onClick={() => void onCopyText(handoff?.storyboardPrompt || fallbackBrief, "创作画布提示词已复制")}
         className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10"
       >
-        复制分镜提示词
+        复制创作画布提示词
       </button>
       <button
         onClick={() => void onCopyText(handoff?.workflowPrompt || fallbackBrief, "工作流提示词已复制")}

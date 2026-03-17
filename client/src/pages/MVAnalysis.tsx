@@ -2193,11 +2193,11 @@ export default function MVAnalysisPage() {
                     </div>
                     <div className="mt-4">
                       <a
-                        href="/storyboard?supervisor=1"
-                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
+                        href="/workflow-nodes?supervisor=1"
+                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给创作画布")}
                         className="block rounded-2xl border border-[#ff8a3d]/30 bg-[linear-gradient(135deg,rgba(255,138,61,0.2),rgba(255,255,255,0.04))] px-4 py-4 text-base font-bold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/20"
                       >
-                        先进入分镜创作，把首发版脚本和镜头改完
+                        先进入创作画布，把首发版脚本和镜头改完
                       </a>
                     </div>
                     <div className="relative mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
