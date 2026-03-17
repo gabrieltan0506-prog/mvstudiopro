@@ -151,6 +151,18 @@ function parseCsvEnv(name: string) {
     .filter(Boolean);
 }
 
+function parsePairPoolEnv(name: string) {
+  return String(process.env[name] || "")
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [left, right] = entry.split("|").map((part) => String(part || "").trim());
+      return { left, right };
+    })
+    .filter((entry) => entry.left);
+}
+
 function parseCookiePool(primaryName: string, backupName?: string) {
   const raw = [
     String(process.env[primaryName] || "").trim(),
@@ -1664,6 +1676,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   ].filter(Boolean);
   const authorLimit = Math.max(1, Math.min(16, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 12) || 12));
   const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 10) || 10));
+  const authorPairPool = parsePairPoolEnv("TOUTIAO_AUTHOR_POOL");
 
   if (!userTokenPool.length) {
     throw new Error("Toutiao collector requires TOUTIAO_USER_TOKEN.");
@@ -1691,10 +1704,25 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
   };
 
-  const authorProfiles = userTokenPool.slice(0, authorLimit).map((userToken, index) => ({
-    userToken,
-    mediaId: mediaIdPool[index] || mediaIdPool[0] || "",
-  }));
+  const authorProfiles = Array.from(new Map(
+    [
+      ...authorPairPool.map((entry) => ({
+        userToken: entry.left,
+        mediaId: entry.right || mediaIdPool[0] || "",
+      })),
+      ...userTokenPool.flatMap((userToken, index) => {
+        const directMedia = mediaIdPool[index] || mediaIdPool[0] || "";
+        const pooledMedia = mediaIdPool.slice(0, Math.min(4, mediaIdPool.length));
+        const candidates = directMedia
+          ? [directMedia, ...pooledMedia]
+          : pooledMedia;
+        if (!candidates.length) return [{ userToken, mediaId: "" }];
+        return candidates.map((mediaId) => ({ userToken, mediaId }));
+      }),
+    ]
+      .filter((entry) => entry.userToken)
+      .map((entry) => [`${entry.userToken}::${entry.mediaId}`, entry]),
+  ).values()).slice(0, authorLimit);
   notes.push(`Toutiao author pool size ${authorProfiles.length}; media pool size ${mediaIdPool.length}.`);
 
   for (const authorProfile of authorProfiles) {
@@ -1776,29 +1804,30 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   }
 
   const extraMediaIds = Array.from(new Set(mediaIdPool.filter(Boolean))).slice(0, Math.max(authorLimit, 12));
-  const fallbackUserToken = authorProfiles[0]?.userToken || userTokenPool[0] || "";
-  for (const mediaId of extraMediaIds) {
-    if (!fallbackUserToken) break;
-    const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
-    mediaUrl.searchParams.set("media_id", mediaId);
-    mediaUrl.searchParams.set("user_token", fallbackUserToken);
-    mediaUrl.searchParams.set("aid", "24");
-    mediaUrl.searchParams.set("app_name", "toutiao_web");
-    mediaUrl.searchParams.set("_signature", signer.sign({ url: mediaUrl.toString() }));
-    const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
-    requestCount += 1;
-    if (!response.ok) {
-      notes.push(`Toutiao media_hot pool ${mediaId} responded with ${response.status}.`);
-      continue;
+  const fallbackUserTokens = Array.from(new Set(authorProfiles.map((item) => item.userToken).filter(Boolean)));
+  for (const userToken of fallbackUserTokens.slice(0, Math.min(6, fallbackUserTokens.length))) {
+    for (const mediaId of extraMediaIds) {
+      const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
+      mediaUrl.searchParams.set("media_id", mediaId);
+      mediaUrl.searchParams.set("user_token", userToken);
+      mediaUrl.searchParams.set("aid", "24");
+      mediaUrl.searchParams.set("app_name", "toutiao_web");
+      mediaUrl.searchParams.set("_signature", signer.sign({ url: mediaUrl.toString() }));
+      const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
+      requestCount += 1;
+      if (!response.ok) {
+        notes.push(`Toutiao media_hot pool ${userToken.slice(0, 12)} ${mediaId} responded with ${response.status}.`);
+        continue;
+      }
+      const payload = await response.json() as Record<string, any>;
+      const mediaItems = parseToutiaoMediaHotItems(payload).map((item) => ({
+        ...item,
+        bucket: "toutiao_media_hot",
+        tags: Array.from(new Set([...(item.tags || []), mediaId, userToken.slice(0, 12)])),
+      }));
+      items.push(...mediaItems);
+      notes.push(`Fetched ${mediaItems.length} Toutiao pooled media hot items for ${userToken.slice(0, 12)} + ${mediaId}.`);
     }
-    const payload = await response.json() as Record<string, any>;
-    const mediaItems = parseToutiaoMediaHotItems(payload).map((item) => ({
-      ...item,
-      bucket: "toutiao_media_hot",
-      tags: Array.from(new Set([...(item.tags || []), mediaId])),
-    }));
-    items.push(...mediaItems);
-    notes.push(`Fetched ${mediaItems.length} Toutiao pooled media hot items for ${mediaId}.`);
   }
 
   const dedupedItems = dedupeById(items);

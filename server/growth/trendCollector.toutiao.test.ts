@@ -159,6 +159,6 @@ describe("collectPlatformTrends toutiao", () => {
     expect(result.stats.bucketCounts.toutiao_video_feed).toBeGreaterThanOrEqual(2);
     expect(result.stats.bucketCounts.toutiao_media_hot).toBeGreaterThanOrEqual(2);
     expect(result.stats.bucketCounts.toutiao_feed).toBeGreaterThanOrEqual(1);
-    expect(result.notes.some((note) => note.includes("Toutiao author pool size 2"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("Toutiao author pool size 4"))).toBe(true);
   });
 });
