@@ -49,7 +49,7 @@ const PLATFORM_BY_LABEL = Object.fromEntries(
 export function normalizePlatforms(input?: string[]): GrowthPlatform[] {
   const mapped = (input || [])
     .map((item) => PLATFORM_ALIASES[String(item || "").trim().toLowerCase()] || PLATFORM_ALIASES[String(item || "").trim()])
-    .filter(Boolean) as GrowthPlatform[];
+    .filter((item): item is GrowthPlatform => Boolean(item) && item !== "weixin_channels");
   const unique = Array.from(new Set(mapped));
   return unique.length ? unique.slice(0, 4) : ["douyin", "kuaishou", "bilibili", "xiaohongshu"];
 }
@@ -241,14 +241,14 @@ function buildTrackPlaybook(
   if (trackName === "知识付费") {
     return {
       why: "用户不是为观点付费，而是为更短路径、更稳结果和可复制方法付费。",
-      action: `先把内容整理成“结果 + 3 步方法 + 常见误区”，再用「${offerA} / ${offerB}」测试付费意愿。`,
+      action: `先做三步：1. 把视频改成“结果 + 3 步方法 + 常见误区”；2. 补一页案例或前后对比，证明方法有效；3. 只用「${offerA} / ${offerB}」其中一个轻产品先测付费，不直接卖完整课程。`,
       avoid: "不要一开始就卖完整课程，先用单主题案例、清单或模板验证成交理由。",
     };
   }
   if (trackName === "电商带货") {
     return {
       why: "这条内容的冲击力更适合结果前置和利益点表达，能直接承接单一购买动作。",
-      action: `先把前 3 秒改成结果和痛点，再只挂一个产品动作，优先测「${offerA}」。`,
+      action: `先做四步：1. 开头 3 秒先讲适合谁、解决什么；2. 中段只保留 2 到 3 个利益点，不讲空故事；3. 补「${industryTemplate.trustAsset}」里的一个信任证据；4. 结尾只留一个购买动作，优先测「${offerA}」。`,
       avoid: "不要同一条内容同时挂多个商品、多个动作和多个理由。",
     };
   }
@@ -326,6 +326,7 @@ function buildTopicLibrary(
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthTopicLibraryItem[] {
   const contextKeywords = extractContextKeywords(context);
+  if (industryTemplate.id === "industry-unspecified" || !contextKeywords.length) return [];
   const templates = isBeautyFashionContext(context)
     ? buildBeautyFashionTopicTemplates(context)
     : buildGenericTopicTemplates(context, industryTemplate);
@@ -675,6 +676,10 @@ function buildMonetizationTracks(
   const xiaohongshuFit = platformSnapshots.find((item) => item.platform === "xiaohongshu")?.audienceFitScore || 0;
   const bilibiliFit = platformSnapshots.find((item) => item.platform === "bilibili")?.audienceFitScore || 0;
   const douyinFit = platformSnapshots.find((item) => item.platform === "douyin")?.audienceFitScore || 0;
+  const commerceDriven = /带货|商品|电商|转化|卖家|店铺|橱窗|陶瓷|瓷砖|家居|建材|下单/.test(text);
+  const educationDriven = /课程|教学|知识|教程|陪跑|训练营|方法论/.test(text);
+  const serviceDriven = /咨询|顾问|预约|服务|方案/.test(text);
+  const offlineDriven = /到店|门店|实体|本地|预约/.test(text);
 
   return [
     {
@@ -689,19 +694,19 @@ function buildMonetizationTracks(
     },
     {
       name: "电商带货",
-      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
+      fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 14 : 0) + (offlineDriven ? 4 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
       reason: `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
       nextStep: `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
     },
     {
       name: "知识付费",
-      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
+      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -18) + (commerceDriven ? -22 : 0) + (serviceDriven ? 4 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
       reason: `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
       nextStep: `把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。可先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`,
     },
     {
       name: "社群会员",
-      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
+      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0) + (educationDriven ? 4 : 0) - (commerceDriven ? 14 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
       reason: "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
       nextStep: `先定社群主题、每周固定更新、群内权益和转化路径，再连续发布 3 条同主题内容验证进群理由。核心权益建议围绕：${industryTemplate.offerExamples.slice(0, 2).join("、") || "固定答疑与模板"}`,
     },
@@ -766,7 +771,7 @@ function buildPlatformRecommendations(
     const platformTemplate = getPlatformTemplate(platform);
     const signals = deriveContentStrategySignals(analysis, context, snapshot, industryTemplate);
     const watchouts = snapshot?.watchouts?.slice(0, 2).join("、") || platformTemplate.avoidance;
-    const topicHint = snapshot?.sampleTopics?.[0] || industryTemplate.trustAsset;
+    const topicHint = industryTemplate.trustAsset;
     if (platform === "douyin") {
       return {
         name: PLATFORM_LABELS[platform],
@@ -833,6 +838,7 @@ function buildBusinessInsights(
   const commerceStyle = /带货|商品|单品|橱窗|电商/.test(context);
   const educationStyle = /课程|教学|知识|教程|训练营|陪跑/.test(context);
   const communityStyle = /社群|会员|私域/.test(context);
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   const primaryAction = primaryTrack === "品牌合作"
     ? (beautyFashion
         ? "先把你的内容改写成“场景痛点 + 解决方案 + 合作品类”的提案型表达，让品牌知道你能承接哪类问题。"
@@ -859,7 +865,9 @@ function buildBusinessInsights(
     },
     {
       title: "为什么先做",
-      detail: playbook.why,
+      detail: commerceDriven && primaryTrack === "电商带货"
+        ? "因为你当前是卖货场景，这条内容最缺的不是观点，而是让用户立刻判断“适不适合我、值不值得买、怎么买”。先把成交稿跑通，比先做知识付费或社群更直接。"
+        : playbook.why,
     },
     {
       title: "中长期主承接动作",
@@ -875,7 +883,9 @@ function buildBusinessInsights(
     },
     {
       title: "中长期成交说法",
-      detail: primaryTrack === "品牌合作" && beautyFashion
+      detail: commerceDriven && primaryTrack === "电商带货"
+        ? "先讲适合谁、解决什么、为什么值，再补一个真实使用证据，最后只留一个购买动作。不要再讲泛故事或空泛理念。"
+        : primaryTrack === "品牌合作" && beautyFashion
         ? "不要写泛品牌合作，要直接写成可合作场景和品类。"
         : primaryTrack === "暂不主打变现"
           ? "先讲清你解决什么问题和能给什么结果，再谈商业化。"
@@ -883,7 +893,9 @@ function buildBusinessInsights(
     },
     {
       title: "中长期下一步落地",
-      detail: playbook.action,
+      detail: commerceDriven && primaryTrack === "电商带货"
+        ? "按四步落地：1. 开头 3 秒讲适合谁和结果；2. 中段只留 2 到 3 个利益点；3. 补一条信任证据；4. 结尾统一导向橱窗、评论区或私聊。"
+        : playbook.action,
     },
     {
       title: "当前不要做",
@@ -903,11 +915,6 @@ function buildDashboardConsole(params: {
   industryTemplate: GrowthIndustryTemplate;
 }) {
   const { analysis, context, requestedPlatforms, platformSnapshots, monetizationTracks, platformRecommendations, businessInsights, industryTemplate } = params;
-  const totalCreators = platformSnapshots.reduce((sum, item) => sum + (item.last30d.creatorsTracked || 0), 0);
-  const totalPosts = platformSnapshots.reduce((sum, item) => sum + (item.last30d.postsAnalyzed || 0), 0);
-  const avgViews = platformSnapshots.length
-    ? Math.round(platformSnapshots.reduce((sum, item) => sum + (item.last30d.avgViews || 0), 0) / platformSnapshots.length)
-    : 0;
   const topTrack = monetizationTracks[0];
   const secondTrack = monetizationTracks[1];
   const topPlatform = platformRecommendations[0]?.name || PLATFORM_LABELS[requestedPlatforms[0] || "douyin"];
@@ -945,7 +952,7 @@ function buildDashboardConsole(params: {
     },
     {
       id: "track-core",
-      title: `主打「${topTrack?.name || "知识付费"}」路径`,
+      title: `主打「${topTrack?.name || industryTemplate.primaryConversion}」路径`,
       audience: topTrack?.name || "高意向用户",
       why: topTrack?.reason || "当前这条路径最容易把内容和成交动作接起来。",
       evidence: buildEvidence(topTrack?.reason || industryTemplate.commercialFocus, industryTemplate.primaryConversion),
@@ -958,22 +965,22 @@ function buildDashboardConsole(params: {
       why: platformRecommendations[0]?.reason || "当前平台匹配度最高，适合先用它拿反馈。",
       evidence: buildEvidence(
         platformRecommendations[0]?.reason || industryTemplate.analysisHint,
-        primaryPlatformSnapshot?.sampleTopics?.[0] || primaryPlatformSnapshot?.summary || industryTemplate.trustAsset,
+        primaryPlatformSnapshot?.summary || industryTemplate.trustAsset,
       ),
       action: platformRecommendations[0]?.action || "先做一版首发稿，再看是否扩到第二平台。",
     },
   ];
 
   return {
-    headline: `${topPlatform} 先发，${topTrack?.name || "知识付费"} 先跑，重点拿下 ${primaryAudience}`,
+    headline: `${topPlatform} 先发，${topTrack?.name || industryTemplate.primaryConversion} 先跑，重点拿下 ${primaryAudience}`,
     summary: `${businessInsights[1]?.detail || "当前先把入口讲清楚。"} ${businessInsights[2]?.detail || ""}`.trim(),
     stats: [
       {
-        id: "creator_pool",
-        label: "样本总台",
-        value: `${formatCompactStat(totalCreators)} 位`,
-        note: `当前已纳入 ${requestedPlatforms.length} 个平台的人群样本池。`,
-        delta: `${formatCompactStat(totalPosts)} 条内容`,
+        id: "content_goal",
+        label: "当前最该讲清",
+        value: industryTemplate.painPoint,
+        note: "不要展示后台样本口径，前台只保留用户能理解的内容目标。",
+        delta: "先讲清问题",
       },
       {
         id: "readiness",
@@ -991,16 +998,16 @@ function buildDashboardConsole(params: {
       },
       {
         id: "commercial",
-        label: "放大空间",
-        value: formatCompactStat(avgViews),
-        note: `按当前样本均值估算的平均播放体量，适合先跑轻量验证。`,
-        delta: `${requestedPlatforms.length} 平台联动`,
+        label: "当前主卖法",
+        value: topTrack?.name || industryTemplate.primaryConversion,
+        note: `围绕「${industryTemplate.primaryConversion}」做单一路径，不把多个商业动作混在一条内容里。`,
+        delta: "只保留一条路径",
       },
     ],
     trendSeries: [
       {
         id: "platform-fit",
-        label: "平台匹配总览",
+        label: "各平台适配分",
         points: platformSnapshots.slice(0, 4).map((snapshot) => ({
           label: snapshot.displayName,
           value: snapshot.audienceFitScore,
@@ -1008,17 +1015,17 @@ function buildDashboardConsole(params: {
       },
       {
         id: "conversion-readiness",
-        label: "转化准备度",
+        label: "当前转化准备度",
         points: [
           { label: "内容入口", value: analysis.composition },
           { label: "停留钩子", value: analysis.impact },
           { label: "商业承接", value: topTrack?.fit || 0 },
-          { label: "放大空间", value: analysis.viralPotential },
+          { label: "扩量潜力", value: analysis.viralPotential },
         ],
       },
       {
         id: "track-comparison",
-        label: "转化路径对比",
+        label: "候选变现路径分",
         points: monetizationTracks.slice(0, 4).map((track) => ({
           label: track.name,
           value: track.fit,
@@ -1098,30 +1105,32 @@ function compactAudienceReason(context: string, industryTemplate: GrowthIndustry
   return `你的业务背景是「${shortened}」，所以推荐先集中服务最容易被 ${industryTemplate.primaryConversion} 打动的人群。`;
 }
 
-function formatCompactStat(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  if (value >= 10000) return `${Math.round(value / 1000)}k`;
-  return `${Math.round(value)}`;
-}
-
 function buildGrowthPlan(
   analysis: GrowthAnalysisScores,
   platformRecommendations: GrowthPlatformRecommendation[],
+  monetizationTracks: GrowthMonetizationTrack[],
+  industryTemplate: GrowthIndustryTemplate,
+  context: string,
 ): GrowthPlanStep[] {
   const topPlatform = platformRecommendations[0]?.name || "小红书";
+  const topTrack = monetizationTracks[0]?.name || industryTemplate.primaryConversion;
+  const commerceDriven = /带货|商品|电商|卖家|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
+  const storyboardTarget = commerceDriven
+    ? "把视频改成“结果 + 使用场景 + 利益点 + 一个购买动作”"
+    : `把内容改成更适合 ${topTrack} 承接的版本`;
   return [
-    { day: 1, title: "聚焦卖点", action: "重新定义这条内容的单一目标，只保留一个最强卖点，并重写开头 3 秒。" },
-    { day: 2, title: "准备测试素材", action: "基于当前画面生成 2 个封面版本和 2 个标题版本，准备 A/B 测试。" },
-    { day: 3, title: "首发验证", action: `先在 ${topPlatform} 发第一版，重点观察收藏、停留、完读和评论关键词。` },
-    { day: 4, title: "节奏重写", action: "根据反馈重写中段节奏，把弱镜头删掉，强化转折点。" },
-    { day: 5, title: "矩阵延展", action: "补一版幕后、拆解或教学内容，让单条内容变成内容矩阵。" },
-    { day: 6, title: "模板沉淀", action: "将表现最好的表达方式整理成模板，开始做系列化发布。" },
+    { day: 1, title: "先重写成交开头", action: `${storyboardTarget}，开头 3 秒先讲“适合谁、解决什么、为什么值得看”。` },
+    { day: 2, title: "补信任证据", action: `补 2 个信任证据：${industryTemplate.trustAsset}。不要再只讲氛围或抽象观点。` },
+    { day: 3, title: "补成交动作", action: commerceDriven ? "结尾只留一个动作：进橱窗、私信关键词或看商品页，不要同时留多个动作。" : `把结尾统一到「${industryTemplate.primaryConversion}」这条路径。` },
+    { day: 4, title: "首发验证", action: `先在 ${topPlatform} 发第一版，重点看停留、收藏、评论和咨询是否真的围绕「${industryTemplate.painPoint}」。` },
+    { day: 5, title: "二改节奏", action: "根据首发反馈删掉解释段，把弱镜头删掉，保留最能成交的 3 个信息点。" },
+    { day: 6, title: "扩第二版本", action: commerceDriven ? "补一版买家视角或使用场景版，再补一版参数/对比版，不要复读同一条。" : "把首发版拆成案例版和方法版，分别测试收藏与咨询。" },
     {
       day: 7,
-      title: "商业承接",
+      title: "复盘成交理由",
       action: analysis.viralPotential >= 75
-        ? "复盘数据，确定这一版是否值得继续放大，并补下一轮小红书标题、封面和收藏理由。"
-        : "复盘数据，确认下一轮优先优化的是开头冲击力还是画面统一性。",
+        ? `复盘用户最终是因为什么动作转化，再决定是否继续放大「${topTrack}」路径。`
+        : "复盘用户没转化是因为开头、利益点、信任证据还是动作不够清楚，再定下一轮只改一个点。",
     },
   ];
 }
@@ -1257,7 +1266,7 @@ export function buildMockGrowthSnapshot(params: {
     businessInsights,
     industryTemplate,
   });
-  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
+  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations, monetizationTracks, industryTemplate, context);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
   const today = new Date();
@@ -1408,7 +1417,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     businessInsights,
     industryTemplate,
   });
-  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations);
+  const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations, monetizationTracks, industryTemplate, context);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
 
   const snapshot = {

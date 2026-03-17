@@ -14,7 +14,6 @@ import type {
   GrowthPlanStep,
   GrowthPlatformRecommendation,
   GrowthSnapshot,
-  GrowthTopicLibraryItem,
 } from "@shared/growth";
 import {
   ArrowLeft,
@@ -127,7 +126,6 @@ const PLATFORM_LABELS: Record<string, string> = {
   xiaohongshu: "小红书",
   bilibili: "B站",
   kuaishou: "快手",
-  weixin_channels: "视频号",
 };
 
 function hasSupervisorAccess() {
@@ -168,13 +166,7 @@ function formatCompactNumber(value: number) {
 function compactText(text: string, maxLength = 72) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return "";
-  const segments = normalized
-    .split(/(?<=[。！？!?.])/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  const concise = segments.slice(0, 1).join("");
-  const basis = concise || normalized;
-  return basis.length > maxLength ? `${basis.slice(0, maxLength - 1)}…` : basis;
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
 }
 
 function normalizeText(text: string) {
@@ -232,28 +224,28 @@ function buildDashboardMetrics(
   return [
     {
       id: "readiness",
-      label: "综合成熟度",
+      label: "内容可转化度",
       value: `${averageScore}%`,
-      note: "基于五个独立维度的平均值，只用于快速判断当前整体成熟度。",
+      note: "只回答一个问题：这条内容现在离“能带来生意”还有多远。",
       tone: "from-[#ff8a3d]/30 via-[#ff8a3d]/10 to-transparent",
     },
     {
       id: "monetization",
-      label: "高匹配商业方向",
+      label: "可跑商业路径",
       value: `${highConfidenceTracks.length}`,
-      note: "只统计匹配度达到 80% 以上的方向，避免给用户空泛结论。",
+      note: "只保留当前真的值得先跑的方向，不把低相关路线硬塞给你。",
       tone: "from-[#f5b7ff]/30 via-[#f5b7ff]/10 to-transparent",
     },
     {
       id: "positioning",
-      label: "内容角色",
+      label: "当前内容状态",
       value: averageScore >= 80 ? "可放大" : averageScore >= 65 ? "可优化" : "需重构",
       note: "先判断当前内容该直接放大、重剪，还是需要先重写定位与钩子。",
       tone: "from-[#9df6c0]/30 via-[#9df6c0]/10 to-transparent",
     },
     {
       id: "platforms",
-      label: "首发建议",
+      label: "先发平台",
       value: platformRecommendations[0]?.name || "待生成",
       note: "首发平台优先用于验证第一版表达，后续再做多平台拆分和分发。",
       tone: "from-[#90c4ff]/30 via-[#90c4ff]/10 to-transparent",
@@ -293,48 +285,49 @@ function buildPositioningRows(
   return [
     {
       label: "🎯 受众痛点",
-      insight: compactText(audience, 22),
-      action: compactText(industryTemplate?.painPoint || "先只解决一个最痛的问题。", 14),
+      insight: audience,
+      action: industryTemplate?.painPoint || "先只解决一个最痛的问题。",
       highlight: "先锁一个痛点",
     },
     {
       label: "🧭 内容角色",
-      insight: compactText(roleHint, 20),
-      action: compactText("先写清角色，再统一标题和脚本。", 14),
+      insight: roleHint,
+      action: "先写清角色，再统一标题和脚本。",
       highlight: "先定角色",
     },
     {
       label: "💼 当前重点",
       insight: primaryDirection === "先不主打变现" ? "先把入口做成熟。" : `先主攻「${primaryDirection}」。`,
-      action: compactText(industryTemplate?.primaryConversion || "只留一个承接动作。", 14),
+      action: industryTemplate?.primaryConversion || "只留一个承接动作。",
       highlight: "只留一个主方向",
     },
   ];
 }
 
-function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
+function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null, context = ""): InsightTableRow[] {
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   return [
     {
       label: "✅ 当前优势",
-      insight: compactText(analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。", 22),
-      action: compactText(analysis.strengths[1] || "把优势固定成标题或封面。", 14),
+      insight: analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。",
+      action: analysis.strengths[1] || "把优势固定成标题或封面。",
       highlight: "先固定优势",
     },
     {
       label: "⚠️ 优先优化点",
-      insight: compactText(analysis.improvements[0] || "开头抓力不足，信息进入过慢。", 22),
-      action: compactText(analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。", 14),
+      insight: analysis.improvements[0] || "开头抓力不足，信息进入过慢。",
+      action: analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。",
       highlight: "先修停留",
     },
     {
       label: "🧩 表达问题",
-      insight: compactText(analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。", 22),
-      action: compactText("先给一句结论，再补细节。", 14),
+      insight: analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。",
+      action: commerceDriven ? "先讲适合谁、值不值买、为什么值得看，再补细节。" : "先给一句结论，再补细节。",
     },
     {
       label: "🚀 建议方向",
-      insight: compactText(industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。", 22),
-      action: compactText("按“痛点 -> 做法 -> 动作”重写。", 14),
+      insight: industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。",
+      action: commerceDriven ? "按“适用场景 -> 核心利益点 -> 信任证据 -> 一个动作”重写。" : "按“痛点 -> 做法 -> 动作”重写。",
       highlight: "方案要短、能执行",
     },
   ];
@@ -345,13 +338,7 @@ function buildTrendRows(
   _context: string,
   _platforms: GrowthPlatformRecommendation[],
 ): TrendTableRow[] {
-  return (growthSnapshot?.topicLibrary || []).slice(0, 6).map((item: GrowthTopicLibraryItem) => ({
-    platform: item.platformLabel,
-    topic: normalizeText(item.title),
-    reason: normalizeText(item.rationale),
-    action: normalizeText(item.executionHint),
-    highlight: normalizeText(item.commercialAngle),
-  }));
+  return [];
 }
 
 function buildPlatformRecommendationRows(
@@ -369,7 +356,7 @@ function buildPlatformRecommendationRows(
           : "做案例拆解版：先讲结果，再讲步骤和误区。";
     return {
       label: platform.name,
-      insight: compactText(platform.reason, 34),
+      insight: platform.reason,
       action: publishAction,
       highlight: snapshot?.watchouts?.[0] ? `避免：${normalizeText(snapshot.watchouts[0])}` : undefined,
     };
@@ -382,6 +369,8 @@ function buildPlatformCompareRows(
   comparePlatformName: string,
 ): PlatformCompareRow[] {
   const primaryName = recommendations[0]?.name || "";
+  if (!FULL_PLATFORM_ORDER.map((platform) => PLATFORM_LABELS[platform]).includes(primaryName)) return [];
+  if (!FULL_PLATFORM_ORDER.map((platform) => PLATFORM_LABELS[platform]).includes(comparePlatformName)) return [];
   const primary = growthSnapshot?.platformSnapshots.find((item) => item.displayName === primaryName);
   const compare = growthSnapshot?.platformSnapshots.find((item) => item.displayName === comparePlatformName);
   if (!primary || !compare) return [];
@@ -429,9 +418,9 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
     if (track.name === "知识付费") {
       return {
         label: `${track.name} ${track.fit}%`,
-        insight: "适合做案例拆解、方法复盘和工具模板，不适合只讲观点。",
-        action: "先用完整案例验证，再拆成收藏笔记和短视频。",
-        highlight: "优先：诊断框架、复盘案例、三步方法。",
+        insight: "只有当你能把这条内容讲成“用户问题 -> 三步做法 -> 做完能得到什么结果”时，知识付费才成立。",
+        action: "先做一版完整案例拆解：第 1 段讲用户原问题，第 2 段讲你怎么判断，第 3 段讲具体做法，第 4 段讲结果，再把这套内容拆成笔记和短视频。",
+        highlight: "先卖具体方法，不卖空泛理念。",
       };
     }
     if (track.name === "品牌合作") {
@@ -449,15 +438,15 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
     if (track.name === "电商带货") {
       return {
         label: `${track.name} ${track.fit}%`,
-        insight: "适合结果前置和利益点直接的转化表达。",
-        action: "先测 1 到 2 个强 CTA 版本，只保留一个购买动作。",
-        highlight: "先做单品，不要混多个商品。",
+        insight: "只有把“适合谁、解决什么、为什么值”讲清，带货才会成立；否则只是展示，不会转化。",
+        action: "先重做成交稿：开头 3 秒说适合谁和解决什么，中段只留 2 到 3 个利益点，补一个真实使用证据，结尾只保留一个购买动作，统一导向橱窗或私聊。",
+        highlight: "先跑单品成交稿，不要一条内容卖多个东西。",
       };
     }
     return {
       label: `${track.name} ${track.fit}%`,
-      insight: compactText(replaceTerms(track.reason), 34),
-      action: compactText(replaceTerms(track.nextStep), 36),
+      insight: replaceTerms(track.reason),
+      action: replaceTerms(track.nextStep),
       highlight: track.name === "社群会员"
         ? "先有固定主题、固定更新、固定权益。"
         : industryTemplate?.offerExamples?.[0]
@@ -470,6 +459,7 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
 function buildExecutionBriefRows(analysis: AnalysisResult, context: string): ExecutionBriefRow[] {
   const normalized = `${analysis.summary}\n${context}`;
   const isMedicalSports = /医生|医学|慢性病|健康管理|网球|比赛|运动损伤|康复/.test(normalized);
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(normalized);
   if (isMedicalSports) {
     return [
       {
@@ -487,6 +477,27 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
       {
         label: "💰 承接方式",
         content: "先承接咨询、评估、专题课或健康管理服务，不先同时讲品牌、社群和多个变现方向。",
+      },
+    ];
+  }
+
+  if (commerceDriven) {
+    return [
+      {
+        label: "🔥 先做什么",
+        content: "先把这条视频改成“适合谁 + 解决什么 + 为什么值得买/值得问”的成交版，不再讲泛介绍。",
+      },
+      {
+        label: "✨ 现有亮点",
+        content: compactText(analysis.strengths[0] || "素材本身有真实场景和产品感，适合往结果展示和利益点表达方向改。", 120),
+      },
+      {
+        label: "🛠 立刻改法",
+        content: "重写前三秒：先讲用户场景和结果；中段只留 2 到 3 个利益点；补一个信任证据；结尾把动作统一到橱窗、私聊或咨询。",
+      },
+      {
+        label: "💰 商业延展",
+        content: "先把单品或主服务跑通，再扩到商品页、橱窗组合、案例页和咨询承接，不要一开始同时做知识付费和社群。",
       },
     ];
   }
@@ -520,6 +531,8 @@ function buildCommercialTracks(
   const xiaohongshuFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "xiaohongshu")?.audienceFitScore || 0;
   const bilibiliFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "bilibili")?.audienceFitScore || 0;
   const douyinFit = growthSnapshot?.platformSnapshots.find((item) => item.platform === "douyin")?.audienceFitScore || 0;
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(text);
+  const educationDriven = /课程|教学|知识|教程|陪跑|训练营/.test(text);
 
   return [
     {
@@ -534,19 +547,19 @@ function buildCommercialTracks(
     },
     {
       name: "电商带货",
-      fit: Math.min(96, Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (/带货|商品|电商|转化/.test(text) ? 8 : 0))),
+      fit: Math.min(96, Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 16 : 0))),
       reason: "冲击力和节奏更适合做转化型表达，但产品利益点和 CTA 需要足够直接。",
       nextStep: "把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。",
     },
     {
       name: "知识付费",
-      fit: Math.min(96, Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (/课程|教学|知识|教程|陪跑/.test(text) ? 10 : 0))),
+      fit: Math.min(96, Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -22) - (commerceDriven ? 18 : 0))),
       reason: "适合把内容拆成方法、结构、案例复盘，再沉淀成课程、模板或陪跑服务。",
       nextStep: "把当前内容整理成“结果 + 三步方法 + 常见误区”的结构，形成可复用的方法论入口。",
     },
     {
       name: "社群会员",
-      fit: Math.min(96, Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4)),
+      fit: Math.min(96, Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 - (commerceDriven ? 12 : 0))),
       reason: "社群不是默认答案，只有当你能稳定更新同主题内容、持续交付群内价值时，才值得做会员或长期社群。",
       nextStep: "先验证是否存在固定主题、固定更新节奏和固定权益，再决定要不要把社群作为主承接方式。",
     },
@@ -561,11 +574,16 @@ function buildCreationAssistBrief(
 ) {
   const primaryTrack = tracks[0]?.name || "品牌合作";
   const primaryPlatform = platforms[0]?.name || "抖音";
+  const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   return [
     `内容目标：把当前素材升级成更适合 ${primaryPlatform} 分发、并服务于「${primaryTrack}」转化的内容版本。`,
     `核心分析：${analysis.summary}`,
-    "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
-    "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
+    commerceDriven
+      ? "开场建议：前 2-3 秒先讲“适合谁、解决什么、为什么值得买”，不要从产品介绍开始。"
+      : "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
+    commerceDriven
+      ? "商业动作：结尾只保留一个成交动作，统一导向橱窗、评论区关键词或私聊入口。"
+      : "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
     context.trim() ? `业务背景：${context.trim()}` : "业务背景：未填写，建议补充目标受众与转化目标。",
   ].join("\n");
 }
@@ -950,7 +968,7 @@ export default function MVAnalysisPage() {
         { label: "包装潜力", value: analysis.color },
         { label: "信息清晰", value: analysis.lighting },
         { label: "表达钩子", value: analysis.impact },
-        { label: "商业放大空间", value: analysis.viralPotential },
+        { label: "商业承接力", value: analysis.viralPotential },
       ];
     }
     if (inputKind === "video") {
@@ -959,7 +977,7 @@ export default function MVAnalysisPage() {
         { label: "视觉包装", value: analysis.color },
         { label: "信息清晰", value: analysis.lighting },
         { label: "节奏冲击", value: analysis.impact },
-        { label: "商业放大空间", value: analysis.viralPotential },
+        { label: "商业承接力", value: analysis.viralPotential },
       ];
     }
     return [
@@ -967,7 +985,7 @@ export default function MVAnalysisPage() {
       { label: "色彩识别", value: analysis.color },
       { label: "光线氛围", value: analysis.lighting },
       { label: "冲击强度", value: analysis.impact },
-      { label: "商业放大空间", value: analysis.viralPotential },
+      { label: "商业承接力", value: analysis.viralPotential },
     ];
   }, [analysis, inputKind]);
 
@@ -994,8 +1012,8 @@ export default function MVAnalysisPage() {
     [analysis, context, commercialTracks, growthSnapshot?.industryTemplate],
   );
   const contentAnalysisRows = useMemo(
-    () => analysis ? buildContentAnalysisRows(analysis, growthSnapshot?.industryTemplate) : [],
-    [analysis, growthSnapshot?.industryTemplate],
+    () => analysis ? buildContentAnalysisRows(analysis, growthSnapshot?.industryTemplate, context) : [],
+    [analysis, growthSnapshot?.industryTemplate, context],
   );
   const trendRows = useMemo(
     () => buildTrendRows(growthSnapshot, context, platformRecommendations),
@@ -1504,11 +1522,11 @@ export default function MVAnalysisPage() {
                         <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
                           <div className="flex items-center justify-between gap-3">
                             <div>
-                              <div className="text-xs uppercase tracking-[0.18em] text-[#7ee7ff]">数据总台</div>
+                              <div className="text-xs uppercase tracking-[0.18em] text-[#7ee7ff]">当前判断</div>
                               <div className="mt-2 text-2xl font-black text-white">{dashboardConsole.headline}</div>
                               <p className="mt-3 max-w-3xl text-sm leading-7 text-white/65">{dashboardConsole.summary}</p>
                             </div>
-                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">用户分层总览</div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/60">先看这里</div>
                           </div>
                           <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                             {dashboardConsole.stats.map((stat) => (
@@ -1571,12 +1589,12 @@ export default function MVAnalysisPage() {
                                   <div className="text-base font-bold text-white">{card.title}</div>
                                   <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60">{card.audience}</div>
                                 </div>
-                                <p className="mt-3 text-sm leading-6 text-white/68">{compactText(card.why, 34)}</p>
+                                <p className="mt-3 text-sm leading-6 text-white/68">{card.why}</p>
                                 <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs leading-6 text-white/55">
-                                  {compactText(card.evidence, 44)}
+                                  {card.evidence}
                                 </div>
                                 <div className="mt-3 rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/45 px-3 py-2 text-sm text-[#ffe3ff]">
-                                  {compactText(card.action, 34)}
+                                  {card.action}
                                 </div>
                               </button>
                             ))}
@@ -1598,7 +1616,7 @@ export default function MVAnalysisPage() {
                           ) : null}
                           <div className="relative flex items-center gap-2 text-white">
                             <Orbit className="h-4 w-4 text-[#9df6c0]" />
-                            <span className="text-sm font-semibold">成熟度分布</span>
+                            <span className="text-sm font-semibold">内容可转化度分布</span>
                           </div>
                           <div className="relative mt-4 h-[240px]">
                             <ResponsiveContainer width="100%" height="100%">
@@ -1654,7 +1672,7 @@ export default function MVAnalysisPage() {
                         <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
                           <div className="flex items-center gap-2 text-white">
                             <PanelsTopLeft className="h-4 w-4 text-[#90c4ff]" />
-                            <span className="text-sm font-semibold">平台打法矩阵</span>
+                            <span className="text-sm font-semibold">平台匹配与改写方向</span>
                           </div>
                           <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             {platformDashboardCards.map((row) => (
@@ -1673,7 +1691,7 @@ export default function MVAnalysisPage() {
                                   <span className="text-lg font-black text-white">{row.label}</span>
                                   <Send className="h-4 w-4 text-[#90c4ff]" />
                                 </div>
-                                <p className="relative mt-3 text-sm leading-6 text-white/75">{compactText(row.insight, 78)}</p>
+                                <p className="relative mt-3 text-sm leading-6 text-white/75">{row.insight}</p>
                               </button>
                             ))}
                           </div>
@@ -1691,7 +1709,7 @@ export default function MVAnalysisPage() {
                           ) : null}
                           <div className="relative flex items-center gap-2 text-white">
                             <Workflow className="h-4 w-4 text-[#f5b7ff]" />
-                            <span className="text-sm font-semibold">业务转化漏斗</span>
+                            <span className="text-sm font-semibold">不同人群的转化路径</span>
                           </div>
                           {activeConversionFunnel ? (
                             <div className="relative mt-4 space-y-4">
@@ -2032,10 +2050,6 @@ export default function MVAnalysisPage() {
                   ) : null}
                   {growthSnapshot ? (
                     <div className="mt-5 space-y-4">
-                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/70">
-                        <div className="font-semibold text-white">趋势判断</div>
-                        <p className="mt-2">{replaceTerms(growthSnapshot.overview.trendNarrative)}</p>
-                      </div>
                       {filteredTrendRows.length ? (
                         <div className="overflow-hidden rounded-2xl border border-white/10 bg-black/15">
                           <table className="w-full border-collapse text-sm leading-7 text-white/75">
@@ -2123,6 +2137,15 @@ export default function MVAnalysisPage() {
                         <div className="mt-1 text-sm text-white/55">短期执行方案，目标是在 7 天内先把第一轮结果跑出来。</div>
                       </div>
                     </div>
+                    <div className="mt-4">
+                      <a
+                        href="/storyboard?supervisor=1"
+                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
+                        className="block rounded-2xl border border-[#ff8a3d]/30 bg-[linear-gradient(135deg,rgba(255,138,61,0.2),rgba(255,255,255,0.04))] px-4 py-4 text-base font-bold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/20"
+                      >
+                        先进入分镜创作，把首发版脚本和镜头改完
+                      </a>
+                    </div>
                     <div className="relative mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/15">
                       <table className="w-full border-collapse text-sm leading-7 text-white/75">
                         <tbody>
@@ -2135,15 +2158,6 @@ export default function MVAnalysisPage() {
                           ))}
                         </tbody>
                       </table>
-                    </div>
-                    <div className="mt-4">
-                      <a
-                        href="/storyboard?supervisor=1"
-                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给 storyboard")}
-                        className="block rounded-2xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/10 px-4 py-3 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/15"
-                      >
-                        进入分镜创作
-                      </a>
                     </div>
                   </div>
 
@@ -2183,8 +2197,8 @@ export default function MVAnalysisPage() {
                           {platformRecommendationRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-28 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[24%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 22)}</td>
-                              <td className="w-[48%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 36)}</td>
+                                  <td className="w-[24%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                                  <td className="w-[48%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
                               <td className="w-[18%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
@@ -2216,8 +2230,8 @@ export default function MVAnalysisPage() {
                           {positioningRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 18)}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 20)}</td>
+                                  <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                                  <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
                               <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
@@ -2245,8 +2259,8 @@ export default function MVAnalysisPage() {
                           {contentAnalysisRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 18)}</td>
-                              <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 20)}</td>
+                                  <td className="w-[38%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                                  <td className="w-[34%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
                               <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
@@ -2270,7 +2284,7 @@ export default function MVAnalysisPage() {
                       {businessInsights.map((item) => (
                         <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-sm font-semibold text-white">{item.title}</div>
-                          <p className="mt-2 text-sm leading-7 text-white/70">{compactText(replaceTerms(item.detail), 18)}</p>
+                          <p className="mt-2 text-sm leading-7 text-white/70">{replaceTerms(item.detail)}</p>
                         </div>
                       ))}
                     </div>
@@ -2279,7 +2293,7 @@ export default function MVAnalysisPage() {
                         <div className="rounded-2xl border border-[#f5b7ff]/20 bg-[#24142a] p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-[#f5b7ff]">当前主打</div>
                           <div className="mt-2 text-lg font-black text-white">{focusedBusinessTrack.name} {focusedBusinessTrack.fit}%</div>
-                          <p className="mt-2 text-sm leading-7 text-white/72">{compactText(replaceTerms(focusedBusinessTrack.reason), 48)}</p>
+                          <p className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(focusedBusinessTrack.reason)}</p>
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">决策信号</div>
@@ -2293,7 +2307,7 @@ export default function MVAnalysisPage() {
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">下一步动作</div>
-                          <p className="mt-2 text-sm leading-7 text-white/78">{compactText(replaceTerms(focusedBusinessTrack.nextStep), 54)}</p>
+                          <p className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(focusedBusinessTrack.nextStep)}</p>
                         </div>
                       </div>
                     ) : null}
@@ -2332,9 +2346,9 @@ export default function MVAnalysisPage() {
                           {businessTrackRows.map((row) => (
                             <tr key={row.label} className="border-b border-white/10 last:border-b-0">
                               <td className="w-36 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{compactText(row.insight, 22)}</td>
-                              <td className="w-[40%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{compactText(row.action, 28)}</td>
-                              <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{compactText(row.highlight || "-", 12)}</td>
+                              <td className="w-[28%] px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
+                              <td className="w-[40%] px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
+                              <td className="w-[14%] px-4 py-4 align-top whitespace-normal break-words text-[#f5b7ff]">{row.highlight || "-"}</td>
                             </tr>
                           ))}
                         </tbody>

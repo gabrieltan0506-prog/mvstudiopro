@@ -5,17 +5,17 @@ type IndustryTemplateDefinition = GrowthIndustryTemplate & {
   negativeKeywords?: string[];
 };
 
-const GENERIC_TEMPLATE: GrowthIndustryTemplate = {
-  id: "generic-commercial",
-  name: "通用商业化",
-  audience: "对当前主题有明确痛点、愿意为更快结果付费的人群。",
-  painPoint: "用户不是缺信息，而是缺更短路径、更可信案例和更明确的下一步动作。",
-  positioningHint: "先把自己定义成解决某类问题的人，而不是泛内容创作者。",
-  analysisHint: "内容要先回答“你解决什么问题、凭什么可信、下一步做什么”，不要把过程叙事当结论。",
-  trustAsset: "优先展示结果、案例、对比、方法框架或服务边界。",
-  primaryConversion: "优先跑通单一路径承接，例如咨询、商品、课程或服务预约。",
-  commercialFocus: "不要同时堆多个变现方向，先把一个入口做深。",
-  offerExamples: ["咨询预约", "案例页", "商品入口", "课程模板"],
+const UNSPECIFIED_TEMPLATE: GrowthIndustryTemplate = {
+  id: "industry-unspecified",
+  name: "待补充行业信息",
+  audience: "当前行业、人群和成交目标还不够明确。",
+  painPoint: "先补充你卖什么、卖给谁、用户为什么要买，系统才能给出可执行方案。",
+  positioningHint: "先说明行业、产品或服务对象，不启用通用商业模板。",
+  analysisHint: "信息不足时不做通用商业判断，只输出需要补充的关键字段。",
+  trustAsset: "请补充行业案例、产品利益点、用户场景或服务结果。",
+  primaryConversion: "先确认主变现路径",
+  commercialFocus: "先补全行业和用户信息，再决定商业方向。",
+  offerExamples: ["行业信息", "用户人群", "产品利益点", "成交动作"],
 };
 
 const INDUSTRY_TEMPLATES: IndustryTemplateDefinition[] = [
@@ -321,5 +321,5 @@ export function matchIndustryTemplate(context: string, extras: string[] = []): G
     primaryConversion: bestTemplate.primaryConversion,
     commercialFocus: bestTemplate.commercialFocus,
     offerExamples: bestTemplate.offerExamples,
-  } : GENERIC_TEMPLATE;
+  } : UNSPECIFIED_TEMPLATE;
 }
