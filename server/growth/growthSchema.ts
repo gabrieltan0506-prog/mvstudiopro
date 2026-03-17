@@ -24,6 +24,8 @@ export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   toutiao: "今日头条",
 };
 
+const DEFAULT_GROWTH_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
+
 export const PLATFORM_ALIASES = Object.fromEntries([
   ["douyin", "douyin"],
   ["抖音", "douyin"],
@@ -1260,21 +1262,22 @@ export function buildMockGrowthSnapshot(params: {
 
   const today = new Date();
   const generatedAt = today.toISOString();
+  const windowDays = DEFAULT_GROWTH_WINDOW_DAYS;
   const overview = {
-    summary: "趋势模块当前返回的是可落地 mock/fallback 结构，但字段已经按 30 天平台抓取需求设计，明天接入采集任务后可直接替换数据源。",
+    summary: `趋势模块当前返回的是可落地 mock/fallback 结构，但字段已经按 ${windowDays} 天平台抓取需求设计，后续接入真实采集后可直接替换数据源。`,
     trendNarrative:
       params.analysis.impact >= 72
         ? "当前内容更适合先打强钩子和快节奏平台，再用拆解版承接长尾讨论。"
         : "当前内容更适合先做结构重写和封面测试，再逐步扩到分发平台。",
-    nextCollectionPlan: "预留了平台快照、热门结构模式和机会点三类对象，后续爬虫只需要填充 30 天窗口指标即可。",
+    nextCollectionPlan: `预留了平台快照、热门结构模式和机会点三类对象，后续爬虫只需要填充 ${windowDays} 天窗口指标即可。`,
   };
 
   const snapshot = {
     status: {
       source: "fallback",
       generatedAt,
-      windowDays: 30,
-      freshnessLabel: "结构化参考样本，非真实 30 天历史库",
+      windowDays,
+      freshnessLabel: `结构化参考样本，非真实 ${windowDays} 天历史库`,
       collectorReady: false,
       missingConnectors: [
         "douyin.trends.fetch30d",
@@ -1282,8 +1285,8 @@ export function buildMockGrowthSnapshot(params: {
         "bilibili.trends.fetch30d",
       ],
       notes: [
-        "当前为结构化 fallback 数据，不代表真实 30 天平台历史统计。",
-        "字段已按后续真实抓取任务需要的 30 天窗口指标展开。",
+        `当前为结构化 fallback 数据，不代表真实 ${windowDays} 天平台历史统计。`,
+        `字段已按后续真实抓取任务需要的 ${windowDays} 天窗口指标展开。`,
       ],
     },
     requestedPlatforms,
@@ -1385,6 +1388,7 @@ export function buildGrowthSnapshotFromCollections(params: {
 
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
+  const windowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
   const industryTemplate = matchIndustryTemplate(context, [
     params.analysis.summary,
     ...params.analysis.strengths,
@@ -1411,15 +1415,15 @@ export function buildGrowthSnapshotFromCollections(params: {
     status: {
       source: missingPlatforms.length ? "hybrid" : "live",
       generatedAt: new Date().toISOString(),
-      windowDays: 30,
-      freshnessLabel: missingPlatforms.length ? "当前 live sample + 结构化补位，并非完整 30 天历史库" : "当前 live sample，非完整 30 天历史库",
+      windowDays,
+      freshnessLabel: missingPlatforms.length ? `当前 live sample + 结构化补位，并非完整 ${windowDays} 天历史库` : `当前 live sample，非完整 ${windowDays} 天历史库`,
       collectorReady: true,
       missingConnectors: missingPlatforms.map((platform) => `${platform}.trends.fetch30d`),
       notes: [
         livePlatforms.length
           ? `已接入真实抓取平台：${livePlatforms.map((platform) => PLATFORM_LABELS[platform]).join("、")}。`
           : "当前没有已接入的真实抓取平台。",
-        "当前实时数据来自平台热门样本，不等于完整 30 天历史数据仓。",
+        `当前实时数据来自平台热门样本，不等于完整 ${windowDays} 天历史数据仓。`,
         ...activeCollections.flatMap((item) => item.notes.slice(0, 2)),
         ...Object.entries(params.errors || {}).map(([platform, error]) => `${PLATFORM_LABELS[platform as GrowthPlatform] || platform}：${error}`),
       ],
@@ -1427,12 +1431,12 @@ export function buildGrowthSnapshotFromCollections(params: {
     requestedPlatforms,
     industryTemplate,
     overview: {
-      summary: "趋势模块已经开始消费真实平台实时样本，并保留 fallback 结构；当前仍是样本级参考，不应表述为完整 30 天历史库。",
+      summary: `趋势模块已经开始消费真实平台实时样本，并保留 fallback 结构；当前仍是样本级参考，不应表述为完整 ${windowDays} 天历史库。`,
       trendNarrative:
         params.analysis.impact >= 72
           ? "当前内容适合先打强钩子和分发效率高的平台，再用拆解版和幕后版承接长尾讨论。"
           : "当前内容更适合先做结构重写、封面测试和平台化版本，再逐步扩大投放。",
-      nextCollectionPlan: "继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 30 天趋势库。",
+      nextCollectionPlan: `继续扩展采样深度、增加多页抓取和定时调度，再把当前 live sample 收敛成稳定的 ${windowDays} 天趋势库。`,
     },
     trendLayers: buildTrendLayers(requestedPlatforms, params.collections),
     topicLibrary: buildTopicLibrary(requestedPlatforms, params.collections, context, industryTemplate),

@@ -7,8 +7,8 @@ const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) 
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
 const HISTORY_MIN_INTERVAL_MS = 60 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
-const HISTORY_STEP_TARGET = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 2) || 2);
-const HISTORY_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 2) || 2);
+const HISTORY_STEP_TARGET = Math.max(4, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 6) || 6);
+const HISTORY_STEP_FALLBACK = Math.max(4, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 6) || 6);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 
 let backfillStarted = false;
@@ -40,7 +40,8 @@ function scheduleNextBackfillStep() {
 function getPendingPlatforms(stats: Awaited<ReturnType<typeof getGrowthTrendStats>>) {
   return PLATFORMS.filter((platform) => {
     const row = stats.platforms.find((item) => item.platform === platform);
-    return (row?.currentTotal || 0) < TARGET && (plateau.get(platform) || 0) < PLATEAU_LIMIT;
+    const historicalTotal = row?.archivedItems || 0;
+    return historicalTotal < TARGET && (plateau.get(platform) || 0) < PLATEAU_LIMIT;
   });
 }
 
@@ -81,7 +82,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsBefore.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 2，并按轮次轮换 cookie。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 ${HISTORY_STEP_TARGET}，并按轮次轮换 cookie。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -120,7 +121,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsAfter.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 2，并按轮次轮换 cookie。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 ${HISTORY_STEP_TARGET}，并按轮次轮换 cookie。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;

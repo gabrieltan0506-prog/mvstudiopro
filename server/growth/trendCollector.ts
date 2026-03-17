@@ -70,8 +70,8 @@ const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; m
   toutiao: { min: 20, max: 60 },
 };
 
-const DEFAULT_WINDOW_DAYS = 30;
-const WINDOW_FALLBACKS = [60, 90, 120, 180];
+const DEFAULT_WINDOW_DAYS = 365;
+const WINDOW_FALLBACKS = [60, 90, 120, 180, 270, 365];
 const MIN_PLATFORM_ITEM_TARGET = 10_000;
 
 function parseNumberEnv(name: string, fallback: number) {

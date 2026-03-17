@@ -166,8 +166,8 @@ const STORE_FILE = path.join(STORE_DIR, "current.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
-const RETENTION_DAYS = 180;
-const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180];
+const RETENTION_DAYS = 365;
+const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 
 async function ensureStoreDir() {
   await fs.mkdir(STORE_DIR, { recursive: true });
