@@ -232,37 +232,38 @@ function buildTrackPlaybook(
 ) {
   const offerA = industryTemplate.offerExamples[0] || industryTemplate.primaryConversion;
   const offerB = industryTemplate.offerExamples[1] || industryTemplate.trustAsset;
+  const businessContext = summarizeBusinessContext(context);
   if (trackName === "社群会员") {
     return {
       why: "只有当主题固定、更新固定、群内权益固定时，社群才成立；否则用户没有留下来的理由。",
-      action: `先把社群主题锁到「${industryTemplate.painPoint}」，每周固定 1 次更新与 1 个群内权益，先用「${offerA}」测试进群理由。`,
+      action: `先把社群主题锁到「${industryTemplate.painPoint}」，围绕 ${businessContext} 每周固定 1 次更新与 1 个群内权益，先用「${offerA}」测试进群理由。`,
       avoid: "不要先写“欢迎进群”或直接做重运营，先验证有没有稳定的同主题内容和明确权益。",
     };
   }
   if (trackName === "知识付费") {
     return {
       why: "用户不是为观点付费，而是为更短路径、更稳结果和可复制方法付费。",
-      action: `先做三步：1. 把视频改成“结果 + 3 步方法 + 常见误区”；2. 补一页案例或前后对比，证明方法有效；3. 只用「${offerA} / ${offerB}」其中一个轻产品先测付费，不直接卖完整课程。`,
+      action: `先做三步：1. 把 ${businessContext} 讲成“结果 + 3 步方法 + 常见误区”；2. 补一页案例或前后对比，证明方法有效；3. 只用「${offerA} / ${offerB}」其中一个轻产品先测付费，不直接卖完整课程。`,
       avoid: "不要一开始就卖完整课程，先用单主题案例、清单或模板验证成交理由。",
     };
   }
   if (trackName === "电商带货") {
     return {
       why: "这条内容的冲击力更适合结果前置和利益点表达，能直接承接单一购买动作。",
-      action: `先做四步：1. 开头 3 秒先讲适合谁、解决什么；2. 中段只保留 2 到 3 个利益点，不讲空故事；3. 补「${industryTemplate.trustAsset}」里的一个信任证据；4. 结尾只留一个购买动作，优先测「${offerA}」。`,
+      action: `先做四步：1. 开头 3 秒先讲 ${businessContext} 适合谁、解决什么；2. 中段只保留 2 到 3 个利益点，不讲空故事；3. 补「${industryTemplate.trustAsset}」里的一个信任证据；4. 结尾只留一个购买动作，优先测「${offerA}」。`,
       avoid: "不要同一条内容同时挂多个商品、多个动作和多个理由。",
     };
   }
   if (trackName === "品牌合作") {
     return {
       why: "品牌不会为泛流量买单，而是为可对接场景、可展示结果和明确合作品类买单。",
-      action: `先补一页“场景痛点 -> 解决方案 -> 合作品类 -> 结果证明”，优先围绕「${industryTemplate.trustAsset}」展开。`,
+      action: `先补一页“${businessContext} 场景痛点 -> 解决方案 -> 合作品类 -> 结果证明”，优先围绕「${industryTemplate.trustAsset}」展开。`,
       avoid: "不要只写“可接品牌合作”，要写清你替品牌解决什么问题。",
     };
   }
   return {
     why: analysis.viralPotential >= 70 ? "当前内容已有放大基础，但承接路径还没收紧。" : "当前更像内容入口，还不是完整商业入口。",
-    action: `先围绕「${industryTemplate.primaryConversion}」做单一路径验证，重点展示「${offerA}」。`,
+    action: `先围绕「${industryTemplate.primaryConversion}」做单一路径验证，重点展示「${offerA}」，不要偏离 ${businessContext} 这个核心场景。`,
     avoid: "不要同时堆多个商业方向，先只跑一条最短转化路径。",
   };
 }
@@ -1165,6 +1166,11 @@ function compactAudienceReason(context: string, industryTemplate: GrowthIndustry
   if (!contextLabel) return fallback;
   const shortened = contextLabel.length > 20 ? `${contextLabel.slice(0, 19)}…` : contextLabel;
   return `你的业务背景是「${shortened}」，所以推荐先集中服务最容易被 ${industryTemplate.primaryConversion} 打动的人群。`;
+}
+
+function summarizeBusinessContext(context: string) {
+  const keywords = extractContextKeywords(context).slice(0, 3);
+  return keywords.length ? keywords.join(" / ") : "当前业务";
 }
 
 function buildGrowthPlan(

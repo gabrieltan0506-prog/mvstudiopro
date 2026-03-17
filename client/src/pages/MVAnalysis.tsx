@@ -681,12 +681,12 @@ const PANEL_SCROLL_TARGETS: Record<string, string> = {
 };
 
 const PANEL_SECTION_LINKS: Record<string, string[]> = {
-  readiness: ["execution", "positioning", "content"],
+  readiness: ["positioning", "content", "monetization", "execution"],
   positioning: ["positioning", "content"],
-  content: ["content", "execution"],
+  content: ["content", "execution", "monetization"],
   platforms: ["platforms"],
-  monetization: ["monetization"],
-  execution: ["execution"],
+  monetization: ["monetization", "execution"],
+  execution: ["execution", "content"],
 };
 
 export default function MVAnalysisPage() {
@@ -1786,19 +1786,19 @@ export default function MVAnalysisPage() {
                                 <div className="grid gap-3 md:grid-cols-2">
                                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                                     <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">适合人群</div>
-                                    <div className="mt-2 text-sm leading-6 text-white">{compactText(activeConversionFunnel.persona, 26)}</div>
+                                    <div className="mt-2 text-sm leading-6 text-white">{activeConversionFunnel.persona}</div>
                                   </div>
                                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                                     <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">成交依据</div>
-                                    <div className="mt-2 text-sm leading-6 text-white/78">{compactText(focusedBusinessTrack?.reason || activeConversionFunnel.trigger, 34)}</div>
+                                    <div className="mt-2 text-sm leading-6 text-white/78">{focusedBusinessTrack?.reason || activeConversionFunnel.trigger}</div>
                                   </div>
                                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                                     <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">先不要做</div>
-                                    <div className="mt-2 text-sm leading-6 text-white/78">{compactText(businessInsights.find((item) => item.title === "当前不要做")?.detail || "不要同时堆多个承接方向，先验证一个主动作。", 32)}</div>
+                                    <div className="mt-2 text-sm leading-6 text-white/78">{businessInsights.find((item) => item.title === "当前不要做")?.detail || "不要同时堆多个承接方向，先验证一个主动作。"}</div>
                                   </div>
                                   <div className="rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/40 p-3">
                                     <div className="text-[11px] uppercase tracking-[0.16em] text-[#f5b7ff]">立刻动作</div>
-                                    <div className="mt-2 text-sm leading-6 text-[#ffe3ff]">{compactText(activeConversionFunnel.action, 30)}</div>
+                                    <div className="mt-2 text-sm leading-6 text-[#ffe3ff]">{activeConversionFunnel.action}</div>
                                   </div>
                                 </div>
                               </div>
@@ -1827,7 +1827,7 @@ export default function MVAnalysisPage() {
                                         background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
                                       }}
                                     >
-                                      {compactText(step.detail, 28)}
+                                      {step.detail}
                                     </div>
                                   </div>
                                 </button>
