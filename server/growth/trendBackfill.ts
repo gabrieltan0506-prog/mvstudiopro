@@ -65,7 +65,7 @@ export async function runGrowthTrendBackfillStep() {
             target: TARGET,
             currentTotal: row?.currentTotal || 0,
             archivedTotal: row?.archivedItems || 0,
-            status: (row?.currentTotal || 0) >= TARGET ? "done" : "pending",
+            status: (row?.archivedItems || 0) >= TARGET ? "done" : "pending",
           };
         }),
       });
@@ -91,7 +91,7 @@ export async function runGrowthTrendBackfillStep() {
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedItems || 0,
           plateauCount: plateau.get(platform) || 0,
-          status: pending.includes(platform) ? "running" : "done",
+          status: pending.includes(platform) ? "running" : (row?.archivedItems || 0) >= TARGET ? "done" : "pending",
         };
       }),
     });
@@ -108,7 +108,7 @@ export async function runGrowthTrendBackfillStep() {
     const statsAfter = await getGrowthTrendStats();
 
     for (const platform of pending) {
-      const total = statsAfter.platforms.find((item) => item.platform === platform)?.currentTotal || 0;
+      const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedItems || 0;
       const prev = previous.get(platform) || 0;
       previous.set(platform, total);
       plateau.set(platform, total <= prev ? (plateau.get(platform) || 0) + 1 : 0);
@@ -133,7 +133,7 @@ export async function runGrowthTrendBackfillStep() {
           addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
           mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
           plateauCount: plateau.get(platform) || 0,
-          status: stalled ? "plateau" : (row?.currentTotal || 0) >= TARGET ? "done" : "running",
+          status: stalled ? "plateau" : (row?.archivedItems || 0) >= TARGET ? "done" : "running",
           error: collected.errors[platform],
         };
       }),

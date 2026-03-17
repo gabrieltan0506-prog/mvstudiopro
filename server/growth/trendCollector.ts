@@ -425,6 +425,16 @@ function parseToutiaoMediaHotItems(payload: Record<string, any>) {
   }).filter(Boolean) as TrendItem[];
 }
 
+function extractToutiaoFeedCursor(payload: Record<string, any>) {
+  return String(
+    payload?.next?.max_behot_time
+    ?? payload?.next?.behot_time
+    ?? payload?.max_behot_time
+    ?? payload?.behot_time
+    ?? "",
+  ).trim();
+}
+
 function extractDouyinCreatorItems(state: unknown) {
   const items: TrendItem[] = [];
   const visited = new Set<unknown>();
@@ -1016,9 +1026,18 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed_recommend",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.fashion_v3",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.food_v3",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.travel_v3",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.household_product_v3",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.career_v3",
+      "https://www.xiaohongshu.com/explore?channel_id=homefeed.movie_and_tv_v3",
     ];
   const pageLimit = Math.max(1, Math.min(20, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
   const searchKeywords = getPlatformSeeds("xiaohongshu").slice(0, Math.max(6, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 12) || 12));
+  const searchPages = Math.max(1, Math.min(8, Number(process.env.XHS_SEARCH_PAGES || 4) || 4));
+  const searchSorts = parseCsvEnv("XHS_SEARCH_SORTS").length
+    ? parseCsvEnv("XHS_SEARCH_SORTS")
+    : ["general", "popularity_desc"];
   const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -1068,54 +1087,58 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   }
 
   const searchResults = await runBatches(
-    searchKeywords.map((keyword) => async () => {
-      const pageUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_explore_feed`;
-      const response = await fetch(pageUrl, {
-        headers: {
-          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-          ...(cookie ? { cookie } : {}),
-        },
-      });
-      if (!response.ok) return { keyword, items: [] as TrendItem[] };
-      const html = await response.text();
-      const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
-      if (!match) return { keyword, items: [] as TrendItem[] };
-      const state = vm.runInNewContext(`(${match[1]})`, {}) as {
-        searchResult?: { notes?: Array<Record<string, any>> };
-        note?: { notes?: Array<Record<string, any>> };
-      };
-      const notesList = state.searchResult?.notes ?? state.note?.notes ?? [];
-      const pageItems = notesList
-        .map((note, index) => {
-          const title = String(note.displayTitle ?? note.title ?? "").trim();
-          if (!title) return null;
-          return {
-            id: String(note.id ?? `${keyword}-${index}`),
-            title,
-            bucket: "xiaohongshu_feed",
-            author: String(note.user?.nickname ?? note.user?.nickName ?? "").trim() || undefined,
-            url: note.id ? `https://www.xiaohongshu.com/explore/${note.id}` : undefined,
-            likes: parseChineseCount(note.interactInfo?.likedCount ?? note.likedCount),
-            comments: parseChineseCount(note.interactInfo?.commentCount ?? note.commentCount),
-            shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),
-            contentType: note.video ? "video" : "note",
-            tags: [keyword],
-          } satisfies TrendItem;
-        })
-        .filter(Boolean) as TrendItem[];
-      return { keyword, items: pageItems };
-    }),
+    searchKeywords.flatMap((keyword) =>
+      searchSorts.flatMap((sort) =>
+        Array.from({ length: searchPages }, (_, index) => index + 1).map((page) => async () => {
+          const pageUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_explore_feed&sort=${encodeURIComponent(sort)}&page=${page}`;
+          const response = await fetch(pageUrl, {
+            headers: {
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              ...(cookie ? { cookie } : {}),
+            },
+          });
+          if (!response.ok) return { keyword, sort, page, items: [] as TrendItem[] };
+          const html = await response.text();
+          const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
+          if (!match) return { keyword, sort, page, items: [] as TrendItem[] };
+          const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+            searchResult?: { notes?: Array<Record<string, any>> };
+            note?: { notes?: Array<Record<string, any>> };
+          };
+          const notesList = state.searchResult?.notes ?? state.note?.notes ?? [];
+          const pageItems = notesList
+            .map((note, itemIndex) => {
+              const title = String(note.displayTitle ?? note.title ?? "").trim();
+              if (!title) return null;
+              return {
+                id: String(note.id ?? `${keyword}-${sort}-${page}-${itemIndex}`),
+                title,
+                bucket: "xiaohongshu_feed",
+                author: String(note.user?.nickname ?? note.user?.nickName ?? "").trim() || undefined,
+                url: note.id ? `https://www.xiaohongshu.com/explore/${note.id}` : undefined,
+                likes: parseChineseCount(note.interactInfo?.likedCount ?? note.likedCount),
+                comments: parseChineseCount(note.interactInfo?.commentCount ?? note.commentCount),
+                shares: parseChineseCount(note.interactInfo?.shareCount ?? note.shareCount),
+                contentType: note.video ? "video" : "note",
+                tags: [keyword, sort],
+              } satisfies TrendItem;
+            })
+            .filter(Boolean) as TrendItem[];
+          return { keyword, sort, page, items: pageItems };
+        }),
+      ),
+    ),
     concurrency,
   );
   for (const result of searchResults) {
     items.push(...result.items);
-    notes.push(`Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword}.`);
+    notes.push(`Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword} sort ${result.sort} page ${result.page}.`);
   }
 
   return finalizeCollection("xiaohongshu", "live", dedupeById(items), notes, {
     collectorMode: "warehouse",
-    requestCount: Math.min(pageLimit, explorePaths.length) + searchKeywords.length,
-    pageDepth: Math.min(pageLimit, explorePaths.length),
+    requestCount: Math.min(pageLimit, explorePaths.length) + (searchKeywords.length * searchSorts.length * searchPages),
+    pageDepth: Math.max(Math.min(pageLimit, explorePaths.length), searchPages),
     targetPerRun: Math.max(items.length, 20 * Math.min(pageLimit, explorePaths.length), getPlatformTargetItemCount("xiaohongshu")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.xiaohongshu?.max || 60,
@@ -1134,9 +1157,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const creatorSeeds = getKuaishouCreatorSeeds();
   const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 12) || 12));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
-  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 2) || 2));
-  const searchUserLimit = Math.max(5, Math.min(100, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 20) || 20));
-  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 8) || 8));
+  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 4) || 4));
+  const searchUserLimit = Math.max(5, Math.min(100, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 40) || 40));
+  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 12) || 12));
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let privateRequestCount = 0;
@@ -1608,6 +1631,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   const csrfToken = parseCookieValue(cookie, "csrftoken");
   const userToken = String(process.env.TOUTIAO_USER_TOKEN || "").trim();
   const mediaId = String(process.env.TOUTIAO_MEDIA_ID || "").trim();
+  const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 6) || 6));
 
   if (!userToken) {
     throw new Error("Toutiao collector requires TOUTIAO_USER_TOKEN.");
@@ -1661,26 +1685,32 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   };
 
   for (const category of selectedCategories) {
-    const pageUrl = new URL("https://www.toutiao.com/api/pc/feed/");
-    pageUrl.searchParams.set("category", category);
-    pageUrl.searchParams.set("utm_source", "toutiao");
-    pageUrl.searchParams.set("visit_user_token", userToken);
-    pageUrl.searchParams.set("max_behot_time", "0");
-    pageUrl.searchParams.set("aid", "24");
-    pageUrl.searchParams.set("app_name", "toutiao_web");
-    pageUrl.searchParams.set("_signature", signer.sign({ url: pageUrl.toString() }));
-    const response = await fetch(pageUrl.toString(), { headers: baseHeaders });
-    requestCount += 1;
-    if (!response.ok) {
-      notes.push(`Toutiao pc/feed ${category} responded with ${response.status}.`);
-      continue;
+    let maxBehotTime = "0";
+    for (let page = 0; page < profilePages; page += 1) {
+      const pageUrl = new URL("https://www.toutiao.com/api/pc/feed/");
+      pageUrl.searchParams.set("category", category);
+      pageUrl.searchParams.set("utm_source", "toutiao");
+      pageUrl.searchParams.set("visit_user_token", userToken);
+      pageUrl.searchParams.set("max_behot_time", maxBehotTime);
+      pageUrl.searchParams.set("aid", "24");
+      pageUrl.searchParams.set("app_name", "toutiao_web");
+      pageUrl.searchParams.set("_signature", signer.sign({ url: pageUrl.toString() }));
+      const response = await fetch(pageUrl.toString(), { headers: baseHeaders });
+      requestCount += 1;
+      if (!response.ok) {
+        notes.push(`Toutiao pc/feed ${category} page ${page + 1} responded with ${response.status}.`);
+        break;
+      }
+      const payload = await response.json() as Record<string, any>;
+      const categoryItems = category === "pc_profile_video"
+        ? parseToutiaoVideoItems(payload)
+        : parseToutiaoFeedItems(payload, category);
+      items.push(...categoryItems);
+      notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category} page ${page + 1}.`);
+      const nextCursor = extractToutiaoFeedCursor(payload);
+      if (!nextCursor || !categoryItems.length || nextCursor === maxBehotTime) break;
+      maxBehotTime = nextCursor;
     }
-    const payload = await response.json() as Record<string, any>;
-    const categoryItems = category === "pc_profile_video"
-      ? parseToutiaoVideoItems(payload)
-      : parseToutiaoFeedItems(payload, category);
-    items.push(...categoryItems);
-    notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category}.`);
   }
 
   if (mediaId) {
@@ -1711,7 +1741,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   return finalizeCollection("toutiao", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
     requestCount,
-    pageDepth: selectedCategories.length,
+    pageDepth: selectedCategories.length * profilePages,
     targetPerRun: Math.max(500, getPlatformTargetItemCount("toutiao")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.toutiao?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.toutiao?.max || 60,
