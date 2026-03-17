@@ -69,5 +69,6 @@ describe("buildGrowthSnapshotFromCollections", () => {
 
     expect(topPlatform).toBeTruthy();
     expect(snapshot.growthHandoff.recommendedPlatforms[0]).toBe(topPlatform);
+    expect(snapshot.dashboardConsole.personalizedRecommendations[0]?.evidence).toContain("上传内容依据");
   });
 });

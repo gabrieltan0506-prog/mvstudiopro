@@ -650,6 +650,24 @@ function buildDashboardPanels(
   ];
 }
 
+const PANEL_SCROLL_TARGETS: Record<string, string> = {
+  readiness: "execution",
+  positioning: "positioning",
+  content: "content",
+  platforms: "platforms",
+  monetization: "monetization",
+  execution: "execution",
+};
+
+const PANEL_SECTION_LINKS: Record<string, string[]> = {
+  readiness: ["execution", "positioning", "content"],
+  positioning: ["positioning", "content"],
+  content: ["content", "execution"],
+  platforms: ["platforms"],
+  monetization: ["monetization"],
+  execution: ["execution"],
+};
+
 export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
@@ -1091,7 +1109,7 @@ export default function MVAnalysisPage() {
   );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
-    (panelId: string, accent: string) => activeDashboardPanel === panelId
+    (panelId: string, accent: string) => (PANEL_SECTION_LINKS[activeDashboardPanel] || [activeDashboardPanel]).includes(panelId)
       ? `relative overflow-hidden rounded-[28px] border ${accent} bg-[#0f1a2c] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]`
       : "rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6",
     [activeDashboardPanel],
@@ -1136,7 +1154,7 @@ export default function MVAnalysisPage() {
     if (panelId === "positioning" || panelId === "content") {
       setSelectedTrendPlatform("all");
     }
-    const target = sectionRefs.current[panelId];
+    const target = sectionRefs.current[PANEL_SCROLL_TARGETS[panelId] || panelId];
     if (target) {
       requestAnimationFrame(() => {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1537,16 +1555,30 @@ export default function MVAnalysisPage() {
                           <div className="mt-2 text-2xl font-black text-white">先看人群，再定转化方式</div>
                           <div className="mt-4 space-y-3">
                             {personalizedRecommendationCards.map((card) => (
-                              <div key={card.id} className="rounded-2xl border border-white/10 bg-[#121a2a] p-4">
+                              <button
+                                key={card.id}
+                                type="button"
+                                onClick={() => activateDashboardPanel(
+                                  card.id === "audience-core"
+                                    ? "positioning"
+                                    : card.id === "track-core"
+                                      ? "monetization"
+                                      : "platforms",
+                                )}
+                                className="w-full rounded-2xl border border-white/10 bg-[#121a2a] p-4 text-left transition hover:border-white/20 hover:bg-[#162237]"
+                              >
                                 <div className="flex items-center justify-between gap-3">
                                   <div className="text-base font-bold text-white">{card.title}</div>
                                   <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/60">{card.audience}</div>
                                 </div>
-                                <p className="mt-3 text-sm leading-6 text-white/68">{card.why}</p>
-                                <div className="mt-3 rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/45 px-3 py-2 text-sm text-[#ffe3ff]">
-                                  {card.action}
+                                <p className="mt-3 text-sm leading-6 text-white/68">{compactText(card.why, 34)}</p>
+                                <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs leading-6 text-white/55">
+                                  {compactText(card.evidence, 44)}
                                 </div>
-                              </div>
+                                <div className="mt-3 rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/45 px-3 py-2 text-sm text-[#ffe3ff]">
+                                  {compactText(card.action, 34)}
+                                </div>
+                              </button>
                             ))}
                           </div>
                         </div>
@@ -1719,15 +1751,30 @@ export default function MVAnalysisPage() {
                                               background: "linear-gradient(90deg,#d085ff,#ffb4df,#ffd68e,#8ef0b1)",
                                             }}
                                           >
-                                            {compactText(stage.detail, 24)}
+                                            {compactText(stage.detail, 18)}
                                           </div>
                                         </div>
                                       </div>
                                     );
                                   })}
                                 </div>
-                                <div className="rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/40 px-3 py-3 text-sm text-[#ffe3ff]">
-                                  {activeConversionFunnel.action}
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">适合人群</div>
+                                    <div className="mt-2 text-sm leading-6 text-white">{compactText(activeConversionFunnel.persona, 26)}</div>
+                                  </div>
+                                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">成交依据</div>
+                                    <div className="mt-2 text-sm leading-6 text-white/78">{compactText(focusedBusinessTrack?.reason || activeConversionFunnel.trigger, 34)}</div>
+                                  </div>
+                                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">先不要做</div>
+                                    <div className="mt-2 text-sm leading-6 text-white/78">{compactText(businessInsights.find((item) => item.title === "当前不要做")?.detail || "不要同时堆多个承接方向，先验证一个主动作。", 32)}</div>
+                                  </div>
+                                  <div className="rounded-xl border border-[#f5b7ff]/20 bg-[#2b1733]/40 p-3">
+                                    <div className="text-[11px] uppercase tracking-[0.16em] text-[#f5b7ff]">立刻动作</div>
+                                    <div className="mt-2 text-sm leading-6 text-[#ffe3ff]">{compactText(activeConversionFunnel.action, 30)}</div>
+                                  </div>
                                 </div>
                               </div>
                             </div>
@@ -1842,17 +1889,17 @@ export default function MVAnalysisPage() {
                           </div>
                         </div>
                         <div className="relative mt-4 grid gap-3 lg:grid-cols-3">
-                          <div className="rounded-2xl border border-white/10 bg-[#111f32] p-4">
-                            <div className="text-sm font-semibold text-white">现在先做什么</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">{activePanelDetail.summary}</div>
+                        <div className="rounded-2xl border border-white/10 bg-[#111f32] p-4">
+                          <div className="text-sm font-semibold text-white">现在先做什么</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{compactText(activePanelDetail.summary, 38)}</div>
                           </div>
                           <div className="rounded-2xl border border-white/10 bg-[#0d1828] p-4">
                             <div className="text-sm font-semibold text-white">为什么先做</div>
-                            <div className="mt-2 text-sm leading-7 text-white/72">{activePanelDetail.detail}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{compactText(activePanelDetail.detail, 52)}</div>
                           </div>
                           <div className="rounded-2xl border border-white/10 bg-[#10233e] p-4">
                             <div className={`text-sm font-semibold ${activePanelDetail.accent}`}>立刻动作</div>
-                            <div className="mt-2 text-sm leading-7 text-white">{activePanelDetail.action}</div>
+                            <div className="mt-2 text-sm leading-7 text-white">{compactText(activePanelDetail.action, 40)}</div>
                           </div>
                         </div>
                       </div>
@@ -2223,7 +2270,7 @@ export default function MVAnalysisPage() {
                       {businessInsights.map((item) => (
                         <div key={item.title} className="rounded-2xl border border-white/10 bg-black/15 p-4">
                           <div className="text-sm font-semibold text-white">{item.title}</div>
-                          <p className="mt-2 text-sm leading-7 text-white/70">{compactText(replaceTerms(item.detail), 26)}</p>
+                          <p className="mt-2 text-sm leading-7 text-white/70">{compactText(replaceTerms(item.detail), 18)}</p>
                         </div>
                       ))}
                     </div>

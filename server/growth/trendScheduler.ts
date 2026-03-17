@@ -4,6 +4,7 @@ import { collectPlatformTrends } from "./trendCollector";
 import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
 import {
   exportTrendCollectionsCsv,
+  getGrowthTrendStats,
   isTrendCollectionStale,
   mergeTrendCollections,
   readTrendMailDigestState,
@@ -13,6 +14,8 @@ import {
   updateTrendSchedulerState,
 } from "./trendStore";
 import { sendMailWithAttachments } from "../services/smtp-mailer";
+import { getPlatformTemplate } from "./platformTemplates";
+import { PLATFORM_LABELS } from "./growthSchema";
 
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
@@ -199,12 +202,29 @@ async function notifyCollectionUpdate(params: {
   }
 
   const store = await readTrendStore();
+  const stats = await getGrowthTrendStats();
   const exported = await exportTrendCollectionsCsv();
   const platformFile = exported.files.find((file) => file.platform === params.platform);
   const schedulerSummary = Object.values(store.scheduler || {})
     .map((item) =>
       `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
     )
+    .join("\n");
+  const topIndustries = stats.industries
+    .slice(0, 3)
+    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+    .join("；");
+  const topContentTypes = stats.contentTypes
+    .slice(0, 3)
+    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+    .join("；");
+  const templateDigest = stats.platforms
+    .filter((item) => item.currentTotal > 0)
+    .slice(0, 4)
+    .map((item) => {
+      const template = getPlatformTemplate(item.platform);
+      return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
+    })
     .join("\n");
 
   await sendMailWithAttachments({
@@ -223,6 +243,10 @@ async function notifyCollectionUpdate(params: {
       `是否真实 live：${params.live ? "是" : "否"}\n` +
       `下次计划抓取：${params.nextRunAt}\n` +
       `\n[当前调度概览]\n${schedulerSummary}\n` +
+      `\n[模板累计分析]\n` +
+      `主行业：${topIndustries || "暂无"}\n` +
+      `主内容类型：${topContentTypes || "暂无"}\n` +
+      `${templateDigest || "当前样本仍在累积，暂未形成稳定模板判断。"}\n` +
       `总导出行数：${exported.rows}\n` +
       `清单：${exported.manifestPath}`,
     attachments: [
@@ -248,6 +272,8 @@ async function notifyCollectionUpdate(params: {
       `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
       `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
       `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
+      `<p><strong>模板累计分析：</strong>${topIndustries || "暂无主行业"} / ${topContentTypes || "暂无主内容类型"}</p>` +
+      `<p>${(templateDigest || "当前样本仍在累积，暂未形成稳定模板判断。").replace(/\n/g, "<br />")}</p>` +
       `<p><strong>总导出行数：</strong>${exported.rows}</p>` +
       (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
   });

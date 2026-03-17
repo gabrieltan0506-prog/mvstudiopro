@@ -177,6 +177,7 @@ export const growthPersonalizedRecommendationSchema = z.object({
   title: z.string(),
   audience: z.string(),
   why: z.string(),
+  evidence: z.string(),
   action: z.string(),
 });
 

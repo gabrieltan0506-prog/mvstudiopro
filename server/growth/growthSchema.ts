@@ -911,6 +911,18 @@ function buildDashboardConsole(params: {
   const topPlatform = platformRecommendations[0]?.name || PLATFORM_LABELS[requestedPlatforms[0] || "douyin"];
   const primaryAudience = industryTemplate.audience.split("、")[0] || industryTemplate.audience;
   const readiness = Math.round((analysis.composition + analysis.impact + analysis.viralPotential) / 3);
+  const primaryPlatformSnapshot = platformSnapshots.find((item) => item.displayName === topPlatform);
+  const uploadEvidence = [
+    analysis.strengths[0],
+    analysis.improvements[0],
+    analysis.summary,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  const buildEvidence = (sourceLabel: string, sampleLabel: string) => {
+    const source = uploadEvidence[0] || industryTemplate.analysisHint;
+    return `上传内容依据：${source}；样本依据：${sampleLabel || sourceLabel}`;
+  };
 
   const buildFunnelStages = (base: number, labels: string[], details: string[]) =>
     labels.map((label, index) => ({
@@ -926,6 +938,7 @@ function buildDashboardConsole(params: {
       title: `先拿下「${primaryAudience}」`,
       audience: primaryAudience,
       why: compactAudienceReason(context, industryTemplate, businessInsights[0]?.detail || industryTemplate.painPoint),
+      evidence: buildEvidence(industryTemplate.painPoint, industryTemplate.trustAsset),
       action: `先把内容改成“${industryTemplate.painPoint} -> ${industryTemplate.primaryConversion}”的单一转化稿。`,
     },
     {
@@ -933,6 +946,7 @@ function buildDashboardConsole(params: {
       title: `主打「${topTrack?.name || "知识付费"}」路径`,
       audience: topTrack?.name || "高意向用户",
       why: topTrack?.reason || "当前这条路径最容易把内容和成交动作接起来。",
+      evidence: buildEvidence(topTrack?.reason || industryTemplate.commercialFocus, industryTemplate.primaryConversion),
       action: topTrack?.nextStep || "先验证一个主承接动作，再决定是否扩量。",
     },
     {
@@ -940,6 +954,10 @@ function buildDashboardConsole(params: {
       title: `${topPlatform} 先做首发验证`,
       audience: `${topPlatform} 首发人群`,
       why: platformRecommendations[0]?.reason || "当前平台匹配度最高，适合先用它拿反馈。",
+      evidence: buildEvidence(
+        platformRecommendations[0]?.reason || industryTemplate.analysisHint,
+        primaryPlatformSnapshot?.sampleTopics?.[0] || primaryPlatformSnapshot?.summary || industryTemplate.trustAsset,
+      ),
       action: platformRecommendations[0]?.action || "先做一版首发稿，再看是否扩到第二平台。",
     },
   ];
