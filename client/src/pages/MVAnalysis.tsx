@@ -985,7 +985,7 @@ export default function MVAnalysisPage() {
     }
   }, [refreshGrowthMutation, growthSnapshotQuery]);
 
-  const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "handoff 已暂存") => {
+  const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "分析结果已同步到创作画布") => {
     if (!handoff) return;
     saveGrowthHandoff(handoff);
     toast.success(successMessage);
@@ -2194,7 +2194,7 @@ export default function MVAnalysisPage() {
                     <div className="mt-4">
                       <a
                         href="/workflow-nodes?supervisor=1"
-                        onClick={() => handleStoreHandoff(growthHandoff, "handoff 已写入本地，可交给创作画布")}
+                        onClick={() => handleStoreHandoff(growthHandoff, "分析结果已同步到创作画布")}
                         className="block rounded-2xl border border-[#ff8a3d]/30 bg-[linear-gradient(135deg,rgba(255,138,61,0.2),rgba(255,255,255,0.04))] px-4 py-4 text-base font-bold text-[#ffd4b7] transition hover:bg-[#ff8a3d]/20"
                       >
                         先进入创作画布，把首发版脚本和镜头改完

@@ -47,18 +47,11 @@ export function GrowthHandoffActions({
         复制工作流提示词
       </button>
       <button
-        onClick={() => void onCopyText(JSON.stringify(handoff, null, 2), "growth handoff JSON 已复制")}
+        onClick={() => onStoreHandoff(handoff, "分析结果已同步到创作画布")}
         disabled={!handoff}
         className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        复制 handoff JSON
-      </button>
-      <button
-        onClick={() => onStoreHandoff(handoff, "growth handoff 已暂存到本地")}
-        disabled={!handoff}
-        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left text-sm font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        暂存 handoff 到本地
+        同步到创作画布
       </button>
     </div>
   );
