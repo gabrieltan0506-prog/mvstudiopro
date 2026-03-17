@@ -134,8 +134,9 @@ type CachedTrendStore = {
   collections?: Partial<Record<GrowthPlatform, CachedTrendCollection>>;
 };
 
-const CACHE_PATH = path.resolve(process.cwd(), ".cache/growth-trends.json");
-const SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili"];
+const CURRENT_CACHE_PATH = path.resolve(process.cwd(), ".cache/growth/current.json");
+const LEGACY_CACHE_PATH = path.resolve(process.cwd(), ".cache/growth-trends.json");
+const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou"];
 
 function normalizeSeed(value: string) {
   return String(value || "")
@@ -170,20 +171,25 @@ function splitCandidateTerms(value: string) {
 
 function loadCachedTrendStore(): CachedTrendStore | null {
   try {
-    if (!fs.existsSync(CACHE_PATH)) return null;
-    return JSON.parse(fs.readFileSync(CACHE_PATH, "utf8")) as CachedTrendStore;
+    const cachePath = fs.existsSync(CURRENT_CACHE_PATH)
+      ? CURRENT_CACHE_PATH
+      : fs.existsSync(LEGACY_CACHE_PATH)
+        ? LEGACY_CACHE_PATH
+        : "";
+    if (!cachePath) return null;
+    return JSON.parse(fs.readFileSync(cachePath, "utf8")) as CachedTrendStore;
   } catch {
     return null;
   }
 }
 
 function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
-  if (platform !== "kuaishou") return [];
   const store = loadCachedTrendStore();
   if (!store?.collections) return [];
 
   const collected: string[] = [];
-  for (const sourcePlatform of SOURCE_PLATFORMS) {
+  const sourcePlatforms = SIGNAL_SOURCE_PLATFORMS.filter((item) => item !== platform);
+  for (const sourcePlatform of sourcePlatforms) {
     const collection = store.collections[sourcePlatform];
     const items = Array.isArray(collection?.items) ? collection.items : [];
     for (const item of items.slice(0, 200)) {
@@ -203,14 +209,9 @@ export function getPlatformSeeds(platform: GrowthPlatform) {
     .map((item) => item.trim())
     .filter(Boolean);
   const base = PLATFORM_SEEDS[platform] || [];
-  const crossPlatformSeeds =
-    platform === "kuaishou"
-      ? [
-          ...(PLATFORM_SEEDS.douyin || []),
-          ...(PLATFORM_SEEDS.xiaohongshu || []),
-          ...(PLATFORM_SEEDS.bilibili || []),
-        ]
-      : [];
+  const crossPlatformSeeds = SIGNAL_SOURCE_PLATFORMS
+    .filter((item) => item !== platform)
+    .flatMap((item) => PLATFORM_SEEDS[item] || []);
   const dynamicSeeds = buildCrossPlatformDynamicSeeds(platform);
   return Array.from(
     new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
