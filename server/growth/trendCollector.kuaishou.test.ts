@@ -318,4 +318,96 @@ describe("collectPlatformTrends kuaishou", () => {
     expect(result.items.some((item) => item.id === "profile-feed-1")).toBe(true);
     expect(result.notes.some((note) => note.includes("Kuaishou profile/user 3xuser1 => creator one public=32"))).toBe(true);
   });
+
+  it("degrades instead of throwing when only discovery metadata is available", async () => {
+    vi.resetModules();
+    fetchCalls.length = 0;
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      fetchCalls.push({ url, init });
+
+      if (url.includes("/rest/v/profile/private/list")) {
+        return {
+          ok: true,
+          json: async () => ({
+            feeds: [],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/feed")) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              list: [],
+              pcursor: "",
+            },
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/search/user")) {
+        return {
+          ok: true,
+          json: async () => ({
+            users: [{ user_id: "3xuser1", user_name: "creator one" }],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/profile/user")) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: 1,
+            userProfile: {
+              profile: { user_id: "3xuser1", user_name: "creator one" },
+              ownerCount: { photo_public: 32 },
+              userDefineId: "creator-one-principal",
+            },
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/rest/v/profile/feed")) {
+        return {
+          ok: true,
+          json: async () => ({
+            result: 109,
+            error_msg: "blocked",
+            feeds: [],
+            pcursor: "",
+          }),
+        } as Response;
+      }
+
+      if (url.includes("/m_graphql")) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              publicFeeds: {
+                list: [],
+                pcursor: "",
+              },
+            },
+          }),
+        } as Response;
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const mod = await import("./trendCollector");
+    const result = await mod.collectPlatformTrends("kuaishou");
+
+    expect(result.items).toHaveLength(0);
+    expect(fetchCalls.some((call) => call.url.includes("/m_graphql"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("principal creator-one-principal"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("Keeping the run degraded instead of failing hard"))).toBe(true);
+  });
 });

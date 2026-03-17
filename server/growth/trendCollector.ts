@@ -1125,7 +1125,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
 async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const cookies = parseKuaishouCookiePool();
   const primaryKuaishouCookie = cookies[0] || "";
-  const principals = parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5);
+  const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
   const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 12) || 12));
@@ -1434,6 +1434,10 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
         const canonicalName = String(profile.user_name ?? creator.name).trim();
         const publicCount = Number(ownerCount.photo_public ?? 0) || 0;
         const userDefineId = String(userProfile.userDefineId ?? "").trim();
+        if (userDefineId && !discoveredPrincipalIds.has(userDefineId)) {
+          discoveredPrincipalIds.add(userDefineId);
+          notes.push(`Kuaishou discovery promoted ${creator.userId} => principal ${userDefineId}.`);
+        }
         notes.push(`Kuaishou profile/user ${creator.userId} => ${canonicalName || creator.name} public=${publicCount}${userDefineId ? ` uid=${userDefineId}` : ""}.`);
 
         let profileCursor = "";
@@ -1481,7 +1485,8 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     }
   }
 
-  if (principals.length) {
+  const principalCandidates = Array.from(discoveredPrincipalIds).slice(0, 8);
+  if (principalCandidates.length) {
     const query = `
       query publicFeeds($principalId: String!, $pcursor: String, $count: Int) {
         publicFeeds(principalId: $principalId, pcursor: $pcursor, count: $count) {
@@ -1506,7 +1511,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       }
     `;
 
-    for (const principalId of principals) {
+    for (const principalId of principalCandidates) {
       let pcursor = "";
       for (let page = 0; page < publicPages; page += 1) {
         try {
@@ -1561,26 +1566,28 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     }
   }
 
-  const publicRequestCount = principals.length * publicPages;
-  const publicTargetCount = principals.length * publicPages * count;
+  const publicRequestCount = principalCandidates.length * publicPages;
+  const publicTargetCount = principalCandidates.length * publicPages * count;
   const searchTargetCount = searchKeywords.length * searchPages * count;
 
   if (!items.length) {
-    throw new Error("Kuaishou collector returned 0 items. 请配置 KUAISHOU_COOKIE 或 KUAISHOU_TREND_PRINCIPALS。");
+    notes.push(
+      `Kuaishou collector returned 0 items in this round; discovery=${discoveredCreators.size}, principals=${principalCandidates.length}. Keeping the run degraded instead of failing hard.`,
+    );
   }
 
   return finalizeCollection("kuaishou", "live", items, notes, {
     collectorMode: searchRequestCount
-      ? cookies.length || principals.length
+      ? cookies.length || principalCandidates.length
         ? "warehouse"
         : "public_feed"
-      : cookies.length && principals.length
+      : cookies.length && principalCandidates.length
         ? "hybrid"
         : cookies.length
           ? "authenticated_feed"
           : "public_feed",
     requestCount: privateRequestCount + publicRequestCount + searchRequestCount + discoveryRequestCount,
-    pageDepth: Math.max(privatePageDepth, searchPageDepth, principals.length ? publicPages : 0),
+    pageDepth: Math.max(privatePageDepth, searchPageDepth, principalCandidates.length ? publicPages : 0),
     targetPerRun: Math.max((cookies.length ? cookies.length * privatePages * count : 0) + publicTargetCount + searchTargetCount, getPlatformTargetItemCount("kuaishou")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.kuaishou?.max || 36,
