@@ -181,6 +181,18 @@ export const growthPersonalizedRecommendationSchema = z.object({
   action: z.string(),
 });
 
+export const growthReferenceExampleSchema = z.object({
+  id: z.string(),
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  account: z.string(),
+  title: z.string(),
+  url: z.string().optional(),
+  reason: z.string(),
+  production: z.string(),
+  conversion: z.string(),
+});
+
 export const growthDashboardConsoleSchema = z.object({
   headline: z.string(),
   summary: z.string(),
@@ -188,6 +200,7 @@ export const growthDashboardConsoleSchema = z.object({
   trendSeries: z.array(growthDashboardSeriesSchema),
   conversionFunnels: z.array(growthUserSegmentFunnelSchema),
   personalizedRecommendations: z.array(growthPersonalizedRecommendationSchema),
+  referenceExamples: z.array(growthReferenceExampleSchema).default([]),
 });
 
 export const growthPlanStepSchema = z.object({
@@ -263,6 +276,7 @@ export type GrowthDashboardSeries = z.infer<typeof growthDashboardSeriesSchema>;
 export type GrowthFunnelStage = z.infer<typeof growthFunnelStageSchema>;
 export type GrowthUserSegmentFunnel = z.infer<typeof growthUserSegmentFunnelSchema>;
 export type GrowthPersonalizedRecommendation = z.infer<typeof growthPersonalizedRecommendationSchema>;
+export type GrowthReferenceExample = z.infer<typeof growthReferenceExampleSchema>;
 export type GrowthDashboardConsole = z.infer<typeof growthDashboardConsoleSchema>;
 export type GrowthPlanStep = z.infer<typeof growthPlanStepSchema>;
 export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;

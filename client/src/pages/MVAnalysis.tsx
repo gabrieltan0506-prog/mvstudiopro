@@ -13,6 +13,7 @@ import type {
   GrowthIndustryTemplate,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
+  GrowthReferenceExample,
   GrowthSnapshot,
 } from "@shared/growth";
 import {
@@ -118,6 +119,8 @@ type PlatformCompareRow = {
   compareValue: string;
   verdict: string;
 };
+
+type ReferenceExampleCard = GrowthReferenceExample;
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
@@ -1022,6 +1025,10 @@ export default function MVAnalysisPage() {
   const platformRecommendationRows = useMemo(
     () => buildPlatformRecommendationRows(platformRecommendations, growthSnapshot),
     [platformRecommendations, growthSnapshot],
+  );
+  const referenceExamples = useMemo<ReferenceExampleCard[]>(
+    () => growthSnapshot?.dashboardConsole?.referenceExamples || [],
+    [growthSnapshot],
   );
   const highConfidenceTracks = useMemo(
     () => commercialTracks.filter((track) => track.fit >= 80),
@@ -2205,6 +2212,59 @@ export default function MVAnalysisPage() {
                         </tbody>
                       </table>
                     </div>
+                    {referenceExamples.length ? (
+                      <div className="relative mt-5 grid gap-4">
+                        <div className="flex items-center justify-between gap-3 text-[#9dd0ff]">
+                          <div className="flex items-center gap-3">
+                            <Orbit className="h-5 w-5" />
+                            <h3 className="text-xl font-bold">参考账号</h3>
+                          </div>
+                          <div className="rounded-full border border-[#90c4ff]/20 bg-[#90c4ff]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#b9dbff]">
+                            同行业参考
+                          </div>
+                        </div>
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          {referenceExamples.map((item) => (
+                            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">{item.platformLabel}</div>
+                                  <div className="mt-2 text-lg font-black text-white">{item.account}</div>
+                                </div>
+                                {item.url ? (
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70 transition hover:bg-white/10"
+                                  >
+                                    查看作品
+                                  </a>
+                                ) : null}
+                              </div>
+                              <div className="mt-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                                <div className="text-xs uppercase tracking-[0.16em] text-white/45">优秀作品</div>
+                                <div className="mt-2 text-sm leading-7 text-white">{item.title}</div>
+                              </div>
+                              <div className="mt-3 grid gap-3">
+                                <div className="rounded-xl border border-white/10 bg-[#111b2c] px-3 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">分析原因</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/78">{item.reason}</div>
+                                </div>
+                                <div className="rounded-xl border border-white/10 bg-[#111b2c] px-3 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">制作方式</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/78">{item.production}</div>
+                                </div>
+                                <div className="rounded-xl border border-[#f5b7ff]/20 bg-[#24142a] px-3 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">转化方式</div>
+                                  <div className="mt-2 text-sm leading-7 text-[#ffe3ff]">{item.conversion}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </>
               ) : null}
