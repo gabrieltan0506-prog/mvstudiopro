@@ -16,8 +16,8 @@ type DocumentAnalysisResult = {
 };
 
 const GROWTH_CAMP_FINAL_MODEL =
-  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-3.1-pro").trim()
-  || "gemini-3.1-pro";
+  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-2.5-pro").trim()
+  || "gemini-2.5-pro";
 
 function truncate(value: string, max = 6000) {
   return value.length > max ? `${value.slice(0, max)}...` : value;

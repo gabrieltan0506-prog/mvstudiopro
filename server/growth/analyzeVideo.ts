@@ -11,8 +11,8 @@ import { invokeLLM } from "../_core/llm";
 const execFileAsync = promisify(execFile);
 
 const GROWTH_CAMP_FINAL_MODEL =
-  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-3.1-pro").trim()
-  || "gemini-3.1-pro";
+  String(process.env.GROWTH_CAMP_FINAL_MODEL || process.env.VERTEX_GROWTH_FINAL_MODEL || "gemini-2.5-pro").trim()
+  || "gemini-2.5-pro";
 
 type VideoAnalysisResult = {
   analysis: GrowthAnalysisScores;
