@@ -766,15 +766,15 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
-  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 30) || 30));
+  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 40) || 40));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 8) || 8));
+  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 12) || 12));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(12, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 24) || 24));
+  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(16, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 36) || 36));
   const searchOrders = Array.from(new Set((parseCsvEnv("BILIBILI_SEARCH_ORDERS").length
     ? parseCsvEnv("BILIBILI_SEARCH_ORDERS")
-    : ["", "click", "pubdate", "dm"])
+    : ["", "click", "pubdate", "dm", "scores"])
     .map((item) => item.trim())
     .filter((item) => ["", "click", "pubdate", "dm", "scores"].includes(item))));
   const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
@@ -1161,15 +1161,15 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 12) || 12));
+  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 20) || 20));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
-  const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(8, Math.min(40, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20)));
+  const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(12, Math.min(48, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 28) || 28)));
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 12) || 12));
+  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 16) || 16));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
-  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 4) || 4));
-  const searchUserLimit = Math.max(5, Math.min(100, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 40) || 40));
-  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 12) || 12));
+  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 8) || 8));
+  const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 60) || 60));
+  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 20) || 20));
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let privateRequestCount = 0;
@@ -1447,7 +1447,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     notes.push(`Kuaishou discovery found ${discoveredCreators.size} searchable creators. Sample: ${sample}`);
   }
 
-  if (discoveredCreators.size && primaryKuaishouCookie && items.length < kuaishouSearchThreshold) {
+  if (discoveredCreators.size && primaryKuaishouCookie && items.length < Math.max(kuaishouSearchThreshold, 24)) {
     const publicProfileTargets = Array.from(discoveredCreators.values()).slice(0, publicProfileLimit);
     for (const creator of publicProfileTargets) {
       try {
@@ -1662,8 +1662,8 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
     ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
   ].filter(Boolean);
-  const authorLimit = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 6) || 6));
-  const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 6) || 6));
+  const authorLimit = Math.max(1, Math.min(16, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 12) || 12));
+  const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 10) || 10));
 
   if (!userTokenPool.length) {
     throw new Error("Toutiao collector requires TOUTIAO_USER_TOKEN.");
@@ -1695,7 +1695,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     userToken,
     mediaId: mediaIdPool[index] || mediaIdPool[0] || "",
   }));
-  notes.push(`Toutiao author pool size ${authorProfiles.length}.`);
+  notes.push(`Toutiao author pool size ${authorProfiles.length}; media pool size ${mediaIdPool.length}.`);
 
   for (const authorProfile of authorProfiles) {
     const categoriesResponse = await fetch("https://www.toutiao.com/api/pc/user/tabs_info?aid=24&app_name=toutiao_web", {
@@ -1773,6 +1773,32 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
         notes.push(`Toutiao media_hot ${authorProfile.userToken.slice(0, 12)} responded with ${response.status}.`);
       }
     }
+  }
+
+  const extraMediaIds = Array.from(new Set(mediaIdPool.filter(Boolean))).slice(0, Math.max(authorLimit, 12));
+  const fallbackUserToken = authorProfiles[0]?.userToken || userTokenPool[0] || "";
+  for (const mediaId of extraMediaIds) {
+    if (!fallbackUserToken) break;
+    const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
+    mediaUrl.searchParams.set("media_id", mediaId);
+    mediaUrl.searchParams.set("user_token", fallbackUserToken);
+    mediaUrl.searchParams.set("aid", "24");
+    mediaUrl.searchParams.set("app_name", "toutiao_web");
+    mediaUrl.searchParams.set("_signature", signer.sign({ url: mediaUrl.toString() }));
+    const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
+    requestCount += 1;
+    if (!response.ok) {
+      notes.push(`Toutiao media_hot pool ${mediaId} responded with ${response.status}.`);
+      continue;
+    }
+    const payload = await response.json() as Record<string, any>;
+    const mediaItems = parseToutiaoMediaHotItems(payload).map((item) => ({
+      ...item,
+      bucket: "toutiao_media_hot",
+      tags: Array.from(new Set([...(item.tags || []), mediaId])),
+    }));
+    items.push(...mediaItems);
+    notes.push(`Fetched ${mediaItems.length} Toutiao pooled media hot items for ${mediaId}.`);
   }
 
   const dedupedItems = dedupeById(items);
