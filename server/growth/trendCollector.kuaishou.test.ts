@@ -96,6 +96,8 @@ describe("collectPlatformTrends kuaishou", () => {
         .filter(Boolean),
     );
     expect(requestCookies.size).toBe(1);
+    expect(result.stats.bucketCounts.kuaishou_private_list).toBe(1);
+    expect(result.stats.bucketCounts.kuaishou_search_feed).toBeGreaterThanOrEqual(8);
   });
 
   it("skips search when private feed already yields enough items", async () => {

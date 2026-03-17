@@ -8,7 +8,9 @@ describe("collectPlatformTrends toutiao", () => {
     process.env = { ...envBackup };
     process.env.TOUTIAO_COOKIE = "csrftoken=csrf-token; tt_anti_token=anti-token; sessionid=tt-session";
     process.env.TOUTIAO_USER_TOKEN = "user-token";
+    process.env.TOUTIAO_USER_TOKEN_POOL = "user-token-2";
     process.env.TOUTIAO_MEDIA_ID = "media-id";
+    process.env.TOUTIAO_MEDIA_ID_POOL = "media-id-2";
   });
 
   afterEach(() => {
@@ -56,7 +58,7 @@ describe("collectPlatformTrends toutiao", () => {
             data: [
               {
                 stream_cell: {
-                  id: "feed-1",
+                  id: url.includes("user-token-2") ? "feed-2" : "feed-1",
                   raw_data: JSON.stringify({
                     itemCell: {
                       title: "toutiao feed item",
@@ -83,7 +85,7 @@ describe("collectPlatformTrends toutiao", () => {
             data: [
               {
                 stream_cell: {
-                  id: "ugc-1",
+                  id: url.includes("user-token-2") ? "ugc-2" : "ugc-1",
                   raw_data: JSON.stringify({
                     itemCell: {
                       content: "toutiao ugc item",
@@ -109,7 +111,7 @@ describe("collectPlatformTrends toutiao", () => {
             message: "success",
             data: [
               {
-                group_id: "video-1",
+                group_id: url.includes("user-token-2") ? "video-2" : "video-1",
                 title: "toutiao video item",
                 source: "video-user",
                 display_url: "https://www.toutiao.com/video/video-1/",
@@ -129,7 +131,7 @@ describe("collectPlatformTrends toutiao", () => {
             message: "success",
             data: [
               {
-                group_id: "hot-1",
+                group_id: url.includes("user-token-2") ? "hot-2" : "hot-1",
                 title: "toutiao media hot item",
                 source: "hot-user",
                 display_url: "https://www.toutiao.com/article/hot-1/",
@@ -153,7 +155,10 @@ describe("collectPlatformTrends toutiao", () => {
     expect(result.items.some((item) => item.id === "ugc-1")).toBe(true);
     expect(result.items.some((item) => item.id === "video-1")).toBe(true);
     expect(result.items.some((item) => item.id === "hot-1")).toBe(true);
+    expect(result.items.some((item) => item.id === "video-2")).toBe(true);
+    expect(result.stats.bucketCounts.toutiao_video_feed).toBeGreaterThanOrEqual(2);
+    expect(result.stats.bucketCounts.toutiao_media_hot).toBeGreaterThanOrEqual(2);
     expect(result.stats.bucketCounts.toutiao_feed).toBeGreaterThanOrEqual(1);
-    expect(result.notes.some((note) => note.includes("Fetched 3 Toutiao profile tabs"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("Toutiao author pool size 2"))).toBe(true);
   });
 });

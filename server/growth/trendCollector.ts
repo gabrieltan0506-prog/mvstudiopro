@@ -766,12 +766,17 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
-  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 20) || 20));
+  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 30) || 30));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 5) || 5));
+  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 8) || 8));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(6, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 12) || 12));
+  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(12, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 24) || 24));
+  const searchOrders = Array.from(new Set((parseCsvEnv("BILIBILI_SEARCH_ORDERS").length
+    ? parseCsvEnv("BILIBILI_SEARCH_ORDERS")
+    : ["", "click", "pubdate", "dm"])
+    .map((item) => item.trim())
+    .filter((item) => ["", "click", "pubdate", "dm", "scores"].includes(item))));
   const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
 
   const pushBilibiliItem = (item: Record<string, any>) => {
@@ -833,24 +838,29 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   }
 
   const searchTasks = searchKeywords.flatMap((keyword) =>
-    Array.from({ length: searchPages }, (_, index) => index + 1).map((page) => async () => {
-      const response = await fetch(
-        `https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword=${encodeURIComponent(keyword)}&page=${page}&page_size=${searchPageSize}`,
-        {
+    searchOrders.flatMap((order) =>
+      Array.from({ length: searchPages }, (_, index) => index + 1).map((page) => async () => {
+        const searchUrl = new URL("https://api.bilibili.com/x/web-interface/search/type");
+        searchUrl.searchParams.set("search_type", "video");
+        searchUrl.searchParams.set("keyword", keyword);
+        searchUrl.searchParams.set("page", String(page));
+        searchUrl.searchParams.set("page_size", String(searchPageSize));
+        if (order) searchUrl.searchParams.set("order", order);
+        const response = await fetch(searchUrl.toString(), {
           headers: {
             accept: "application/json,text/plain,*/*",
             referer: "https://search.bilibili.com/",
             "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
             ...(cookie ? { cookie } : {}),
           },
-        },
-      );
-      if (!response.ok) return { keyword, page, list: [] as Array<Record<string, any>> };
-      const payload = await response.json() as {
-        data?: { result?: Array<Record<string, any>> };
-      };
-      return { keyword, page, list: payload.data?.result ?? [] };
-    }),
+        });
+        if (!response.ok) return { keyword, order, page, list: [] as Array<Record<string, any>> };
+        const payload = await response.json() as {
+          data?: { result?: Array<Record<string, any>> };
+        };
+        return { keyword, order, page, list: payload.data?.result ?? [] };
+      }),
+    ),
   );
   const searchResults = await runBatches(searchTasks, concurrency);
   for (const result of searchResults) {
@@ -871,16 +881,16 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
         tname: item.tag,
       });
     });
-    notes.push(`Fetched ${result.list.length} Bilibili search videos for keyword ${result.keyword} page ${result.page}.`);
+    notes.push(`Fetched ${result.list.length} Bilibili search videos for keyword ${result.keyword} ${result.order || "default"} page ${result.page}.`);
   }
 
   const dedupedItems = dedupeById(items);
   notes.push(`Fetched ${dedupedItems.length} total Bilibili videos after merging feed, popular, and search.`);
   return finalizeCollection("bilibili", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
-    requestCount: popularPages + (cookie ? 1 : 0) + searchKeywords.length * searchPages,
+    requestCount: popularPages + (cookie ? 1 : 0) + searchKeywords.length * searchPages * searchOrders.length,
     pageDepth: Math.max(popularPages, searchPages),
-    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0) + searchKeywords.length * searchPages * searchPageSize, getPlatformTargetItemCount("bilibili")),
+    targetPerRun: Math.max(popularPages * popularPageSize + (cookie ? authPageSize : 0) + searchKeywords.length * searchPages * searchOrders.length * searchPageSize, getPlatformTargetItemCount("bilibili")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.bilibili?.min || 40,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.bilibili?.max || 80,
   });
@@ -1180,6 +1190,14 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     notes.push(`Loaded ${creatorSeeds.length} curated Kuaishou creator seeds for discovery fallback.`);
   }
 
+  const resolveKuaishouBucket = (sourceLabel: string) => {
+    if (sourceLabel.startsWith("private-list:")) return "kuaishou_private_list";
+    if (sourceLabel.startsWith("search:")) return "kuaishou_search_feed";
+    if (sourceLabel.startsWith("profile-feed:")) return "kuaishou_profile_feed";
+    if (sourceLabel.startsWith("public-feed:")) return "kuaishou_public_feed";
+    return "kuaishou_feed";
+  };
+
   const pushKuaishouItem = (item: Record<string, any>, sourceLabel: string) => {
     const photo = item.photo ?? item;
     const author = item.author ?? item.user ?? {};
@@ -1201,7 +1219,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     items.push({
       id,
       title,
-      bucket: "kuaishou_feed",
+      bucket: resolveKuaishouBucket(sourceLabel),
       author: authorName || authorId || undefined,
       url: id ? `https://www.kuaishou.com/short-video/${id}` : undefined,
       publishedAt: safeDateFromTimestamp(Number(photo.timestamp ?? item.timestamp)),
@@ -1577,7 +1595,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
           }
 
           const list = payload.data?.publicFeeds?.list ?? [];
-          list.forEach((item) => pushKuaishouItem(item, principalId));
+          list.forEach((item) => pushKuaishouItem(item, `public-feed:${principalId}:${page + 1}`));
           notes.push(`Fetched ${list.length} Kuaishou public feed items from ${principalId} page ${page + 1}.`);
           pcursor = String(payload.data?.publicFeeds?.pcursor || "").trim();
           if (!pcursor || !list.length) break;
@@ -1598,6 +1616,13 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       `Kuaishou collector returned 0 items in this round; discovery=${discoveredCreators.size}, principals=${principalCandidates.length}. Keeping the run degraded instead of failing hard.`,
     );
   }
+
+  const sourceCounts = getBucketCounts(items);
+  notes.push(
+    `Kuaishou source counts before merge: ${Object.entries(sourceCounts)
+      .map(([bucket, count]) => `${bucket}=${count}`)
+      .join(", ") || "none"}.`,
+  );
 
   return finalizeCollection("kuaishou", "live", items, notes, {
     collectorMode: searchRequestCount
@@ -1629,11 +1654,18 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
 
   const antiToken = parseCookieValue(cookie, "tt_anti_token");
   const csrfToken = parseCookieValue(cookie, "csrftoken");
-  const userToken = String(process.env.TOUTIAO_USER_TOKEN || "").trim();
-  const mediaId = String(process.env.TOUTIAO_MEDIA_ID || "").trim();
+  const userTokenPool = Array.from(new Set([
+    String(process.env.TOUTIAO_USER_TOKEN || "").trim(),
+    ...parseCsvEnv("TOUTIAO_USER_TOKEN_POOL"),
+  ].filter(Boolean)));
+  const mediaIdPool = [
+    String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
+    ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
+  ].filter(Boolean);
+  const authorLimit = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 6) || 6));
   const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 6) || 6));
 
-  if (!userToken) {
+  if (!userTokenPool.length) {
     throw new Error("Toutiao collector requires TOUTIAO_USER_TOKEN.");
   }
 
@@ -1649,31 +1681,6 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     throw new Error("Toutiao acrawler signer could not be initialized.");
   }
 
-  const categoriesResponse = await fetch("https://www.toutiao.com/api/pc/user/tabs_info?aid=24&app_name=toutiao_web", {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/plain, */*",
-      "content-type": "application/x-www-form-urlencoded",
-      cookie,
-      referer: "https://www.toutiao.com/",
-      origin: "https://www.toutiao.com",
-      "x-csrftoken": csrfToken,
-      "tt-anti-token": antiToken,
-      "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-    },
-    body: `token=${encodeURIComponent(userToken)}`,
-  });
-  requestCount += 1;
-  if (!categoriesResponse.ok) {
-    throw new Error(`Toutiao tabs_info responded with ${categoriesResponse.status}`);
-  }
-  const categoriesPayload = await categoriesResponse.json() as Record<string, any>;
-  const categories = Array.isArray(categoriesPayload?.data) ? categoriesPayload.data as Array<Record<string, any>> : [];
-  const selectedCategories = categories
-    .map((item) => String(item.category ?? "").trim())
-    .filter((item) => ["profile_all", "pc_profile_video", "pc_profile_ugc"].includes(item));
-  notes.push(`Fetched ${selectedCategories.length} Toutiao profile tabs: ${selectedCategories.join(", ")}.`);
-
   const baseHeaders = {
     accept: "application/json, text/plain, */*",
     cookie,
@@ -1684,52 +1691,87 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
   };
 
-  for (const category of selectedCategories) {
-    let maxBehotTime = "0";
-    for (let page = 0; page < profilePages; page += 1) {
-      const pageUrl = new URL("https://www.toutiao.com/api/pc/feed/");
-      pageUrl.searchParams.set("category", category);
-      pageUrl.searchParams.set("utm_source", "toutiao");
-      pageUrl.searchParams.set("visit_user_token", userToken);
-      pageUrl.searchParams.set("max_behot_time", maxBehotTime);
-      pageUrl.searchParams.set("aid", "24");
-      pageUrl.searchParams.set("app_name", "toutiao_web");
-      pageUrl.searchParams.set("_signature", signer.sign({ url: pageUrl.toString() }));
-      const response = await fetch(pageUrl.toString(), { headers: baseHeaders });
-      requestCount += 1;
-      if (!response.ok) {
-        notes.push(`Toutiao pc/feed ${category} page ${page + 1} responded with ${response.status}.`);
-        break;
-      }
-      const payload = await response.json() as Record<string, any>;
-      const categoryItems = category === "pc_profile_video"
-        ? parseToutiaoVideoItems(payload)
-        : parseToutiaoFeedItems(payload, category);
-      items.push(...categoryItems);
-      notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category} page ${page + 1}.`);
-      const nextCursor = extractToutiaoFeedCursor(payload);
-      if (!nextCursor || !categoryItems.length || nextCursor === maxBehotTime) break;
-      maxBehotTime = nextCursor;
-    }
-  }
+  const authorProfiles = userTokenPool.slice(0, authorLimit).map((userToken, index) => ({
+    userToken,
+    mediaId: mediaIdPool[index] || mediaIdPool[0] || "",
+  }));
+  notes.push(`Toutiao author pool size ${authorProfiles.length}.`);
 
-  if (mediaId) {
-    const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
-    mediaUrl.searchParams.set("media_id", mediaId);
-    mediaUrl.searchParams.set("user_token", userToken);
-    mediaUrl.searchParams.set("aid", "24");
-    mediaUrl.searchParams.set("app_name", "toutiao_web");
-    const mediaSignature = signer.sign({ url: mediaUrl.toString() });
-    mediaUrl.searchParams.set("_signature", mediaSignature);
-    const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
+  for (const authorProfile of authorProfiles) {
+    const categoriesResponse = await fetch("https://www.toutiao.com/api/pc/user/tabs_info?aid=24&app_name=toutiao_web", {
+      method: "POST",
+      headers: {
+        ...baseHeaders,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: `token=${encodeURIComponent(authorProfile.userToken)}`,
+    });
     requestCount += 1;
-    if (response.ok) {
-      const payload = await response.json() as Record<string, any>;
-      const mediaItems = parseToutiaoMediaHotItems(payload);
-      items.push(...mediaItems);
-      notes.push(`Fetched ${mediaItems.length} Toutiao media hot items.`);
-    } else {
-      notes.push(`Toutiao media_hot responded with ${response.status}.`);
+    if (!categoriesResponse.ok) {
+      notes.push(`Toutiao tabs_info ${authorProfile.userToken.slice(0, 12)} responded with ${categoriesResponse.status}.`);
+      continue;
+    }
+    const categoriesPayload = await categoriesResponse.json() as Record<string, any>;
+    const categories = Array.isArray(categoriesPayload?.data) ? categoriesPayload.data as Array<Record<string, any>> : [];
+    const selectedCategories = categories
+      .map((item) => String(item.category ?? "").trim())
+      .filter((item) => ["profile_all", "pc_profile_video", "pc_profile_ugc"].includes(item));
+    notes.push(`Fetched ${selectedCategories.length} Toutiao profile tabs for ${authorProfile.userToken.slice(0, 12)}: ${selectedCategories.join(", ")}.`);
+
+    for (const category of selectedCategories) {
+      let maxBehotTime = "0";
+      for (let page = 0; page < profilePages; page += 1) {
+        const pageUrl = new URL("https://www.toutiao.com/api/pc/feed/");
+        pageUrl.searchParams.set("category", category);
+        pageUrl.searchParams.set("utm_source", "toutiao");
+        pageUrl.searchParams.set("visit_user_token", authorProfile.userToken);
+        pageUrl.searchParams.set("max_behot_time", maxBehotTime);
+        pageUrl.searchParams.set("aid", "24");
+        pageUrl.searchParams.set("app_name", "toutiao_web");
+        pageUrl.searchParams.set("_signature", signer.sign({ url: pageUrl.toString() }));
+        const response = await fetch(pageUrl.toString(), { headers: baseHeaders });
+        requestCount += 1;
+        if (!response.ok) {
+          notes.push(`Toutiao pc/feed ${category} ${authorProfile.userToken.slice(0, 12)} page ${page + 1} responded with ${response.status}.`);
+          break;
+        }
+        const payload = await response.json() as Record<string, any>;
+        const categoryItems = category === "pc_profile_video"
+          ? parseToutiaoVideoItems(payload)
+          : parseToutiaoFeedItems(payload, category);
+        items.push(...categoryItems.map((item) => ({
+          ...item,
+          bucket: category === "pc_profile_video" ? "toutiao_video_feed" : "toutiao_feed",
+          tags: Array.from(new Set([...(item.tags || []), category])),
+        })));
+        notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category} ${authorProfile.userToken.slice(0, 12)} page ${page + 1}.`);
+        const nextCursor = extractToutiaoFeedCursor(payload);
+        if (!nextCursor || !categoryItems.length || nextCursor === maxBehotTime) break;
+        maxBehotTime = nextCursor;
+      }
+    }
+
+    if (authorProfile.mediaId) {
+      const mediaUrl = new URL("https://www.toutiao.com/api/pc/media_hot/");
+      mediaUrl.searchParams.set("media_id", authorProfile.mediaId);
+      mediaUrl.searchParams.set("user_token", authorProfile.userToken);
+      mediaUrl.searchParams.set("aid", "24");
+      mediaUrl.searchParams.set("app_name", "toutiao_web");
+      const mediaSignature = signer.sign({ url: mediaUrl.toString() });
+      mediaUrl.searchParams.set("_signature", mediaSignature);
+      const response = await fetch(mediaUrl.toString(), { headers: baseHeaders });
+      requestCount += 1;
+      if (response.ok) {
+        const payload = await response.json() as Record<string, any>;
+        const mediaItems = parseToutiaoMediaHotItems(payload).map((item) => ({
+          ...item,
+          bucket: "toutiao_media_hot",
+        }));
+        items.push(...mediaItems);
+        notes.push(`Fetched ${mediaItems.length} Toutiao media hot items for ${authorProfile.userToken.slice(0, 12)}.`);
+      } else {
+        notes.push(`Toutiao media_hot ${authorProfile.userToken.slice(0, 12)} responded with ${response.status}.`);
+      }
     }
   }
 
@@ -1741,7 +1783,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   return finalizeCollection("toutiao", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
     requestCount,
-    pageDepth: selectedCategories.length * profilePages,
+    pageDepth: profilePages,
     targetPerRun: Math.max(500, getPlatformTargetItemCount("toutiao")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.toutiao?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.toutiao?.max || 60,
