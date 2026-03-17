@@ -160,6 +160,22 @@ function parseColonPairCsvEnv(name: string) {
     .filter((entry) => entry.left);
 }
 
+function parseCookieHeader(rawCookie: string) {
+  return String(rawCookie || "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("=");
+      if (separator <= 0) return null;
+      return {
+        name: entry.slice(0, separator).trim(),
+        value: entry.slice(separator + 1).trim(),
+      };
+    })
+    .filter(Boolean) as Array<{ name: string; value: string }>;
+}
+
 function parsePairPoolEnv(name: string) {
   return String(process.env[name] || "")
     .split(/[,\n]/)
@@ -801,6 +817,183 @@ async function probeDouyinCreatorIndexEndpoint(
   };
 }
 
+async function captureDouyinCreatorPageText(url: string, cookie: string) {
+  const cdpVersionUrl = String(process.env.DOUYIN_CREATOR_INDEX_CDP_URL || "http://127.0.0.1:9223").replace(/\/$/, "");
+  const version = await fetch(`${cdpVersionUrl}/json/version`).then((response) => {
+    if (!response.ok) throw new Error(`CDP version responded with ${response.status}`);
+    return response.json() as Promise<{ webSocketDebuggerUrl?: string }>;
+  });
+  const browserWsUrl = String(version.webSocketDebuggerUrl || "").trim();
+  if (!browserWsUrl) throw new Error("CDP browser websocket unavailable.");
+
+  const BrowserWebSocket = (globalThis as any).WebSocket;
+  if (!BrowserWebSocket) throw new Error("Global WebSocket unavailable.");
+
+  const browserSocket = new BrowserWebSocket(browserWsUrl);
+  await new Promise<void>((resolve, reject) => {
+    browserSocket.onopen = () => resolve();
+    browserSocket.onerror = (error: unknown) => reject(error);
+  });
+
+  let browserMessageId = 0;
+  const browserPending = new Map<number, (value: any) => void>();
+  browserSocket.onmessage = (event: MessageEvent) => {
+    const message = JSON.parse(String(event.data || "{}"));
+    if (message.id && browserPending.has(message.id)) {
+      browserPending.get(message.id)?.(message);
+      browserPending.delete(message.id);
+    }
+  };
+  const sendBrowser = (method: string, params: Record<string, any> = {}) => new Promise<any>((resolve) => {
+    const id = ++browserMessageId;
+    browserPending.set(id, resolve);
+    browserSocket.send(JSON.stringify({ id, method, params }));
+  });
+
+  const created = await sendBrowser("Target.createTarget", { url: "about:blank" });
+  const targetId = created?.result?.targetId as string | undefined;
+  if (!targetId) throw new Error("Failed to create CDP target.");
+
+  const targets = await fetch(`${cdpVersionUrl}/json/list`).then((response) => {
+    if (!response.ok) throw new Error(`CDP list responded with ${response.status}`);
+    return response.json() as Promise<Array<{ id: string; webSocketDebuggerUrl?: string }>>;
+  });
+  const page = targets.find((entry) => entry.id === targetId);
+  const pageWsUrl = String(page?.webSocketDebuggerUrl || "").trim();
+  if (!pageWsUrl) throw new Error("CDP page websocket unavailable.");
+
+  const pageSocket = new BrowserWebSocket(pageWsUrl);
+  await new Promise<void>((resolve, reject) => {
+    pageSocket.onopen = () => resolve();
+    pageSocket.onerror = (error: unknown) => reject(error);
+  });
+
+  let pageMessageId = 0;
+  const pagePending = new Map<number, (value: any) => void>();
+  pageSocket.onmessage = (event: MessageEvent) => {
+    const message = JSON.parse(String(event.data || "{}"));
+    if (message.id && pagePending.has(message.id)) {
+      pagePending.get(message.id)?.(message);
+      pagePending.delete(message.id);
+    }
+  };
+  const sendPage = (method: string, params: Record<string, any> = {}) => new Promise<any>((resolve) => {
+    const id = ++pageMessageId;
+    pagePending.set(id, resolve);
+    pageSocket.send(JSON.stringify({ id, method, params }));
+  });
+
+  await sendPage("Network.enable");
+  await sendPage("Page.enable");
+  for (const parsedCookie of parseCookieHeader(cookie)) {
+    await sendPage("Network.setCookie", {
+      name: parsedCookie.name,
+      value: parsedCookie.value,
+      domain: "creator.douyin.com",
+      path: "/",
+      secure: true,
+    });
+  }
+
+  await sendPage("Page.navigate", { url });
+  await new Promise((resolve) => setTimeout(resolve, 10_000));
+  await sendPage("Runtime.evaluate", {
+    expression: `(() => {
+      const trigger = [...document.querySelectorAll('button,div,span')].find((node) => /确认/.test(node.textContent || ""));
+      if (trigger) trigger.click();
+      return true;
+    })()`,
+    returnByValue: true,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+  const evaluated = await sendPage("Runtime.evaluate", {
+    expression: "document.body ? document.body.innerText : ''",
+    returnByValue: true,
+  });
+  const text = String(evaluated?.result?.result?.value || "").trim();
+
+  pageSocket.close();
+  browserSocket.close();
+  return text;
+}
+
+function parseDouyinCreatorPageMetric(text: string) {
+  const averageMatch = text.match(/平均值\s*([\d.]+)\s*([万亿]?)/);
+  if (!averageMatch) return undefined;
+  const raw = `${averageMatch[1]}${averageMatch[2] || ""}`;
+  return parseChineseCount(raw);
+}
+
+async function collectDouyinCreatorIndexPageItems(
+  creatorCookies: string[],
+  keywordSeeds: string[],
+  topicIds: string[],
+  brandSeeds: Array<{ brandName: string; categoryId: string }>,
+) {
+  const enabled = String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1";
+  if (!enabled || !creatorCookies.length) {
+    return { items: [] as TrendItem[], notes: [] as string[], requestCount: 0 };
+  }
+
+  const cookie = creatorCookies[0];
+  const items: TrendItem[] = [];
+  const notes: string[] = [];
+  let requestCount = 0;
+
+  const pageTargets = [
+    ...keywordSeeds.slice(0, Math.max(1, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6))).map((keyword) => ({
+      id: `douyin-index-keyword-page:${keyword}`,
+      bucket: "douyin_creator_index_keyword_page",
+      title: `${keyword} 关键词页面结果`,
+      label: keyword,
+      url: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&appName=aweme`,
+    })),
+    ...topicIds.slice(0, Math.max(1, parseNumberEnv("DOUYIN_CREATOR_INDEX_TOPIC_LIMIT", 6))).map((topicId) => ({
+      id: `douyin-index-topic-page:${topicId}`,
+      bucket: "douyin_creator_index_topic_page",
+      title: `${topicId} 话题页面结果`,
+      label: topicId,
+      url: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?topic=${encodeURIComponent(topicId)}&source=creator`,
+    })),
+    ...brandSeeds.slice(0, Math.max(1, parseNumberEnv("DOUYIN_CREATOR_INDEX_BRAND_LIMIT", 4))).map((brand) => ({
+      id: `douyin-index-brand-page:${brand.brandName}:${brand.categoryId}`,
+      bucket: "douyin_creator_index_brand_page",
+      title: `${brand.brandName} 品牌页面结果`,
+      label: brand.brandName,
+      url: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysisTheme?source=creator&keyword=${encodeURIComponent(brand.brandName)}&categoryId=${encodeURIComponent(brand.categoryId)}&appName=aweme`,
+    })),
+  ];
+
+  for (const target of pageTargets) {
+    try {
+      const text = await captureDouyinCreatorPageText(target.url, cookie);
+      requestCount += 1;
+      if (!text) {
+        notes.push(`${target.title} page capture returned empty text.`);
+        continue;
+      }
+      const hotValue = parseDouyinCreatorPageMetric(text);
+      items.push({
+        id: target.id,
+        title: target.title,
+        bucket: target.bucket,
+        url: target.url,
+        hotValue,
+        views: hotValue,
+        contentType: "topic",
+        tags: [target.label, "page_capture"].filter(Boolean),
+      });
+      notes.push(`${target.title} page capture snippet: ${text.replace(/\s+/g, " ").slice(0, 220)}.`);
+    } catch (error) {
+      requestCount += 1;
+      notes.push(`${target.title} page capture failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return { items: dedupeById(items), notes, requestCount };
+}
+
 async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: TrendItem[]) {
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -1111,6 +1304,16 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
   if (creatorCookies.length) {
     notes.push("Douyin creator index now ingests plain video/author analytics and probes keyword/topic/brand endpoints, marking encrypted payloads explicitly.");
   }
+
+  const pageCapture = await collectDouyinCreatorIndexPageItems(
+    creatorCookies,
+    keywordSeeds,
+    topicIds,
+    brandSeeds,
+  );
+  items.push(...pageCapture.items);
+  notes.push(...pageCapture.notes);
+  requestCount += pageCapture.requestCount;
 
   return { items: dedupeById(items), notes, requestCount };
 }
@@ -1450,10 +1653,16 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     }
   }
 
-  return finalizeCollection("douyin", "live", topicItems, [`Fetched ${topicItems.length} Douyin hot search topics.`], {
+  const creatorIndex = await collectDouyinCreatorIndexItems([], topicItems);
+  const fallbackItems = dedupeById([...topicItems, ...creatorIndex.items]);
+  const fallbackNotes = [
+    `Fetched ${topicItems.length} Douyin hot search topics.`,
+    ...creatorIndex.notes,
+  ];
+  return finalizeCollection("douyin", "live", fallbackItems, fallbackNotes, {
     collectorMode: "hot_topics",
-    requestCount: 1,
-    pageDepth: 1,
+    requestCount: 1 + creatorIndex.requestCount,
+    pageDepth: 1 + creatorIndex.requestCount,
     targetPerRun: Math.max(20, getPlatformTargetItemCount("douyin")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.douyin?.min || 12,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.douyin?.max || 30,
