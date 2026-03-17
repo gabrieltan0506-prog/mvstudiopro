@@ -168,6 +168,7 @@ const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
+const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
 
 async function ensureStoreDir() {
   await fs.mkdir(STORE_DIR, { recursive: true });
@@ -656,7 +657,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     };
   });
   const selectedCoverage =
-    coverageWindows.find((window) => window.archivedItems >= Math.max(200, window.activePlatforms * 50)) ||
+    coverageWindows.find((window) => window.days === DEFAULT_SELECTED_WINDOW_DAYS) ||
     coverageWindows[coverageWindows.length - 1];
 
   return {
@@ -693,10 +694,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     },
     coverage: {
       selectedWindowDays: selectedCoverage.days,
-      reason:
-        selectedCoverage.days === 30
-          ? "30 天窗口样本量已达到基础分析阈值，优先使用 30 天。"
-          : `${selectedCoverage.days} 天窗口被启用，因为 30 天窗口样本偏少，系统已自动扩展回翻周期。`,
+      reason: `${selectedCoverage.days} 天窗口为当前固定历史分析口径，用于优先沉淀近一年的平台样本。`,
       windows: coverageWindows,
     },
     platforms,
