@@ -234,6 +234,9 @@ describe("collectPlatformTrends douyin", () => {
     expect(result.items.some((item) => item.id === "creator-1")).toBe(true);
     expect(result.items.some((item) => item.bucket === "douyin_creator_index_video")).toBe(true);
     expect(result.items.some((item) => item.bucket === "douyin_creator_index_author")).toBe(true);
+    expect(result.items.some((item) => item.bucket === "douyin_creator_index_keyword_probe")).toBe(true);
+    expect(result.items.some((item) => item.bucket === "douyin_creator_index_topic_probe")).toBe(true);
+    expect(result.items.some((item) => item.bucket === "douyin_creator_index_brand_probe")).toBe(true);
     expect(result.notes.some((note) => note.includes("Douyin creator center"))).toBe(true);
     expect(result.notes.some((note) => note.includes("creator index"))).toBe(true);
     expect(result.notes.some((note) => note.includes("keyword trend 卖健身器材 returned encrypted payload"))).toBe(true);

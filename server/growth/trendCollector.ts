@@ -820,6 +820,7 @@ async function probeDouyinCreatorIndexEndpoint(
     if (!response.ok) {
       return {
         requestCount: 1,
+        payloadKind: "http_error" as const,
         note: `${options.label} responded with ${response.status}.`,
       };
     }
@@ -828,6 +829,7 @@ async function probeDouyinCreatorIndexEndpoint(
     if (status !== 0) {
       return {
         requestCount: 1,
+        payloadKind: "status_error" as const,
         note: `${options.label} returned status=${payload?.status ?? payload?.status_code ?? "unknown"} (${String(payload?.msg ?? payload?.status_msg ?? "unknown")}).`,
       };
     }
@@ -835,31 +837,66 @@ async function probeDouyinCreatorIndexEndpoint(
     if (typeof data === "string" && data.trim()) {
       return {
         requestCount: 1,
+        payloadKind: "encrypted" as const,
         note: `${options.label} returned encrypted payload.`,
       };
     }
     if (Array.isArray(data)) {
       return {
         requestCount: 1,
+        payloadKind: "plain_array" as const,
         note: `${options.label} returned plain array payload (${data.length}).`,
       };
     }
     if (data && typeof data === "object") {
       return {
         requestCount: 1,
+        payloadKind: "plain_object" as const,
         note: `${options.label} returned plain object payload (${Object.keys(data).length} fields).`,
       };
     }
     return {
       requestCount: 1,
+      payloadKind: "empty" as const,
       note: `${options.label} returned empty payload.`,
     };
   }
 
   return {
     requestCount: 0,
+    payloadKind: "skipped" as const,
     note: `${options.label} skipped (no creator index cookie available).`,
   };
+}
+
+function buildDouyinCreatorIndexSignalItem(params: {
+  id: string;
+  title: string;
+  bucket: string;
+  label: string;
+  probeKinds: string[];
+  url?: string;
+}) {
+  const effectiveKinds = params.probeKinds.filter((kind) => kind !== "skipped");
+  if (!effectiveKinds.length) return null;
+
+  const signalScore = effectiveKinds.reduce((score, kind) => {
+    if (kind === "plain_object" || kind === "plain_array") return score + 24;
+    if (kind === "encrypted") return score + 16;
+    if (kind === "empty") return score + 6;
+    return score + 2;
+  }, 0);
+
+  return {
+    id: params.id,
+    title: params.title,
+    bucket: params.bucket,
+    url: params.url,
+    hotValue: signalScore,
+    views: signalScore,
+    contentType: "topic" as const,
+    tags: [params.label, ...Array.from(new Set(effectiveKinds.map((kind) => `probe:${kind}`)))],
+  } satisfies TrendItem;
 }
 
 async function captureDouyinCreatorPageText(url: string, cookie: string) {
@@ -1254,6 +1291,16 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
       });
       requestCount += interpretationProbe.requestCount;
       notes.push(interpretationProbe.note);
+
+      const keywordSignal = buildDouyinCreatorIndexSignalItem({
+        id: `douyin-index-keyword-probe:${keyword}`,
+        title: `${keyword} 关键词指数信号`,
+        bucket: "douyin_creator_index_keyword_probe",
+        label: keyword,
+        probeKinds: [validDateProbe.payloadKind, hotTrendProbe.payloadKind, interpretationProbe.payloadKind],
+        url: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?source=creator&keyword=${encodeURIComponent(keyword)}&appName=aweme`,
+      });
+      if (keywordSignal) items.push(keywordSignal);
     }
 
     const hotWordProbe = await probeDouyinCreatorIndexEndpoint(creatorCookies, csrfToken, {
@@ -1267,6 +1314,15 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
     });
     requestCount += hotWordProbe.requestCount;
     notes.push(hotWordProbe.note);
+    const hotWordSignal = buildDouyinCreatorIndexSignalItem({
+      id: "douyin-index-hot-trend-words",
+      title: "抖音热词指数信号",
+      bucket: "douyin_creator_index_hot_words_probe",
+      label: "hot_trend_words",
+      probeKinds: [hotWordProbe.payloadKind],
+      url: "https://creator.douyin.com/creator-micro/creator-count/arithmetic-index",
+    });
+    if (hotWordSignal) items.push(hotWordSignal);
   }
 
   if (creatorCookies.length && topicIds.length) {
@@ -1288,6 +1344,15 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
     });
     requestCount += topicProbe.requestCount;
     notes.push(topicProbe.note);
+    const topicSignal = buildDouyinCreatorIndexSignalItem({
+      id: `douyin-index-topic-probe:${topicIds.join(",")}`,
+      title: `${topicIds[0]} 话题指数信号`,
+      bucket: "douyin_creator_index_topic_probe",
+      label: topicIds.join(","),
+      probeKinds: [topicProbe.payloadKind],
+      url: `https://creator.douyin.com/creator-micro/creator-count/arithmetic-index/analysis?topic=${encodeURIComponent(topicIds[0])}&source=creator`,
+    });
+    if (topicSignal) items.push(topicSignal);
   }
 
   if (creatorCookies.length && brandSeeds.length) {
@@ -1352,6 +1417,15 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
       });
       requestCount += result.requestCount;
       notes.push(result.note);
+      const brandSignal = buildDouyinCreatorIndexSignalItem({
+        id: `douyin-index-brand-probe:${brandList[0]?.brand_name}:${brandList[0]?.category_id}:${probe.label}`,
+        title: `${brandList[0]?.brand_name || "品牌"} 指数信号`,
+        bucket: "douyin_creator_index_brand_probe",
+        label: `${brandList[0]?.brand_name || ""}:${brandList[0]?.category_id || ""}:${probe.label}`,
+        probeKinds: [result.payloadKind],
+        url: brandReferer,
+      });
+      if (brandSignal) items.push(brandSignal);
     }
   }
 
