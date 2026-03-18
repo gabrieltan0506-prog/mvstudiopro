@@ -1542,6 +1542,23 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 ) : null}
+                {growthSystemStatusQuery.data?.douyinCreatorCenter ? (
+                  <div className="mt-4 space-y-2 rounded-2xl border border-fuchsia-200/15 bg-black/15 p-4 text-xs text-white/72">
+                    <div className="font-semibold text-fuchsia-100">抖音创作者中心 / 指数</div>
+                    <div className="grid gap-1 md:grid-cols-2">
+                      <div>current total: {String(growthSystemStatusQuery.data.douyinCreatorCenter.currentTotal || 0)}</div>
+                      <div>archived total: {String(growthSystemStatusQuery.data.douyinCreatorCenter.archivedTotal || 0)}</div>
+                    </div>
+                    <div className="space-y-2">
+                      {(growthSystemStatusQuery.data.douyinCreatorCenter.buckets || []).map((item) => (
+                        <div key={String(item.bucket)} className="grid gap-1 md:grid-cols-2">
+                          <div>{String(item.bucket)} current: {String(item.currentTotal || 0)}</div>
+                          <div>{String(item.bucket)} archived: {String(item.archivedTotal || 0)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
           </section>
         ) : null}

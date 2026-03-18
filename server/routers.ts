@@ -44,6 +44,25 @@ import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
 import { growthAnalysisScoresSchema, growthCampModelSchema } from "@shared/growth";
 
+const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
+  "douyin_creator_center",
+  "douyin_creator_index",
+] as const;
+
+function isDouyinCreatorCenterBucket(bucket: string) {
+  return DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES.some((prefix) => bucket.startsWith(prefix));
+}
+
+function getCollectionBucketCounts(items: Array<{ bucket?: string }> = []) {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const bucket = String(item?.bucket || "").trim();
+    if (!bucket) continue;
+    counts[bucket] = (counts[bucket] || 0) + 1;
+  }
+  return counts;
+}
+
 function buildFallbackFrameAnalysis(context?: string) {
   const text = String(context || "").trim();
   const isCommercial = /品牌|招商|客户|服务|案例/.test(text);
@@ -464,6 +483,43 @@ export const appRouter = router({
         const smtp = getSmtpStatus();
         const scheduler = await readTrendStore();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
+        const douyinCollection = scheduler.collections?.douyin;
+        const douyinCurrentBucketCounts =
+          douyinCollection?.stats?.bucketCounts ||
+          getCollectionBucketCounts(douyinCollection?.items || []);
+        const douyinCreatorCenterBuckets = Object.entries(douyinCurrentBucketCounts)
+          .filter(([bucket]) => isDouyinCreatorCenterBucket(bucket))
+          .sort((left, right) => right[1] - left[1])
+          .map(([bucket, currentTotal]) => ({
+            bucket,
+            currentTotal,
+            archivedTotal: 0,
+          }));
+        const douyinCreatorCenterBucketMap = new Map(
+          douyinCreatorCenterBuckets.map((item) => [item.bucket, item]),
+        );
+
+        for (const entry of scheduler.archiveIndex || []) {
+          if (entry.platform !== "douyin") continue;
+          for (const [bucket, archivedCount] of Object.entries(entry.bucketCounts || {})) {
+            if (!isDouyinCreatorCenterBucket(bucket)) continue;
+            const current = douyinCreatorCenterBucketMap.get(bucket) || {
+              bucket,
+              currentTotal: 0,
+              archivedTotal: 0,
+            };
+            current.archivedTotal += archivedCount;
+            douyinCreatorCenterBucketMap.set(bucket, current);
+          }
+        }
+
+        const douyinCreatorCenterBucketList = Array.from(douyinCreatorCenterBucketMap.values())
+          .sort((left, right) => right.currentTotal - left.currentTotal || right.archivedTotal - left.archivedTotal);
+        const douyinCreatorCenterStats = {
+          currentTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.currentTotal, 0),
+          archivedTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.archivedTotal, 0),
+          buckets: douyinCreatorCenterBucketList,
+        };
 
         return {
           success: true,
@@ -484,6 +540,7 @@ export const appRouter = router({
             lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastError: item?.lastError,
           })),
+          douyinCreatorCenter: douyinCreatorCenterStats,
         };
       }),
 
