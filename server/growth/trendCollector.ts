@@ -668,7 +668,13 @@ async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: str
     .filter((value) => Number.isFinite(value) && value > 0);
   const selectedBillboardTypes = billboardTypes.length ? billboardTypes : [1, 3];
 
-  if (!creatorCookies.length || !endpoint) {
+  if (!creatorCookies.length) {
+    notes.push("Douyin creator center skipped: no creator cookie or douyin cookie available.");
+    return { items, notes, requestCount };
+  }
+
+  if (!endpoint) {
+    notes.push("Douyin creator center skipped: endpoint is empty.");
     return { items, notes, requestCount };
   }
 
@@ -734,6 +740,45 @@ function buildDouyinCreatorIndexHeaders(cookie: string, csrfToken: string, refer
     referer,
     "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
     "x-secsdk-csrf-token": csrfToken,
+  };
+}
+
+async function resolveDouyinCreatorIndexCsrfToken(cookies: string[]) {
+  const explicit = String(
+    process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN
+    || process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN
+    || "",
+  ).trim();
+  if (explicit) {
+    return {
+      token: explicit,
+      note: "Douyin creator index csrf token: using configured env token.",
+    };
+  }
+
+  for (const cookie of cookies) {
+    try {
+      const response = await fetch("https://creator.douyin.com/creator-micro/home", {
+        headers: {
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          cookie,
+          referer: "https://creator.douyin.com/",
+          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+        },
+      });
+      const headerToken = String(response.headers.get("x-secsdk-csrf-token") || "").trim();
+      if (response.ok && headerToken) {
+        return {
+          token: headerToken,
+          note: "Douyin creator index csrf token: resolved from creator home response header.",
+        };
+      }
+    } catch {}
+  }
+
+  return {
+    token: "",
+    note: "Douyin creator index csrf token missing: env token not configured and creator home response did not return x-secsdk-csrf-token.",
   };
 }
 
@@ -984,7 +1029,13 @@ async function collectDouyinCreatorIndexPageItems(
         contentType: "topic",
         tags: [target.label, "page_capture"].filter(Boolean),
       });
-      notes.push(`${target.title} page capture snippet: ${text.replace(/\s+/g, " ").slice(0, 220)}.`);
+      const normalized = text.replace(/\s+/g, " ").trim();
+      const summaryParts = [
+        `metric=${hotValue ?? "n/a"}`,
+        `label=${target.label}`,
+        `textLen=${normalized.length}`,
+      ];
+      notes.push(`${target.title} page capture summary: ${summaryParts.join(", ")}.`);
     } catch (error) {
       requestCount += 1;
       notes.push(`${target.title} page capture failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1004,12 +1055,15 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
     String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim(),
     ...cookies,
   ].filter(Boolean)));
-  const csrfToken = String(
-    process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN
-    || process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN
-    || "",
-  ).trim();
-  if (!creatorCookies.length || !csrfToken) {
+  if (!creatorCookies.length) {
+    notes.push("Douyin creator index skipped: no creator cookie or douyin cookie available.");
+    return { items, notes, requestCount };
+  }
+
+  const csrfResolution = await resolveDouyinCreatorIndexCsrfToken(creatorCookies);
+  notes.push(csrfResolution.note);
+  const csrfToken = csrfResolution.token;
+  if (!csrfToken) {
     return { items, notes, requestCount };
   }
 

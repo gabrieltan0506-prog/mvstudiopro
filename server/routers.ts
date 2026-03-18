@@ -515,10 +515,18 @@ export const appRouter = router({
 
         const douyinCreatorCenterBucketList = Array.from(douyinCreatorCenterBucketMap.values())
           .sort((left, right) => right.currentTotal - left.currentTotal || right.archivedTotal - left.archivedTotal);
+        const douyinCreatorNotes = (douyinCollection?.notes || []).filter((note) => /Douyin creator center|Douyin creator index/i.test(note));
         const douyinCreatorCenterStats = {
           currentTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.currentTotal, 0),
           archivedTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.archivedTotal, 0),
           buckets: douyinCreatorCenterBucketList,
+          notes: douyinCreatorNotes.slice(-12),
+          diagnostics: {
+            hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
+            hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
+            hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
+            pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
+          },
         };
 
         return {
