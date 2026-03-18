@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 
@@ -426,7 +427,14 @@ async function archiveCollection(
   const datePrefix = collection.collectedAt.slice(0, 10);
   const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
   const bucket = Object.keys(bucketCounts).sort().join("+") || "default";
-  const fileName = `${platform}-${bucket}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
+  const bucketPreview = Object.keys(bucketCounts)
+    .sort()
+    .slice(0, 3)
+    .join("+")
+    .replace(/[^a-z0-9+_-]/gi, "-")
+    .slice(0, 80) || "default";
+  const bucketHash = createHash("sha1").update(bucket).digest("hex").slice(0, 12);
+  const fileName = `${platform}-${bucketPreview}-${bucketHash}-${collection.collectedAt.replace(/[:.]/g, "-")}.json`;
   const absoluteFile = path.join(ARCHIVE_DIR, datePrefix, fileName);
   await fs.mkdir(path.dirname(absoluteFile), { recursive: true });
   await fs.writeFile(absoluteFile, JSON.stringify(collection, null, 2), "utf8");
