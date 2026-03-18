@@ -160,8 +160,11 @@ export type GrowthTrendStatsSummary = {
   scheduler: Array<TrendSchedulerState>;
 };
 
-const LEGACY_STORE_FILE = path.resolve(process.cwd(), ".cache", "growth-trends.json");
-const STORE_DIR = path.resolve(process.cwd(), ".cache", "growth");
+const DEFAULT_STORE_ROOT = path.resolve(process.cwd(), ".cache");
+const STORE_DIR = path.resolve(process.env.GROWTH_STORE_DIR || path.join(DEFAULT_STORE_ROOT, "growth"));
+const LEGACY_STORE_FILE = path.resolve(
+  process.env.GROWTH_LEGACY_STORE_FILE || path.join(path.dirname(STORE_DIR), "growth-trends.json"),
+);
 const STORE_FILE = path.join(STORE_DIR, "current.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const EXPORT_DIR = path.join(STORE_DIR, "exports");
@@ -298,6 +301,15 @@ export async function readTrendStore(): Promise<TrendStoreFile> {
   if (legacy) {
     await fs.writeFile(STORE_FILE, JSON.stringify(legacy, null, 2), "utf8");
     return legacy;
+  }
+
+  const defaultStoreFile = path.join(DEFAULT_STORE_ROOT, "growth", "current.json");
+  if (defaultStoreFile !== STORE_FILE) {
+    const fallback = await readRawStoreFile(defaultStoreFile);
+    if (fallback) {
+      await fs.writeFile(STORE_FILE, JSON.stringify(fallback, null, 2), "utf8");
+      return fallback;
+    }
   }
   return createEmptyStore();
 }
