@@ -445,18 +445,68 @@ function getGeminiConfig(format: ReturnType<typeof normalizeResponseFormat>) {
   return {};
 }
 
+function isGemini31Model(modelName: string) {
+  return /gemini-3\.1/i.test(modelName);
+}
+
+function isGemini25Model(modelName: string) {
+  return /gemini-2\.5/i.test(modelName);
+}
+
+function readNumberEnv(name: string): number | undefined {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function readStringEnv(name: string): string | undefined {
+  const raw = String(process.env[name] || "").trim();
+  return raw || undefined;
+}
+
+function buildGeminiGenerationConfig(
+  modelName: string,
+  format: ReturnType<typeof normalizeResponseFormat>,
+  maxOutputTokens?: number,
+) {
+  const config: Record<string, unknown> = {
+    ...getGeminiConfig(format),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+  };
+
+  if (isGemini31Model(modelName)) {
+    config.temperature = readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.2;
+    config.topP = readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
+    config.thinkingConfig = {
+      includeThoughts: false,
+      thinkingLevel: readStringEnv("VERTEX_GEMINI_31_THINKING_LEVEL") ?? "MEDIUM",
+    };
+    return config;
+  }
+
+  if (isGemini25Model(modelName)) {
+    config.temperature = readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.5;
+    config.topP = readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
+    config.thinkingBudget = readNumberEnv("VERTEX_GEMINI_25_THINKING_BUDGET") ?? 1024;
+    return config;
+  }
+
+  return config;
+}
+
 async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target: LlmTarget): Promise<InvokeResult> {
   const ai = new GoogleGenAI({ apiKey: target.apiKey });
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
+  const maxOutputTokens = params.maxTokens || params.max_tokens;
 
   const response = await ai.models.generateContent({
     model: target.modelName,
     contents,
     config: {
       ...(systemInstruction ? { systemInstruction } : {}),
-      ...getGeminiConfig(normalizedResponseFormat),
-      ...(params.maxTokens || params.max_tokens ? { maxOutputTokens: params.maxTokens || params.max_tokens } : {}),
+      ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
     },
   });
 
@@ -495,6 +545,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
   const accessToken = await getVertexAccessToken();
+  const maxOutputTokens = params.maxTokens || params.max_tokens;
 
   const response = await fetch(String(target.apiUrl), {
     method: "POST",
@@ -505,12 +556,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
-      generationConfig: {
-        ...(normalizedResponseFormat && normalizedResponseFormat.type !== "text"
-          ? { responseMimeType: "application/json" }
-          : {}),
-        ...(params.maxTokens || params.max_tokens ? { maxOutputTokens: params.maxTokens || params.max_tokens } : {}),
-      },
+      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
     }),
   });
 

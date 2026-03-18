@@ -100,7 +100,7 @@ describe("collectPlatformTrends kuaishou", () => {
     expect(result.stats.bucketCounts.kuaishou_search_feed).toBeGreaterThanOrEqual(searchCalls.length);
   });
 
-  it("skips search when private feed already yields enough items", async () => {
+  it("continues search expansion even when private feed already yields enough items", async () => {
     vi.resetModules();
     fetchCalls.length = 0;
 
@@ -125,7 +125,23 @@ describe("collectPlatformTrends kuaishou", () => {
       }
 
       if (url.includes("/rest/v/search/feed")) {
-        throw new Error("search/feed should not run when private feed is sufficient");
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              list: [
+                {
+                  id: "search-after-private",
+                  caption: "search expansion item",
+                  timestamp: Date.now(),
+                  likeCount: "4",
+                  commentCount: "1",
+                },
+              ],
+              pcursor: "",
+            },
+          }),
+        } as Response;
       }
 
       throw new Error(`Unexpected fetch: ${url}`);
@@ -138,9 +154,9 @@ describe("collectPlatformTrends kuaishou", () => {
     const privateCalls = fetchCalls.filter((call) => call.url.includes("/rest/v/profile/private/list"));
 
     expect(privateCalls).toHaveLength(1);
-    expect(searchCalls).toHaveLength(0);
-    expect(result.items.length).toBeGreaterThanOrEqual(12);
-    expect(result.notes.some((note) => note.includes("Skipped Kuaishou search/feed"))).toBe(true);
+    expect(searchCalls.length).toBeGreaterThan(0);
+    expect(result.items.length).toBeGreaterThanOrEqual(13);
+    expect(result.notes.some((note) => note.includes("search/feed will continue to expand"))).toBe(true);
   });
 
   it("keeps older kuaishou items when 365-day fallback is needed", async () => {
@@ -170,7 +186,15 @@ describe("collectPlatformTrends kuaishou", () => {
       }
 
       if (url.includes("/rest/v/search/feed")) {
-        throw new Error("search/feed should not run when private feed is sufficient");
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              list: [],
+              pcursor: "",
+            },
+          }),
+        } as Response;
       }
 
       throw new Error(`Unexpected fetch: ${url}`);

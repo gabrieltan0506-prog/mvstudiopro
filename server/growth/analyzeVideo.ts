@@ -143,6 +143,28 @@ function normalizeFailureReason(error: unknown) {
   return String(error || "未知错误");
 }
 
+function formatFrameEvidence(
+  frameAnalyses: Array<{
+    frameIndex: number;
+    timestamp: number;
+    frameScore: number;
+    analysis: { detail: string };
+  }>,
+  mode: "strong" | "weak",
+  limit: number,
+) {
+  const sorted = [...frameAnalyses].sort((a, b) =>
+    mode === "strong"
+      ? b.frameScore - a.frameScore
+      : a.frameScore - b.frameScore,
+  );
+
+  return sorted
+    .slice(0, limit)
+    .map((item) => `第${item.frameIndex + 1}帧 ${item.timestamp.toFixed(1)}s（${item.frameScore}分）：${item.analysis.detail}`)
+    .join("\n");
+}
+
 function buildVideoFallbackResult(params: {
   mimeType: string;
   context?: string;
@@ -195,11 +217,8 @@ export async function analyzeVideo(params: {
       console.warn("[growth.analyzeVideo] transcript fallback:", error);
       return "";
     });
-    const frameHighlights = multiFrame.frameAnalyses
-      .filter((item) => !item.dropped)
-      .slice(0, 6)
-      .map((item) => `第${item.frameIndex + 1}帧 ${item.timestamp.toFixed(1)}s：${item.analysis.detail}`)
-      .join("\n");
+    const frameHighlights = formatFrameEvidence(multiFrame.frameAnalyses, "strong", 8);
+    const weakFrameHighlights = formatFrameEvidence(multiFrame.frameAnalyses, "weak", 4);
 
     const response = await invokeLLM({
       model: "pro",
@@ -208,12 +227,15 @@ export async function analyzeVideo(params: {
       messages: [
         {
           role: "system",
-          content: `你是一位创作者商业增长顾问。请根据视频多帧分析结果和转写内容，返回 Creator Growth Camp 的统一分析结构。
+          content: `你是一位资深短视频商业策略顾问兼生成式视频导演。请根据视频多帧分析、时间点证据、转写内容和用户身份，返回 Creator Growth Camp 的统一分析结构。
 
 注意：
 0. 必须优先依据“多帧综合摘要 / 亮点 / 改进 / 帧细节 / 转写”做判断，不能只根据业务背景给建议。summary、strengths、improvements 里至少要有一半内容直接来自画面或转写证据。
 1. 如果没有音轨或转写为空，只能依据关键帧和画面结构做判断，不能编造口播内容。
 2. 不要输出互相矛盾的建议。低成熟度阶段先给短期验证路径，不要同时堆多个商业化方向。
+3. 严禁输出与用户身份无关的泛模板路径，例如户外运动/美食博主不应该默认给知识付费、社群会员。商业方向必须直接解释“为什么适合这个用户”和“为什么是这条视频”。
+4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议、至少 2 个弱帧参考，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
+5. 输出要像真人顾问在给初步解决方案，不要只说“讲清楚、重构、优化”，而要说明怎么改、改哪一秒、为什么这样改。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -241,7 +263,36 @@ summary 必须覆盖：
   "strengths": ["string"],
   "improvements": ["string"],
   "platforms": ["string"],
-  "summary": "string"
+  "summary": "string",
+  "titleSuggestions": ["string"],
+  "creatorCenterSignals": ["string"],
+  "timestampSuggestions": [
+    {
+      "timestamp": "00:19",
+      "issue": "string",
+      "fix": "string",
+      "opportunity": "string"
+    }
+  ],
+  "weakFrameReferences": [
+    {
+      "timestamp": "00:08",
+      "reason": "string",
+      "fix": "string"
+    }
+  ],
+  "commercialAngles": [
+    {
+      "title": "string",
+      "scenario": "string",
+      "whyItFits": "string",
+      "brands": ["string"],
+      "execution": "string",
+      "hook": "string",
+      "veoPrompt": "string"
+    }
+  ],
+  "followUpPrompt": "string"
 }`,
         },
         {
@@ -256,7 +307,8 @@ summary 必须覆盖：
                 `多帧综合摘要：${multiFrame.summary}`,
                 `亮点：${multiFrame.highlights.join("；")}`,
                 `改进：${multiFrame.improvements.join("；")}`,
-                `帧细节：\n${frameHighlights}`,
+                `强势帧证据：\n${frameHighlights}`,
+                `弱势帧证据（必须用于优化建议）：\n${weakFrameHighlights}`,
                 transcript ? `口播/字幕转写：\n${transcript.slice(0, 5000)}` : "口播/字幕转写：暂无或转写失败",
               ].join("\n\n"),
             },

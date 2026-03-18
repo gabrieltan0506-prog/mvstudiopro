@@ -42,7 +42,18 @@ import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
-import { growthAnalysisScoresSchema, growthCampModelSchema } from "@shared/growth";
+import {
+  growthAnalysisScoresSchema,
+  growthBusinessInsightSchema,
+  growthCampModelSchema,
+  growthCreationAssistSchema,
+  growthDashboardConsoleSchema,
+  growthHandoffSchema,
+  growthMonetizationTrackSchema,
+  growthPlanStepSchema,
+  growthPlatformRecommendationSchema,
+  growthSnapshotSchema,
+} from "@shared/growth";
 
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
@@ -61,6 +72,225 @@ function getCollectionBucketCounts(items: Array<{ bucket?: string }> = []) {
     counts[bucket] = (counts[bucket] || 0) + 1;
   }
   return counts;
+}
+
+function resolveGrowthCampFinalModel(modelName?: string) {
+  return String(
+    modelName
+      || process.env.GROWTH_CAMP_FINAL_MODEL
+      || process.env.VERTEX_GROWTH_FINAL_MODEL
+      || "gemini-2.5-pro",
+  ).trim() || "gemini-2.5-pro";
+}
+
+function buildDouyinCreatorCenterStats(store: Awaited<ReturnType<typeof readTrendStore>>) {
+  const douyinCollection = store.collections?.douyin;
+  const douyinCurrentBucketCounts =
+    douyinCollection?.stats?.bucketCounts ||
+    getCollectionBucketCounts(douyinCollection?.items || []);
+  const douyinCreatorCenterBuckets = Object.entries(douyinCurrentBucketCounts)
+    .filter(([bucket]) => isDouyinCreatorCenterBucket(bucket))
+    .sort((left, right) => right[1] - left[1])
+    .map(([bucket, currentTotal]) => ({
+      bucket,
+      currentTotal,
+      archivedTotal: 0,
+    }));
+  const douyinCreatorCenterBucketMap = new Map(
+    douyinCreatorCenterBuckets.map((item) => [item.bucket, item]),
+  );
+
+  for (const entry of store.archiveIndex || []) {
+    if (entry.platform !== "douyin") continue;
+    for (const [bucket, archivedCount] of Object.entries(entry.bucketCounts || {})) {
+      if (!isDouyinCreatorCenterBucket(bucket)) continue;
+      const current = douyinCreatorCenterBucketMap.get(bucket) || {
+        bucket,
+        currentTotal: 0,
+        archivedTotal: 0,
+      };
+      current.archivedTotal += archivedCount;
+      douyinCreatorCenterBucketMap.set(bucket, current);
+    }
+  }
+
+  const douyinCreatorCenterBucketList = Array.from(douyinCreatorCenterBucketMap.values())
+    .sort((left, right) => right.currentTotal - left.currentTotal || right.archivedTotal - left.archivedTotal);
+  const rawDouyinCreatorNotes = (douyinCollection?.notes || []).filter((note) => /Douyin creator center|Douyin creator index/i.test(note));
+  const douyinCreatorNotes = rawDouyinCreatorNotes.filter((note) => {
+    if (/itemBase .* responded with 404/i.test(note)) return false;
+    if (/returned encrypted payload\./i.test(note) && /itemBase|keyword valid-date|keyword trend|keyword interpretation|brand lines|brand radar|brand cycles/i.test(note)) {
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    currentTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.currentTotal, 0),
+    archivedTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.archivedTotal, 0),
+    buckets: douyinCreatorCenterBucketList,
+    notes: douyinCreatorNotes.slice(-12),
+    diagnostics: {
+      hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
+      hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
+      hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
+      pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
+    },
+  };
+}
+
+const growthSnapshotPersonalizationSchema = z.object({
+  overview: z.object({
+    summary: z.string(),
+    trendNarrative: z.string(),
+    nextCollectionPlan: z.string(),
+  }),
+  monetizationTracks: z.array(growthMonetizationTrackSchema),
+  platformRecommendations: z.array(growthPlatformRecommendationSchema),
+  businessInsights: z.array(growthBusinessInsightSchema),
+  dashboardConsole: growthDashboardConsoleSchema,
+  growthPlan: z.array(growthPlanStepSchema),
+  creationAssist: growthCreationAssistSchema,
+  growthHandoff: growthHandoffSchema,
+  statusNotes: z.array(z.string()).default([]),
+});
+
+async function personalizeGrowthSnapshot(params: {
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+  analysis: z.infer<typeof growthAnalysisScoresSchema>;
+  context?: string;
+  requestedPlatforms: string[];
+  modelName?: string;
+  store: Awaited<ReturnType<typeof readTrendStore>>;
+}) {
+  const { snapshot, analysis, context, requestedPlatforms, modelName, store } = params;
+  const backfillPlatforms = (store.backfill?.platforms || [])
+    .filter((item) => requestedPlatforms.includes(item.platform))
+    .map((item) => ({
+      platform: item.platform,
+      currentTotal: item.currentTotal || 0,
+      archivedTotal: item.archivedTotal || 0,
+      status: item.status,
+      plateauCount: item.plateauCount || 0,
+    }));
+  const creatorCenterStats = buildDouyinCreatorCenterStats(store);
+  const creatorCenterEvidence = requestedPlatforms.includes("douyin")
+    ? {
+        currentTotal: creatorCenterStats.currentTotal,
+        archivedTotal: creatorCenterStats.archivedTotal,
+        buckets: creatorCenterStats.buckets.slice(0, 6),
+      }
+    : null;
+  const collectionEvidence = requestedPlatforms.map((platform) => {
+    const collection = store.collections?.[platform as keyof typeof store.collections];
+    const bucketCounts = collection?.stats?.bucketCounts || getCollectionBucketCounts(collection?.items || []);
+    return {
+      platform,
+      collectedAt: collection?.collectedAt || null,
+      itemCount: collection?.items?.length || 0,
+      sampleTitles: (collection?.items || []).slice(0, 8).map((item) => item.title),
+      topBuckets: Object.entries(bucketCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 5)
+        .map(([bucket, count]) => ({ bucket, count })),
+      notes: (collection?.notes || []).slice(0, 5),
+    };
+  });
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: resolveGrowthCampFinalModel(modelName),
+    messages: [
+      {
+        role: "system",
+        content: `你是 Creator Growth Camp 的首席商业策略顾问。你的任务不是套模板，而是基于上传内容、多模态分析结果、平台数据和历史沉淀，产出“千人千面”的结构化商业洞察。
+
+硬性要求：
+1. 你必须优先依据上传内容分析与平台证据，不得复读通用模板。
+2. 如果用户身份与素材主题跨域，也要判断“这条素材怎样桥接到用户业务”或“哪些方向当前不成立”，不能偷懒给泛商业化答案。
+3. 平台 currentTotal / archivedTotal 代表当前窗口与历史沉淀。数据弱的平台只能弱引用，不能高置信推荐。
+4. 严禁把“知识付费、社群会员”当默认答案。只有证据充分才允许保留。
+5. 输出必须保留结构化字段，方便前端直接展示；不要写成大段散文。
+6. dashboardConsole、businessInsights、growthPlan、creationAssist 必须相互一致，不能各说各话。
+7. 对于当前不成立的方向，要明确在 businessInsights 或 growthPlan 中给出“不要做”的判断。
+8. platformRecommendations 必须站在用户视角写，不要暴露后台逻辑、平台分数、中位数、均值、漏斗、内部排序机制。
+9. 对于首发平台和备选平台，请给出 3 到 5 个可直接执行的选题方向。每个选题要包含：
+   - title: 用户可以直接拿去继续创作的选题标题
+   - angle: 这个选题为什么适合当前素材和当前业务
+   - expansion: 这个选题后续如何拓展成图文、短视频或系列内容
+10. playbook 只写“这个平台怎么发”，不要写平台内部数据或工程口径。
+11. 你会收到 baseSnapshot 里的行业、趋势和平台样本，它们只能作为背景证据，绝不能继承其中已有的推荐结论、旧商业路径或旧 7 天计划。
+12. 如果 analysis.commercialAngles、titleSuggestions、followUpPrompt 已经给出跨域桥接或商业延展，它们优先级高于任何旧 snapshot 判断。
+13. 对于“健身/户外/旅行/美食/美妆”等人设遇到“比赛、赛事、运动场面、风景、社会事件”等跨域素材，你必须先回答“怎么借这条素材切入原业务”，而不是直接跳到卖课、社群或咨询。
+14. 如果没有直接成交证据，就先给“内容桥接方案、品牌合作切口、内容延展路线”，不要强行给高客单成交路径。
+15. overview.summary 必须像真正的结论，不能出现“小红书先发、社群会员先跑、拿下老板”这类套话；要直接说明这条素材对当前业务的可用方式。
+
+只返回 JSON。`,
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              context: String(context || "").trim(),
+              requestedPlatforms,
+              analysis,
+              baseSnapshot: {
+                industryTemplate: snapshot.industryTemplate,
+                overview: snapshot.overview,
+                platformSnapshots: snapshot.platformSnapshots,
+                topicLibrary: snapshot.topicLibrary.slice(0, 8),
+                trendLayers: snapshot.trendLayers.slice(0, 8),
+                opportunities: snapshot.opportunities.slice(0, 6),
+                structurePatterns: snapshot.structurePatterns.slice(0, 6),
+              },
+              commercialSeeds: {
+                titleSuggestions: analysis.titleSuggestions || [],
+                commercialAngles: analysis.commercialAngles || [],
+                creatorCenterSignals: analysis.creatorCenterSignals || [],
+                weakFrameReferences: analysis.weakFrameReferences || [],
+                timestampSuggestions: analysis.timestampSuggestions || [],
+                followUpPrompt: analysis.followUpPrompt || "",
+              },
+              platformEvidence: {
+                selectedWindowDays: store.backfill?.selectedWindowDays || snapshot.status.windowDays,
+                currentRound: store.backfill?.currentRound || 0,
+                currentVsArchiveByPlatform: backfillPlatforms,
+                creatorCenterEvidence,
+                collections: collectionEvidence,
+              },
+            }, null, 2),
+          },
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  return growthSnapshotPersonalizationSchema.parse(parsed);
+}
+
+function buildGrowthDataEvidenceNotes(params: {
+  requestedPlatforms: string[];
+  store: Awaited<ReturnType<typeof readTrendStore>>;
+}) {
+  const platformRows = (params.store.backfill?.platforms || [])
+    .filter((item) => params.requestedPlatforms.includes(item.platform))
+    .map((item) => `${item.platform}: 当前 ${item.currentTotal || 0} / 历史 ${item.archivedTotal || 0}`)
+    .slice(0, 6);
+  const creatorCenter = buildDouyinCreatorCenterStats(params.store);
+  const notes = [
+    platformRows.length
+      ? `平台数据证据：${platformRows.join("；")}。`
+      : "",
+  ];
+  if (params.requestedPlatforms.includes("douyin") && (creatorCenter.currentTotal || creatorCenter.archivedTotal)) {
+    notes.push(`抖音创作者中心证据：当前 ${creatorCenter.currentTotal} / 历史 ${creatorCenter.archivedTotal}。`);
+  }
+  return notes.filter(Boolean);
 }
 
 function buildFallbackFrameAnalysis(context?: string) {
@@ -447,17 +677,15 @@ export const appRouter = router({
           isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
         );
 
-        let collections = store.collections;
-        let errors: Partial<Record<typeof requestedPlatforms[number], string>> = {};
-
-        if (stalePlatforms.length) {
-          const collected = await collectTrendPlatforms(stalePlatforms);
-          collections = (await mergeTrendCollections(collected.collections)).collections;
-          errors = collected.errors as Partial<Record<typeof requestedPlatforms[number], string>>;
-        }
+        const collections = store.collections;
+        const errors: Partial<Record<typeof requestedPlatforms[number], string>> = {};
+        const effectiveStore = {
+          ...store,
+          collections,
+        };
 
         const hasAnyLiveCollection = requestedPlatforms.some((platform) => collections[platform]?.items.length);
-        const snapshot = hasAnyLiveCollection
+        const baseSnapshot = hasAnyLiveCollection
           ? buildGrowthSnapshotFromCollections({
               analysis: input.analysis,
               context: input.context,
@@ -470,11 +698,82 @@ export const appRouter = router({
               context: input.context,
               requestedPlatforms,
             });
+        const personalized = await personalizeGrowthSnapshot({
+          snapshot: baseSnapshot,
+          analysis: input.analysis,
+          context: input.context,
+          requestedPlatforms,
+          modelName: input.modelName,
+          store: effectiveStore,
+        }).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
+          return null;
+        });
+        const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
+          requestedPlatforms,
+          store: effectiveStore,
+        });
+        const snapshot = personalized
+          ? growthSnapshotSchema.parse({
+              ...baseSnapshot,
+              overview: personalized.overview,
+              monetizationTracks: personalized.monetizationTracks,
+              platformRecommendations: personalized.platformRecommendations,
+              businessInsights: personalized.businessInsights,
+              dashboardConsole: personalized.dashboardConsole,
+              growthPlan: personalized.growthPlan,
+              creationAssist: personalized.creationAssist,
+              growthHandoff: personalized.growthHandoff,
+              status: {
+                ...baseSnapshot.status,
+                notes: [
+                  ...baseSnapshot.status.notes,
+                  ...(stalePlatforms.length
+                    ? [`部分平台数据仍在后台补位中：${stalePlatforms.join("、")}。本次先基于已沉淀数据生成结果，不阻塞报告返回。`]
+                    : []),
+                  ...dataEvidenceNotes,
+                  ...personalized.statusNotes,
+                ].slice(0, 16),
+              },
+            })
+          : growthSnapshotSchema.parse({
+              ...baseSnapshot,
+              status: {
+                ...baseSnapshot.status,
+                notes: [
+                  ...baseSnapshot.status.notes,
+                  ...(stalePlatforms.length
+                    ? [`部分平台数据仍在后台补位中：${stalePlatforms.join("、")}。本次先基于已沉淀数据生成结果，不阻塞报告返回。`]
+                    : []),
+                  ...dataEvidenceNotes,
+                ].slice(0, 16),
+              },
+            });
 
         return {
           success: true,
           source: snapshot.status.source,
           snapshot,
+          debug: {
+            route: "mvAnalysis.getGrowthSnapshot",
+            modelName: resolveGrowthCampFinalModel(input.modelName),
+            requestedPlatforms,
+            stalePlatforms,
+            hasAnyLiveCollection,
+            personalizedApplied: Boolean(personalized),
+            baseSource: baseSnapshot.status.source,
+            finalSource: snapshot.status.source,
+            windowDays: snapshot.status.windowDays,
+            notesCount: snapshot.status.notes.length,
+            trendLayerCount: snapshot.trendLayers.length,
+            topicLibraryCount: snapshot.topicLibrary.length,
+            platformSnapshotCount: snapshot.platformSnapshots.length,
+            monetizationTrackCount: snapshot.monetizationTracks.length,
+            recommendationCount: snapshot.platformRecommendations.length,
+            businessInsightCount: snapshot.businessInsights.length,
+            growthPlanCount: snapshot.growthPlan.length,
+            creationAssetExtensionCount: snapshot.creationAssist.assetExtensions.length,
+          },
         };
       }),
 
@@ -483,51 +782,7 @@ export const appRouter = router({
         const smtp = getSmtpStatus();
         const scheduler = await readTrendStore();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
-        const douyinCollection = scheduler.collections?.douyin;
-        const douyinCurrentBucketCounts =
-          douyinCollection?.stats?.bucketCounts ||
-          getCollectionBucketCounts(douyinCollection?.items || []);
-        const douyinCreatorCenterBuckets = Object.entries(douyinCurrentBucketCounts)
-          .filter(([bucket]) => isDouyinCreatorCenterBucket(bucket))
-          .sort((left, right) => right[1] - left[1])
-          .map(([bucket, currentTotal]) => ({
-            bucket,
-            currentTotal,
-            archivedTotal: 0,
-          }));
-        const douyinCreatorCenterBucketMap = new Map(
-          douyinCreatorCenterBuckets.map((item) => [item.bucket, item]),
-        );
-
-        for (const entry of scheduler.archiveIndex || []) {
-          if (entry.platform !== "douyin") continue;
-          for (const [bucket, archivedCount] of Object.entries(entry.bucketCounts || {})) {
-            if (!isDouyinCreatorCenterBucket(bucket)) continue;
-            const current = douyinCreatorCenterBucketMap.get(bucket) || {
-              bucket,
-              currentTotal: 0,
-              archivedTotal: 0,
-            };
-            current.archivedTotal += archivedCount;
-            douyinCreatorCenterBucketMap.set(bucket, current);
-          }
-        }
-
-        const douyinCreatorCenterBucketList = Array.from(douyinCreatorCenterBucketMap.values())
-          .sort((left, right) => right.currentTotal - left.currentTotal || right.archivedTotal - left.archivedTotal);
-        const douyinCreatorNotes = (douyinCollection?.notes || []).filter((note) => /Douyin creator center|Douyin creator index/i.test(note));
-        const douyinCreatorCenterStats = {
-          currentTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.currentTotal, 0),
-          archivedTotal: douyinCreatorCenterBucketList.reduce((sum, item) => sum + item.archivedTotal, 0),
-          buckets: douyinCreatorCenterBucketList,
-          notes: douyinCreatorNotes.slice(-12),
-          diagnostics: {
-            hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
-            hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
-            hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
-            pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
-          },
-        };
+        const douyinCreatorCenterStats = buildDouyinCreatorCenterStats(scheduler);
 
         return {
           success: true,

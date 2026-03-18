@@ -2,6 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
 
+function parseCsvEnv(name: string) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 const GLOBAL_SEEDS = [
   "商业咨询",
   "教育培训",
@@ -183,16 +190,27 @@ function loadCachedTrendStore(): CachedTrendStore | null {
   }
 }
 
+function getCrossPlatformSourceItemLimit(platform: GrowthPlatform) {
+  if (platform === "kuaishou") return 600;
+  return 200;
+}
+
+function getCrossPlatformSeedCap(platform: GrowthPlatform) {
+  if (platform === "kuaishou") return 240;
+  return 120;
+}
+
 function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
   const store = loadCachedTrendStore();
   if (!store?.collections) return [];
 
   const collected: string[] = [];
   const sourcePlatforms = SIGNAL_SOURCE_PLATFORMS.filter((item) => item !== platform);
+  const sourceItemLimit = getCrossPlatformSourceItemLimit(platform);
   for (const sourcePlatform of sourcePlatforms) {
     const collection = store.collections[sourcePlatform];
     const items = Array.isArray(collection?.items) ? collection.items : [];
-    for (const item of items.slice(0, 200)) {
+    for (const item of items.slice(0, sourceItemLimit)) {
       collected.push(...splitCandidateTerms(item.title || ""));
       collected.push(...splitCandidateTerms(item.author || ""));
       for (const tag of item.tags || []) collected.push(...splitCandidateTerms(tag));
@@ -200,7 +218,24 @@ function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
     }
   }
 
-  return Array.from(new Set(collected)).slice(0, 120);
+  return Array.from(new Set(collected)).slice(0, getCrossPlatformSeedCap(platform));
+}
+
+function buildCrossPlatformAuthorSeeds(platform: GrowthPlatform) {
+  const store = loadCachedTrendStore();
+  if (!store?.collections) return [];
+
+  const authorTerms: string[] = [];
+  const sourcePlatforms = SIGNAL_SOURCE_PLATFORMS.filter((item) => item !== platform);
+  for (const sourcePlatform of sourcePlatforms) {
+    const collection = store.collections[sourcePlatform];
+    const items = Array.isArray(collection?.items) ? collection.items : [];
+    for (const item of items.slice(0, sourcePlatform === "douyin" ? 400 : 250)) {
+      authorTerms.push(...splitCandidateTerms(item.author || ""));
+    }
+  }
+
+  return Array.from(new Set(authorTerms)).slice(0, platform === "kuaishou" ? 80 : 40);
 }
 
 export function getPlatformSeeds(platform: GrowthPlatform) {
@@ -216,6 +251,19 @@ export function getPlatformSeeds(platform: GrowthPlatform) {
   return Array.from(
     new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
   );
+}
+
+export function getKuaishouDiscoveryKeywords() {
+  const envSeeds = parseCsvEnv("KUAISHOU_DISCOVERY_KEYWORDS");
+  const platformSeeds = getPlatformSeeds("kuaishou");
+  const authorSeeds = buildCrossPlatformAuthorSeeds("kuaishou");
+  const prioritized = [
+    ...envSeeds,
+    ...authorSeeds,
+    ...platformSeeds,
+  ].filter(shouldKeepSeed);
+
+  return Array.from(new Set(prioritized)).slice(0, 320);
 }
 
 export function getKuaishouCreatorSeeds() {

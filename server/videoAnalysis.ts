@@ -1,18 +1,12 @@
 /**
  * 视频多帧分析模块
  *
- * 根据视频时长动态抽帧：
- * - ≤ 5 分钟：抽取 10 帧，去掉最低分 1 帧，取 9 帧平均分
- * - 5-10 分钟：抽取 12 帧，去掉最低分 2 帧，取 10 帧平均分
- * - > 10 分钟：拒绝上传，提示裁剪为两段
+ * 抽帧策略：
+ * - 基础层：按 3 秒 1 帧均匀抽样，使用向上取整
+ * - 高潮层：识别张力最高的时间区间后，对该区间按 1 秒 1 帧补采样
+ * - 所有帧都参与分析，不再丢弃低分帧
  *
- * 分析维度：
- * - 开场吸引力（前 2 帧）
- * - 画面构图与色彩（所有帧）
- * - 中段节奏感（中间帧）
- * - 高潮表现力（后半段帧）
- * - 结尾收束（最后 2 帧）
- * - 整体一致性（全局比较）
+ * 低分帧会保留给 Growth Camp 作为“弱帧参考”，提示用户具体在哪几秒优化。
  */
 
 import { invokeLLM } from "./_core/llm";
@@ -29,17 +23,16 @@ const execAsync = promisify(exec);
 // ─── 常量 ──────────────────────────────────────────
 const MAX_DURATION_SECONDS = 600; // 10 分钟
 const SHORT_VIDEO_THRESHOLD = 300; // 5 分钟
-const SHORT_VIDEO_FRAMES = 10;
-const LONG_VIDEO_FRAMES = 12;
-const SHORT_VIDEO_DROP = 1; // ≤5分钟去掉最低1帧
-const LONG_VIDEO_DROP = 2;  // 5-10分钟去掉最低2帧
+const BASE_FRAME_INTERVAL_SECONDS = 3;
+const HIGHLIGHT_PADDING_SECONDS = 2;
+const HIGHLIGHT_MIN_SPAN_SECONDS = 4;
 
 // ─── 类型定义 ──────────────────────────────────────
 export interface FrameAnalysis {
   frameIndex: number;
   timestamp: number; // 秒
   imageUrl: string;
-  dropped: boolean;  // 是否被去除（最低分帧）
+  dropped: boolean;  // 为兼容旧链路保留，当前固定为 false
   frameScore: number; // 该帧的综合分数
   analysis: {
     composition: number;     // 构图 0-100
@@ -54,10 +47,12 @@ export interface FrameAnalysis {
 
 export interface ScoringStrategy {
   totalExtracted: number;   // 抽取总帧数
-  droppedCount: number;     // 去除帧数
+  droppedCount: number;     // 兼容旧口径，当前固定为 0
   scoringFrames: number;    // 计分帧数
   durationCategory: "short" | "long"; // 时长类别
   durationSeconds: number;
+  baseFrameIntervalSeconds: number;
+  highlightRange?: { start: number; end: number; extraFrames: number };
 }
 
 export interface MultiFrameResult {
@@ -111,23 +106,69 @@ export function validateDuration(durationSeconds: number): {
   }
 
   const isShort = durationSeconds <= SHORT_VIDEO_THRESHOLD;
+  const baseFrames = Math.ceil(durationSeconds / BASE_FRAME_INTERVAL_SECONDS);
   const strategy: ScoringStrategy = {
-    totalExtracted: isShort ? SHORT_VIDEO_FRAMES : LONG_VIDEO_FRAMES,
-    droppedCount: isShort ? SHORT_VIDEO_DROP : LONG_VIDEO_DROP,
-    scoringFrames: isShort
-      ? SHORT_VIDEO_FRAMES - SHORT_VIDEO_DROP
-      : LONG_VIDEO_FRAMES - LONG_VIDEO_DROP,
+    totalExtracted: baseFrames,
+    droppedCount: 0,
+    scoringFrames: baseFrames,
     durationCategory: isShort ? "short" : "long",
     durationSeconds,
+    baseFrameIntervalSeconds: BASE_FRAME_INTERVAL_SECONDS,
   };
 
   return { valid: true, strategy };
 }
 
 // ─── 从视频中抽取帧 ────────────────────────────────
-async function extractFrames(
+function buildBaseTimestamps(duration: number): number[] {
+  const totalFrames = Math.ceil(duration / BASE_FRAME_INTERVAL_SECONDS);
+  if (totalFrames <= 1) {
+    return [Math.max(0, Math.min(duration, duration / 2 || 0.1))];
+  }
+
+  const startOffset = Math.min(0.5, duration * 0.02);
+  const endOffset = Math.min(0.5, duration * 0.02);
+  const usableDuration = Math.max(0.1, duration - startOffset - endOffset);
+  const interval = usableDuration / Math.max(1, totalFrames - 1);
+  return Array.from({ length: totalFrames }, (_, index) =>
+    Number((startOffset + interval * index).toFixed(3))
+  );
+}
+
+function buildHighlightTimestamps(
+  frameAnalyses: FrameAnalysis[],
+  duration: number,
+  existingTimestamps: number[]
+): { timestamps: number[]; range?: { start: number; end: number; extraFrames: number } } {
+  if (frameAnalyses.length === 0) {
+    return { timestamps: [] };
+  }
+
+  const strongestFrame = [...frameAnalyses].sort((a, b) => b.frameScore - a.frameScore)[0];
+  const start = Math.max(0, Math.floor(strongestFrame.timestamp) - HIGHLIGHT_PADDING_SECONDS);
+  const end = Math.min(
+    Math.ceil(duration),
+    Math.max(start + HIGHLIGHT_MIN_SPAN_SECONDS, Math.ceil(strongestFrame.timestamp) + HIGHLIGHT_PADDING_SECONDS)
+  );
+
+  const extra = new Set<number>();
+  for (let second = start; second <= end; second += 1) {
+    const exists = existingTimestamps.some((ts) => Math.abs(ts - second) < 0.45);
+    if (!exists) {
+      extra.add(Number(second.toFixed(3)));
+    }
+  }
+
+  return {
+    timestamps: Array.from(extra).sort((a, b) => a - b),
+    range: extra.size > 0 ? { start, end, extraFrames: extra.size } : undefined,
+  };
+}
+
+async function extractFramesAtTimestamps(
   videoPath: string,
-  frameCount: number,
+  timestamps: number[],
+  label: string,
   onProgress?: ProgressCallback
 ): Promise<{ framePaths: string[]; duration: number }> {
   const duration = await getVideoDuration(videoPath);
@@ -137,17 +178,6 @@ async function extractFrames(
   const validation = validateDuration(duration);
   if (!validation.valid) {
     throw new Error(validation.error);
-  }
-
-  // 计算均匀分布的时间点（避开首尾各 0.5 秒）
-  const startOffset = Math.min(0.5, duration * 0.02);
-  const endOffset = Math.min(0.5, duration * 0.02);
-  const usableDuration = duration - startOffset - endOffset;
-  const interval = usableDuration / (frameCount - 1);
-
-  const timestamps: number[] = [];
-  for (let i = 0; i < frameCount; i++) {
-    timestamps.push(startOffset + interval * i);
   }
 
   // 创建临时目录
@@ -163,7 +193,7 @@ async function extractFrames(
     onProgress?.(
       "extracting",
       Math.round(((i + 1) / timestamps.length) * 100),
-      `正在抽取第 ${i + 1}/${timestamps.length} 帧（${ts.toFixed(1)}s）`
+      `正在抽取${label}第 ${i + 1}/${timestamps.length} 帧（${ts.toFixed(1)}s）`
     );
 
     await execAsync(
@@ -316,39 +346,13 @@ function calculateFrameScore(analysis: FrameAnalysis["analysis"]): number {
   );
 }
 
-// ─── 去除最低分帧 + 标记 ──────────────────────────
-function dropLowestFrames(
-  frameAnalyses: FrameAnalysis[],
-  dropCount: number
-): FrameAnalysis[] {
-  // 计算每帧的综合分数
-  const withScores = frameAnalyses.map((f) => ({
-    ...f,
-    frameScore: calculateFrameScore(f.analysis),
-    dropped: false,
-  }));
-
-  // 按分数升序排列，找出最低的 dropCount 帧
-  const sortedByScore = [...withScores].sort((a, b) => a.frameScore - b.frameScore);
-  const droppedIndices = new Set(
-    sortedByScore.slice(0, dropCount).map((f) => f.frameIndex)
-  );
-
-  // 标记被去除的帧
-  return withScores.map((f) => ({
-    ...f,
-    dropped: droppedIndices.has(f.frameIndex),
-  }));
-}
-
-// ─── AI 综合评分（仅使用计分帧） ──────────────────
+// ─── AI 综合评分（使用全部帧） ──────────────────
 async function synthesizeScores(
   allFrameAnalyses: FrameAnalysis[],
   videoDuration: number,
   strategy: ScoringStrategy
 ): Promise<Omit<MultiFrameResult, "totalFrames" | "extractedFrames" | "videoDuration" | "frameAnalyses" | "scoringStrategy">> {
-  // 只使用未被去除的帧进行计分
-  const scoringFrames = allFrameAnalyses.filter((f) => !f.dropped);
+  const scoringFrames = allFrameAnalyses;
   const totalScoringFrames = scoringFrames.length;
 
   // 按位置分组
@@ -429,13 +433,16 @@ async function synthesizeScores(
     consistency * 0.15
   )));
 
-  // 构建分析摘要（包含去除帧的说明）
-  const droppedFrames = allFrameAnalyses.filter((f) => f.dropped);
-  const droppedInfo = droppedFrames.length > 0
-    ? `\n\n已去除的最低分帧（${droppedFrames.length} 帧）：\n${droppedFrames.map((f) => `第${f.frameIndex + 1}帧(${f.timestamp.toFixed(1)}s, 综合分${f.frameScore}): ${f.analysis.detail}`).join("\n")}`
+  const sortedFrames = [...allFrameAnalyses].sort((a, b) => a.frameScore - b.frameScore);
+  const weakFrames = sortedFrames.slice(0, Math.min(3, sortedFrames.length));
+  const weakInfo = weakFrames.length > 0
+    ? `\n\n低分参考帧（保留给优化使用）：\n${weakFrames.map((f) => `第${f.frameIndex + 1}帧(${f.timestamp.toFixed(1)}s, 综合分${f.frameScore}): ${f.analysis.detail}`).join("\n")}`
     : "";
 
-  const scoringInfo = `评分策略：视频时长 ${Math.floor(videoDuration / 60)}分${Math.round(videoDuration % 60)}秒（${strategy.durationCategory === "short" ? "≤5分钟" : "5-10分钟"}），抽取 ${strategy.totalExtracted} 帧，去除最低 ${strategy.droppedCount} 帧，以 ${strategy.scoringFrames} 帧平均分计算。`;
+  const highlightInfo = strategy.highlightRange
+    ? `；高潮补采样区间 ${strategy.highlightRange.start}s-${strategy.highlightRange.end}s，共补 ${strategy.highlightRange.extraFrames} 帧`
+    : "";
+  const scoringInfo = `评分策略：视频时长 ${Math.floor(videoDuration / 60)}分${Math.round(videoDuration % 60)}秒（${strategy.durationCategory === "short" ? "≤5分钟" : "5-10分钟"}），基础层按每 ${strategy.baseFrameIntervalSeconds} 秒抽取 ${Math.ceil(videoDuration / strategy.baseFrameIntervalSeconds)} 帧${highlightInfo}，全部帧共同参与分析，不再丢弃低分帧。`;
 
   // 用 AI 生成总结
   const summaryResponse = await invokeLLM({
@@ -457,12 +464,12 @@ ${scoringInfo}
 - 综合评分: ${overallVisualScore}/100
 
 各计分帧分析摘要：
-${scoringFrames.map((f, i) => `第${f.frameIndex + 1}帧(${f.timestamp.toFixed(1)}s, 分数${f.frameScore}): ${f.analysis.detail}`).join("\n")}
-${droppedInfo}
+${scoringFrames.map((f) => `第${f.frameIndex + 1}帧(${f.timestamp.toFixed(1)}s, 分数${f.frameScore}): ${f.analysis.detail}`).join("\n")}
+${weakInfo}
 
 请以 JSON 格式返回：
 {
-  "summary": "2-3 句话的整体评价，需提及评分策略（抽帧数、去除帧数、计分帧数）",
+  "summary": "2-3 句话的整体评价，需提及评分策略（基础抽帧、高潮补帧、保留弱帧）",
   "highlights": ["亮点1", "亮点2", "亮点3"],
   "improvements": ["改进建议1", "改进建议2"],
   "dimensionDetails": {
@@ -599,12 +606,13 @@ async function analyzeVideoMultiFrameFromPath(
       "checking",
       100,
       `视频时长 ${durationMin}分${durationSec}秒，` +
-      `策略：抽取 ${strategy.totalExtracted} 帧，去除最低 ${strategy.droppedCount} 帧，` +
-      `以 ${strategy.scoringFrames} 帧平均分计算`
+      `策略：基础层按每 ${strategy.baseFrameIntervalSeconds} 秒抽取 ${strategy.totalExtracted} 帧，` +
+      `识别高潮区间后补充逐秒帧，不再丢弃低分帧`
     );
 
-    onProgress?.("extracting", 0, `正在从视频中均匀抽取 ${strategy.totalExtracted} 帧...`);
-    const { framePaths } = await extractFrames(videoPath, strategy.totalExtracted, onProgress);
+    const baseTimestamps = buildBaseTimestamps(duration);
+    onProgress?.("extracting", 0, `正在按每 ${strategy.baseFrameIntervalSeconds} 秒抽取基础帧，共 ${baseTimestamps.length} 帧...`);
+    const { framePaths } = await extractFramesAtTimestamps(videoPath, baseTimestamps, "基础层", onProgress);
     tmpDir = path.dirname(framePaths[0] || "");
 
     if (framePaths.length === 0) {
@@ -618,10 +626,7 @@ async function analyzeVideoMultiFrameFromPath(
 
     for (let i = 0; i < framePaths.length; i++) {
       const uploaded = await uploadFrame(framePaths[i], i);
-      const startOffset = Math.min(0.5, duration * 0.02);
-      const usableDuration = duration - startOffset * 2;
-      const interval = usableDuration / (framePaths.length - 1);
-      const timestamp = startOffset + interval * i;
+      const timestamp = baseTimestamps[i] ?? 0;
 
       frameUrls.push({ path: framePaths[i], url: uploaded.url, dataUrl: uploaded.dataUrl, timestamp });
       onProgress?.(
@@ -673,35 +678,56 @@ async function analyzeVideoMultiFrameFromPath(
       }
     }
 
-    onProgress?.(
-      "scoring",
-      10,
-      `正在去除最低分的 ${strategy.droppedCount} 帧...`
-    );
+    const highlightPlan = buildHighlightTimestamps(rawFrameAnalyses, duration, baseTimestamps);
+    let finalFrameAnalyses = rawFrameAnalyses;
+    if (highlightPlan.timestamps.length > 0) {
+      onProgress?.(
+        "extracting",
+        0,
+        `识别到高潮区间 ${highlightPlan.range?.start ?? 0}s-${highlightPlan.range?.end ?? 0}s，补充 ${highlightPlan.timestamps.length} 帧逐秒分析...`
+      );
+      const { framePaths: highlightPaths } = await extractFramesAtTimestamps(videoPath, highlightPlan.timestamps, "高潮层", onProgress);
+      for (let i = 0; i < highlightPaths.length; i++) {
+        const uploaded = await uploadFrame(highlightPaths[i], baseTimestamps.length + i);
+        const timestamp = highlightPlan.timestamps[i] ?? 0;
+        const analysis = await analyzeFrame(
+          uploaded.url,
+          uploaded.dataUrl,
+          rawFrameAnalyses.length + i,
+          rawFrameAnalyses.length + highlightPaths.length,
+          timestamp,
+          duration
+        );
+        finalFrameAnalyses.push({
+          frameIndex: rawFrameAnalyses.length + i,
+          timestamp,
+          imageUrl: uploaded.url,
+          dropped: false,
+          frameScore: calculateFrameScore(analysis),
+          analysis,
+        });
+      }
+      finalFrameAnalyses = [...finalFrameAnalyses].sort((a, b) => a.timestamp - b.timestamp).map((item, index) => ({
+        ...item,
+        frameIndex: index,
+      }));
+      strategy.highlightRange = highlightPlan.range;
+      strategy.totalExtracted = finalFrameAnalyses.length;
+      strategy.scoringFrames = finalFrameAnalyses.length;
+    }
 
-    const markedFrameAnalyses = dropLowestFrames(rawFrameAnalyses, strategy.droppedCount);
+    onProgress?.("scoring", 35, `正在综合分析 ${finalFrameAnalyses.length} 帧的数据，并保留低分帧作为优化参考...`);
 
-    const droppedFrames = markedFrameAnalyses.filter((f) => f.dropped);
-    const scoringFrames = markedFrameAnalyses.filter((f) => !f.dropped);
-
-    onProgress?.(
-      "scoring",
-      20,
-      `已去除 ${droppedFrames.length} 帧（${droppedFrames.map((f) => `第${f.frameIndex + 1}帧:${f.frameScore}分`).join("、")}），以 ${scoringFrames.length} 帧计算最终评分`
-    );
-
-    onProgress?.("scoring", 50, `正在综合分析 ${scoringFrames.length} 帧的数据...`);
-
-    const synthesized = await synthesizeScores(markedFrameAnalyses, duration, strategy);
+    const synthesized = await synthesizeScores(finalFrameAnalyses, duration, strategy);
 
     onProgress?.("scoring", 100, "评分完成！");
 
     return {
       totalFrames: strategy.totalExtracted,
-      extractedFrames: markedFrameAnalyses.length,
+      extractedFrames: finalFrameAnalyses.length,
       videoDuration: duration,
       scoringStrategy: strategy,
-      frameAnalyses: markedFrameAnalyses,
+      frameAnalyses: finalFrameAnalyses,
       ...synthesized,
     };
   } finally {

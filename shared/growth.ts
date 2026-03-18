@@ -29,6 +29,29 @@ export const growthAnalysisScoresSchema = z.object({
   improvements: z.array(z.string()).default([]),
   platforms: z.array(z.string()).default([]),
   summary: z.string().default(""),
+  titleSuggestions: z.array(z.string()).default([]),
+  creatorCenterSignals: z.array(z.string()).default([]),
+  timestampSuggestions: z.array(z.object({
+    timestamp: z.string(),
+    issue: z.string(),
+    fix: z.string(),
+    opportunity: z.string().default(""),
+  })).default([]),
+  weakFrameReferences: z.array(z.object({
+    timestamp: z.string(),
+    reason: z.string(),
+    fix: z.string(),
+  })).default([]),
+  commercialAngles: z.array(z.object({
+    title: z.string(),
+    scenario: z.string(),
+    whyItFits: z.string(),
+    brands: z.array(z.string()).default([]),
+    execution: z.string(),
+    hook: z.string(),
+    veoPrompt: z.string().default(""),
+  })).default([]),
+  followUpPrompt: z.string().default(""),
 });
 
 export const growthMetricWindowSchema = z.object({
@@ -132,10 +155,18 @@ export const growthMonetizationTrackSchema = z.object({
   nextStep: z.string(),
 });
 
+export const growthPlatformTopicIdeaSchema = z.object({
+  title: z.string(),
+  angle: z.string(),
+  expansion: z.string(),
+});
+
 export const growthPlatformRecommendationSchema = z.object({
   name: z.string(),
   reason: z.string(),
   action: z.string(),
+  playbook: z.string().default(""),
+  topicIdeas: z.array(growthPlatformTopicIdeaSchema).default([]),
 });
 
 export const growthBusinessInsightSchema = z.object({
@@ -288,6 +319,7 @@ export type GrowthContentPattern = z.infer<typeof growthContentPatternSchema>;
 export type GrowthOpportunity = z.infer<typeof growthOpportunitySchema>;
 export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema>;
 export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSchema>;
+export type GrowthPlatformTopicIdea = z.infer<typeof growthPlatformTopicIdeaSchema>;
 export type GrowthPlatformRecommendation = z.infer<typeof growthPlatformRecommendationSchema>;
 export type GrowthBusinessInsight = z.infer<typeof growthBusinessInsightSchema>;
 export type GrowthDashboardStat = z.infer<typeof growthDashboardStatSchema>;

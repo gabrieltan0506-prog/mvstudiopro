@@ -783,6 +783,49 @@ function buildPlatformRecommendations(
   context: string,
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthPlatformRecommendation[] {
+  const buildTopicIdeas = (platform: GrowthPlatform, fallbackTitle: string) => {
+    const collection = collections[platform];
+    const keywords = Array.from(new Set(
+      String(context)
+        .split(/[\s,，。；;、/]+/)
+        .map((item) => item.trim())
+        .filter((item) => item.length >= 2),
+    ));
+    const liveTopicIdeas = (collection?.items || [])
+      .filter((item) => item.title && item.contentType !== "topic")
+      .filter((item) => {
+        if (!keywords.length) return true;
+        const haystack = `${item.title} ${(item.tags || []).join(" ")}`.toLowerCase();
+        return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+      })
+      .sort((left, right) => ((right.likes || 0) + (right.views || 0)) - ((left.likes || 0) + (left.views || 0)))
+      .slice(0, 5)
+      .map((item, index) => ({
+        title: item.title,
+        angle: `优先切入 ${(item.tags || []).slice(0, 2).join(" / ") || "相似高表现主题"}，把它改写成更贴近你当前业务的人群和结果。`,
+        expansion: index === 0
+          ? "先做首发版，再拆成对比版和案例版。"
+          : "保留同一主题，往不同人群场景或行动指令继续展开。",
+      }));
+    if (liveTopicIdeas.length) return liveTopicIdeas;
+    return [
+      {
+        title: `${fallbackTitle}适合谁`,
+        angle: `先讲清楚这条内容最适合哪类人，以及为什么和 ${industryTemplate.painPoint} 有关系。`,
+        expansion: "延展成不同人群版本，对比“适合”和“不适合”的边界。",
+      },
+      {
+        title: `${fallbackTitle}怎么用`,
+        angle: `把抽象判断改成步骤、场景或示范，重点补 ${industryTemplate.trustAsset}。`,
+        expansion: "拆成步骤版、避坑版和结果前置版。",
+      },
+      {
+        title: `${fallbackTitle}值不值得`,
+        angle: "把收藏理由、购买理由或继续看的理由直接说透，不讲后台判断逻辑。",
+        expansion: "延展成前后对比、清单和决策建议版。",
+      },
+    ];
+  };
   const selectedPlatforms: GrowthPlatform[] = requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili"];
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   const sportsCommerce = isSportsCommerceContext(context);
@@ -806,6 +849,10 @@ function buildPlatformRecommendations(
           : index === 0
           ? `做 1 版 9:16 结果前置短视频：开头先讲结论，中段只保留 2 到 3 个关键画面，结尾只留一个动作。${signals.commerceDriven ? "如果要转化，就把商品利益点或预约动作直接说出来。" : "如果先做增长，就把评论互动问题放在结尾。"} 注意避免：${watchouts}`
           : `把首发图文改写成抖音视频版：删掉解释型段落，保留冲突、结果和一个行动指令。${platformTemplate.actionRule} 注意避免：${watchouts}`,
+        playbook: commerceDriven
+          ? "发短视频成交稿：封面或前两秒直接说适合谁，中段只保留一个训练场景和一个关键差异，结尾把动作收束到橱窗、商品页或私聊其中一个入口。"
+          : "发短视频版本：前两秒先给结果或冲突，中段只保留 2 到 3 个关键镜头，结尾用一个问题或动作收口，不要把后台分析过程讲给用户。",
+        topicIdeas: buildTopicIdeas(platform, topicHint),
       };
     }
     if (platform === "xiaohongshu") {
@@ -819,6 +866,10 @@ function buildPlatformRecommendations(
         action: commerceDriven
           ? "把它改成决策笔记：封面讲“适合哪类训练人群”，正文按“适用场景 -> 核心差异 -> 参数对比 -> 为什么值得买 -> 一个动作”排。"
           : `先写 1 版小红书笔记：封面只讲一个结果，正文按“场景痛点 -> 做法拆解 -> 收藏理由 -> 下一步动作”排。${signals.videoExpansion ? "首发后立刻把这版拆成分镜，延展出 30 到 60 秒短视频。" : "先把这版笔记跑通，再抽最强一段改成短视频脚本。"} 注意避免：${watchouts}`,
+        playbook: commerceDriven
+          ? "发小红书决策笔记：标题直接写适合谁和为什么值得买，正文按场景、差异、参数、避坑和一个动作来排。不要塞平台中位数和内部评分。"
+          : "发小红书首发版：封面只放一个结果，正文按痛点、做法、证据、收藏理由和下一步动作来写。跑通后再拆出视频版。",
+        topicIdeas: buildTopicIdeas(platform, topicHint),
       };
     }
     if (platform === "bilibili") {
@@ -828,6 +879,8 @@ function buildPlatformRecommendations(
           ? `B站更适合把这条内容讲完整，尤其是方法、案例、复盘和幕后拆解。这里不是简单“多发一个平台”，而是把同一内容升级成更长尾、更能建立信任的版本。`
           : `如果你要把这条内容继续放大，B站适合承接“为什么这样做、踩了什么坑、如何复用”的后续版，不适合只上传短版切片。`,
         action: `做 1 版 60 到 120 秒复盘或案例拆解视频：先讲结果，再讲步骤和误区，最后告诉用户可以继续看哪一版内容。${signals.serviceDriven ? "如果你卖的是咨询、课程或服务，就把案例结果和方法论说透。" : "如果你做的是内容增长，就重点讲结构、节奏和可复制的方法。"} 注意避免：${watchouts}`,
+        playbook: "发 B 站复盘版：标题直接讲结果或案例主题，视频先给结论，再拆步骤、误区和可复用方法，结尾引导用户看下一条延展内容。",
+        topicIdeas: buildTopicIdeas(platform, topicHint),
       };
     }
     if (platform === "kuaishou") {
@@ -835,12 +888,16 @@ function buildPlatformRecommendations(
         name: PLATFORM_LABELS[platform],
         reason: `快手更适合做直给型版本。不要讲平台分析，不要讲抽象定位，只要直接告诉用户“这件事值不值、适不适合、怎么做更省事”。同一主题到快手必须换成更生活化、更结果导向的表达。`,
         action: `把内容改成生活场景口播或真实演示版：开头先讲能解决什么，中段只保留 2 个最实用步骤，结尾留一个最直接的动作。${signals.commerceDriven ? "如果有商品或服务承接，就把价格感、结果感和适用人群讲清楚。" : "如果先做增长，就用一个最直白的问题把评论引出来。"} 注意避免：${watchouts}`,
+        playbook: "发快手直给版：开头先说值不值、适不适合，中段只讲两个最实用点，结尾留一个最直接的动作，不讲长背景。",
+        topicIdeas: buildTopicIdeas(platform, topicHint),
       };
     }
     return {
       name: snapshot?.displayName || PLATFORM_LABELS[platform as GrowthPlatform],
       reason: `这个平台不该拿来重复发同一份稿，而是拿来验证“同一主题换表达后，哪种结构更容易被接受”。核心是按内容本身改写，不是按平台套模板。`,
       action: `保留同一个核心卖点，单独改写标题、结构和行动指令后再发。当前最该保留的是「${topicHint}」，最该删掉的是平台内部推理和冗长解释。注意避免：${watchouts}`,
+      playbook: "按这个平台的内容习惯单独改写，不要把别的平台结构原样搬过去。只保留结果、证据和一个动作。",
+      topicIdeas: buildTopicIdeas(platform as GrowthPlatform, topicHint),
     };
   });
 
@@ -1264,18 +1321,41 @@ function buildCreationAssist(
   const backgroundLine = context.trim()
     ? `业务背景：${context.trim()}`
     : "业务背景：未填写，建议补充目标受众、成交方式和想放大的内容主题。";
+  const titleLines = analysis.titleSuggestions?.length
+    ? `备选标题：${analysis.titleSuggestions.slice(0, 5).join(" / ")}`
+    : "备选标题：先把结果、适合谁、为什么值得看写进标题。";
+  const timestampLines = analysis.timestampSuggestions?.length
+    ? `秒点优化：${analysis.timestampSuggestions.slice(0, 3).map((item) => `${item.timestamp} ${item.fix}`).join("；")}`
+    : "秒点优化：前 3 秒先讲结果，中段只保留最能证明观点的镜头。";
+  const weakFrameLines = analysis.weakFrameReferences?.length
+    ? `弱帧参考：${analysis.weakFrameReferences.slice(0, 2).map((item) => `${item.timestamp} ${item.reason}，改法：${item.fix}`).join("；")}`
+    : "弱帧参考：删掉与主结论无关的弱镜头，保留最能成交的证据镜头。";
+  const assetExtensions = (analysis.commercialAngles || []).slice(0, 3).map((angle, index) => ({
+    id: `asset-${index + 1}`,
+    title: angle.title,
+    scenario: angle.scenario,
+    commercialGoal: angle.brands?.join("、") || primaryTrack,
+    bridgeReason: angle.whyItFits,
+    transitionIdea: angle.hook,
+    sourceCue: angle.execution,
+    veoPrompt: angle.veoPrompt,
+    executionNotes: `${angle.execution}；合作品牌方向：${angle.brands?.join("、") || "待确认"}`,
+  }));
 
   return {
     brief: [
       `内容目标：把当前素材升级成更适合 ${primaryPlatform} 分发，并服务于「${primaryTrack}」转化的内容版本。`,
       `核心分析：${analysis.summary}`,
+      titleLines,
+      timestampLines,
+      weakFrameLines,
       "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
       "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
       backgroundLine,
     ].join("\n"),
-    storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA。${backgroundLine}`,
-    workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本。优先服务于 ${primaryTrack} 转化。`,
-    assetExtensions: [],
+    storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA，并直接吸收这些秒点建议：${timestampLines}。${backgroundLine}`,
+    workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本，并结合这些弱帧修正：${weakFrameLines}。优先服务于 ${primaryTrack} 转化。`,
+    assetExtensions,
   };
 }
 
@@ -1599,6 +1679,12 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
     improvements: ["开头还可以更快"],
     platforms: ["抖音", "小红书"],
     summary: "sample",
+    titleSuggestions: [],
+    creatorCenterSignals: [],
+    timestampSuggestions: [],
+    weakFrameReferences: [],
+    commercialAngles: [],
+    followUpPrompt: "",
   },
   context: "城市夜景航拍",
 });

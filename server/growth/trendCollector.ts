@@ -4,7 +4,7 @@ import {
   type GrowthPlatform,
 } from "@shared/growth";
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
-import { getKuaishouCreatorSeeds, getPlatformSeeds } from "./trendSeedLibrary";
+import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds } from "./trendSeedLibrary";
 
 export type TrendSource = "live" | "seed";
 
@@ -1933,12 +1933,15 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
   const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 20) || 20));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
-  const searchKeywords = getPlatformSeeds("kuaishou").slice(0, Math.max(12, Math.min(48, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 28) || 28)));
+  const discoveryKeywords = getKuaishouDiscoveryKeywords();
+  const searchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 36) || 36));
+  const searchKeywords = discoveryKeywords.slice(0, searchKeywordLimit);
   const creatorSeeds = getKuaishouCreatorSeeds();
   const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 16) || 16));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
   const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 8) || 8));
   const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 60) || 60));
+  const searchUserKeywordLimit = Math.max(6, Math.min(32, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 16) || 16));
   const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 20) || 20));
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -1958,6 +1961,9 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   });
   if (creatorSeeds.length) {
     notes.push(`Loaded ${creatorSeeds.length} curated Kuaishou creator seeds for discovery fallback.`);
+  }
+  if (discoveryKeywords.length) {
+    notes.push(`Loaded ${discoveryKeywords.length} Kuaishou discovery keywords, including cross-platform title and author signals.`);
   }
 
   const resolveKuaishouBucket = (sourceLabel: string) => {
@@ -2105,10 +2111,12 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   }
 
   const kuaishouSearchThreshold = PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12;
-  const shouldRunSearch = searchKeywords.length > 0 && items.length < kuaishouSearchThreshold;
+  const shouldRunSearch = searchKeywords.length > 0;
 
-  if (searchKeywords.length && !shouldRunSearch) {
-    notes.push(`Skipped Kuaishou search/feed because private/list already yielded ${items.length} items.`);
+  if (searchKeywords.length && items.length >= kuaishouSearchThreshold) {
+    notes.push(
+      `Kuaishou private/list already yielded ${items.length} items, but search/feed will continue to expand beyond low-diversity private samples.`,
+    );
   }
 
   if (shouldRunSearch) {
@@ -2161,7 +2169,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   }
 
   if (searchKeywords.length && cookies.length) {
-    const discoveryTasks = searchKeywords.slice(0, Math.min(searchKeywords.length, 8)).map((keyword) => async () => {
+    const discoveryTasks = searchKeywords.slice(0, Math.min(searchKeywords.length, searchUserKeywordLimit)).map((keyword) => async () => {
       let pcursor = "";
       for (let page = 0; page < searchUserPages; page += 1) {
         try {
@@ -2217,7 +2225,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     notes.push(`Kuaishou discovery found ${discoveredCreators.size} searchable creators. Sample: ${sample}`);
   }
 
-  if (discoveredCreators.size && primaryKuaishouCookie && items.length < Math.max(kuaishouSearchThreshold, 24)) {
+  if (discoveredCreators.size && primaryKuaishouCookie) {
     const publicProfileTargets = Array.from(discoveredCreators.values()).slice(0, publicProfileLimit);
     for (const creator of publicProfileTargets) {
       try {
