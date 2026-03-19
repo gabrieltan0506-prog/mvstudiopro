@@ -141,8 +141,14 @@ type CachedTrendStore = {
   collections?: Partial<Record<GrowthPlatform, CachedTrendCollection>>;
 };
 
-const CURRENT_CACHE_PATH = path.resolve(process.cwd(), ".cache/growth/current.json");
-const LEGACY_CACHE_PATH = path.resolve(process.cwd(), ".cache/growth-trends.json");
+const DEFAULT_STORE_ROOT = path.resolve(process.cwd(), ".cache");
+const CURRENT_CACHE_PATH = path.resolve(
+  process.env.GROWTH_STORE_DIR || path.join(DEFAULT_STORE_ROOT, "growth"),
+  "current.json",
+);
+const LEGACY_CACHE_PATH = path.resolve(
+  process.env.GROWTH_LEGACY_STORE_FILE || path.join(DEFAULT_STORE_ROOT, "growth-trends.json"),
+);
 const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou"];
 
 function normalizeSeed(value: string) {
@@ -178,11 +184,14 @@ function splitCandidateTerms(value: string) {
 
 function loadCachedTrendStore(): CachedTrendStore | null {
   try {
-    const cachePath = fs.existsSync(CURRENT_CACHE_PATH)
-      ? CURRENT_CACHE_PATH
-      : fs.existsSync(LEGACY_CACHE_PATH)
-        ? LEGACY_CACHE_PATH
-        : "";
+    const additionalCandidates = [
+      path.resolve(process.cwd(), ".cache/growth/current.json"),
+      path.resolve(process.cwd(), ".cache/growth-trends.json"),
+      "/data/growth/current.json",
+      "/data/growth-trends.json",
+    ];
+    const cachePath = [CURRENT_CACHE_PATH, LEGACY_CACHE_PATH, ...additionalCandidates]
+      .find((candidate) => candidate && fs.existsSync(candidate)) || "";
     if (!cachePath) return null;
     return JSON.parse(fs.readFileSync(cachePath, "utf8")) as CachedTrendStore;
   } catch {
@@ -221,6 +230,28 @@ function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
   return Array.from(new Set(collected)).slice(0, getCrossPlatformSeedCap(platform));
 }
 
+function buildCrossPlatformTopicSeeds(platform: GrowthPlatform) {
+  const store = loadCachedTrendStore();
+  if (!store?.collections) return [];
+
+  const topicTerms: string[] = [];
+  const sourcePlatforms = SIGNAL_SOURCE_PLATFORMS.filter((item) => item !== platform);
+  for (const sourcePlatform of sourcePlatforms) {
+    const collection = store.collections[sourcePlatform];
+    const items = Array.isArray(collection?.items) ? collection.items : [];
+    for (const item of items.slice(0, sourcePlatform === "douyin" ? 500 : 300)) {
+      if (String(item.title || "").includes("#")) {
+        topicTerms.push(...splitCandidateTerms(item.title || ""));
+      }
+      for (const tag of item.tags || []) {
+        topicTerms.push(...splitCandidateTerms(tag));
+      }
+    }
+  }
+
+  return Array.from(new Set(topicTerms)).slice(0, platform === "douyin" ? 120 : 80);
+}
+
 function buildCrossPlatformAuthorSeeds(platform: GrowthPlatform) {
   const store = loadCachedTrendStore();
   if (!store?.collections) return [];
@@ -248,8 +279,9 @@ export function getPlatformSeeds(platform: GrowthPlatform) {
     .filter((item) => item !== platform)
     .flatMap((item) => PLATFORM_SEEDS[item] || []);
   const dynamicSeeds = buildCrossPlatformDynamicSeeds(platform);
+  const topicSeeds = buildCrossPlatformTopicSeeds(platform);
   return Array.from(
-    new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
+    new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...topicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
   );
 }
 
