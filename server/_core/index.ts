@@ -24,6 +24,11 @@ import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
 import klingImageHandler from "../../api/kling-image";
 
+function isGrowthTrendSchedulerDisabled() {
+  const raw = String(process.env.DISABLE_GROWTH_TREND_SCHEDULER || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 function buildRoutingMap() {
   return {
     free: {
@@ -273,9 +278,13 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // Defer background worker startup until the HTTP listener is ready.
     startJobWorker();
-    bootstrapGrowthTrendScheduler().catch((error) => {
-      console.warn("[growth.scheduler] bootstrap failed:", error);
-    });
+    if (isGrowthTrendSchedulerDisabled()) {
+      console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
+    } else {
+      bootstrapGrowthTrendScheduler().catch((error) => {
+        console.warn("[growth.scheduler] bootstrap failed:", error);
+      });
+    }
   });
 }
 
