@@ -5,10 +5,10 @@ import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress
 const TARGET = Math.max(10_000, Number(process.env.GROWTH_PLATFORM_MIN_ITEMS || 10_000) || 10_000);
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
-const HISTORY_MIN_INTERVAL_MS = 60 * 1000;
+const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
-const HISTORY_STEP_TARGET = Math.max(4, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 6) || 6);
-const HISTORY_STEP_FALLBACK = Math.max(4, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 6) || 6);
+const HISTORY_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 10) || 10);
+const HISTORY_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 5) || 5);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 
 let backfillStarted = false;
@@ -82,7 +82,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsBefore.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 ${HISTORY_STEP_TARGET}，并按轮次轮换 cookie。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -121,7 +121,7 @@ export async function runGrowthTrendBackfillStep() {
       targetPerPlatform: TARGET,
       selectedWindowDays: statsAfter.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：固定每 1 分钟抓取一次，目标步长 ${HISTORY_STEP_TARGET}，并按轮次轮换 cookie。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;

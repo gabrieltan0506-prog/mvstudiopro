@@ -40,6 +40,18 @@ type VideoFailureStage =
   | "llm"
   | "unknown";
 
+class VideoAnalysisFailure extends Error {
+  failureStage: VideoFailureStage;
+  failureReason: string;
+
+  constructor(failureStage: VideoFailureStage, failureReason: string) {
+    super(failureReason);
+    this.name = "VideoAnalysisFailure";
+    this.failureStage = failureStage;
+    this.failureReason = failureReason;
+  }
+}
+
 async function withTempVideo<T>(buffer: Buffer, fn: (videoPath: string) => Promise<T>): Promise<T> {
   const videoPath = path.join(
     os.tmpdir(),
@@ -165,30 +177,6 @@ function formatFrameEvidence(
     .join("\n");
 }
 
-function buildVideoFallbackResult(params: {
-  mimeType: string;
-  context?: string;
-  summary?: string;
-  transcript?: string;
-  videoDuration?: number;
-  failureStage: VideoFailureStage;
-  failureReason: string;
-}): VideoAnalysisResult {
-  return {
-    analysis: buildFallbackVideoAnalysis(params.summary || "", params.context || ""),
-    videoMeta: {
-      videoUrl: "",
-      transcript: params.transcript || "",
-      videoDuration: params.videoDuration || 0,
-      provider: "fallback",
-      model: "deterministic",
-      fallback: true,
-      failureStage: params.failureStage,
-      failureReason: params.failureReason,
-    },
-  };
-}
-
 export async function analyzeVideo(params: {
   fileBase64: string;
   mimeType: string;
@@ -205,12 +193,7 @@ export async function analyzeVideo(params: {
       multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
     } catch (error) {
       console.warn("[growth.analyzeVideo] frame extraction fallback:", error);
-      return buildVideoFallbackResult({
-        mimeType: params.mimeType,
-        context: params.context,
-        failureStage: "frame_extraction",
-        failureReason: normalizeFailureReason(error),
-      });
+      throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
     }
 
     const transcript = await transcribeVideoAudio(buffer).catch((error) => {
@@ -331,12 +314,10 @@ summary 必须覆盖：
       },
     };
   } catch (error) {
-    console.warn("[growth.analyzeVideo] Falling back to deterministic analysis:", error);
-    return buildVideoFallbackResult({
-      mimeType: params.mimeType,
-      context: params.context,
-      failureStage: "unknown",
-      failureReason: normalizeFailureReason(error),
-    });
+    if (error instanceof VideoAnalysisFailure) {
+      throw error;
+    }
+    console.warn("[growth.analyzeVideo] video analysis failed:", error);
+    throw new VideoAnalysisFailure("unknown", normalizeFailureReason(error));
   }
 }

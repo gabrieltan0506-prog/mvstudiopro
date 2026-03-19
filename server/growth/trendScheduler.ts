@@ -21,13 +21,31 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 10) || 10);
+const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 15) || 15);
+const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
+const LOW_YIELD_LIMIT = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_LIMIT || 5) || 5);
 const BURST_TRIGGER_MIN_COUNT = Math.max(6, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 10) || 10);
 const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST_TRIGGER_GROWTH_RATIO || 0.2) || 0.2);
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
 const BURST_MIN_STABLE_RUNS = Math.max(1, Number(process.env.GROWTH_BURST_MIN_STABLE_RUNS || 2) || 2);
-const MAIL_DIGEST_INTERVAL_MS = 30 * 60 * 1000;
+const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
+  15,
+  Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
+);
+const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
+const FORCE_BURST_PLATFORMS = new Set(
+  String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean),
+);
+const FORCE_BURST_UNTIL_MS = (() => {
+  const raw = String(process.env.GROWTH_FORCE_BURST_UNTIL || "").trim();
+  if (!raw) return 0;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+})();
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -51,6 +69,14 @@ function getPlatformBurstIntervalMinutes(platform: GrowthPlatform) {
 
 function getPlatformBurstIntervalMs(platform: GrowthPlatform) {
   return getPlatformBurstIntervalMinutes(platform) * 60 * 1000;
+}
+
+function getPlatformLowYieldIntervalMinutes(platform: GrowthPlatform) {
+  return readPlatformMinutesEnv(platform, "BURST_LOW_YIELD_INTERVAL_MINUTES", LOW_YIELD_INTERVAL_MINUTES);
+}
+
+function getPlatformLowYieldIntervalMs(platform: GrowthPlatform) {
+  return getPlatformLowYieldIntervalMinutes(platform) * 60 * 1000;
 }
 
 function getPlatformBurstTriggerMinCount(platform: GrowthPlatform) {
@@ -106,11 +132,11 @@ function isWeekendOrHoliday(now = new Date()) {
 }
 
 function getSchedulerIntervalMinutes(now = new Date()) {
-  if (isWeekendOrHoliday(now)) return 20;
+  if (isWeekendOrHoliday(now)) return 10;
   const hour = getSchedulerHour(now);
-  if (hour >= 17 && hour < 22) return 120;
-  if (hour >= 22 || hour < 6) return 180;
-  return 240;
+  if (hour >= 17 && hour < 22) return 60;
+  if (hour >= 22 || hour < 6) return 120;
+  return 180;
 }
 
 function nextScheduledRunIso(now = new Date()) {
@@ -119,12 +145,35 @@ function nextScheduledRunIso(now = new Date()) {
 
 function getSchedulerFrequencyLabel(now = new Date()) {
   const interval = getSchedulerIntervalMinutes(now);
-  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 20 分钟一次";
-  return `${interval / 60} 小时一次`;
+  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 10 分钟一次";
+  if (interval < 60) return `每 ${interval} 分钟一次`;
+  return `每 ${interval / 60} 小时一次`;
 }
 
 function getBurstFrequencyLabel(platform: GrowthPlatform) {
   return `${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
+}
+
+function getLowYieldFrequencyLabel(platform: GrowthPlatform) {
+  return `低产出回退 / 每 ${getPlatformLowYieldIntervalMinutes(platform)} 分钟一次`;
+}
+
+function getForceBurstLabel(platform: GrowthPlatform) {
+  const until = FORCE_BURST_UNTIL_MS
+    ? new Intl.DateTimeFormat("zh-CN", {
+        timeZone: SCHEDULER_TIMEZONE,
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(FORCE_BURST_UNTIL_MS))
+    : "手动关闭";
+  return `强制 burst（至 ${until}）/${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
+}
+
+function isForceBurstActive(platform: GrowthPlatform) {
+  return FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.has(platform);
 }
 
 function isClearlyHigherThanPrevious(platform: GrowthPlatform, currentCount: number, previousCount: number) {
@@ -138,7 +187,23 @@ function resolveNextRunPlan(params: {
   previousCount: number;
   burstMode: boolean;
   burstStableRuns: number;
+  burstLowYieldRuns: number;
 }) {
+  if (isForceBurstActive(params.platform)) {
+    const lowYieldRuns = isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)
+      ? 0
+      : params.burstLowYieldRuns + 1;
+    const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
+    return {
+      burstMode: true,
+      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getForceBurstLabel(params.platform),
+      burstStableRuns: params.burstStableRuns,
+      burstLowYieldRuns: lowYieldRuns,
+      burstEvent: params.burstMode ? ("stay" as const) : ("enter" as const),
+    };
+  }
+
   if (params.burstMode) {
     const exitThreshold = Math.max(0, Math.floor(params.previousCount * (1 - getPlatformBurstExitDropRatio(params.platform))));
     if (params.currentCount < exitThreshold && params.burstStableRuns >= BURST_MIN_STABLE_RUNS) {
@@ -147,14 +212,20 @@ function resolveNextRunPlan(params: {
         nextRunAt: nextScheduledRunIso(),
         frequencyLabel: getSchedulerFrequencyLabel(),
         burstStableRuns: 0,
+        burstLowYieldRuns: 0,
         burstEvent: "exit" as const,
       };
     }
+    const lowYieldRuns = isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)
+      ? 0
+      : params.burstLowYieldRuns + 1;
+    const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
-      frequencyLabel: getBurstFrequencyLabel(params.platform),
+      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getBurstFrequencyLabel(params.platform),
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
+      burstLowYieldRuns: lowYieldRuns,
       burstEvent: "stay" as const,
     };
   }
@@ -165,6 +236,7 @@ function resolveNextRunPlan(params: {
       nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
       frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: 0,
+      burstLowYieldRuns: 0,
       burstEvent: "enter" as const,
     };
   }
@@ -174,6 +246,7 @@ function resolveNextRunPlan(params: {
     nextRunAt: nextScheduledRunIso(),
     frequencyLabel: getSchedulerFrequencyLabel(),
     burstStableRuns: 0,
+    burstLowYieldRuns: 0,
     burstEvent: "none" as const,
   };
 }
@@ -232,7 +305,7 @@ async function notifyCollectionUpdate(params: {
     subject: `Creator Growth Camp 数据汇总 - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
     requireResend: true,
     text:
-      `[Growth Trend Scheduler 半小时汇总]\n` +
+      `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
       `最新触发平台：${params.platform}\n` +
       `最新抓取时间：${params.collectedAt}\n` +
       `最新新增数量：${params.addedCount}\n` +
@@ -262,7 +335,7 @@ async function notifyCollectionUpdate(params: {
       },
     ],
     html:
-      `<p><strong>半小时汇总窗口：</strong>30 分钟</p>` +
+      `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
       `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
       `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
       `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
@@ -280,7 +353,7 @@ async function notifyCollectionUpdate(params: {
   await updateTrendMailDigestState({
     lastSentAt: new Date().toISOString(),
     lastManifestPath: exported.manifestPath,
-    lastWindowMinutes: 30,
+    lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
   });
 }
 
@@ -304,6 +377,7 @@ async function runPlatform(platform: GrowthPlatform) {
       previousCount,
       burstMode: Boolean(currentState?.burstMode),
       burstStableRuns: currentState?.burstStableRuns || 0,
+      burstLowYieldRuns: currentState?.burstLowYieldRuns || 0,
     });
     await updateTrendSchedulerState(platform, {
       lastSuccessAt: collection.collectedAt,
@@ -319,6 +393,7 @@ async function runPlatform(platform: GrowthPlatform) {
       burstEnterCount: (currentState?.burstEnterCount || 0) + (plan.burstEvent === "enter" ? 1 : 0),
       burstExitCount: (currentState?.burstExitCount || 0) + (plan.burstEvent === "exit" ? 1 : 0),
       burstStableRuns: plan.burstStableRuns,
+      burstLowYieldRuns: plan.burstLowYieldRuns,
       burstTriggeredAt: plan.burstMode
         ? (currentState?.burstMode ? currentState?.burstTriggeredAt : collection.collectedAt)
         : undefined,
@@ -345,16 +420,19 @@ async function runPlatform(platform: GrowthPlatform) {
     const message = error instanceof Error ? error.message : String(error);
     const current = (await readTrendSchedulerState())[platform];
     const failureCount = (current?.failureCount || 0) + 1;
+    const forcedBurst = isForceBurstActive(platform);
     await updateTrendSchedulerState(platform, {
       failureCount,
       totalRuns: (current?.totalRuns || 0) + 1,
       totalFailures: (current?.totalFailures || 0) + 1,
       lastDurationMs: Date.now() - startedAtMs,
       lastError: message,
-      burstMode: false,
-      burstStableRuns: 0,
-      burstTriggeredAt: undefined,
-      nextRunAt: nextRunIso(buildRetryDelayMs(failureCount)),
+      burstMode: forcedBurst,
+      burstStableRuns: forcedBurst ? (current?.burstStableRuns || 0) : 0,
+      burstLowYieldRuns: forcedBurst ? (current?.burstLowYieldRuns || 0) : 0,
+      burstTriggeredAt: forcedBurst ? (current?.burstTriggeredAt || startedAt) : undefined,
+      nextRunAt: forcedBurst ? nextRunIso(getPlatformLowYieldIntervalMs(platform)) : nextRunIso(buildRetryDelayMs(failureCount)),
+      lastFrequencyLabel: forcedBurst ? getLowYieldFrequencyLabel(platform) : current?.lastFrequencyLabel,
     });
     console.warn(`[growth.scheduler] ${platform} failed:`, message);
   }

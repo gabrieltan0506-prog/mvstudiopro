@@ -488,7 +488,9 @@ function buildGeminiGenerationConfig(
   if (isGemini25Model(modelName)) {
     config.temperature = readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.5;
     config.topP = readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
-    config.thinkingBudget = readNumberEnv("VERTEX_GEMINI_25_THINKING_BUDGET") ?? 1024;
+    config.thinkingConfig = {
+      thinkingBudget: readNumberEnv("VERTEX_GEMINI_25_THINKING_BUDGET") ?? 1024,
+    };
     return config;
   }
 
