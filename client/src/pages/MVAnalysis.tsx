@@ -1466,27 +1466,18 @@ export default function MVAnalysisPage() {
                   <Compass className="h-5 w-5" />
                   <span className="font-semibold">趋势洞察</span>
                 </div>
-                <p className="mt-4 text-sm leading-7 text-white/65">
-                生成后会只保留和你身份、题材与商业目标高度相关的内容方向，不把无关热点硬塞给你。
-                </p>
               </div>
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#90c4ff]">
                 <BriefcaseBusiness className="h-5 w-5" />
                 <span className="font-semibold">商业洞察</span>
               </div>
-              <p className="mt-4 text-sm leading-7 text-white/65">
-                分析结果不会停在“好不好看”，而会继续判断它更适合吸粉、转化、案例展示还是服务售卖。
-              </p>
             </div>
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#9df6c0]">
                 <Send className="h-5 w-5" />
                 <span className="font-semibold">推荐平台</span>
               </div>
-              <p className="mt-4 text-sm leading-7 text-white/65">
-                报告会把推荐平台做成明确动作建议，而不是只列平台名，便于你直接发布验证。
-              </p>
             </div>
           </section>
         ) : null}
