@@ -897,8 +897,6 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     const summary = historyPlatforms[platform];
     return Boolean(summary?.archivedItems);
   });
-  const historyLedgers = await readAllHistoryLedgers(historyPlatformKeys);
-
   for (const collection of Object.values(store.collections)) {
     if (!collection) continue;
     const bucketCounts = collection.stats?.bucketCounts || getBucketCounts(collection.items);
@@ -1038,21 +1036,23 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
   const coverageWindows = LOOKBACK_WINDOWS.map((days) => {
     const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
-    let archivedItems = 0;
-    let activePlatforms = 0;
-    for (const platform of historyPlatformKeys) {
-      const ledger = historyLedgers.get(platform) || {};
-      const matching = Object.values(ledger).filter((item) => {
-        const firstSeenTime = new Date(item.firstSeenAt).getTime();
-        return Number.isFinite(firstSeenTime) && firstSeenTime >= threshold;
-      });
-      if (matching.length) activePlatforms += 1;
-      archivedItems += matching.length;
-    }
     const entries = (store.archiveIndex || []).filter((item) => {
       const time = new Date(item.archivedAt).getTime();
       return Number.isFinite(time) && time >= threshold;
     });
+    const activePlatforms = historyPlatformKeys.filter((platform) => {
+      const summary = historyPlatforms[platform];
+      const lastSeenTime = new Date(summary?.lastSeenAt || 0).getTime();
+      return Number.isFinite(lastSeenTime) && lastSeenTime >= threshold;
+    }).length;
+    const archivedItems = historyPlatformKeys.reduce((sum, platform) => {
+      const summary = historyPlatforms[platform];
+      const lastSeenTime = new Date(summary?.lastSeenAt || 0).getTime();
+      if (Number.isFinite(lastSeenTime) && lastSeenTime >= threshold) {
+        return sum + (summary?.archivedItems || 0);
+      }
+      return sum;
+    }, 0);
     return {
       days,
       archivedItems,
