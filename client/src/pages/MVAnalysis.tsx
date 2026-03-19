@@ -454,54 +454,16 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
       highlight: "中长期商业化先放后面，短期先把内容入口做成熟。",
     }];
   }
-  return viableTracks.map((track) => {
-    if (track.name === "知识付费") {
-      return {
-        label: `${track.name} ${track.fit}%`,
-        insight: "只有当你能把这条内容讲成“用户问题 -> 三步做法 -> 做完能得到什么结果”时，知识付费才成立。",
-        action: "先做一版完整案例拆解：第 1 段讲用户原问题，第 2 段讲你怎么判断，第 3 段讲具体做法，第 4 段讲结果，再把这套内容拆成笔记和短视频。",
-        highlight: "先卖具体方法，不卖空泛理念。",
-      };
-    }
-    if (track.name === "品牌合作") {
-      return {
-        label: `${track.name} ${track.fit}%`,
-        insight: /美妆|穿搭|形象|妆|护肤|造型/.test(context)
-          ? "不是泛写“可接品牌合作”，而是要围绕场景问题、解决方案和合作品类展开。先让品牌看懂你能替它卖什么场景。"
-          : "品牌合作只在表达统一、案例清楚、服务结果讲透时才成立。没有案例页和结果说明时，不要把品牌合作写成主卖点。",
-        action: /美妆|穿搭|形象|妆|护肤|造型/.test(context)
-          ? "先补场景案例页，写清问题、方案、合作品类。"
-          : "先做行业案例页，写清问题、结果和合作对象。",
-        highlight: "先清合作类别、结果证明、承接页。",
-      };
-    }
-    if (track.name === "电商带货") {
-      return {
-        label: `${track.name} ${track.fit}%`,
-        insight: "只有把“适合谁、解决什么、为什么值”讲清，带货才会成立；否则只是展示，不会转化。",
-        action: "先重做成交稿：开头 3 秒说适合谁和解决什么，中段只留 2 到 3 个利益点，补一个真实使用证据，结尾只保留一个购买动作，统一导向橱窗或私聊。",
-        highlight: "先跑单品成交稿，不要一条内容卖多个东西。",
-      };
-    }
-    if (track.name === "社群会员") {
-      return {
-        label: `${track.name} ${track.fit}%`,
-        insight: "社群不是默认答案。只有你能持续输出同主题内容、固定更新并提供稳定权益时，社群才会成立。",
-        action: "当前不要先做社群。先把成交稿、案例页或商品页跑通，验证用户愿不愿意咨询、下单或复购，再考虑售后群或会员群。",
-        highlight: "先别做社群，先做成交验证。",
-      };
-    }
-    return {
-      label: `${track.name} ${track.fit}%`,
-      insight: replaceTerms(track.reason),
-      action: replaceTerms(track.nextStep),
-      highlight: track.name === "社群会员"
-        ? "先有固定主题、固定更新、固定权益。"
-        : industryTemplate?.offerExamples?.[0]
-          ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
-          : undefined,
-    };
-  });
+  return viableTracks.map((track, index) => ({
+    label: `${track.name} ${track.fit}%`,
+    insight: replaceTerms(track.reason),
+    action: replaceTerms(track.nextStep),
+    highlight: index === 0
+      ? industryTemplate?.offerExamples?.length
+        ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
+        : "先验证一个最短可成交动作。"
+      : undefined,
+  }));
 }
 
 function buildExecutionBriefRows(analysis: AnalysisResult, context: string): ExecutionBriefRow[] {
@@ -761,7 +723,7 @@ export default function MVAnalysisPage() {
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") return false;
-    return new URLSearchParams(window.location.search).get("debug") === "1";
+    return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
   });
   const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
   const [activeDashboardPanel, setActiveDashboardPanel] = useState("readiness");
@@ -816,9 +778,9 @@ export default function MVAnalysisPage() {
     },
   );
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
-    enabled: debugMode,
+    enabled: supervisorAccess && debugMode,
     staleTime: 30_000,
-    refetchInterval: debugMode ? 10_000 : false,
+    refetchInterval: supervisorAccess && debugMode ? 10_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: false,
@@ -1324,17 +1286,19 @@ export default function MVAnalysisPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setDebugMode((prev) => !prev)}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-white/75 transition hover:bg-white/10"
-            >
-              {debugMode ? "Debug ON" : "Debug OFF"}
-            </button>
             {supervisorAccess ? (
-              <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-200">
-                Supervisor Mode
-              </div>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setDebugMode((prev) => !prev)}
+                  className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm text-white/75 transition hover:bg-white/10"
+                >
+                  {debugMode ? "Debug ON" : "Debug OFF"}
+                </button>
+                <div className="rounded-full border border-emerald-300/30 bg-emerald-400/10 px-3 py-1 text-sm text-emerald-200">
+                  Supervisor Mode
+                </div>
+              </>
             ) : null}
             <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
               Creator Growth Camp
@@ -1699,9 +1663,9 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="rounded-[24px] border border-[#f5b7ff]/20 bg-[linear-gradient(135deg,rgba(245,183,255,0.12),rgba(255,255,255,0.03))] p-5">
-                        <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">展示原则</div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">内容延展</div>
                         <div className="mt-3 text-sm leading-7 text-white/78">
-                          页面只保留给用户的结论、平台打法和选题拓展，不再把后台比较逻辑、漏斗和中位数直接展示出来。
+                          保留用户真正需要的版本建议、平台打法和延展方向，直接服务下一步创作和发布。
                         </div>
                       </div>
                     </div>
@@ -1805,7 +1769,7 @@ export default function MVAnalysisPage() {
                       <h2 className="text-2xl font-bold">现在就能执行的版本</h2>
                     </div>
                     <p className="mt-3 text-sm leading-7 text-white/60">
-                      这里只保留首发版最重要的动作，不再把系统内部的判断过程和固定模板直接展示给用户。
+                      这里只保留首发版最重要的动作，方便你直接进入改稿和发布。
                     </p>
                     <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
                       <div className="rounded-2xl border border-[#ffd08f]/20 bg-[linear-gradient(135deg,rgba(255,208,143,0.12),rgba(255,255,255,0.03))] p-5">

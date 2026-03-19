@@ -4,9 +4,9 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
-import { analyzeVideoMultiFrameFromLocalFile } from "../videoAnalysis";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
+import { storagePut } from "../storage";
 
 const execFileAsync = promisify(execFile);
 
@@ -124,6 +124,75 @@ async function transcribeVideoAudio(videoBuffer: Buffer): Promise<string> {
   });
 }
 
+async function getVideoDurationFromPath(videoPath: string): Promise<number> {
+  const probe = await execFileAsync("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    videoPath,
+  ]);
+  const parsed = Number(String(probe.stdout || "").trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error("无法检测视频时长");
+  }
+  return parsed;
+}
+
+async function extractKeyframes(videoBuffer: Buffer) {
+  return withTempVideo(videoBuffer, async (videoPath) => {
+    const duration = await getVideoDurationFromPath(videoPath);
+    const timestamps = Array.from(
+      new Set([
+        Math.max(0.2, Math.min(duration * 0.12, Math.max(duration - 0.2, 0.2))),
+        Math.max(0.2, Math.min(duration * 0.32, Math.max(duration - 0.2, 0.2))),
+        Math.max(0.2, Math.min(duration * 0.58, Math.max(duration - 0.2, 0.2))),
+        Math.max(0.2, Math.min(duration * 0.84, Math.max(duration - 0.2, 0.2))),
+      ].map((value) => Number(value.toFixed(3)))),
+    );
+    const frameDir = path.join(
+      os.tmpdir(),
+      `growth-camp-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    await fs.mkdir(frameDir, { recursive: true });
+    try {
+      const frames: Array<{ timestamp: number; dataUrl: string; storageUrl: string }> = [];
+      for (let index = 0; index < timestamps.length; index += 1) {
+        const timestamp = timestamps[index];
+        const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
+        await execFileAsync("ffmpeg", [
+          "-y",
+          "-ss",
+          String(timestamp),
+          "-i",
+          videoPath,
+          "-frames:v",
+          "1",
+          "-q:v",
+          "3",
+          outPath,
+        ]);
+        const frameBuffer = await fs.readFile(outPath);
+        const stored = await storagePut(
+          `growth-camp/frames/${Date.now()}-${index}.jpg`,
+          frameBuffer,
+          "image/jpeg",
+        );
+        frames.push({
+          timestamp,
+          dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
+          storageUrl: stored.url,
+        });
+      }
+      return { duration, frames };
+    } finally {
+      await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+}
+
 function buildFallbackVideoAnalysis(summary: string, context: string) {
   const normalized = `${summary}\n${context}`;
   const isCommercial = /品牌|招商|服务|转化|案例/.test(normalized);
@@ -187,12 +256,16 @@ export async function analyzeVideo(params: {
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
     const buffer = Buffer.from(params.fileBase64, "base64");
-    const videoUrl = `data:${params.mimeType};base64,${params.fileBase64}`;
-    let multiFrame;
+    const storedVideo = await storagePut(
+      `growth-camp/videos/${Date.now()}-${(params.fileName || "video").replace(/[^a-z0-9._-]/gi, "-")}`,
+      buffer,
+      params.mimeType,
+    );
+    let keyframes;
     try {
-      multiFrame = await withTempVideo(buffer, async (videoPath) => analyzeVideoMultiFrameFromLocalFile(videoPath));
+      keyframes = await extractKeyframes(buffer);
     } catch (error) {
-      console.warn("[growth.analyzeVideo] frame extraction fallback:", error);
+      console.warn("[growth.analyzeVideo] keyframe extraction failed:", error);
       throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
     }
 
@@ -200,8 +273,6 @@ export async function analyzeVideo(params: {
       console.warn("[growth.analyzeVideo] transcript fallback:", error);
       return "";
     });
-    const frameHighlights = formatFrameEvidence(multiFrame.frameAnalyses, "strong", 8);
-    const weakFrameHighlights = formatFrameEvidence(multiFrame.frameAnalyses, "weak", 4);
 
     const response = await invokeLLM({
       model: "pro",
@@ -210,15 +281,16 @@ export async function analyzeVideo(params: {
       messages: [
         {
           role: "system",
-          content: `你是一位资深短视频商业策略顾问兼生成式视频导演。请根据视频多帧分析、时间点证据、转写内容和用户身份，返回 Creator Growth Camp 的统一分析结构。
+          content: `你是一位资深短视频商业策略顾问兼生成式视频导演。请根据关键帧、时间点证据、转写内容和用户身份，返回 Creator Growth Camp 的统一分析结构。
 
 注意：
-0. 必须优先依据“多帧综合摘要 / 亮点 / 改进 / 帧细节 / 转写”做判断，不能只根据业务背景给建议。summary、strengths、improvements 里至少要有一半内容直接来自画面或转写证据。
+0. 必须优先依据“关键帧 / 时间点 / 转写”做判断，不能只根据业务背景给建议。summary、strengths、improvements 里至少要有一半内容直接来自画面或转写证据。
 1. 如果没有音轨或转写为空，只能依据关键帧和画面结构做判断，不能编造口播内容。
 2. 不要输出互相矛盾的建议。低成熟度阶段先给短期验证路径，不要同时堆多个商业化方向。
 3. 严禁输出与用户身份无关的泛模板路径，例如户外运动/美食博主不应该默认给知识付费、社群会员。商业方向必须直接解释“为什么适合这个用户”和“为什么是这条视频”。
-4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议、至少 2 个弱帧参考，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
+4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
 5. 输出要像真人顾问在给初步解决方案，不要只说“讲清楚、重构、优化”，而要说明怎么改、改哪一秒、为什么这样改。
+6. 如果用户上传的是跨域素材，例如户外/旅行/美食博主上传比赛、赛事、风景或社会事件视频，你必须先回答“这条素材怎么借回原业务”，而不是直接跳到卖课、社群或咨询。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -286,15 +358,19 @@ summary 必须覆盖：
               text: [
                 `文件名：${params.fileName || "未命名视频"}`,
                 `业务背景：${params.context?.trim() || "未提供"}`,
-                `视频时长：${multiFrame.videoDuration.toFixed(1)} 秒`,
-                `多帧综合摘要：${multiFrame.summary}`,
-                `亮点：${multiFrame.highlights.join("；")}`,
-                `改进：${multiFrame.improvements.join("；")}`,
-                `强势帧证据：\n${frameHighlights}`,
-                `弱势帧证据（必须用于优化建议）：\n${weakFrameHighlights}`,
+                `视频公开地址：${storedVideo.url}`,
+                `视频时长：${keyframes.duration.toFixed(1)} 秒`,
+                `关键帧时间点：${keyframes.frames.map((item, index) => `第${index + 1}帧 ${item.timestamp.toFixed(1)}s`).join("；")}`,
                 transcript ? `口播/字幕转写：\n${transcript.slice(0, 5000)}` : "口播/字幕转写：暂无或转写失败",
               ].join("\n\n"),
             },
+            ...keyframes.frames.map((item, index) => ({
+              type: "image_url" as const,
+              image_url: {
+                url: item.dataUrl,
+                detail: index === 0 ? "high" as const : "auto" as const,
+              },
+            })),
           ],
         },
       ],
@@ -305,9 +381,9 @@ summary 必须覆盖：
     return {
       analysis: growthAnalysisScoresSchema.parse(parsed),
       videoMeta: {
-        videoUrl,
+        videoUrl: storedVideo.url,
         transcript,
-        videoDuration: multiFrame.videoDuration,
+        videoDuration: keyframes.duration,
         provider: response.provider || "unknown",
         model: response.model || "unknown",
         fallback: false,

@@ -687,6 +687,8 @@ function buildMonetizationTracks(
   const educationDriven = /课程|教学|知识|教程|陪跑|训练营|方法论/.test(text);
   const serviceDriven = /咨询|顾问|预约|服务|方案/.test(text);
   const offlineDriven = /到店|门店|实体|本地|预约/.test(text);
+  const communityDriven = /社群|会员|私域|进群/.test(text) || /社群|会员|陪跑/.test(industryTemplate.primaryConversion);
+  const explicitEducationPath = educationDriven || /课程|训练营|模板|教学|知识/.test(industryTemplate.primaryConversion);
 
   return [
     {
@@ -711,7 +713,9 @@ function buildMonetizationTracks(
     },
     {
       name: "知识付费",
-      fit: clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -18) + (commerceDriven ? -28 : 0) + (sportsCommerce ? -18 : 0) + (serviceDriven ? 4 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96),
+      fit: explicitEducationPath
+        ? clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 + (educationDriven ? 10 : -18) + (commerceDriven ? -28 : 0) + (sportsCommerce ? -18 : 0) + (serviceDriven ? 4 : 0) + (/课程|训练营|陪跑|模板/.test(industryTemplate.primaryConversion) ? 10 : 0)), 12, 96)
+        : clamp(Math.round((analysis.composition + analysis.viralPotential + bilibiliFit) / 3 - 42 - (commerceDriven ? 18 : 0) - (sportsCommerce ? 18 : 0)), 6, 38),
       reason: sportsCommerce
         ? "当前不该先走知识付费。你最短的商业路径是先把器材卖出去，而不是先把训练方法讲成付费课。"
         : `适合把内容拆成方法、结构和案例复盘，再沉淀成课程、模板或陪跑服务。当前更该强化「${industryTemplate.analysisHint}」这类表达。`,
@@ -721,7 +725,9 @@ function buildMonetizationTracks(
     },
     {
       name: "社群会员",
-      fit: clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0) + (educationDriven ? 4 : 0) - (commerceDriven ? 18 : 0) - (sportsCommerce ? 18 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96),
+      fit: communityDriven
+        ? clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 + 4 + (/社群|会员|陪跑/.test(industryTemplate.primaryConversion) ? 6 : 0) + (educationDriven ? 4 : 0) - (commerceDriven ? 18 : 0) - (sportsCommerce ? 18 : 0)) - (analysis.composition < 55 ? 10 : 0), 12, 96)
+        : clamp(Math.round((analysis.color + analysis.lighting + xiaohongshuFit) / 3 - 40 - (commerceDriven ? 12 : 0) - (sportsCommerce ? 12 : 0)), 6, 35),
       reason: sportsCommerce
         ? "当前不该先做社群。用户买健身器材先看适配、效果和价格，不会因为一句“欢迎进群”就留下。"
         : "只有当主题稳定、更新稳定、服务权益稳定时，社群会员才会成立，不能只靠一句“欢迎进群”。",
