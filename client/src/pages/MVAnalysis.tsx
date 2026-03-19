@@ -62,6 +62,29 @@ type AnalysisResult = {
   improvements: string[];
   platforms: string[];
   summary: string;
+  titleSuggestions?: string[];
+  creatorCenterSignals?: string[];
+  timestampSuggestions?: Array<{
+    timestamp: string;
+    issue: string;
+    fix: string;
+    opportunity?: string;
+  }>;
+  weakFrameReferences?: Array<{
+    timestamp: string;
+    reason: string;
+    fix: string;
+  }>;
+  commercialAngles?: Array<{
+    title: string;
+    scenario: string;
+    whyItFits: string;
+    brands: string[];
+    execution: string;
+    hook: string;
+    veoPrompt?: string;
+  }>;
+  followUpPrompt?: string;
 };
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
@@ -1813,7 +1836,7 @@ export default function MVAnalysisPage() {
                           <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                             <div className="text-sm font-semibold text-white">先从这几个标题开始</div>
                             <div className="mt-3 space-y-3">
-                              {directTitleSuggestions.map((item, index) => (
+                              {directTitleSuggestions.map((item: string, index: number) => (
                                 <div key={`${index}-${item}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm leading-7 text-white/76">
                                   <span className="mr-2 font-semibold text-[#9df6c0]">标题 {index + 1}</span>
                                   <span className="font-semibold text-white">{stripInternalJargon(item)}</span>
@@ -1851,7 +1874,7 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {directCommercialAngles.map((angle, index) => (
+                        {directCommercialAngles.map((angle: NonNullable<AnalysisResult["commercialAngles"]>[number], index: number) => (
                           <div key={`${angle.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xl font-black text-white">{angle.title}</div>
@@ -1875,7 +1898,7 @@ export default function MVAnalysisPage() {
                             </div>
                             {angle.brands.length ? (
                               <div className="mt-4 flex flex-wrap gap-2">
-                                {angle.brands.slice(0, 4).map((brand) => (
+                                {angle.brands.slice(0, 4).map((brand: string) => (
                                   <div key={`${angle.title}-${brand}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">
                                     {brand}
                                   </div>
