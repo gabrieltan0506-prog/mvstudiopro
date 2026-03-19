@@ -781,14 +781,31 @@ export const appRouter = router({
       .query(async () => {
         const smtp = getSmtpStatus();
         const scheduler = await readTrendStore();
+        const stats = await getGrowthTrendStats();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const douyinCreatorCenterStats = buildDouyinCreatorCenterStats(scheduler);
+        const statsPlatformMap = new Map(stats.platforms.map((item) => [item.platform, item]));
+        const backfillPlatforms = (scheduler.backfill?.platforms || []).map((item) => {
+          const statsRow = statsPlatformMap.get(item.platform);
+          return {
+            ...item,
+            currentTotal: Math.max(item.currentTotal || 0, statsRow?.currentTotal || 0),
+            archivedTotal: Math.max(item.archivedTotal || 0, statsRow?.archivedItems || 0),
+          };
+        });
+        const backfill =
+          scheduler.backfill
+            ? {
+                ...scheduler.backfill,
+                platforms: backfillPlatforms,
+              }
+            : null;
 
         return {
           success: true,
           targetEmail,
           smtp,
-          backfill: scheduler.backfill || null,
+          backfill,
           mailDigest: scheduler.mailDigest || {
             lastWindowMinutes: 30,
           },

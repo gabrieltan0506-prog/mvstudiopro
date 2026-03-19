@@ -22,6 +22,7 @@ export type TrendSchedulerState = {
   burstEnterCount?: number;
   burstExitCount?: number;
   burstStableRuns?: number;
+  burstLowYieldRuns?: number;
   lastFrequencyLabel?: string;
   lastError?: string;
 };
@@ -537,10 +538,50 @@ export async function readTrendSchedulerState() {
 export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
   const store = await readTrendStore();
   const current = store.backfill || createEmptyStore().backfill!;
+  const currentPlatformMap = new Map(
+    Object.entries(store.collections || {}).map(([platform, collection]) => [
+      platform as GrowthPlatform,
+      collection?.items.length || 0,
+    ]),
+  );
+  const previousPlatformMap = new Map(
+    (current.platforms || []).map((item) => [item.platform, item]),
+  );
+  const incomingPlatformMap = new Map(
+    (progress.platforms || []).map((item) => [item.platform, item]),
+  );
+  const mergedPlatforms = Array.from(
+    new Set<GrowthPlatform>([
+      ...Array.from(previousPlatformMap.keys()),
+      ...Array.from(incomingPlatformMap.keys()),
+      ...Array.from(currentPlatformMap.keys()),
+    ]),
+  ).map((platform) => {
+    const previous = previousPlatformMap.get(platform);
+    const incoming = incomingPlatformMap.get(platform);
+    const collectionCurrentTotal = currentPlatformMap.get(platform) || 0;
+    const previousArchived = previous?.archivedTotal || 0;
+    const incomingArchived = incoming?.archivedTotal || 0;
+    const effectiveArchivedTotal = Math.max(previousArchived, incomingArchived, collectionCurrentTotal);
+    const effectiveCurrentTotal = Math.max(
+      collectionCurrentTotal,
+      incoming?.currentTotal || 0,
+      previous?.currentTotal || 0,
+    );
+    return {
+      ...previous,
+      ...incoming,
+      platform,
+      currentTotal: effectiveCurrentTotal,
+      archivedTotal: effectiveArchivedTotal,
+      target: incoming?.target ?? previous?.target ?? current.targetPerPlatform ?? 0,
+      status: incoming?.status ?? previous?.status ?? "pending",
+    };
+  });
   store.backfill = {
     ...current,
     ...progress,
-    platforms: progress.platforms || current.platforms || [],
+    platforms: mergedPlatforms,
     updatedAt: new Date().toISOString(),
   };
   store.updatedAt = new Date().toISOString();
@@ -555,6 +596,9 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const industryMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const ageMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const contentMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
+  const backfillPlatformMap = new Map(
+    (store.backfill?.platforms || []).map((item) => [item.platform, item]),
+  );
 
   for (const collection of Object.values(store.collections)) {
     if (!collection) continue;
@@ -660,6 +704,21 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
     }
   }
 
+  for (const [platform, platformStats] of Array.from(platformMap.entries())) {
+    const backfillProgress = backfillPlatformMap.get(platform);
+    platformStats.archivedItems = Math.max(
+      platformStats.archivedItems,
+      platformStats.currentTotal,
+      backfillProgress?.archivedTotal || 0,
+    );
+    platformMap.set(platform, platformStats);
+  }
+
+  for (const [bucket, bucketStats] of Array.from(bucketMap.entries())) {
+    bucketStats.archivedItems = Math.max(bucketStats.archivedItems, bucketStats.currentTotal);
+    bucketMap.set(bucket, bucketStats);
+  }
+
   const platforms = Array.from(platformMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
   const buckets = Array.from(bucketMap.values()).sort((left, right) => right.currentTotal - left.currentTotal);
   const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
@@ -686,7 +745,7 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       currentItems: platforms.reduce((sum, item) => sum + item.currentTotal, 0),
       currentPlatforms: platforms.filter((item) => item.currentTotal > 0).length,
       archiveRuns: (store.archiveIndex || []).length,
-      archivedItems: (store.archiveIndex || []).reduce((sum, item) => sum + item.itemCount, 0),
+      archivedItems: platforms.reduce((sum, item) => sum + item.archivedItems, 0),
       schedulerTrackedPlatforms: scheduler.length,
       burstEnterCount: scheduler.reduce((sum, item) => sum + (item.burstEnterCount || 0), 0),
       burstExitCount: scheduler.reduce((sum, item) => sum + (item.burstExitCount || 0), 0),
