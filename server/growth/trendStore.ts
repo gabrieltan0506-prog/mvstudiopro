@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type { GrowthPlatform } from "@shared/growth";
+import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 
 export type TrendSchedulerState = {
@@ -91,11 +91,39 @@ export type TrendMailDigestState = {
   lastWindowMinutes?: number;
 };
 
+export type TrendHistoryLedgerEntry = {
+  key: string;
+  bucket: string;
+  industryLabels: string[];
+  ageLabels: string[];
+  contentLabels: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+};
+
+export type TrendHistoryPlatformSummary = {
+  platform: GrowthPlatform;
+  archivedItems: number;
+  bucketCounts: Record<string, number>;
+  industryCounts: Record<string, number>;
+  ageCounts: Record<string, number>;
+  contentCounts: Record<string, number>;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+};
+
+export type TrendHistoryState = {
+  updatedAt: string;
+  source: "ledger";
+  platforms: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>>;
+};
+
 type TrendStoreFile = {
   updatedAt: string;
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   archiveIndex: TrendArchiveEntry[];
+  history?: TrendHistoryState;
   backfill?: TrendBackfillProgress;
   mailDigest?: TrendMailDigestState;
 };
@@ -171,15 +199,26 @@ const STORE_FILE = path.join(STORE_DIR, "current.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
+const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
+let historyReconcilePromise: Promise<TrendStoreFile> | null = null;
 
 async function ensureStoreDir() {
   await fs.mkdir(STORE_DIR, { recursive: true });
   await fs.mkdir(ARCHIVE_DIR, { recursive: true });
   await fs.mkdir(EXPORT_DIR, { recursive: true });
   await fs.mkdir(PLATFORM_DIR, { recursive: true });
+  await fs.mkdir(HISTORY_LEDGER_DIR, { recursive: true });
+}
+
+function createEmptyHistoryState(): TrendHistoryState {
+  return {
+    updatedAt: new Date(0).toISOString(),
+    source: "ledger",
+    platforms: {},
+  };
 }
 
 function createEmptyStore(): TrendStoreFile {
@@ -188,6 +227,7 @@ function createEmptyStore(): TrendStoreFile {
     collections: {},
     scheduler: {},
     archiveIndex: [],
+    history: createEmptyHistoryState(),
     backfill: {
       active: false,
       currentRound: 0,
@@ -256,6 +296,10 @@ function getItemKey(item: TrendItem) {
   return `${String(item.title || "").trim()}::${String(item.author || "").trim()}::${String(item.bucket || "").trim()}`;
 }
 
+function normalizeLabels(labels: string[] | undefined) {
+  return Array.from(new Set((labels || []).map((label) => String(label || "").trim()).filter(Boolean)));
+}
+
 function getBucketCounts(items: TrendItem[]) {
   return items.reduce<Record<string, number>>((acc, item) => {
     const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
@@ -269,6 +313,156 @@ function getReferenceRange(collection?: PlatformTrendCollection) {
     min: collection?.stats?.referenceMinItems || 0,
     max: collection?.stats?.referenceMaxItems || 0,
   };
+}
+
+function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHistoryLedgerEntry | null {
+  const normalized = normalizeItem(item);
+  const key = getItemKey(normalized);
+  if (!key || !normalized.title) return null;
+  return {
+    key,
+    bucket: String(normalized.bucket || normalized.contentType || "default").trim() || "default",
+    industryLabels: normalizeLabels(normalized.industryLabels),
+    ageLabels: normalizeLabels(normalized.ageLabels),
+    contentLabels: normalizeLabels(normalized.contentLabels),
+    firstSeenAt: observedAt,
+    lastSeenAt: observedAt,
+  };
+}
+
+function summarizeHistoryLedger(
+  platform: GrowthPlatform,
+  ledger: Record<string, TrendHistoryLedgerEntry>,
+): TrendHistoryPlatformSummary {
+  const bucketCounts: Record<string, number> = {};
+  const industryCounts: Record<string, number> = {};
+  const ageCounts: Record<string, number> = {};
+  const contentCounts: Record<string, number> = {};
+  let firstSeenAt = "";
+  let lastSeenAt = "";
+
+  for (const entry of Object.values(ledger)) {
+    bucketCounts[entry.bucket] = (bucketCounts[entry.bucket] || 0) + 1;
+    for (const label of entry.industryLabels) industryCounts[label] = (industryCounts[label] || 0) + 1;
+    for (const label of entry.ageLabels) ageCounts[label] = (ageCounts[label] || 0) + 1;
+    for (const label of entry.contentLabels) contentCounts[label] = (contentCounts[label] || 0) + 1;
+    if (!firstSeenAt || entry.firstSeenAt < firstSeenAt) firstSeenAt = entry.firstSeenAt;
+    if (!lastSeenAt || entry.lastSeenAt > lastSeenAt) lastSeenAt = entry.lastSeenAt;
+  }
+
+  return {
+    platform,
+    archivedItems: Object.keys(ledger).length,
+    bucketCounts,
+    industryCounts,
+    ageCounts,
+    contentCounts,
+    firstSeenAt: firstSeenAt || undefined,
+    lastSeenAt: lastSeenAt || undefined,
+  };
+}
+
+function getHistoryLedgerFile(platform: GrowthPlatform) {
+  return path.join(HISTORY_LEDGER_DIR, `${platform}.json`);
+}
+
+async function readHistoryLedger(platform: GrowthPlatform): Promise<Record<string, TrendHistoryLedgerEntry>> {
+  try {
+    const raw = await fs.readFile(getHistoryLedgerFile(platform), "utf8");
+    const parsed = JSON.parse(raw) as { items?: Record<string, TrendHistoryLedgerEntry> };
+    return parsed.items || {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string, TrendHistoryLedgerEntry>) {
+  await ensureStoreDir();
+  await fs.writeFile(
+    getHistoryLedgerFile(platform),
+    JSON.stringify(
+      {
+        updatedAt: new Date().toISOString(),
+        platform,
+        items,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
+async function readAllHistoryLedgers(platforms: GrowthPlatform[]) {
+  const ledgers = new Map<GrowthPlatform, Record<string, TrendHistoryLedgerEntry>>();
+  for (const platform of platforms) {
+    ledgers.set(platform, await readHistoryLedger(platform));
+  }
+  return ledgers;
+}
+
+async function refreshHistorySummary(
+  store: TrendStoreFile,
+  platforms: GrowthPlatform[],
+) {
+  const summaries: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>> = {
+    ...(store.history?.platforms || {}),
+  };
+  for (const platform of platforms) {
+    const ledger = await readHistoryLedger(platform);
+    summaries[platform] = summarizeHistoryLedger(platform, ledger);
+  }
+  store.history = {
+    updatedAt: new Date().toISOString(),
+    source: "ledger",
+    platforms: summaries,
+  };
+}
+
+async function updateHistoryFromCollections(
+  store: TrendStoreFile,
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+) {
+  const touched = new Set<GrowthPlatform>();
+  for (const [platform, collection] of Object.entries(collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
+    if (!collection?.items?.length) continue;
+    const ledger = await readHistoryLedger(platform);
+    for (const rawItem of collection.items) {
+      const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
+      if (!entry) continue;
+      const current = ledger[entry.key];
+      if (!current) {
+        ledger[entry.key] = entry;
+        continue;
+      }
+      ledger[entry.key] = {
+        ...current,
+        bucket: entry.bucket || current.bucket,
+        industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
+        ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
+        contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
+        firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
+        lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+      };
+    }
+    await writeHistoryLedger(platform, ledger);
+    touched.add(platform);
+  }
+  if (touched.size) {
+    await refreshHistorySummary(store, Array.from(touched));
+  } else if (!store.history) {
+    store.history = createEmptyHistoryState();
+  }
+}
+
+async function readArchiveCollectionItems(entry: TrendArchiveEntry): Promise<TrendItem[]> {
+  try {
+    const raw = await fs.readFile(entry.file, "utf8");
+    const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
+    return Array.isArray(parsed.items) ? parsed.items : [];
+  } catch {
+    return [];
+  }
 }
 
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
@@ -286,6 +480,7 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
         ageCounts: entry.ageCounts || {},
         contentCounts: entry.contentCounts || {},
       })),
+      history: parsed.history || createEmptyHistoryState(),
       backfill: parsed.backfill || createEmptyStore().backfill,
       mailDigest: parsed.mailDigest || {},
     };
@@ -314,6 +509,100 @@ export async function readTrendStore(): Promise<TrendStoreFile> {
     }
   }
   return createEmptyStore();
+}
+
+export async function reconcileTrendHistoryState(options?: { force?: boolean }) {
+  if (!options?.force && historyReconcilePromise) return historyReconcilePromise;
+
+  const run = (async () => {
+    const store = await readTrendStore();
+    const platforms = new Set<GrowthPlatform>(
+      growthPlatformValues.filter((platform) =>
+        Boolean(store.collections?.[platform]?.items?.length)
+          || (store.archiveIndex || []).some((entry) => entry.platform === platform),
+      ),
+    );
+    const ledgers = new Map<GrowthPlatform, Record<string, TrendHistoryLedgerEntry>>();
+
+    for (const platform of Array.from(platforms)) {
+      ledgers.set(platform, options?.force ? {} : await readHistoryLedger(platform));
+    }
+
+    for (const [platform, collection] of Object.entries(store.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
+      if (!collection?.items?.length) continue;
+      const ledger = ledgers.get(platform) || {};
+      for (const rawItem of collection.items) {
+        const entry = buildHistoryLedgerEntry(rawItem, collection.collectedAt);
+        if (!entry) continue;
+        const current = ledger[entry.key];
+        if (!current) {
+          ledger[entry.key] = entry;
+          continue;
+        }
+        ledger[entry.key] = {
+          ...current,
+          bucket: entry.bucket || current.bucket,
+          industryLabels: normalizeLabels([...(current.industryLabels || []), ...entry.industryLabels]),
+          ageLabels: normalizeLabels([...(current.ageLabels || []), ...entry.ageLabels]),
+          contentLabels: normalizeLabels([...(current.contentLabels || []), ...entry.contentLabels]),
+          firstSeenAt: current.firstSeenAt < entry.firstSeenAt ? current.firstSeenAt : entry.firstSeenAt,
+          lastSeenAt: current.lastSeenAt > entry.lastSeenAt ? current.lastSeenAt : entry.lastSeenAt,
+        };
+      }
+      ledgers.set(platform, ledger);
+    }
+
+    const archiveEntries = [...(store.archiveIndex || [])].sort((left, right) =>
+      new Date(left.archivedAt).getTime() - new Date(right.archivedAt).getTime(),
+    );
+    for (const entry of archiveEntries) {
+      const items = await readArchiveCollectionItems(entry);
+      if (!items.length) continue;
+      const ledger = ledgers.get(entry.platform) || {};
+      for (const rawItem of items) {
+        const historyEntry = buildHistoryLedgerEntry(rawItem, entry.archivedAt);
+        if (!historyEntry) continue;
+        const current = ledger[historyEntry.key];
+        if (!current) {
+          ledger[historyEntry.key] = historyEntry;
+          continue;
+        }
+        ledger[historyEntry.key] = {
+          ...current,
+          bucket: historyEntry.bucket || current.bucket,
+          industryLabels: normalizeLabels([...(current.industryLabels || []), ...historyEntry.industryLabels]),
+          ageLabels: normalizeLabels([...(current.ageLabels || []), ...historyEntry.ageLabels]),
+          contentLabels: normalizeLabels([...(current.contentLabels || []), ...historyEntry.contentLabels]),
+          firstSeenAt: current.firstSeenAt < historyEntry.firstSeenAt ? current.firstSeenAt : historyEntry.firstSeenAt,
+          lastSeenAt: current.lastSeenAt > historyEntry.lastSeenAt ? current.lastSeenAt : historyEntry.lastSeenAt,
+        };
+      }
+      ledgers.set(entry.platform, ledger);
+    }
+
+    const summaries: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>> = {};
+    for (const platform of growthPlatformValues) {
+      const ledger = ledgers.get(platform) || {};
+      await writeHistoryLedger(platform, ledger);
+      summaries[platform] = summarizeHistoryLedger(platform, ledger);
+    }
+
+    store.history = {
+      updatedAt: new Date().toISOString(),
+      source: "ledger",
+      platforms: summaries,
+    };
+    store.updatedAt = new Date().toISOString();
+    await writeStore(store);
+    return store;
+  })();
+
+  if (!options?.force) historyReconcilePromise = run;
+  try {
+    return await run;
+  } finally {
+    if (!options?.force) historyReconcilePromise = null;
+  }
 }
 
 async function writeStore(next: TrendStoreFile) {
@@ -464,6 +753,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
   next.updatedAt = new Date().toISOString();
   next.collections = collections;
   const current = await readTrendStore();
+  next.history = current.history || next.history;
   next.backfill = current.backfill || next.backfill;
   next.mailDigest = current.mailDigest || next.mailDigest;
   return writeStore(next);
@@ -476,6 +766,7 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     collections: { ...current.collections },
     scheduler: current.scheduler || {},
     archiveIndex: [...(current.archiveIndex || [])],
+    history: current.history || createEmptyHistoryState(),
     backfill: current.backfill || createEmptyStore().backfill,
     mailDigest: current.mailDigest || createEmptyStore().mailDigest,
   };
@@ -504,6 +795,8 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
   next.archiveIndex = (await pruneOldArchives(next.archiveIndex))
     .sort((left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime())
     .slice(0, 5000);
+
+  await updateHistoryFromCollections(next, collections);
 
   const written = await writeStore(next);
   return {
@@ -562,7 +855,7 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
     const collectionCurrentTotal = currentPlatformMap.get(platform) || 0;
     const previousArchived = previous?.archivedTotal || 0;
     const incomingArchived = incoming?.archivedTotal || 0;
-    const effectiveArchivedTotal = Math.max(previousArchived, incomingArchived, collectionCurrentTotal);
+    const effectiveArchivedTotal = Math.max(previousArchived, incomingArchived);
     const effectiveCurrentTotal = Math.max(
       collectionCurrentTotal,
       incoming?.currentTotal || 0,
@@ -590,15 +883,21 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
 }
 
 export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
-  const store = await readTrendStore();
+  let store = await readTrendStore();
+  if (!store.history?.platforms || !Object.keys(store.history.platforms).length) {
+    store = await reconcileTrendHistoryState();
+  }
   const platformMap = new Map<GrowthPlatform, TrendCollectionStatsSummary>();
   const bucketMap = new Map<string, TrendBucketStatsSummary>();
   const industryMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const ageMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
   const contentMap = new Map<string, { label: string; currentTotal: number; archivedItems: number }>();
-  const backfillPlatformMap = new Map(
-    (store.backfill?.platforms || []).map((item) => [item.platform, item]),
-  );
+  const historyPlatforms = store.history?.platforms || {};
+  const historyPlatformKeys = growthPlatformValues.filter((platform) => {
+    const summary = historyPlatforms[platform];
+    return Boolean(summary?.archivedItems);
+  });
+  const historyLedgers = await readAllHistoryLedgers(historyPlatformKeys);
 
   for (const collection of Object.values(store.collections)) {
     if (!collection) continue;
@@ -671,51 +970,66 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
       contentCounts: {},
     };
     platformStats.archivedRuns += 1;
-    platformStats.archivedItems += entry.itemCount;
     platformStats.referenceMinItems ||= entry.referenceMinItems || 0;
     platformStats.referenceMaxItems ||= entry.referenceMaxItems || 0;
     platformMap.set(entry.platform, platformStats);
+  }
 
-    for (const [bucket, count] of Object.entries(entry.bucketCounts || {})) {
+  for (const platform of growthPlatformValues) {
+    const history = historyPlatforms[platform];
+    if (!history) continue;
+    const platformStats = platformMap.get(platform) || {
+      platform,
+      currentTotal: 0,
+      source: undefined,
+      singleRunCount: 0,
+      singleRunTarget: 0,
+      pageDepth: 0,
+      requestCount: 0,
+      uniqueAuthors: 0,
+      archivedRuns: 0,
+      archivedItems: 0,
+      referenceMinItems: 0,
+      referenceMaxItems: 0,
+      bucketCounts: {},
+      industryCounts: {},
+      ageCounts: {},
+      contentCounts: {},
+    };
+    platformStats.archivedItems = history.archivedItems || 0;
+    platformMap.set(platform, platformStats);
+
+    for (const [bucket, count] of Object.entries(history.bucketCounts || {})) {
       const current = bucketMap.get(bucket) || {
         bucket,
         currentTotal: 0,
         archivedItems: 0,
         archivedRuns: 0,
       };
-      current.archivedItems += count;
-      current.archivedRuns += 1;
+      current.archivedItems = count;
       bucketMap.set(bucket, current);
     }
-    for (const [label, count] of Object.entries(entry.industryCounts || {})) {
+
+    for (const [label, count] of Object.entries(history.industryCounts || {})) {
       const current = industryMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
-      current.archivedItems += count;
+      current.archivedItems = count;
       industryMap.set(label, current);
     }
-    for (const [label, count] of Object.entries(entry.ageCounts || {})) {
+
+    for (const [label, count] of Object.entries(history.ageCounts || {})) {
       const current = ageMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
-      current.archivedItems += count;
+      current.archivedItems = count;
       ageMap.set(label, current);
     }
-    for (const [label, count] of Object.entries(entry.contentCounts || {})) {
+
+    for (const [label, count] of Object.entries(history.contentCounts || {})) {
       const current = contentMap.get(label) || { label, currentTotal: 0, archivedItems: 0 };
-      current.archivedItems += count;
+      current.archivedItems = count;
       contentMap.set(label, current);
     }
   }
 
-  for (const [platform, platformStats] of Array.from(platformMap.entries())) {
-    const backfillProgress = backfillPlatformMap.get(platform);
-    platformStats.archivedItems = Math.max(
-      platformStats.archivedItems,
-      platformStats.currentTotal,
-      backfillProgress?.archivedTotal || 0,
-    );
-    platformMap.set(platform, platformStats);
-  }
-
   for (const [bucket, bucketStats] of Array.from(bucketMap.entries())) {
-    bucketStats.archivedItems = Math.max(bucketStats.archivedItems, bucketStats.currentTotal);
     bucketMap.set(bucket, bucketStats);
   }
 
@@ -724,15 +1038,26 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
   const scheduler = Object.values(store.scheduler || {}).sort((left, right) => left.platform.localeCompare(right.platform));
   const coverageWindows = LOOKBACK_WINDOWS.map((days) => {
     const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
+    let archivedItems = 0;
+    let activePlatforms = 0;
+    for (const platform of historyPlatformKeys) {
+      const ledger = historyLedgers.get(platform) || {};
+      const matching = Object.values(ledger).filter((item) => {
+        const firstSeenTime = new Date(item.firstSeenAt).getTime();
+        return Number.isFinite(firstSeenTime) && firstSeenTime >= threshold;
+      });
+      if (matching.length) activePlatforms += 1;
+      archivedItems += matching.length;
+    }
     const entries = (store.archiveIndex || []).filter((item) => {
       const time = new Date(item.archivedAt).getTime();
       return Number.isFinite(time) && time >= threshold;
     });
     return {
       days,
-      archivedItems: entries.reduce((sum, item) => sum + item.itemCount, 0),
+      archivedItems,
       archivedRuns: entries.length,
-      activePlatforms: new Set(entries.map((item) => item.platform)).size,
+      activePlatforms,
     };
   });
   const selectedCoverage =

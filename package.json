@@ -10,7 +10,10 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "rebuild:growth-store": "tsx scripts/rebuild-growth-store-from-recovery.ts",
+    "growth:snapshot": "tsx scripts/snapshot-growth-store.ts",
+    "growth:restore-snapshot": "tsx scripts/restore-growth-store-from-snapshot.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",

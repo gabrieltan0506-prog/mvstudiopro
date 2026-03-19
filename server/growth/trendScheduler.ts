@@ -7,6 +7,7 @@ import {
   getGrowthTrendStats,
   isTrendCollectionStale,
   mergeTrendCollections,
+  reconcileTrendHistoryState,
   readTrendMailDigestState,
   readTrendSchedulerState,
   readTrendStore,
@@ -464,6 +465,10 @@ async function runDuePlatforms() {
 export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
+
+  await reconcileTrendHistoryState().catch((error) => {
+    console.warn("[growth.history] reconcile on bootstrap failed:", error);
+  });
 
   const scheduler = await readTrendSchedulerState();
   for (const platform of PRIORITY_PLATFORMS) {

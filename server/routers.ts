@@ -26,7 +26,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendStore } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -100,18 +100,16 @@ function buildDouyinCreatorCenterStats(store: Awaited<ReturnType<typeof readTren
     douyinCreatorCenterBuckets.map((item) => [item.bucket, item]),
   );
 
-  for (const entry of store.archiveIndex || []) {
-    if (entry.platform !== "douyin") continue;
-    for (const [bucket, archivedCount] of Object.entries(entry.bucketCounts || {})) {
-      if (!isDouyinCreatorCenterBucket(bucket)) continue;
-      const current = douyinCreatorCenterBucketMap.get(bucket) || {
-        bucket,
-        currentTotal: 0,
-        archivedTotal: 0,
-      };
-      current.archivedTotal += archivedCount;
-      douyinCreatorCenterBucketMap.set(bucket, current);
-    }
+  const historyBucketCounts = store.history?.platforms?.douyin?.bucketCounts || {};
+  for (const [bucket, archivedCount] of Object.entries(historyBucketCounts)) {
+    if (!isDouyinCreatorCenterBucket(bucket)) continue;
+    const current = douyinCreatorCenterBucketMap.get(bucket) || {
+      bucket,
+      currentTotal: 0,
+      archivedTotal: 0,
+    };
+    current.archivedTotal = archivedCount;
+    douyinCreatorCenterBucketMap.set(bucket, current);
   }
 
   const douyinCreatorCenterBucketList = Array.from(douyinCreatorCenterBucketMap.values())
@@ -779,8 +777,9 @@ export const appRouter = router({
 
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
+        const reconciledStore = await reconcileTrendHistoryState();
         const smtp = getSmtpStatus();
-        const scheduler = await readTrendStore();
+        const scheduler = reconciledStore;
         const stats = await getGrowthTrendStats();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const douyinCreatorCenterStats = buildDouyinCreatorCenterStats(scheduler);
