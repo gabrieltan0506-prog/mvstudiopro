@@ -128,6 +128,13 @@ type TrendStoreFile = {
   mailDigest?: TrendMailDigestState;
 };
 
+type TrendStoreRuntimeMeta = {
+  updatedAt?: string;
+  scheduler?: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
+  backfill?: TrendBackfillProgress;
+  mailDigest?: TrendMailDigestState;
+};
+
 export type TrendCollectionStatsSummary = {
   platform: GrowthPlatform;
   source?: PlatformTrendCollection["source"];
@@ -196,6 +203,7 @@ const LEGACY_STORE_FILE = path.resolve(
   process.env.GROWTH_LEGACY_STORE_FILE || path.join(path.dirname(STORE_DIR), "growth-trends.json"),
 );
 const STORE_FILE = path.join(STORE_DIR, "current.json");
+const META_FILE = path.join(STORE_DIR, "runtime-meta.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
@@ -203,6 +211,9 @@ const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
+const IS_FLY_VOLUME_STORE = STORE_DIR.startsWith("/data/");
+const SHOULD_WRITE_LEGACY_MIRROR = process.env.GROWTH_WRITE_LEGACY_MIRROR === "1" || !IS_FLY_VOLUME_STORE;
+const SHOULD_WRITE_DERIVED_PLATFORM_FILES = process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES === "1" || !IS_FLY_VOLUME_STORE;
 let historyReconcilePromise: Promise<TrendStoreFile> | null = null;
 
 async function ensureStoreDir() {
@@ -489,15 +500,64 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
   }
 }
 
+async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
+  try {
+    const raw = await fs.readFile(META_FILE, "utf8");
+    const parsed = JSON.parse(raw) as TrendStoreRuntimeMeta;
+    return {
+      updatedAt: parsed.updatedAt,
+      scheduler: parsed.scheduler || {},
+      backfill: parsed.backfill,
+      mailDigest: parsed.mailDigest || {},
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
+  await ensureStoreDir();
+  await fs.writeFile(
+    META_FILE,
+    JSON.stringify(
+      {
+        updatedAt: next.updatedAt || new Date().toISOString(),
+        scheduler: next.scheduler || {},
+        backfill: next.backfill,
+        mailDigest: next.mailDigest || {},
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+}
+
 export async function readTrendStore(): Promise<TrendStoreFile> {
   await ensureStoreDir();
   const current = await readRawStoreFile(STORE_FILE);
-  if (current) return current;
+  if (current) {
+    const meta = await readRuntimeMeta();
+    return {
+      ...current,
+      updatedAt: meta.updatedAt || current.updatedAt,
+      scheduler: meta.scheduler || current.scheduler || {},
+      backfill: meta.backfill || current.backfill,
+      mailDigest: meta.mailDigest || current.mailDigest,
+    };
+  }
 
   const legacy = await readRawStoreFile(LEGACY_STORE_FILE);
   if (legacy) {
     await fs.writeFile(STORE_FILE, JSON.stringify(legacy, null, 2), "utf8");
-    return legacy;
+    const meta = await readRuntimeMeta();
+    return {
+      ...legacy,
+      updatedAt: meta.updatedAt || legacy.updatedAt,
+      scheduler: meta.scheduler || legacy.scheduler || {},
+      backfill: meta.backfill || legacy.backfill,
+      mailDigest: meta.mailDigest || legacy.mailDigest,
+    };
   }
 
   const defaultStoreFile = path.join(DEFAULT_STORE_ROOT, "growth", "current.json");
@@ -505,7 +565,14 @@ export async function readTrendStore(): Promise<TrendStoreFile> {
     const fallback = await readRawStoreFile(defaultStoreFile);
     if (fallback) {
       await fs.writeFile(STORE_FILE, JSON.stringify(fallback, null, 2), "utf8");
-      return fallback;
+      const meta = await readRuntimeMeta();
+      return {
+        ...fallback,
+        updatedAt: meta.updatedAt || fallback.updatedAt,
+        scheduler: meta.scheduler || fallback.scheduler || {},
+        backfill: meta.backfill || fallback.backfill,
+        mailDigest: meta.mailDigest || fallback.mailDigest,
+      };
     }
   }
   return createEmptyStore();
@@ -516,6 +583,13 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
 
   const run = (async () => {
     const store = await readTrendStore();
+    if (
+      !options?.force
+      && store.history?.source === "ledger"
+      && Object.keys(store.history.platforms || {}).length > 0
+    ) {
+      return store;
+    }
     const platforms = new Set<GrowthPlatform>(
       growthPlatformValues.filter((platform) =>
         Boolean(store.collections?.[platform]?.items?.length)
@@ -605,10 +679,27 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
   }
 }
 
-async function writeStore(next: TrendStoreFile) {
+async function writeStore(
+  next: TrendStoreFile,
+  options?: {
+    writeDerivedPlatformFiles?: boolean;
+    writeLegacyMirror?: boolean;
+  },
+) {
   await ensureStoreDir();
   await fs.writeFile(STORE_FILE, JSON.stringify(next, null, 2), "utf8");
-  await fs.writeFile(LEGACY_STORE_FILE, JSON.stringify(next, null, 2), "utf8");
+  await writeRuntimeMeta({
+    updatedAt: next.updatedAt,
+    scheduler: next.scheduler,
+    backfill: next.backfill,
+    mailDigest: next.mailDigest,
+  });
+  if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
+    await fs.writeFile(LEGACY_STORE_FILE, JSON.stringify(next, null, 2), "utf8");
+  }
+  if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
+    return next;
+  }
   await Promise.all(
     Object.entries(next.collections).map(async ([platform, collection]) => {
       if (!collection) return;
@@ -810,17 +901,24 @@ export async function updateTrendSchedulerState(
   patch: Partial<TrendSchedulerState>,
 ) {
   const store = await readTrendStore();
-  const current = store.scheduler[platform] || {
+  const meta = await readRuntimeMeta();
+  const scheduler = { ...(meta.scheduler || store.scheduler || {}) };
+  const current = scheduler[platform] || {
     platform,
     failureCount: 0,
   };
-  store.scheduler[platform] = {
+  scheduler[platform] = {
     ...current,
     ...patch,
     platform,
   };
-  store.updatedAt = new Date().toISOString();
-  return writeStore(store);
+  await writeRuntimeMeta({
+    updatedAt: new Date().toISOString(),
+    scheduler,
+    backfill: meta.backfill || store.backfill,
+    mailDigest: meta.mailDigest || store.mailDigest,
+  });
+  return scheduler[platform];
 }
 
 export async function readTrendSchedulerState() {
@@ -830,6 +928,7 @@ export async function readTrendSchedulerState() {
 
 export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
   const store = await readTrendStore();
+  const meta = await readRuntimeMeta();
   const current = store.backfill || createEmptyStore().backfill!;
   const currentPlatformMap = new Map(
     Object.entries(store.collections || {}).map(([platform, collection]) => [
@@ -871,15 +970,19 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
       status: incoming?.status ?? previous?.status ?? "pending",
     };
   });
-  store.backfill = {
+  const nextBackfill: TrendBackfillProgress = {
     ...current,
     ...progress,
     platforms: mergedPlatforms,
     updatedAt: new Date().toISOString(),
   };
-  store.updatedAt = new Date().toISOString();
-  await writeStore(store);
-  return store.backfill;
+  await writeRuntimeMeta({
+    updatedAt: new Date().toISOString(),
+    scheduler: meta.scheduler || store.scheduler,
+    backfill: nextBackfill,
+    mailDigest: meta.mailDigest || store.mailDigest,
+  });
+  return nextBackfill;
 }
 
 export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
@@ -1117,12 +1220,18 @@ export async function readTrendMailDigestState(): Promise<TrendMailDigestState> 
 
 export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestState>) {
   const store = await readTrendStore();
-  store.mailDigest = {
+  const meta = await readRuntimeMeta();
+  const mailDigest = {
     ...(store.mailDigest || {}),
     ...patch,
   };
-  store.updatedAt = new Date().toISOString();
-  return writeStore(store);
+  await writeRuntimeMeta({
+    updatedAt: new Date().toISOString(),
+    scheduler: meta.scheduler || store.scheduler,
+    backfill: meta.backfill || store.backfill,
+    mailDigest,
+  });
+  return mailDigest;
 }
 
 export async function exportTrendCollectionsCsv() {
