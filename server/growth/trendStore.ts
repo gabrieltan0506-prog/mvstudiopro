@@ -900,9 +900,8 @@ export async function updateTrendSchedulerState(
   platform: GrowthPlatform,
   patch: Partial<TrendSchedulerState>,
 ) {
-  const store = await readTrendStore();
   const meta = await readRuntimeMeta();
-  const scheduler = { ...(meta.scheduler || store.scheduler || {}) };
+  const scheduler = { ...(meta.scheduler || {}) };
   const current = scheduler[platform] || {
     platform,
     failureCount: 0,
@@ -915,15 +914,15 @@ export async function updateTrendSchedulerState(
   await writeRuntimeMeta({
     updatedAt: new Date().toISOString(),
     scheduler,
-    backfill: meta.backfill || store.backfill,
-    mailDigest: meta.mailDigest || store.mailDigest,
+    backfill: meta.backfill,
+    mailDigest: meta.mailDigest,
   });
   return scheduler[platform];
 }
 
 export async function readTrendSchedulerState() {
-  const store = await readTrendStore();
-  return store.scheduler;
+  const meta = await readRuntimeMeta();
+  return meta.scheduler || {};
 }
 
 export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
@@ -1219,16 +1218,15 @@ export async function readTrendMailDigestState(): Promise<TrendMailDigestState> 
 }
 
 export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestState>) {
-  const store = await readTrendStore();
   const meta = await readRuntimeMeta();
   const mailDigest = {
-    ...(store.mailDigest || {}),
+    ...(meta.mailDigest || {}),
     ...patch,
   };
   await writeRuntimeMeta({
     updatedAt: new Date().toISOString(),
-    scheduler: meta.scheduler || store.scheduler,
-    backfill: meta.backfill || store.backfill,
+    scheduler: meta.scheduler,
+    backfill: meta.backfill,
     mailDigest,
   });
   return mailDigest;
