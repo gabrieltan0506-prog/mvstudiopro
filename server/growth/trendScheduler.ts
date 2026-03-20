@@ -23,7 +23,7 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 15) || 15);
+const BURST_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 1) || 1);
 const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
 const LOW_YIELD_LIMIT = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_LIMIT || 5) || 5);
 const BURST_TRIGGER_MIN_COUNT = Math.max(6, Number(process.env.GROWTH_BURST_TRIGGER_MIN_COUNT || 10) || 10);
@@ -58,8 +58,9 @@ function withJitter(baseMs: number) {
   return baseMs + Math.floor(Math.random() * JITTER_MAX_MS);
 }
 
-function nextRunIso(baseMs: number) {
-  return new Date(Date.now() + withJitter(baseMs)).toISOString();
+function nextRunIso(baseMs: number, options?: { jitter?: boolean }) {
+  const useJitter = options?.jitter ?? true;
+  return new Date(Date.now() + (useJitter ? withJitter(baseMs) : baseMs)).toISOString();
 }
 
 function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallbackMinutes: number) {
@@ -200,7 +201,7 @@ function resolveNextRunPlan(params: {
     const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
+      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform), { jitter: false }),
       frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getForceBurstLabel(params.platform),
       burstStableRuns: params.burstStableRuns,
       burstLowYieldRuns: lowYieldRuns,
@@ -226,7 +227,7 @@ function resolveNextRunPlan(params: {
     const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
+      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform), { jitter: false }),
       frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getBurstFrequencyLabel(params.platform),
       burstStableRuns: params.currentCount >= params.previousCount ? params.burstStableRuns + 1 : 0,
       burstLowYieldRuns: lowYieldRuns,
@@ -237,7 +238,7 @@ function resolveNextRunPlan(params: {
   if (isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)) {
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
+      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform), { jitter: false }),
       frequencyLabel: getBurstFrequencyLabel(params.platform),
       burstStableRuns: 0,
       burstLowYieldRuns: 0,
@@ -599,7 +600,7 @@ async function runPlatform(platform: GrowthPlatform) {
       burstStableRuns: forcedBurst ? (current?.burstStableRuns || 0) : 0,
       burstLowYieldRuns: forcedBurst ? (current?.burstLowYieldRuns || 0) : 0,
       burstTriggeredAt: forcedBurst ? (current?.burstTriggeredAt || startedAt) : undefined,
-      nextRunAt: forcedBurst ? nextRunIso(getPlatformLowYieldIntervalMs(platform)) : nextRunIso(buildRetryDelayMs(failureCount)),
+      nextRunAt: forcedBurst ? nextRunIso(getPlatformLowYieldIntervalMs(platform), { jitter: false }) : nextRunIso(buildRetryDelayMs(failureCount)),
       lastFrequencyLabel: forcedBurst ? getLowYieldFrequencyLabel(platform) : current?.lastFrequencyLabel,
     });
     console.warn(`[growth.scheduler] ${platform} failed:`, message);

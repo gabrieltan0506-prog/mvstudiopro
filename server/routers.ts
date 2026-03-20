@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -134,6 +136,104 @@ function buildDouyinCreatorCenterStats(store: Awaited<ReturnType<typeof readTren
       hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
       pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
     },
+  };
+}
+
+type CreatorCenterLiteStats = ReturnType<typeof buildDouyinCreatorCenterStats>;
+
+async function readDouyinCreatorCenterStatsLite(): Promise<CreatorCenterLiteStats> {
+  const storeDir = path.resolve(
+    process.env.GROWTH_STORE_DIR || path.join(path.resolve(process.cwd(), ".cache"), "growth"),
+  );
+  const platformFile = path.join(storeDir, "platforms", "douyin.json");
+  const storeFile = path.join(storeDir, "current.json");
+  const ledgerFile = path.join(storeDir, "history-ledger", "douyin.json");
+  const diagnostics = {
+    hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
+    hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
+    hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
+    pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
+  };
+
+  let currentBucketCounts: Record<string, number> = {};
+  let notes: string[] = [];
+  try {
+    const parsed = JSON.parse(await fs.readFile(platformFile, "utf8")) as {
+      collection?: {
+        items?: Array<{ bucket?: string }>;
+        notes?: string[];
+        stats?: { bucketCounts?: Record<string, number> };
+      };
+    };
+    currentBucketCounts =
+      parsed.collection?.stats?.bucketCounts
+      || getCollectionBucketCounts(parsed.collection?.items || []);
+    notes = (parsed.collection?.notes || []).filter((note) => /Douyin creator center|Douyin creator index/i.test(note));
+  } catch {
+    try {
+      const parsed = JSON.parse(await fs.readFile(storeFile, "utf8")) as {
+        collections?: {
+          douyin?: {
+            items?: Array<{ bucket?: string }>;
+            notes?: string[];
+            stats?: { bucketCounts?: Record<string, number> };
+          };
+        };
+      };
+      const collection = parsed.collections?.douyin;
+      currentBucketCounts =
+        collection?.stats?.bucketCounts
+        || getCollectionBucketCounts(collection?.items || []);
+      notes = (collection?.notes || []).filter((note) => /Douyin creator center|Douyin creator index/i.test(note));
+    } catch {
+      return {
+        currentTotal: 0,
+        archivedTotal: 0,
+        buckets: [],
+        notes: [],
+        diagnostics,
+      };
+    }
+  }
+
+  const bucketMap = new Map<string, { bucket: string; currentTotal: number; archivedTotal: number }>();
+  for (const [bucket, currentTotal] of Object.entries(currentBucketCounts)) {
+    if (!isDouyinCreatorCenterBucket(bucket)) continue;
+    bucketMap.set(bucket, { bucket, currentTotal, archivedTotal: 0 });
+  }
+
+  try {
+    const parsed = JSON.parse(await fs.readFile(ledgerFile, "utf8")) as
+      | { items?: Record<string, { bucket?: string }> }
+      | Record<string, { bucket?: string }>;
+    const entries = "items" in parsed && parsed.items ? Object.values(parsed.items) : Object.values(parsed || {});
+    for (const entry of entries) {
+      const bucket = String(entry?.bucket || "").trim();
+      if (!isDouyinCreatorCenterBucket(bucket)) continue;
+      const current = bucketMap.get(bucket) || { bucket, currentTotal: 0, archivedTotal: 0 };
+      current.archivedTotal += 1;
+      bucketMap.set(bucket, current);
+    }
+  } catch {
+    // keep current-only stats when ledger is unavailable
+  }
+
+  const creatorNotes = notes.filter((note) => {
+    if (/itemBase .* responded with 404/i.test(note)) return false;
+    if (/returned encrypted payload\./i.test(note) && /itemBase|keyword valid-date|keyword trend|keyword interpretation|brand lines|brand radar|brand cycles/i.test(note)) {
+      return false;
+    }
+    return true;
+  });
+  const buckets = Array.from(bucketMap.values())
+    .sort((left, right) => right.currentTotal - left.currentTotal || right.archivedTotal - left.archivedTotal);
+
+  return {
+    currentTotal: buckets.reduce((sum, item) => sum + item.currentTotal, 0),
+    archivedTotal: buckets.reduce((sum, item) => sum + item.archivedTotal, 0),
+    buckets,
+    notes: creatorNotes.slice(-12),
+    diagnostics,
   };
 }
 
@@ -781,18 +881,7 @@ export const appRouter = router({
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const backfill = runtimeMeta.backfill || null;
-        const douyinCreatorCenterStats = {
-          currentTotal: 0,
-          archivedTotal: 0,
-          buckets: [] as Array<{ bucket: string; currentTotal: number; archivedTotal: number }>,
-          notes: [] as string[],
-          diagnostics: {
-            hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
-            hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
-            hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
-            pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
-          },
-        };
+        const douyinCreatorCenterStats = await readDouyinCreatorCenterStatsLite();
 
         return {
           success: true,

@@ -131,6 +131,9 @@ type CachedTrendItem = {
   author?: string;
   tags?: string[];
   industryLabels?: string[];
+  contentLabels?: string[];
+  ageLabels?: string[];
+  bucket?: string;
 };
 
 type CachedTrendCollection = {
@@ -224,6 +227,9 @@ function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
       collected.push(...splitCandidateTerms(item.author || ""));
       for (const tag of item.tags || []) collected.push(...splitCandidateTerms(tag));
       for (const label of item.industryLabels || []) collected.push(...splitCandidateTerms(label));
+      for (const label of item.contentLabels || []) collected.push(...splitCandidateTerms(label));
+      for (const label of item.ageLabels || []) collected.push(...splitCandidateTerms(label));
+      collected.push(...splitCandidateTerms(item.bucket || ""));
     }
   }
 
@@ -269,6 +275,44 @@ function buildCrossPlatformAuthorSeeds(platform: GrowthPlatform) {
   return Array.from(new Set(authorTerms)).slice(0, platform === "kuaishou" ? 80 : 40);
 }
 
+function buildCrossPlatformSignalSeeds(platform: GrowthPlatform) {
+  const store = loadCachedTrendStore();
+  if (!store?.collections) return [];
+
+  const collected: string[] = [];
+  const sourcePlatforms = SIGNAL_SOURCE_PLATFORMS.filter((item) => item !== platform);
+  for (const sourcePlatform of sourcePlatforms) {
+    const collection = store.collections[sourcePlatform];
+    const items = Array.isArray(collection?.items) ? collection.items : [];
+    for (const item of items.slice(0, sourcePlatform === "douyin" ? 600 : 360)) {
+      const author = String(item.author || "").trim();
+      if (author) {
+        collected.push(...splitCandidateTerms(author));
+        if (author.length >= 2 && author.length <= 12) {
+          collected.push(`${author}同款`);
+          collected.push(`${author}风格`);
+        }
+      }
+      for (const tag of item.tags || []) {
+        collected.push(...splitCandidateTerms(tag));
+        if (tag.length >= 2 && tag.length <= 12) {
+          collected.push(`${tag}教程`);
+          collected.push(`${tag}案例`);
+        }
+      }
+      for (const label of item.industryLabels || []) {
+        collected.push(...splitCandidateTerms(label));
+        if (label.length >= 2 && label.length <= 12) {
+          collected.push(`${label}选题`);
+          collected.push(`${label}热点`);
+        }
+      }
+    }
+  }
+
+  return Array.from(new Set(collected)).slice(0, platform === "kuaishou" ? 160 : 120);
+}
+
 export function getPlatformSeeds(platform: GrowthPlatform) {
   const envSeeds = String(process.env[`${platform.toUpperCase()}_TREND_KEYWORDS`] || "")
     .split(",")
@@ -280,8 +324,9 @@ export function getPlatformSeeds(platform: GrowthPlatform) {
     .flatMap((item) => PLATFORM_SEEDS[item] || []);
   const dynamicSeeds = buildCrossPlatformDynamicSeeds(platform);
   const topicSeeds = buildCrossPlatformTopicSeeds(platform);
+  const signalSeeds = buildCrossPlatformSignalSeeds(platform);
   return Array.from(
-    new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...topicSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
+    new Set([...envSeeds, ...base, ...crossPlatformSeeds, ...dynamicSeeds, ...topicSeeds, ...signalSeeds, ...GLOBAL_SEEDS].filter(shouldKeepSeed)),
   );
 }
 
