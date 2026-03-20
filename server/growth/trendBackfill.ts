@@ -2,7 +2,6 @@ import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
 import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress } from "./trendStore";
 
-const TARGET = Math.max(10_000, Number(process.env.GROWTH_PLATFORM_MIN_ITEMS || 10_000) || 10_000);
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
 const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
@@ -39,9 +38,7 @@ function scheduleNextBackfillStep() {
 
 function getPendingPlatforms(stats: Awaited<ReturnType<typeof getGrowthTrendStats>>) {
   return PLATFORMS.filter((platform) => {
-    const row = stats.platforms.find((item) => item.platform === platform);
-    const historicalTotal = row?.archivedItems || 0;
-    return historicalTotal < TARGET && (plateau.get(platform) || 0) < PLATEAU_LIMIT;
+    return (plateau.get(platform) || 0) < PLATEAU_LIMIT;
   });
 }
 
@@ -53,19 +50,19 @@ export async function runGrowthTrendBackfillStep() {
     const pending = getPendingPlatforms(statsBefore);
     if (!pending.length) {
       await updateTrendBackfillProgress({
-        active: false,
-        finishedAt: new Date().toISOString(),
-        status: "completed",
+        active: true,
+        status: "running",
         selectedWindowDays: statsBefore.coverage.selectedWindowDays,
-        note: "历史回填已达到目标量，worker 停止。",
+        note: "历史回填运行中：所有平台暂时进入低产出平台期，worker 保持运行，等待下一轮继续抓取。",
         platforms: PLATFORMS.map((platform) => {
           const row = statsBefore.platforms.find((item) => item.platform === platform);
           return {
             platform,
-            target: TARGET,
+            target: 0,
             currentTotal: row?.currentTotal || 0,
             archivedTotal: row?.archivedItems || 0,
-            status: (row?.archivedItems || 0) >= TARGET ? "done" : "pending",
+            plateauCount: plateau.get(platform) || 0,
+            status: "plateau",
           };
         }),
       });
@@ -79,19 +76,19 @@ export async function runGrowthTrendBackfillStep() {
       startedAt,
       currentRound: nextRound,
       maxRounds: MAX_ROUNDS,
-      targetPerPlatform: TARGET,
+      targetPerPlatform: 0,
       selectedWindowDays: statsBefore.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
           platform,
-          target: TARGET,
+          target: 0,
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedItems || 0,
           plateauCount: plateau.get(platform) || 0,
-          status: pending.includes(platform) ? "running" : (row?.archivedItems || 0) >= TARGET ? "done" : "pending",
+          status: pending.includes(platform) ? "running" : "plateau",
         };
       }),
     });
@@ -118,22 +115,22 @@ export async function runGrowthTrendBackfillStep() {
       active: true,
       currentRound: nextRound,
       maxRounds: MAX_ROUNDS,
-      targetPerPlatform: TARGET,
+      targetPerPlatform: 0,
       selectedWindowDays: statsAfter.coverage.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;
         return {
           platform,
-          target: TARGET,
+          target: 0,
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedItems || 0,
           addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
           mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
           plateauCount: plateau.get(platform) || 0,
-          status: stalled ? "plateau" : (row?.archivedItems || 0) >= TARGET ? "done" : "running",
+          status: stalled ? "plateau" : "running",
           error: collected.errors[platform],
         };
       }),

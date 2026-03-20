@@ -1593,34 +1593,6 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 ) : null}
-                {growthSystemStatusQuery.data?.douyinCreatorCenter ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-fuchsia-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-fuchsia-100">抖音创作者中心 / 指数</div>
-                    <div className="grid gap-1 md:grid-cols-2">
-                      <div>current total: {String(growthSystemStatusQuery.data.douyinCreatorCenter.currentTotal || 0)}</div>
-                      <div>archived total: {String(growthSystemStatusQuery.data.douyinCreatorCenter.archivedTotal || 0)}</div>
-                      <div>creator cookie: {String(growthSystemStatusQuery.data.douyinCreatorCenter.diagnostics?.hasCreatorCenterCookie ?? false)}</div>
-                      <div>creator index cookie: {String(growthSystemStatusQuery.data.douyinCreatorCenter.diagnostics?.hasCreatorIndexCookie ?? false)}</div>
-                      <div>csrf token: {String(growthSystemStatusQuery.data.douyinCreatorCenter.diagnostics?.hasCreatorCsrfToken ?? false)}</div>
-                      <div>page capture: {String(growthSystemStatusQuery.data.douyinCreatorCenter.diagnostics?.pageCaptureEnabled ?? false)}</div>
-                    </div>
-                    <div className="space-y-2">
-                      {(growthSystemStatusQuery.data.douyinCreatorCenter.buckets || []).map((item) => (
-                        <div key={String(item.bucket)} className="grid gap-1 md:grid-cols-2">
-                          <div>{String(item.bucket)} current: {String(item.currentTotal || 0)}</div>
-                          <div>{String(item.bucket)} archived: {String(item.archivedTotal || 0)}</div>
-                        </div>
-                      ))}
-                    </div>
-                    {(growthSystemStatusQuery.data.douyinCreatorCenter.notes || []).length ? (
-                      <div className="space-y-1 rounded-xl border border-fuchsia-200/15 bg-fuchsia-400/5 p-3 leading-6">
-                        {(growthSystemStatusQuery.data.douyinCreatorCenter.notes || []).map((note, index) => (
-                          <div key={`${index}-${note}`}>{String(note)}</div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
           </section>
         ) : null}

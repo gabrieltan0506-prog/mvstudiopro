@@ -379,15 +379,11 @@ function buildGrowthDataEvidenceNotes(params: {
     .filter((item) => params.requestedPlatforms.includes(item.platform))
     .map((item) => `${item.platform}: 当前 ${item.currentTotal || 0} / 历史 ${item.archivedTotal || 0}`)
     .slice(0, 6);
-  const creatorCenter = buildDouyinCreatorCenterStats(params.store);
   const notes = [
     platformRows.length
       ? `平台数据证据：${platformRows.join("；")}。`
       : "",
   ];
-  if (params.requestedPlatforms.includes("douyin") && (creatorCenter.currentTotal || creatorCenter.archivedTotal)) {
-    notes.push(`抖音创作者中心证据：当前 ${creatorCenter.currentTotal} / 历史 ${creatorCenter.archivedTotal}。`);
-  }
   return notes.filter(Boolean);
 }
 
@@ -881,7 +877,6 @@ export const appRouter = router({
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const backfill = runtimeMeta.backfill || null;
-        const douyinCreatorCenterStats = await readDouyinCreatorCenterStatsLite();
 
         return {
           success: true,
@@ -902,7 +897,6 @@ export const appRouter = router({
             lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastError: item?.lastError,
           })),
-          douyinCreatorCenter: douyinCreatorCenterStats,
         };
       }),
 
