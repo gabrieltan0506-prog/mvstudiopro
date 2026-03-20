@@ -279,40 +279,51 @@ async function notifyCollectionUpdate(params: {
   if (lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS) {
     return;
   }
+  let schedulerSummary = "";
+  let topIndustries = "";
+  let topContentTypes = "";
+  let templateDigest = "";
+  let exported:
+    | Awaited<ReturnType<typeof exportTrendCollectionsCsv>>
+    | null = null;
+  let platformFile:
+    | Awaited<ReturnType<typeof exportTrendCollectionsCsv>>["files"][number]
+    | undefined;
 
   if (DISABLE_GROWTH_MAIL_ATTACHMENTS) {
-    await updateTrendMailDigestState({
-      lastSentAt: new Date().toISOString(),
-      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
-    });
-    return;
+    const scheduler = await readTrendSchedulerState();
+    schedulerSummary = Object.values(scheduler || {})
+      .map((item) =>
+        `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
+      )
+      .join("\n");
+  } else {
+    const store = await readTrendStore();
+    const stats = await getGrowthTrendStats();
+    exported = await exportTrendCollectionsCsv();
+    platformFile = exported.files.find((file) => file.platform === params.platform);
+    schedulerSummary = Object.values(store.scheduler || {})
+      .map((item) =>
+        `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
+      )
+      .join("\n");
+    topIndustries = stats.industries
+      .slice(0, 3)
+      .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+      .join("；");
+    topContentTypes = stats.contentTypes
+      .slice(0, 3)
+      .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+      .join("；");
+    templateDigest = stats.platforms
+      .filter((item) => item.currentTotal > 0)
+      .slice(0, 4)
+      .map((item) => {
+        const template = getPlatformTemplate(item.platform);
+        return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
+      })
+      .join("\n");
   }
-
-  const store = await readTrendStore();
-  const stats = await getGrowthTrendStats();
-  const exported = await exportTrendCollectionsCsv();
-  const platformFile = exported.files.find((file) => file.platform === params.platform);
-  const schedulerSummary = Object.values(store.scheduler || {})
-    .map((item) =>
-      `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
-    )
-    .join("\n");
-  const topIndustries = stats.industries
-    .slice(0, 3)
-    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-    .join("；");
-  const topContentTypes = stats.contentTypes
-    .slice(0, 3)
-    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-    .join("；");
-  const templateDigest = stats.platforms
-    .filter((item) => item.currentTotal > 0)
-    .slice(0, 4)
-    .map((item) => {
-      const template = getPlatformTemplate(item.platform);
-      return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
-    })
-    .join("\n");
 
   await sendMailWithAttachments({
     to: recipient,
@@ -331,23 +342,24 @@ async function notifyCollectionUpdate(params: {
       `下次计划抓取：${params.nextRunAt}\n` +
       `\n[当前调度概览]\n${schedulerSummary}\n` +
       `\n[模板累计分析]\n` +
-      `主行业：${topIndustries || "暂无"}\n` +
-      `主内容类型：${topContentTypes || "暂无"}\n` +
-      `${templateDigest || "当前样本仍在累积，暂未形成稳定模板判断。"}\n` +
-      `总导出行数：${exported.rows}\n` +
-      `清单：${exported.manifestPath}`,
-    attachments: [
-      ...exported.files.map((file) => ({
-        filename: path.basename(file.filePath),
-        path: file.filePath,
-        contentType: "text/csv",
-      })),
-      {
-        filename: path.basename(exported.manifestPath),
-        path: exported.manifestPath,
-        contentType: "application/json",
-      },
-    ],
+      `主行业：${topIndustries || "轻量模式已启用，跳过全量统计"}\n` +
+      `主内容类型：${topContentTypes || "轻量模式已启用，跳过全量统计"}\n` +
+      `${templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。"}\n` +
+      (exported ? `总导出行数：${exported.rows}\n清单：${exported.manifestPath}` : ""),
+    attachments: exported
+      ? [
+          ...exported.files.map((file) => ({
+            filename: path.basename(file.filePath),
+            path: file.filePath,
+            contentType: "text/csv",
+          })),
+          {
+            filename: path.basename(exported.manifestPath),
+            path: exported.manifestPath,
+            contentType: "application/json",
+          },
+        ]
+      : [],
     html:
       `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
       `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
@@ -359,14 +371,14 @@ async function notifyCollectionUpdate(params: {
       `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
       `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
       `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
-      `<p><strong>模板累计分析：</strong>${topIndustries || "暂无主行业"} / ${topContentTypes || "暂无主内容类型"}</p>` +
-      `<p>${(templateDigest || "当前样本仍在累积，暂未形成稳定模板判断。").replace(/\n/g, "<br />")}</p>` +
-      `<p><strong>总导出行数：</strong>${exported.rows}</p>` +
+      `<p><strong>模板累计分析：</strong>${topIndustries || "轻量模式已启用"} / ${topContentTypes || "轻量模式已启用"}</p>` +
+      `<p>${(templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。").replace(/\n/g, "<br />")}</p>` +
+      (exported ? `<p><strong>总导出行数：</strong>${exported.rows}</p>` : "") +
       (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
   });
   await updateTrendMailDigestState({
     lastSentAt: new Date().toISOString(),
-    lastManifestPath: exported.manifestPath,
+    lastManifestPath: exported?.manifestPath,
     lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
   });
 }
