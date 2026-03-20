@@ -515,6 +515,21 @@ async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
   }
 }
 
+export async function readTrendRuntimeMeta(): Promise<{
+  updatedAt?: string;
+  scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
+  backfill?: TrendBackfillProgress;
+  mailDigest: TrendMailDigestState;
+}> {
+  const meta = await readRuntimeMeta();
+  return {
+    updatedAt: meta.updatedAt,
+    scheduler: meta.scheduler || {},
+    backfill: meta.backfill,
+    mailDigest: meta.mailDigest || {},
+  };
+}
+
 async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
   await ensureStoreDir();
   await fs.writeFile(

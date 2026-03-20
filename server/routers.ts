@@ -26,7 +26,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -777,38 +777,32 @@ export const appRouter = router({
 
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
-        const reconciledStore = await reconcileTrendHistoryState();
         const smtp = getSmtpStatus();
-        const scheduler = reconciledStore;
-        const stats = await getGrowthTrendStats();
+        const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
-        const douyinCreatorCenterStats = buildDouyinCreatorCenterStats(scheduler);
-        const statsPlatformMap = new Map(stats.platforms.map((item) => [item.platform, item]));
-        const backfillPlatforms = (scheduler.backfill?.platforms || []).map((item) => {
-          const statsRow = statsPlatformMap.get(item.platform);
-          return {
-            ...item,
-            currentTotal: Math.max(item.currentTotal || 0, statsRow?.currentTotal || 0),
-            archivedTotal: Math.max(item.archivedTotal || 0, statsRow?.archivedItems || 0),
-          };
-        });
-        const backfill =
-          scheduler.backfill
-            ? {
-                ...scheduler.backfill,
-                platforms: backfillPlatforms,
-              }
-            : null;
+        const backfill = runtimeMeta.backfill || null;
+        const douyinCreatorCenterStats = {
+          currentTotal: 0,
+          archivedTotal: 0,
+          buckets: [] as Array<{ bucket: string; currentTotal: number; archivedTotal: number }>,
+          notes: [] as string[],
+          diagnostics: {
+            hasCreatorCenterCookie: Boolean(String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim()),
+            hasCreatorIndexCookie: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim()),
+            hasCreatorCsrfToken: Boolean(String(process.env.DOUYIN_CREATOR_INDEX_CSRF_TOKEN || "").trim() || String(process.env.DOUYIN_CREATOR_CENTER_CSRF_TOKEN || "").trim()),
+            pageCaptureEnabled: String(process.env.DOUYIN_CREATOR_INDEX_PAGE_CAPTURE || "0") === "1",
+          },
+        };
 
         return {
           success: true,
           targetEmail,
           smtp,
           backfill,
-          mailDigest: scheduler.mailDigest || {
+          mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },
-          scheduler: Object.values(scheduler.scheduler || {}).map((item) => ({
+          scheduler: Object.values(runtimeMeta.scheduler || {}).map((item) => ({
             platform: item?.platform,
             lastRunAt: item?.lastRunAt,
             lastSuccessAt: item?.lastSuccessAt,
