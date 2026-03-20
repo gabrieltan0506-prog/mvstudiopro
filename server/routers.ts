@@ -882,7 +882,14 @@ export const appRouter = router({
           success: true,
           targetEmail,
           smtp,
-          backfill,
+          backfill: backfill
+            ? {
+                ...backfill,
+                currentRound: 0,
+                maxRounds: 0,
+                targetPerPlatform: 0,
+              }
+            : null,
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },

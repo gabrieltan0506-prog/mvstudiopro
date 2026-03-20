@@ -1568,8 +1568,6 @@ export default function MVAnalysisPage() {
                     <div className="grid gap-1 md:grid-cols-2">
                       <div>status: {String(growthSystemStatusQuery.data.backfill.status || "-")}</div>
                       <div>active: {String(growthSystemStatusQuery.data.backfill.active ?? false)}</div>
-                      <div>round: {String(growthSystemStatusQuery.data.backfill.currentRound || 0)} / {String(growthSystemStatusQuery.data.backfill.maxRounds || 0)}</div>
-                      <div>target / platform: {String(growthSystemStatusQuery.data.backfill.targetPerPlatform || 0)}</div>
                       <div>window days: {String(growthSystemStatusQuery.data.backfill.selectedWindowDays || "-")}</div>
                       <div>started: {String(growthSystemStatusQuery.data.backfill.startedAt || "-")}</div>
                       <div>updated: {String(growthSystemStatusQuery.data.backfill.updatedAt || "-")}</div>
