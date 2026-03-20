@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs/promises";
 import type { GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
 import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
@@ -34,11 +35,8 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
-const DISABLE_GROWTH_MAIL_ATTACHMENTS = (() => {
-  const raw = String(process.env.DISABLE_GROWTH_MAIL_ATTACHMENTS || "").trim().toLowerCase();
-  if (raw) return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-  return String(process.env.GROWTH_STORE_DIR || "").startsWith("/data/");
-})();
+const MAIL_SEND_THRESHOLD_BYTES = 10 * 1024 * 1024;
+const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 5 * 1024 * 1024;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
@@ -261,6 +259,99 @@ function buildRetryDelayMs(failureCount: number) {
   return Math.min(60 * 60 * 1000, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
 
+async function getAttachmentSize(attachment: {
+  path?: string;
+  content?: string | Buffer;
+}) {
+  if (attachment.path) {
+    const stat = await fs.stat(attachment.path);
+    return stat.size;
+  }
+  if (typeof attachment.content === "string") {
+    return Buffer.byteLength(attachment.content);
+  }
+  if (attachment.content) {
+    return attachment.content.length;
+  }
+  return 0;
+}
+
+async function chunkMailAttachments<T extends {
+  path?: string;
+  content?: string | Buffer;
+}>(attachments: T[]) {
+  const chunks: T[][] = [];
+  let current: T[] = [];
+  let currentSize = 0;
+
+  for (const attachment of attachments) {
+    const size = await getAttachmentSize(attachment);
+    if (current.length && currentSize + size > MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES) {
+      chunks.push(current);
+      current = [];
+      currentSize = 0;
+    }
+    current.push(attachment);
+    currentSize += size;
+  }
+
+  if (current.length) {
+    chunks.push(current);
+  }
+
+  return chunks;
+}
+
+async function sendChunkedDigest(params: {
+  recipient: string;
+  subjectBase: string;
+  textBase: string;
+  htmlBase: string;
+  attachments: Array<{
+    filename: string;
+    path?: string;
+    contentType?: string;
+  }>;
+  sentAt: string;
+  keepAtMostBatches?: number;
+}) {
+  const chunks = await chunkMailAttachments(params.attachments);
+  const sendLimit = Math.max(1, params.keepAtMostBatches || 2);
+  const toSend = chunks.slice(0, sendLimit);
+  const deferred = chunks.slice(sendLimit);
+
+  if (!toSend.length) {
+    await sendMailWithAttachments({
+      to: params.recipient,
+      subject: params.subjectBase,
+      requireResend: true,
+      text: params.textBase,
+      html: params.htmlBase,
+    });
+  } else {
+    for (let index = 0; index < toSend.length; index += 1) {
+      await sendMailWithAttachments({
+        to: params.recipient,
+        subject: `${params.subjectBase} (${index + 1}/${chunks.length})`,
+        requireResend: true,
+        text: `${params.textBase}\n\n附件分片：${index + 1}/${chunks.length}`,
+        html: `${params.htmlBase}<p><strong>附件分片：</strong>${index + 1}/${chunks.length}</p>`,
+        attachments: toSend[index],
+      });
+    }
+  }
+
+  const deferredBytes = (await Promise.all(
+    deferred.flat().map((attachment) => getAttachmentSize(attachment)),
+  )).reduce((sum, size) => sum + size, 0);
+
+  return {
+    deferred,
+    deferredBytes,
+    sentAt: params.sentAt,
+  };
+}
+
 async function notifyCollectionUpdate(params: {
   platform: GrowthPlatform;
   itemCount: number;
@@ -276,9 +367,45 @@ async function notifyCollectionUpdate(params: {
   if (!recipient) return;
   const digestState = await readTrendMailDigestState();
   const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
-  if (lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS) {
-    return;
+  const nowIso = new Date().toISOString();
+  const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
+
+  if (!withinWindow && (digestState.pendingAttachmentBatches || []).length) {
+    const pendingBatches = digestState.pendingAttachmentBatches || [];
+    const pendingSubjectBase =
+      digestState.pendingSubjectBase
+      || `Creator Growth Camp 数据汇总 - 延后分片 ${digestState.pendingCreatedAt || nowIso}`;
+    const pendingTextBase =
+      digestState.pendingTextBase
+      || `上一轮超出单小时双封限制的附件分片，延后到当前小时发送。\n时间戳：${digestState.pendingCreatedAt || nowIso}`;
+    const pendingHtmlBase =
+      digestState.pendingHtmlBase
+      || `<p>上一轮超出单小时双封限制的附件分片，延后到当前小时发送。</p><p><strong>时间戳：</strong>${digestState.pendingCreatedAt || nowIso}</p>`;
+    const pendingAttachments = pendingBatches.flat().filter(Boolean);
+    const pendingResult = await sendChunkedDigest({
+      recipient,
+      subjectBase: `${pendingSubjectBase} [${digestState.pendingCreatedAt || nowIso}]`,
+      textBase: pendingTextBase,
+      htmlBase: pendingHtmlBase,
+      attachments: pendingAttachments,
+      sentAt: nowIso,
+      keepAtMostBatches: 2,
+    });
+    await updateTrendMailDigestState({
+      lastSentAt: nowIso,
+      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+      pendingAttachmentBytes: pendingResult.deferredBytes,
+      pendingCreatedAt: pendingResult.deferred.length ? (digestState.pendingCreatedAt || nowIso) : undefined,
+      pendingSubjectBase: pendingResult.deferred.length ? pendingSubjectBase : undefined,
+      pendingTextBase: pendingResult.deferred.length ? pendingTextBase : undefined,
+      pendingHtmlBase: pendingResult.deferred.length ? pendingHtmlBase : undefined,
+      pendingAttachmentBatches: pendingResult.deferred.length ? pendingResult.deferred : undefined,
+    });
+    if (pendingResult.deferred.length) {
+      return;
+    }
   }
+
   let schedulerSummary = "";
   let topIndustries = "";
   let topContentTypes = "";
@@ -289,97 +416,112 @@ async function notifyCollectionUpdate(params: {
   let platformFile:
     | Awaited<ReturnType<typeof exportTrendCollectionsCsv>>["files"][number]
     | undefined;
+  const store = await readTrendStore();
+  const stats = await getGrowthTrendStats();
+  exported = await exportTrendCollectionsCsv();
+  platformFile = exported.files.find((file) => file.platform === params.platform);
+  schedulerSummary = Object.values(store.scheduler || {})
+    .map((item) =>
+      `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
+    )
+    .join("\n");
+  topIndustries = stats.industries
+    .slice(0, 3)
+    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+    .join("；");
+  topContentTypes = stats.contentTypes
+    .slice(0, 3)
+    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
+    .join("；");
+  templateDigest = stats.platforms
+    .filter((item) => item.currentTotal > 0)
+    .slice(0, 4)
+    .map((item) => {
+      const template = getPlatformTemplate(item.platform);
+      return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
+    })
+    .join("\n");
 
-  if (DISABLE_GROWTH_MAIL_ATTACHMENTS) {
-    const scheduler = await readTrendSchedulerState();
-    schedulerSummary = Object.values(scheduler || {})
-      .map((item) =>
-        `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
-      )
-      .join("\n");
-  } else {
-    const store = await readTrendStore();
-    const stats = await getGrowthTrendStats();
-    exported = await exportTrendCollectionsCsv();
-    platformFile = exported.files.find((file) => file.platform === params.platform);
-    schedulerSummary = Object.values(store.scheduler || {})
-      .map((item) =>
-        `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
-      )
-      .join("\n");
-    topIndustries = stats.industries
-      .slice(0, 3)
-      .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-      .join("；");
-    topContentTypes = stats.contentTypes
-      .slice(0, 3)
-      .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-      .join("；");
-    templateDigest = stats.platforms
-      .filter((item) => item.currentTotal > 0)
-      .slice(0, 4)
-      .map((item) => {
-        const template = getPlatformTemplate(item.platform);
-        return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
-      })
-      .join("\n");
+  const subjectBase = `Creator Growth Camp 数据汇总 - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+  const textBase =
+    `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
+    `最新触发平台：${params.platform}\n` +
+    `最新抓取时间：${params.collectedAt}\n` +
+    `最新新增数量：${params.addedCount}\n` +
+    `最新合并数量：${params.mergedCount}\n` +
+    `该平台当前总样本数：${params.itemCount}\n` +
+    `当前 live 调度频率：${params.frequencyLabel}\n` +
+    `当前 burst mode：${params.burstMode ? "ON" : "OFF"}\n` +
+    `是否真实 live：${params.live ? "是" : "否"}\n` +
+    `下次计划抓取：${params.nextRunAt}\n` +
+    `\n[当前调度概览]\n${schedulerSummary}\n` +
+    `\n[模板累计分析]\n` +
+    `主行业：${topIndustries || "轻量模式已启用，跳过全量统计"}\n` +
+    `主内容类型：${topContentTypes || "轻量模式已启用，跳过全量统计"}\n` +
+    `${templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。"}\n` +
+    (exported ? `总导出行数：${exported.rows}\n清单：${exported.manifestPath}` : "");
+  const htmlBase =
+    `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
+    `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
+    `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
+    `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
+    `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
+    `<p><strong>该平台当前总样本数：</strong>${params.itemCount}</p>` +
+    `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +
+    `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
+    `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
+    `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
+    `<p><strong>模板累计分析：</strong>${topIndustries || "轻量模式已启用"} / ${topContentTypes || "轻量模式已启用"}</p>` +
+    `<p>${(templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。").replace(/\n/g, "<br />")}</p>` +
+    (exported ? `<p><strong>总导出行数：</strong>${exported.rows}</p>` : "") +
+    (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : "");
+
+  const attachments = exported
+    ? [
+        ...exported.files.map((file) => ({
+          filename: path.basename(file.filePath),
+          path: file.filePath,
+          contentType: "text/csv",
+        })),
+        {
+          filename: path.basename(exported.manifestPath),
+          path: exported.manifestPath,
+          contentType: "application/json",
+        },
+      ]
+    : [];
+  const attachmentBytes = (await Promise.all(attachments.map((attachment) => getAttachmentSize(attachment))))
+    .reduce((sum, size) => sum + size, 0);
+  const pendingAttachmentBytes = digestState.pendingAttachmentBytes || 0;
+  const projectedAttachmentBytes = pendingAttachmentBytes + attachmentBytes;
+
+  if (withinWindow && projectedAttachmentBytes <= MAIL_SEND_THRESHOLD_BYTES) {
+    await updateTrendMailDigestState({
+      pendingAttachmentBytes: projectedAttachmentBytes,
+      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+    });
+    return;
   }
 
-  await sendMailWithAttachments({
-    to: recipient,
-    subject: `Creator Growth Camp 数据汇总 - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
-    requireResend: true,
-    text:
-      `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
-      `最新触发平台：${params.platform}\n` +
-      `最新抓取时间：${params.collectedAt}\n` +
-      `最新新增数量：${params.addedCount}\n` +
-      `最新合并数量：${params.mergedCount}\n` +
-      `该平台当前总样本数：${params.itemCount}\n` +
-      `当前 live 调度频率：${params.frequencyLabel}\n` +
-      `当前 burst mode：${params.burstMode ? "ON" : "OFF"}\n` +
-      `是否真实 live：${params.live ? "是" : "否"}\n` +
-      `下次计划抓取：${params.nextRunAt}\n` +
-      `\n[当前调度概览]\n${schedulerSummary}\n` +
-      `\n[模板累计分析]\n` +
-      `主行业：${topIndustries || "轻量模式已启用，跳过全量统计"}\n` +
-      `主内容类型：${topContentTypes || "轻量模式已启用，跳过全量统计"}\n` +
-      `${templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。"}\n` +
-      (exported ? `总导出行数：${exported.rows}\n清单：${exported.manifestPath}` : ""),
-    attachments: exported
-      ? [
-          ...exported.files.map((file) => ({
-            filename: path.basename(file.filePath),
-            path: file.filePath,
-            contentType: "text/csv",
-          })),
-          {
-            filename: path.basename(exported.manifestPath),
-            path: exported.manifestPath,
-            contentType: "application/json",
-          },
-        ]
-      : [],
-    html:
-      `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
-      `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
-      `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
-      `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
-      `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
-      `<p><strong>该平台当前总样本数：</strong>${params.itemCount}</p>` +
-      `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +
-      `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
-      `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
-      `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
-      `<p><strong>模板累计分析：</strong>${topIndustries || "轻量模式已启用"} / ${topContentTypes || "轻量模式已启用"}</p>` +
-      `<p>${(templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。").replace(/\n/g, "<br />")}</p>` +
-      (exported ? `<p><strong>总导出行数：</strong>${exported.rows}</p>` : "") +
-      (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : ""),
+  const sendResult = await sendChunkedDigest({
+    recipient,
+    subjectBase,
+    textBase,
+    htmlBase,
+    attachments,
+    sentAt: nowIso,
+    keepAtMostBatches: 2,
   });
   await updateTrendMailDigestState({
-    lastSentAt: new Date().toISOString(),
+    lastSentAt: nowIso,
     lastManifestPath: exported?.manifestPath,
     lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+    pendingAttachmentBytes: sendResult.deferredBytes,
+    pendingCreatedAt: sendResult.deferred.length ? nowIso : undefined,
+    pendingSubjectBase: sendResult.deferred.length ? subjectBase : undefined,
+    pendingTextBase: sendResult.deferred.length ? textBase : undefined,
+    pendingHtmlBase: sendResult.deferred.length ? htmlBase : undefined,
+    pendingAttachmentBatches: sendResult.deferred.length ? sendResult.deferred : undefined,
   });
 }
 

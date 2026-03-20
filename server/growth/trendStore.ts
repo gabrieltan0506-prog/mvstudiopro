@@ -89,6 +89,16 @@ export type TrendMailDigestState = {
   lastSentAt?: string;
   lastManifestPath?: string;
   lastWindowMinutes?: number;
+  pendingAttachmentBytes?: number;
+  pendingCreatedAt?: string;
+  pendingSubjectBase?: string;
+  pendingTextBase?: string;
+  pendingHtmlBase?: string;
+  pendingAttachmentBatches?: Array<Array<{
+    filename: string;
+    path?: string;
+    contentType?: string;
+  }>>;
 };
 
 export type TrendHistoryLedgerEntry = {
