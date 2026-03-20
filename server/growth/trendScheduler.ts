@@ -34,6 +34,11 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
+const DISABLE_GROWTH_MAIL_ATTACHMENTS = (() => {
+  const raw = String(process.env.DISABLE_GROWTH_MAIL_ATTACHMENTS || "").trim().toLowerCase();
+  if (raw) return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  return String(process.env.GROWTH_STORE_DIR || "").startsWith("/data/");
+})();
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
@@ -272,6 +277,14 @@ async function notifyCollectionUpdate(params: {
   const digestState = await readTrendMailDigestState();
   const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
   if (lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS) {
+    return;
+  }
+
+  if (DISABLE_GROWTH_MAIL_ATTACHMENTS) {
+    await updateTrendMailDigestState({
+      lastSentAt: new Date().toISOString(),
+      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+    });
     return;
   }
 
