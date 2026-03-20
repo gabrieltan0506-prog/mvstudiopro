@@ -709,9 +709,33 @@ async function writeStore(
   options?: {
     writeDerivedPlatformFiles?: boolean;
     writeLegacyMirror?: boolean;
+    allowLowerTotals?: boolean;
   },
 ) {
   await ensureStoreDir();
+  if (!(options?.allowLowerTotals)) {
+    const existing = await readRawStoreFile(STORE_FILE);
+    if (existing?.collections) {
+      const protectedCollections = { ...(next.collections || {}) };
+      let preservedAny = false;
+      for (const platform of growthPlatformValues) {
+        const existingCollection = existing.collections?.[platform];
+        const nextCollection = protectedCollections?.[platform];
+        const existingCount = existingCollection?.items?.length || 0;
+        const nextCount = nextCollection?.items?.length || 0;
+        if (existingCount > 0 && nextCount < existingCount) {
+          protectedCollections[platform] = existingCollection;
+          preservedAny = true;
+        }
+      }
+      if (preservedAny) {
+        next = {
+          ...next,
+          collections: protectedCollections,
+        };
+      }
+    }
+  }
   await fs.writeFile(STORE_FILE, JSON.stringify(next, null, 2), "utf8");
   await writeRuntimeMeta({
     updatedAt: next.updatedAt,
