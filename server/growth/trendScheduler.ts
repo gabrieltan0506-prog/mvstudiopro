@@ -35,8 +35,7 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
-const MAIL_SEND_THRESHOLD_BYTES = 10 * 1024 * 1024;
-const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 5 * 1024 * 1024;
+const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 8 * 1024 * 1024;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
@@ -316,7 +315,7 @@ async function sendChunkedDigest(params: {
   keepAtMostBatches?: number;
 }) {
   const chunks = await chunkMailAttachments(params.attachments);
-  const sendLimit = Math.max(1, params.keepAtMostBatches || 2);
+  const sendLimit = Math.max(1, params.keepAtMostBatches || 1);
   const toSend = chunks.slice(0, sendLimit);
   const deferred = chunks.slice(sendLimit);
 
@@ -369,42 +368,6 @@ async function notifyCollectionUpdate(params: {
   const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
   const nowIso = new Date().toISOString();
   const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
-
-  if (!withinWindow && (digestState.pendingAttachmentBatches || []).length) {
-    const pendingBatches = digestState.pendingAttachmentBatches || [];
-    const pendingSubjectBase =
-      digestState.pendingSubjectBase
-      || `Creator Growth Camp 数据汇总 - 延后分片 ${digestState.pendingCreatedAt || nowIso}`;
-    const pendingTextBase =
-      digestState.pendingTextBase
-      || `上一轮超出单小时双封限制的附件分片，延后到当前小时发送。\n时间戳：${digestState.pendingCreatedAt || nowIso}`;
-    const pendingHtmlBase =
-      digestState.pendingHtmlBase
-      || `<p>上一轮超出单小时双封限制的附件分片，延后到当前小时发送。</p><p><strong>时间戳：</strong>${digestState.pendingCreatedAt || nowIso}</p>`;
-    const pendingAttachments = pendingBatches.flat().filter(Boolean);
-    const pendingResult = await sendChunkedDigest({
-      recipient,
-      subjectBase: `${pendingSubjectBase} [${digestState.pendingCreatedAt || nowIso}]`,
-      textBase: pendingTextBase,
-      htmlBase: pendingHtmlBase,
-      attachments: pendingAttachments,
-      sentAt: nowIso,
-      keepAtMostBatches: 2,
-    });
-    await updateTrendMailDigestState({
-      lastSentAt: nowIso,
-      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
-      pendingAttachmentBytes: pendingResult.deferredBytes,
-      pendingCreatedAt: pendingResult.deferred.length ? (digestState.pendingCreatedAt || nowIso) : undefined,
-      pendingSubjectBase: pendingResult.deferred.length ? pendingSubjectBase : undefined,
-      pendingTextBase: pendingResult.deferred.length ? pendingTextBase : undefined,
-      pendingHtmlBase: pendingResult.deferred.length ? pendingHtmlBase : undefined,
-      pendingAttachmentBatches: pendingResult.deferred.length ? pendingResult.deferred : undefined,
-    });
-    if (pendingResult.deferred.length) {
-      return;
-    }
-  }
 
   let schedulerSummary = "";
   let topIndustries = "";
@@ -492,35 +455,53 @@ async function notifyCollectionUpdate(params: {
     : [];
   const attachmentBytes = (await Promise.all(attachments.map((attachment) => getAttachmentSize(attachment))))
     .reduce((sum, size) => sum + size, 0);
-  const pendingAttachmentBytes = digestState.pendingAttachmentBytes || 0;
-  const projectedAttachmentBytes = pendingAttachmentBytes + attachmentBytes;
+  const pendingBatches = digestState.pendingAttachmentBatches || [];
+  const pendingAttachments = pendingBatches.flat().filter(Boolean);
+  const allAttachments = [...pendingAttachments, ...attachments];
+  const nextSubjectBase =
+    digestState.pendingSubjectBase || subjectBase;
+  const nextTextBase =
+    digestState.pendingTextBase || textBase;
+  const nextHtmlBase =
+    digestState.pendingHtmlBase || htmlBase;
+  const nextCreatedAt =
+    digestState.pendingCreatedAt || nowIso;
 
-  if (withinWindow && projectedAttachmentBytes <= MAIL_SEND_THRESHOLD_BYTES) {
+  if (withinWindow) {
+    const deferredChunks = await chunkMailAttachments(allAttachments);
+    const deferredBytes = (await Promise.all(
+      deferredChunks.flat().map((attachment) => getAttachmentSize(attachment)),
+    )).reduce((sum, size) => sum + size, 0);
     await updateTrendMailDigestState({
-      pendingAttachmentBytes: projectedAttachmentBytes,
       lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+      pendingAttachmentBytes: deferredBytes,
+      pendingCreatedAt: nextCreatedAt,
+      pendingSubjectBase: nextSubjectBase,
+      pendingTextBase: nextTextBase,
+      pendingHtmlBase: nextHtmlBase,
+      pendingAttachmentBatches: deferredChunks,
     });
     return;
   }
 
   const sendResult = await sendChunkedDigest({
     recipient,
-    subjectBase,
-    textBase,
-    htmlBase,
-    attachments,
+    subjectBase: nextSubjectBase,
+    textBase: nextTextBase,
+    htmlBase: nextHtmlBase,
+    attachments: allAttachments,
     sentAt: nowIso,
-    keepAtMostBatches: 2,
+    keepAtMostBatches: 1,
   });
   await updateTrendMailDigestState({
     lastSentAt: nowIso,
     lastManifestPath: exported?.manifestPath,
     lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
     pendingAttachmentBytes: sendResult.deferredBytes,
-    pendingCreatedAt: sendResult.deferred.length ? nowIso : undefined,
-    pendingSubjectBase: sendResult.deferred.length ? subjectBase : undefined,
-    pendingTextBase: sendResult.deferred.length ? textBase : undefined,
-    pendingHtmlBase: sendResult.deferred.length ? htmlBase : undefined,
+    pendingCreatedAt: sendResult.deferred.length ? nextCreatedAt : undefined,
+    pendingSubjectBase: sendResult.deferred.length ? nextSubjectBase : undefined,
+    pendingTextBase: sendResult.deferred.length ? nextTextBase : undefined,
+    pendingHtmlBase: sendResult.deferred.length ? nextHtmlBase : undefined,
     pendingAttachmentBatches: sendResult.deferred.length ? sendResult.deferred : undefined,
   });
 }
