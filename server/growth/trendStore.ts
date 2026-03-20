@@ -339,7 +339,7 @@ function getReferenceRange(collection?: PlatformTrendCollection) {
 function buildHistoryLedgerEntry(item: TrendItem, observedAt: string): TrendHistoryLedgerEntry | null {
   const normalized = normalizeItem(item);
   const key = getItemKey(normalized);
-  if (!key || !normalized.title) return null;
+  if (!key) return null;
   return {
     key,
     bucket: String(normalized.bucket || normalized.contentType || "default").trim() || "default",
