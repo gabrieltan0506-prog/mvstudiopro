@@ -17,6 +17,11 @@ const plateau = new Map<GrowthPlatform, number>();
 const previous = new Map<GrowthPlatform, number>();
 let startedAt = "";
 
+function isStorageFullError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /\bENOSPC\b|no space left on device/i.test(message);
+}
+
 function nextHistoryDelayMs() {
   const span = Math.max(0, HISTORY_MAX_INTERVAL_MS - HISTORY_MIN_INTERVAL_MS);
   return HISTORY_MIN_INTERVAL_MS + Math.floor(Math.random() * (span + 1));
@@ -136,11 +141,29 @@ export async function runGrowthTrendBackfillStep() {
       }),
     });
   } catch (error) {
+    const stats = await getGrowthTrendStats().catch(() => null);
+    const storageFull = isStorageFullError(error);
     await updateTrendBackfillProgress({
-      active: false,
-      finishedAt: new Date().toISOString(),
-      status: "failed",
-      note: error instanceof Error ? error.message : String(error),
+      active: true,
+      finishedAt: storageFull ? undefined : new Date().toISOString(),
+      status: storageFull ? "running" : "failed",
+      note: storageFull
+        ? "历史回填运行中：磁盘空间不足，保留最后一次成功结果，等待 archive 外移后继续。"
+        : (error instanceof Error ? error.message : String(error)),
+      platforms: stats
+        ? PLATFORMS.map((platform) => {
+            const row = stats.platforms.find((item) => item.platform === platform);
+            return {
+              platform,
+              target: 0,
+              currentTotal: row?.currentTotal || 0,
+              archivedTotal: row?.archivedItems || 0,
+              plateauCount: plateau.get(platform) || 0,
+              status: (plateau.get(platform) || 0) >= PLATEAU_LIMIT ? "plateau" : "running",
+              error: storageFull ? undefined : undefined,
+            };
+          })
+        : undefined,
     });
     console.warn("[growth.backfill] step failed:", error);
   } finally {

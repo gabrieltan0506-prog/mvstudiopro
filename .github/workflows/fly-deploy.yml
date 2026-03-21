@@ -10,9 +10,26 @@ jobs:
     name: Deploy app
     runs-on: ubuntu-latest
     concurrency: deploy-group    # optional: ensure only one action runs at a time
+    env:
+      APP_URL: https://mvstudiopro.fly.dev
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run growth:fetch-status -- "$APP_URL" /tmp/growth-before.json
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Fetch post-deploy growth status
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if npm run growth:fetch-status -- "$APP_URL" /tmp/growth-after.json; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Failed to fetch post-deploy growth status"
+          exit 1
+      - run: npm run growth:verify-monotonic -- ops/growth-monotonic-baseline.json /tmp/growth-before.json /tmp/growth-after.json

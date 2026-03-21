@@ -1,0 +1,24 @@
+{
+  "platforms": {
+    "douyin": {
+      "currentTotal": 121328,
+      "archivedTotal": 116284
+    },
+    "xiaohongshu": {
+      "currentTotal": 79549,
+      "archivedTotal": 78894
+    },
+    "bilibili": {
+      "currentTotal": 61087,
+      "archivedTotal": 59159
+    },
+    "kuaishou": {
+      "currentTotal": 751,
+      "archivedTotal": 751
+    },
+    "toutiao": {
+      "currentTotal": 274,
+      "archivedTotal": 270
+    }
+  }
+}

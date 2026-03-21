@@ -1,0 +1,30 @@
+name: Growth Backup
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  backup:
+    name: Backup growth store from Fly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Fetch growth store files from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          mkdir -p /tmp/growth-backup
+          flyctl ssh console -a mvstudiopro -C "gzip -c /data/growth/current.json" > /tmp/growth-backup/current.json.gz
+          flyctl ssh console -a mvstudiopro -C "gzip -c /data/growth/runtime-meta.json" > /tmp/growth-backup/runtime-meta.json.gz
+          flyctl ssh console -a mvstudiopro -C "test -f /data/growth/history-ledger/douyin.json && echo yes || echo no" > /tmp/growth-backup/has-history-ledger.txt
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
+      - name: Upload GitHub backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-backup-${{ github.run_id }}
+          path: /tmp/growth-backup
+          if-no-files-found: error
+          retention-days: 30

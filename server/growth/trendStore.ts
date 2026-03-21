@@ -215,13 +215,16 @@ const LEGACY_STORE_FILE = path.resolve(
 const STORE_FILE = path.join(STORE_DIR, "current.json");
 const META_FILE = path.join(STORE_DIR, "runtime-meta.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
-const EXPORT_DIR = path.join(STORE_DIR, "exports");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
 const IS_FLY_VOLUME_STORE = STORE_DIR.startsWith("/data/");
+const EXPORT_DIR = path.resolve(
+  process.env.GROWTH_EXPORT_DIR
+    || (IS_FLY_VOLUME_STORE ? path.join("/tmp", "growth-exports") : path.join(STORE_DIR, "exports")),
+);
 const SHOULD_WRITE_LEGACY_MIRROR = process.env.GROWTH_WRITE_LEGACY_MIRROR === "1" || !IS_FLY_VOLUME_STORE;
 const SHOULD_WRITE_DERIVED_PLATFORM_FILES = process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES === "1" || !IS_FLY_VOLUME_STORE;
 let historyReconcilePromise: Promise<TrendStoreFile> | null = null;

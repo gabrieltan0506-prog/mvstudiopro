@@ -1,0 +1,57 @@
+name: Growth Archive Offload
+
+on:
+  schedule:
+    - cron: "15 */6 * * *"
+  workflow_dispatch:
+
+jobs:
+  offload:
+    name: Offload old growth archive shards from Fly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Build offload list from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          mkdir -p /tmp/growth-archive-offload
+          flyctl ssh console -a mvstudiopro -C "sh -lc '
+            cd /data/growth/archive || exit 0
+            find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > /tmp/archive-all-dirs.txt
+            awk '\''/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/'\'' /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt
+            head -n -2 /tmp/archive-date-dirs.txt > /tmp/archive-offload-date-dirs.txt || true
+            grep -v -E '\''^[0-9]{4}-[0-9]{2}-[0-9]{2}$'\'' /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
+            cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed '\''/^[[:space:]]*$/d'\'' > /tmp/archive-offload-dirs.txt
+            cat /tmp/archive-offload-dirs.txt
+          '" > /tmp/growth-archive-offload/dirs.txt
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-archive-offload/fetched-at.txt
+      - name: Stream archive shard bundle from Fly
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ ! -s /tmp/growth-archive-offload/dirs.txt ]; then
+            echo "No archive shards to offload"
+            touch /tmp/growth-archive-offload/EMPTY
+            exit 0
+          fi
+          tr '\n' ' ' < /tmp/growth-archive-offload/dirs.txt > /tmp/growth-archive-offload/dirs.inline
+          dirs=$(cat /tmp/growth-archive-offload/dirs.inline)
+          flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /data/growth/archive && tar -czf - $dirs'" > /tmp/growth-archive-offload/archive-shards.tar.gz
+      - name: Upload GitHub archive offload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-archive-offload-${{ github.run_id }}
+          path: /tmp/growth-archive-offload
+          if-no-files-found: error
+          retention-days: 30
+      - name: Delete offloaded shards from Fly
+        if: hashFiles('/tmp/growth-archive-offload/EMPTY') == ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
+            flyctl ssh console -a mvstudiopro -C "rm -rf /data/growth/archive/$dir"
+          done < /tmp/growth-archive-offload/dirs.txt
