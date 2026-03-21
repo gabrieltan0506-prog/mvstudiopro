@@ -45,6 +45,7 @@ import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBeta
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
 import {
+  growthPlatformValues,
   growthAnalysisScoresSchema,
   growthBusinessInsightSchema,
   growthCampModelSchema,
@@ -882,7 +883,9 @@ export const appRouter = router({
           (backfill?.platforms || []).map((item) => [String(item.platform), { ...item }]),
         );
 
-        for (const [platform, item] of Object.entries(summary?.platforms || {})) {
+        for (const platform of growthPlatformValues) {
+          const item = summary?.platforms?.[platform];
+          if (!item) continue;
           const current = backfillPlatforms.get(platform) || {
             platform,
             target: 0,
