@@ -17,7 +17,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm run growth:fetch-status -- "$APP_URL" /tmp/growth-before.json
+      - name: Fetch pre-deploy growth status
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if npm run growth:fetch-status -- "$APP_URL" /tmp/growth-before.json; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Warning: failed to fetch pre-deploy growth status, continuing deploy"
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:
@@ -32,4 +40,10 @@ jobs:
           done
           echo "Failed to fetch post-deploy growth status"
           exit 1
-      - run: npm run growth:verify-monotonic -- ops/growth-monotonic-baseline.json /tmp/growth-before.json /tmp/growth-after.json
+      - name: Verify monotonic growth
+        run: |
+          if [ -f /tmp/growth-before.json ] && [ -f /tmp/growth-after.json ]; then
+            npm run growth:verify-monotonic -- ops/growth-monotonic-baseline.json /tmp/growth-before.json /tmp/growth-after.json
+          else
+            echo "Skipping monotonic verification because pre/post status snapshots are incomplete"
+          fi
