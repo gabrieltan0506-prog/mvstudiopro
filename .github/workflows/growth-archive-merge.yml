@@ -32,6 +32,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Enable pnpm
+        run: corepack enable
+
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
