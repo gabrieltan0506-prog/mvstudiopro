@@ -35,7 +35,7 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
-const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 8 * 1024 * 1024;
+const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = Math.floor(8.5 * 1024 * 1024);
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
@@ -52,6 +52,11 @@ const FORCE_BURST_UNTIL_MS = (() => {
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
+
+function isStorageFullError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /\bENOSPC\b|no space left on device/i.test(message);
+}
 
 function withJitter(baseMs: number) {
   return baseMs + Math.floor(Math.random() * JITTER_MAX_MS);
@@ -312,14 +317,10 @@ async function sendChunkedDigest(params: {
     contentType?: string;
   }>;
   sentAt: string;
-  keepAtMostBatches?: number;
 }) {
   const chunks = await chunkMailAttachments(params.attachments);
-  const sendLimit = Math.max(1, params.keepAtMostBatches || 1);
-  const toSend = chunks.slice(0, sendLimit);
-  const deferred = chunks.slice(sendLimit);
 
-  if (!toSend.length) {
+  if (!chunks.length) {
     await sendMailWithAttachments({
       to: params.recipient,
       subject: params.subjectBase,
@@ -328,25 +329,21 @@ async function sendChunkedDigest(params: {
       html: params.htmlBase,
     });
   } else {
-    for (let index = 0; index < toSend.length; index += 1) {
+    for (let index = 0; index < chunks.length; index += 1) {
       await sendMailWithAttachments({
         to: params.recipient,
         subject: `${params.subjectBase} (${index + 1}/${chunks.length})`,
         requireResend: true,
         text: `${params.textBase}\n\n附件分片：${index + 1}/${chunks.length}`,
         html: `${params.htmlBase}<p><strong>附件分片：</strong>${index + 1}/${chunks.length}</p>`,
-        attachments: toSend[index],
+        attachments: chunks[index],
       });
     }
   }
 
-  const deferredBytes = (await Promise.all(
-    deferred.flat().map((attachment) => getAttachmentSize(attachment)),
-  )).reduce((sum, size) => sum + size, 0);
-
   return {
-    deferred,
-    deferredBytes,
+    deferred: [] as typeof chunks,
+    deferredBytes: 0,
     sentAt: params.sentAt,
   };
 }
@@ -491,7 +488,6 @@ async function notifyCollectionUpdate(params: {
     htmlBase: nextHtmlBase,
     attachments: allAttachments,
     sentAt: nowIso,
-    keepAtMostBatches: 1,
   });
   await updateTrendMailDigestState({
     lastSentAt: nowIso,
@@ -570,6 +566,7 @@ async function runPlatform(platform: GrowthPlatform) {
     const current = (await readTrendSchedulerState())[platform];
     const failureCount = (current?.failureCount || 0) + 1;
     const forcedBurst = isForceBurstActive(platform);
+    const storageFull = isStorageFullError(error);
     await updateTrendSchedulerState(platform, {
       failureCount,
       totalRuns: (current?.totalRuns || 0) + 1,
@@ -580,8 +577,12 @@ async function runPlatform(platform: GrowthPlatform) {
       burstStableRuns: forcedBurst ? (current?.burstStableRuns || 0) : 0,
       burstLowYieldRuns: forcedBurst ? (current?.burstLowYieldRuns || 0) : 0,
       burstTriggeredAt: forcedBurst ? (current?.burstTriggeredAt || startedAt) : undefined,
-      nextRunAt: forcedBurst ? nextRunIso(getPlatformLowYieldIntervalMs(platform)) : nextRunIso(buildRetryDelayMs(failureCount)),
-      lastFrequencyLabel: forcedBurst ? getLowYieldFrequencyLabel(platform) : current?.lastFrequencyLabel,
+      nextRunAt: forcedBurst
+        ? nextRunIso(storageFull ? getPlatformBurstIntervalMs(platform) : getPlatformLowYieldIntervalMs(platform))
+        : nextRunIso(buildRetryDelayMs(failureCount)),
+      lastFrequencyLabel: forcedBurst
+        ? (storageFull ? getBurstFrequencyLabel(platform) : getLowYieldFrequencyLabel(platform))
+        : current?.lastFrequencyLabel,
     });
     console.warn(`[growth.scheduler] ${platform} failed:`, message);
   }
