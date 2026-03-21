@@ -1,0 +1,90 @@
+name: Growth Archive Merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      current_asset_url:
+        description: Current snapshot gzip URL
+        required: true
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/merged-current.json.gz
+      merged_15_19_url:
+        description: recovery-merged-15-19 tar.gz URL
+        required: true
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/recovery-merged-15-19-upload.tar.gz
+      merged_17_19_url:
+        description: recovery-merged-17-19 tar.gz URL
+        required: true
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/recovery-merged-17-19-upload.tar.gz
+      merged_18_19_url:
+        description: recovery-merged-18-19 tar.gz URL
+        required: true
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/recovery-merged-18-19-upload.tar.gz
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Download recovery assets
+        run: |
+          mkdir -p /tmp/growth-archive-merge/assets
+          curl -L "${{ inputs.current_asset_url }}" -o /tmp/growth-archive-merge/assets/current.json.gz
+          curl -L "${{ inputs.merged_15_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-15-19-upload.tar.gz
+          curl -L "${{ inputs.merged_17_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-17-19-upload.tar.gz
+          curl -L "${{ inputs.merged_18_19_url }}" -o /tmp/growth-archive-merge/assets/recovery-merged-18-19-upload.tar.gz
+
+      - name: Prepare working directories
+        run: |
+          mkdir -p /tmp/growth-archive-merge/store/archive
+          mkdir -p /tmp/growth-archive-merge/recovery-merged-all
+          gzip -dfc /tmp/growth-archive-merge/assets/current.json.gz > /tmp/growth-archive-merge/store/current.json
+          tar -xzf /tmp/growth-archive-merge/assets/recovery-merged-15-19-upload.tar.gz -C /tmp/growth-archive-merge/assets
+          tar -xzf /tmp/growth-archive-merge/assets/recovery-merged-17-19-upload.tar.gz -C /tmp/growth-archive-merge/assets
+          tar -xzf /tmp/growth-archive-merge/assets/recovery-merged-18-19-upload.tar.gz -C /tmp/growth-archive-merge/assets
+          find /tmp/growth-archive-merge/assets -type f -name '*-merged.csv' -exec cp {} /tmp/growth-archive-merge/recovery-merged-all/ \;
+          ls -lh /tmp/growth-archive-merge/recovery-merged-all
+
+      - name: Merge archive into current store
+        env:
+          GROWTH_STORE_DIR: /tmp/growth-archive-merge/store
+          GROWTH_LEGACY_STORE_FILE: /tmp/growth-archive-merge/growth-trends.json
+        run: |
+          ./node_modules/.bin/tsx scripts/restore-growth-archives-from-merged.ts /tmp/growth-archive-merge/recovery-merged-all | tee /tmp/growth-archive-merge/archive-merge-summary.json
+
+      - name: Package merged result
+        run: |
+          gzip -c /tmp/growth-archive-merge/store/current.json > /tmp/growth-archive-merge/archive-merged-current.json.gz
+          tar -czf /tmp/growth-archive-merge/archive-csv-recovery-17-19.tar.gz -C /tmp/growth-archive-merge/store archive
+          tar -czf /tmp/growth-archive-merge/archive-merged-snapshot.tar.gz -C /tmp/growth-archive-merge/store current.json archive
+          ls -lh /tmp/growth-archive-merge/archive-merged-current.json.gz /tmp/growth-archive-merge/archive-csv-recovery-17-19.tar.gz /tmp/growth-archive-merge/archive-merged-snapshot.tar.gz
+
+      - name: Upload merged assets to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload growth-recovery-20260321 \
+            /tmp/growth-archive-merge/archive-merged-current.json.gz#archive-merged-current.json.gz \
+            /tmp/growth-archive-merge/archive-csv-recovery-17-19.tar.gz#archive-csv-recovery-17-19.tar.gz \
+            /tmp/growth-archive-merge/archive-merged-snapshot.tar.gz#archive-merged-snapshot.tar.gz \
+            /tmp/growth-archive-merge/archive-merge-summary.json#archive-merge-summary.json \
+            --clobber
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: growth-archive-merged
+          path: |
+            /tmp/growth-archive-merge/archive-merged-current.json.gz
+            /tmp/growth-archive-merge/archive-csv-recovery-17-19.tar.gz
+            /tmp/growth-archive-merge/archive-merged-snapshot.tar.gz
+            /tmp/growth-archive-merge/archive-merge-summary.json
