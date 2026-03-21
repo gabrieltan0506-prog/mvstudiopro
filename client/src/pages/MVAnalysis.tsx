@@ -1580,8 +1580,8 @@ export default function MVAnalysisPage() {
                       {growthSystemStatusQuery.data.backfill.platforms?.map((item) => (
                         <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
                           <div>{String(item.platform)} status: {String(item.status || "-")}</div>
-                          <div>{String(item.platform)} total: {String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
-                          <div>{String(item.platform)} archived: {String(item.currentTotal || 0)}</div>
+                          <div>{String(item.platform)} archived: {String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
+                          <div>{String(item.platform)} current: {String(item.currentTotal || 0)}</div>
                           <div>{String(item.platform)} added: {String(item.addedCount || 0)}</div>
                           <div>{String(item.platform)} merged: {String(item.mergedCount || 0)}</div>
                           <div>{String(item.platform)} plateau: {String(item.plateauCount || 0)}</div>
