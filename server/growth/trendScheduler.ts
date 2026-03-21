@@ -1,23 +1,25 @@
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 import type { GrowthPlatform } from "@shared/growth";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { collectPlatformTrends } from "./trendCollector";
 import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
 import {
-  exportTrendCollectionsCsv,
-  getGrowthTrendStats,
+  exportSingleTrendCollectionCsv,
   isTrendCollectionStale,
-  mergeTrendCollections,
-  reconcileTrendHistoryState,
   readTrendMailDigestState,
   readTrendSchedulerState,
   readTrendStore,
+  mergeTrendCollections,
+  reconcileTrendHistoryState,
   updateTrendMailDigestState,
   updateTrendSchedulerState,
 } from "./trendStore";
 import { sendMailWithAttachments } from "../services/smtp-mailer";
-import { getPlatformTemplate } from "./platformTemplates";
-import { PLATFORM_LABELS } from "./growthSchema";
+import { nowShanghaiIso } from "./time";
+import type { PlatformTrendCollection } from "./trendCollector";
 
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
@@ -35,7 +37,8 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
-const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = Math.floor(8.5 * 1024 * 1024);
+const MAIL_ATTACHMENT_SPLIT_THRESHOLD_BYTES = 10 * 1024 * 1024;
+const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 10 * 1024 * 1024;
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
@@ -49,9 +52,13 @@ const FORCE_BURST_UNTIL_MS = (() => {
   const parsed = new Date(raw).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 })();
+const ENABLE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
+  String(process.env.GROWTH_ENABLE_BACKFILL_BOOTSTRAP || "").trim(),
+);
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
+const execFileAsync = promisify(execFile);
 
 function isStorageFullError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
@@ -63,7 +70,7 @@ function withJitter(baseMs: number) {
 }
 
 function nextRunIso(baseMs: number) {
-  return new Date(Date.now() + withJitter(baseMs)).toISOString();
+  return nowShanghaiIso(Date.now() + withJitter(baseMs));
 }
 
 function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallbackMinutes: number) {
@@ -283,14 +290,14 @@ async function getAttachmentSize(attachment: {
 async function chunkMailAttachments<T extends {
   path?: string;
   content?: string | Buffer;
-}>(attachments: T[]) {
+}>(attachments: T[], chunkLimitBytes = MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES) {
   const chunks: T[][] = [];
   let current: T[] = [];
   let currentSize = 0;
 
   for (const attachment of attachments) {
     const size = await getAttachmentSize(attachment);
-    if (current.length && currentSize + size > MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES) {
+    if (current.length && currentSize + size > chunkLimitBytes) {
       chunks.push(current);
       current = [];
       currentSize = 0;
@@ -306,6 +313,79 @@ async function chunkMailAttachments<T extends {
   return chunks;
 }
 
+async function sanitizeMailAttachments<T extends {
+  filename: string;
+  path?: string;
+  contentType?: string;
+  content?: string | Buffer;
+}>(attachments: T[]) {
+  const valid: T[] = [];
+  const dropped: T[] = [];
+  const seen = new Set<string>();
+
+  for (const attachment of attachments) {
+    const dedupeKey = attachment.path || `${attachment.filename}:${attachment.contentType || "-"}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    try {
+      await getAttachmentSize(attachment);
+      valid.push(attachment);
+    } catch {
+      dropped.push(attachment);
+    }
+  }
+
+  if (dropped.length) {
+    console.info(
+      `[growth.scheduler] dropped ${dropped.length} stale attachment(s): ${dropped
+        .slice(0, 5)
+        .map((attachment) => attachment.path || attachment.filename)
+        .join(", ")}`,
+    );
+  }
+
+  return { valid, dropped };
+}
+
+async function buildZipAttachment(
+  attachments: Array<{
+    filename: string;
+    path?: string;
+    content?: string | Buffer;
+    contentType?: string;
+  }>,
+  index: number,
+  total: number,
+) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "growth-mail-zip-"));
+  const zipPath = path.join(tempDir, total > 1 ? `creator-growth-camp-${index + 1}-of-${total}.zip` : "creator-growth-camp.zip");
+
+  try {
+    for (const attachment of attachments) {
+      const content = attachment.path
+        ? await fs.readFile(attachment.path)
+        : (typeof attachment.content === "string" ? Buffer.from(attachment.content) : attachment.content);
+      if (!content) continue;
+      await fs.writeFile(path.join(tempDir, attachment.filename), content);
+    }
+
+    const fileNames = attachments.map((attachment) => attachment.filename);
+    await execFileAsync("/usr/bin/zip", ["-q", "-9", zipPath, ...fileNames], {
+      cwd: tempDir,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+    const buffer = await fs.readFile(zipPath);
+
+    return {
+      filename: path.basename(zipPath),
+      content: buffer,
+      contentType: "application/zip",
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 async function sendChunkedDigest(params: {
   recipient: string;
   subjectBase: string;
@@ -315,12 +395,16 @@ async function sendChunkedDigest(params: {
     filename: string;
     path?: string;
     contentType?: string;
+    content?: string | Buffer;
   }>;
   sentAt: string;
 }) {
-  const chunks = await chunkMailAttachments(params.attachments);
+  const { valid: sanitizedAttachments } = await sanitizeMailAttachments(params.attachments);
+  const totalBytes = (await Promise.all(
+    sanitizedAttachments.map((attachment) => getAttachmentSize(attachment)),
+  )).reduce((sum, size) => sum + size, 0);
 
-  if (!chunks.length) {
+  if (!sanitizedAttachments.length) {
     await sendMailWithAttachments({
       to: params.recipient,
       subject: params.subjectBase,
@@ -328,23 +412,49 @@ async function sendChunkedDigest(params: {
       text: params.textBase,
       html: params.htmlBase,
     });
-  } else {
-    for (let index = 0; index < chunks.length; index += 1) {
-      await sendMailWithAttachments({
-        to: params.recipient,
-        subject: `${params.subjectBase} (${index + 1}/${chunks.length})`,
-        requireResend: true,
-        text: `${params.textBase}\n\n附件分片：${index + 1}/${chunks.length}`,
-        html: `${params.htmlBase}<p><strong>附件分片：</strong>${index + 1}/${chunks.length}</p>`,
-        attachments: chunks[index],
-      });
-    }
+    console.info("[growth.scheduler] digest sent without attachments");
+    return { sentAt: params.sentAt, emailCount: 1 };
   }
 
+  if (totalBytes <= MAIL_ATTACHMENT_SPLIT_THRESHOLD_BYTES) {
+    await sendMailWithAttachments({
+      to: params.recipient,
+      subject: params.subjectBase,
+      requireResend: true,
+      text: params.textBase,
+      html: params.htmlBase,
+      attachments: sanitizedAttachments,
+    });
+    console.info(
+      `[growth.scheduler] digest sent: emails=1 attachments=${sanitizedAttachments.length} totalBytes=${totalBytes} mode=raw`,
+    );
+    return { sentAt: params.sentAt, emailCount: 1 };
+  }
+
+  const rawChunks = await chunkMailAttachments(sanitizedAttachments);
+  const zipChunks = await Promise.all(
+    rawChunks.map((chunk, index) => buildZipAttachment(chunk, index, rawChunks.length)),
+  );
+
+  for (let index = 0; index < zipChunks.length; index += 1) {
+    const attachment = zipChunks[index];
+    await sendMailWithAttachments({
+      to: params.recipient,
+      subject: `${params.subjectBase} (${index + 1}/${zipChunks.length})`,
+      requireResend: true,
+      text: `${params.textBase}\n\n压缩附件分片：${index + 1}/${zipChunks.length}`,
+      html: `${params.htmlBase}<p><strong>压缩附件分片：</strong>${index + 1}/${zipChunks.length}</p>`,
+      attachments: [attachment],
+    });
+  }
+
+  console.info(
+    `[growth.scheduler] digest sent: emails=${zipChunks.length} attachments=${sanitizedAttachments.length} totalBytes=${totalBytes} mode=zip`,
+  );
+
   return {
-    deferred: [] as typeof chunks,
-    deferredBytes: 0,
     sentAt: params.sentAt,
+    emailCount: zipChunks.length,
   };
 }
 
@@ -358,51 +468,39 @@ async function notifyCollectionUpdate(params: {
   frequencyLabel: string;
   burstMode: boolean;
   live: boolean;
+  collection: PlatformTrendCollection;
 }) {
   const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
   if (!recipient) return;
   const digestState = await readTrendMailDigestState();
   const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
-  const nowIso = new Date().toISOString();
+  const nowIso = nowShanghaiIso();
   const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
 
-  let schedulerSummary = "";
-  let topIndustries = "";
-  let topContentTypes = "";
-  let templateDigest = "";
-  let exported:
-    | Awaited<ReturnType<typeof exportTrendCollectionsCsv>>
-    | null = null;
-  let platformFile:
-    | Awaited<ReturnType<typeof exportTrendCollectionsCsv>>["files"][number]
-    | undefined;
-  const store = await readTrendStore();
-  const stats = await getGrowthTrendStats();
-  exported = await exportTrendCollectionsCsv();
-  platformFile = exported.files.find((file) => file.platform === params.platform);
-  schedulerSummary = Object.values(store.scheduler || {})
+  if (withinWindow) {
+    console.info("[growth.scheduler] digest skipped within hourly window");
+    await updateTrendMailDigestState({
+      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+      pendingAttachmentBytes: 0,
+      pendingCreatedAt: undefined,
+      pendingSubjectBase: undefined,
+      pendingTextBase: undefined,
+      pendingHtmlBase: undefined,
+      pendingAttachmentBatches: undefined,
+    });
+    return;
+  }
+
+  const scheduler = await readTrendSchedulerState();
+  const exported = await exportSingleTrendCollectionCsv(params.collection);
+  const platformFile = exported.files[0];
+  const schedulerSummary = Object.values(scheduler || {})
     .map((item) =>
       `${item.platform}: ${item.lastCollectedCount || 0} 条 / 下次 ${item.nextRunAt || "-"} / ${item.lastFrequencyLabel || "-"}`,
     )
     .join("\n");
-  topIndustries = stats.industries
-    .slice(0, 3)
-    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-    .join("；");
-  topContentTypes = stats.contentTypes
-    .slice(0, 3)
-    .map((item) => `${item.label}（当前 ${item.currentTotal} / 历史 ${item.archivedItems}）`)
-    .join("；");
-  templateDigest = stats.platforms
-    .filter((item) => item.currentTotal > 0)
-    .slice(0, 4)
-    .map((item) => {
-      const template = getPlatformTemplate(item.platform);
-      return `${PLATFORM_LABELS[item.platform]}：当前 ${item.currentTotal} / 历史 ${item.archivedItems}，适配「${template.contentPreference}」；承接重点是「${template.conversionRule}」；信任触发优先看「${template.trustTrigger}」。`;
-    })
-    .join("\n");
 
-  const subjectBase = `Creator Growth Camp 数据汇总 - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+  const subjectBase = `Creator Growth Camp 数据汇总 - ${nowShanghaiIso().slice(0, 16).replace("T", " ")}`;
   const textBase =
     `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
     `最新触发平台：${params.platform}\n` +
@@ -415,11 +513,10 @@ async function notifyCollectionUpdate(params: {
     `是否真实 live：${params.live ? "是" : "否"}\n` +
     `下次计划抓取：${params.nextRunAt}\n` +
     `\n[当前调度概览]\n${schedulerSummary}\n` +
-    `\n[模板累计分析]\n` +
-    `主行业：${topIndustries || "轻量模式已启用，跳过全量统计"}\n` +
-    `主内容类型：${topContentTypes || "轻量模式已启用，跳过全量统计"}\n` +
-    `${templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。"}\n` +
-    (exported ? `总导出行数：${exported.rows}\n清单：${exported.manifestPath}` : "");
+    `\n[本次增量附件]\n` +
+    `本次导出行数：${exported.rows}\n` +
+    `清单：${exported.manifestPath}\n` +
+    `说明：邮件仅附带本次触发平台的增量导出，不再附带全平台全量导出。`;
   const htmlBase =
     `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
     `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
@@ -431,79 +528,50 @@ async function notifyCollectionUpdate(params: {
     `<p><strong>当前 live 调度频率：</strong>${params.frequencyLabel}</p>` +
     `<p><strong>当前 burst mode：</strong>${params.burstMode ? "ON" : "OFF"}</p>` +
     `<p><strong>是否真实 live：</strong>${params.live ? "是" : "否"}</p>` +
-    `<p><strong>模板累计分析：</strong>${topIndustries || "轻量模式已启用"} / ${topContentTypes || "轻量模式已启用"}</p>` +
-    `<p>${(templateDigest || "轻量模式已启用，保留抓取与调度通知，不再附带全量导出。").replace(/\n/g, "<br />")}</p>` +
-    (exported ? `<p><strong>总导出行数：</strong>${exported.rows}</p>` : "") +
-    (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : "");
+    `<p><strong>当前调度概览：</strong></p><p>${schedulerSummary.replace(/\n/g, "<br />")}</p>` +
+    `<p><strong>本次导出行数：</strong>${exported.rows}</p>` +
+    (platformFile ? `<p><strong>本次重点附件：</strong>${path.basename(platformFile.filePath)}</p>` : "") +
+    `<p><strong>说明：</strong>邮件仅附带本次触发平台的增量导出，不再附带全平台全量导出。</p>`;
 
-  const attachments = exported
-    ? [
-        ...exported.files.map((file) => ({
-          filename: path.basename(file.filePath),
-          path: file.filePath,
-          contentType: "text/csv",
-        })),
-        {
-          filename: path.basename(exported.manifestPath),
-          path: exported.manifestPath,
-          contentType: "application/json",
-        },
-      ]
-    : [];
-  const attachmentBytes = (await Promise.all(attachments.map((attachment) => getAttachmentSize(attachment))))
-    .reduce((sum, size) => sum + size, 0);
-  const pendingBatches = digestState.pendingAttachmentBatches || [];
-  const pendingAttachments = pendingBatches.flat().filter(Boolean);
-  const allAttachments = [...pendingAttachments, ...attachments];
-  const nextSubjectBase =
-    digestState.pendingSubjectBase || subjectBase;
-  const nextTextBase =
-    digestState.pendingTextBase || textBase;
-  const nextHtmlBase =
-    digestState.pendingHtmlBase || htmlBase;
-  const nextCreatedAt =
-    digestState.pendingCreatedAt || nowIso;
-
-  if (withinWindow) {
-    const deferredChunks = await chunkMailAttachments(allAttachments);
-    const deferredBytes = (await Promise.all(
-      deferredChunks.flat().map((attachment) => getAttachmentSize(attachment)),
-    )).reduce((sum, size) => sum + size, 0);
-    await updateTrendMailDigestState({
-      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
-      pendingAttachmentBytes: deferredBytes,
-      pendingCreatedAt: nextCreatedAt,
-      pendingSubjectBase: nextSubjectBase,
-      pendingTextBase: nextTextBase,
-      pendingHtmlBase: nextHtmlBase,
-      pendingAttachmentBatches: deferredChunks,
-    });
-    return;
-  }
+  const attachments = [
+    ...exported.files.map((file) => ({
+      filename: path.basename(file.filePath),
+      path: file.filePath,
+      contentType: "text/csv",
+    })),
+    {
+      filename: path.basename(exported.manifestPath),
+      path: exported.manifestPath,
+      contentType: "application/json",
+    },
+  ];
 
   const sendResult = await sendChunkedDigest({
     recipient,
-    subjectBase: nextSubjectBase,
-    textBase: nextTextBase,
-    htmlBase: nextHtmlBase,
-    attachments: allAttachments,
+    subjectBase,
+    textBase,
+    htmlBase,
+    attachments,
     sentAt: nowIso,
   });
+  console.info(
+    `[growth.scheduler] digest state updated: lastSentAt=${nowIso} emailCount=${sendResult.emailCount}`,
+  );
   await updateTrendMailDigestState({
     lastSentAt: nowIso,
-    lastManifestPath: exported?.manifestPath,
+    lastManifestPath: exported.manifestPath,
     lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
-    pendingAttachmentBytes: sendResult.deferredBytes,
-    pendingCreatedAt: sendResult.deferred.length ? nextCreatedAt : undefined,
-    pendingSubjectBase: sendResult.deferred.length ? nextSubjectBase : undefined,
-    pendingTextBase: sendResult.deferred.length ? nextTextBase : undefined,
-    pendingHtmlBase: sendResult.deferred.length ? nextHtmlBase : undefined,
-    pendingAttachmentBatches: sendResult.deferred.length ? sendResult.deferred : undefined,
+    pendingAttachmentBytes: 0,
+    pendingCreatedAt: undefined,
+    pendingSubjectBase: undefined,
+    pendingTextBase: undefined,
+    pendingHtmlBase: undefined,
+    pendingAttachmentBatches: undefined,
   });
 }
 
 async function runPlatform(platform: GrowthPlatform) {
-  const startedAt = new Date().toISOString();
+  const startedAt = nowShanghaiIso();
   const startedAtMs = Date.now();
   const currentState = (await readTrendSchedulerState())[platform];
   await updateTrendSchedulerState(platform, {
@@ -557,6 +625,7 @@ async function runPlatform(platform: GrowthPlatform) {
         frequencyLabel: plan.frequencyLabel,
         burstMode: plan.burstMode,
         live: collection.source === "live",
+        collection,
       }).catch((error) => {
         console.warn(`[growth.scheduler] email notify skipped for ${platform}:`, error);
       });
@@ -625,14 +694,18 @@ export async function bootstrapGrowthTrendScheduler() {
       await updateTrendSchedulerState(platform, {
         platform,
         failureCount: scheduler[platform]?.failureCount || 0,
-        nextRunAt: new Date().toISOString(),
+        nextRunAt: nowShanghaiIso(),
       });
     }
   }
 
-  bootstrapGrowthTrendBackfillWorker().catch((error) => {
-    console.warn("[growth.backfill] bootstrap failed:", error);
-  });
+  if (ENABLE_BACKFILL_BOOTSTRAP) {
+    bootstrapGrowthTrendBackfillWorker().catch((error) => {
+      console.warn("[growth.backfill] bootstrap failed:", error);
+    });
+  } else {
+    console.info("[growth.backfill] bootstrap skipped; set GROWTH_ENABLE_BACKFILL_BOOTSTRAP=1 to enable automatic historical backfill on boot.");
+  }
   runDuePlatforms().catch((error) => {
     console.warn("[growth.scheduler] initial bootstrap failed:", error);
   });

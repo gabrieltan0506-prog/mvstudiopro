@@ -1,6 +1,7 @@
 import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
 import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress } from "./trendStore";
+import { nowShanghaiIso } from "./time";
 
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
@@ -75,7 +76,7 @@ export async function runGrowthTrendBackfillStep() {
     }
 
     const nextRound = Math.min(MAX_ROUNDS, (statsBefore.totals.archiveRuns || 0) + 1);
-    if (!startedAt) startedAt = new Date().toISOString();
+    if (!startedAt) startedAt = nowShanghaiIso();
     await updateTrendBackfillProgress({
       active: true,
       startedAt,
@@ -145,7 +146,7 @@ export async function runGrowthTrendBackfillStep() {
     const storageFull = isStorageFullError(error);
     await updateTrendBackfillProgress({
       active: true,
-      finishedAt: storageFull ? undefined : new Date().toISOString(),
+      finishedAt: storageFull ? undefined : nowShanghaiIso(),
       status: storageFull ? "running" : "failed",
       note: storageFull
         ? "历史回填运行中：磁盘空间不足，保留最后一次成功结果，等待 archive 外移后继续。"
