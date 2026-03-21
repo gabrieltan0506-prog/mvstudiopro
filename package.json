@@ -14,6 +14,7 @@
     "rebuild:growth-store": "tsx scripts/rebuild-growth-store-from-recovery.ts",
     "growth:snapshot": "tsx scripts/snapshot-growth-store.ts",
     "growth:restore-snapshot": "tsx scripts/restore-growth-store-from-snapshot.ts",
+    "growth:refresh-debug-summary": "tsx scripts/refresh-growth-debug-summary.ts",
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs"
   },

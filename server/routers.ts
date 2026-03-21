@@ -28,7 +28,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -877,6 +877,23 @@ export const appRouter = router({
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const backfill = runtimeMeta.backfill || null;
+        const summary = await readGrowthDebugSummary();
+        const backfillPlatforms = new Map(
+          (backfill?.platforms || []).map((item) => [String(item.platform), { ...item }]),
+        );
+
+        for (const [platform, item] of Object.entries(summary?.platforms || {})) {
+          const current = backfillPlatforms.get(platform) || {
+            platform,
+            target: 0,
+            status: "done" as const,
+          };
+          backfillPlatforms.set(platform, {
+            ...current,
+            currentTotal: Number(item?.currentTotal || 0),
+            archivedTotal: Number(item?.archivedTotal || 0),
+          });
+        }
 
         return {
           success: true,
@@ -888,8 +905,19 @@ export const appRouter = router({
                 currentRound: 0,
                 maxRounds: 0,
                 targetPerPlatform: 0,
+                platforms: Array.from(backfillPlatforms.values()),
               }
-            : null,
+            : summary
+              ? {
+                  active: false,
+                  currentRound: 0,
+                  maxRounds: 0,
+                  targetPerPlatform: 0,
+                  status: "completed" as const,
+                  selectedWindowDays: 365,
+                  platforms: Array.from(backfillPlatforms.values()),
+                }
+              : null,
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },
@@ -904,6 +932,44 @@ export const appRouter = router({
             lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastError: item?.lastError,
           })),
+        };
+      }),
+
+    getGrowthMonotonicStatus: publicProcedure
+      .query(async () => {
+        const summary = await readGrowthDebugSummary();
+        if (summary) {
+          return {
+            success: true,
+            fetchedAt: new Date().toISOString(),
+            totals: summary.totals,
+            platforms: Object.fromEntries(
+              Object.entries(summary.platforms).map(([platform, item]) => [
+                platform,
+                {
+                  currentTotal: Number(item?.currentTotal || 0),
+                  archivedTotal: Number(item?.archivedTotal || 0),
+                },
+              ]),
+            ),
+            source: "growth-debug-summary",
+          };
+        }
+
+        const stats = await getGrowthTrendStats();
+        return {
+          success: true,
+          fetchedAt: new Date().toISOString(),
+          platforms: Object.fromEntries(
+            stats.platforms.map((item) => [
+              item.platform,
+              {
+                currentTotal: Number(item.currentTotal || 0),
+                archivedTotal: Number(item.archivedItems || 0),
+              },
+            ]),
+          ),
+          source: "growth-trend-stats",
         };
       }),
 
