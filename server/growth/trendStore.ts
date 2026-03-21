@@ -146,6 +146,21 @@ type TrendStoreRuntimeMeta = {
   mailDigest?: TrendMailDigestState;
 };
 
+export type GrowthDebugSummaryPlatform = {
+  platform: GrowthPlatform;
+  currentTotal: number;
+  archivedTotal: number;
+};
+
+export type GrowthDebugSummary = {
+  updatedAt: string;
+  totals: {
+    currentItems: number;
+    archivedItems: number;
+  };
+  platforms: Partial<Record<GrowthPlatform, GrowthDebugSummaryPlatform>>;
+};
+
 export type TrendCollectionStatsSummary = {
   platform: GrowthPlatform;
   source?: PlatformTrendCollection["source"];
@@ -215,6 +230,7 @@ const LEGACY_STORE_FILE = path.resolve(
 );
 const STORE_FILE = path.join(STORE_DIR, "current.json");
 const META_FILE = path.join(STORE_DIR, "runtime-meta.json");
+const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
@@ -232,10 +248,48 @@ let historyReconcilePromise: Promise<TrendStoreFile> | null = null;
 
 async function ensureStoreDir() {
   await fs.mkdir(STORE_DIR, { recursive: true });
+  await fs.mkdir(path.dirname(DEBUG_SUMMARY_FILE), { recursive: true });
   await fs.mkdir(ARCHIVE_DIR, { recursive: true });
   await fs.mkdir(EXPORT_DIR, { recursive: true });
   await fs.mkdir(PLATFORM_DIR, { recursive: true });
   await fs.mkdir(HISTORY_LEDGER_DIR, { recursive: true });
+}
+
+function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
+  const platforms = Object.fromEntries(
+    growthPlatformValues.map((platform) => [
+      platform,
+      {
+        platform,
+        currentTotal: store.collections?.[platform]?.items?.length || 0,
+        archivedTotal: store.history?.platforms?.[platform]?.archivedItems || 0,
+      },
+    ]),
+  ) as Partial<Record<GrowthPlatform, GrowthDebugSummaryPlatform>>;
+
+  return {
+    updatedAt: store.updatedAt || nowShanghaiIso(),
+    totals: {
+      currentItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.currentTotal || 0), 0),
+      archivedItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.archivedTotal || 0), 0),
+    },
+    platforms,
+  };
+}
+
+export async function readGrowthDebugSummary(): Promise<GrowthDebugSummary | null> {
+  try {
+    return JSON.parse(await fs.readFile(DEBUG_SUMMARY_FILE, "utf8")) as GrowthDebugSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshTrendDebugSummary(store?: TrendStoreFile) {
+  const next = store || await readTrendStore();
+  const summary = buildGrowthDebugSummary(next);
+  await writeJsonAtomic(DEBUG_SUMMARY_FILE, summary);
+  return summary;
 }
 
 function createEmptyHistoryState(): TrendHistoryState {
@@ -762,6 +816,7 @@ async function writeStore(
     backfill: next.backfill,
     mailDigest: next.mailDigest,
   });
+  await refreshTrendDebugSummary(next);
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
     await writeJsonAtomic(LEGACY_STORE_FILE, next);
   }
