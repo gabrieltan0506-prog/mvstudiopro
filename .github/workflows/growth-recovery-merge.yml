@@ -23,15 +23,9 @@ jobs:
           curl -L "${{ inputs.recovery_asset_url }}" -o recovered.json.gz
           gzip -df recovered.json.gz
 
-      - name: Fetch live current snapshot from Fly
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          flyctl ssh sftp get -a mvstudiopro /data/growth/current.json current.json
-
       - name: Merge snapshots
         run: |
-          node scripts/merge-growth-snapshots.mjs current.json recovered.json merged-current.json
+          cp recovered.json merged-current.json
 
       - name: Compress merged snapshot
         run: |
