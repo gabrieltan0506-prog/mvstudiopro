@@ -26,7 +26,7 @@ primary_region = 'sin'
     interval = "15s"
     method = "GET"
     timeout = "10s"
-    path = "/"
+    path = "/api/health"
 
 [[vm]]
   memory = '4gb'
