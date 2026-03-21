@@ -5,6 +5,7 @@ import {
 } from "@shared/growth";
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
 import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds } from "./trendSeedLibrary";
+import { nowShanghaiIso, toShanghaiIso } from "./time";
 
 export type TrendSource = "live" | "seed";
 
@@ -136,12 +137,12 @@ function parseChineseCount(value: unknown): number | undefined {
 
 function safeDateFromUnix(timestamp?: number) {
   if (!timestamp || !Number.isFinite(timestamp)) return undefined;
-  return new Date(timestamp * 1000).toISOString();
+  return toShanghaiIso(timestamp * 1000);
 }
 
 function safeDateFromTimestamp(timestamp?: number) {
   if (!timestamp || !Number.isFinite(timestamp)) return undefined;
-  return new Date(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000).toISOString();
+  return toShanghaiIso(timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000);
 }
 
 function parseCsvEnv(name: string) {
@@ -1504,7 +1505,7 @@ function finalizeCollection(
   return {
     platform,
     source,
-    collectedAt: new Date().toISOString(),
+    collectedAt: nowShanghaiIso(),
     windowDays: resolvedWindow.windowDays,
     items: windowFilteredItems,
     notes: enrichedNotes,
@@ -1674,7 +1675,9 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
         bucket: "douyin_topics",
         hotValue: Number(item.hot_value ?? 0) || undefined,
         url: item.word ? `https://www.douyin.com/hot/${encodeURIComponent(String(item.word))}` : undefined,
-        publishedAt: payload.active_time ? new Date(String(payload.active_time).replace(" ", "T") + "+08:00").toISOString() : undefined,
+        publishedAt: payload.active_time
+          ? toShanghaiIso(String(payload.active_time).replace(" ", "T") + "+08:00")
+          : undefined,
         contentType: "topic" as const,
         tags: [String(item.word_type ?? "").trim()].filter(Boolean),
       })),

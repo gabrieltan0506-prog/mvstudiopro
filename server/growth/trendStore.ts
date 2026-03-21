@@ -3,6 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
+import { nowShanghaiIso, toShanghaiIso } from "./time";
 
 export type TrendSchedulerState = {
   platform: GrowthPlatform;
@@ -239,7 +240,7 @@ async function ensureStoreDir() {
 
 function createEmptyHistoryState(): TrendHistoryState {
   return {
-    updatedAt: new Date(0).toISOString(),
+    updatedAt: toShanghaiIso(0),
     source: "ledger",
     platforms: {},
   };
@@ -247,7 +248,7 @@ function createEmptyHistoryState(): TrendHistoryState {
 
 function createEmptyStore(): TrendStoreFile {
   return {
-    updatedAt: new Date(0).toISOString(),
+    updatedAt: toShanghaiIso(0),
     collections: {},
     scheduler: {},
     archiveIndex: [],
@@ -264,6 +265,23 @@ function createEmptyStore(): TrendStoreFile {
   };
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(new Set(value.map((item) => String(item || "").trim()).filter(Boolean)));
+  }
+  if (typeof value === "string") {
+    return Array.from(
+      new Set(
+        value
+          .split(/[|,]/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+  return [];
+}
+
 function normalizeItem(item: TrendItem): TrendItem {
   return {
     ...item,
@@ -272,7 +290,7 @@ function normalizeItem(item: TrendItem): TrendItem {
     bucket: item.bucket ? String(item.bucket).trim() : undefined,
     author: item.author ? String(item.author).trim() : undefined,
     url: item.url ? String(item.url).trim() : undefined,
-    tags: Array.from(new Set((item.tags || []).map((tag) => String(tag || "").trim()).filter(Boolean))),
+    tags: normalizeStringList(item.tags),
   };
 }
 
@@ -320,8 +338,8 @@ function getItemKey(item: TrendItem) {
   return `${String(item.title || "").trim()}::${String(item.author || "").trim()}::${String(item.bucket || "").trim()}`;
 }
 
-function normalizeLabels(labels: string[] | undefined) {
-  return Array.from(new Set((labels || []).map((label) => String(label || "").trim()).filter(Boolean)));
+function normalizeLabels(labels: unknown) {
+  return normalizeStringList(labels);
 }
 
 function getBucketCounts(items: TrendItem[]) {
@@ -406,7 +424,7 @@ async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string
     getHistoryLedgerFile(platform),
     JSON.stringify(
       {
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowShanghaiIso(),
         platform,
         items,
       },
@@ -437,7 +455,7 @@ async function refreshHistorySummary(
     summaries[platform] = summarizeHistoryLedger(platform, ledger);
   }
   store.history = {
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
     source: "ledger",
     platforms: summaries,
   };
@@ -494,7 +512,7 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
     const raw = await fs.readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as Partial<TrendStoreFile>;
     return {
-      updatedAt: parsed.updatedAt || new Date(0).toISOString(),
+      updatedAt: parsed.updatedAt || toShanghaiIso(0),
       collections: parsed.collections || {},
       scheduler: parsed.scheduler || {},
       archiveIndex: (parsed.archiveIndex || []).map((entry) => ({
@@ -545,20 +563,18 @@ export async function readTrendRuntimeMeta(): Promise<{
 
 async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
   await ensureStoreDir();
-  await fs.writeFile(
-    META_FILE,
-    JSON.stringify(
-      {
-        updatedAt: next.updatedAt || new Date().toISOString(),
-        scheduler: next.scheduler || {},
-        backfill: next.backfill,
-        mailDigest: next.mailDigest || {},
-      },
-      null,
-      2,
-    ),
-    "utf8",
-  );
+  await writeJsonAtomic(META_FILE, {
+    updatedAt: next.updatedAt || nowShanghaiIso(),
+    scheduler: next.scheduler || {},
+    backfill: next.backfill,
+    mailDigest: next.mailDigest || {},
+  });
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown) {
+  const tempPath = `${filePath}.next`;
+  await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf8");
+  await fs.rename(tempPath, filePath);
 }
 
 export async function readTrendStore(): Promise<TrendStoreFile> {
@@ -690,11 +706,11 @@ export async function reconcileTrendHistoryState(options?: { force?: boolean }) 
     }
 
     store.history = {
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowShanghaiIso(),
       source: "ledger",
       platforms: summaries,
     };
-    store.updatedAt = new Date().toISOString();
+    store.updatedAt = nowShanghaiIso();
     await writeStore(store);
     return store;
   })();
@@ -739,7 +755,7 @@ async function writeStore(
       }
     }
   }
-  await fs.writeFile(STORE_FILE, JSON.stringify(next, null, 2), "utf8");
+  await writeJsonAtomic(STORE_FILE, next);
   await writeRuntimeMeta({
     updatedAt: next.updatedAt,
     scheduler: next.scheduler,
@@ -747,7 +763,7 @@ async function writeStore(
     mailDigest: next.mailDigest,
   });
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
-    await fs.writeFile(LEGACY_STORE_FILE, JSON.stringify(next, null, 2), "utf8");
+    await writeJsonAtomic(LEGACY_STORE_FILE, next);
   }
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
@@ -893,7 +909,7 @@ async function archiveCollection(
 
 export async function writeTrendStore(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
   const next = createEmptyStore();
-  next.updatedAt = new Date().toISOString();
+  next.updatedAt = nowShanghaiIso();
   next.collections = collections;
   const current = await readTrendStore();
   next.history = current.history || next.history;
@@ -905,7 +921,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
 export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
   const current = await readTrendStore();
   const next: TrendStoreFile = {
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
     collections: { ...current.collections },
     scheduler: current.scheduler || {},
     archiveIndex: [...(current.archiveIndex || [])],
@@ -964,7 +980,7 @@ export async function updateTrendSchedulerState(
     platform,
   };
   await writeRuntimeMeta({
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
     scheduler,
     backfill: meta.backfill,
     mailDigest: meta.mailDigest,
@@ -1025,10 +1041,10 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
     ...current,
     ...progress,
     platforms: mergedPlatforms,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
   };
   await writeRuntimeMeta({
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
     scheduler: meta.scheduler || store.scheduler,
     backfill: nextBackfill,
     mailDigest: meta.mailDigest || store.mailDigest,
@@ -1276,7 +1292,7 @@ export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestS
     ...patch,
   };
   await writeRuntimeMeta({
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowShanghaiIso(),
     scheduler: meta.scheduler,
     backfill: meta.backfill,
     mailDigest,
@@ -1286,6 +1302,18 @@ export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestS
 
 export async function exportTrendCollectionsCsv() {
   const store = await readTrendStore();
+  await ensureStoreDir();
+  return exportTrendCollectionsCsvFromCollections(Object.values(store.collections));
+}
+
+export async function exportSingleTrendCollectionCsv(collection: PlatformTrendCollection) {
+  await ensureStoreDir();
+  return exportTrendCollectionsCsvFromCollections([collection]);
+}
+
+async function exportTrendCollectionsCsvFromCollections(
+  collections: Array<PlatformTrendCollection | undefined>,
+) {
   await ensureStoreDir();
 
   const header = [
@@ -1307,11 +1335,11 @@ export async function exportTrendCollectionsCsv() {
     "tags",
   ].join(",");
 
-  const createdAt = new Date().toISOString().replace(/[:.]/g, "-");
+  const createdAt = nowShanghaiIso().replace(/[:.]/g, "-");
   const files: Array<{ platform: GrowthPlatform; bucket: string; filePath: string; rows: number }> = [];
   let totalRows = 0;
 
-  for (const collection of Object.values(store.collections)) {
+  for (const collection of collections) {
     if (!collection?.items.length) continue;
     const buckets = collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
       const bucket = String(item.bucket || item.contentType || "default").trim() || "default";
