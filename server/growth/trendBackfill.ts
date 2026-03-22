@@ -141,11 +141,10 @@ export async function runGrowthTrendBackfillStep() {
 
     for (const platform of pending) {
       const collection = collected.collections[platform];
-      const mergedCollection = merged.collections[platform];
-      if (collection?.source !== "live" || !mergedCollection?.items.length) continue;
+      if (collection?.source !== "live" || !collection.items.length) continue;
       await notifyGrowthCollectionUpdate({
         platform,
-        itemCount: mergedCollection.items.length,
+        itemCount: collection.items.length,
         addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
         mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
         collectedAt: collection.collectedAt,

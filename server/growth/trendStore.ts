@@ -259,12 +259,15 @@ async function ensureStoreDir() {
 }
 
 function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
+  const isRecoveredCollection = (collection: PlatformTrendCollection | undefined) =>
+    isRecoveredCollectionSource(collection?.source);
+
   const platforms = Object.fromEntries(
     growthPlatformValues.map((platform) => [
       platform,
       {
         platform,
-        currentTotal: store.collections?.[platform]?.items?.length || 0,
+        currentTotal: isRecoveredCollection(store.collections?.[platform]) ? 0 : (store.collections?.[platform]?.items?.length || 0),
         archivedTotal: store.history?.platforms?.[platform]?.archivedItems || 0,
       },
     ]),
@@ -320,6 +323,11 @@ function createEmptyStore(): TrendStoreFile {
     },
     mailDigest: {},
   };
+}
+
+function isRecoveredCollectionSource(source?: PlatformTrendCollection["source"]) {
+  const normalized = String(source || "").toLowerCase();
+  return normalized.includes("recovered") || normalized.includes("archive") || normalized.includes("csv");
 }
 
 function normalizeItem(item: TrendItem): TrendItem {
@@ -604,6 +612,9 @@ async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<Pla
   try {
     const raw = await fs.readFile(path.join(PLATFORM_DIR, `${platform}.json`), "utf8");
     const parsed = JSON.parse(raw) as { collection?: PlatformTrendCollection };
+    if (isRecoveredCollectionSource(parsed.collection?.source)) {
+      return undefined;
+    }
     return parsed.collection;
   } catch {
     return undefined;
@@ -895,9 +906,15 @@ async function writeStore(
     return next;
   }
   await Promise.all(
-    Object.entries(next.collections).map(async ([platform, collection]) => {
-      if (!collection) return;
+    growthPlatformValues.map(async (platform) => {
+      const collection = next.collections?.[platform];
       const platformFile = path.join(PLATFORM_DIR, `${platform}.json`);
+      const bucketDir = path.join(PLATFORM_DIR, platform);
+      if (!collection || isRecoveredCollectionSource(collection.source)) {
+        await fs.rm(platformFile, { force: true });
+        await fs.rm(bucketDir, { recursive: true, force: true });
+        return;
+      }
       await fs.writeFile(
         platformFile,
         JSON.stringify(
@@ -911,7 +928,6 @@ async function writeStore(
         ),
         "utf8",
       );
-      const bucketDir = path.join(PLATFORM_DIR, platform);
       await fs.mkdir(bucketDir, { recursive: true });
       const buckets = Object.entries(
         collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {

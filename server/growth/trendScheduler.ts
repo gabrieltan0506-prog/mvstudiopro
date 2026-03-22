@@ -302,11 +302,11 @@ async function runPlatform(platform: GrowthPlatform) {
       lastFrequencyLabel: plan.frequencyLabel,
       lastError: undefined,
     });
-    if (collection.source === "live" && (mergedCollection?.items.length || 0) > 0) {
+    if (collection.source === "live" && currentCount > 0) {
       const mergeStat = mergedStore.mergeStats?.[platform];
       await notifyGrowthCollectionUpdate({
         platform,
-        itemCount: mergedCollection?.items.length || 0,
+        itemCount: currentCount,
         addedCount: mergeStat?.addedCount || 0,
         mergedCount: mergeStat?.mergedCount || 0,
         collectedAt: collection.collectedAt,
