@@ -790,10 +790,12 @@ async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
   try {
     const raw = await fs.readFile(META_FILE, "utf8");
     const parsed = JSON.parse(raw) as TrendStoreRuntimeMeta;
+    const legacyBackfill = parsed.backfill;
+    const hasSplitBackfill = Boolean(parsed.backfillLive || parsed.backfillHistory);
     return {
       updatedAt: parsed.updatedAt,
       scheduler: parsed.scheduler || {},
-      backfill: parsed.backfill,
+      backfill: hasSplitBackfill ? undefined : legacyBackfill,
       backfillLive: parsed.backfillLive,
       backfillHistory: parsed.backfillHistory,
       mailDigest: parsed.mailDigest || {},
@@ -827,7 +829,6 @@ async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
   await writeJsonAtomic(META_FILE, {
     updatedAt: next.updatedAt || nowShanghaiIso(),
     scheduler: next.scheduler || {},
-    backfill: next.backfill,
     backfillLive: next.backfillLive,
     backfillHistory: next.backfillHistory,
     mailDigest: next.mailDigest || {},
@@ -1298,7 +1299,6 @@ export async function updateTrendSchedulerState(
   await writeRuntimeMeta({
     updatedAt: nowShanghaiIso(),
     scheduler,
-    backfill: meta.backfill,
     backfillLive: meta.backfillLive,
     backfillHistory: meta.backfillHistory,
     mailDigest: meta.mailDigest,
@@ -1371,7 +1371,6 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
   await writeRuntimeMeta({
     updatedAt: nowShanghaiIso(),
     scheduler: meta.scheduler || {},
-    backfill: nextBackfill,
     backfillLive: mode === "live" ? nextBackfill : (meta.backfillLive || createEmptyStore().backfillLive),
     backfillHistory: mode === "history" ? nextBackfill : (meta.backfillHistory || createEmptyStore().backfillHistory),
     mailDigest: meta.mailDigest || {},
@@ -1621,7 +1620,8 @@ export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestS
   await writeRuntimeMeta({
     updatedAt: nowShanghaiIso(),
     scheduler: meta.scheduler,
-    backfill: meta.backfill,
+    backfillLive: meta.backfillLive,
+    backfillHistory: meta.backfillHistory,
     mailDigest,
   });
   return mailDigest;
