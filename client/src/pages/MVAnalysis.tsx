@@ -1542,6 +1542,20 @@ export default function MVAnalysisPage() {
                   {debugInfo?.failureStage ? <div>失败阶段：{String(debugInfo.failureStage)}</div> : null}
                   {debugInfo?.failureReason ? <div>失败原因：{String(debugInfo.failureReason)}</div> : null}
                 </div>
+                {growthSystemStatusQuery.data?.truthStore?.platforms?.length ? (
+                  <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
+                    <div className="font-semibold text-sky-100">各平台真值拆分</div>
+                    <div className="space-y-2">
+                      {growthSystemStatusQuery.data.truthStore.platforms.map((item) => (
+                        <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} live 当前量：{String(item.currentItems || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} historical 历史量：{String(item.archivedItems || 0)}</div>
+                          <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {growthSnapshotDebug ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-emerald-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-emerald-100">Growth Snapshot Debug</div>
