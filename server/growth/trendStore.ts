@@ -1036,13 +1036,16 @@ export async function readTrendSchedulerState() {
 }
 
 export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
-  const store = await readTrendStore();
   const meta = await readRuntimeMeta();
-  const current = store.backfill || createEmptyStore().backfill!;
+  const current = meta.backfill || createEmptyStore().backfill!;
+  const summary = await readGrowthDebugSummary();
   const currentPlatformMap = new Map(
-    Object.entries(store.collections || {}).map(([platform, collection]) => [
-      platform as GrowthPlatform,
-      collection?.items.length || 0,
+    growthPlatformValues.map((platform) => [
+      platform,
+      {
+        currentTotal: summary?.platforms?.[platform]?.currentTotal || 0,
+        archivedTotal: summary?.platforms?.[platform]?.archivedTotal || 0,
+      },
     ]),
   );
   const previousPlatformMap = new Map(
@@ -1060,12 +1063,12 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
   ).map((platform) => {
     const previous = previousPlatformMap.get(platform);
     const incoming = incomingPlatformMap.get(platform);
-    const collectionCurrentTotal = currentPlatformMap.get(platform) || 0;
+    const summaryTotals = currentPlatformMap.get(platform) || { currentTotal: 0, archivedTotal: 0 };
     const previousArchived = previous?.archivedTotal || 0;
     const incomingArchived = incoming?.archivedTotal || 0;
-    const effectiveArchivedTotal = Math.max(previousArchived, incomingArchived);
+    const effectiveArchivedTotal = Math.max(summaryTotals.archivedTotal, previousArchived, incomingArchived);
     const effectiveCurrentTotal = Math.max(
-      collectionCurrentTotal,
+      summaryTotals.currentTotal,
       incoming?.currentTotal || 0,
       previous?.currentTotal || 0,
     );
@@ -1087,9 +1090,9 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
   };
   await writeRuntimeMeta({
     updatedAt: nowShanghaiIso(),
-    scheduler: meta.scheduler || store.scheduler,
+    scheduler: meta.scheduler || {},
     backfill: nextBackfill,
-    mailDigest: meta.mailDigest || store.mailDigest,
+    mailDigest: meta.mailDigest || {},
   });
   return nextBackfill;
 }

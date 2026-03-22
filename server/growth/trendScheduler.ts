@@ -1,10 +1,10 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
 import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
 import {
-  isTrendCollectionStale,
   readTrendSchedulerState,
-  readTrendStore,
   mergeTrendCollections,
   reconcileTrendHistoryState,
   updateTrendSchedulerState,
@@ -38,6 +38,13 @@ const FORCE_BURST_UNTIL_MS = (() => {
 })();
 const ENABLE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
   String(process.env.GROWTH_ENABLE_BACKFILL_BOOTSTRAP || "").trim(),
+);
+const DISABLE_BACKFILL_ON_LARGE_STORE = !/^(0|false|no)$/i.test(
+  String(process.env.GROWTH_DISABLE_BACKFILL_ON_LARGE_STORE || "1").trim(),
+);
+const BACKFILL_STORE_SIZE_LIMIT_MB = Math.max(
+  64,
+  Number(process.env.GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB || 128) || 128,
 );
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -343,14 +350,10 @@ async function runDuePlatforms() {
   if (runInFlight) return;
   runInFlight = true;
   try {
-    const store = await readTrendStore();
     const scheduler = await readTrendSchedulerState();
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
       const nextRunAt = scheduler[platform]?.nextRunAt;
-      if (!nextRunAt) {
-        const lastCollectedAt = store.collections[platform]?.collectedAt;
-        return isTrendCollectionStale(lastCollectedAt, getSchedulerIntervalMinutes() / 60);
-      }
+      if (!nextRunAt) return true;
       return new Date(nextRunAt).getTime() <= Date.now();
     });
 
@@ -360,6 +363,28 @@ async function runDuePlatforms() {
   } finally {
     runInFlight = false;
   }
+}
+
+async function shouldBootstrapBackfill() {
+  if (!ENABLE_BACKFILL_BOOTSTRAP) return false;
+  if (!DISABLE_BACKFILL_ON_LARGE_STORE) return true;
+  try {
+    const storeDir = path.resolve(
+      process.env.GROWTH_STORE_DIR || path.join(path.resolve(process.cwd(), ".cache"), "growth"),
+    );
+    const currentPath = path.join(storeDir, "current.json");
+    const stat = await fs.stat(currentPath);
+    const sizeMb = stat.size / 1024 / 1024;
+    if (sizeMb > BACKFILL_STORE_SIZE_LIMIT_MB) {
+      console.warn(
+        `[growth.backfill] bootstrap skipped: current.json is ${sizeMb.toFixed(1)}MB, above safety limit ${BACKFILL_STORE_SIZE_LIMIT_MB}MB.`,
+      );
+      return false;
+    }
+  } catch {
+    return true;
+  }
+  return true;
 }
 
 export async function bootstrapGrowthTrendScheduler() {
@@ -381,7 +406,7 @@ export async function bootstrapGrowthTrendScheduler() {
     }
   }
 
-  if (ENABLE_BACKFILL_BOOTSTRAP) {
+  if (await shouldBootstrapBackfill()) {
     bootstrapGrowthTrendBackfillWorker().catch((error) => {
       console.warn("[growth.backfill] bootstrap failed:", error);
     });
