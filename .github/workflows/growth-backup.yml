@@ -17,9 +17,36 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           mkdir -p /tmp/growth-backup
-          flyctl ssh console -a mvstudiopro -C "gzip -c /data/growth/current.json" > /tmp/growth-backup/current.json.gz
-          flyctl ssh console -a mvstudiopro -C "gzip -c /data/growth/runtime-meta.json" > /tmp/growth-backup/runtime-meta.json.gz
-          flyctl ssh console -a mvstudiopro -C "test -f /data/growth/history-ledger/douyin.json && echo yes || echo no" > /tmp/growth-backup/has-history-ledger.txt
+
+          wait_for_started_vm() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if flyctl status -a mvstudiopro | grep -q "started"; then
+                return 0
+              fi
+              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              sleep 15
+            done
+            echo "No started VM became available in time"
+            return 1
+          }
+
+          capture_from_fly() {
+            local command="$1"
+            local output_path="$2"
+            for attempt in 1 2 3 4 5; do
+              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "$command" > "$output_path"; then
+                return 0
+              fi
+              echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
+              sleep 20
+            done
+            echo "Fly fetch failed after retries: $command"
+            return 1
+          }
+
+          capture_from_fly "gzip -c /data/growth/current.json" /tmp/growth-backup/current.json.gz
+          capture_from_fly "gzip -c /data/growth/runtime-meta.json" /tmp/growth-backup/runtime-meta.json.gz
+          capture_from_fly "test -f /data/growth/history-ledger/douyin.json && echo yes || echo no" /tmp/growth-backup/has-history-ledger.txt
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
       - name: Upload GitHub backup artifact
         uses: actions/upload-artifact@v4
