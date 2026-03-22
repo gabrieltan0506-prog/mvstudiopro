@@ -81,6 +81,12 @@ function parseNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function isBooleanEnvEnabled(name: string, fallback = false) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return fallback;
+  return /^(1|true|yes|on)$/i.test(raw);
+}
+
 function getTargetWindowDays() {
   return Math.max(7, parseNumberEnv("GROWTH_TARGET_WINDOW_DAYS", DEFAULT_WINDOW_DAYS));
 }
@@ -656,6 +662,11 @@ async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: str
   const notes: string[] = [];
   let requestCount = 0;
 
+  if (!isBooleanEnvEnabled("DOUYIN_CREATOR_CENTER_ENABLED", false)) {
+    notes.push("Douyin creator center skipped: DOUYIN_CREATOR_CENTER_ENABLED is off.");
+    return { items, notes, requestCount };
+  }
+
   const creatorCookies = Array.from(new Set([
     String(process.env.DOUYIN_CREATOR_CENTER_COOKIE || "").trim(),
     String(process.env.DOUYIN_CREATOR_CENTER_COOKIE_BACKUP || "").trim(),
@@ -1088,6 +1099,11 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let requestCount = 0;
+
+  if (!isBooleanEnvEnabled("DOUYIN_CREATOR_INDEX_ENABLED", false)) {
+    notes.push("Douyin creator index skipped: DOUYIN_CREATOR_INDEX_ENABLED is off.");
+    return { items, notes, requestCount };
+  }
 
   const creatorCookies = Array.from(new Set([
     String(process.env.DOUYIN_CREATOR_INDEX_COOKIE || "").trim(),

@@ -1,6 +1,6 @@
 import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
-import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress } from "./trendStore";
+import { mergeTrendCollections, readGrowthDebugSummary, readTrendRuntimeMeta, updateTrendBackfillProgress } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 
@@ -43,7 +43,35 @@ function scheduleNextBackfillStep() {
   }, nextHistoryDelayMs());
 }
 
-function getPendingPlatforms(stats: Awaited<ReturnType<typeof getGrowthTrendStats>>) {
+type BackfillPlatformSnapshot = {
+  platform: GrowthPlatform;
+  currentTotal: number;
+  archivedTotal: number;
+};
+
+type BackfillSnapshot = {
+  currentRound: number;
+  selectedWindowDays: number;
+  platforms: BackfillPlatformSnapshot[];
+};
+
+async function readBackfillSnapshot(): Promise<BackfillSnapshot> {
+  const [summary, runtimeMeta] = await Promise.all([
+    readGrowthDebugSummary(),
+    readTrendRuntimeMeta(),
+  ]);
+  return {
+    currentRound: runtimeMeta.backfill?.currentRound || 0,
+    selectedWindowDays: runtimeMeta.backfill?.selectedWindowDays || Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365,
+    platforms: PLATFORMS.map((platform) => ({
+      platform,
+      currentTotal: summary?.platforms?.[platform]?.currentTotal || 0,
+      archivedTotal: summary?.platforms?.[platform]?.archivedTotal || 0,
+    })),
+  };
+}
+
+function getPendingPlatforms(_stats: BackfillSnapshot) {
   return PLATFORMS.filter((platform) => {
     return (plateau.get(platform) || 0) < PLATEAU_LIMIT;
   });
@@ -53,13 +81,13 @@ export async function runGrowthTrendBackfillStep() {
   if (backfillInFlight) return;
   backfillInFlight = true;
   try {
-    const statsBefore = await getGrowthTrendStats();
+    const statsBefore = await readBackfillSnapshot();
     const pending = getPendingPlatforms(statsBefore);
     if (!pending.length) {
       await updateTrendBackfillProgress({
         active: true,
         status: "running",
-        selectedWindowDays: statsBefore.coverage.selectedWindowDays,
+        selectedWindowDays: statsBefore.selectedWindowDays,
         note: "历史回填运行中：所有平台暂时进入低产出平台期，worker 保持运行，等待下一轮继续抓取。",
         platforms: PLATFORMS.map((platform) => {
           const row = statsBefore.platforms.find((item) => item.platform === platform);
@@ -67,7 +95,7 @@ export async function runGrowthTrendBackfillStep() {
             platform,
             target: 0,
             currentTotal: row?.currentTotal || 0,
-            archivedTotal: row?.archivedItems || 0,
+            archivedTotal: row?.archivedTotal || 0,
             plateauCount: plateau.get(platform) || 0,
             status: "plateau",
           };
@@ -76,7 +104,7 @@ export async function runGrowthTrendBackfillStep() {
       return;
     }
 
-    const nextRound = Math.min(MAX_ROUNDS, (statsBefore.totals.archiveRuns || 0) + 1);
+    const nextRound = Math.min(MAX_ROUNDS, (statsBefore.currentRound || 0) + 1);
     if (!startedAt) startedAt = nowShanghaiIso();
     await updateTrendBackfillProgress({
       active: true,
@@ -84,16 +112,16 @@ export async function runGrowthTrendBackfillStep() {
       currentRound: nextRound,
       maxRounds: MAX_ROUNDS,
       targetPerPlatform: 0,
-      selectedWindowDays: statsBefore.coverage.selectedWindowDays,
+      selectedWindowDays: statsBefore.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，当前窗口 ${statsBefore.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，当前窗口 ${statsBefore.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
           platform,
           target: 0,
           currentTotal: row?.currentTotal || 0,
-          archivedTotal: row?.archivedItems || 0,
+          archivedTotal: row?.archivedTotal || 0,
           plateauCount: plateau.get(platform) || 0,
           status: pending.includes(platform) ? "running" : "plateau",
         };
@@ -109,7 +137,7 @@ export async function runGrowthTrendBackfillStep() {
     process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
     const collected = await collectTrendPlatforms(pending);
     const merged = await mergeTrendCollections(collected.collections);
-    const statsAfter = await getGrowthTrendStats();
+    const statsAfter = await readBackfillSnapshot();
 
     for (const platform of pending) {
       const collection = collected.collections[platform];
@@ -132,7 +160,7 @@ export async function runGrowthTrendBackfillStep() {
     }
 
     for (const platform of pending) {
-      const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedItems || 0;
+      const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedTotal || 0;
       const prev = previous.get(platform) || 0;
       previous.set(platform, total);
       plateau.set(platform, total <= prev ? (plateau.get(platform) || 0) + 1 : 0);
@@ -143,9 +171,9 @@ export async function runGrowthTrendBackfillStep() {
       currentRound: nextRound,
       maxRounds: MAX_ROUNDS,
       targetPerPlatform: 0,
-      selectedWindowDays: statsAfter.coverage.selectedWindowDays,
+      selectedWindowDays: statsAfter.selectedWindowDays,
       status: "running",
-      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，最新覆盖窗口 ${statsAfter.coverage.selectedWindowDays} 天。`,
+      note: `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${HISTORY_STEP_TARGET}，受限时回落到 ${HISTORY_STEP_FALLBACK}。不设平台总量上限，最新覆盖窗口 ${statsAfter.selectedWindowDays} 天。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -153,7 +181,7 @@ export async function runGrowthTrendBackfillStep() {
           platform,
           target: 0,
           currentTotal: row?.currentTotal || 0,
-          archivedTotal: row?.archivedItems || 0,
+          archivedTotal: row?.archivedTotal || 0,
           addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
           mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
           plateauCount: plateau.get(platform) || 0,
@@ -163,7 +191,7 @@ export async function runGrowthTrendBackfillStep() {
       }),
     });
   } catch (error) {
-    const stats = await getGrowthTrendStats().catch(() => null);
+    const stats = await readBackfillSnapshot().catch(() => null);
     const storageFull = isStorageFullError(error);
     await updateTrendBackfillProgress({
       active: true,
@@ -179,7 +207,7 @@ export async function runGrowthTrendBackfillStep() {
               platform,
               target: 0,
               currentTotal: row?.currentTotal || 0,
-              archivedTotal: row?.archivedItems || 0,
+              archivedTotal: row?.archivedTotal || 0,
               plateauCount: plateau.get(platform) || 0,
               status: (plateau.get(platform) || 0) >= PLATEAU_LIMIT ? "plateau" : "running",
               error: storageFull ? undefined : undefined,
