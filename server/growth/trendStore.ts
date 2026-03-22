@@ -1443,8 +1443,8 @@ export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
 }
 
 export async function readTrendMailDigestState(): Promise<TrendMailDigestState> {
-  const store = await readTrendStore();
-  return store.mailDigest || {};
+  const meta = await readRuntimeMeta();
+  return meta.mailDigest || {};
 }
 
 export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestState>) {
@@ -1463,7 +1463,7 @@ export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestS
 }
 
 export async function exportTrendCollectionsCsv() {
-  const store = await readTrendStore();
+  const store = await readTrendStore({ preferDerivedFiles: true });
   await ensureStoreDir();
   return exportTrendCollectionsCsvFromCollections(Object.values(store.collections));
 }

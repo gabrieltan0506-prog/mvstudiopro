@@ -814,7 +814,7 @@ export const appRouter = router({
       }))
       .query(async ({ input }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
-        const store = await readTrendStore();
+        const store = await readTrendStore({ preferDerivedFiles: true });
         const stalePlatforms = requestedPlatforms.filter((platform) =>
           isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
         );

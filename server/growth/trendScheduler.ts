@@ -391,9 +391,11 @@ export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
-  await reconcileTrendHistoryState().catch((error) => {
-    console.warn("[growth.history] reconcile on bootstrap failed:", error);
-  });
+  if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {
+    await reconcileTrendHistoryState().catch((error) => {
+      console.warn("[growth.history] reconcile on bootstrap failed:", error);
+    });
+  }
 
   const scheduler = await readTrendSchedulerState();
   for (const platform of PRIORITY_PLATFORMS) {
