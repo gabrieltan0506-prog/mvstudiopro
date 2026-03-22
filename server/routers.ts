@@ -1039,42 +1039,6 @@ export const appRouter = router({
         };
       }),
 
-    getGrowthMonotonicStatus: publicProcedure
-      .query(async () => {
-        const archiveSummary = await readGrowthArchiveMergeSummary();
-        if (archiveSummary) {
-          return {
-            success: true,
-            fetchedAt: new Date().toISOString(),
-            totals: archiveSummary.totals,
-            platforms: Object.fromEntries(
-              Object.entries(archiveSummary.platforms).map(([platform, item]) => [
-                platform,
-                {
-                  currentTotal: Number(item.currentTotal || 0),
-                  archivedTotal: Number(item.archivedTotal || 0),
-                },
-              ]),
-            ),
-            source: "archive-merge-summary",
-          };
-        }
-        const stats = await getGrowthTrendStats();
-        return {
-          success: true,
-          fetchedAt: new Date().toISOString(),
-          platforms: Object.fromEntries(
-            stats.platforms.map((item) => [
-              item.platform,
-              {
-                currentTotal: Number(item.currentTotal || 0),
-                archivedTotal: Number(item.archivedItems || 0),
-              },
-            ]),
-          ),
-        };
-      }),
-
     refreshGrowthTrends: publicProcedure
       .input(z.object({
         platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),

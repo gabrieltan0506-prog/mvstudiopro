@@ -174,6 +174,59 @@ export const growthBusinessInsightSchema = z.object({
   detail: z.string(),
 });
 
+export const growthDecisionNoteSchema = z.object({
+  title: z.string(),
+  detail: z.string(),
+});
+
+export const growthEvidenceSignalSchema = z.object({
+  title: z.string(),
+  detail: z.string(),
+  source: z.string(),
+});
+
+export const growthMainPathSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  whyNow: z.string(),
+  nextAction: z.string(),
+});
+
+export const growthAvoidPathSchema = z.object({
+  title: z.string(),
+  reason: z.string(),
+});
+
+export const growthAssetAdaptationSchema = z.object({
+  format: z.string(),
+  firstHook: z.string(),
+  structure: z.string(),
+  callToAction: z.string(),
+});
+
+export const growthValidationStepSchema = z.object({
+  label: z.string(),
+  successSignal: z.string(),
+  nextMove: z.string(),
+});
+
+export const growthAudienceTriggerSchema = z.object({
+  label: z.string(),
+  reason: z.string(),
+  example: z.string(),
+});
+
+export const growthDecisionFrameworkSchema = z.object({
+  materialFacts: z.array(growthDecisionNoteSchema),
+  businessTranslation: z.array(growthDecisionNoteSchema),
+  evidenceSignals: z.array(growthEvidenceSignalSchema),
+  mainPath: growthMainPathSchema,
+  avoidPaths: z.array(growthAvoidPathSchema),
+  assetAdaptation: growthAssetAdaptationSchema,
+  validationPlan: z.array(growthValidationStepSchema),
+  audienceTriggers: z.array(growthAudienceTriggerSchema),
+});
+
 export const growthDashboardStatSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -302,6 +355,7 @@ export const growthSnapshotSchema = z.object({
   monetizationTracks: z.array(growthMonetizationTrackSchema),
   platformRecommendations: z.array(growthPlatformRecommendationSchema),
   businessInsights: z.array(growthBusinessInsightSchema),
+  decisionFramework: growthDecisionFrameworkSchema,
   dashboardConsole: growthDashboardConsoleSchema,
   growthPlan: z.array(growthPlanStepSchema),
   creationAssist: growthCreationAssistSchema,
@@ -322,6 +376,14 @@ export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSche
 export type GrowthPlatformTopicIdea = z.infer<typeof growthPlatformTopicIdeaSchema>;
 export type GrowthPlatformRecommendation = z.infer<typeof growthPlatformRecommendationSchema>;
 export type GrowthBusinessInsight = z.infer<typeof growthBusinessInsightSchema>;
+export type GrowthDecisionNote = z.infer<typeof growthDecisionNoteSchema>;
+export type GrowthEvidenceSignal = z.infer<typeof growthEvidenceSignalSchema>;
+export type GrowthMainPath = z.infer<typeof growthMainPathSchema>;
+export type GrowthAvoidPath = z.infer<typeof growthAvoidPathSchema>;
+export type GrowthAssetAdaptation = z.infer<typeof growthAssetAdaptationSchema>;
+export type GrowthValidationStep = z.infer<typeof growthValidationStepSchema>;
+export type GrowthAudienceTrigger = z.infer<typeof growthAudienceTriggerSchema>;
+export type GrowthDecisionFramework = z.infer<typeof growthDecisionFrameworkSchema>;
 export type GrowthDashboardStat = z.infer<typeof growthDashboardStatSchema>;
 export type GrowthDashboardSeries = z.infer<typeof growthDashboardSeriesSchema>;
 export type GrowthFunnelStage = z.infer<typeof growthFunnelStageSchema>;
