@@ -113,6 +113,18 @@ const PLATFORM_SEEDS: Partial<Record<GrowthPlatform, string[]>> = {
     "实体老板",
     "同城招聘",
   ],
+  toutiao: [
+    "热点解读",
+    "案例拆解",
+    "行业观察",
+    "老板IP",
+    "副业",
+    "本地服务",
+    "探店",
+    "好物推荐",
+    "装修避坑",
+    "创业故事",
+  ],
 };
 
 type KuaishouCreatorSeed = {
@@ -153,7 +165,7 @@ const CURRENT_CACHE_PATH = path.resolve(
 const LEGACY_CACHE_PATH = path.resolve(
   process.env.GROWTH_LEGACY_STORE_FILE || path.join(DEFAULT_STORE_ROOT, "growth-trends.json"),
 );
-const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou"];
+const SIGNAL_SOURCE_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"];
 
 function normalizeSeed(value: string) {
   return String(value || "")

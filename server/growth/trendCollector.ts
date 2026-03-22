@@ -470,6 +470,45 @@ function parseToutiaoMediaHotItems(payload: Record<string, any>) {
   }).filter(Boolean) as TrendItem[];
 }
 
+function parseToutiaoSearchItems(payload: Record<string, any>, keyword: string) {
+  const list = Array.isArray(payload?.data) ? payload.data as Array<Record<string, any>> : [];
+  return list.map((entry, index) => {
+    const title = String(
+      entry.title
+      ?? entry.abstract
+      ?? entry.name
+      ?? entry.keyword
+      ?? "",
+    ).replace(/<[^>]+>/g, "").trim();
+    if (!title) return null;
+    const id = String(
+      entry.group_id
+      ?? entry.item_id
+      ?? entry.id
+      ?? entry.log_pb?.group_id
+      ?? `toutiao-search-${keyword}-${index}`,
+    ).trim();
+    const views = parseChineseCount(entry.read_count ?? entry.show_count ?? entry.play_count ?? entry.impression_count);
+    const likes = parseChineseCount(entry.digg_count ?? entry.like_count);
+    const comments = parseChineseCount(entry.comment_count);
+    return {
+      id,
+      title,
+      bucket: "toutiao_search_feed",
+      author: String(entry.source ?? entry.media_name ?? entry.user_name ?? "").trim() || undefined,
+      url: String(entry.article_url ?? entry.display_url ?? entry.share_url ?? "").trim() || undefined,
+      publishedAt: safeDateFromUnix(Number(entry.publish_time ?? entry.create_time ?? entry.behot_time)),
+      likes,
+      comments,
+      shares: parseChineseCount(entry.share_count),
+      views,
+      hotValue: (views || 0) + (likes || 0) + (comments || 0),
+      contentType: String(entry.article_genre ?? entry.group_source ?? "").includes("video") ? "video" : "note",
+      tags: Array.from(new Set([keyword, ...normalizeStringList(entry.chinese_tag)])),
+    } satisfies TrendItem;
+  }).filter(Boolean) as TrendItem[];
+}
+
 function extractToutiaoFeedCursor(payload: Record<string, any>) {
   return String(
     payload?.next?.max_behot_time
@@ -1961,18 +2000,18 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 20) || 20));
-  const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 30) || 30));
+  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 24) || 24));
+  const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 40) || 40));
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
-  const searchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 36) || 36));
+  const searchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 60) || 60));
   const searchKeywords = discoveryKeywords.slice(0, searchKeywordLimit);
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 16) || 16));
-  const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 4) || 4));
-  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 8) || 8));
-  const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 60) || 60));
-  const searchUserKeywordLimit = Math.max(6, Math.min(32, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 16) || 16));
-  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 20) || 20));
+  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 24) || 24));
+  const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 5) || 5));
+  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 12) || 12));
+  const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 90) || 90));
+  const searchUserKeywordLimit = Math.max(6, Math.min(32, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 24) || 24));
+  const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 28) || 28));
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let privateRequestCount = 0;
@@ -2470,6 +2509,10 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
     ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
   ].filter(Boolean);
+  const searchKeywords = getPlatformSeeds("toutiao").slice(0, Math.max(8, Math.min(48, Number(process.env.TOUTIAO_SEARCH_KEYWORD_LIMIT || 24) || 24)));
+  const searchPages = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_SEARCH_PAGES || 4) || 4));
+  const searchPageSize = Math.max(10, Math.min(30, Number(process.env.TOUTIAO_SEARCH_PAGE_SIZE || 20) || 20));
+  const searchConcurrency = Math.max(1, Math.min(6, Number(process.env.TOUTIAO_SEARCH_CONCURRENCY || 3) || 3));
   const authorLimit = Math.max(1, Math.min(16, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 12) || 12));
   const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 10) || 10));
   const authorPairPool = parsePairPoolEnv("TOUTIAO_AUTHOR_POOL");
@@ -2520,6 +2563,45 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
       .map((entry) => [`${entry.userToken}::${entry.mediaId}`, entry]),
   ).values()).slice(0, authorLimit);
   notes.push(`Toutiao author pool size ${authorProfiles.length}; media pool size ${mediaIdPool.length}.`);
+  if (searchKeywords.length) {
+    notes.push(`Toutiao search keywords loaded: ${searchKeywords.slice(0, 12).join(", ")}${searchKeywords.length > 12 ? "..." : ""}.`);
+  }
+
+  if (searchKeywords.length) {
+    const searchTasks = searchKeywords.flatMap((keyword) =>
+      Array.from({ length: searchPages }, (_, index) => index).map((pageIndex) => async () => {
+        try {
+          const searchUrl = new URL("https://www.toutiao.com/api/search/content/");
+          searchUrl.searchParams.set("keyword", keyword);
+          searchUrl.searchParams.set("offset", String(pageIndex * searchPageSize));
+          searchUrl.searchParams.set("count", String(searchPageSize));
+          searchUrl.searchParams.set("format", "json");
+          searchUrl.searchParams.set("aid", "24");
+          searchUrl.searchParams.set("app_name", "toutiao_web");
+          searchUrl.searchParams.set("_signature", signer.sign({ url: searchUrl.toString() }));
+          const response = await fetch(searchUrl.toString(), {
+            headers: {
+              ...baseHeaders,
+              referer: `https://so.toutiao.com/search?keyword=${encodeURIComponent(keyword)}`,
+            },
+          });
+          requestCount += 1;
+          if (!response.ok) {
+            notes.push(`Toutiao search ${keyword} page ${pageIndex + 1} responded with ${response.status}.`);
+            return;
+          }
+          const payload = await response.json() as Record<string, any>;
+          const searchItems = parseToutiaoSearchItems(payload, keyword);
+          items.push(...searchItems);
+          notes.push(`Fetched ${searchItems.length} Toutiao search items for ${keyword} page ${pageIndex + 1}.`);
+        } catch (error) {
+          requestCount += 1;
+          notes.push(`Toutiao search ${keyword} page ${pageIndex + 1} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }),
+    );
+    await runBatches(searchTasks, searchConcurrency);
+  }
 
   for (const authorProfile of authorProfiles) {
     const categoriesResponse = await fetch("https://www.toutiao.com/api/pc/user/tabs_info?aid=24&app_name=toutiao_web", {
@@ -2634,8 +2716,8 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   return finalizeCollection("toutiao", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
     requestCount,
-    pageDepth: profilePages,
-    targetPerRun: Math.max(500, getPlatformTargetItemCount("toutiao")),
+    pageDepth: Math.max(profilePages, searchPages),
+    targetPerRun: Math.max(500, searchKeywords.length * searchPages * searchPageSize, getPlatformTargetItemCount("toutiao")),
     referenceMinItems: PLATFORM_REFERENCE_RANGES.toutiao?.min || 20,
     referenceMaxItems: PLATFORM_REFERENCE_RANGES.toutiao?.max || 60,
   });
