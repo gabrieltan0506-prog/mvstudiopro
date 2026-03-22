@@ -32,7 +32,14 @@ jobs:
           const fs = require("fs");
           const path = require("path");
 
-          const root = "/tmp/growth-restore";
+          const candidateRoots = [
+            "/tmp/growth-restore",
+            "/tmp/growth-restore/snapshot",
+          ];
+          const root = candidateRoots.find((dir) => fs.existsSync(path.join(dir, "current.json")));
+          if (!root) {
+            throw new Error(`Snapshot root not found under: ${candidateRoots.join(", ")}`);
+          }
           const currentPath = path.join(root, "current.json");
           const runtimeMetaPath = path.join(root, "runtime-meta.json");
 
@@ -61,7 +68,12 @@ jobs:
 
       - name: Upload snapshot to Fly temp
         run: |
-          fly ssh sftp put -a mvstudiopro -R /tmp/growth-restore /tmp/growth-restore-input
+          if [ -f /tmp/growth-restore/current.json ]; then
+            SOURCE_DIR=/tmp/growth-restore
+          else
+            SOURCE_DIR=/tmp/growth-restore/snapshot
+          fi
+          fly ssh sftp put -a mvstudiopro -R "$SOURCE_DIR" /tmp/growth-restore-input
 
       - name: Restore snapshot into Fly store
         run: |
