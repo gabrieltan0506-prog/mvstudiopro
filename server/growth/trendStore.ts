@@ -247,6 +247,9 @@ const EXPORT_DIR = path.resolve(
 );
 const SHOULD_WRITE_LEGACY_MIRROR = process.env.GROWTH_WRITE_LEGACY_MIRROR === "1" || !IS_FLY_VOLUME_STORE;
 const SHOULD_WRITE_DERIVED_PLATFORM_FILES = process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES !== "0";
+const DISABLE_HISTORY_LEDGER_UPDATES = !/^(0|false|no)$/i.test(
+  String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "1").trim(),
+);
 let historyReconcilePromise: Promise<TrendStoreFile> | null = null;
 
 async function ensureStoreDir() {
@@ -516,6 +519,11 @@ async function updateHistoryFromCollections(
   store: TrendStoreFile,
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
 ) {
+  if (DISABLE_HISTORY_LEDGER_UPDATES) {
+    store.history = (await readHistorySummaryFile()) || store.history || createEmptyHistoryState();
+    store.history.updatedAt = nowShanghaiIso();
+    return;
+  }
   const touched = new Set<GrowthPlatform>();
   for (const [platform, collection] of Object.entries(collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>) {
     if (!collection?.items?.length) continue;
@@ -1207,7 +1215,7 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
 }
 
 export async function getGrowthTrendStats(): Promise<GrowthTrendStatsSummary> {
-  let store = await readTrendStore();
+  let store = await readTrendStore({ preferDerivedFiles: true });
   if (!store.history?.platforms || !Object.keys(store.history.platforms).length) {
     store = await reconcileTrendHistoryState();
   }
