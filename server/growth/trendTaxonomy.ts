@@ -1,4 +1,5 @@
 import type { TrendItem } from "./trendCollector";
+import { normalizeStringList } from "./trendNormalize";
 
 type LabelRule = {
   label: string;
@@ -66,7 +67,7 @@ function collectText(item: TrendItem) {
     item.title,
     item.author,
     item.bucket,
-    ...(item.tags || []),
+    ...normalizeStringList(item.tags),
   ].filter(Boolean).join(" ").toLowerCase();
 }
 

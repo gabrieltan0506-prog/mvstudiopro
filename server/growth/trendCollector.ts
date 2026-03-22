@@ -6,6 +6,7 @@ import {
 import { classifyTrendItem, countLabels } from "./trendTaxonomy";
 import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds } from "./trendSeedLibrary";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
+import { normalizeStringList } from "./trendNormalize";
 
 export type TrendSource = "live" | "seed";
 
@@ -795,7 +796,7 @@ function parseDouyinCreatorBrandSeeds() {
 function extractDouyinCreatorKeywordSeeds(seedItems: TrendItem[]) {
   const explicit = parseCsvEnv("DOUYIN_CREATOR_INDEX_KEYWORDS");
   const derived = seedItems
-    .flatMap((item) => [item.title, ...(item.tags || [])])
+    .flatMap((item) => [item.title, ...normalizeStringList(item.tags)])
     .map((value) => String(value || "").trim())
     .filter((value) => value && value.length <= 16 && !/^douyin[-_:]/i.test(value))
     .slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
@@ -2539,7 +2540,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
         items.push(...categoryItems.map((item) => ({
           ...item,
           bucket: category === "pc_profile_video" ? "toutiao_video_feed" : "toutiao_feed",
-          tags: Array.from(new Set([...(item.tags || []), category])),
+          tags: Array.from(new Set([...normalizeStringList(item.tags), category])),
         })));
         notes.push(`Fetched ${categoryItems.length} Toutiao items for ${category} ${authorProfile.userToken.slice(0, 12)} page ${page + 1}.`);
         const nextCursor = extractToutiaoFeedCursor(payload);
@@ -2592,7 +2593,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
       const mediaItems = parseToutiaoMediaHotItems(payload).map((item) => ({
         ...item,
         bucket: "toutiao_media_hot",
-        tags: Array.from(new Set([...(item.tags || []), mediaId, userToken.slice(0, 12)])),
+        tags: Array.from(new Set([...normalizeStringList(item.tags), mediaId, userToken.slice(0, 12)])),
       }));
       items.push(...mediaItems);
       notes.push(`Fetched ${mediaItems.length} Toutiao pooled media hot items for ${userToken.slice(0, 12)} + ${mediaId}.`);

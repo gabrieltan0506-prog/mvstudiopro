@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
+import { normalizeStringList } from "./trendNormalize";
 
 function parseCsvEnv(name: string) {
   return String(process.env[name] || "")
@@ -225,10 +226,10 @@ function buildCrossPlatformDynamicSeeds(platform: GrowthPlatform) {
     for (const item of items.slice(0, sourceItemLimit)) {
       collected.push(...splitCandidateTerms(item.title || ""));
       collected.push(...splitCandidateTerms(item.author || ""));
-      for (const tag of item.tags || []) collected.push(...splitCandidateTerms(tag));
-      for (const label of item.industryLabels || []) collected.push(...splitCandidateTerms(label));
-      for (const label of item.contentLabels || []) collected.push(...splitCandidateTerms(label));
-      for (const label of item.ageLabels || []) collected.push(...splitCandidateTerms(label));
+      for (const tag of normalizeStringList(item.tags)) collected.push(...splitCandidateTerms(tag));
+      for (const label of normalizeStringList(item.industryLabels)) collected.push(...splitCandidateTerms(label));
+      for (const label of normalizeStringList(item.contentLabels)) collected.push(...splitCandidateTerms(label));
+      for (const label of normalizeStringList(item.ageLabels)) collected.push(...splitCandidateTerms(label));
       collected.push(...splitCandidateTerms(item.bucket || ""));
     }
   }
@@ -249,7 +250,7 @@ function buildCrossPlatformTopicSeeds(platform: GrowthPlatform) {
       if (String(item.title || "").includes("#")) {
         topicTerms.push(...splitCandidateTerms(item.title || ""));
       }
-      for (const tag of item.tags || []) {
+      for (const tag of normalizeStringList(item.tags)) {
         topicTerms.push(...splitCandidateTerms(tag));
       }
     }
@@ -293,14 +294,14 @@ function buildCrossPlatformSignalSeeds(platform: GrowthPlatform) {
           collected.push(`${author}风格`);
         }
       }
-      for (const tag of item.tags || []) {
+      for (const tag of normalizeStringList(item.tags)) {
         collected.push(...splitCandidateTerms(tag));
         if (tag.length >= 2 && tag.length <= 12) {
           collected.push(`${tag}教程`);
           collected.push(`${tag}案例`);
         }
       }
-      for (const label of item.industryLabels || []) {
+      for (const label of normalizeStringList(item.industryLabels)) {
         collected.push(...splitCandidateTerms(label));
         if (label.length >= 2 && label.length <= 12) {
           collected.push(`${label}选题`);

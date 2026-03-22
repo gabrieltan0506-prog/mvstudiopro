@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
+import { normalizeStringList } from "./trendNormalize";
 
 export type TrendSchedulerState = {
   platform: GrowthPlatform;
@@ -319,23 +320,6 @@ function createEmptyStore(): TrendStoreFile {
   };
 }
 
-function normalizeStringList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return Array.from(new Set(value.map((item) => String(item || "").trim()).filter(Boolean)));
-  }
-  if (typeof value === "string") {
-    return Array.from(
-      new Set(
-        value
-          .split(/[|,]/)
-          .map((item) => item.trim())
-          .filter(Boolean),
-      ),
-    );
-  }
-  return [];
-}
-
 function normalizeItem(item: TrendItem): TrendItem {
   return {
     ...item,
@@ -372,7 +356,10 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
     bucket.set(item.id, {
       ...current,
       ...item,
-      tags: Array.from(new Set([...(current.tags || []), ...(item.tags || [])])),
+      tags: Array.from(new Set([
+        ...normalizeStringList(current.tags),
+        ...normalizeStringList(item.tags),
+      ])),
       hotValue: Math.max(current.hotValue || 0, item.hotValue || 0) || undefined,
       likes: Math.max(current.likes || 0, item.likes || 0) || undefined,
       comments: Math.max(current.comments || 0, item.comments || 0) || undefined,
@@ -1421,7 +1408,7 @@ async function exportTrendCollectionsCsvFromCollections(
           String(item.views || ""),
           String(item.hotValue || ""),
           item.contentType || "",
-          (item.tags || []).join("|"),
+          normalizeStringList(item.tags).join("|"),
         ]
           .map((cell) => `"${String(cell).replace(/"/g, "\"\"")}"`)
           .join(",");

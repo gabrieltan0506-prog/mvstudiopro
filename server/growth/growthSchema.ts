@@ -1,6 +1,8 @@
 import {
   type GrowthAnalysisScores,
+  type GrowthAudienceTrigger,
   type GrowthBusinessInsight,
+  type GrowthDecisionFramework,
   type GrowthIndustryTemplate,
   type GrowthMonetizationTrack,
   type GrowthPlatform,
@@ -15,6 +17,7 @@ import {
 import { matchIndustryTemplate } from "./industryTemplates";
 import { getPlatformTemplate } from "./platformTemplates";
 import type { PlatformTrendCollection } from "./trendCollector";
+import { normalizeStringList } from "./trendNormalize";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   douyin: "抖音",
@@ -187,7 +190,7 @@ function countKeywordHits(values: string[], keywords: string[]) {
 function buildPlatformSignalCluster(collection?: PlatformTrendCollection) {
   const contentItems = (collection?.items || []).filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
   const topicItems = (collection?.items || []).filter((item) => item.bucket === "douyin_topics" || item.contentType === "topic");
-  const tags = contentItems.flatMap((item) => item.tags || []).filter(Boolean);
+  const tags = contentItems.flatMap((item) => normalizeStringList(item.tags)).filter(Boolean);
   const avgLikes = contentItems.length
     ? contentItems.reduce((sum, item) => sum + (item.likes || item.hotValue || 0), 0) / contentItems.length
     : 0;
@@ -801,14 +804,14 @@ function buildPlatformRecommendations(
       .filter((item) => item.title && item.contentType !== "topic")
       .filter((item) => {
         if (!keywords.length) return true;
-        const haystack = `${item.title} ${(item.tags || []).join(" ")}`.toLowerCase();
+        const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")}`.toLowerCase();
         return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
       })
       .sort((left, right) => ((right.likes || 0) + (right.views || 0)) - ((left.likes || 0) + (left.views || 0)))
       .slice(0, 5)
       .map((item, index) => ({
         title: item.title,
-        angle: `优先切入 ${(item.tags || []).slice(0, 2).join(" / ") || "相似高表现主题"}，把它改写成更贴近你当前业务的人群和结果。`,
+        angle: `优先切入 ${normalizeStringList(item.tags).slice(0, 2).join(" / ") || "相似高表现主题"}，把它改写成更贴近你当前业务的人群和结果。`,
         expansion: index === 0
           ? "先做首发版，再拆成对比版和案例版。"
           : "保留同一主题，往不同人群场景或行动指令继续展开。",
@@ -1229,7 +1232,7 @@ function buildReferenceExamples(
     return collection.items
       .map((item) => ({ platform, item }))
       .filter(({ item }) => {
-        const haystack = `${item.title} ${item.author || ""} ${(item.tags || []).join(" ")} ${(item.industryLabels || []).join(" ")}`;
+        const haystack = `${item.title} ${item.author || ""} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
         if (!contextKeywords.length) return true;
         return contextKeywords.some((keyword) => haystack.includes(keyword));
       });
@@ -1237,7 +1240,7 @@ function buildReferenceExamples(
 
   const scored = items
     .map(({ platform, item }) => {
-      const haystack = `${item.title} ${(item.tags || []).join(" ")} ${(item.industryLabels || []).join(" ")}`;
+      const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
       const keywordHits = contextKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
       const engagement = (item.likes || 0) + (item.comments || 0) * 3 + (item.shares || 0) * 5 + Math.round((item.views || 0) / 1000);
       return {
@@ -1284,6 +1287,87 @@ function compactAudienceReason(context: string, industryTemplate: GrowthIndustry
 function summarizeBusinessContext(context: string) {
   const keywords = extractContextKeywords(context).slice(0, 3);
   return keywords.length ? keywords.join(" / ") : "当前业务";
+}
+
+function creationStructureHint(platformLabel: string) {
+  if (platformLabel.includes("小红书")) return "封面先写结果，正文按痛点、做法、证据、动作四段展开。";
+  if (platformLabel.includes("B站")) return "先讲结果，再拆步骤和案例，最后补方法与动作。";
+  return "前 3 秒先给结果，中段只留 2 到 3 个证据点，结尾只保留一个动作。";
+}
+
+function buildDecisionFramework(params: {
+  analysis: GrowthAnalysisScores;
+  context: string;
+  industryTemplate: GrowthIndustryTemplate;
+  platformRecommendations: GrowthPlatformRecommendation[];
+  monetizationTracks: GrowthMonetizationTrack[];
+  businessInsights: GrowthBusinessInsight[];
+  platformSnapshots: GrowthPlatformSnapshot[];
+}): GrowthDecisionFramework {
+  const { analysis, context, industryTemplate, platformRecommendations, monetizationTracks, businessInsights, platformSnapshots } = params;
+  const topPlatform = platformRecommendations[0]?.name || PLATFORM_LABELS[platformSnapshots[0]?.platform || "xiaohongshu"];
+  const topTrack = monetizationTracks[0];
+  const secondTrack = monetizationTracks[1];
+  const primarySnapshot = platformSnapshots[0];
+  const contextHint = summarizeBusinessContext(context);
+  const audienceTriggers: GrowthAudienceTrigger[] = [
+    {
+      label: "生活方式投射",
+      reason: "素材先让用户投射自己想进入的状态，再决定要不要继续看。",
+      example: "把赛场、工作或训练场景改写成普通人也能代入的版本。",
+    },
+    {
+      label: "结果先行",
+      reason: "先让用户看到结果或反差，比先铺背景更容易停留。",
+      example: "开头先说适合谁、解决什么，再补过程和细节。",
+    },
+    {
+      label: "可收藏表达",
+      reason: "收藏来自可复用，不来自抽象评价。",
+      example: "把内容写成清单、步骤、对照或避坑，而不是只讲感受。",
+    },
+  ];
+  return {
+    materialFacts: [
+      { title: "素材里真正可用的信号", detail: analysis.strengths[0] || analysis.summary || "当前素材有可放大的视觉或叙事信号。" },
+      { title: "当前最大错位", detail: analysis.improvements[0] || `素材表达和「${contextHint}」之间还缺一层桥接。` },
+      { title: "先别套现成模板", detail: "先围绕已出现的画面、情绪和动作做判断，不要直接跳到泛商业母版。" },
+    ],
+    businessTranslation: [
+      { title: "这条素材更像什么", detail: topTrack?.reason || `更像一条先吸引目标用户、再承接「${industryTemplate.primaryConversion}」的前置素材。` },
+      { title: "它先该卖什么价值", detail: `先把价值收敛到「${topTrack?.name || industryTemplate.primaryConversion}」这一条，不要同时塞多个方向。` },
+      { title: "最合理的桥接方式", detail: businessInsights[2]?.detail || `先讲用户问题，再把素材转成 ${industryTemplate.primaryConversion} 的入口。` },
+    ],
+    evidenceSignals: [
+      { title: "视频证据", detail: analysis.summary || "素材本身提供了可转译的内容抓手。", source: "video" },
+      { title: "平台证据", detail: primarySnapshot?.summary || `${topPlatform} 目前是更适合先拿反馈的平台。`, source: "platform-data" },
+      { title: "业务证据", detail: context.trim() || "当前先按用户输入的业务目标收敛。", source: "business-context" },
+    ],
+    mainPath: {
+      title: topTrack?.name || industryTemplate.primaryConversion,
+      summary: businessInsights[1]?.detail || `当前先围绕「${topTrack?.name || industryTemplate.primaryConversion}」做单一路径验证。`,
+      whyNow: businessInsights[3]?.detail || `先让 ${topPlatform} 跑出第一轮反馈，再决定是否扩第二条商业路径。`,
+      nextAction: topTrack?.nextStep || businessInsights[0]?.detail || "先把内容改成一个用户一看就懂、且愿意继续看的版本。",
+    },
+    avoidPaths: [
+      {
+        title: secondTrack?.name || "多路径并行",
+        reason: businessInsights[businessInsights.length - 1]?.detail || "当前最该避免的是还没验证入口，就同时推多个商业方向。",
+      },
+    ],
+    assetAdaptation: {
+      format: topPlatform.includes("小红书") ? "图文 / 封面强标题版" : "短视频 / 结果前置版",
+      firstHook: analysis.titleSuggestions?.[0] || "开头先给结果、适合谁和为什么值得继续看。",
+      structure: creationStructureHint(topPlatform),
+      callToAction: topTrack?.nextStep || `结尾只留一个动作，统一导向「${industryTemplate.primaryConversion}」。`,
+    },
+    validationPlan: [
+      { label: "首发验证", successSignal: `看 ${topPlatform} 的停留、收藏、评论是否真的围绕核心问题。`, nextMove: "如果反馈聚焦，就继续做第二版；如果散掉，就只改开头和标题。" },
+      { label: "承接验证", successSignal: "看用户是否愿意点击、私信、咨询或进入下一步。", nextMove: "如果没有承接动作，就先补清晰 CTA，不要继续加解释。" },
+      { label: "放大验证", successSignal: "确认用户是被什么理由打动，而不是只看虚高曝光。", nextMove: "只保留最有效的卖点，再决定是否扩第二平台。" },
+    ],
+    audienceTriggers,
+  };
 }
 
 function buildGrowthPlan(
@@ -1475,6 +1559,15 @@ export function buildMockGrowthSnapshot(params: {
   });
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations, monetizationTracks, industryTemplate, context);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
+  const decisionFramework = buildDecisionFramework({
+    analysis: params.analysis,
+    context,
+    industryTemplate,
+    platformRecommendations,
+    monetizationTracks,
+    businessInsights,
+    platformSnapshots,
+  });
 
   const today = new Date();
   const generatedAt = today.toISOString();
@@ -1551,6 +1644,7 @@ export function buildMockGrowthSnapshot(params: {
     monetizationTracks,
     platformRecommendations,
     businessInsights,
+    decisionFramework,
     dashboardConsole,
     growthPlan,
     creationAssist,
@@ -1628,6 +1722,15 @@ export function buildGrowthSnapshotFromCollections(params: {
   });
   const growthPlan = buildGrowthPlan(params.analysis, platformRecommendations, monetizationTracks, industryTemplate, context);
   const creationAssist = buildCreationAssist(params.analysis, context, platformRecommendations, monetizationTracks);
+  const decisionFramework = buildDecisionFramework({
+    analysis: params.analysis,
+    context,
+    industryTemplate,
+    platformRecommendations,
+    monetizationTracks,
+    businessInsights,
+    platformSnapshots,
+  });
 
   const snapshot = {
     status: {
@@ -1665,6 +1768,7 @@ export function buildGrowthSnapshotFromCollections(params: {
     monetizationTracks,
     platformRecommendations,
     businessInsights,
+    decisionFramework,
     dashboardConsole,
     growthPlan,
     creationAssist,

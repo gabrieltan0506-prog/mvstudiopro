@@ -50,6 +50,7 @@ import {
   growthBusinessInsightSchema,
   growthCampModelSchema,
   growthCreationAssistSchema,
+  growthDecisionFrameworkSchema,
   growthDashboardConsoleSchema,
   growthHandoffSchema,
   growthMonetizationTrackSchema,
@@ -84,6 +85,53 @@ function resolveGrowthCampFinalModel(modelName?: string) {
       || process.env.VERTEX_GROWTH_FINAL_MODEL
       || "gemini-2.5-pro",
   ).trim() || "gemini-2.5-pro";
+}
+
+type GrowthArchiveSummaryPlatform = {
+  platform: string;
+  currentTotal: number;
+  archivedTotal: number;
+};
+
+async function readGrowthArchiveMergeSummary(): Promise<{
+  totals: { currentItems: number; archivedItems: number } | null;
+  platforms: Record<string, GrowthArchiveSummaryPlatform>;
+} | null> {
+  const parseSummary = (raw: any) => ({
+    totals: {
+      currentItems: Number(raw?.totals?.currentItems || 0),
+      archivedItems: Number(raw?.totals?.archivedItems || 0),
+    },
+    platforms: Object.fromEntries(
+      Array.isArray(raw?.platforms)
+        ? raw.platforms.map((item: any) => [
+            String(item?.platform || ""),
+            {
+              platform: String(item?.platform || ""),
+              currentTotal: Number(item?.currentTotal || 0),
+              archivedTotal: Number(item?.archivedItems || 0),
+            },
+          ])
+        : [],
+    ),
+  });
+
+  try {
+    const storeDir = String(process.env.GROWTH_STORE_DIR || "/data/growth").trim() || "/data/growth";
+    const summaryPath = path.join(storeDir, "backups", "archive-merge-summary.json");
+    return parseSummary(JSON.parse(await fs.readFile(summaryPath, "utf8")));
+  } catch {
+    try {
+      const response = await fetch(
+        "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260321/archive-merge-summary.json",
+        { signal: AbortSignal.timeout(5000) },
+      );
+      if (!response.ok) return null;
+      return parseSummary(await response.json());
+    } catch {
+      return null;
+    }
+  }
 }
 
 function buildDouyinCreatorCenterStats(store: Awaited<ReturnType<typeof readTrendStore>>) {
@@ -247,6 +295,7 @@ const growthSnapshotPersonalizationSchema = z.object({
   monetizationTracks: z.array(growthMonetizationTrackSchema),
   platformRecommendations: z.array(growthPlatformRecommendationSchema),
   businessInsights: z.array(growthBusinessInsightSchema),
+  decisionFramework: growthDecisionFrameworkSchema,
   dashboardConsole: growthDashboardConsoleSchema,
   growthPlan: z.array(growthPlanStepSchema),
   creationAssist: growthCreationAssistSchema,
@@ -303,64 +352,59 @@ async function personalizeGrowthSnapshot(params: {
     messages: [
       {
         role: "system",
-        content: `你是 Creator Growth Camp 的首席商业策略顾问。你的任务不是套模板，而是基于上传内容、多模态分析结果、平台数据和历史沉淀，产出“千人千面”的结构化商业洞察。
+        content: `你是一个擅长内容商业化、平台策略和素材转译的资深顾问。
 
-硬性要求：
-1. 你必须优先依据上传内容分析与平台证据，不得复读通用模板。
-2. 如果用户身份与素材主题跨域，也要判断“这条素材怎样桥接到用户业务”或“哪些方向当前不成立”，不能偷懒给泛商业化答案。
-3. 平台 currentTotal / archivedTotal 代表当前窗口与历史沉淀。数据弱的平台只能弱引用，不能高置信推荐。
-4. 严禁把“知识付费、社群会员”当默认答案。只有证据充分才允许保留。
-5. 输出必须保留结构化字段，方便前端直接展示；不要写成大段散文。
-6. dashboardConsole、businessInsights、growthPlan、creationAssist 必须相互一致，不能各说各话。
-7. 对于当前不成立的方向，要明确在 businessInsights 或 growthPlan 中给出“不要做”的判断。
-8. platformRecommendations 必须站在用户视角写，不要暴露后台逻辑、平台分数、中位数、均值、漏斗、内部排序机制。
-9. 对于首发平台和备选平台，请给出 3 到 5 个可直接执行的选题方向。每个选题要包含：
-   - title: 用户可以直接拿去继续创作的选题标题
-   - angle: 这个选题为什么适合当前素材和当前业务
-   - expansion: 这个选题后续如何拓展成图文、短视频或系列内容
-10. playbook 只写“这个平台怎么发”，不要写平台内部数据或工程口径。
-11. 你会收到 baseSnapshot 里的行业、趋势和平台样本，它们只能作为背景证据，绝不能继承其中已有的推荐结论、旧商业路径或旧 7 天计划。
-12. 如果 analysis.commercialAngles、titleSuggestions、followUpPrompt 已经给出跨域桥接或商业延展，它们优先级高于任何旧 snapshot 判断。
-13. 对于“健身/户外/旅行/美食/美妆”等人设遇到“比赛、赛事、运动场面、风景、社会事件”等跨域素材，你必须先回答“怎么借这条素材切入原业务”，而不是直接跳到卖课、社群或咨询。
-14. 如果没有直接成交证据，就先给“内容桥接方案、品牌合作切口、内容延展路线”，不要强行给高客单成交路径。
-15. overview.summary 必须像真正的结论，不能出现“小红书先发、社群会员先跑、拿下老板”这类套话；要直接说明这条素材对当前业务的可用方式。
+请像用户在直接向 Gemini 求助那样思考问题，而不是先套产品模板。
+你必须先理解“这个人是谁、这条素材是什么、他想实现什么商业价值”，再给判断。
 
-只返回 JSON。`,
+输出规则：
+1. 优先依据上传内容分析、用户业务背景和平台证据，不得复读通用模板。
+2. 如果用户身份与素材主题跨域，先回答“这条素材怎么桥接回原业务”，不要直接跳到卖课、社群或咨询。
+3. 严禁把“知识付费、社群会员、咨询陪跑”当默认答案，除非证据充分。
+4. decisionFramework 是主输出，必须保留一条 mainPath 和至少一条 avoidPath。
+5. decisionFramework.assetAdaptation 必须直接说明更适合视频还是图文、开头怎么改、结构怎么改、结尾动作是什么。
+6. 平台数据和历史沉淀只能作为证据，不要暴露后台统计口径、内部排序机制或工程逻辑。
+7. 输出必须是结构化 JSON，不要写成散文。`,
       },
       {
         role: "user",
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              context: String(context || "").trim(),
-              requestedPlatforms,
-              analysis,
-              baseSnapshot: {
-                industryTemplate: snapshot.industryTemplate,
-                overview: snapshot.overview,
-                platformSnapshots: snapshot.platformSnapshots,
-                topicLibrary: snapshot.topicLibrary.slice(0, 8),
-                trendLayers: snapshot.trendLayers.slice(0, 8),
-                opportunities: snapshot.opportunities.slice(0, 6),
-                structurePatterns: snapshot.structurePatterns.slice(0, 6),
-              },
-              commercialSeeds: {
-                titleSuggestions: analysis.titleSuggestions || [],
-                commercialAngles: analysis.commercialAngles || [],
-                creatorCenterSignals: analysis.creatorCenterSignals || [],
-                weakFrameReferences: analysis.weakFrameReferences || [],
-                timestampSuggestions: analysis.timestampSuggestions || [],
-                followUpPrompt: analysis.followUpPrompt || "",
-              },
-              platformEvidence: {
-                selectedWindowDays: store.backfill?.selectedWindowDays || snapshot.status.windowDays,
-                currentRound: store.backfill?.currentRound || 0,
-                currentVsArchiveByPlatform: backfillPlatforms,
-                creatorCenterEvidence,
-                collections: collectionEvidence,
-              },
-            }, null, 2),
+            text: [
+              `用户任务：我是${String(context || "").trim() || "一个正在寻找内容商业化方向的创作者"}，请用这条素材，分析我怎样把它转成对我有商业价值的内容。`,
+              "请先判断这条素材和我原本业务的连接点，再告诉我最值得做的一条商业路径、当前不要做的路径、适合发视频还是图文、首发应该怎么改，以及我该用什么方式验证这条路径是否成立。",
+              "不要给泛泛的商业模板，也不要默认推荐社群、课程或咨询，除非这条素材和我的业务真的有直接证据支持。",
+              "",
+              "下面是你可以使用的证据：",
+              JSON.stringify({
+                requestedPlatforms,
+                analysis,
+                baseSnapshot: {
+                  industryTemplate: snapshot.industryTemplate,
+                  overview: snapshot.overview,
+                  platformSnapshots: snapshot.platformSnapshots,
+                  topicLibrary: snapshot.topicLibrary.slice(0, 8),
+                  trendLayers: snapshot.trendLayers.slice(0, 8),
+                  opportunities: snapshot.opportunities.slice(0, 6),
+                  structurePatterns: snapshot.structurePatterns.slice(0, 6),
+                },
+                commercialSeeds: {
+                  titleSuggestions: analysis.titleSuggestions || [],
+                  commercialAngles: analysis.commercialAngles || [],
+                  creatorCenterSignals: analysis.creatorCenterSignals || [],
+                  weakFrameReferences: analysis.weakFrameReferences || [],
+                  timestampSuggestions: analysis.timestampSuggestions || [],
+                  followUpPrompt: analysis.followUpPrompt || "",
+                },
+                platformEvidence: {
+                  selectedWindowDays: store.backfill?.selectedWindowDays || snapshot.status.windowDays,
+                  currentVsArchiveByPlatform: backfillPlatforms,
+                  creatorCenterEvidence,
+                  collections: collectionEvidence,
+                },
+              }, null, 2),
+            ].join("\n"),
           },
         ],
       },
@@ -369,7 +413,10 @@ async function personalizeGrowthSnapshot(params: {
   });
 
   const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
-  return growthSnapshotPersonalizationSchema.parse(parsed);
+  return growthSnapshotPersonalizationSchema.parse({
+    ...parsed,
+    decisionFramework: parsed?.decisionFramework || snapshot.decisionFramework,
+  });
 }
 
 function buildGrowthDataEvidenceNotes(params: {
@@ -815,6 +862,7 @@ export const appRouter = router({
               monetizationTracks: personalized.monetizationTracks,
               platformRecommendations: personalized.platformRecommendations,
               businessInsights: personalized.businessInsights,
+              decisionFramework: personalized.decisionFramework,
               dashboardConsole: personalized.dashboardConsole,
               growthPlan: personalized.growthPlan,
               creationAssist: personalized.creationAssist,
@@ -878,23 +926,24 @@ export const appRouter = router({
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const backfill = runtimeMeta.backfill || null;
-        const summary = await readGrowthDebugSummary();
+        const store = await readTrendStore().catch(() => null);
         const backfillPlatforms = new Map(
           (backfill?.platforms || []).map((item) => [String(item.platform), { ...item }]),
         );
-
         for (const platform of growthPlatformValues) {
-          const item = summary?.platforms?.[platform];
-          if (!item) continue;
+          const collection = store?.collections?.[platform];
+          const history = store?.history?.platforms?.[platform];
           const current = backfillPlatforms.get(platform) || {
             platform,
             target: 0,
-            status: "done" as const,
+            currentTotal: 0,
+            archivedTotal: 0,
+            status: "pending" as const,
           };
           backfillPlatforms.set(platform, {
             ...current,
-            currentTotal: Number(item?.currentTotal || 0),
-            archivedTotal: Number(item?.archivedTotal || 0),
+            currentTotal: Number(collection?.stats?.itemCount || collection?.items?.length || current.currentTotal || 0),
+            archivedTotal: Number(history?.archivedItems || current.archivedTotal || 0),
           });
         }
 
@@ -910,16 +959,6 @@ export const appRouter = router({
                 targetPerPlatform: 0,
                 platforms: Array.from(backfillPlatforms.values()),
               }
-            : summary
-              ? {
-                  active: false,
-                  currentRound: 0,
-                  maxRounds: 0,
-                  targetPerPlatform: 0,
-                  status: "completed" as const,
-                  selectedWindowDays: 365,
-                  platforms: Array.from(backfillPlatforms.values()),
-                }
               : null,
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
@@ -997,6 +1036,42 @@ export const appRouter = router({
             exitCount: stats.totals.burstExitCount,
           },
           stats,
+        };
+      }),
+
+    getGrowthMonotonicStatus: publicProcedure
+      .query(async () => {
+        const archiveSummary = await readGrowthArchiveMergeSummary();
+        if (archiveSummary) {
+          return {
+            success: true,
+            fetchedAt: new Date().toISOString(),
+            totals: archiveSummary.totals,
+            platforms: Object.fromEntries(
+              Object.entries(archiveSummary.platforms).map(([platform, item]) => [
+                platform,
+                {
+                  currentTotal: Number(item.currentTotal || 0),
+                  archivedTotal: Number(item.archivedTotal || 0),
+                },
+              ]),
+            ),
+            source: "archive-merge-summary",
+          };
+        }
+        const stats = await getGrowthTrendStats();
+        return {
+          success: true,
+          fetchedAt: new Date().toISOString(),
+          platforms: Object.fromEntries(
+            stats.platforms.map((item) => [
+              item.platform,
+              {
+                currentTotal: Number(item.currentTotal || 0),
+                archivedTotal: Number(item.archivedItems || 0),
+              },
+            ]),
+          ),
         };
       }),
 
