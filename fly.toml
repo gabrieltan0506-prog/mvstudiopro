@@ -11,7 +11,7 @@ primary_region = 'sin'
 [env]
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
-  NODE_OPTIONS = '--max-old-space-size=3072'
+  NODE_OPTIONS = '--max-old-space-size=4096'
 
 [http_service]
   internal_port = 3000

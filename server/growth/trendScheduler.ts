@@ -16,7 +16,6 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
-const MAX_RUNS_PER_TICK = Math.max(1, Number(process.env.GROWTH_SCHEDULER_MAX_RUNS_PER_TICK || 1) || 1);
 const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 15) || 15);
 const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
 const LOW_YIELD_LIMIT = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_LIMIT || 5) || 5);
@@ -353,7 +352,7 @@ async function runDuePlatforms() {
         return isTrendCollectionStale(lastCollectedAt, getSchedulerIntervalMinutes() / 60);
       }
       return new Date(nextRunAt).getTime() <= Date.now();
-    }).slice(0, MAX_RUNS_PER_TICK);
+    });
 
     for (const platform of queue) {
       await runPlatform(platform);
