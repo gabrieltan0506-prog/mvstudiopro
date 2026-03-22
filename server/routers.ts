@@ -64,6 +64,19 @@ const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_index",
 ] as const;
 
+const GROWTH_PLATFORM_META: Record<string, { label: string; description: string }> = {
+  douyin: { label: "抖音", description: "短视频主阵地，当前样本量最大，优先看热点与爆发趋势。" },
+  xiaohongshu: { label: "小红书", description: "种草与搜索场景为主，适合看内容沉淀与转化线索。" },
+  kuaishou: { label: "快手", description: "下沉与直播氛围更强，适合看高频更新和稳定增量。" },
+  toutiao: { label: "头条", description: "资讯分发场景，样本量相对小，适合单独看补齐情况。" },
+  bilibili: { label: "B站", description: "中长视频与社区互动更强，适合看内容深度与长期沉淀。" },
+};
+
+function getGrowthPlatformMeta(platform?: string) {
+  const key = String(platform || "").trim();
+  return GROWTH_PLATFORM_META[key] || { label: key || "-", description: "平台说明暂未配置。" };
+}
+
 function isDouyinCreatorCenterBucket(bucket: string) {
   return DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES.some((prefix) => bucket.startsWith(prefix));
 }
@@ -924,6 +937,7 @@ export const appRouter = router({
       .query(async () => {
         const smtp = getSmtpStatus();
         const runtimeMeta = await readTrendRuntimeMeta();
+        const debugSummary = await readGrowthDebugSummary();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const normalizeBackfill = (backfill: typeof runtimeMeta.backfill | null | undefined) => {
           if (!backfill) return null;
@@ -945,7 +959,11 @@ export const appRouter = router({
             currentRound: 0,
             maxRounds: 0,
             targetPerPlatform: 0,
-            platforms: Array.from(backfillPlatforms.values()),
+            platforms: Array.from(backfillPlatforms.values()).map((item) => ({
+              ...item,
+              platformLabel: getGrowthPlatformMeta(item.platform).label,
+              platformDescription: getGrowthPlatformMeta(item.platform).description,
+            })),
           };
         };
         const backfill = normalizeBackfill(runtimeMeta.backfill);
@@ -956,6 +974,12 @@ export const appRouter = router({
           success: true,
           targetEmail,
           smtp,
+          truthStore: {
+            source: debugSummary?.truthSource || "current-json",
+            updatedAt: debugSummary?.updatedAt || runtimeMeta.updatedAt || null,
+            currentItems: debugSummary?.totals.currentItems || 0,
+            archivedItems: debugSummary?.totals.archivedItems || 0,
+          },
           backfill,
           backfillLive,
           backfillHistory,
@@ -964,6 +988,8 @@ export const appRouter = router({
           },
           scheduler: Object.values(runtimeMeta.scheduler || {}).map((item) => ({
             platform: item?.platform,
+            platformLabel: getGrowthPlatformMeta(item?.platform).label,
+            platformDescription: getGrowthPlatformMeta(item?.platform).description,
             lastRunAt: item?.lastRunAt,
             lastSuccessAt: item?.lastSuccessAt,
             nextRunAt: item?.nextRunAt,

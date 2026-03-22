@@ -160,6 +160,7 @@ export type GrowthDebugSummaryPlatform = {
 
 export type GrowthDebugSummary = {
   updatedAt: string;
+  truthSource?: "platform-current" | "derived-platforms" | "current-json";
   totals: {
     currentItems: number;
     archivedItems: number;
@@ -241,6 +242,8 @@ const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
 const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
+const PLATFORM_CURRENT_DIR = path.join(STORE_DIR, "platform-current");
+const PLATFORM_CURRENT_MANIFEST_FILE = path.join(STORE_DIR, "platform-current-manifest.json");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
@@ -263,6 +266,7 @@ async function ensureStoreDir() {
   await fs.mkdir(ARCHIVE_DIR, { recursive: true });
   await fs.mkdir(EXPORT_DIR, { recursive: true });
   await fs.mkdir(PLATFORM_DIR, { recursive: true });
+  await fs.mkdir(PLATFORM_CURRENT_DIR, { recursive: true });
   await fs.mkdir(HISTORY_LEDGER_DIR, { recursive: true });
 }
 
@@ -283,6 +287,7 @@ function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
 
   return {
     updatedAt: store.updatedAt || nowShanghaiIso(),
+    truthSource: "platform-current",
     totals: {
       currentItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.currentTotal || 0), 0),
       archivedItems: Object.values(platforms).reduce((sum, item) => sum + Number(item?.archivedTotal || 0), 0),
@@ -654,6 +659,94 @@ async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<Pla
   }
 }
 
+type PlatformCurrentTruthFile = {
+  updatedAt: string;
+  truthSource: "platform-current";
+  platform: GrowthPlatform;
+  collection: PlatformTrendCollection;
+  history?: TrendHistoryPlatformSummary;
+};
+
+type PlatformCurrentManifest = {
+  updatedAt: string;
+  truthSource: "platform-current";
+  platforms: Partial<Record<GrowthPlatform, {
+    file: string;
+    currentTotal: number;
+    archivedTotal: number;
+  }>>;
+};
+
+function getPlatformCurrentTruthFile(platform: GrowthPlatform) {
+  return path.join(PLATFORM_CURRENT_DIR, `${platform}.current.json`);
+}
+
+async function readPlatformCurrentManifest(): Promise<PlatformCurrentManifest | null> {
+  try {
+    const raw = await fs.readFile(PLATFORM_CURRENT_MANIFEST_FILE, "utf8");
+    return JSON.parse(raw) as PlatformCurrentManifest;
+  } catch {
+    return null;
+  }
+}
+
+async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
+  try {
+    const raw = await fs.readFile(getPlatformCurrentTruthFile(platform), "utf8");
+    const parsed = JSON.parse(raw) as PlatformCurrentTruthFile;
+    if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | null> {
+  const [meta, archiveIndex, history, summary, manifest] = await Promise.all([
+    readRuntimeMeta(),
+    readArchiveIndexFile(),
+    readHistorySummaryFile(),
+    readGrowthDebugSummary(),
+    readPlatformCurrentManifest(),
+  ]);
+  if (!manifest?.platforms || !Object.keys(manifest.platforms).length) return null;
+  const truthEntries = await Promise.all(
+    growthPlatformValues.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
+  );
+  const availableEntries = truthEntries.filter(([, entry]) => Boolean(entry));
+  if (!availableEntries.length) return null;
+  const requiredPlatforms = growthPlatformValues.filter(
+    (platform) => Number(summary?.platforms?.[platform]?.currentTotal || 0) > 0,
+  );
+  const availablePlatforms = new Set(availableEntries.map(([platform]) => platform));
+  if (requiredPlatforms.some((platform) => !availablePlatforms.has(platform))) return null;
+  if ((summary?.totals.archivedItems || 0) > 0 && !history) return null;
+  const collections = Object.fromEntries(
+    availableEntries.map(([platform, entry]) => [platform, entry!.collection]),
+  ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  const historyPlatforms: Partial<Record<GrowthPlatform, TrendHistoryPlatformSummary>> = {
+    ...(history?.platforms || {}),
+  };
+  for (const [platform, entry] of availableEntries) {
+    if (entry?.history) historyPlatforms[platform] = entry.history;
+  }
+  return {
+    updatedAt: meta.updatedAt || manifest.updatedAt || nowShanghaiIso(),
+    collections,
+    scheduler: meta.scheduler || {},
+    archiveIndex,
+    history: {
+      updatedAt: history?.updatedAt || manifest.updatedAt || nowShanghaiIso(),
+      source: "ledger",
+      platforms: historyPlatforms,
+    },
+    backfill: meta.backfill || createEmptyStore().backfill,
+    backfillLive: meta.backfillLive || createEmptyStore().backfillLive,
+    backfillHistory: meta.backfillHistory || createEmptyStore().backfillHistory,
+    mailDigest: meta.mailDigest || {},
+  };
+}
+
 async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
   const [meta, archiveIndex, history, summary] = await Promise.all([
     readRuntimeMeta(),
@@ -750,6 +843,8 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
 export async function readTrendStore(options?: { preferDerivedFiles?: boolean }): Promise<TrendStoreFile> {
   await ensureStoreDir();
   if (options?.preferDerivedFiles) {
+    const platformTruth = await readPlatformCurrentTruthStoreFile();
+    if (platformTruth) return platformTruth;
     const derived = await readDerivedStoreFile();
     if (derived) return derived;
   }
@@ -954,13 +1049,20 @@ async function writeStore(
   if (!(options?.writeDerivedPlatformFiles ?? SHOULD_WRITE_DERIVED_PLATFORM_FILES)) {
     return next;
   }
+  const platformManifest: PlatformCurrentManifest = {
+    updatedAt: next.updatedAt,
+    truthSource: "platform-current",
+    platforms: {},
+  };
   await Promise.all(
     growthPlatformValues.map(async (platform) => {
       const collection = next.collections?.[platform];
       const platformFile = path.join(PLATFORM_DIR, `${platform}.json`);
       const bucketDir = path.join(PLATFORM_DIR, platform);
+      const truthFile = getPlatformCurrentTruthFile(platform);
       if (!collection || isRecoveredCollectionSource(collection.source)) {
         await fs.rm(platformFile, { force: true });
+        await fs.rm(truthFile, { force: true });
         await fs.rm(bucketDir, { recursive: true, force: true });
         return;
       }
@@ -977,6 +1079,19 @@ async function writeStore(
         ),
         "utf8",
       );
+      const historySummary = next.history?.platforms?.[platform];
+      await writeJsonAtomic(truthFile, {
+        updatedAt: next.updatedAt,
+        truthSource: "platform-current",
+        platform,
+        collection,
+        history: historySummary,
+      } satisfies PlatformCurrentTruthFile);
+      platformManifest.platforms[platform] = {
+        file: truthFile,
+        currentTotal: collection.items.length,
+        archivedTotal: historySummary?.archivedItems || 0,
+      };
       await fs.mkdir(bucketDir, { recursive: true });
       const buckets = Object.entries(
         collection.items.reduce<Record<string, TrendItem[]>>((acc, item) => {
@@ -1007,6 +1122,7 @@ async function writeStore(
       );
     }),
   );
+  await writeJsonAtomic(PLATFORM_CURRENT_MANIFEST_FILE, platformManifest);
   return next;
 }
 

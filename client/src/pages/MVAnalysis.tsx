@@ -153,7 +153,39 @@ const PLATFORM_LABELS: Record<string, string> = {
   xiaohongshu: "小红书",
   bilibili: "B站",
   kuaishou: "快手",
+  toutiao: "头条",
 };
+
+const PLATFORM_DEBUG_DESCRIPTIONS: Record<string, string> = {
+  douyin: "短视频主阵地，优先看热点和爆发趋势。",
+  xiaohongshu: "种草与搜索场景，优先看内容沉淀和转化线索。",
+  bilibili: "中长视频社区，优先看深度内容和长期沉淀。",
+  kuaishou: "高频更新场景，优先看稳定增量和直播相关表现。",
+  toutiao: "资讯分发场景，适合单独看补齐情况和历史恢复状态。",
+};
+
+function getPlatformLabel(platform?: string) {
+  const key = String(platform || "").trim();
+  return PLATFORM_LABELS[key] || key || "-";
+}
+
+function getPlatformDescription(platform?: string) {
+  const key = String(platform || "").trim();
+  return PLATFORM_DEBUG_DESCRIPTIONS[key] || "平台说明暂未配置。";
+}
+
+function formatPlatformList(platforms: unknown) {
+  return Array.isArray(platforms)
+    ? platforms.map((platform) => getPlatformLabel(String(platform))).join("、") || "-"
+    : "-";
+}
+
+function formatTruthSource(source?: string) {
+  if (source === "platform-current") return "平台真值档";
+  if (source === "derived-platforms") return "平台派生档";
+  if (source === "current-json") return "单一 current.json";
+  return String(source || "-");
+}
 
 function hasSupervisorAccess() {
   if (typeof window === "undefined") return false;
@@ -1487,47 +1519,51 @@ export default function MVAnalysisPage() {
             <div className="rounded-[24px] border border-cyan-300/20 bg-cyan-400/10 p-5">
                 <div className="text-sm font-semibold text-cyan-100">Debug 面板</div>
                 <div className="mt-3 grid gap-2 text-sm text-white/75 md:grid-cols-2">
-                  <div>input: {String(debugInfo?.inputKind || inputKind || "-")}</div>
-                  <div>route: {String(debugInfo?.route || "-")}</div>
-                  <div>provider: {String(debugInfo?.provider || "-")}</div>
-                  <div>model: {String(debugInfo?.model || "-")}</div>
-                  <div>selected model: {selectedGrowthModel}</div>
-                  <div>fallback: {String(debugInfo?.fallback ?? "-")}</div>
-                  <div>trend source: {String(growthSnapshot?.status.source || "-")}</div>
-                  <div>mime: {String(debugInfo?.mimeType || fileMimeType || "-")}</div>
-                  <div>file: {String(debugInfo?.fileName || fileName || "-")}</div>
-                  <div>smtp configured: {String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
-                  <div>mail to: {String(growthSystemStatusQuery.data?.targetEmail || "-")}</div>
-                  <div>smtp from: {String(growthSystemStatusQuery.data?.smtp?.from || "-")}</div>
-                  <div>smtp missing: {Array.isArray(growthSystemStatusQuery.data?.smtp?.missing) ? growthSystemStatusQuery.data?.smtp?.missing.join(", ") || "-" : "-"}</div>
-                  {debugInfo?.extractionMethod ? <div>extract: {String(debugInfo.extractionMethod)}</div> : null}
-                  {debugInfo?.videoDuration ? <div>video sec: {String(debugInfo.videoDuration)}</div> : null}
-                  {debugInfo?.transcriptChars ? <div>transcript chars: {String(debugInfo.transcriptChars)}</div> : null}
-                  {debugInfo?.failureStage ? <div>failure stage: {String(debugInfo.failureStage)}</div> : null}
-                  {debugInfo?.failureReason ? <div>failure reason: {String(debugInfo.failureReason)}</div> : null}
+                  <div>输入类型：{String(debugInfo?.inputKind || inputKind || "-")}</div>
+                  <div>路由：{String(debugInfo?.route || "-")}</div>
+                  <div>服务提供方：{String(debugInfo?.provider || "-")}</div>
+                  <div>模型：{String(debugInfo?.model || "-")}</div>
+                  <div>当前选择模型：{selectedGrowthModel}</div>
+                  <div>降级补位：{String(debugInfo?.fallback ?? "-")}</div>
+                  <div>趋势数据来源：{String(growthSnapshot?.status.source || "-")}</div>
+                  <div>真值口径：{formatTruthSource(growthSystemStatusQuery.data?.truthStore?.source)}</div>
+                  <div>真值更新时间：{String(growthSystemStatusQuery.data?.truthStore?.updatedAt || "-")}</div>
+                  <div>真值当前总量：{String(growthSystemStatusQuery.data?.truthStore?.currentItems ?? "-")}</div>
+                  <div>真值历史总量：{String(growthSystemStatusQuery.data?.truthStore?.archivedItems ?? "-")}</div>
+                  <div>文件类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
+                  <div>文件名：{String(debugInfo?.fileName || fileName || "-")}</div>
+                  <div>邮件配置可用：{String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
+                  <div>邮件接收人：{String(growthSystemStatusQuery.data?.targetEmail || "-")}</div>
+                  <div>邮件发送人：{String(growthSystemStatusQuery.data?.smtp?.from || "-")}</div>
+                  <div>缺失配置：{Array.isArray(growthSystemStatusQuery.data?.smtp?.missing) ? growthSystemStatusQuery.data?.smtp?.missing.join(", ") || "-" : "-"}</div>
+                  {debugInfo?.extractionMethod ? <div>提取方式：{String(debugInfo.extractionMethod)}</div> : null}
+                  {debugInfo?.videoDuration ? <div>视频时长秒数：{String(debugInfo.videoDuration)}</div> : null}
+                  {debugInfo?.transcriptChars ? <div>转录字数：{String(debugInfo.transcriptChars)}</div> : null}
+                  {debugInfo?.failureStage ? <div>失败阶段：{String(debugInfo.failureStage)}</div> : null}
+                  {debugInfo?.failureReason ? <div>失败原因：{String(debugInfo.failureReason)}</div> : null}
                 </div>
                 {growthSnapshotDebug ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-emerald-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-emerald-100">Growth Snapshot Debug</div>
                     <div className="grid gap-1 md:grid-cols-2">
-                      <div>snapshot route: {String(growthSnapshotDebug.route || "-")}</div>
-                      <div>snapshot model: {String(growthSnapshotDebug.modelName || "-")}</div>
-                      <div>base source: {String(growthSnapshotDebug.baseSource || "-")}</div>
-                      <div>final source: {String(growthSnapshotDebug.finalSource || "-")}</div>
-                      <div>window days: {String(growthSnapshotDebug.windowDays || "-")}</div>
-                      <div>live collections: {String(growthSnapshotDebug.hasAnyLiveCollection ?? "-")}</div>
-                      <div>personalized applied: {String(growthSnapshotDebug.personalizedApplied ?? "-")}</div>
-                      <div>status notes: {String(growthSnapshotDebug.notesCount || 0)}</div>
-                      <div>platforms: {Array.isArray(growthSnapshotDebug.requestedPlatforms) ? growthSnapshotDebug.requestedPlatforms.join(", ") || "-" : "-"}</div>
-                      <div>stale platforms: {Array.isArray(growthSnapshotDebug.stalePlatforms) ? growthSnapshotDebug.stalePlatforms.join(", ") || "-" : "-"}</div>
-                      <div>trend layers: {String(growthSnapshotDebug.trendLayerCount || 0)}</div>
-                      <div>topic library: {String(growthSnapshotDebug.topicLibraryCount || 0)}</div>
-                      <div>platform snapshots: {String(growthSnapshotDebug.platformSnapshotCount || 0)}</div>
-                      <div>monetization tracks: {String(growthSnapshotDebug.monetizationTrackCount || 0)}</div>
-                      <div>platform recs: {String(growthSnapshotDebug.recommendationCount || 0)}</div>
-                      <div>business insights: {String(growthSnapshotDebug.businessInsightCount || 0)}</div>
-                      <div>growth plan steps: {String(growthSnapshotDebug.growthPlanCount || 0)}</div>
-                      <div>asset extensions: {String(growthSnapshotDebug.creationAssetExtensionCount || 0)}</div>
+                      <div>快照路由：{String(growthSnapshotDebug.route || "-")}</div>
+                      <div>快照模型：{String(growthSnapshotDebug.modelName || "-")}</div>
+                      <div>基础来源：{String(growthSnapshotDebug.baseSource || "-")}</div>
+                      <div>最终来源：{String(growthSnapshotDebug.finalSource || "-")}</div>
+                      <div>分析窗口天数：{String(growthSnapshotDebug.windowDays || "-")}</div>
+                      <div>是否有实时样本：{String(growthSnapshotDebug.hasAnyLiveCollection ?? "-")}</div>
+                      <div>是否应用个性化：{String(growthSnapshotDebug.personalizedApplied ?? "-")}</div>
+                      <div>状态备注数：{String(growthSnapshotDebug.notesCount || 0)}</div>
+                      <div>请求平台：{formatPlatformList(growthSnapshotDebug.requestedPlatforms)}</div>
+                      <div>过期平台：{formatPlatformList(growthSnapshotDebug.stalePlatforms)}</div>
+                      <div>趋势层数量：{String(growthSnapshotDebug.trendLayerCount || 0)}</div>
+                      <div>选题库数量：{String(growthSnapshotDebug.topicLibraryCount || 0)}</div>
+                      <div>平台快照数：{String(growthSnapshotDebug.platformSnapshotCount || 0)}</div>
+                      <div>商业化轨道数：{String(growthSnapshotDebug.monetizationTrackCount || 0)}</div>
+                      <div>平台建议数：{String(growthSnapshotDebug.recommendationCount || 0)}</div>
+                      <div>商业洞察数：{String(growthSnapshotDebug.businessInsightCount || 0)}</div>
+                      <div>增长步骤数：{String(growthSnapshotDebug.growthPlanCount || 0)}</div>
+                      <div>资产扩展数：{String(growthSnapshotDebug.creationAssetExtensionCount || 0)}</div>
                     </div>
                     {growthSnapshot?.status?.notes?.length ? (
                       <div className="space-y-1 rounded-xl border border-emerald-200/15 bg-emerald-400/5 p-3 leading-6">
@@ -1551,13 +1587,14 @@ export default function MVAnalysisPage() {
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
                       <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                        <div>{String(item.platform)} last success: {String(item.lastSuccessAt || "-")}</div>
-                        <div>{String(item.platform)} next run: {String(item.nextRunAt || "-")}</div>
-                        <div>{String(item.platform)} failures: {String(item.failureCount ?? 0)}</div>
-                        <div>{String(item.platform)} burst mode: {String(item.burstMode ?? false)}</div>
-                        <div>{String(item.platform)} last count: {String(item.lastCollectedCount ?? 0)}</div>
-                        <div>{String(item.platform)} burst since: {String(item.burstTriggeredAt || "-")}</div>
-                        <div>{String(item.platform)} error: {String(item.lastError || "-")}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近成功：{String(item.lastSuccessAt || "-")}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次执行：{String(item.nextRunAt || "-")}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 失败次数：{String(item.failureCount ?? 0)}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发模式：{String(item.burstMode ?? false)}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量：{String(item.lastCollectedCount ?? 0)}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：{String(item.burstTriggeredAt || "-")}</div>
+                        <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
+                        <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.lastError || "-")}</div>
                       </div>
                     ))}
                   </div>
@@ -1579,13 +1616,14 @@ export default function MVAnalysisPage() {
                     <div className="space-y-2">
                       {growthSystemStatusQuery.data.backfill.platforms?.map((item) => (
                         <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                          <div>{String(item.platform)} status: {String(item.status || "-")}</div>
-                          <div>{String(item.platform)} archived: {String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
-                          <div>{String(item.platform)} current: {String(item.currentTotal || 0)}</div>
-                          <div>{String(item.platform)} added: {String(item.addedCount || 0)}</div>
-                          <div>{String(item.platform)} merged: {String(item.mergedCount || 0)}</div>
-                          <div>{String(item.platform)} plateau: {String(item.plateauCount || 0)}</div>
-                          <div className="md:col-span-2">{String(item.platform)} error: {String(item.error || "-")}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 状态：{String(item.status || "-")}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 历史量：{String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 当前量：{String(item.currentTotal || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 新增：{String(item.addedCount || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 合并：{String(item.mergedCount || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台停滞轮数：{String(item.plateauCount || 0)}</div>
+                          <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.error || "-")}</div>
                         </div>
                       ))}
                     </div>
