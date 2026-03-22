@@ -19,8 +19,8 @@ const MAIL_DIGEST_INTERVAL_MINUTES = Math.max(
   Number(process.env.GROWTH_MAIL_DIGEST_INTERVAL_MINUTES || 60) || 60,
 );
 const MAIL_DIGEST_INTERVAL_MS = MAIL_DIGEST_INTERVAL_MINUTES * 60 * 1000;
-const MAIL_ATTACHMENT_SPLIT_THRESHOLD_BYTES = 10 * 1024 * 1024;
-const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 10 * 1024 * 1024;
+const MAIL_ATTACHMENT_SPLIT_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const MAIL_ATTACHMENT_CHUNK_LIMIT_BYTES = 8 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 async function getAttachmentSize(attachment: {
@@ -226,11 +226,27 @@ export async function notifyGrowthCollectionUpdate(params: {
   const recipient = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
   if (!recipient) return;
   const digestState = await readTrendMailDigestState();
+  const lastSentAtMs = digestState.lastSentAt ? new Date(digestState.lastSentAt).getTime() : 0;
   const nowIso = nowShanghaiIso();
+  const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
 
   console.info(
     `[growth.mail] evaluate platform=${params.platform} recipient=${recipient} lastSentAt=${digestState.lastSentAt || "-"} intervalMinutes=${MAIL_DIGEST_INTERVAL_MINUTES}`,
   );
+
+  if (withinWindow) {
+    console.info("[growth.mail] digest skipped within hourly window");
+    await updateTrendMailDigestState({
+      lastWindowMinutes: MAIL_DIGEST_INTERVAL_MINUTES,
+      pendingAttachmentBytes: 0,
+      pendingCreatedAt: undefined,
+      pendingSubjectBase: undefined,
+      pendingTextBase: undefined,
+      pendingHtmlBase: undefined,
+      pendingAttachmentBatches: undefined,
+    });
+    return;
+  }
 
   const scheduler = await readTrendSchedulerState();
   const exported = await exportSingleTrendCollectionCsv(params.collection);
