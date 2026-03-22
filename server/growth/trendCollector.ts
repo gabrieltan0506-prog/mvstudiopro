@@ -7,6 +7,7 @@ import { classifyTrendItem, countLabels } from "./trendTaxonomy";
 import { getKuaishouCreatorSeeds, getKuaishouDiscoveryKeywords, getPlatformSeeds } from "./trendSeedLibrary";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
+import { getAdaptiveRouteDecision, prioritizeAdaptiveSeeds, recordAdaptiveRouteRun, recordAdaptiveSeedRun } from "./trendAdaptiveConfig";
 
 export type TrendSource = "live" | "seed";
 
@@ -1589,9 +1590,21 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 40) || 40));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const searchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 12) || 12));
+  const defaultSearchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 12) || 12));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const searchKeywords = getPlatformSeeds("bilibili").slice(0, Math.max(16, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 36) || 36));
+  const defaultKeywordLimit = Math.max(16, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 36) || 36);
+  const searchRoute = await getAdaptiveRouteDecision("bilibili", "search_feed", {
+    pageCount: defaultSearchPages,
+    keywordLimit: defaultKeywordLimit,
+    minimumPages: 4,
+  });
+  const searchPages = searchRoute.pageCount || defaultSearchPages;
+  const searchKeywords = await prioritizeAdaptiveSeeds(
+    "bilibili",
+    "search_feed",
+    getPlatformSeeds("bilibili"),
+    searchRoute.keywordLimit || defaultKeywordLimit,
+  );
   const searchOrders = Array.from(new Set((parseCsvEnv("BILIBILI_SEARCH_ORDERS").length
     ? parseCsvEnv("BILIBILI_SEARCH_ORDERS")
     : ["", "click", "pubdate", "dm", "scores"])
@@ -1703,6 +1716,18 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
     });
     notes.push(`Fetched ${result.list.length} Bilibili search videos for keyword ${result.keyword} ${result.order || "default"} page ${result.page}.`);
   }
+  await recordAdaptiveRouteRun({
+    platform: "bilibili",
+    routeKey: "search_feed",
+    yieldCount: searchResults.reduce((sum, item) => sum + item.list.length, 0),
+    requestCount: searchKeywords.length * searchPages * searchOrders.length,
+  });
+  await recordAdaptiveSeedRun({
+    platform: "bilibili",
+    routeKey: "search_feed",
+    seeds: searchKeywords,
+    yieldedCount: searchResults.reduce((sum, item) => sum + item.list.length, 0),
+  });
 
   const dedupedItems = dedupeById(items);
   notes.push(`Fetched ${dedupedItems.length} total Bilibili videos after merging feed, popular, and search.`);
@@ -1886,8 +1911,20 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.movie_and_tv_v3",
     ];
   const pageLimit = Math.max(1, Math.min(20, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
-  const searchKeywords = getPlatformSeeds("xiaohongshu").slice(0, Math.max(6, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 12) || 12));
-  const searchPages = Math.max(1, Math.min(8, Number(process.env.XHS_SEARCH_PAGES || 4) || 4));
+  const defaultXhsKeywordLimit = Math.max(6, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 12) || 12);
+  const defaultXhsSearchPages = Math.max(1, Math.min(8, Number(process.env.XHS_SEARCH_PAGES || 4) || 4));
+  const xhsSearchRoute = await getAdaptiveRouteDecision("xiaohongshu", "search_feed", {
+    pageCount: defaultXhsSearchPages,
+    keywordLimit: defaultXhsKeywordLimit,
+    minimumPages: 2,
+  });
+  const searchKeywords = await prioritizeAdaptiveSeeds(
+    "xiaohongshu",
+    "search_feed",
+    getPlatformSeeds("xiaohongshu"),
+    xhsSearchRoute.keywordLimit || defaultXhsKeywordLimit,
+  );
+  const searchPages = xhsSearchRoute.pageCount || defaultXhsSearchPages;
   const searchSorts = parseCsvEnv("XHS_SEARCH_SORTS").length
     ? parseCsvEnv("XHS_SEARCH_SORTS")
     : ["general", "popularity_desc"];
@@ -1987,6 +2024,18 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     items.push(...result.items);
     notes.push(`Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword} sort ${result.sort} page ${result.page}.`);
   }
+  await recordAdaptiveRouteRun({
+    platform: "xiaohongshu",
+    routeKey: "search_feed",
+    yieldCount: searchResults.reduce((sum, item) => sum + item.items.length, 0),
+    requestCount: searchKeywords.length * searchSorts.length * searchPages,
+  });
+  await recordAdaptiveSeedRun({
+    platform: "xiaohongshu",
+    routeKey: "search_feed",
+    seeds: searchKeywords,
+    yieldedCount: searchResults.reduce((sum, item) => sum + item.items.length, 0),
+  });
 
   return finalizeCollection("xiaohongshu", "live", dedupeById(items), notes, {
     collectorMode: "warehouse",
@@ -2004,21 +2053,39 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 36) || 36));
+  const defaultPrivatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 36) || 36));
   const privateConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 6) || 6));
   const privateRetryLimit = Math.max(0, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_RETRY_LIMIT || 2) || 2));
   const privateRetryDelayMs = Math.max(500, Math.min(8000, Number(process.env.KUAISHOU_PRIVATE_RETRY_DELAY_MS || 1500) || 1500));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 40) || 40));
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
-  const searchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 60) || 60));
-  const searchKeywords = discoveryKeywords.slice(0, searchKeywordLimit);
+  const defaultSearchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 60) || 60));
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const searchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 24) || 24));
+  const defaultSearchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 24) || 24));
   const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 5) || 5));
   const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 12) || 12));
   const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 90) || 90));
   const searchUserKeywordLimit = Math.max(6, Math.min(32, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 24) || 24));
   const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 28) || 28));
+  const privateRoute = await getAdaptiveRouteDecision("kuaishou", "private_list", {
+    pageCount: defaultPrivatePages,
+    concurrency: privateConcurrency,
+    minimumPages: 12,
+  });
+  const privatePages = privateRoute.pageCount || defaultPrivatePages;
+  const privateLaneConcurrency = privateRoute.concurrency || privateConcurrency;
+  const searchRoute = await getAdaptiveRouteDecision("kuaishou", "search_feed", {
+    pageCount: defaultSearchPages,
+    keywordLimit: defaultSearchKeywordLimit,
+    minimumPages: 8,
+  });
+  const searchKeywords = await prioritizeAdaptiveSeeds(
+    "kuaishou",
+    "search_feed",
+    discoveryKeywords,
+    searchRoute.keywordLimit || defaultSearchKeywordLimit,
+  );
+  const searchPages = searchRoute.pageCount || defaultSearchPages;
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let privateRequestCount = 0;
@@ -2153,6 +2220,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   };
 
   if (cookies.length) {
+    const privateStartCount = items.length;
     const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
       let pcursor = "";
       for (let page = 0; page < privatePages; page += 1) {
@@ -2196,7 +2264,13 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       }
     });
 
-    await runBatches(privateTasks, Math.max(1, Math.min(privateConcurrency, cookies.length)));
+    await runBatches(privateTasks, Math.max(1, Math.min(privateLaneConcurrency, cookies.length)));
+    await recordAdaptiveRouteRun({
+      platform: "kuaishou",
+      routeKey: "private_list",
+      yieldCount: Math.max(0, items.length - privateStartCount),
+      requestCount: privateRequestCount,
+    });
   }
 
   const kuaishouSearchThreshold = PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12;
@@ -2209,6 +2283,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   }
 
   if (shouldRunSearch) {
+    const searchStartCount = items.length;
     const cookiePool = cookies.length ? cookies : [""];
     const searchTasks = cookiePool.flatMap((cookie, cookieIndex) =>
       searchKeywords.map((keyword) => async () => {
@@ -2255,6 +2330,18 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     );
 
     await runBatches(searchTasks, searchConcurrency);
+    await recordAdaptiveRouteRun({
+      platform: "kuaishou",
+      routeKey: "search_feed",
+      yieldCount: Math.max(0, items.length - searchStartCount),
+      requestCount: searchRequestCount,
+    });
+    await recordAdaptiveSeedRun({
+      platform: "kuaishou",
+      routeKey: "search_feed",
+      seeds: searchKeywords,
+      yieldedCount: Math.max(0, items.length - searchStartCount),
+    });
   }
 
   if (searchKeywords.length && cookies.length) {
@@ -2529,8 +2616,8 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
     ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
   ].filter(Boolean);
-  const searchKeywords = getPlatformSeeds("toutiao").slice(0, Math.max(8, Math.min(48, Number(process.env.TOUTIAO_SEARCH_KEYWORD_LIMIT || 24) || 24)));
-  const searchPages = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_SEARCH_PAGES || 4) || 4));
+  const defaultToutiaoKeywordLimit = Math.max(8, Math.min(48, Number(process.env.TOUTIAO_SEARCH_KEYWORD_LIMIT || 24) || 24));
+  const defaultToutiaoSearchPages = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_SEARCH_PAGES || 4) || 4));
   const searchPageSize = Math.max(10, Math.min(30, Number(process.env.TOUTIAO_SEARCH_PAGE_SIZE || 20) || 20));
   const searchConcurrency = Math.max(1, Math.min(6, Number(process.env.TOUTIAO_SEARCH_CONCURRENCY || 3) || 3));
   const authorLimit = Math.max(1, Math.min(16, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 12) || 12));
@@ -2562,6 +2649,18 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     "tt-anti-token": antiToken,
     "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
   };
+  const toutiaoSearchRoute = await getAdaptiveRouteDecision("toutiao", "search_feed", {
+    pageCount: defaultToutiaoSearchPages,
+    keywordLimit: defaultToutiaoKeywordLimit,
+    minimumPages: 2,
+  });
+  const searchKeywords = await prioritizeAdaptiveSeeds(
+    "toutiao",
+    "search_feed",
+    getPlatformSeeds("toutiao"),
+    toutiaoSearchRoute.keywordLimit || defaultToutiaoKeywordLimit,
+  );
+  const searchPages = toutiaoSearchRoute.pageCount || defaultToutiaoSearchPages;
 
   const authorProfiles = Array.from(new Map(
     [
@@ -2588,6 +2687,7 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
   }
 
   if (searchKeywords.length) {
+    const searchStartCount = items.length;
     const searchTasks = searchKeywords.flatMap((keyword) =>
       Array.from({ length: searchPages }, (_, index) => index).map((pageIndex) => async () => {
         try {
@@ -2621,6 +2721,18 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
       }),
     );
     await runBatches(searchTasks, searchConcurrency);
+    await recordAdaptiveRouteRun({
+      platform: "toutiao",
+      routeKey: "search_feed",
+      yieldCount: Math.max(0, items.length - searchStartCount),
+      requestCount: searchKeywords.length * searchPages,
+    });
+    await recordAdaptiveSeedRun({
+      platform: "toutiao",
+      routeKey: "search_feed",
+      seeds: searchKeywords,
+      yieldedCount: Math.max(0, items.length - searchStartCount),
+    });
   }
 
   for (const authorProfile of authorProfiles) {
