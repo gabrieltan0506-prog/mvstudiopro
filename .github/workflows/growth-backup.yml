@@ -34,7 +34,7 @@ jobs:
             local command="$1"
             local output_path="$2"
             for attempt in 1 2 3 4 5; do
-              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "$command" > "$output_path"; then
+              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
                 return 0
               fi
               echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
