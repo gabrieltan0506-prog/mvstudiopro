@@ -926,24 +926,17 @@ export const appRouter = router({
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const backfill = runtimeMeta.backfill || null;
-        const store = await readTrendStore().catch(() => null);
         const backfillPlatforms = new Map(
           (backfill?.platforms || []).map((item) => [String(item.platform), { ...item }]),
         );
         for (const platform of growthPlatformValues) {
-          const collection = store?.collections?.[platform];
-          const history = store?.history?.platforms?.[platform];
-          const current = backfillPlatforms.get(platform) || {
+          if (backfillPlatforms.has(platform)) continue;
+          backfillPlatforms.set(platform, {
             platform,
             target: 0,
             currentTotal: 0,
             archivedTotal: 0,
             status: "pending" as const,
-          };
-          backfillPlatforms.set(platform, {
-            ...current,
-            currentTotal: Number(collection?.stats?.itemCount || collection?.items?.length || current.currentTotal || 0),
-            archivedTotal: Number(history?.archivedItems || current.archivedTotal || 0),
           });
         }
 
