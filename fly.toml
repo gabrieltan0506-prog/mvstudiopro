@@ -12,6 +12,8 @@ primary_region = 'sin'
   GROWTH_STORE_DIR = '/data/growth'
   GROWTH_LEGACY_STORE_FILE = '/data/growth-trends.json'
   NODE_OPTIONS = '--max-old-space-size=4096'
+  DOUYIN_CREATOR_CENTER_ENABLED = '0'
+  DOUYIN_CREATOR_INDEX_ENABLED = '0'
 
 [http_service]
   internal_port = 3000

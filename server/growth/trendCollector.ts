@@ -1660,6 +1660,8 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookies = parseCookiePool("DOUYIN_COOKIE", "DOUYIN_COOKIE_BACKUP");
   const creatorKeywords = getPlatformSeeds("douyin");
+  const creatorCenterEnabled = String(process.env.DOUYIN_CREATOR_CENTER_ENABLED || "1") !== "0";
+  const creatorIndexEnabled = String(process.env.DOUYIN_CREATOR_INDEX_ENABLED || "1") !== "0";
   const topicItems: TrendItem[] = [];
   const topicResponse = await fetch("https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/", {
     headers: { "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0" },
@@ -1763,15 +1765,23 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       items.push(...cookieItems);
     });
 
-    const creatorCenter = await collectDouyinCreatorCenterItems(cookies, creatorKeywords);
-    items.push(...creatorCenter.items);
-    notes.push(...creatorCenter.notes);
-    requestCount += creatorCenter.requestCount;
+    if (creatorCenterEnabled) {
+      const creatorCenter = await collectDouyinCreatorCenterItems(cookies, creatorKeywords);
+      items.push(...creatorCenter.items);
+      notes.push(...creatorCenter.notes);
+      requestCount += creatorCenter.requestCount;
+    } else {
+      notes.push("Douyin creator center skipped: disabled by DOUYIN_CREATOR_CENTER_ENABLED=0.");
+    }
 
-    const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items);
-    items.push(...creatorIndex.items);
-    notes.push(...creatorIndex.notes);
-    requestCount += creatorIndex.requestCount;
+    if (creatorIndexEnabled) {
+      const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items);
+      items.push(...creatorIndex.items);
+      notes.push(...creatorIndex.notes);
+      requestCount += creatorIndex.requestCount;
+    } else {
+      notes.push("Douyin creator index skipped: disabled by DOUYIN_CREATOR_INDEX_ENABLED=0.");
+    }
 
     if (items.length) {
       return finalizeCollection("douyin", "live", dedupeById(items), notes, {
