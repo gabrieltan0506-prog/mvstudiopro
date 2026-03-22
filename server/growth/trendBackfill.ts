@@ -1,6 +1,7 @@
 import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
 import { getGrowthTrendStats, mergeTrendCollections, updateTrendBackfillProgress } from "./trendStore";
+import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 
 const MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_BACKFILL_ROUNDS || 20) || 20);
@@ -109,6 +110,26 @@ export async function runGrowthTrendBackfillStep() {
     const collected = await collectTrendPlatforms(pending);
     const merged = await mergeTrendCollections(collected.collections);
     const statsAfter = await getGrowthTrendStats();
+
+    for (const platform of pending) {
+      const collection = collected.collections[platform];
+      const mergedCollection = merged.collections[platform];
+      if (collection?.source !== "live" || !mergedCollection?.items.length) continue;
+      await notifyGrowthCollectionUpdate({
+        platform,
+        itemCount: mergedCollection.items.length,
+        addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
+        mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+        collectedAt: collection.collectedAt,
+        nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
+        frequencyLabel: `历史回填 / 30-60 秒真人节奏 / 目标步长 ${HISTORY_STEP_TARGET}`,
+        burstMode: false,
+        live: true,
+        collection,
+      }).catch((error) => {
+        console.warn(`[growth.backfill] email notify skipped for ${platform}:`, error);
+      });
+    }
 
     for (const platform of pending) {
       const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedItems || 0;
