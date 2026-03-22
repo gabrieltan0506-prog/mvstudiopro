@@ -696,6 +696,10 @@ async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number
   return results;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function collectDouyinCreatorCenterItems(cookies: string[], _keywords: string[]) {
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -2000,7 +2004,10 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 24) || 24));
+  const privatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 36) || 36));
+  const privateConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 6) || 6));
+  const privateRetryLimit = Math.max(0, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_RETRY_LIMIT || 2) || 2));
+  const privateRetryDelayMs = Math.max(500, Math.min(8000, Number(process.env.KUAISHOU_PRIVATE_RETRY_DELAY_MS || 1500) || 1500));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 40) || 40));
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
   const searchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 60) || 60));
@@ -2034,6 +2041,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   if (discoveryKeywords.length) {
     notes.push(`Loaded ${discoveryKeywords.length} Kuaishou discovery keywords, including cross-platform title and author signals.`);
   }
+  notes.push(`Kuaishou private/list tuned for depth=${privatePages}, concurrency=${privateConcurrency}, retry=${privateRetryLimit}.`);
 
   const resolveKuaishouBucket = (sourceLabel: string) => {
     if (sourceLabel.startsWith("private-list:")) return "kuaishou_private_list";
@@ -2148,26 +2156,38 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
     const privateTasks = cookies.map((cookie, cookieIndex) => async () => {
       let pcursor = "";
       for (let page = 0; page < privatePages; page += 1) {
-        const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
-        if (pcursor) url.searchParams.set("pcursor", pcursor);
-        const response = await fetch(url.toString(), {
-          headers: {
-            accept: "application/json,text/plain,*/*",
-            cookie,
-            referer: "https://www.kuaishou.com/new-reco",
-            "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
-          },
-        });
-        privateRequestCount += 1;
-        privatePageDepth = Math.max(privatePageDepth, page + 1);
-        if (!response.ok) {
-          notes.push(`Kuaishou private/list cookie ${cookieIndex + 1} page ${page + 1} responded with ${response.status}.`);
+        let payload: { feeds?: Array<Record<string, any>>; pcursor?: string } | null = null;
+        let responseOk = false;
+        for (let attempt = 0; attempt <= privateRetryLimit; attempt += 1) {
+          const url = new URL("https://www.kuaishou.com/rest/v/profile/private/list");
+          if (pcursor) url.searchParams.set("pcursor", pcursor);
+          const response = await fetch(url.toString(), {
+            headers: {
+              accept: "application/json,text/plain,*/*",
+              cookie,
+              referer: "https://www.kuaishou.com/new-reco",
+              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+            },
+          });
+          privateRequestCount += 1;
+          privatePageDepth = Math.max(privatePageDepth, page + 1);
+          if (!response.ok) {
+            const retryable = response.status === 429 || response.status >= 500;
+            notes.push(`Kuaishou private/list cookie ${cookieIndex + 1} page ${page + 1} attempt ${attempt + 1} responded with ${response.status}.`);
+            if (retryable && attempt < privateRetryLimit) {
+              await sleep(privateRetryDelayMs * (attempt + 1));
+              continue;
+            }
+            break;
+          }
+          payload = await response.json() as {
+            feeds?: Array<Record<string, any>>;
+            pcursor?: string;
+          };
+          responseOk = true;
           break;
         }
-        const payload = await response.json() as {
-          feeds?: Array<Record<string, any>>;
-          pcursor?: string;
-        };
+        if (!responseOk || !payload) break;
         const list = payload.feeds ?? [];
         list.forEach((item) => pushKuaishouItem(item, `private-list:${cookieIndex + 1}:${page + 1}`));
         notes.push(`Fetched ${list.length} Kuaishou authenticated feed items from cookie ${cookieIndex + 1} private/list page ${page + 1}.`);
@@ -2176,7 +2196,7 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
       }
     });
 
-    await runBatches(privateTasks, Math.max(1, Math.min(4, cookies.length)));
+    await runBatches(privateTasks, Math.max(1, Math.min(privateConcurrency, cookies.length)));
   }
 
   const kuaishouSearchThreshold = PLATFORM_REFERENCE_RANGES.kuaishou?.min || 12;
