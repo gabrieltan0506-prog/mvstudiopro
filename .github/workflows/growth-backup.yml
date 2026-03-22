@@ -46,7 +46,7 @@ jobs:
 
           capture_from_fly "gzip -c /data/growth/current.json" /tmp/growth-backup/current.json.gz
           capture_from_fly "gzip -c /data/growth/runtime-meta.json" /tmp/growth-backup/runtime-meta.json.gz
-          capture_from_fly "test -f /data/growth/history-ledger/douyin.json && echo yes || echo no" /tmp/growth-backup/has-history-ledger.txt
+          capture_from_fly "node -e \"const fs=require('fs');process.stdout.write(fs.existsSync('/data/growth/history-ledger/douyin.json') ? 'yes' : 'no')\"" /tmp/growth-backup/has-history-ledger.txt
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
       - name: Upload GitHub backup artifact
         uses: actions/upload-artifact@v4
