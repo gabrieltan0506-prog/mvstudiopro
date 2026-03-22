@@ -9,6 +9,19 @@ type SmtpConfig = {
   provider: "smtp" | "resend";
 };
 
+const MAIL_CONNECTION_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.MAIL_CONNECTION_TIMEOUT_MS || 15_000) || 15_000,
+);
+const MAIL_GREETING_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.MAIL_GREETING_TIMEOUT_MS || 10_000) || 10_000,
+);
+const MAIL_SOCKET_TIMEOUT_MS = Math.max(
+  10_000,
+  Number(process.env.MAIL_SOCKET_TIMEOUT_MS || 20_000) || 20_000,
+);
+
 function getMissingVars() {
   const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"] as const;
   return required.filter(key => !process.env[key] || String(process.env[key]).trim().length === 0);
@@ -80,6 +93,21 @@ function getConfig(options?: { requireResend?: boolean }): SmtpConfig {
   };
 }
 
+function createTransport(config: SmtpConfig) {
+  return nodemailer.createTransport({
+    host: config.host,
+    port: config.port,
+    secure: config.port === 465,
+    connectionTimeout: MAIL_CONNECTION_TIMEOUT_MS,
+    greetingTimeout: MAIL_GREETING_TIMEOUT_MS,
+    socketTimeout: MAIL_SOCKET_TIMEOUT_MS,
+    auth: {
+      user: config.user,
+      pass: config.pass,
+    },
+  });
+}
+
 export async function sendOtpMail(email: string, otp: string): Promise<void> {
   const config = getConfig();
   if (config.host === "console") {
@@ -87,15 +115,7 @@ export async function sendOtpMail(email: string, otp: string): Promise<void> {
     return;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.port === 465,
-    auth: {
-      user: config.user,
-      pass: config.pass,
-    },
-  });
+  const transporter = createTransport(config);
 
   await transporter.sendMail({
     from: config.from,
@@ -125,22 +145,30 @@ export async function sendMailWithAttachments(params: {
     return;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.port === 465,
-    auth: {
-      user: config.user,
-      pass: config.pass,
-    },
-  });
+  const transporter = createTransport(config);
+  const attachmentCount = params.attachments?.length || 0;
 
-  await transporter.sendMail({
-    from: config.from,
-    to: params.to,
-    subject: params.subject,
-    text: params.text,
-    html: params.html,
-    attachments: params.attachments,
-  });
+  console.info(
+    `[mail.send] provider=${config.provider} host=${config.host} to=${params.to} attachments=${attachmentCount} subject=${params.subject}`,
+  );
+
+  try {
+    await transporter.sendMail({
+      from: config.from,
+      to: params.to,
+      subject: params.subject,
+      text: params.text,
+      html: params.html,
+      attachments: params.attachments,
+    });
+    console.info(
+      `[mail.send] success provider=${config.provider} to=${params.to} attachments=${attachmentCount} subject=${params.subject}`,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[mail.send] failed provider=${config.provider} host=${config.host} to=${params.to} attachments=${attachmentCount} subject=${params.subject}: ${message}`,
+    );
+    throw error;
+  }
 }

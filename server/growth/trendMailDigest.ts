@@ -230,6 +230,10 @@ export async function notifyGrowthCollectionUpdate(params: {
   const nowIso = nowShanghaiIso();
   const withinWindow = lastSentAtMs && Date.now() - lastSentAtMs < MAIL_DIGEST_INTERVAL_MS;
 
+  console.info(
+    `[growth.mail] evaluate platform=${params.platform} recipient=${recipient} lastSentAt=${digestState.lastSentAt || "-"} intervalMinutes=${MAIL_DIGEST_INTERVAL_MINUTES}`,
+  );
+
   if (withinWindow) {
     console.info("[growth.mail] digest skipped within hourly window");
     await updateTrendMailDigestState({
@@ -298,6 +302,10 @@ export async function notifyGrowthCollectionUpdate(params: {
       contentType: "application/json",
     },
   ];
+
+  console.info(
+    `[growth.mail] sending digest platform=${params.platform} files=${attachments.length} rows=${exported.rows} manifest=${exported.manifestPath}`,
+  );
 
   const sendResult = await sendChunkedDigest({
     recipient,
