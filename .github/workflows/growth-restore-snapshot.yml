@@ -66,7 +66,7 @@ jobs:
 
       - name: Prepare Fly temp directory
         run: |
-          flyctl ssh console -a mvstudiopro --command "sh -lc 'rm -rf /tmp/growth-restore-input && mkdir -p /tmp/growth-restore-input'"
+          flyctl ssh console -a mvstudiopro --command "sh -lc 'rm -rf /tmp/growth-restore-input'"
 
       - name: Upload snapshot to Fly temp
         run: |
