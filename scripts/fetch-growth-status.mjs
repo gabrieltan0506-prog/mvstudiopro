@@ -22,14 +22,19 @@ async function main() {
   }
   const body = await response.json();
   const json = body?.[0]?.result?.data?.json;
-  if (!json?.backfill?.platforms) {
-    throw new Error("Growth status response missing backfill.platforms");
+  const sourcePlatforms =
+    (Array.isArray(json?.truthStore?.platforms) && json.truthStore.platforms)
+    || (Array.isArray(json?.backfillLive?.platforms) && json.backfillLive.platforms)
+    || (Array.isArray(json?.backfillHistory?.platforms) && json.backfillHistory.platforms)
+    || (Array.isArray(json?.backfill?.platforms) && json.backfill.platforms);
+  if (!sourcePlatforms) {
+    throw new Error("Growth status response missing truthStore/backfill platforms");
   }
   const platforms = Object.fromEntries(
-    json.backfill.platforms.map((item) => [
+    sourcePlatforms.map((item) => [
       String(item.platform),
       {
-        currentTotal: Number(item.currentTotal || 0),
+        currentTotal: Number(item.currentTotal || item.currentItems || 0),
         archivedTotal: Number(item.archivedTotal || 0),
       },
     ]),
