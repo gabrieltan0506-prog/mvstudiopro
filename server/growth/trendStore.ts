@@ -232,6 +232,8 @@ const LEGACY_STORE_FILE = path.resolve(
 const STORE_FILE = path.join(STORE_DIR, "current.json");
 const META_FILE = path.join(STORE_DIR, "runtime-meta.json");
 const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
+const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
+const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
 const ARCHIVE_DIR = path.join(STORE_DIR, "archive");
 const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
@@ -244,7 +246,7 @@ const EXPORT_DIR = path.resolve(
     || (IS_FLY_VOLUME_STORE ? path.join("/tmp", "growth-exports") : path.join(STORE_DIR, "exports")),
 );
 const SHOULD_WRITE_LEGACY_MIRROR = process.env.GROWTH_WRITE_LEGACY_MIRROR === "1" || !IS_FLY_VOLUME_STORE;
-const SHOULD_WRITE_DERIVED_PLATFORM_FILES = process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES === "1" || !IS_FLY_VOLUME_STORE;
+const SHOULD_WRITE_DERIVED_PLATFORM_FILES = process.env.GROWTH_WRITE_DERIVED_PLATFORM_FILES !== "0";
 let historyReconcilePromise: Promise<TrendStoreFile> | null = null;
 
 async function ensureStoreDir() {
@@ -572,6 +574,66 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
   }
 }
 
+async function readArchiveIndexFile(): Promise<TrendArchiveEntry[]> {
+  try {
+    const raw = await fs.readFile(ARCHIVE_INDEX_FILE, "utf8");
+    const parsed = JSON.parse(raw) as { archiveIndex?: TrendArchiveEntry[] } | TrendArchiveEntry[];
+    const entries = Array.isArray(parsed) ? parsed : (parsed.archiveIndex || []);
+    return entries.map((entry) => ({
+      ...entry,
+      bucketCounts: entry.bucketCounts || {},
+      industryCounts: entry.industryCounts || {},
+      ageCounts: entry.ageCounts || {},
+      contentCounts: entry.contentCounts || {},
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function readHistorySummaryFile(): Promise<TrendHistoryState | null> {
+  try {
+    const raw = await fs.readFile(HISTORY_SUMMARY_FILE, "utf8");
+    return JSON.parse(raw) as TrendHistoryState;
+  } catch {
+    return null;
+  }
+}
+
+async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<PlatformTrendCollection | undefined> {
+  try {
+    const raw = await fs.readFile(path.join(PLATFORM_DIR, `${platform}.json`), "utf8");
+    const parsed = JSON.parse(raw) as { collection?: PlatformTrendCollection };
+    return parsed.collection;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
+  const collectionsEntries = await Promise.all(
+    growthPlatformValues.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
+  );
+  const hasDerivedCollections = collectionsEntries.some(([, collection]) => Boolean(collection));
+  if (!hasDerivedCollections) return null;
+  const [meta, archiveIndex, history] = await Promise.all([
+    readRuntimeMeta(),
+    readArchiveIndexFile(),
+    readHistorySummaryFile(),
+  ]);
+  return {
+    updatedAt: meta.updatedAt || nowShanghaiIso(),
+    collections: Object.fromEntries(
+      collectionsEntries.filter(([, collection]) => Boolean(collection)),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+    scheduler: meta.scheduler || {},
+    archiveIndex,
+    history: history || createEmptyHistoryState(),
+    backfill: meta.backfill || createEmptyStore().backfill,
+    mailDigest: meta.mailDigest || {},
+  };
+}
+
 async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
   try {
     const raw = await fs.readFile(META_FILE, "utf8");
@@ -618,8 +680,12 @@ async function writeJsonAtomic(filePath: string, value: unknown) {
   await fs.rename(tempPath, filePath);
 }
 
-export async function readTrendStore(): Promise<TrendStoreFile> {
+export async function readTrendStore(options?: { preferDerivedFiles?: boolean }): Promise<TrendStoreFile> {
   await ensureStoreDir();
+  if (options?.preferDerivedFiles) {
+    const derived = await readDerivedStoreFile();
+    if (derived) return derived;
+  }
   const current = await readRawStoreFile(STORE_FILE);
   if (current) {
     const meta = await readRuntimeMeta();
@@ -774,7 +840,7 @@ async function writeStore(
 ) {
   await ensureStoreDir();
   if (!(options?.allowLowerTotals)) {
-    const existing = await readRawStoreFile(STORE_FILE);
+    const existing = await readTrendStore({ preferDerivedFiles: true });
     if (existing?.collections) {
       const protectedCollections = { ...(next.collections || {}) };
       let preservedAny = false;
@@ -803,6 +869,11 @@ async function writeStore(
     backfill: next.backfill,
     mailDigest: next.mailDigest,
   });
+  await writeJsonAtomic(ARCHIVE_INDEX_FILE, {
+    updatedAt: next.updatedAt,
+    archiveIndex: next.archiveIndex || [],
+  });
+  await writeJsonAtomic(HISTORY_SUMMARY_FILE, next.history || createEmptyHistoryState());
   await refreshTrendDebugSummary(next);
   if (options?.writeLegacyMirror ?? SHOULD_WRITE_LEGACY_MIRROR) {
     await writeJsonAtomic(LEGACY_STORE_FILE, next);
@@ -961,7 +1032,7 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
 }
 
 export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
-  const current = await readTrendStore();
+  const current = await readTrendStore({ preferDerivedFiles: true });
   const next: TrendStoreFile = {
     updatedAt: nowShanghaiIso(),
     collections: { ...current.collections },
