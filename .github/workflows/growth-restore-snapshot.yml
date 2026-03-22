@@ -64,7 +64,7 @@ jobs:
 
       - name: Prepare Fly temp directory
         run: |
-          fly ssh console -a mvstudiopro --command "sh -lc 'rm -rf /tmp/growth-restore-input && mkdir -p /tmp/growth-restore-input'"
+          flyctl ssh console -a mvstudiopro --command "sh -lc 'rm -rf /tmp/growth-restore-input && mkdir -p /tmp/growth-restore-input'"
 
       - name: Upload snapshot to Fly temp
         run: |
@@ -73,11 +73,11 @@ jobs:
           else
             SOURCE_DIR=/tmp/growth-restore/snapshot
           fi
-          fly ssh sftp put -a mvstudiopro -R "$SOURCE_DIR" /tmp/growth-restore-input
+          flyctl ssh sftp put -a mvstudiopro -R "$SOURCE_DIR" /tmp/growth-restore-input
 
       - name: Restore snapshot into Fly store
         run: |
-          fly ssh console -a mvstudiopro --command "sh -lc '
+          flyctl ssh console -a mvstudiopro --command "sh -lc '
             set -eu
             STORE=/data/growth
             SNAP=/tmp/growth-restore-input
@@ -133,7 +133,7 @@ jobs:
 
       - name: Verify restored files
         run: |
-          fly ssh console -a mvstudiopro --command "sh -lc '
+          flyctl ssh console -a mvstudiopro --command "sh -lc '
             ls -lah /data/growth | sed -n \"1,40p\"
             echo ---
             ls -lah /data/growth/platforms | sed -n \"1,20p\"
