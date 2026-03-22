@@ -1,0 +1,132 @@
+name: Growth Restore Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_asset_url:
+        description: Snapshot tar.gz URL
+        required: true
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260323/snapshot-20260323.tar.gz
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Download snapshot asset
+        run: |
+          rm -rf /tmp/growth-restore
+          mkdir -p /tmp/growth-restore
+          curl -L "${{ inputs.snapshot_asset_url }}" -o /tmp/growth-restore/snapshot.tar.gz
+          tar -xzf /tmp/growth-restore/snapshot.tar.gz -C /tmp/growth-restore
+          ls -lah /tmp/growth-restore
+
+      - name: Sanitize snapshot runtime state
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const root = "/tmp/growth-restore";
+          const currentPath = path.join(root, "current.json");
+          const runtimeMetaPath = path.join(root, "runtime-meta.json");
+
+          const cleanBackfill = (value) => {
+            if (!value || typeof value !== "object") return value;
+            const next = { ...value };
+            delete next.backfill;
+            return next;
+          };
+
+          const current = JSON.parse(fs.readFileSync(currentPath, "utf8"));
+          delete current.backfill;
+          delete current.backfillLive;
+          delete current.backfillHistory;
+          fs.writeFileSync(currentPath, JSON.stringify(current, null, 2));
+
+          if (fs.existsSync(runtimeMetaPath)) {
+            const runtimeMeta = cleanBackfill(JSON.parse(fs.readFileSync(runtimeMetaPath, "utf8")));
+            fs.writeFileSync(runtimeMetaPath, JSON.stringify(runtimeMeta, null, 2));
+          }
+          NODE
+
+      - name: Prepare Fly temp directory
+        run: |
+          fly ssh console -a mvstudiopro --command "sh -lc 'rm -rf /tmp/growth-restore-input && mkdir -p /tmp/growth-restore-input'"
+
+      - name: Upload snapshot to Fly temp
+        run: |
+          fly ssh sftp put -a mvstudiopro -R /tmp/growth-restore /tmp/growth-restore-input
+
+      - name: Restore snapshot into Fly store
+        run: |
+          fly ssh console -a mvstudiopro --command "sh -lc '
+            set -eu
+            STORE=/data/growth
+            SNAP=/tmp/growth-restore-input
+            STAMP=$(date +%Y%m%dT%H%M%S)
+            BACKUP=$STORE/restore-temp/writeback-$STAMP
+
+            mkdir -p \"$STORE/restore-temp\" \"$STORE/backups\" \"$BACKUP\"
+
+            for file in current.json archive-index.json history-summary.json runtime-meta.json; do
+              if [ -f \"$STORE/$file\" ]; then
+                cp \"$STORE/$file\" \"$BACKUP/$file\"
+              fi
+            done
+
+            if [ -d \"$STORE/platforms\" ]; then
+              cp -R \"$STORE/platforms\" \"$BACKUP/\"
+            fi
+
+            if [ -f \"$STORE/backups/growth-debug-summary.json\" ]; then
+              cp \"$STORE/backups/growth-debug-summary.json\" \"$BACKUP/growth-debug-summary.json\"
+            fi
+
+            cp \"$SNAP/current.json\" \"$STORE/current.json.next\"
+            cp \"$SNAP/archive-index.json\" \"$STORE/archive-index.json.next\"
+            cp \"$SNAP/history-summary.json\" \"$STORE/history-summary.json.next\"
+
+            rm -rf \"$STORE/platforms.next\"
+            cp -R \"$SNAP/platforms\" \"$STORE/platforms.next\"
+
+            mv \"$STORE/current.json.next\" \"$STORE/current.json\"
+            mv \"$STORE/archive-index.json.next\" \"$STORE/archive-index.json\"
+            mv \"$STORE/history-summary.json.next\" \"$STORE/history-summary.json\"
+
+            rm -rf \"$STORE/platforms.prev\"
+            if [ -d \"$STORE/platforms\" ]; then
+              mv \"$STORE/platforms\" \"$STORE/platforms.prev\"
+            fi
+            mv \"$STORE/platforms.next\" \"$STORE/platforms\"
+            rm -rf \"$STORE/platform-current\"
+            rm -f \"$STORE/platform-current-manifest.json\"
+
+            node -e \"const fs=require('fs');const p='$STORE/runtime-meta.json';const d=JSON.parse(fs.readFileSync(p,'utf8'));delete d.backfill;fs.writeFileSync(p+'.next', JSON.stringify(d,null,2));fs.renameSync(p+'.next', p);\"
+
+            if [ -f \"$SNAP/backups/growth-debug-summary.json\" ]; then
+              cp \"$SNAP/backups/growth-debug-summary.json\" \"$STORE/backups/growth-debug-summary.json\"
+            fi
+
+            cd /app
+            ./node_modules/.bin/tsx scripts/refresh-growth-debug-summary.ts >/tmp/growth-restore-debug-summary.json
+
+            echo restored
+          '"
+
+      - name: Verify restored files
+        run: |
+          fly ssh console -a mvstudiopro --command "sh -lc '
+            ls -lah /data/growth | sed -n \"1,40p\"
+            echo ---
+            ls -lah /data/growth/platforms | sed -n \"1,20p\"
+            echo ---
+            grep -n \"backfill\" /data/growth/runtime-meta.json || true
+            echo ---
+            sed -n \"1,80p\" /tmp/growth-restore-debug-summary.json
+          '"
