@@ -848,14 +848,15 @@ function parseDouyinCreatorBrandSeeds() {
     .filter((entry) => entry.brandName && entry.categoryId);
 }
 
-function extractDouyinCreatorKeywordSeeds(seedItems: TrendItem[]) {
+function extractDouyinCreatorKeywordSeeds(seedItems: TrendItem[], prioritizedSeeds: string[] = []) {
   const explicit = parseCsvEnv("DOUYIN_CREATOR_INDEX_KEYWORDS");
   const derived = seedItems
     .flatMap((item) => [item.title, ...normalizeStringList(item.tags)])
     .map((value) => String(value || "").trim())
     .filter((value) => value && value.length <= 16 && !/^douyin[-_:]/i.test(value))
     .slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
-  return Array.from(new Set([...explicit, ...derived])).slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
+  return Array.from(new Set([...prioritizedSeeds, ...explicit, ...derived]))
+    .slice(0, Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6)));
 }
 
 async function probeDouyinCreatorIndexEndpoint(
@@ -1139,7 +1140,11 @@ async function collectDouyinCreatorIndexPageItems(
   return { items: dedupeById(items), notes, requestCount };
 }
 
-async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: TrendItem[]) {
+async function collectDouyinCreatorIndexItems(
+  cookies: string[],
+  seedItems: TrendItem[],
+  prioritizedKeywords: string[] = [],
+) {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   let requestCount = 0;
@@ -1174,7 +1179,7 @@ async function collectDouyinCreatorIndexItems(cookies: string[], seedItems: Tren
       .slice(0, Math.max(3, parseNumberEnv("DOUYIN_CREATOR_INDEX_VIDEO_LIMIT", 8))),
   ])).slice(0, Math.max(3, parseNumberEnv("DOUYIN_CREATOR_INDEX_VIDEO_LIMIT", 8)));
   const explicitAuthorIds = parseCsvEnv("DOUYIN_CREATOR_INDEX_AUTHOR_IDS");
-  const keywordSeeds = extractDouyinCreatorKeywordSeeds(seedItems);
+  const keywordSeeds = extractDouyinCreatorKeywordSeeds(seedItems, prioritizedKeywords);
   const topicIds = parseCsvEnv("DOUYIN_CREATOR_INDEX_TOPIC_IDS");
   const brandSeeds = parseDouyinCreatorBrandSeeds();
   const discoveredAuthorIds: string[] = [];
@@ -1743,7 +1748,24 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
 
 async function collectDouyin(): Promise<PlatformTrendCollection> {
   const cookies = parseCookiePool("DOUYIN_COOKIE", "DOUYIN_COOKIE_BACKUP");
-  const creatorKeywords = getPlatformSeeds("douyin");
+  const creatorKeywordLimit = Math.max(2, parseNumberEnv("DOUYIN_CREATOR_INDEX_KEYWORD_LIMIT", 6));
+  const feedPageLimitDefault = Math.max(1, Math.min(200, Number(process.env.DOUYIN_TREND_PAGES || 60) || 60));
+  const feedConcurrencyDefault = Math.max(1, Math.min(4, cookies.length));
+  const feedRoute = await getAdaptiveRouteDecision("douyin", "feed_live", {
+    pageCount: feedPageLimitDefault,
+    concurrency: feedConcurrencyDefault,
+    minimumPages: 4,
+  });
+  const creatorIndexRoute = await getAdaptiveRouteDecision("douyin", "creator_index", {
+    keywordLimit: creatorKeywordLimit,
+    enabled: String(process.env.DOUYIN_CREATOR_INDEX_ENABLED || "1") !== "0",
+  });
+  const creatorKeywords = await prioritizeAdaptiveSeeds(
+    "douyin",
+    "creator_index",
+    getPlatformSeeds("douyin"),
+    creatorIndexRoute.keywordLimit || creatorKeywordLimit,
+  );
   const creatorCenterEnabled = String(process.env.DOUYIN_CREATOR_CENTER_ENABLED || "1") !== "0";
   const creatorIndexEnabled = String(process.env.DOUYIN_CREATOR_INDEX_ENABLED || "1") !== "0";
   const topicItems: TrendItem[] = [];
@@ -1771,11 +1793,12 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     );
   }
   if (cookies.length) {
-    const pageLimit = Math.max(1, Math.min(200, Number(process.env.DOUYIN_TREND_PAGES || 60) || 60));
+    const pageLimit = Math.max(1, Math.min(200, feedRoute.pageCount || feedPageLimitDefault));
     const pageSize = Math.max(8, Math.min(20, Number(process.env.DOUYIN_TREND_PAGE_SIZE || 12) || 12));
     const items: TrendItem[] = [...topicItems];
     const notes: string[] = [];
     let requestCount = 0;
+    let feedRequestCount = 0;
     const cookieTasks = cookies.map((cookie, cookieIndex) => async () => {
       let maxCursor = "0";
       let hasMore = 0;
@@ -1794,6 +1817,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
         );
 
         requestCount += 1;
+        feedRequestCount += 1;
         if (!response.ok) {
           throw new Error(`Douyin feed cookie ${cookieIndex + 1} responded with ${response.status}`);
         }
@@ -1843,11 +1867,12 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       return cookieItems;
     });
 
-    const concurrency = Math.max(1, Math.min(4, cookies.length));
+    const concurrency = Math.max(1, Math.min(feedRoute.concurrency || feedConcurrencyDefault, cookies.length));
     const cookieResults = await runBatches(cookieTasks, concurrency);
     cookieResults.forEach((cookieItems) => {
       items.push(...cookieItems);
     });
+    notes.push(`Douyin adaptive feed route weight=${feedRoute.weight.toFixed(2)}, pages=${pageLimit}, concurrency=${concurrency}.`);
 
     if (creatorCenterEnabled) {
       const creatorCenter = await collectDouyinCreatorCenterItems(cookies, creatorKeywords);
@@ -1858,17 +1883,43 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
       notes.push("Douyin creator center skipped: disabled by DOUYIN_CREATOR_CENTER_ENABLED=0.");
     }
 
-    if (creatorIndexEnabled) {
-      const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items);
+    if (creatorIndexEnabled && creatorIndexRoute.enabled) {
+      const creatorIndex = await collectDouyinCreatorIndexItems(cookies, items, creatorKeywords);
       items.push(...creatorIndex.items);
       notes.push(...creatorIndex.notes);
       requestCount += creatorIndex.requestCount;
+      notes.push(`Douyin adaptive creator index weight=${creatorIndexRoute.weight.toFixed(2)}, keywords=${creatorKeywords.join(", ")}.`);
+    } else if (creatorIndexEnabled) {
+      notes.push("Douyin creator index skipped by adaptive config due to sustained low yield.");
     } else {
       notes.push("Douyin creator index skipped: disabled by DOUYIN_CREATOR_INDEX_ENABLED=0.");
     }
 
     if (items.length) {
-      return finalizeCollection("douyin", "live", dedupeById(items), notes, {
+      const deduped = dedupeById(items);
+      const feedYield = deduped.filter((item) => item.bucket === "douyin_feed").length;
+      const creatorYield = deduped.filter((item) => String(item.bucket || "").startsWith("douyin_creator_")).length;
+      await recordAdaptiveRouteRun({
+        platform: "douyin",
+        routeKey: "feed_live",
+        yieldCount: feedYield,
+        requestCount: feedRequestCount,
+      });
+      if (creatorIndexEnabled) {
+        await recordAdaptiveRouteRun({
+          platform: "douyin",
+          routeKey: "creator_index",
+          yieldCount: creatorYield,
+          requestCount: Math.max(0, requestCount - feedRequestCount),
+        });
+        await recordAdaptiveSeedRun({
+          platform: "douyin",
+          routeKey: "creator_index",
+          seeds: creatorKeywords,
+          yieldedCount: creatorYield,
+        });
+      }
+      return finalizeCollection("douyin", "live", deduped, notes, {
         collectorMode: "warehouse",
         requestCount,
         pageDepth: requestCount,
@@ -1879,7 +1930,7 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
     }
   }
 
-  const creatorIndex = await collectDouyinCreatorIndexItems([], topicItems);
+  const creatorIndex = await collectDouyinCreatorIndexItems([], topicItems, creatorKeywords);
   const fallbackItems = dedupeById([...topicItems, ...creatorIndex.items]);
   const fallbackNotes = [
     `Fetched ${topicItems.length} Douyin hot search topics.`,
