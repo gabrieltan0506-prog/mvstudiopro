@@ -979,25 +979,6 @@ export const appRouter = router({
 
     getGrowthMonotonicStatus: publicProcedure
       .query(async () => {
-        const summary = await readGrowthDebugSummary();
-        if (summary) {
-          return {
-            success: true,
-            fetchedAt: new Date().toISOString(),
-            totals: summary.totals,
-            platforms: Object.fromEntries(
-              Object.entries(summary.platforms).map(([platform, item]) => [
-                platform,
-                {
-                  currentTotal: Number(item?.currentTotal || 0),
-                  archivedTotal: Number(item?.archivedTotal || 0),
-                },
-              ]),
-            ),
-            source: "growth-debug-summary",
-          };
-        }
-
         const stats = await getGrowthTrendStats();
         return {
           success: true,
