@@ -925,34 +925,40 @@ export const appRouter = router({
         const smtp = getSmtpStatus();
         const runtimeMeta = await readTrendRuntimeMeta();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
-        const backfill = runtimeMeta.backfill || null;
-        const backfillPlatforms = new Map(
-          (backfill?.platforms || []).map((item) => [String(item.platform), { ...item }]),
-        );
-        for (const platform of growthPlatformValues) {
-          if (backfillPlatforms.has(platform)) continue;
-          backfillPlatforms.set(platform, {
-            platform,
-            target: 0,
-            currentTotal: 0,
-            archivedTotal: 0,
-            status: "pending" as const,
-          });
-        }
+        const normalizeBackfill = (backfill: typeof runtimeMeta.backfill | null | undefined) => {
+          if (!backfill) return null;
+          const backfillPlatforms = new Map(
+            (backfill.platforms || []).map((item) => [String(item.platform), { ...item }]),
+          );
+          for (const platform of growthPlatformValues) {
+            if (backfillPlatforms.has(platform)) continue;
+            backfillPlatforms.set(platform, {
+              platform,
+              target: 0,
+              currentTotal: 0,
+              archivedTotal: 0,
+              status: "pending" as const,
+            });
+          }
+          return {
+            ...backfill,
+            currentRound: 0,
+            maxRounds: 0,
+            targetPerPlatform: 0,
+            platforms: Array.from(backfillPlatforms.values()),
+          };
+        };
+        const backfill = normalizeBackfill(runtimeMeta.backfill);
+        const backfillLive = normalizeBackfill(runtimeMeta.backfillLive);
+        const backfillHistory = normalizeBackfill(runtimeMeta.backfillHistory);
 
         return {
           success: true,
           targetEmail,
           smtp,
-          backfill: backfill
-            ? {
-                ...backfill,
-                currentRound: 0,
-                maxRounds: 0,
-                targetPerPlatform: 0,
-                platforms: Array.from(backfillPlatforms.values()),
-              }
-              : null,
+          backfill,
+          backfillLive,
+          backfillHistory,
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },

@@ -74,6 +74,7 @@ export type TrendBackfillPlatformProgress = {
 };
 
 export type TrendBackfillProgress = {
+  mode?: "live" | "history";
   active: boolean;
   startedAt?: string;
   updatedAt?: string;
@@ -137,6 +138,8 @@ type TrendStoreFile = {
   archiveIndex: TrendArchiveEntry[];
   history?: TrendHistoryState;
   backfill?: TrendBackfillProgress;
+  backfillLive?: TrendBackfillProgress;
+  backfillHistory?: TrendBackfillProgress;
   mailDigest?: TrendMailDigestState;
 };
 
@@ -144,6 +147,8 @@ type TrendStoreRuntimeMeta = {
   updatedAt?: string;
   scheduler?: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   backfill?: TrendBackfillProgress;
+  backfillLive?: TrendBackfillProgress;
+  backfillHistory?: TrendBackfillProgress;
   mailDigest?: TrendMailDigestState;
 };
 
@@ -323,6 +328,24 @@ function createEmptyStore(): TrendStoreFile {
       targetPerPlatform: 0,
       status: "idle",
       platforms: [],
+    },
+    backfillLive: {
+      active: false,
+      currentRound: 0,
+      maxRounds: 0,
+      targetPerPlatform: 0,
+      status: "idle",
+      platforms: [],
+      mode: "live",
+    },
+    backfillHistory: {
+      active: false,
+      currentRound: 0,
+      maxRounds: 0,
+      targetPerPlatform: 0,
+      status: "idle",
+      platforms: [],
+      mode: "history",
     },
     mailDigest: {},
   };
@@ -583,6 +606,8 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
       })),
       history: parsed.history || createEmptyHistoryState(),
       backfill: parsed.backfill || createEmptyStore().backfill,
+      backfillLive: parsed.backfillLive || createEmptyStore().backfillLive,
+      backfillHistory: parsed.backfillHistory || createEmptyStore().backfillHistory,
       mailDigest: parsed.mailDigest || {},
     };
   } catch {
@@ -662,6 +687,8 @@ async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
     archiveIndex,
     history: history || createEmptyHistoryState(),
     backfill: meta.backfill || createEmptyStore().backfill,
+    backfillLive: meta.backfillLive || createEmptyStore().backfillLive,
+    backfillHistory: meta.backfillHistory || createEmptyStore().backfillHistory,
     mailDigest: meta.mailDigest || {},
   };
 }
@@ -674,6 +701,8 @@ async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
       updatedAt: parsed.updatedAt,
       scheduler: parsed.scheduler || {},
       backfill: parsed.backfill,
+      backfillLive: parsed.backfillLive,
+      backfillHistory: parsed.backfillHistory,
       mailDigest: parsed.mailDigest || {},
     };
   } catch {
@@ -685,6 +714,8 @@ export async function readTrendRuntimeMeta(): Promise<{
   updatedAt?: string;
   scheduler: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
   backfill?: TrendBackfillProgress;
+  backfillLive?: TrendBackfillProgress;
+  backfillHistory?: TrendBackfillProgress;
   mailDigest: TrendMailDigestState;
 }> {
   const meta = await readRuntimeMeta();
@@ -692,6 +723,8 @@ export async function readTrendRuntimeMeta(): Promise<{
     updatedAt: meta.updatedAt,
     scheduler: meta.scheduler || {},
     backfill: meta.backfill,
+    backfillLive: meta.backfillLive,
+    backfillHistory: meta.backfillHistory,
     mailDigest: meta.mailDigest || {},
   };
 }
@@ -702,6 +735,8 @@ async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
     updatedAt: next.updatedAt || nowShanghaiIso(),
     scheduler: next.scheduler || {},
     backfill: next.backfill,
+    backfillLive: next.backfillLive,
+    backfillHistory: next.backfillHistory,
     mailDigest: next.mailDigest || {},
   });
 }
@@ -726,6 +761,8 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean })
       updatedAt: meta.updatedAt || current.updatedAt,
       scheduler: meta.scheduler || current.scheduler || {},
       backfill: meta.backfill || current.backfill,
+      backfillLive: meta.backfillLive || current.backfillLive,
+      backfillHistory: meta.backfillHistory || current.backfillHistory,
       mailDigest: meta.mailDigest || current.mailDigest,
     };
   }
@@ -739,6 +776,8 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean })
       updatedAt: meta.updatedAt || legacy.updatedAt,
       scheduler: meta.scheduler || legacy.scheduler || {},
       backfill: meta.backfill || legacy.backfill,
+      backfillLive: meta.backfillLive || legacy.backfillLive,
+      backfillHistory: meta.backfillHistory || legacy.backfillHistory,
       mailDigest: meta.mailDigest || legacy.mailDigest,
     };
   }
@@ -754,6 +793,8 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean })
         updatedAt: meta.updatedAt || fallback.updatedAt,
         scheduler: meta.scheduler || fallback.scheduler || {},
         backfill: meta.backfill || fallback.backfill,
+        backfillLive: meta.backfillLive || fallback.backfillLive,
+        backfillHistory: meta.backfillHistory || fallback.backfillHistory,
         mailDigest: meta.mailDigest || fallback.mailDigest,
       };
     }
@@ -1142,6 +1183,8 @@ export async function updateTrendSchedulerState(
     updatedAt: nowShanghaiIso(),
     scheduler,
     backfill: meta.backfill,
+    backfillLive: meta.backfillLive,
+    backfillHistory: meta.backfillHistory,
     mailDigest: meta.mailDigest,
   });
   return scheduler[platform];
@@ -1154,7 +1197,10 @@ export async function readTrendSchedulerState() {
 
 export async function updateTrendBackfillProgress(progress: Partial<TrendBackfillProgress>) {
   const meta = await readRuntimeMeta();
-  const current = meta.backfill || createEmptyStore().backfill!;
+  const mode = progress.mode === "live" ? "live" : "history";
+  const current = mode === "live"
+    ? (meta.backfillLive || createEmptyStore().backfillLive!)
+    : (meta.backfillHistory || createEmptyStore().backfillHistory!);
   const summary = await readGrowthDebugSummary();
   const currentPlatformMap = new Map(
     growthPlatformValues.map((platform) => [
@@ -1202,6 +1248,7 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
   const nextBackfill: TrendBackfillProgress = {
     ...current,
     ...progress,
+    mode,
     platforms: mergedPlatforms,
     updatedAt: nowShanghaiIso(),
   };
@@ -1209,6 +1256,8 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
     updatedAt: nowShanghaiIso(),
     scheduler: meta.scheduler || {},
     backfill: nextBackfill,
+    backfillLive: mode === "live" ? nextBackfill : (meta.backfillLive || createEmptyStore().backfillLive),
+    backfillHistory: mode === "history" ? nextBackfill : (meta.backfillHistory || createEmptyStore().backfillHistory),
     mailDigest: meta.mailDigest || {},
   });
   return nextBackfill;

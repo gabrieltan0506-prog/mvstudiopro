@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { GrowthPlatform } from "@shared/growth";
 import { collectPlatformTrends } from "./trendCollector";
-import { bootstrapGrowthTrendBackfillWorker, stopGrowthTrendBackfillWorker } from "./trendBackfill";
+import {
+  bootstrapGrowthTrendBackfillWorker,
+  bootstrapGrowthTrendLiveBackfillWorker,
+  stopGrowthTrendBackfillWorker,
+  stopGrowthTrendLiveBackfillWorker,
+} from "./trendBackfill";
 import {
   readTrendSchedulerState,
   mergeTrendCollections,
@@ -412,6 +417,9 @@ export async function bootstrapGrowthTrendScheduler() {
     bootstrapGrowthTrendBackfillWorker().catch((error) => {
       console.warn("[growth.backfill] bootstrap failed:", error);
     });
+    bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
+      console.warn("[growth.backfill.live] bootstrap failed:", error);
+    });
   } else {
     console.info("[growth.backfill] bootstrap skipped; set GROWTH_ENABLE_BACKFILL_BOOTSTRAP=1 to enable automatic historical backfill on boot.");
   }
@@ -432,5 +440,6 @@ export function stopGrowthTrendScheduler() {
     tickTimer = null;
   }
   stopGrowthTrendBackfillWorker();
+  stopGrowthTrendLiveBackfillWorker();
   schedulerStarted = false;
 }
