@@ -3,10 +3,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const [baseStorePath, remoteStorePath, csvDir, outputPath] = process.argv.slice(2);
+const [baseStorePath, remoteStorePath, csvDir, outputPath, snapshotDirArg] = process.argv.slice(2);
 
 if (!baseStorePath || !remoteStorePath || !csvDir || !outputPath) {
-  console.error("Usage: node scripts/merge-growth-store-sources.mjs <base-store> <remote-store> <csv-dir> <output-store>");
+  console.error("Usage: node scripts/merge-growth-store-sources.mjs <base-store> <remote-store> <csv-dir> <output-store> [snapshot-dir]");
   process.exit(1);
 }
 
@@ -42,6 +42,15 @@ function normalizeItem(item) {
   };
 }
 
+function isValidPublishedAt(value) {
+  const publishedAt = text(value);
+  if (!publishedAt) return true;
+  if (publishedAt.length < 10) return false;
+  if (/^\d+$/.test(publishedAt)) return false;
+  const parsed = Date.parse(publishedAt);
+  return Number.isFinite(parsed);
+}
+
 function itemKey(item) {
   const id = text(item?.id);
   if (id) return id;
@@ -63,6 +72,7 @@ function mergeItems(existing = [], incoming = []) {
   const map = new Map();
   for (const raw of [...existing, ...incoming]) {
     const item = normalizeItem(raw);
+    if (!isValidPublishedAt(item.publishedAt)) continue;
     if (!item.id || !item.title) continue;
     const current = map.get(item.id);
     if (!current) {
@@ -126,11 +136,15 @@ async function readStore(file) {
 }
 
 async function walk(dir, files = []) {
+  try {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const absolute = path.join(dir, entry.name);
     if (entry.isDirectory()) await walk(absolute, files);
     else if (entry.isFile() && absolute.endsWith(".csv")) files.push(absolute);
+  }
+  } catch {
+    return files;
   }
   return files;
 }
@@ -302,4 +316,47 @@ const nextStore = {
 };
 
 await fs.writeFile(outputPath, JSON.stringify(nextStore, null, 2), "utf8");
+
+if (snapshotDirArg) {
+  const snapshotDir = path.resolve(snapshotDirArg);
+  await fs.mkdir(path.join(snapshotDir, "platforms"), { recursive: true });
+  await fs.mkdir(path.join(snapshotDir, "backups"), { recursive: true });
+  await fs.writeFile(path.join(snapshotDir, "current.json"), JSON.stringify(nextStore, null, 2), "utf8");
+  await fs.writeFile(path.join(snapshotDir, "runtime-meta.json"), JSON.stringify({
+    updatedAt,
+    scheduler: nextStore.scheduler || {},
+    backfill: nextStore.backfill || {},
+    mailDigest: nextStore.mailDigest || {},
+  }, null, 2), "utf8");
+  await fs.writeFile(path.join(snapshotDir, "archive-index.json"), JSON.stringify(nextStore.archiveIndex || [], null, 2), "utf8");
+  await fs.writeFile(path.join(snapshotDir, "history-summary.json"), JSON.stringify(nextStore.history || {}, null, 2), "utf8");
+  await fs.writeFile(path.join(snapshotDir, "backups", "growth-debug-summary.json"), JSON.stringify({
+    updatedAt,
+    totals: {
+      currentItems: Object.values(finalCollections).reduce((sum, collection) => sum + (collection.items?.length || 0), 0),
+      archivedItems: Object.values(finalHistoryPlatforms).reduce((sum, summary) => sum + (summary.archivedItems || 0), 0),
+    },
+    platforms: Object.fromEntries(
+      PLATFORM_ORDER.map((platform) => [
+        platform,
+        {
+          platform,
+          currentTotal: finalCollections[platform]?.items?.length || 0,
+          archivedTotal: finalHistoryPlatforms[platform]?.archivedItems || 0,
+        },
+      ]),
+    ),
+  }, null, 2), "utf8");
+
+  for (const platform of PLATFORM_ORDER) {
+    const collection = finalCollections[platform];
+    if (!collection) continue;
+    await fs.writeFile(
+      path.join(snapshotDir, "platforms", `${platform}.json`),
+      JSON.stringify({ updatedAt, platform, collection }, null, 2),
+      "utf8",
+    );
+  }
+}
+
 console.log(JSON.stringify(summary, null, 2));

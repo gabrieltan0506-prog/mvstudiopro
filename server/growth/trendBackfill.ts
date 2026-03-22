@@ -11,12 +11,36 @@ const LIVE_MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_LIVE_BACKFILL_ROUN
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
 const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
+const HISTORY_BASE_INTERVAL_MS = Math.max(
+  30 * 60 * 1000,
+  Number(process.env.GROWTH_HISTORY_BACKFILL_INTERVAL_MS || 30 * 60 * 1000) || 30 * 60 * 1000,
+);
+const HISTORY_STAGE_ONE_THRESHOLD = Math.max(
+  150_000,
+  Number(process.env.GROWTH_HISTORY_BACKFILL_STAGE_ONE_THRESHOLD || 150_000) || 150_000,
+);
+const HISTORY_STAGE_TWO_THRESHOLD = Math.max(
+  HISTORY_STAGE_ONE_THRESHOLD,
+  Number(process.env.GROWTH_HISTORY_BACKFILL_STAGE_TWO_THRESHOLD || 300_000) || 300_000,
+);
+const HISTORY_STAGE_THREE_THRESHOLD = Math.max(
+  HISTORY_STAGE_TWO_THRESHOLD,
+  Number(process.env.GROWTH_HISTORY_BACKFILL_STAGE_THREE_THRESHOLD || 500_000) || 500_000,
+);
 const HISTORY_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 10) || 10);
 const HISTORY_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 5) || 5);
 const LIVE_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_TARGET || 8) || 8);
 const LIVE_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_FALLBACK || 5) || 5);
 const LIVE_WINDOW_DAYS = Math.max(7, Number(process.env.GROWTH_LIVE_BACKFILL_WINDOW_DAYS || 30) || 30);
-const LIVE_GAP_STALE_MINUTES = Math.max(30, Number(process.env.GROWTH_LIVE_BACKFILL_STALE_MINUTES || 180) || 180);
+const LIVE_GAP_STALE_MINUTES = Math.max(30, Number(process.env.GROWTH_LIVE_BACKFILL_STALE_MINUTES || 30) || 30);
+const LIVE_GAP_BUCKET_MINUTES = Math.max(
+  15,
+  Number(process.env.GROWTH_LIVE_BACKFILL_BUCKET_MINUTES || 30) || 30,
+);
+const LIVE_GAP_BUCKETS = Math.max(
+  2,
+  Number(process.env.GROWTH_LIVE_BACKFILL_GAP_BUCKETS || 2) || 2,
+);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 
 const ENABLE_LIVE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
@@ -61,6 +85,13 @@ function nextHistoryDelayMs() {
   return HISTORY_MIN_INTERVAL_MS + Math.floor(Math.random() * (span + 1));
 }
 
+function getHistoricalCadenceMs(totalArchivedItems: number) {
+  if (totalArchivedItems >= HISTORY_STAGE_THREE_THRESHOLD) return 4 * 60 * 60 * 1000;
+  if (totalArchivedItems >= HISTORY_STAGE_TWO_THRESHOLD) return 2 * 60 * 60 * 1000;
+  if (totalArchivedItems >= HISTORY_STAGE_ONE_THRESHOLD) return 60 * 60 * 1000;
+  return HISTORY_BASE_INTERVAL_MS;
+}
+
 function getWorkerLabel(kind: BackfillKind) {
   return kind === "live" ? "growth.backfill.live" : "growth.backfill";
 }
@@ -80,7 +111,7 @@ function getWorkerMaxRounds(kind: BackfillKind) {
 function getWorkerSelectedWindowDays(kind: BackfillKind) {
   return kind === "live"
     ? LIVE_WINDOW_DAYS
-    : (Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
+    : Math.max(1, Number(process.env.GROWTH_HISTORY_BACKFILL_WINDOW_DAYS || process.env.GROWTH_TARGET_WINDOW_DAYS || 4) || 4);
 }
 
 function isSchedulerStale(lastSuccessAt?: string) {
@@ -89,19 +120,36 @@ function isSchedulerStale(lastSuccessAt?: string) {
   return Date.now() - time >= LIVE_GAP_STALE_MINUTES * 60 * 1000;
 }
 
-function scheduleNextBackfillStep(kind: BackfillKind) {
+function isSchedulerGapDetected(lastSuccessAt?: string) {
+  const time = new Date(lastSuccessAt || 0).getTime();
+  if (!Number.isFinite(time) || time <= 0) return true;
+  const ageMinutes = (Date.now() - time) / (60 * 1000);
+  return ageMinutes >= LIVE_GAP_BUCKET_MINUTES * LIVE_GAP_BUCKETS;
+}
+
+async function scheduleNextBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (!state.started) return;
   if (state.timer) clearTimeout(state.timer);
+  let delayMs = nextHistoryDelayMs();
+  if (kind === "history") {
+    try {
+      const stats = await readBackfillSnapshotFor("history");
+      const totalArchivedItems = stats.platforms.reduce((sum, item) => sum + (item.archivedTotal || 0), 0);
+      delayMs = getHistoricalCadenceMs(totalArchivedItems);
+    } catch {
+      delayMs = HISTORY_BASE_INTERVAL_MS;
+    }
+  }
   state.timer = setTimeout(() => {
     runBackfillStep(kind)
       .catch((error) => {
         console.warn(`[${getWorkerLabel(kind)}] periodic tick failed:`, error);
       })
       .finally(() => {
-        scheduleNextBackfillStep(kind);
+        void scheduleNextBackfillStep(kind);
       });
-  }, nextHistoryDelayMs());
+  }, delayMs);
 }
 
 type BackfillPlatformSnapshot = {
@@ -145,7 +193,7 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
   return PLATFORMS.filter((platform) => {
     if (kind === "live") {
       const row = stats.platforms.find((item) => item.platform === platform);
-      return isSchedulerStale(row?.lastSuccessAt);
+      return isSchedulerStale(row?.lastSuccessAt) || isSchedulerGapDetected(row?.lastSuccessAt);
     }
     return (workerState.history.plateau.get(platform) || 0) < PLATEAU_LIMIT;
   });
@@ -199,8 +247,8 @@ async function runBackfillStep(kind: BackfillKind) {
       selectedWindowDays: statsBefore.selectedWindowDays,
       status: "running",
       note: kind === "live"
-        ? `近 ${windowDays} 天 live 回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${stepTarget}，优先补齐近期断点。`
-        : `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${stepTarget}，受限时回落到 ${stepFallback}。不设平台总量上限，当前窗口 ${statsBefore.selectedWindowDays} 天。`,
+        ? `近 ${windowDays} 天 live 回填运行中：按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐，目标步长 ${stepTarget}。`
+        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，默认每 30 分钟一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 1 / 2 / 4 小时一次。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -236,8 +284,8 @@ async function runBackfillStep(kind: BackfillKind) {
         collectedAt: collection.collectedAt,
         nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
         frequencyLabel: kind === "live"
-          ? `近 ${windowDays} 天 live 回填 / 30-60 秒真人节奏 / 目标步长 ${stepTarget}`
-          : `历史回填 / 30-60 秒真人节奏 / 目标步长 ${stepTarget}`,
+          ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
+          : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
         burstMode: false,
         live: true,
         collection,
@@ -262,8 +310,8 @@ async function runBackfillStep(kind: BackfillKind) {
       selectedWindowDays: statsAfter.selectedWindowDays,
       status: "running",
       note: kind === "live"
-        ? `近 ${windowDays} 天 live 回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${stepTarget}，持续补齐近期断点。`
-        : `历史回填运行中：按 30-60 秒真人节奏抖动抓取，目标步长 ${stepTarget}，受限时回落到 ${stepFallback}。不设平台总量上限，最新覆盖窗口 ${statsAfter.selectedWindowDays} 天。`,
+        ? `近 ${windowDays} 天 live 回填运行中：按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐。`
+        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后降到 1 / 2 / 4 小时一次。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (state.plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -325,7 +373,7 @@ async function bootstrapWorker(kind: BackfillKind) {
   if (state.started) return;
   state.started = true;
   await runBackfillStep(kind);
-  scheduleNextBackfillStep(kind);
+  await scheduleNextBackfillStep(kind);
 }
 
 function stopWorker(kind: BackfillKind) {
