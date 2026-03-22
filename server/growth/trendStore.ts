@@ -611,16 +611,29 @@ async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<Pla
 }
 
 async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
+  const [meta, archiveIndex, history, summary] = await Promise.all([
+    readRuntimeMeta(),
+    readArchiveIndexFile(),
+    readHistorySummaryFile(),
+    readGrowthDebugSummary(),
+  ]);
   const collectionsEntries = await Promise.all(
     growthPlatformValues.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
   );
   const hasDerivedCollections = collectionsEntries.some(([, collection]) => Boolean(collection));
   if (!hasDerivedCollections) return null;
-  const [meta, archiveIndex, history] = await Promise.all([
-    readRuntimeMeta(),
-    readArchiveIndexFile(),
-    readHistorySummaryFile(),
-  ]);
+  const requiredPlatforms = growthPlatformValues.filter(
+    (platform) => Number(summary?.platforms?.[platform]?.currentTotal || 0) > 0,
+  );
+  const availablePlatforms = new Set(
+    collectionsEntries.filter(([, collection]) => Boolean(collection)).map(([platform]) => platform),
+  );
+  if (requiredPlatforms.some((platform) => !availablePlatforms.has(platform))) {
+    return null;
+  }
+  if ((summary?.totals.archivedItems || 0) > 0 && (!archiveIndex.length || !history)) {
+    return null;
+  }
   return {
     updatedAt: meta.updatedAt || nowShanghaiIso(),
     collections: Object.fromEntries(
@@ -1029,6 +1042,15 @@ export async function writeTrendStore(collections: Partial<Record<GrowthPlatform
   next.backfill = current.backfill || next.backfill;
   next.mailDigest = current.mailDigest || next.mailDigest;
   return writeStore(next);
+}
+
+export async function rebuildTrendDerivedFilesFromCurrentStore() {
+  const current = await readTrendStore();
+  return writeStore(current, {
+    writeDerivedPlatformFiles: true,
+    writeLegacyMirror: false,
+    allowLowerTotals: true,
+  });
 }
 
 export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
