@@ -1946,6 +1946,35 @@ async function collectDouyin(): Promise<PlatformTrendCollection> {
   });
 }
 
+/**
+ * Extract the JSON value of window.__INITIAL_STATE__ from XHS HTML.
+ * Uses balanced-brace counting to avoid issues with </script> inside JSON
+ * or greedy regex catastrophic backtracking on large payloads.
+ */
+function extractXhsInitialState(html: string): string | null {
+  const marker = "window.__INITIAL_STATE__=";
+  const startIdx = html.indexOf(marker);
+  if (startIdx === -1) return null;
+  const jsonStart = startIdx + marker.length;
+  if (html[jsonStart] !== "{") return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = jsonStart; i < html.length; i++) {
+    const ch = html[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\" && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return html.slice(jsonStart, i + 1);
+    }
+  }
+  return null;
+}
+
 async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   const cookie = String(process.env.XHS_COOKIE || "").trim();
   const paths = parseCsvEnv("XHS_EXPLORE_PATHS");
@@ -1995,11 +2024,9 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       });
       if (!response.ok) return { pageUrl, items: [] as TrendItem[], debugNote: `HTTP ${response.status}` };
       const html = await response.text();
-      // Use greedy match + allow optional semicolon / whitespace before </script>
-      const match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/)
-        ?? html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/m);
-      if (!match) return { pageUrl, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
-      const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+      const stateJson = extractXhsInitialState(html);
+      if (!stateJson) return { pageUrl, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
+      const state = vm.runInNewContext(`(${stateJson})`, {}) as {
         feed?: { feeds?: Array<Record<string, any>> };
       };
       const feeds = state.feed?.feeds ?? [];
@@ -2049,10 +2076,9 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
           });
           if (!response.ok) return { keyword, sort, page, items: [] as TrendItem[], debugNote: `HTTP ${response.status}` };
           const html = await response.text();
-          const match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/)
-            ?? html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/m);
-          if (!match) return { keyword, sort, page, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
-          const state = vm.runInNewContext(`(${match[1]})`, {}) as {
+          const stateJson = extractXhsInitialState(html);
+          if (!stateJson) return { keyword, sort, page, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
+          const state = vm.runInNewContext(`(${stateJson})`, {}) as {
             searchResult?: { notes?: Array<Record<string, any>> };
             note?: { notes?: Array<Record<string, any>> };
           };
