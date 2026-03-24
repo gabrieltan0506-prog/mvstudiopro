@@ -1987,14 +1987,18 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     explorePaths.slice(0, pageLimit).map((pageUrl) => async () => {
       const response = await fetch(pageUrl, {
         headers: {
-          "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
           ...(cookie ? { cookie } : {}),
         },
       });
-      if (!response.ok) return { pageUrl, items: [] as TrendItem[] };
+      if (!response.ok) return { pageUrl, items: [] as TrendItem[], debugNote: `HTTP ${response.status}` };
       const html = await response.text();
-      const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
-      if (!match) return { pageUrl, items: [] as TrendItem[] };
+      // Use greedy match + allow optional semicolon / whitespace before </script>
+      const match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/)
+        ?? html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/m);
+      if (!match) return { pageUrl, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
       const state = vm.runInNewContext(`(${match[1]})`, {}) as {
         feed?: { feeds?: Array<Record<string, any>> };
       };
@@ -2018,13 +2022,16 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
           } satisfies TrendItem;
         })
         .filter(Boolean) as TrendItem[];
-      return { pageUrl, items: pageItems };
+      return { pageUrl, items: pageItems, debugNote: "" };
     }),
     concurrency,
   );
   for (const result of exploreResults) {
     items.push(...result.items);
-    notes.push(`Fetched ${result.items.length} Xiaohongshu items from ${result.pageUrl}.`);
+    const note = result.debugNote
+      ? `Fetched ${result.items.length} Xiaohongshu items from ${result.pageUrl} [${result.debugNote}].`
+      : `Fetched ${result.items.length} Xiaohongshu items from ${result.pageUrl}.`;
+    notes.push(note);
   }
 
   const searchResults = await runBatches(
@@ -2034,14 +2041,17 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
           const pageUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(keyword)}&source=web_explore_feed&sort=${encodeURIComponent(sort)}&page=${page}`;
           const response = await fetch(pageUrl, {
             headers: {
-              "user-agent": "Mozilla/5.0 mvstudiopro-growth-collector/1.0",
+              "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+              accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
               ...(cookie ? { cookie } : {}),
             },
           });
-          if (!response.ok) return { keyword, sort, page, items: [] as TrendItem[] };
+          if (!response.ok) return { keyword, sort, page, items: [] as TrendItem[], debugNote: `HTTP ${response.status}` };
           const html = await response.text();
-          const match = html.match(/window\.__INITIAL_STATE__=(\{[\s\S]*?\})<\/script>/);
-          if (!match) return { keyword, sort, page, items: [] as TrendItem[] };
+          const match = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*\})\s*;?\s*<\/script>/)
+            ?? html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*;?\s*<\/script>/m);
+          if (!match) return { keyword, sort, page, items: [] as TrendItem[], debugNote: "no __INITIAL_STATE__ found" };
           const state = vm.runInNewContext(`(${match[1]})`, {}) as {
             searchResult?: { notes?: Array<Record<string, any>> };
             note?: { notes?: Array<Record<string, any>> };
@@ -2065,7 +2075,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
               } satisfies TrendItem;
             })
             .filter(Boolean) as TrendItem[];
-          return { keyword, sort, page, items: pageItems };
+          return { keyword, sort, page, items: pageItems, debugNote: "" };
         }),
       ),
     ),
@@ -2073,7 +2083,10 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   );
   for (const result of searchResults) {
     items.push(...result.items);
-    notes.push(`Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword} sort ${result.sort} page ${result.page}.`);
+    const note = result.debugNote
+      ? `Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword} sort ${result.sort} page ${result.page} [${result.debugNote}].`
+      : `Fetched ${result.items.length} Xiaohongshu search items for keyword ${result.keyword} sort ${result.sort} page ${result.page}.`;
+    notes.push(note);
   }
   await recordAdaptiveRouteRun({
     platform: "xiaohongshu",
