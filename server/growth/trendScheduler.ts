@@ -19,8 +19,15 @@ import { nowShanghaiIso } from "./time";
 
 const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"];
 const RETRY_BASE_MS = 5 * 60 * 1000;
+const RETRY_MAX_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.GROWTH_SCHEDULER_RETRY_MAX_MS || 30 * 60 * 1000) || 30 * 60 * 1000,
+);
 const CHECK_INTERVAL_MS = 60 * 1000;
-const JITTER_MAX_MS = 20 * 60 * 1000;
+const JITTER_MAX_MS = Math.max(
+  0,
+  Number(process.env.GROWTH_SCHEDULER_JITTER_MAX_MS || 0) || 0,
+);
 const SCHEDULER_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_SCHEDULER_INTERVAL_MINUTES || 30) || 30);
 const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 10) || 10);
 const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
@@ -293,7 +300,7 @@ function resolveNextRunPlan(params: {
 }
 
 function buildRetryDelayMs(failureCount: number) {
-  return Math.min(60 * 60 * 1000, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
+  return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * Math.max(1, 2 ** Math.max(0, failureCount - 1)));
 }
 
 async function runPlatform(platform: GrowthPlatform) {
