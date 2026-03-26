@@ -87,6 +87,12 @@ function parseNumberEnv(name: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function parsePreferredNumberEnv(preferredName: string, legacyName: string, fallback: number) {
+  const preferred = Number(process.env[preferredName] || "");
+  if (Number.isFinite(preferred)) return preferred;
+  return parseNumberEnv(legacyName, fallback);
+}
+
 function isBooleanEnvEnabled(name: string, fallback = false) {
   const raw = String(process.env[name] || "").trim();
   if (!raw) return fallback;
@@ -1661,12 +1667,12 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
-  const popularPages = Math.max(1, Math.min(6, Number(process.env.BILIBILI_TREND_PAGES || 6) || 6));
+  const popularPages = Math.max(1, Math.min(6, parsePreferredNumberEnv("GROWTH_BILIBILI_TREND_PAGES", "BILIBILI_TREND_PAGES", 6)));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const defaultSearchPages = Math.max(1, Math.min(2, Number(process.env.BILIBILI_SEARCH_PAGES || 2) || 2));
+  const defaultSearchPages = Math.max(1, Math.min(2, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_PAGES", "BILIBILI_SEARCH_PAGES", 2)));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const defaultKeywordLimit = Math.max(8, Math.min(12, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 12) || 12));
+  const defaultKeywordLimit = Math.max(8, Math.min(12, parsePreferredNumberEnv("GROWTH_BILIBILI_SEARCH_KEYWORD_LIMIT", "BILIBILI_SEARCH_KEYWORD_LIMIT", 12)));
   const searchRoute = await getAdaptiveRouteDecision("bilibili", "search_feed", {
     pageCount: defaultSearchPages,
     keywordLimit: defaultKeywordLimit,
@@ -2059,12 +2065,12 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.career_v3",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.movie_and_tv_v3",
     ];
-  const pageLimit = Math.max(1, Math.min(8, Number(process.env.XHS_TREND_PAGES || 4) || 4));
-  const defaultXhsKeywordLimit = Math.max(3, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 6) || 6);
-  const defaultXhsSearchPages = Math.max(1, Math.min(4, Number(process.env.XHS_SEARCH_PAGES || 2) || 2));
-  const xhsCommentItemLimit = Math.max(0, Math.min(8, Number(process.env.XHS_COMMENT_SAMPLE_ITEMS || 4) || 4));
-  const xhsCommentSampleLimit = Math.max(0, Math.min(5, Number(process.env.XHS_COMMENT_SAMPLE_LIMIT || 3) || 3));
-  const xhsConcurrency = Math.max(2, Math.min(4, Number(process.env.XHS_CONCURRENCY || 3) || 3));
+  const pageLimit = Math.max(1, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_TREND_PAGES", "XHS_TREND_PAGES", 4)));
+  const defaultXhsKeywordLimit = Math.max(3, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_KEYWORD_LIMIT", "XHS_SEARCH_KEYWORD_LIMIT", 6));
+  const defaultXhsSearchPages = Math.max(1, Math.min(4, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_PAGES", "XHS_SEARCH_PAGES", 2)));
+  const xhsCommentItemLimit = Math.max(0, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_ITEMS", "XHS_COMMENT_SAMPLE_ITEMS", 4)));
+  const xhsCommentSampleLimit = Math.max(0, Math.min(5, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_LIMIT", "XHS_COMMENT_SAMPLE_LIMIT", 3)));
+  const xhsConcurrency = Math.max(2, Math.min(4, parsePreferredNumberEnv("GROWTH_XHS_CONCURRENCY", "XHS_CONCURRENCY", 3)));
   const xhsSearchRoute = await getAdaptiveRouteDecision("xiaohongshu", "search_feed", {
     pageCount: defaultXhsSearchPages,
     keywordLimit: defaultXhsKeywordLimit,
@@ -2798,12 +2804,12 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
     ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
   ].filter(Boolean);
-  const defaultToutiaoKeywordLimit = Math.max(8, Math.min(48, Number(process.env.TOUTIAO_SEARCH_KEYWORD_LIMIT || 24) || 24));
-  const defaultToutiaoSearchPages = Math.max(1, Math.min(12, Number(process.env.TOUTIAO_SEARCH_PAGES || 4) || 4));
+  const defaultToutiaoKeywordLimit = Math.max(4, Math.min(48, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_KEYWORD_LIMIT", "TOUTIAO_SEARCH_KEYWORD_LIMIT", 24)));
+  const defaultToutiaoSearchPages = Math.max(1, Math.min(12, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_PAGES", "TOUTIAO_SEARCH_PAGES", 4)));
   const searchPageSize = Math.max(10, Math.min(30, Number(process.env.TOUTIAO_SEARCH_PAGE_SIZE || 20) || 20));
-  const searchConcurrency = Math.max(1, Math.min(6, Number(process.env.TOUTIAO_SEARCH_CONCURRENCY || 3) || 3));
-  const authorLimit = Math.max(1, Math.min(16, Number(process.env.TOUTIAO_AUTHOR_LIMIT || 12) || 12));
-  const profilePages = Math.max(1, Math.min(20, Number(process.env.TOUTIAO_PROFILE_PAGES || 10) || 10));
+  const searchConcurrency = Math.max(1, Math.min(6, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_CONCURRENCY", "TOUTIAO_SEARCH_CONCURRENCY", 3)));
+  const authorLimit = Math.max(1, Math.min(16, parsePreferredNumberEnv("GROWTH_TOUTIAO_AUTHOR_LIMIT", "TOUTIAO_AUTHOR_LIMIT", 12)));
+  const profilePages = Math.max(1, Math.min(20, parsePreferredNumberEnv("GROWTH_TOUTIAO_PROFILE_PAGES", "TOUTIAO_PROFILE_PAGES", 10)));
   const authorPairPool = parsePairPoolEnv("TOUTIAO_AUTHOR_POOL");
 
   if (!userTokenPool.length) {
