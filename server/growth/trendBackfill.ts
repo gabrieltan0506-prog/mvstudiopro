@@ -44,6 +44,12 @@ const LIVE_GAP_BUCKETS = Math.max(
   Number(process.env.GROWTH_LIVE_BACKFILL_GAP_BUCKETS || 2) || 2,
 );
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
+const BACKFILL_EXCLUDE_PLATFORMS = new Set<GrowthPlatform>(
+  String(process.env.GROWTH_BACKFILL_EXCLUDE_PLATFORMS || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item): item is GrowthPlatform => PLATFORMS.includes(item as GrowthPlatform)),
+);
 
 const ENABLE_LIVE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
   String(process.env.GROWTH_ENABLE_LIVE_BACKFILL_BOOTSTRAP || "0").trim(),
@@ -211,6 +217,7 @@ async function readBackfillSnapshotFor(kind: BackfillKind): Promise<BackfillRunt
 
 function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot) {
   return PLATFORMS.filter((platform) => {
+    if (BACKFILL_EXCLUDE_PLATFORMS.has(platform)) return false;
     if (kind === "live") {
       const row = stats.platforms.find((item) => item.platform === platform);
       return isSchedulerStale(row?.lastSuccessAt) || isSchedulerGapDetected(row?.lastSuccessAt);
