@@ -422,10 +422,6 @@ async function runDuePlatforms() {
       if (isForceBurstActive(platform) && staleSinceLastRun) return true;
       if (!nextRunAt) return true;
       return new Date(nextRunAt).getTime() <= Date.now();
-    }).sort((left, right) => {
-      const leftNext = scheduler[left]?.nextRunAt ? new Date(scheduler[left]!.nextRunAt!).getTime() : 0;
-      const rightNext = scheduler[right]?.nextRunAt ? new Date(scheduler[right]!.nextRunAt!).getTime() : 0;
-      return leftNext - rightNext;
     });
 
     for (const platform of queue) {
