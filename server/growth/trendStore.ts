@@ -445,6 +445,16 @@ function normalizeItem(item: TrendItem): TrendItem {
     author: item.author ? String(item.author).trim() : undefined,
     url: item.url ? String(item.url).trim() : undefined,
     tags: normalizeStringList(item.tags),
+    commentSamples: Array.isArray(item.commentSamples)
+      ? item.commentSamples
+        .map((sample) => ({
+          author: sample?.author ? String(sample.author).trim() : undefined,
+          text: String(sample?.text || "").trim(),
+          likeCount: Number(sample?.likeCount || 0) || undefined,
+        }))
+        .filter((sample) => sample.text)
+        .slice(0, 5)
+      : undefined,
   };
 }
 
@@ -476,6 +486,7 @@ function dedupeTrendItems(existing: TrendItem[] = [], incoming: TrendItem[] = []
         ...normalizeStringList(current.tags),
         ...normalizeStringList(item.tags),
       ])),
+      commentSamples: (item.commentSamples?.length ? item.commentSamples : current.commentSamples)?.slice(0, 5),
       hotValue: Math.max(current.hotValue || 0, item.hotValue || 0) || undefined,
       likes: Math.max(current.likes || 0, item.likes || 0) || undefined,
       comments: Math.max(current.comments || 0, item.comments || 0) || undefined,

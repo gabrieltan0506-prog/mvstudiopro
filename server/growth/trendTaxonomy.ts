@@ -68,6 +68,7 @@ function collectText(item: TrendItem) {
     item.author,
     item.bucket,
     ...normalizeStringList(item.tags),
+    ...(item.commentSamples || []).map((sample) => sample.text),
   ].filter(Boolean).join(" ").toLowerCase();
 }
 

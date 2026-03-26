@@ -25,6 +25,11 @@ export type TrendItem = {
   hotValue?: number;
   contentType?: "video" | "note" | "topic";
   tags?: string[];
+  commentSamples?: Array<{
+    author?: string;
+    text: string;
+    likeCount?: number;
+  }>;
   industryLabels?: string[];
   ageLabels?: string[];
   contentLabels?: string[];
@@ -683,6 +688,29 @@ function dedupeById(items: TrendItem[]) {
     seen.add(key);
     return true;
   });
+}
+
+function normalizeCommentSamples(
+  samples: TrendItem["commentSamples"],
+  limit: number,
+): TrendItem["commentSamples"] {
+  if (!Array.isArray(samples) || !samples.length || limit <= 0) return undefined;
+  const seen = new Set<string>();
+  const normalized = samples
+    .map((sample) => ({
+      author: sample?.author ? String(sample.author).trim() : undefined,
+      text: String(sample?.text || "").trim(),
+      likeCount: Number(sample?.likeCount || 0) || undefined,
+    }))
+    .filter((sample) => sample.text)
+    .filter((sample) => {
+      const key = `${sample.author || ""}::${sample.text}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, limit);
+  return normalized.length ? normalized : undefined;
 }
 
 async function runBatches<T>(tasks: Array<() => Promise<T>>, concurrency: number) {
@@ -1588,6 +1616,47 @@ function finalizeCollection(
   };
 }
 
+function extractXhsCommentSamples(payload: any, limit: number): TrendItem["commentSamples"] {
+  const candidates = Array.isArray(payload?.data?.comments)
+    ? payload.data.comments
+    : Array.isArray(payload?.comments)
+      ? payload.comments
+      : [];
+  return normalizeCommentSamples(
+    candidates.map((comment: any) => ({
+      author: String(comment?.user_info?.nickname ?? comment?.nickname ?? "").trim() || undefined,
+      text: String(comment?.content ?? comment?.comment ?? "").trim(),
+      likeCount: Number(comment?.like_count ?? comment?.liked_count ?? comment?.likes ?? 0) || undefined,
+    })),
+    limit,
+  );
+}
+
+async function fetchXhsCommentSamples(
+  noteId: string,
+  cookie: string,
+  limit: number,
+): Promise<TrendItem["commentSamples"]> {
+  if (!noteId || !cookie || limit <= 0) return undefined;
+  try {
+    const url = `https://edith.xiaohongshu.com/api/sns/web/v2/comment/page?note_id=${encodeURIComponent(noteId)}&cursor=&top_comment_id=&image_formats=jpg,webp,avif`;
+    const response = await fetch(url, {
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        accept: "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        referer: `https://www.xiaohongshu.com/explore/${noteId}`,
+        cookie,
+      },
+    });
+    if (!response.ok) return undefined;
+    const payload = await response.json();
+    return extractXhsCommentSamples(payload, limit);
+  } catch {
+    return undefined;
+  }
+}
+
 async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
@@ -1990,9 +2059,12 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.career_v3",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.movie_and_tv_v3",
     ];
-  const pageLimit = Math.max(1, Math.min(20, Number(process.env.XHS_TREND_PAGES || explorePaths.length) || explorePaths.length));
-  const defaultXhsKeywordLimit = Math.max(6, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 12) || 12);
-  const defaultXhsSearchPages = Math.max(1, Math.min(8, Number(process.env.XHS_SEARCH_PAGES || 4) || 4));
+  const pageLimit = Math.max(1, Math.min(8, Number(process.env.XHS_TREND_PAGES || 4) || 4));
+  const defaultXhsKeywordLimit = Math.max(3, Number(process.env.XHS_SEARCH_KEYWORD_LIMIT || 6) || 6);
+  const defaultXhsSearchPages = Math.max(1, Math.min(4, Number(process.env.XHS_SEARCH_PAGES || 2) || 2));
+  const xhsCommentItemLimit = Math.max(0, Math.min(8, Number(process.env.XHS_COMMENT_SAMPLE_ITEMS || 4) || 4));
+  const xhsCommentSampleLimit = Math.max(0, Math.min(5, Number(process.env.XHS_COMMENT_SAMPLE_LIMIT || 3) || 3));
+  const xhsConcurrency = Math.max(2, Math.min(4, Number(process.env.XHS_CONCURRENCY || 3) || 3));
   const xhsSearchRoute = await getAdaptiveRouteDecision("xiaohongshu", "search_feed", {
     pageCount: defaultXhsSearchPages,
     keywordLimit: defaultXhsKeywordLimit,
@@ -2008,7 +2080,6 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
   const searchSorts = parseCsvEnv("XHS_SEARCH_SORTS").length
     ? parseCsvEnv("XHS_SEARCH_SORTS")
     : ["general", "popularity_desc"];
-  const concurrency = Math.max(2, Math.min(12, Number(process.env.GROWTH_COLLECTOR_CONCURRENCY || 6) || 6));
   const items: TrendItem[] = [];
   const notes: string[] = [];
 
@@ -2051,7 +2122,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
         .filter(Boolean) as TrendItem[];
       return { pageUrl, items: pageItems, debugNote: "" };
     }),
-    concurrency,
+    xhsConcurrency,
   );
   for (const result of exploreResults) {
     items.push(...result.items);
@@ -2105,7 +2176,7 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
         }),
       ),
     ),
-    concurrency,
+    xhsConcurrency,
   );
   for (const result of searchResults) {
     items.push(...result.items);
@@ -2127,7 +2198,28 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
     yieldedCount: searchResults.reduce((sum, item) => sum + item.items.length, 0),
   });
 
-  return finalizeCollection("xiaohongshu", "live", dedupeById(items), notes, {
+  const dedupedItems = dedupeById(items);
+  if (cookie && xhsCommentItemLimit > 0 && xhsCommentSampleLimit > 0) {
+    const commentTargets = dedupedItems
+      .filter((item) => item.id && item.url)
+      .sort((left, right) => (right.hotValue || right.likes || 0) - (left.hotValue || left.likes || 0))
+      .slice(0, xhsCommentItemLimit);
+    const commentResults = await runBatches(
+      commentTargets.map((item) => async () => ({
+        id: item.id,
+        samples: await fetchXhsCommentSamples(item.id, cookie, xhsCommentSampleLimit),
+      })),
+      2,
+    );
+    const byId = new Map(commentResults.filter((item) => item.samples?.length).map((item) => [item.id, item.samples]));
+    for (const item of dedupedItems) {
+      const samples = byId.get(item.id);
+      if (samples?.length) item.commentSamples = samples;
+    }
+    notes.push(`Fetched Xiaohongshu comment samples for ${byId.size} items.`);
+  }
+
+  return finalizeCollection("xiaohongshu", "live", dedupedItems, notes, {
     collectorMode: "warehouse",
     requestCount: Math.min(pageLimit, explorePaths.length) + (searchKeywords.length * searchSorts.length * searchPages),
     pageDepth: Math.max(Math.min(pageLimit, explorePaths.length), searchPages),
