@@ -11,6 +11,12 @@ const LIVE_MAX_ROUNDS = Math.max(1, Number(process.env.GROWTH_LIVE_BACKFILL_ROUN
 const PLATEAU_LIMIT = Math.max(2, Number(process.env.GROWTH_BACKFILL_PLATEAU_LIMIT || 3) || 3);
 const HISTORY_MIN_INTERVAL_MS = 30 * 1000;
 const HISTORY_MAX_INTERVAL_MS = 60 * 1000;
+const BACKFILL_ACTIVE_INTERVAL_MS = Math.max(
+  1 * 60 * 1000,
+  Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 10 * 60 * 1000) || 10 * 60 * 1000,
+);
+const BACKFILL_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_START_HOUR || 1) || 1));
+const BACKFILL_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_END_HOUR || 6) || 6));
 const HISTORY_BASE_INTERVAL_MS = Math.max(
   30 * 60 * 1000,
   Number(process.env.GROWTH_HISTORY_BACKFILL_INTERVAL_MS || 30 * 60 * 1000) || 30 * 60 * 1000,
@@ -107,8 +113,27 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 }
 
 function nextHistoryDelayMs() {
-  const span = Math.max(0, HISTORY_MAX_INTERVAL_MS - HISTORY_MIN_INTERVAL_MS);
-  return HISTORY_MIN_INTERVAL_MS + Math.floor(Math.random() * (span + 1));
+  return BACKFILL_ACTIVE_INTERVAL_MS;
+}
+
+function getShanghaiHour(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hourPart = parts.find((part) => part.type === "hour")?.value;
+  return Number(hourPart || 0);
+}
+
+function isHourInWindow(hour: number, startHour: number, endHour: number) {
+  if (startHour === endHour) return true;
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
+function isBackfillWindow(now = new Date()) {
+  return isHourInWindow(getShanghaiHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
 function getHistoricalCadenceMs(totalArchivedItems: number) {
@@ -166,6 +191,9 @@ async function scheduleNextBackfillStep(kind: BackfillKind) {
     } catch {
       delayMs = HISTORY_BASE_INTERVAL_MS;
     }
+  }
+  if (!isBackfillWindow()) {
+    delayMs = BACKFILL_ACTIVE_INTERVAL_MS;
   }
   state.timer = setTimeout(() => {
     runBackfillStep(kind)
@@ -229,6 +257,7 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
 async function runBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (state.inFlight) return;
+  if (!isBackfillWindow()) return;
   state.inFlight = true;
   try {
     const statsBefore = await readBackfillSnapshotFor(kind);

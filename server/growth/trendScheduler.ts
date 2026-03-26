@@ -30,6 +30,10 @@ const BURST_TRIGGER_GROWTH_RATIO = Math.max(0.1, Number(process.env.GROWTH_BURST
 const BURST_EXIT_DROP_RATIO = Math.max(0.05, Number(process.env.GROWTH_BURST_EXIT_DROP_RATIO || 0.3) || 0.3);
 const BURST_MIN_STABLE_RUNS = Math.max(1, Number(process.env.GROWTH_BURST_MIN_STABLE_RUNS || 2) || 2);
 const SCHEDULER_TIMEZONE = "Asia/Shanghai";
+const LIVE_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_LIVE_WINDOW_START_HOUR || 7) || 7));
+const LIVE_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_LIVE_WINDOW_END_HOUR || 1) || 1));
+const BACKFILL_WINDOW_START_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_START_HOUR || 1) || 1));
+const BACKFILL_WINDOW_END_HOUR = Math.max(0, Math.min(23, Number(process.env.GROWTH_BACKFILL_WINDOW_END_HOUR || 6) || 6));
 const FORCE_BURST_PLATFORMS = new Set(
   String(process.env.GROWTH_FORCE_BURST_PLATFORMS || "")
     .split(",")
@@ -129,6 +133,20 @@ function getSchedulerHour(now = new Date()) {
   }).formatToParts(now);
   const hourPart = parts.find((part) => part.type === "hour")?.value;
   return Number(hourPart || 0);
+}
+
+function isHourInWindow(hour: number, startHour: number, endHour: number) {
+  if (startHour === endHour) return true;
+  if (startHour < endHour) return hour >= startHour && hour < endHour;
+  return hour >= startHour || hour < endHour;
+}
+
+function isLiveWindow(now = new Date()) {
+  return isHourInWindow(getSchedulerHour(now), LIVE_WINDOW_START_HOUR, LIVE_WINDOW_END_HOUR);
+}
+
+function isBackfillWindow(now = new Date()) {
+  return isHourInWindow(getSchedulerHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
 function getShanghaiDateParts(now = new Date()) {
@@ -379,6 +397,7 @@ async function runPlatform(platform: GrowthPlatform) {
 
 async function runDuePlatforms() {
   if (runInFlight) return;
+  if (!isLiveWindow()) return;
   runInFlight = true;
   try {
     const scheduler = await readTrendSchedulerState();
@@ -440,12 +459,17 @@ export async function bootstrapGrowthTrendScheduler() {
   }
 
   if (await shouldBootstrapBackfill()) {
-    bootstrapGrowthTrendBackfillWorker().catch((error) => {
-      console.warn("[growth.backfill] bootstrap failed:", error);
-    });
-    bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
-      console.warn("[growth.backfill.live] bootstrap failed:", error);
-    });
+    if (isBackfillWindow()) {
+      bootstrapGrowthTrendBackfillWorker().catch((error) => {
+        console.warn("[growth.backfill] bootstrap failed:", error);
+      });
+      bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
+        console.warn("[growth.backfill.live] bootstrap failed:", error);
+      });
+    } else {
+      stopGrowthTrendBackfillWorker();
+      stopGrowthTrendLiveBackfillWorker();
+    }
   } else {
     console.info("[growth.backfill] bootstrap skipped; set GROWTH_ENABLE_BACKFILL_BOOTSTRAP=1 to enable automatic historical backfill on boot.");
   }
@@ -454,6 +478,17 @@ export async function bootstrapGrowthTrendScheduler() {
   });
 
   tickTimer = setInterval(() => {
+    if (isBackfillWindow()) {
+      bootstrapGrowthTrendBackfillWorker().catch((error) => {
+        console.warn("[growth.backfill] periodic bootstrap failed:", error);
+      });
+      bootstrapGrowthTrendLiveBackfillWorker().catch((error) => {
+        console.warn("[growth.backfill.live] periodic bootstrap failed:", error);
+      });
+    } else {
+      stopGrowthTrendBackfillWorker();
+      stopGrowthTrendLiveBackfillWorker();
+    }
     runDuePlatforms().catch((error) => {
       console.warn("[growth.scheduler] periodic tick failed:", error);
     });
