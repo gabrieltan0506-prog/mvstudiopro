@@ -55,11 +55,11 @@ jobs:
           capture_from_fly "gzip -c /data/growth/archive-index.json" /tmp/growth-backup/archive-index.json.gz
           capture_from_fly "gzip -c /data/growth/history-summary.json" /tmp/growth-backup/history-summary.json.gz
           capture_from_fly "gzip -c /data/growth/backups/growth-debug-summary.json" /tmp/growth-backup/growth-debug-summary.json.gz
-          capture_from_fly "tar -czf - -C /data/growth platforms" /tmp/growth-backup/platforms.tar.gz
-          capture_from_fly "tar -czf - -C /data/growth archive" /tmp/growth-backup/archive.tar.gz
-          capture_from_fly "tar -czf - -C /data/growth history-ledger" /tmp/growth-backup/history-ledger.tar.gz
-          capture_from_fly "node -e \"const fs=require('fs');process.stdout.write(fs.existsSync('/data/growth/platform-current-manifest.json') ? 'yes' : 'no')\"" /tmp/growth-backup/has-platform-current.txt
-          capture_from_fly "if [ -d /data/growth/platform-current ]; then tar -czf - -C /data/growth platform-current; fi" /tmp/growth-backup/platform-current.tar.gz || true
+          capture_from_fly "tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth platforms" /tmp/growth-backup/platforms.tar.gz
+          capture_from_fly "tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth archive" /tmp/growth-backup/archive.tar.gz
+          capture_from_fly "tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth history-ledger" /tmp/growth-backup/history-ledger.tar.gz
+          capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then echo yes; else echo no; fi" /tmp/growth-backup/has-platform-current.txt
+          capture_from_fly "if [ -d /data/growth/platform-current ]; then tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth platform-current; fi" /tmp/growth-backup/platform-current.tar.gz || true
           capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then gzip -c /data/growth/platform-current-manifest.json; fi" /tmp/growth-backup/platform-current-manifest.json.gz || true
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
