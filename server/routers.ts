@@ -77,6 +77,12 @@ function getGrowthPlatformMeta(platform?: string) {
   return GROWTH_PLATFORM_META[key] || { label: key || "-", description: "平台说明暂未配置。" };
 }
 
+function addMinutesToIso(base?: string, minutes = 15) {
+  const time = new Date(String(base || "")).getTime();
+  if (!Number.isFinite(time) || time <= 0) return undefined;
+  return new Date(time + minutes * 60 * 1000).toISOString();
+}
+
 function isDouyinCreatorCenterBucket(bucket: string) {
   return DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES.some((prefix) => bucket.startsWith(prefix));
 }
@@ -941,8 +947,18 @@ export const appRouter = router({
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         const normalizeBackfill = (backfill: typeof runtimeMeta.backfill | null | undefined) => {
           if (!backfill) return null;
+          const selectedWindowDays = Number(backfill.selectedWindowDays || 0) || (backfill.mode === "live" ? 30 : 90);
+          const nextRunAt = backfill.nextRunAt || addMinutesToIso(backfill.updatedAt || backfill.startedAt, 15);
+          const startedAt = backfill.startedAt || backfill.updatedAt;
+          const note = backfill.mode === "live"
+            ? `近期回填运行中：窗口 ${selectedWindowDays} 天，夜间 burst 模式，每 15 分钟一次。`
+            : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间 burst 模式，每 15 分钟一次；累计量超 150000 / 300000 / 500000 后分别降到 0.5 / 1 / 2 小时一次。`;
           const backfillPlatforms = new Map(
-            (backfill.platforms || []).map((item) => [String(item.platform), { ...item }]),
+            (backfill.platforms || []).map((item) => [String(item.platform), {
+              ...item,
+              startedAt: item.startedAt || startedAt,
+              nextRunAt: item.nextRunAt || nextRunAt,
+            }]),
           );
           for (const platform of growthPlatformValues.filter((item) => item !== "weixin_channels")) {
             if (backfillPlatforms.has(platform)) continue;
@@ -951,6 +967,8 @@ export const appRouter = router({
               target: 0,
               currentTotal: 0,
               archivedTotal: 0,
+              startedAt,
+              nextRunAt,
               status: "pending" as const,
             });
           }
@@ -959,6 +977,10 @@ export const appRouter = router({
             currentRound: 0,
             maxRounds: 0,
             targetPerPlatform: 0,
+            startedAt,
+            nextRunAt,
+            selectedWindowDays,
+            note,
             platforms: Array.from(backfillPlatforms.values()).map((item) => ({
               ...item,
               platformLabel: getGrowthPlatformMeta(item.platform).label,
