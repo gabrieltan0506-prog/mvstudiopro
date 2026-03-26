@@ -1,10 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { growthPlatformValues, type GrowthPlatform } from "@shared/growth";
 import type { PlatformTrendCollection, TrendItem } from "./trendCollector";
 import { nowShanghaiIso, toShanghaiIso } from "./time";
 import { normalizeStringList } from "./trendNormalize";
+const execFileAsync = promisify(execFile);
 
 export type TrendSchedulerState = {
   platform: GrowthPlatform;
@@ -245,6 +248,8 @@ const PLATFORM_DIR = path.join(STORE_DIR, "platforms");
 const PLATFORM_CURRENT_DIR = path.join(STORE_DIR, "platform-current");
 const PLATFORM_CURRENT_MANIFEST_FILE = path.join(STORE_DIR, "platform-current-manifest.json");
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
+const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
+const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
@@ -268,6 +273,73 @@ async function ensureStoreDir() {
   await fs.mkdir(PLATFORM_DIR, { recursive: true });
   await fs.mkdir(PLATFORM_CURRENT_DIR, { recursive: true });
   await fs.mkdir(HISTORY_LEDGER_DIR, { recursive: true });
+  await fs.mkdir(GITHUB_OFFLOAD_CACHE_DIR, { recursive: true });
+}
+
+function canUseGithubColdStore() {
+  return Boolean(GITHUB_COLD_STORE_BASE_URL);
+}
+
+function getColdStoreAssetUrl(assetName: string) {
+  if (!GITHUB_COLD_STORE_BASE_URL) return "";
+  return `${GITHUB_COLD_STORE_BASE_URL}/${assetName}`;
+}
+
+async function downloadColdStoreAsset(assetName: string, cacheRelativePath: string) {
+  if (!canUseGithubColdStore()) return null;
+  const url = getColdStoreAssetUrl(assetName);
+  if (!url) return null;
+  const cachePath = path.join(GITHUB_OFFLOAD_CACHE_DIR, cacheRelativePath);
+  try {
+    await fs.access(cachePath);
+    return cachePath;
+  } catch {}
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) return null;
+  const bytes = Buffer.from(await response.arrayBuffer());
+  await fs.mkdir(path.dirname(cachePath), { recursive: true });
+  await fs.writeFile(cachePath, bytes);
+  return cachePath;
+}
+
+async function readJsonWithGzipFallback<T>(localPath: string, assetName: string, cacheRelativePath: string): Promise<T | null> {
+  try {
+    return JSON.parse(await fs.readFile(localPath, "utf8")) as T;
+  } catch {}
+  const downloaded = await downloadColdStoreAsset(assetName, cacheRelativePath);
+  if (!downloaded) return null;
+  try {
+    const { stdout } = await execFileAsync("gzip", ["-dfc", downloaded], { maxBuffer: 64 * 1024 * 1024 });
+    return JSON.parse(stdout) as T;
+  } catch {
+    return null;
+  }
+}
+
+function resolveArchiveRelativePath(filePath: string) {
+  const normalized = String(filePath || "").replace(/\\/g, "/");
+  const archiveIndex = normalized.indexOf("/archive/");
+  if (archiveIndex >= 0) return normalized.slice(archiveIndex + "/archive/".length);
+  if (normalized.startsWith("archive/")) return normalized.slice("archive/".length);
+  return normalized.replace(/^\/+/, "");
+}
+
+async function ensureOffloadedArchiveDir(dirName: string) {
+  if (!dirName || !canUseGithubColdStore()) return null;
+  const targetDir = path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", dirName);
+  try {
+    await fs.access(targetDir);
+    return targetDir;
+  } catch {}
+  const bundle = await downloadColdStoreAsset(`archive-${dirName}.tar.gz`, path.join("bundles", `archive-${dirName}.tar.gz`));
+  if (!bundle) return null;
+  await fs.mkdir(path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive"), { recursive: true });
+  try {
+    await execFileAsync("tar", ["-xzf", bundle, "-C", path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive")], { maxBuffer: 64 * 1024 * 1024 });
+    return targetDir;
+  } catch {
+    return null;
+  }
 }
 
 function buildGrowthDebugSummary(store: TrendStoreFile): GrowthDebugSummary {
@@ -491,13 +563,12 @@ function getHistoryLedgerFile(platform: GrowthPlatform) {
 }
 
 async function readHistoryLedger(platform: GrowthPlatform): Promise<Record<string, TrendHistoryLedgerEntry>> {
-  try {
-    const raw = await fs.readFile(getHistoryLedgerFile(platform), "utf8");
-    const parsed = JSON.parse(raw) as { items?: Record<string, TrendHistoryLedgerEntry> };
-    return parsed.items || {};
-  } catch {
-    return {};
-  }
+  const parsed = await readJsonWithGzipFallback<{ items?: Record<string, TrendHistoryLedgerEntry> }>(
+    getHistoryLedgerFile(platform),
+    `history-ledger-${platform}.json.gz`,
+    path.join("history-ledger", `${platform}.json.gz`),
+  );
+  return parsed?.items || {};
 }
 
 async function writeHistoryLedger(platform: GrowthPlatform, items: Record<string, TrendHistoryLedgerEntry>) {
@@ -590,14 +661,29 @@ async function readArchiveCollectionItems(entry: TrendArchiveEntry): Promise<Tre
     const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
     return Array.isArray(parsed.items) ? parsed.items : [];
   } catch {
-    return [];
+    const relativePath = resolveArchiveRelativePath(entry.file);
+    const [dirName] = relativePath.split("/");
+    if (!dirName) return [];
+    const archiveDir = await ensureOffloadedArchiveDir(dirName);
+    if (!archiveDir) return [];
+    try {
+      const raw = await fs.readFile(path.join(GITHUB_OFFLOAD_CACHE_DIR, "archive", relativePath), "utf8");
+      const parsed = JSON.parse(raw) as Partial<PlatformTrendCollection>;
+      return Array.isArray(parsed.items) ? parsed.items : [];
+    } catch {
+      return [];
+    }
   }
 }
 
 async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null> {
   try {
-    const raw = await fs.readFile(filePath, "utf8");
-    const parsed = JSON.parse(raw) as Partial<TrendStoreFile>;
+    const parsed = await readJsonWithGzipFallback<Partial<TrendStoreFile>>(
+      filePath,
+      path.basename(filePath) === "current.json" ? "current.json.gz" : `${path.basename(filePath)}.gz`,
+      path.basename(filePath) === "current.json" ? "current.json.gz" : `${path.basename(filePath)}.gz`,
+    );
+    if (!parsed) return null;
     return {
       updatedAt: parsed.updatedAt || toShanghaiIso(0),
       collections: parsed.collections || {},
@@ -621,42 +707,37 @@ async function readRawStoreFile(filePath: string): Promise<TrendStoreFile | null
 }
 
 async function readArchiveIndexFile(): Promise<TrendArchiveEntry[]> {
-  try {
-    const raw = await fs.readFile(ARCHIVE_INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw) as { archiveIndex?: TrendArchiveEntry[] } | TrendArchiveEntry[];
-    const entries = Array.isArray(parsed) ? parsed : (parsed.archiveIndex || []);
-    return entries.map((entry) => ({
-      ...entry,
-      bucketCounts: entry.bucketCounts || {},
-      industryCounts: entry.industryCounts || {},
-      ageCounts: entry.ageCounts || {},
-      contentCounts: entry.contentCounts || {},
-    }));
-  } catch {
-    return [];
-  }
+  const parsed = await readJsonWithGzipFallback<{ archiveIndex?: TrendArchiveEntry[] } | TrendArchiveEntry[]>(
+    ARCHIVE_INDEX_FILE,
+    "archive-index.json.gz",
+    "archive-index.json.gz",
+  );
+  const entries = Array.isArray(parsed) ? parsed : (parsed?.archiveIndex || []);
+  return entries.map((entry) => ({
+    ...entry,
+    bucketCounts: entry.bucketCounts || {},
+    industryCounts: entry.industryCounts || {},
+    ageCounts: entry.ageCounts || {},
+    contentCounts: entry.contentCounts || {},
+  }));
 }
 
 async function readHistorySummaryFile(): Promise<TrendHistoryState | null> {
-  try {
-    const raw = await fs.readFile(HISTORY_SUMMARY_FILE, "utf8");
-    return JSON.parse(raw) as TrendHistoryState;
-  } catch {
-    return null;
-  }
+  return readJsonWithGzipFallback<TrendHistoryState>(
+    HISTORY_SUMMARY_FILE,
+    "history-summary.json.gz",
+    "history-summary.json.gz",
+  );
 }
 
 async function readPlatformCollectionFile(platform: GrowthPlatform): Promise<PlatformTrendCollection | undefined> {
-  try {
-    const raw = await fs.readFile(path.join(PLATFORM_DIR, `${platform}.json`), "utf8");
-    const parsed = JSON.parse(raw) as { collection?: PlatformTrendCollection };
-    if (isRecoveredCollectionSource(parsed.collection?.source)) {
-      return undefined;
-    }
-    return parsed.collection;
-  } catch {
-    return undefined;
-  }
+  const parsed = await readJsonWithGzipFallback<{ collection?: PlatformTrendCollection }>(
+    path.join(PLATFORM_DIR, `${platform}.json`),
+    `platform-${platform}.json.gz`,
+    path.join("platforms", `${platform}.json.gz`),
+  );
+  if (isRecoveredCollectionSource(parsed?.collection?.source)) return undefined;
+  return parsed?.collection;
 }
 
 type PlatformCurrentTruthFile = {
@@ -691,14 +772,13 @@ async function readPlatformCurrentManifest(): Promise<PlatformCurrentManifest | 
 }
 
 async function readPlatformCurrentTruthFile(platform: GrowthPlatform): Promise<PlatformCurrentTruthFile | null> {
-  try {
-    const raw = await fs.readFile(getPlatformCurrentTruthFile(platform), "utf8");
-    const parsed = JSON.parse(raw) as PlatformCurrentTruthFile;
-    if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+  const parsed = await readJsonWithGzipFallback<PlatformCurrentTruthFile>(
+    getPlatformCurrentTruthFile(platform),
+    `platform-current-${platform}.json.gz`,
+    path.join("platform-current", `${platform}.json.gz`),
+  );
+  if (!parsed?.collection || isRecoveredCollectionSource(parsed.collection?.source)) return null;
+  return parsed;
 }
 
 async function readPlatformCurrentTruthStoreFile(): Promise<TrendStoreFile | null> {

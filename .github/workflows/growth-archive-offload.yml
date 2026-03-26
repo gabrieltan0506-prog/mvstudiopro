@@ -9,6 +9,8 @@ jobs:
   offload:
     name: Offload old growth archive shards from Fly
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
@@ -39,6 +41,26 @@ jobs:
           tr '\n' ' ' < /tmp/growth-archive-offload/dirs.txt > /tmp/growth-archive-offload/dirs.inline
           dirs=$(cat /tmp/growth-archive-offload/dirs.inline)
           flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /data/growth/archive && tar -czf - $dirs'" > /tmp/growth-archive-offload/archive-shards.tar.gz
+          mkdir -p /tmp/growth-archive-offload/assets
+          while IFS= read -r dir; do
+            [ -n "$dir" ] || continue
+            flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /data/growth/archive && tar -czf - $dir'" > "/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
+          done < /tmp/growth-archive-offload/dirs.txt
+          node <<'NODE'
+          const fs = require("fs");
+          const dirs = fs.readFileSync("/tmp/growth-archive-offload/dirs.txt","utf8").split(/\r?\n/).map((s)=>s.trim()).filter(Boolean);
+          const manifest = {
+            createdAt: new Date().toISOString(),
+            baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
+            archiveDirs: dirs,
+            thresholdsMb: {
+              singleFile: 400,
+              directory: 800,
+              hotData: 900
+            }
+          };
+          fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
+          NODE
       - name: Upload GitHub archive offload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,6 +68,18 @@ jobs:
           path: /tmp/growth-archive-offload
           if-no-files-found: error
           retention-days: 30
+      - name: Publish archive offload bundles
+        if: hashFiles('/tmp/growth-archive-offload/EMPTY') == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view growth-cold-store-latest >/dev/null 2>&1 || \
+            gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
+          gh release upload growth-cold-store-latest /tmp/growth-archive-offload/offload-manifest.json#offload-manifest.json --clobber
+          for file in /tmp/growth-archive-offload/assets/*.tar.gz; do
+            [ -f "$file" ] || continue
+            gh release upload growth-cold-store-latest "$file#$(basename "$file")" --clobber
+          done
       - name: Delete offloaded shards from Fly
         if: hashFiles('/tmp/growth-archive-offload/EMPTY') == ''
         env:

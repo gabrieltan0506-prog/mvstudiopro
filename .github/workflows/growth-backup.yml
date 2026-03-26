@@ -9,6 +9,8 @@ jobs:
   backup:
     name: Backup growth store from Fly
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,8 +70,23 @@ jobs:
           gzip -dfc /tmp/growth-backup/history-summary.json.gz > /tmp/growth-backup/store/history-summary.json
           gzip -dfc /tmp/growth-backup/growth-debug-summary.json.gz > /tmp/growth-backup/store/backups/growth-debug-summary.json
           tar -xzf /tmp/growth-backup/platforms.tar.gz -C /tmp/growth-backup/store
+          for platform_file in /tmp/growth-backup/store/platforms/*.json; do
+            [ -f "$platform_file" ] || continue
+            gzip -c "$platform_file" > "/tmp/growth-backup/platform-$(basename "$platform_file" .json).json.gz"
+          done
+          tar -xzf /tmp/growth-backup/history-ledger.tar.gz -C /tmp/growth-backup/store
+          for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
+            [ -f "$ledger_file" ] || continue
+            gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
+          done
           if [ -s /tmp/growth-backup/platform-current.tar.gz ]; then
             tar -xzf /tmp/growth-backup/platform-current.tar.gz -C /tmp/growth-backup/store
+          fi
+          if [ -d /tmp/growth-backup/store/platform-current ]; then
+            for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
+              [ -f "$platform_file" ] || continue
+              gzip -c "$platform_file" > "/tmp/growth-backup/platform-current-$(basename "$platform_file" .current.json).json.gz"
+            done
           fi
           if [ -s /tmp/growth-backup/platform-current-manifest.json.gz ]; then
             gzip -dfc /tmp/growth-backup/platform-current-manifest.json.gz > /tmp/growth-backup/store/platform-current-manifest.json
@@ -94,3 +111,28 @@ jobs:
           path: /tmp/growth-backup
           if-no-files-found: error
           retention-days: 30
+      - name: Publish cold-store restore assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view growth-cold-store-latest >/dev/null 2>&1 || \
+            gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
+          gh release upload growth-cold-store-latest \
+            /tmp/growth-backup/current.json.gz#current.json.gz \
+            /tmp/growth-backup/runtime-meta.json.gz#runtime-meta.json.gz \
+            /tmp/growth-backup/archive-index.json.gz#archive-index.json.gz \
+            /tmp/growth-backup/history-summary.json.gz#history-summary.json.gz \
+            /tmp/growth-backup/growth-debug-summary.json.gz#growth-debug-summary.json.gz \
+            /tmp/growth-backup/platforms.tar.gz#platforms.tar.gz \
+            /tmp/growth-backup/history-ledger.tar.gz#history-ledger.tar.gz \
+            /tmp/growth-backup/platform-current.tar.gz#platform-current.tar.gz \
+            /tmp/growth-backup/platform-current-manifest.json.gz#platform-current-manifest.json.gz \
+            /tmp/growth-backup/backup-manifest.json#backup-manifest.json \
+            /tmp/growth-backup/growth-restore-bundle.tar.gz#growth-restore-bundle.tar.gz \
+            --clobber
+          for asset in /tmp/growth-backup/*.json.gz; do
+            case "$(basename "$asset")" in
+              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz|platform-current-manifest.json.gz) continue ;;
+            esac
+            gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
+          done
