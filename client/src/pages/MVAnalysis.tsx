@@ -1637,28 +1637,31 @@ export default function MVAnalysisPage() {
                   key: "history",
                   title: "历史回填进度",
                   data: growthSystemStatusQuery.data?.backfillHistory,
-                }].map((section) => section.data ? (
+                }].map((section) => {
+                  const sectionData = section.data;
+                  return sectionData ? (
                   <div key={section.key} className="mt-4 space-y-2 rounded-2xl border border-amber-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-amber-100">{section.title}</div>
                     <div className="grid gap-1 md:grid-cols-2">
-                      <div>status: {String(section.data.status || "-")}</div>
-                      <div>active: {String(section.data.active ?? false)}</div>
-                      <div>window days: {String(section.data.selectedWindowDays || "-")}</div>
-                      <div>开始时间：{formatShanghaiDateTime(String(section.data.startedAt || ""))}</div>
-                      <div>下一次回填：{formatShanghaiDateTime(String(section.data.nextRunAt || ""))}</div>
-                      <div>更新时间：{formatShanghaiDateTime(String(section.data.updatedAt || ""))}</div>
-                      <div>结束时间：{formatShanghaiDateTime(String(section.data.finishedAt || ""))}</div>
+                      <div>status: {String(sectionData.status || "-")}</div>
+                      <div>active: {String(sectionData.active ?? false)}</div>
+                      <div>window days: {String(sectionData.selectedWindowDays || "-")}</div>
+                      <div>回填模式：{section.key === "history" ? "夜间 burst / 每 15 分钟" : "夜间 live 回填 / 每 15 分钟"}</div>
+                      <div>开始时间：{formatShanghaiDateTime(String(sectionData.startedAt || ""))}</div>
+                      <div>下一次回填：{formatShanghaiDateTime(String(sectionData.nextRunAt || ""))}</div>
+                      <div>更新时间：{formatShanghaiDateTime(String(sectionData.updatedAt || ""))}</div>
+                      <div>结束时间：{formatShanghaiDateTime(String(sectionData.finishedAt || ""))}</div>
                     </div>
                     <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
-                      {String(section.data.note || "-")}
+                      {String(sectionData.note || "-")}
                     </div>
                     <div className="space-y-2">
-                      {section.data.platforms?.map((item) => (
+                      {sectionData.platforms?.map((item) => (
                         <div key={`${section.key}-${String(item.platform)}`} className="grid gap-1 md:grid-cols-2">
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 状态：{String(item.status || "-")}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 历史量：{String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 开始回填：{formatShanghaiDateTime(String(item.startedAt || ""))}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次回填：{formatShanghaiDateTime(String(item.nextRunAt || ""))}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 开始回填：{formatShanghaiDateTime(String(item.startedAt || sectionData.startedAt || ""))}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次回填：{formatShanghaiDateTime(String(item.nextRunAt || sectionData.nextRunAt || ""))}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 当前量：{String(item.currentTotal || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 新增：{String(item.addedCount || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 合并：{String(item.mergedCount || 0)}</div>
@@ -1668,7 +1671,7 @@ export default function MVAnalysisPage() {
                       ))}
                     </div>
                   </div>
-                ) : null)}
+                ) : null})}
               </div>
           </section>
         ) : null}
