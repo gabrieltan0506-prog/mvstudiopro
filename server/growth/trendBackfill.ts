@@ -27,10 +27,10 @@ const HISTORY_STAGE_THREE_THRESHOLD = Math.max(
   HISTORY_STAGE_TWO_THRESHOLD,
   Number(process.env.GROWTH_HISTORY_BACKFILL_STAGE_THREE_THRESHOLD || 500_000) || 500_000,
 );
-const HISTORY_STEP_TARGET = Math.max(3, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 5) || 5);
-const HISTORY_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 3) || 3);
-const LIVE_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_TARGET || 8) || 8);
-const LIVE_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_FALLBACK || 5) || 5);
+const HISTORY_STEP_TARGET = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 5) || 5);
+const HISTORY_STEP_FALLBACK = Math.max(1, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 3) || 3);
+const LIVE_STEP_TARGET = Math.max(3, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_TARGET || 8) || 8);
+const LIVE_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_FALLBACK || 5) || 5);
 const LIVE_WINDOW_DAYS = Math.max(7, Number(process.env.GROWTH_LIVE_BACKFILL_WINDOW_DAYS || 30) || 30);
 const HISTORY_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_HISTORY_BACKFILL_WINDOW_DAYS || 90) || 90);
 const HISTORY_LEDGER_BATCH_ROUNDS = Math.max(2, Number(process.env.GROWTH_HISTORY_LEDGER_BATCH_ROUNDS || 6) || 6);
