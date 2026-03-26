@@ -228,6 +228,10 @@ function isForceBurstActive(platform: GrowthPlatform) {
   return FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.has(platform);
 }
 
+function hasAnyForcedBurstConfig() {
+  return FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.size > 0;
+}
+
 function isClearlyHigherThanPrevious(platform: GrowthPlatform, currentCount: number, previousCount: number) {
   if (previousCount <= 0) return currentCount >= getPlatformBurstTriggerMinCount(platform);
   return currentCount >= previousCount + Math.max(3, Math.ceil(previousCount * getPlatformBurstTriggerGrowthRatio(platform)));
@@ -464,6 +468,21 @@ export async function bootstrapGrowthTrendScheduler() {
   }
 
   const scheduler = await readTrendSchedulerState();
+  if (!hasAnyForcedBurstConfig()) {
+    for (const platform of PRIORITY_PLATFORMS) {
+      const state = scheduler[platform];
+      if (!state?.burstMode) continue;
+      await updateTrendSchedulerState(platform, {
+        burstMode: false,
+        burstTriggeredAt: undefined,
+        burstStableRuns: 0,
+        burstLowYieldRuns: 0,
+        nextRunAt: nextScheduledRunIso(),
+        lastFrequencyLabel: getSchedulerFrequencyLabel(),
+        lastError: state.lastError,
+      });
+    }
+  }
   for (const platform of PRIORITY_PLATFORMS) {
     if (!scheduler[platform]?.nextRunAt) {
       await updateTrendSchedulerState(platform, {
