@@ -979,13 +979,15 @@ export const appRouter = router({
             updatedAt: debugSummary?.updatedAt || runtimeMeta.updatedAt || null,
             currentItems: debugSummary?.totals.currentItems || 0,
             archivedItems: debugSummary?.totals.archivedItems || 0,
-            platforms: growthPlatformValues.map((platform) => ({
-              platform,
-              platformLabel: getGrowthPlatformMeta(platform).label,
-              platformDescription: getGrowthPlatformMeta(platform).description,
-              currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal || 0),
-              archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
-            })),
+            platforms: growthPlatformValues
+              .filter((platform) => platform !== "weixin_channels")
+              .map((platform) => ({
+                platform,
+                platformLabel: getGrowthPlatformMeta(platform).label,
+                platformDescription: getGrowthPlatformMeta(platform).description,
+                currentItems: Number(debugSummary?.platforms?.[platform]?.currentTotal || 0),
+                archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
+              })),
           },
           backfill,
           backfillLive,

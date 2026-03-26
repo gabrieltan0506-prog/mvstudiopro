@@ -1610,12 +1610,10 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-cyan-100">抓取调度状态</div>
                     <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
-                      <div>周末 / 节假日 live：每 20 分钟抓取一次</div>
-                      <div>17:00 - 22:00：每 2 小时抓取一次</div>
-                      <div>22:00 - 06:00：每 3 小时抓取一次</div>
-                      <div>06:00 - 17:00：每 4 小时抓取一次</div>
-                      <div>数据量明显放大：立即切到每 20 分钟一次</div>
-                      <div>历史回填 burst：按 30-60 秒真人节奏抖动抓取，目标步长 10，受限时回落到 5</div>
+                      <div>全部平台 live：统一每 30 分钟抓取一次</div>
+                      <div>burst 模式：统一每 10 分钟抓取一次</div>
+                      <div>当前已强制开启 burst，直到你后续手动关闭</div>
+                      <div>历史回填：仍按独立 backfill 节奏执行，不跟 live 共用频率</div>
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
                       <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">

@@ -21,6 +21,7 @@ const PRIORITY_PLATFORMS: GrowthPlatform[] = ["douyin", "kuaishou", "bilibili", 
 const RETRY_BASE_MS = 5 * 60 * 1000;
 const CHECK_INTERVAL_MS = 60 * 1000;
 const JITTER_MAX_MS = 20 * 60 * 1000;
+const SCHEDULER_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_SCHEDULER_INTERVAL_MINUTES || 30) || 30);
 const BURST_INTERVAL_MINUTES = Math.max(5, Number(process.env.GROWTH_BURST_INTERVAL_MINUTES || 10) || 10);
 const LOW_YIELD_INTERVAL_MINUTES = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_INTERVAL_MINUTES || 2) || 2);
 const LOW_YIELD_LIMIT = Math.max(1, Number(process.env.GROWTH_BURST_LOW_YIELD_LIMIT || 5) || 5);
@@ -140,12 +141,8 @@ function isWeekendOrHoliday(now = new Date()) {
   return configured.includes(isoDate);
 }
 
-function getSchedulerIntervalMinutes(now = new Date()) {
-  if (isWeekendOrHoliday(now)) return 10;
-  const hour = getSchedulerHour(now);
-  if (hour >= 17 && hour < 22) return 60;
-  if (hour >= 22 || hour < 6) return 120;
-  return 180;
+function getSchedulerIntervalMinutes(_now = new Date()) {
+  return SCHEDULER_INTERVAL_MINUTES;
 }
 
 function nextScheduledRunIso(now = new Date()) {
@@ -154,7 +151,6 @@ function nextScheduledRunIso(now = new Date()) {
 
 function getSchedulerFrequencyLabel(now = new Date()) {
   const interval = getSchedulerIntervalMinutes(now);
-  if (isWeekendOrHoliday(now)) return "周末 / 节假日每 10 分钟一次";
   if (interval < 60) return `每 ${interval} 分钟一次`;
   return `每 ${interval / 60} 小时一次`;
 }
