@@ -48,6 +48,10 @@ const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilib
 const ENABLE_LIVE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
   String(process.env.GROWTH_ENABLE_LIVE_BACKFILL_BOOTSTRAP || "0").trim(),
 );
+const BACKFILL_PLATFORM_TIMEOUT_MS = Math.max(
+  30 * 1000,
+  Number(process.env.GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
+);
 
 type WorkerState = {
   started: boolean;
@@ -80,6 +84,20 @@ const workerState: Record<BackfillKind, WorkerState> = {
 function isStorageFullError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   return /\bENOSPC\b|no space left on device/i.test(message);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function nextHistoryDelayMs() {
@@ -272,7 +290,11 @@ async function runBackfillStep(kind: BackfillKind) {
     const mergedStats: Record<string, any> = {};
     const collectedErrors: Record<string, string | undefined> = {};
     for (const platform of pending) {
-      const collected = await collectTrendPlatforms([platform]);
+      const collected = await withTimeout(
+        collectTrendPlatforms([platform]),
+        BACKFILL_PLATFORM_TIMEOUT_MS,
+        `[${label}] ${platform}`,
+      );
       if (collected.collections[platform]) {
         mergedCollections[platform] = collected.collections[platform];
       }

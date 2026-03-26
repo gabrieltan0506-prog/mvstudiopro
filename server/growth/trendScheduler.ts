@@ -52,6 +52,10 @@ const BACKFILL_STORE_SIZE_LIMIT_MB = Math.max(
   64,
   Number(process.env.GROWTH_BACKFILL_STORE_SIZE_LIMIT_MB || 128) || 128,
 );
+const PLATFORM_RUN_TIMEOUT_MS = Math.max(
+  30 * 1000,
+  Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 3 * 60 * 1000) || 3 * 60 * 1000,
+);
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -66,6 +70,20 @@ function withJitter(baseMs: number) {
 
 function nextRunIso(baseMs: number) {
   return nowShanghaiIso(Date.now() + withJitter(baseMs));
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function readPlatformMinutesEnv(platform: GrowthPlatform, suffix: string, fallbackMinutes: number) {
@@ -269,7 +287,11 @@ async function runPlatform(platform: GrowthPlatform) {
   });
 
   try {
-    const collection = await collectPlatformTrends(platform);
+    const collection = await withTimeout(
+      collectPlatformTrends(platform),
+      PLATFORM_RUN_TIMEOUT_MS,
+      `[growth.scheduler] ${platform}`,
+    );
     const mergedStore = await mergeTrendCollections({ [platform]: collection });
     const mergedCollection = mergedStore.collections[platform];
     const currentCount = collection.stats?.itemCount || collection.items.length;
