@@ -35,7 +35,6 @@ async function main() {
       String(item.platform),
       {
         currentTotal: Number(item.currentTotal || item.currentItems || 0),
-        // truthStore.platforms uses archivedItems; backfill uses archivedTotal
         archivedTotal: Number(item.archivedTotal || item.archivedItems || 0),
       },
     ]),
