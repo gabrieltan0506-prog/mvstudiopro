@@ -1316,6 +1316,13 @@ export async function rebuildTrendDerivedFilesFromCurrentStore() {
 }
 
 export async function mergeTrendCollections(collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>) {
+  return mergeTrendCollectionsWithOptions(collections);
+}
+
+export async function mergeTrendCollectionsWithOptions(
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+  options?: { deferHistoryLedger?: boolean },
+) {
   const current = await readTrendStore({ preferDerivedFiles: true });
   const next: TrendStoreFile = {
     updatedAt: nowShanghaiIso(),
@@ -1352,7 +1359,9 @@ export async function mergeTrendCollections(collections: Partial<Record<GrowthPl
     .sort((left, right) => new Date(right.archivedAt).getTime() - new Date(left.archivedAt).getTime())
     .slice(0, 5000);
 
-  await updateHistoryFromCollections(next, collections);
+  if (!options?.deferHistoryLedger) {
+    await updateHistoryFromCollections(next, collections);
+  }
 
   const written = await writeStore(next);
   return {

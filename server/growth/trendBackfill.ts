@@ -1,6 +1,6 @@
 import type { GrowthPlatform } from "@shared/growth";
 import { collectTrendPlatforms } from "./trendCollector";
-import { mergeTrendCollections, readGrowthDebugSummary, readTrendRuntimeMeta, updateTrendBackfillProgress } from "./trendStore";
+import { mergeTrendCollectionsWithOptions, readGrowthDebugSummary, readTrendRuntimeMeta, reconcileTrendHistoryState, updateTrendBackfillProgress } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
 import { nowShanghaiIso } from "./time";
 
@@ -27,11 +27,13 @@ const HISTORY_STAGE_THREE_THRESHOLD = Math.max(
   HISTORY_STAGE_TWO_THRESHOLD,
   Number(process.env.GROWTH_HISTORY_BACKFILL_STAGE_THREE_THRESHOLD || 500_000) || 500_000,
 );
-const HISTORY_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 10) || 10);
-const HISTORY_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 5) || 5);
+const HISTORY_STEP_TARGET = Math.max(3, Number(process.env.GROWTH_BACKFILL_STEP_TARGET || 5) || 5);
+const HISTORY_STEP_FALLBACK = Math.max(2, Number(process.env.GROWTH_BACKFILL_STEP_FALLBACK || 3) || 3);
 const LIVE_STEP_TARGET = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_TARGET || 8) || 8);
 const LIVE_STEP_FALLBACK = Math.max(5, Number(process.env.GROWTH_LIVE_BACKFILL_STEP_FALLBACK || 5) || 5);
 const LIVE_WINDOW_DAYS = Math.max(7, Number(process.env.GROWTH_LIVE_BACKFILL_WINDOW_DAYS || 30) || 30);
+const HISTORY_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_HISTORY_BACKFILL_WINDOW_DAYS || 90) || 90);
+const HISTORY_LEDGER_BATCH_ROUNDS = Math.max(2, Number(process.env.GROWTH_HISTORY_LEDGER_BATCH_ROUNDS || 6) || 6);
 const LIVE_GAP_STALE_MINUTES = Math.max(30, Number(process.env.GROWTH_LIVE_BACKFILL_STALE_MINUTES || 30) || 30);
 const LIVE_GAP_BUCKET_MINUTES = Math.max(
   15,
@@ -111,7 +113,7 @@ function getWorkerMaxRounds(kind: BackfillKind) {
 function getWorkerSelectedWindowDays(kind: BackfillKind) {
   return kind === "live"
     ? LIVE_WINDOW_DAYS
-    : Math.max(1, Number(process.env.GROWTH_HISTORY_BACKFILL_WINDOW_DAYS || process.env.GROWTH_TARGET_WINDOW_DAYS || 4) || 4);
+    : HISTORY_WINDOW_DAYS;
 }
 
 function isSchedulerStale(lastSuccessAt?: string) {
@@ -262,37 +264,53 @@ async function runBackfillStep(kind: BackfillKind) {
       }),
     });
 
-    // Keep all pending platforms active; the step target is communicated as the desired
-    // per-minute pull floor for source expansion, while the collectors themselves may
-    // return larger batches when the upstream endpoints allow it.
     process.env.GROWTH_BACKFILL_ACTIVE = kind;
     process.env.GROWTH_BACKFILL_STEP_TARGET = String(stepTarget);
     process.env.GROWTH_BACKFILL_STEP_FALLBACK = String(stepFallback);
     process.env.GROWTH_BACKFILL_COOKIE_OFFSET = String(Math.max(0, nextRound - 1));
-    const collected = await collectTrendPlatforms(pending);
-    const merged = await mergeTrendCollections(collected.collections);
-    const statsAfter = await readBackfillSnapshotFor(kind);
-
+    const mergedCollections: Partial<Record<GrowthPlatform, Awaited<ReturnType<typeof collectTrendPlatforms>>["collections"][GrowthPlatform]>> = {};
+    const mergedStats: Record<string, any> = {};
+    const collectedErrors: Record<string, string | undefined> = {};
     for (const platform of pending) {
+      const collected = await collectTrendPlatforms([platform]);
+      if (collected.collections[platform]) {
+        mergedCollections[platform] = collected.collections[platform];
+      }
+      if (collected.errors[platform]) {
+        collectedErrors[platform] = collected.errors[platform];
+      }
+      const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
+        deferHistoryLedger: kind === "history",
+      });
+      if (merged.mergeStats?.[platform]) {
+        mergedStats[platform] = merged.mergeStats[platform];
+      }
       const collection = collected.collections[platform];
-      if (collection?.source !== "live" || !collection.items.length) continue;
-      await notifyGrowthCollectionUpdate({
-        platform,
-        itemCount: collection.items.length,
-        addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
-        mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
-        collectedAt: collection.collectedAt,
-        nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
-        frequencyLabel: kind === "live"
-          ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
-          : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
-        burstMode: false,
-        live: true,
-        collection,
-      }).catch((error) => {
-        console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+      if (collection?.source === "live" && collection.items.length) {
+        await notifyGrowthCollectionUpdate({
+          platform,
+          itemCount: collection.items.length,
+          addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
+          mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+          collectedAt: collection.collectedAt,
+          nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
+          frequencyLabel: kind === "live"
+            ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
+            : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
+          burstMode: false,
+          live: true,
+          collection,
+        }).catch((error) => {
+          console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+        });
+      }
+    }
+    if (kind === "history" && nextRound % HISTORY_LEDGER_BATCH_ROUNDS === 0) {
+      await reconcileTrendHistoryState({ force: true }).catch((error) => {
+        console.warn(`[${label}] delayed history reconcile skipped:`, error);
       });
     }
+    const statsAfter = await readBackfillSnapshotFor(kind);
 
     for (const platform of pending) {
       const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedTotal || 0;
@@ -311,7 +329,7 @@ async function runBackfillStep(kind: BackfillKind) {
       status: "running",
       note: kind === "live"
         ? `近 ${windowDays} 天 live 回填运行中：按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐。`
-        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后降到 1 / 2 / 4 小时一次。`,
+        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；单平台逐一回填，小步长抓取，history-ledger 延迟到每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮再批量刷新。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (state.plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -320,11 +338,11 @@ async function runBackfillStep(kind: BackfillKind) {
           target: 0,
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedTotal || 0,
-          addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
-          mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+          addedCount: mergedStats?.[platform]?.addedCount || 0,
+          mergedCount: mergedStats?.[platform]?.mergedCount || 0,
           plateauCount: state.plateau.get(platform) || 0,
           status: stalled ? "plateau" : "running",
-          error: collected.errors[platform],
+          error: collectedErrors[platform],
         };
       }),
     });
