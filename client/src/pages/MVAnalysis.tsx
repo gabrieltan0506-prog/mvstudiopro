@@ -187,6 +187,24 @@ function formatTruthSource(source?: string) {
   return String(source || "-");
 }
 
+function formatShanghaiDateTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}-${map.hour}:${map.minute}:${map.second}`;
+}
+
 function hasSupervisorAccess() {
   if (typeof window === "undefined") return false;
   const params = new URLSearchParams(window.location.search);
@@ -1527,7 +1545,7 @@ export default function MVAnalysisPage() {
                   <div>降级补位：{String(debugInfo?.fallback ?? "-")}</div>
                   <div>趋势数据来源：{String(growthSnapshot?.status.source || "-")}</div>
                   <div>真值口径：{formatTruthSource(growthSystemStatusQuery.data?.truthStore?.source)}</div>
-                  <div>真值更新时间：{String(growthSystemStatusQuery.data?.truthStore?.updatedAt || "-")}</div>
+                  <div>真值更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.truthStore?.updatedAt || ""))}</div>
                   <div>真值当前总量：{String(growthSystemStatusQuery.data?.truthStore?.currentItems ?? "-")}</div>
                   <div>真值历史总量：{String(growthSystemStatusQuery.data?.truthStore?.archivedItems ?? "-")}</div>
                   <div>文件类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
@@ -1601,12 +1619,12 @@ export default function MVAnalysisPage() {
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
                       <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近成功：{String(item.lastSuccessAt || "-")}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次执行：{String(item.nextRunAt || "-")}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近成功：{formatShanghaiDateTime(String(item.lastSuccessAt || ""))}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次执行：{formatShanghaiDateTime(String(item.nextRunAt || ""))}</div>
                         <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 失败次数：{String(item.failureCount ?? 0)}</div>
                         <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发模式：{String(item.burstMode ?? false)}</div>
                         <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 最近抓取量：{String(item.lastCollectedCount ?? 0)}</div>
-                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：{String(item.burstTriggeredAt || "-")}</div>
+                        <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 爆发开始：{formatShanghaiDateTime(String(item.burstTriggeredAt || ""))}</div>
                         <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
                         <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.lastError || "-")}</div>
                       </div>
@@ -1620,9 +1638,9 @@ export default function MVAnalysisPage() {
                       <div>status: {String(growthSystemStatusQuery.data.backfill.status || "-")}</div>
                       <div>active: {String(growthSystemStatusQuery.data.backfill.active ?? false)}</div>
                       <div>window days: {String(growthSystemStatusQuery.data.backfill.selectedWindowDays || "-")}</div>
-                      <div>started: {String(growthSystemStatusQuery.data.backfill.startedAt || "-")}</div>
-                      <div>updated: {String(growthSystemStatusQuery.data.backfill.updatedAt || "-")}</div>
-                      <div>finished: {String(growthSystemStatusQuery.data.backfill.finishedAt || "-")}</div>
+                      <div>started: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.startedAt || ""))}</div>
+                      <div>updated: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.updatedAt || ""))}</div>
+                      <div>finished: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.finishedAt || ""))}</div>
                     </div>
                     <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
                       {String(growthSystemStatusQuery.data.backfill.note || "-")}
