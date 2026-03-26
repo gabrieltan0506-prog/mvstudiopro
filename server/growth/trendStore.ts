@@ -1091,6 +1091,7 @@ async function writeStore(
   },
 ) {
   await ensureStoreDir();
+  const meta = await readRuntimeMeta();
   if (!(options?.allowLowerTotals)) {
     const existing = await readTrendStore({ preferDerivedFiles: true });
     if (existing?.collections) {
@@ -1117,9 +1118,10 @@ async function writeStore(
   await writeJsonAtomic(STORE_FILE, next);
   await writeRuntimeMeta({
     updatedAt: next.updatedAt,
-    scheduler: next.scheduler,
-    backfill: next.backfill,
-    mailDigest: next.mailDigest,
+    scheduler: Object.keys(next.scheduler || {}).length ? next.scheduler : (meta.scheduler || {}),
+    backfillLive: next.backfillLive || meta.backfillLive,
+    backfillHistory: next.backfillHistory || meta.backfillHistory,
+    mailDigest: next.mailDigest || meta.mailDigest,
   });
   await writeJsonAtomic(ARCHIVE_INDEX_FILE, {
     updatedAt: next.updatedAt,

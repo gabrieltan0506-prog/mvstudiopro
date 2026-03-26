@@ -944,7 +944,7 @@ export const appRouter = router({
           const backfillPlatforms = new Map(
             (backfill.platforms || []).map((item) => [String(item.platform), { ...item }]),
           );
-          for (const platform of growthPlatformValues) {
+          for (const platform of growthPlatformValues.filter((item) => item !== "weixin_channels")) {
             if (backfillPlatforms.has(platform)) continue;
             backfillPlatforms.set(platform, {
               platform,
@@ -995,7 +995,9 @@ export const appRouter = router({
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },
-          scheduler: Object.values(runtimeMeta.scheduler || {}).map((item) => ({
+          scheduler: Object.values(runtimeMeta.scheduler || {})
+            .filter((item) => item?.platform && item.platform !== "weixin_channels")
+            .map((item) => ({
             platform: item?.platform,
             platformLabel: getGrowthPlatformMeta(item?.platform).label,
             platformDescription: getGrowthPlatformMeta(item?.platform).description,
