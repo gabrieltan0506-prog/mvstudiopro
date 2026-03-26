@@ -250,6 +250,7 @@ const PLATFORM_CURRENT_MANIFEST_FILE = path.join(STORE_DIR, "platform-current-ma
 const HISTORY_LEDGER_DIR = path.join(STORE_DIR, "history-ledger");
 const GITHUB_OFFLOAD_CACHE_DIR = path.resolve(process.env.GROWTH_GITHUB_OFFLOAD_CACHE_DIR || path.join(DEFAULT_STORE_ROOT, "growth-github-cache"));
 const GITHUB_COLD_STORE_BASE_URL = String(process.env.GROWTH_GITHUB_COLD_STORE_BASE_URL || "").trim().replace(/\/$/, "");
+const BACKFILL_PLATFORMS = growthPlatformValues.filter((platform) => platform !== "weixin_channels");
 const RETENTION_DAYS = 365;
 const LOOKBACK_WINDOWS = [30, 60, 90, 120, 180, 270, 365];
 const DEFAULT_SELECTED_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
@@ -1428,7 +1429,7 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
       ...Array.from(incomingPlatformMap.keys()),
       ...Array.from(currentPlatformMap.keys()),
     ]),
-  ).map((platform) => {
+  ).filter((platform) => BACKFILL_PLATFORMS.includes(platform)).map((platform) => {
     const previous = previousPlatformMap.get(platform);
     const incoming = incomingPlatformMap.get(platform);
     const summaryTotals = currentPlatformMap.get(platform) || { currentTotal: 0, archivedTotal: 0 };
