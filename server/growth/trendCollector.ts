@@ -1661,12 +1661,12 @@ async function collectBilibili(): Promise<PlatformTrendCollection> {
   const items: TrendItem[] = [];
   const notes: string[] = [];
   const cookie = String(process.env.BILIBILI_COOKIE || "").trim();
-  const popularPages = Math.max(1, Math.min(200, Number(process.env.BILIBILI_TREND_PAGES || 40) || 40));
+  const popularPages = Math.max(1, Math.min(6, Number(process.env.BILIBILI_TREND_PAGES || 6) || 6));
   const popularPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_TREND_PAGE_SIZE || 50) || 50));
   const authPageSize = Math.max(6, Math.min(50, Number(process.env.BILIBILI_AUTH_TREND_PAGE_SIZE || 30) || 30));
-  const defaultSearchPages = Math.max(1, Math.min(20, Number(process.env.BILIBILI_SEARCH_PAGES || 12) || 12));
+  const defaultSearchPages = Math.max(1, Math.min(2, Number(process.env.BILIBILI_SEARCH_PAGES || 2) || 2));
   const searchPageSize = Math.max(10, Math.min(50, Number(process.env.BILIBILI_SEARCH_PAGE_SIZE || 50) || 50));
-  const defaultKeywordLimit = Math.max(16, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 36) || 36);
+  const defaultKeywordLimit = Math.max(8, Math.min(12, Number(process.env.BILIBILI_SEARCH_KEYWORD_LIMIT || 12) || 12));
   const searchRoute = await getAdaptiveRouteDecision("bilibili", "search_feed", {
     pageCount: defaultSearchPages,
     keywordLimit: defaultKeywordLimit,
