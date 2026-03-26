@@ -198,10 +198,13 @@ class SDKServer {
   }
 
   async verifySession(
-    cookieValue: string | undefined | null
+    cookieValue: string | undefined | null,
+    options: { silentMissing?: boolean } = {}
   ): Promise<{ openId: string; appId: string; name: string } | null> {
     if (!cookieValue) {
-      console.warn("[Auth] Missing session cookie");
+      if (!options.silentMissing) {
+        console.warn("[Auth] Missing session cookie");
+      }
       return null;
     }
 
@@ -256,11 +259,16 @@ class SDKServer {
     } as GetUserInfoWithJwtResponse;
   }
 
-  async authenticateRequest(req: Request): Promise<User> {
+  async authenticateRequest(
+    req: Request,
+    options: { silentMissing?: boolean } = {}
+  ): Promise<User> {
     // Regular authentication flow
     const cookies = this.parseCookies((req as any).headers.cookie);
     const sessionCookie = cookies.get(COOKIE_NAME);
-    const session = await this.verifySession(sessionCookie);
+    const session = await this.verifySession(sessionCookie, {
+      silentMissing: options.silentMissing,
+    });
 
     if (!session) {
       throw ForbiddenError("Invalid session cookie");
