@@ -240,6 +240,10 @@ const LEGACY_STORE_FILE = path.resolve(
 );
 const STORE_FILE = path.join(STORE_DIR, "current.json");
 const META_FILE = path.join(STORE_DIR, "runtime-meta.json");
+const RUNTIME_SCHEDULER_FILE = path.join(STORE_DIR, "runtime-scheduler.json");
+const RUNTIME_BACKFILL_LIVE_FILE = path.join(STORE_DIR, "runtime-backfill-live.json");
+const RUNTIME_BACKFILL_HISTORY_FILE = path.join(STORE_DIR, "runtime-backfill-history.json");
+const RUNTIME_MAIL_DIGEST_FILE = path.join(STORE_DIR, "runtime-mail-digest.json");
 const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
 const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
 const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
@@ -881,6 +885,29 @@ async function readDerivedStoreFile(): Promise<TrendStoreFile | null> {
 }
 
 async function readRuntimeMeta(): Promise<TrendStoreRuntimeMeta> {
+  const [schedulerSegment, liveSegment, historySegment, mailSegment] = await Promise.all([
+    readRuntimeSegment<Partial<Record<GrowthPlatform, TrendSchedulerState>>>(RUNTIME_SCHEDULER_FILE),
+    readRuntimeSegment<TrendBackfillProgress>(RUNTIME_BACKFILL_LIVE_FILE),
+    readRuntimeSegment<TrendBackfillProgress>(RUNTIME_BACKFILL_HISTORY_FILE),
+    readRuntimeSegment<TrendMailDigestState>(RUNTIME_MAIL_DIGEST_FILE),
+  ]);
+
+  if (schedulerSegment || liveSegment || historySegment || mailSegment) {
+    const updatedAt = [
+      schedulerSegment?.updatedAt,
+      liveSegment?.updatedAt,
+      historySegment?.updatedAt,
+      mailSegment?.updatedAt,
+    ].filter(Boolean).sort().at(-1);
+    return {
+      updatedAt,
+      scheduler: schedulerSegment?.value || {},
+      backfillLive: liveSegment?.value,
+      backfillHistory: historySegment?.value,
+      mailDigest: mailSegment?.value || {},
+    };
+  }
+
   try {
     const raw = await fs.readFile(META_FILE, "utf8");
     const parsed = JSON.parse(raw) as TrendStoreRuntimeMeta;
@@ -918,21 +945,35 @@ export async function readTrendRuntimeMeta(): Promise<{
   };
 }
 
-async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
+async function readRuntimeSegment<T>(filePath: string): Promise<{ updatedAt?: string; value: T } | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as { updatedAt?: string; value: T };
+    return {
+      updatedAt: parsed.updatedAt,
+      value: parsed.value,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeRuntimeSegment<T>(filePath: string, value: T, updatedAt = nowShanghaiIso()) {
   await ensureStoreDir();
+  await writeJsonAtomic(filePath, {
+    updatedAt,
+    value,
+  });
+}
+
+async function writeRuntimeMetaSnapshot(updatedAt = nowShanghaiIso()) {
   const current = await readRuntimeMeta();
   await writeJsonAtomic(META_FILE, {
-    updatedAt: next.updatedAt || current.updatedAt || nowShanghaiIso(),
-    scheduler: {
-      ...(current.scheduler || {}),
-      ...(next.scheduler || {}),
-    },
-    backfillLive: next.backfillLive === undefined ? current.backfillLive : next.backfillLive,
-    backfillHistory: next.backfillHistory === undefined ? current.backfillHistory : next.backfillHistory,
-    mailDigest: {
-      ...(current.mailDigest || {}),
-      ...(next.mailDigest || {}),
-    },
+    updatedAt: current.updatedAt || updatedAt,
+    scheduler: current.scheduler || {},
+    backfillLive: current.backfillLive,
+    backfillHistory: current.backfillHistory,
+    mailDigest: current.mailDigest || {},
   });
 }
 
@@ -1134,13 +1175,29 @@ async function writeStore(
     }
   }
   await writeJsonAtomic(STORE_FILE, next);
-  await writeRuntimeMeta({
-    updatedAt: next.updatedAt,
-    scheduler: Object.keys(next.scheduler || {}).length ? next.scheduler : (meta.scheduler || {}),
-    backfillLive: next.backfillLive || meta.backfillLive,
-    backfillHistory: next.backfillHistory || meta.backfillHistory,
-    mailDigest: next.mailDigest || meta.mailDigest,
-  });
+  await Promise.all([
+    writeRuntimeSegment(
+      RUNTIME_SCHEDULER_FILE,
+      Object.keys(next.scheduler || {}).length ? next.scheduler : (meta.scheduler || {}),
+      next.updatedAt,
+    ),
+    writeRuntimeSegment(
+      RUNTIME_BACKFILL_LIVE_FILE,
+      next.backfillLive || meta.backfillLive || createEmptyStore().backfillLive!,
+      next.updatedAt,
+    ),
+    writeRuntimeSegment(
+      RUNTIME_BACKFILL_HISTORY_FILE,
+      next.backfillHistory || meta.backfillHistory || createEmptyStore().backfillHistory!,
+      next.updatedAt,
+    ),
+    writeRuntimeSegment(
+      RUNTIME_MAIL_DIGEST_FILE,
+      next.mailDigest || meta.mailDigest || {},
+      next.updatedAt,
+    ),
+  ]);
+  await writeRuntimeMetaSnapshot(next.updatedAt);
   await writeJsonAtomic(ARCHIVE_INDEX_FILE, {
     updatedAt: next.updatedAt,
     archiveIndex: next.archiveIndex || [],
@@ -1408,13 +1465,9 @@ export async function updateTrendSchedulerState(
     ...patch,
     platform,
   };
-  await writeRuntimeMeta({
-    updatedAt: nowShanghaiIso(),
-    scheduler,
-    backfillLive: meta.backfillLive,
-    backfillHistory: meta.backfillHistory,
-    mailDigest: meta.mailDigest,
-  });
+  const updatedAt = nowShanghaiIso();
+  await writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, scheduler, updatedAt);
+  await writeRuntimeMetaSnapshot(updatedAt);
   return scheduler[platform];
 }
 
@@ -1480,13 +1533,13 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
     platforms: mergedPlatforms,
     updatedAt: nowShanghaiIso(),
   };
-  await writeRuntimeMeta({
-    updatedAt: nowShanghaiIso(),
-    scheduler: meta.scheduler || {},
-    backfillLive: mode === "live" ? nextBackfill : (meta.backfillLive || createEmptyStore().backfillLive),
-    backfillHistory: mode === "history" ? nextBackfill : (meta.backfillHistory || createEmptyStore().backfillHistory),
-    mailDigest: meta.mailDigest || {},
-  });
+  const updatedAt = nowShanghaiIso();
+  await writeRuntimeSegment(
+    mode === "live" ? RUNTIME_BACKFILL_LIVE_FILE : RUNTIME_BACKFILL_HISTORY_FILE,
+    nextBackfill,
+    updatedAt,
+  );
+  await writeRuntimeMetaSnapshot(updatedAt);
   return nextBackfill;
 }
 
@@ -1729,13 +1782,9 @@ export async function updateTrendMailDigestState(patch: Partial<TrendMailDigestS
     ...(meta.mailDigest || {}),
     ...patch,
   };
-  await writeRuntimeMeta({
-    updatedAt: nowShanghaiIso(),
-    scheduler: meta.scheduler,
-    backfillLive: meta.backfillLive,
-    backfillHistory: meta.backfillHistory,
-    mailDigest,
-  });
+  const updatedAt = nowShanghaiIso();
+  await writeRuntimeSegment(RUNTIME_MAIL_DIGEST_FILE, mailDigest, updatedAt);
+  await writeRuntimeMetaSnapshot(updatedAt);
   return mailDigest;
 }
 
