@@ -916,7 +916,7 @@ async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown) {
-  const tempPath = `${filePath}.next`;
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.next`;
   await fs.writeFile(tempPath, JSON.stringify(value, null, 2), "utf8");
   await fs.rename(tempPath, filePath);
 }
