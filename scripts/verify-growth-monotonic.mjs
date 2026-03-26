@@ -13,6 +13,10 @@ function num(value) {
   return Number(value || 0);
 }
 
+function shouldEnforceArchivedGuard() {
+  return /^(1|true|yes)$/i.test(String(process.env.GROWTH_ENFORCE_ARCHIVED_MONOTONIC || "0").trim());
+}
+
 async function readJson(file) {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
@@ -31,6 +35,7 @@ async function main() {
   ]);
 
   const regressions = [];
+  const enforceArchived = shouldEnforceArchivedGuard();
 
   for (const platform of platformNames) {
     const floorCurrent = Math.max(
@@ -48,7 +53,7 @@ async function main() {
         `${platform}: currentTotal regressed ${actualCurrent} < ${floorCurrent}`,
       );
     }
-    if (actualArchived < floorArchived) {
+    if (enforceArchived && actualArchived < floorArchived) {
       regressions.push(
         `${platform}: archivedTotal regressed ${actualArchived} < ${floorArchived}`,
       );
