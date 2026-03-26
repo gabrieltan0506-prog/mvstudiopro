@@ -244,6 +244,7 @@ const RUNTIME_SCHEDULER_FILE = path.join(STORE_DIR, "runtime-scheduler.json");
 const RUNTIME_BACKFILL_LIVE_FILE = path.join(STORE_DIR, "runtime-backfill-live.json");
 const RUNTIME_BACKFILL_HISTORY_FILE = path.join(STORE_DIR, "runtime-backfill-history.json");
 const RUNTIME_MAIL_DIGEST_FILE = path.join(STORE_DIR, "runtime-mail-digest.json");
+const RUNTIME_RELEASE_FILE = path.join(STORE_DIR, "runtime-release.json");
 const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
 const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
 const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
@@ -975,6 +976,22 @@ async function writeRuntimeMetaSnapshot(updatedAt = nowShanghaiIso()) {
     backfillHistory: current.backfillHistory,
     mailDigest: current.mailDigest || {},
   });
+}
+
+export async function resetTrendRuntimeForDeploy(deployId: string) {
+  if (!deployId) return false;
+  const currentRelease = await readRuntimeSegment<{ deployId?: string }>(RUNTIME_RELEASE_FILE);
+  if (currentRelease?.value?.deployId === deployId) return false;
+  const empty = createEmptyStore();
+  const updatedAt = nowShanghaiIso();
+  await Promise.all([
+    writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, {}, updatedAt),
+    writeRuntimeSegment(RUNTIME_BACKFILL_LIVE_FILE, empty.backfillLive!, updatedAt),
+    writeRuntimeSegment(RUNTIME_BACKFILL_HISTORY_FILE, empty.backfillHistory!, updatedAt),
+    writeRuntimeSegment(RUNTIME_RELEASE_FILE, { deployId }, updatedAt),
+  ]);
+  await writeRuntimeMetaSnapshot(updatedAt);
+  return true;
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown) {

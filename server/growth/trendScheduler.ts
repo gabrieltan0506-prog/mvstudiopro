@@ -12,6 +12,7 @@ import {
   readTrendSchedulerState,
   mergeTrendCollections,
   reconcileTrendHistoryState,
+  resetTrendRuntimeForDeploy,
   updateTrendSchedulerState,
 } from "./trendStore";
 import { notifyGrowthCollectionUpdate } from "./trendMailDigest";
@@ -482,6 +483,11 @@ async function shouldBootstrapBackfill() {
 export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
+
+  const deployId = String(process.env.FLY_MACHINE_VERSION || process.env.FLY_IMAGE_REF || "").trim();
+  await resetTrendRuntimeForDeploy(deployId).catch((error) => {
+    console.warn("[growth.scheduler] deploy runtime reset failed:", error);
+  });
 
   if (!/^(1|true|yes)$/i.test(String(process.env.GROWTH_DISABLE_HISTORY_LEDGER_UPDATES || "").trim())) {
     await reconcileTrendHistoryState().catch((error) => {
