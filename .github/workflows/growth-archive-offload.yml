@@ -29,6 +29,24 @@ jobs:
             cat /tmp/archive-offload-dirs.txt
           '" > /tmp/growth-archive-offload/dirs.txt
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-archive-offload/fetched-at.txt
+          node <<'NODE'
+          const fs = require("fs");
+          const dirsPath = "/tmp/growth-archive-offload/dirs.txt";
+          const dirs = fs.existsSync(dirsPath)
+            ? fs.readFileSync(dirsPath,"utf8").split(/\r?\n/).map((s)=>s.trim()).filter(Boolean)
+            : [];
+          const manifest = {
+            createdAt: new Date().toISOString(),
+            baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
+            archiveDirs: dirs,
+            thresholdsMb: {
+              singleFile: 400,
+              directory: 800,
+              hotData: 900
+            }
+          };
+          fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
+          NODE
       - name: Stream archive shard bundle from Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -46,21 +64,6 @@ jobs:
             [ -n "$dir" ] || continue
             flyctl ssh console -a mvstudiopro -C "sh -lc 'cd /data/growth/archive && tar -czf - $dir'" > "/tmp/growth-archive-offload/assets/archive-$dir.tar.gz"
           done < /tmp/growth-archive-offload/dirs.txt
-          node <<'NODE'
-          const fs = require("fs");
-          const dirs = fs.readFileSync("/tmp/growth-archive-offload/dirs.txt","utf8").split(/\r?\n/).map((s)=>s.trim()).filter(Boolean);
-          const manifest = {
-            createdAt: new Date().toISOString(),
-            baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
-            archiveDirs: dirs,
-            thresholdsMb: {
-              singleFile: 400,
-              directory: 800,
-              hotData: 900
-            }
-          };
-          fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
-          NODE
       - name: Upload GitHub archive offload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -73,6 +76,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          test -f /tmp/growth-archive-offload/offload-manifest.json
           gh release view growth-cold-store-latest >/dev/null 2>&1 || \
             gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
           gh release upload growth-cold-store-latest /tmp/growth-archive-offload/offload-manifest.json#offload-manifest.json --clobber
