@@ -50,7 +50,7 @@ const ENABLE_LIVE_BACKFILL_BOOTSTRAP = /^(1|true|yes)$/i.test(
 );
 const BACKFILL_PLATFORM_TIMEOUT_MS = Math.max(
   30 * 1000,
-  Number(process.env.GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
+  Number(process.env.GROWTH_BACKFILL_PLATFORM_TIMEOUT_MS || 60 * 1000) || 60 * 1000,
 );
 
 type WorkerState = {

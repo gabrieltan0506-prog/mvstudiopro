@@ -54,7 +54,7 @@ const BACKFILL_STORE_SIZE_LIMIT_MB = Math.max(
 );
 const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
-  Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 3 * 60 * 1000) || 3 * 60 * 1000,
+  Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -282,8 +282,16 @@ async function runPlatform(platform: GrowthPlatform) {
   const startedAt = nowShanghaiIso();
   const startedAtMs = Date.now();
   const currentState = (await readTrendSchedulerState())[platform];
+  const provisionalBurst = Boolean(currentState?.burstMode) || isForceBurstActive(platform);
   await updateTrendSchedulerState(platform, {
     lastRunAt: startedAt,
+    nextRunAt: provisionalBurst ? nextRunIso(getPlatformBurstIntervalMs(platform)) : nextScheduledRunIso(),
+    burstMode: provisionalBurst,
+    burstTriggeredAt: provisionalBurst ? (currentState?.burstTriggeredAt || startedAt) : undefined,
+    lastFrequencyLabel: provisionalBurst
+      ? (isForceBurstActive(platform) ? getForceBurstLabel(platform) : getBurstFrequencyLabel(platform))
+      : getSchedulerFrequencyLabel(),
+    lastError: undefined,
   });
 
   try {
