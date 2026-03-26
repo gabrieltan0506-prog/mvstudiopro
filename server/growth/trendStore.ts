@@ -80,6 +80,7 @@ export type TrendBackfillProgress = {
   mode?: "live" | "history";
   active: boolean;
   startedAt?: string;
+  nextRunAt?: string;
   updatedAt?: string;
   finishedAt?: string;
   currentRound: number;
@@ -413,6 +414,7 @@ function createEmptyStore(): TrendStoreFile {
       targetPerPlatform: 0,
       status: "idle",
       platforms: [],
+      nextRunAt: undefined,
     },
     backfillLive: {
       active: false,
@@ -422,6 +424,7 @@ function createEmptyStore(): TrendStoreFile {
       status: "idle",
       platforms: [],
       mode: "live",
+      nextRunAt: undefined,
     },
     backfillHistory: {
       active: false,
@@ -431,6 +434,7 @@ function createEmptyStore(): TrendStoreFile {
       status: "idle",
       platforms: [],
       mode: "history",
+      nextRunAt: undefined,
     },
     mailDigest: {},
   };

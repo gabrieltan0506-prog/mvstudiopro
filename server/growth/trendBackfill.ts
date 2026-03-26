@@ -195,6 +195,14 @@ async function scheduleNextBackfillStep(kind: BackfillKind) {
   if (!isBackfillWindow()) {
     delayMs = BACKFILL_ACTIVE_INTERVAL_MS;
   }
+  await updateTrendBackfillProgress({
+    mode: kind,
+    active: true,
+    startedAt: state.startedAt || nowShanghaiIso(),
+    nextRunAt: nowShanghaiIso(Date.now() + delayMs),
+    finishedAt: undefined,
+    status: "running",
+  }).catch(() => undefined);
   state.timer = setTimeout(() => {
     runBackfillStep(kind)
       .catch((error) => {
@@ -303,14 +311,16 @@ async function runBackfillStep(kind: BackfillKind) {
       mode: kind,
       active: true,
       startedAt: state.startedAt,
+      nextRunAt: undefined,
+      finishedAt: undefined,
       currentRound: nextRound,
       maxRounds,
       targetPerPlatform: 0,
       selectedWindowDays: statsBefore.selectedWindowDays,
       status: "running",
       note: kind === "live"
-        ? `近 ${windowDays} 天 live 回填运行中：按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐，目标步长 ${stepTarget}。`
-        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，默认每 30 分钟一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 1 / 2 / 4 小时一次。`,
+        ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐，目标步长 ${stepTarget}。`
+        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，夜间模式默认每 15 分钟一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 0.5 / 1 / 2 小时一次，并启用回填 burst。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -392,14 +402,16 @@ async function runBackfillStep(kind: BackfillKind) {
     await updateTrendBackfillProgress({
       mode: kind,
       active: true,
+      nextRunAt: undefined,
+      finishedAt: undefined,
       currentRound: nextRound,
       maxRounds,
       targetPerPlatform: 0,
       selectedWindowDays: statsAfter.selectedWindowDays,
       status: "running",
       note: kind === "live"
-        ? `近 ${windowDays} 天 live 回填运行中：按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐。`
-        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天；单平台逐一回填，小步长抓取，history-ledger 延迟到每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮再批量刷新。`,
+        ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐。`
+        : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天，夜间模式；按有数据的平台优先回填，单平台逐一执行，小步长抓取，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮再批量刷新。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
         const stalled = pending.includes(platform) && (state.plateau.get(platform) || 0) >= PLATEAU_LIMIT;
@@ -422,6 +434,7 @@ async function runBackfillStep(kind: BackfillKind) {
     await updateTrendBackfillProgress({
       mode: kind,
       active: true,
+      nextRunAt: undefined,
       finishedAt: storageFull ? undefined : nowShanghaiIso(),
       status: storageFull ? "running" : "failed",
       note: storageFull
@@ -471,6 +484,13 @@ function stopWorker(kind: BackfillKind) {
     state.timer = null;
   }
   state.started = false;
+  void updateTrendBackfillProgress({
+    mode: kind,
+    active: false,
+    nextRunAt: undefined,
+    finishedAt: nowShanghaiIso(),
+    status: "idle",
+  }).catch(() => undefined);
 }
 
 export async function bootstrapGrowthTrendBackfillWorker() {

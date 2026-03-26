@@ -1644,9 +1644,10 @@ export default function MVAnalysisPage() {
                       <div>status: {String(section.data.status || "-")}</div>
                       <div>active: {String(section.data.active ?? false)}</div>
                       <div>window days: {String(section.data.selectedWindowDays || "-")}</div>
-                      <div>started: {formatShanghaiDateTime(String(section.data.startedAt || ""))}</div>
-                      <div>updated: {formatShanghaiDateTime(String(section.data.updatedAt || ""))}</div>
-                      <div>finished: {formatShanghaiDateTime(String(section.data.finishedAt || ""))}</div>
+                      <div>开始时间：{formatShanghaiDateTime(String(section.data.startedAt || ""))}</div>
+                      <div>下一次回填：{formatShanghaiDateTime(String(section.data.nextRunAt || ""))}</div>
+                      <div>更新时间：{formatShanghaiDateTime(String(section.data.updatedAt || ""))}</div>
+                      <div>结束时间：{formatShanghaiDateTime(String(section.data.finishedAt || ""))}</div>
                     </div>
                     <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
                       {String(section.data.note || "-")}
