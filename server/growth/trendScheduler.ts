@@ -67,6 +67,10 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
+const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
+);
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -409,7 +413,13 @@ async function runDuePlatforms() {
   try {
     const scheduler = await readTrendSchedulerState();
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
-      const nextRunAt = scheduler[platform]?.nextRunAt;
+      const state = scheduler[platform];
+      const nextRunAt = state?.nextRunAt;
+      const lastRunAt = state?.lastRunAt;
+      const staleSinceLastRun = lastRunAt
+        ? Date.now() - new Date(lastRunAt).getTime() >= STALE_SCHEDULER_FORCE_RUN_MS
+        : false;
+      if (isForceBurstActive(platform) && staleSinceLastRun) return true;
       if (!nextRunAt) return true;
       return new Date(nextRunAt).getTime() <= Date.now();
     });
