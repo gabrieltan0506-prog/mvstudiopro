@@ -909,12 +909,19 @@ export async function readTrendRuntimeMeta(): Promise<{
 
 async function writeRuntimeMeta(next: TrendStoreRuntimeMeta) {
   await ensureStoreDir();
+  const current = await readRuntimeMeta();
   await writeJsonAtomic(META_FILE, {
-    updatedAt: next.updatedAt || nowShanghaiIso(),
-    scheduler: next.scheduler || {},
-    backfillLive: next.backfillLive,
-    backfillHistory: next.backfillHistory,
-    mailDigest: next.mailDigest || {},
+    updatedAt: next.updatedAt || current.updatedAt || nowShanghaiIso(),
+    scheduler: {
+      ...(current.scheduler || {}),
+      ...(next.scheduler || {}),
+    },
+    backfillLive: next.backfillLive === undefined ? current.backfillLive : next.backfillLive,
+    backfillHistory: next.backfillHistory === undefined ? current.backfillHistory : next.backfillHistory,
+    mailDigest: {
+      ...(current.mailDigest || {}),
+      ...(next.mailDigest || {}),
+    },
   });
 }
 
