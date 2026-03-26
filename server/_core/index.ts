@@ -249,6 +249,11 @@ async function startServer() {
     }
   });
 
+  // Keep Fly health checks on a cheap route that never falls through to SPA static handling.
+  app.get("/api/health", (_req, res) => {
+    res.status(200).type("text/plain").send("ok");
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
