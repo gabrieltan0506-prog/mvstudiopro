@@ -11,12 +11,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Fetch growth store files from Fly
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           mkdir -p /tmp/growth-backup
+          mkdir -p /tmp/growth-backup/store/backups
 
           wait_for_started_vm() {
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -46,8 +50,43 @@ jobs:
 
           capture_from_fly "gzip -c /data/growth/current.json" /tmp/growth-backup/current.json.gz
           capture_from_fly "gzip -c /data/growth/runtime-meta.json" /tmp/growth-backup/runtime-meta.json.gz
-          capture_from_fly "node -e \"const fs=require('fs');process.stdout.write(fs.existsSync('/data/growth/history-ledger/douyin.json') ? 'yes' : 'no')\"" /tmp/growth-backup/has-history-ledger.txt
+          capture_from_fly "gzip -c /data/growth/archive-index.json" /tmp/growth-backup/archive-index.json.gz
+          capture_from_fly "gzip -c /data/growth/history-summary.json" /tmp/growth-backup/history-summary.json.gz
+          capture_from_fly "gzip -c /data/growth/backups/growth-debug-summary.json" /tmp/growth-backup/growth-debug-summary.json.gz
+          capture_from_fly "tar -czf - -C /data/growth platforms" /tmp/growth-backup/platforms.tar.gz
+          capture_from_fly "tar -czf - -C /data/growth archive" /tmp/growth-backup/archive.tar.gz
+          capture_from_fly "tar -czf - -C /data/growth history-ledger" /tmp/growth-backup/history-ledger.tar.gz
+          capture_from_fly "node -e \"const fs=require('fs');process.stdout.write(fs.existsSync('/data/growth/platform-current-manifest.json') ? 'yes' : 'no')\"" /tmp/growth-backup/has-platform-current.txt
+          capture_from_fly "if [ -d /data/growth/platform-current ]; then tar -czf - -C /data/growth platform-current; fi" /tmp/growth-backup/platform-current.tar.gz || true
+          capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then gzip -c /data/growth/platform-current-manifest.json; fi" /tmp/growth-backup/platform-current-manifest.json.gz || true
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
+
+          mkdir -p /tmp/growth-backup/store/backups
+          gzip -dfc /tmp/growth-backup/current.json.gz > /tmp/growth-backup/store/current.json
+          gzip -dfc /tmp/growth-backup/runtime-meta.json.gz > /tmp/growth-backup/store/runtime-meta.json
+          gzip -dfc /tmp/growth-backup/archive-index.json.gz > /tmp/growth-backup/store/archive-index.json
+          gzip -dfc /tmp/growth-backup/history-summary.json.gz > /tmp/growth-backup/store/history-summary.json
+          gzip -dfc /tmp/growth-backup/growth-debug-summary.json.gz > /tmp/growth-backup/store/backups/growth-debug-summary.json
+          tar -xzf /tmp/growth-backup/platforms.tar.gz -C /tmp/growth-backup/store
+          if [ -s /tmp/growth-backup/platform-current.tar.gz ]; then
+            tar -xzf /tmp/growth-backup/platform-current.tar.gz -C /tmp/growth-backup/store
+          fi
+          if [ -s /tmp/growth-backup/platform-current-manifest.json.gz ]; then
+            gzip -dfc /tmp/growth-backup/platform-current-manifest.json.gz > /tmp/growth-backup/store/platform-current-manifest.json
+          fi
+          npm run growth:build-backup-manifest -- /tmp/growth-backup/store /tmp/growth-backup/backup-manifest.json
+
+          (
+            cd /tmp/growth-backup/store
+            FILES="current.json runtime-meta.json archive-index.json history-summary.json backups platforms"
+            if [ -d platform-current ]; then
+              FILES="$FILES platform-current"
+            fi
+            if [ -f platform-current-manifest.json ]; then
+              FILES="$FILES platform-current-manifest.json"
+            fi
+            tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
+          )
       - name: Upload GitHub backup artifact
         uses: actions/upload-artifact@v4
         with:
