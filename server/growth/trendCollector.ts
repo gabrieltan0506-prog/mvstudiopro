@@ -2235,19 +2235,19 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
   const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const defaultPrivatePages = Math.max(1, Math.min(60, Number(process.env.KUAISHOU_PRIVATE_PAGES || 36) || 36));
-  const privateConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 6) || 6));
+  const defaultPrivatePages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_PAGES || 4) || 4));
+  const privateConcurrency = Math.max(1, Math.min(1, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 1) || 1));
   const privateRetryLimit = Math.max(0, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_RETRY_LIMIT || 2) || 2));
   const privateRetryDelayMs = Math.max(500, Math.min(8000, Number(process.env.KUAISHOU_PRIVATE_RETRY_DELAY_MS || 1500) || 1500));
   const publicPages = Math.max(1, Math.min(100, Number(process.env.KUAISHOU_TREND_PAGES || 40) || 40));
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
   const defaultSearchKeywordLimit = Math.max(12, Math.min(72, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 60) || 60));
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const defaultSearchPages = Math.max(1, Math.min(50, Number(process.env.KUAISHOU_SEARCH_PAGES || 24) || 24));
-  const searchConcurrency = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 5) || 5));
-  const searchUserPages = Math.max(1, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 12) || 12));
-  const searchUserLimit = Math.max(5, Math.min(120, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 90) || 90));
-  const searchUserKeywordLimit = Math.max(6, Math.min(32, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 24) || 24));
+  const defaultSearchPages = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_PAGES || 8) || 8));
+  const searchConcurrency = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 2) || 2));
+  const searchUserPages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 4) || 4));
+  const searchUserLimit = Math.max(5, Math.min(20, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 20) || 20));
+  const searchUserKeywordLimit = Math.max(4, Math.min(8, Number(process.env.KUAISHOU_SEARCH_USER_KEYWORD_LIMIT || 8) || 8));
   const publicProfileLimit = Math.max(1, Math.min(30, Number(process.env.KUAISHOU_PUBLIC_PROFILE_LIMIT || 28) || 28));
   const privateRoute = await getAdaptiveRouteDecision("kuaishou", "private_list", {
     pageCount: defaultPrivatePages,
