@@ -69,6 +69,10 @@ export type TrendBackfillPlatformProgress = {
   target: number;
   currentTotal: number;
   archivedTotal: number;
+  startedAt?: string;
+  nextRunAt?: string;
+  updatedAt?: string;
+  finishedAt?: string;
   addedCount?: number;
   mergedCount?: number;
   plateauCount?: number;
@@ -1543,6 +1547,10 @@ export async function updateTrendBackfillProgress(progress: Partial<TrendBackfil
       platform,
       currentTotal: effectiveCurrentTotal,
       archivedTotal: effectiveArchivedTotal,
+      startedAt: incoming?.startedAt ?? previous?.startedAt ?? progress.startedAt ?? current.startedAt,
+      nextRunAt: incoming?.nextRunAt ?? progress.nextRunAt ?? previous?.nextRunAt,
+      updatedAt: incoming?.updatedAt ?? progress.updatedAt ?? previous?.updatedAt,
+      finishedAt: incoming?.finishedAt ?? progress.finishedAt ?? previous?.finishedAt,
       target: incoming?.target ?? previous?.target ?? current.targetPerPlatform ?? 0,
       status: incoming?.status ?? previous?.status ?? "pending",
     };

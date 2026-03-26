@@ -273,6 +273,7 @@ async function runBackfillStep(kind: BackfillKind) {
   if (state.inFlight) return;
   if (!isBackfillWindow()) return;
   state.inFlight = true;
+  const roundStartedAt = nowShanghaiIso();
   try {
     const statsBefore = await readBackfillSnapshotFor(kind);
     const pending = getPendingPlatforms(kind, statsBefore);
@@ -306,12 +307,11 @@ async function runBackfillStep(kind: BackfillKind) {
     }
 
     const nextRound = Math.min(maxRounds, (statsBefore.currentRound || 0) + 1);
-    if (!state.startedAt) state.startedAt = nowShanghaiIso();
+    if (!state.startedAt) state.startedAt = roundStartedAt;
     await updateTrendBackfillProgress({
       mode: kind,
       active: true,
       startedAt: state.startedAt,
-      nextRunAt: undefined,
       finishedAt: undefined,
       currentRound: nextRound,
       maxRounds,
@@ -328,6 +328,7 @@ async function runBackfillStep(kind: BackfillKind) {
           target: 0,
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedTotal || 0,
+          startedAt: pending.includes(platform) ? roundStartedAt : undefined,
           plateauCount: state.plateau.get(platform) || 0,
           status: pending.includes(platform) ? "running" : "plateau",
         };
@@ -402,7 +403,6 @@ async function runBackfillStep(kind: BackfillKind) {
     await updateTrendBackfillProgress({
       mode: kind,
       active: true,
-      nextRunAt: undefined,
       finishedAt: undefined,
       currentRound: nextRound,
       maxRounds,
@@ -420,6 +420,7 @@ async function runBackfillStep(kind: BackfillKind) {
           target: 0,
           currentTotal: row?.currentTotal || 0,
           archivedTotal: row?.archivedTotal || 0,
+          startedAt: pending.includes(platform) ? roundStartedAt : undefined,
           addedCount: mergedStats?.[platform]?.addedCount || 0,
           mergedCount: mergedStats?.[platform]?.mergedCount || 0,
           plateauCount: state.plateau.get(platform) || 0,
