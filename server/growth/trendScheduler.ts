@@ -245,11 +245,10 @@ function resolveNextRunPlan(params: {
     const lowYieldRuns = isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)
       ? 0
       : params.burstLowYieldRuns + 1;
-    const lowYieldMode = lowYieldRuns >= LOW_YIELD_LIMIT;
     return {
       burstMode: true,
-      nextRunAt: nextRunIso(lowYieldMode ? getPlatformLowYieldIntervalMs(params.platform) : getPlatformBurstIntervalMs(params.platform)),
-      frequencyLabel: lowYieldMode ? getLowYieldFrequencyLabel(params.platform) : getForceBurstLabel(params.platform),
+      nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
+      frequencyLabel: getForceBurstLabel(params.platform),
       burstStableRuns: params.burstStableRuns,
       burstLowYieldRuns: lowYieldRuns,
       burstEvent: params.burstMode ? ("stay" as const) : ("enter" as const),
@@ -396,10 +395,10 @@ async function runPlatform(platform: GrowthPlatform) {
       burstLowYieldRuns: forcedBurst ? (current?.burstLowYieldRuns || 0) : 0,
       burstTriggeredAt: forcedBurst ? (current?.burstTriggeredAt || startedAt) : undefined,
       nextRunAt: forcedBurst
-        ? nextRunIso(storageFull ? getPlatformBurstIntervalMs(platform) : getPlatformLowYieldIntervalMs(platform))
+        ? nextRunIso(getPlatformBurstIntervalMs(platform))
         : nextRunIso(buildRetryDelayMs(failureCount)),
       lastFrequencyLabel: forcedBurst
-        ? (storageFull ? getBurstFrequencyLabel(platform) : getLowYieldFrequencyLabel(platform))
+        ? getForceBurstLabel(platform)
         : current?.lastFrequencyLabel,
     });
     console.warn(`[growth.scheduler] ${platform} failed:`, message);
