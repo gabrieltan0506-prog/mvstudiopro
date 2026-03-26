@@ -225,11 +225,33 @@ function getForceBurstLabel(platform: GrowthPlatform) {
 }
 
 function isForceBurstActive(platform: GrowthPlatform) {
-  return FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.has(platform);
+  return isLiveWindow()
+    && !isBackfillWindow()
+    && FORCE_BURST_UNTIL_MS > Date.now()
+    && FORCE_BURST_PLATFORMS.has(platform);
 }
 
 function hasAnyForcedBurstConfig() {
-  return FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.size > 0;
+  return isLiveWindow() && !isBackfillWindow() && FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.size > 0;
+}
+
+async function clearStaleBurstStates(reason: "disabled" | "backfill-window") {
+  const scheduler = await readTrendSchedulerState();
+  for (const platform of PRIORITY_PLATFORMS) {
+    const state = scheduler[platform];
+    if (!state?.burstMode) continue;
+    await updateTrendSchedulerState(platform, {
+      burstMode: false,
+      burstTriggeredAt: undefined,
+      burstStableRuns: 0,
+      burstLowYieldRuns: 0,
+      nextRunAt: nextScheduledRunIso(),
+      lastFrequencyLabel: reason === "backfill-window"
+        ? "夜间 backfill 窗口 / live burst 已关闭"
+        : getSchedulerFrequencyLabel(),
+      lastError: state.lastError,
+    });
+  }
 }
 
 function isClearlyHigherThanPrevious(platform: GrowthPlatform, currentCount: number, previousCount: number) {
@@ -469,19 +491,10 @@ export async function bootstrapGrowthTrendScheduler() {
 
   const scheduler = await readTrendSchedulerState();
   if (!hasAnyForcedBurstConfig()) {
-    for (const platform of PRIORITY_PLATFORMS) {
-      const state = scheduler[platform];
-      if (!state?.burstMode) continue;
-      await updateTrendSchedulerState(platform, {
-        burstMode: false,
-        burstTriggeredAt: undefined,
-        burstStableRuns: 0,
-        burstLowYieldRuns: 0,
-        nextRunAt: nextScheduledRunIso(),
-        lastFrequencyLabel: getSchedulerFrequencyLabel(),
-        lastError: state.lastError,
-      });
-    }
+    await clearStaleBurstStates("disabled");
+  }
+  if (isBackfillWindow()) {
+    await clearStaleBurstStates("backfill-window");
   }
   for (const platform of PRIORITY_PLATFORMS) {
     if (!scheduler[platform]?.nextRunAt) {

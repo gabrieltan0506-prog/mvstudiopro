@@ -251,6 +251,12 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
       return isSchedulerStale(row?.lastSuccessAt) || isSchedulerGapDetected(row?.lastSuccessAt);
     }
     return (workerState.history.plateau.get(platform) || 0) < PLATEAU_LIMIT;
+  }).sort((left, right) => {
+    const leftRow = stats.platforms.find((item) => item.platform === left);
+    const rightRow = stats.platforms.find((item) => item.platform === right);
+    const leftWeight = (leftRow?.currentTotal || 0) + (leftRow?.archivedTotal || 0);
+    const rightWeight = (rightRow?.currentTotal || 0) + (rightRow?.archivedTotal || 0);
+    return rightWeight - leftWeight;
   });
 }
 
@@ -326,41 +332,46 @@ async function runBackfillStep(kind: BackfillKind) {
     const mergedStats: Record<string, any> = {};
     const collectedErrors: Record<string, string | undefined> = {};
     for (const platform of pending) {
-      const collected = await withTimeout(
-        collectTrendPlatforms([platform]),
-        BACKFILL_PLATFORM_TIMEOUT_MS,
-        `[${label}] ${platform}`,
-      );
-      if (collected.collections[platform]) {
-        mergedCollections[platform] = collected.collections[platform];
-      }
-      if (collected.errors[platform]) {
-        collectedErrors[platform] = collected.errors[platform];
-      }
-      const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
-        deferHistoryLedger: kind === "history",
-      });
-      if (merged.mergeStats?.[platform]) {
-        mergedStats[platform] = merged.mergeStats[platform];
-      }
-      const collection = collected.collections[platform];
-      if (collection?.source === "live" && collection.items.length) {
-        await notifyGrowthCollectionUpdate({
-          platform,
-          itemCount: collection.items.length,
-          addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
-          mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
-          collectedAt: collection.collectedAt,
-          nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
-          frequencyLabel: kind === "live"
-            ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
-            : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
-          burstMode: false,
-          live: true,
-          collection,
-        }).catch((error) => {
-          console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+      try {
+        const collected = await withTimeout(
+          collectTrendPlatforms([platform]),
+          BACKFILL_PLATFORM_TIMEOUT_MS,
+          `[${label}] ${platform}`,
+        );
+        if (collected.collections[platform]) {
+          mergedCollections[platform] = collected.collections[platform];
+        }
+        if (collected.errors[platform]) {
+          collectedErrors[platform] = collected.errors[platform];
+        }
+        const merged = await mergeTrendCollectionsWithOptions(collected.collections, {
+          deferHistoryLedger: kind === "history",
         });
+        if (merged.mergeStats?.[platform]) {
+          mergedStats[platform] = merged.mergeStats[platform];
+        }
+        const collection = collected.collections[platform];
+        if (collection?.source === "live" && collection.items.length) {
+          await notifyGrowthCollectionUpdate({
+            platform,
+            itemCount: collection.items.length,
+            addedCount: merged.mergeStats?.[platform]?.addedCount || 0,
+            mergedCount: merged.mergeStats?.[platform]?.mergedCount || 0,
+            collectedAt: collection.collectedAt,
+            nextRunAt: nowShanghaiIso(Date.now() + nextHistoryDelayMs()),
+            frequencyLabel: kind === "live"
+              ? `近 ${windowDays} 天 live 回填 / ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket / 目标步长 ${stepTarget}`
+              : `历史回填 / ${statsBefore.selectedWindowDays} 天窗口 / 目标步长 ${stepTarget}`,
+            burstMode: false,
+            live: true,
+            collection,
+          }).catch((error) => {
+            console.warn(`[${label}] email notify skipped for ${platform}:`, error);
+          });
+        }
+      } catch (error) {
+        collectedErrors[platform] = error instanceof Error ? error.message : String(error);
+        console.warn(`[${label}] ${platform} failed:`, error);
       }
     }
     if (kind === "history" && nextRound % HISTORY_LEDGER_BATCH_ROUNDS === 0) {
@@ -374,6 +385,7 @@ async function runBackfillStep(kind: BackfillKind) {
       const total = statsAfter.platforms.find((item) => item.platform === platform)?.archivedTotal || 0;
       const prev = state.previous.get(platform) || 0;
       state.previous.set(platform, total);
+      if (collectedErrors[platform]) continue;
       state.plateau.set(platform, total <= prev ? (state.plateau.get(platform) || 0) + 1 : 0);
     }
 

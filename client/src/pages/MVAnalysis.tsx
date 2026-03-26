@@ -1629,36 +1629,43 @@ export default function MVAnalysisPage() {
                     ))}
                   </div>
                 ) : null}
-                {growthSystemStatusQuery.data?.backfill ? (
-                  <div className="mt-4 space-y-2 rounded-2xl border border-amber-200/15 bg-black/15 p-4 text-xs text-white/72">
-                    <div className="font-semibold text-amber-100">数据仓回填进度</div>
+                {[{
+                  key: "live",
+                  title: "近期回填进度",
+                  data: growthSystemStatusQuery.data?.backfillLive,
+                }, {
+                  key: "history",
+                  title: "历史回填进度",
+                  data: growthSystemStatusQuery.data?.backfillHistory,
+                }].map((section) => section.data ? (
+                  <div key={section.key} className="mt-4 space-y-2 rounded-2xl border border-amber-200/15 bg-black/15 p-4 text-xs text-white/72">
+                    <div className="font-semibold text-amber-100">{section.title}</div>
                     <div className="grid gap-1 md:grid-cols-2">
-                      <div>status: {String(growthSystemStatusQuery.data.backfill.status || "-")}</div>
-                      <div>active: {String(growthSystemStatusQuery.data.backfill.active ?? false)}</div>
-                      <div>window days: {String(growthSystemStatusQuery.data.backfill.selectedWindowDays || "-")}</div>
-                      <div>started: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.startedAt || ""))}</div>
-                      <div>updated: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.updatedAt || ""))}</div>
-                      <div>finished: {formatShanghaiDateTime(String(growthSystemStatusQuery.data.backfill.finishedAt || ""))}</div>
+                      <div>status: {String(section.data.status || "-")}</div>
+                      <div>active: {String(section.data.active ?? false)}</div>
+                      <div>window days: {String(section.data.selectedWindowDays || "-")}</div>
+                      <div>started: {formatShanghaiDateTime(String(section.data.startedAt || ""))}</div>
+                      <div>updated: {formatShanghaiDateTime(String(section.data.updatedAt || ""))}</div>
+                      <div>finished: {formatShanghaiDateTime(String(section.data.finishedAt || ""))}</div>
                     </div>
                     <div className="rounded-xl border border-amber-200/15 bg-amber-400/5 p-3 leading-6">
-                      {String(growthSystemStatusQuery.data.backfill.note || "-")}
+                      {String(section.data.note || "-")}
                     </div>
                     <div className="space-y-2">
-                      {growthSystemStatusQuery.data.backfill.platforms?.map((item) => (
-                        <div key={String(item.platform)} className="grid gap-1 md:grid-cols-2">
+                      {section.data.platforms?.map((item) => (
+                        <div key={`${section.key}-${String(item.platform)}`} className="grid gap-1 md:grid-cols-2">
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 状态：{String(item.status || "-")}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 历史量：{String(item.archivedTotal || 0)} / {String(item.target || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 当前量：{String(item.currentTotal || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 新增：{String(item.addedCount || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 合并：{String(item.mergedCount || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台说明：{String(item.platformDescription || getPlatformDescription(item.platform))}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台停滞轮数：{String(item.plateauCount || 0)}</div>
                           <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.error || "-")}</div>
                         </div>
                       ))}
                     </div>
                   </div>
-                ) : null}
+                ) : null)}
               </div>
           </section>
         ) : null}
