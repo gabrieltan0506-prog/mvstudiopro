@@ -11,6 +11,7 @@ import {
 import {
   readTrendSchedulerState,
   mergeTrendCollections,
+  readGrowthRuntimeControl,
   reconcileTrendHistoryState,
   resetTrendRuntimeForDeploy,
   updateTrendSchedulerState,
@@ -75,6 +76,13 @@ const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
+let runtimeModeOverride: "auto" | "live" | "backfill" = "auto";
+
+async function refreshRuntimeModeOverride() {
+  const control = await readGrowthRuntimeControl();
+  runtimeModeOverride = control?.mode || "auto";
+  return runtimeModeOverride;
+}
 function isStorageFullError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || "");
   return /\bENOSPC\b|no space left on device/i.test(message);
@@ -154,10 +162,14 @@ function isHourInWindow(hour: number, startHour: number, endHour: number) {
 }
 
 function isLiveWindow(now = new Date()) {
+  if (runtimeModeOverride === "live") return true;
+  if (runtimeModeOverride === "backfill") return false;
   return isHourInWindow(getSchedulerHour(now), LIVE_WINDOW_START_HOUR, LIVE_WINDOW_END_HOUR);
 }
 
 function isBackfillWindow(now = new Date()) {
+  if (runtimeModeOverride === "backfill") return true;
+  if (runtimeModeOverride === "live") return false;
   return isHourInWindow(getSchedulerHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
@@ -483,6 +495,7 @@ async function shouldBootstrapBackfill() {
 export async function bootstrapGrowthTrendScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
+  await refreshRuntimeModeOverride().catch(() => "auto");
 
   const deployId = String(process.env.FLY_MACHINE_VERSION || process.env.FLY_IMAGE_REF || "").trim();
   await resetTrendRuntimeForDeploy(deployId).catch((error) => {
@@ -532,6 +545,9 @@ export async function bootstrapGrowthTrendScheduler() {
   });
 
   tickTimer = setInterval(() => {
+    refreshRuntimeModeOverride().catch((error) => {
+      console.warn("[growth.scheduler] runtime mode refresh failed:", error);
+    });
     if (isBackfillWindow()) {
       bootstrapGrowthTrendBackfillWorker().catch((error) => {
         console.warn("[growth.backfill] periodic bootstrap failed:", error);

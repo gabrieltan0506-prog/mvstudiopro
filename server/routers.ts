@@ -28,7 +28,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -943,8 +943,35 @@ export const appRouter = router({
       .query(async () => {
         const smtp = getSmtpStatus();
         const runtimeMeta = await readTrendRuntimeMeta();
+        const runtimeControl = await readGrowthRuntimeControl();
         const debugSummary = await readGrowthDebugSummary();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
+        let storage: {
+          totalBytes: number;
+          freeBytes: number;
+          usedBytes: number;
+          freeMb: number;
+          usedMb: number;
+          totalMb: number;
+          lowSpace: boolean;
+        } | null = null;
+        try {
+          const stat = await fs.statfs("/data");
+          const totalBytes = Number(stat.bsize) * Number(stat.blocks);
+          const freeBytes = Number(stat.bsize) * Number(stat.bavail);
+          const usedBytes = Math.max(0, totalBytes - freeBytes);
+          storage = {
+            totalBytes,
+            freeBytes,
+            usedBytes,
+            freeMb: Math.round((freeBytes / 1024 / 1024) * 10) / 10,
+            usedMb: Math.round((usedBytes / 1024 / 1024) * 10) / 10,
+            totalMb: Math.round((totalBytes / 1024 / 1024) * 10) / 10,
+            lowSpace: freeBytes < 300 * 1024 * 1024,
+          };
+        } catch {
+          storage = null;
+        }
         const normalizeBackfill = (backfill: typeof runtimeMeta.backfill | null | undefined) => {
           if (!backfill) return null;
           const selectedWindowDays = Number(backfill.selectedWindowDays || 0) || (backfill.mode === "live" ? 30 : 90);
@@ -1008,6 +1035,11 @@ export const appRouter = router({
                 archivedItems: Number(debugSummary?.platforms?.[platform]?.archivedTotal || 0),
               })),
           },
+          runtimeControl: {
+            mode: runtimeControl?.mode || "auto",
+            updatedAt: runtimeControl?.updatedAt || null,
+          },
+          storage,
           backfill,
           backfillLive,
           backfillHistory,
@@ -1029,6 +1061,19 @@ export const appRouter = router({
             lastCollectedCount: item?.lastCollectedCount ?? 0,
             lastError: item?.lastError,
           })),
+        };
+      }),
+
+    setGrowthRuntimeMode: publicProcedure
+      .input(z.object({
+        mode: z.enum(["auto", "live", "backfill"]),
+      }))
+      .mutation(async ({ input }) => {
+        const saved = await writeGrowthRuntimeControl(input.mode);
+        return {
+          success: true,
+          mode: saved.mode,
+          updatedAt: saved.updatedAt,
         };
       }),
 

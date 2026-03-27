@@ -835,6 +835,15 @@ export default function MVAnalysisPage() {
     refetchOnReconnect: false,
     retry: false,
   });
+  const setGrowthRuntimeModeMutation = trpc.mvAnalysis.setGrowthRuntimeMode.useMutation({
+    onSuccess: async () => {
+      await growthSystemStatusQuery.refetch();
+      toast.success("运行模式已切换");
+    },
+    onError: (error) => {
+      toast.error(error.message || "运行模式切换失败");
+    },
+  });
 
   useEffect(() => {
     setSupervisorAccess(hasSupervisorAccess());
@@ -1548,6 +1557,12 @@ export default function MVAnalysisPage() {
                   <div>真值更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.truthStore?.updatedAt || ""))}</div>
                   <div>真值当前总量：{String(growthSystemStatusQuery.data?.truthStore?.currentItems ?? "-")}</div>
                   <div>真值历史总量：{String(growthSystemStatusQuery.data?.truthStore?.archivedItems ?? "-")}</div>
+                  <div className={growthSystemStatusQuery.data?.storage?.lowSpace ? "font-semibold text-red-300 animate-pulse" : ""}>
+                    剩余空间：{growthSystemStatusQuery.data?.storage ? `${String(growthSystemStatusQuery.data.storage.freeMb)} MB` : "-"}
+                  </div>
+                  <div>已用空间：{growthSystemStatusQuery.data?.storage ? `${String(growthSystemStatusQuery.data.storage.usedMb)} / ${String(growthSystemStatusQuery.data.storage.totalMb)} MB` : "-"}</div>
+                  <div>运行模式：{String(growthSystemStatusQuery.data?.runtimeControl?.mode || "auto")}</div>
+                  <div>模式更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.runtimeControl?.updatedAt || ""))}</div>
                   <div>文件类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
                   <div>文件名：{String(debugInfo?.fileName || fileName || "-")}</div>
                   <div>邮件配置可用：{String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
@@ -1559,6 +1574,33 @@ export default function MVAnalysisPage() {
                   {debugInfo?.transcriptChars ? <div>转录字数：{String(debugInfo.transcriptChars)}</div> : null}
                   {debugInfo?.failureStage ? <div>失败阶段：{String(debugInfo.failureStage)}</div> : null}
                   {debugInfo?.failureReason ? <div>失败原因：{String(debugInfo.failureReason)}</div> : null}
+                </div>
+                <div className="mt-4 rounded-2xl border border-fuchsia-200/15 bg-black/15 p-4 text-xs text-white/75">
+                  <div className="font-semibold text-fuchsia-100">运行控制</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[
+                      { mode: "auto", label: "自动" },
+                      { mode: "live", label: "只跑 live" },
+                      { mode: "backfill", label: "只跑回填" },
+                    ].map((item) => {
+                      const active = growthSystemStatusQuery.data?.runtimeControl?.mode === item.mode;
+                      return (
+                        <button
+                          key={item.mode}
+                          type="button"
+                          onClick={() => setGrowthRuntimeModeMutation.mutate({ mode: item.mode as "auto" | "live" | "backfill" })}
+                          disabled={setGrowthRuntimeModeMutation.isPending}
+                          className={`rounded-full border px-3 py-1.5 transition ${
+                            active
+                              ? "border-fuchsia-300 bg-fuchsia-400/20 text-fuchsia-100"
+                              : "border-white/15 bg-white/5 text-white/75 hover:border-fuchsia-200/30 hover:text-white"
+                          } ${setGrowthRuntimeModeMutation.isPending ? "opacity-60" : ""}`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 {growthSystemStatusQuery.data?.truthStore?.platforms?.length ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">

@@ -250,6 +250,7 @@ const RUNTIME_BACKFILL_LIVE_FILE = path.join(STORE_DIR, "runtime-backfill-live.j
 const RUNTIME_BACKFILL_HISTORY_FILE = path.join(STORE_DIR, "runtime-backfill-history.json");
 const RUNTIME_MAIL_DIGEST_FILE = path.join(STORE_DIR, "runtime-mail-digest.json");
 const RUNTIME_RELEASE_FILE = path.join(STORE_DIR, "runtime-release.json");
+const RUNTIME_CONTROL_FILE = path.join(STORE_DIR, "runtime-control.json");
 const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
 const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
 const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
@@ -952,6 +953,27 @@ export async function readTrendRuntimeMeta(): Promise<{
     backfillHistory: meta.backfillHistory,
     mailDigest: meta.mailDigest || {},
   };
+}
+
+export type GrowthRuntimeMode = "auto" | "live" | "backfill";
+
+export async function readGrowthRuntimeControl(): Promise<{
+  mode: GrowthRuntimeMode;
+  updatedAt?: string;
+} | null> {
+  const control = await readRuntimeSegment<{ mode?: GrowthRuntimeMode }>(RUNTIME_CONTROL_FILE);
+  const mode = control?.value?.mode;
+  if (!mode || !["auto", "live", "backfill"].includes(mode)) return null;
+  return {
+    mode,
+    updatedAt: control.updatedAt,
+  };
+}
+
+export async function writeGrowthRuntimeControl(mode: GrowthRuntimeMode) {
+  const updatedAt = nowShanghaiIso();
+  await writeRuntimeSegment(RUNTIME_CONTROL_FILE, { mode }, updatedAt);
+  return { mode, updatedAt };
 }
 
 async function readRuntimeSegment<T>(filePath: string): Promise<{ updatedAt?: string; value: T } | null> {
