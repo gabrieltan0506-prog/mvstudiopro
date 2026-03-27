@@ -116,6 +116,11 @@ function nextHistoryDelayMs() {
   return BACKFILL_ACTIVE_INTERVAL_MS;
 }
 
+function formatMinutes(minutes: number) {
+  if (minutes % 60 === 0) return `${minutes / 60} 小时`;
+  return `${minutes} 分钟`;
+}
+
 function getShanghaiHour(now = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Shanghai",
@@ -320,7 +325,7 @@ async function runBackfillStep(kind: BackfillKind) {
       status: "running",
       note: kind === "live"
         ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐，目标步长 ${stepTarget}。`
-        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，夜间模式默认每 15 分钟一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 0.5 / 1 / 2 小时一次，并启用回填 burst。`,
+        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，夜间模式默认每 ${formatMinutes(Math.round(BACKFILL_ACTIVE_INTERVAL_MS / (60 * 1000)))} 一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 1 / 2 / 4 小时一次，并启用回填 burst。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
@@ -485,12 +490,18 @@ function stopWorker(kind: BackfillKind) {
     state.timer = null;
   }
   state.started = false;
+  state.startedAt = "";
   void updateTrendBackfillProgress({
     mode: kind,
     active: false,
+    currentRound: 0,
+    maxRounds: 0,
+    targetPerPlatform: 0,
+    platforms: [],
     nextRunAt: undefined,
     finishedAt: nowShanghaiIso(),
     status: "idle",
+    note: undefined,
   }).catch(() => undefined);
 }
 
