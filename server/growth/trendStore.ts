@@ -1012,14 +1012,8 @@ export async function resetTrendRuntimeForDeploy(deployId: string) {
   if (!deployId) return false;
   const currentRelease = await readRuntimeSegment<{ deployId?: string }>(RUNTIME_RELEASE_FILE);
   if (currentRelease?.value?.deployId === deployId) return false;
-  const empty = createEmptyStore();
   const updatedAt = nowShanghaiIso();
-  await Promise.all([
-    writeRuntimeSegment(RUNTIME_SCHEDULER_FILE, {}, updatedAt),
-    writeRuntimeSegment(RUNTIME_BACKFILL_LIVE_FILE, empty.backfillLive!, updatedAt),
-    writeRuntimeSegment(RUNTIME_BACKFILL_HISTORY_FILE, empty.backfillHistory!, updatedAt),
-    writeRuntimeSegment(RUNTIME_RELEASE_FILE, { deployId }, updatedAt),
-  ]);
+  await writeRuntimeSegment(RUNTIME_RELEASE_FILE, { deployId }, updatedAt);
   await writeRuntimeMetaSnapshot(updatedAt);
   return true;
 }
