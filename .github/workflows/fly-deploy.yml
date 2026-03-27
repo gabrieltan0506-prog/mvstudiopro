@@ -22,6 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: docker/setup-buildx-action@v3
       - name: Fetch pre-deploy growth status
         run: |
           for attempt in 1 2 3 4 5; do
@@ -32,10 +33,12 @@ jobs:
           done
           echo "Warning: failed to fetch pre-deploy growth status, continuing deploy"
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Build deploy image
-        run: flyctl deploy --remote-only --build-only --push --image-label "$IMAGE_TAG"
+      - name: Configure Docker for Fly registry
+        run: flyctl auth docker
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Build deploy image
+        run: docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --push .
       - name: Deploy prebuilt image
         run: flyctl deploy --image "$IMAGE_REF"
         env:
