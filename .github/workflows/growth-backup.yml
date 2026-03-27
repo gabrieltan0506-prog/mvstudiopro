@@ -26,24 +26,63 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          flyctl ssh console -a mvstudiopro -C "sh -lc '
-            find /data/growth -type f -name \"*.next\" -mmin +15 -print -delete 2>/dev/null || true
-          '"
+          wait_for_started_vm() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if flyctl status -a mvstudiopro | grep -q "started"; then
+                return 0
+              fi
+              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              sleep 15
+            done
+            echo "No started VM became available in time"
+            return 1
+          }
+
+          for attempt in 1 2 3 4 5; do
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+              find /data/growth -type f -name \"*.next\" -mmin +15 -print -delete 2>/dev/null || true
+            '"; then
+              exit 0
+            fi
+            echo "Cleanup retry in 20s (attempt $attempt/5)"
+            sleep 20
+          done
+          echo "Cleanup stale growth temp files failed after retries"
+          exit 1
       - name: Assess Fly growth storage pressure
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           mkdir -p /tmp/growth-backup
-          flyctl ssh console -a mvstudiopro -C "sh -lc '
-            current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
-            platforms=$(du -sb /data/growth/platforms 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-            platform_current=$(du -sb /data/growth/platform-current 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-            archive=$(du -sb /data/growth/archive 2>/dev/null | awk \"{print \\$1}\" || echo 0)
-            largest=$(find /data/growth -maxdepth 2 -type f -printf \"%s\n\" 2>/dev/null | sort -nr | head -n 1)
-            total=$(df -B1 /data | awk \"NR==2{print \\$2}\")
-            avail=$(df -B1 /data | awk \"NR==2{print \\$4}\")
-            printf \"CURRENT_BYTES=%s\nPLATFORMS_BYTES=%s\nPLATFORM_CURRENT_BYTES=%s\nARCHIVE_BYTES=%s\nLARGEST_FILE_BYTES=%s\nTOTAL_BYTES=%s\nAVAILABLE_BYTES=%s\n\" \"$current\" \"$platforms\" \"$platform_current\" \"$archive\" \"${largest:-0}\" \"$total\" \"$avail\"
-          '" > /tmp/growth-backup/storage.env
+          wait_for_started_vm() {
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if flyctl status -a mvstudiopro | grep -q "started"; then
+                return 0
+              fi
+              echo "No started VM yet, retrying in 15s (attempt $attempt/10)"
+              sleep 15
+            done
+            echo "No started VM became available in time"
+            return 1
+          }
+
+          for attempt in 1 2 3 4 5; do
+            if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '
+              current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
+              platforms=$(du -sb /data/growth/platforms 2>/dev/null | awk \"{print \\$1}\" || echo 0)
+              platform_current=$(du -sb /data/growth/platform-current 2>/dev/null | awk \"{print \\$1}\" || echo 0)
+              archive=$(du -sb /data/growth/archive 2>/dev/null | awk \"{print \\$1}\" || echo 0)
+              largest=$(find /data/growth -maxdepth 2 -type f -printf \"%s\n\" 2>/dev/null | sort -nr | head -n 1)
+              total=$(df -B1 /data | awk \"NR==2{print \\$2}\")
+              avail=$(df -B1 /data | awk \"NR==2{print \\$4}\")
+              printf \"CURRENT_BYTES=%s\nPLATFORMS_BYTES=%s\nPLATFORM_CURRENT_BYTES=%s\nARCHIVE_BYTES=%s\nLARGEST_FILE_BYTES=%s\nTOTAL_BYTES=%s\nAVAILABLE_BYTES=%s\n\" \"$current\" \"$platforms\" \"$platform_current\" \"$archive\" \"${largest:-0}\" \"$total\" \"$avail\"
+            '" > /tmp/growth-backup/storage.env; then
+              break
+            fi
+            echo "Assess storage retry in 20s (attempt $attempt/5)"
+            sleep 20
+          done
+          test -s /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
           . /tmp/growth-backup/storage.env
           HOT_BYTES=$((CURRENT_BYTES + PLATFORMS_BYTES))
