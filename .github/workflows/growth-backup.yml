@@ -84,41 +84,24 @@ jobs:
             return 1
           }
 
-          capture_from_fly "gzip -c /data/growth/current.json" /tmp/growth-backup/current.json.gz
-          capture_from_fly "gzip -c /data/growth/runtime-meta.json" /tmp/growth-backup/runtime-meta.json.gz
-          capture_from_fly "gzip -c /data/growth/archive-index.json" /tmp/growth-backup/archive-index.json.gz
-          capture_from_fly "gzip -c /data/growth/history-summary.json" /tmp/growth-backup/history-summary.json.gz
-          capture_from_fly "gzip -c /data/growth/backups/growth-debug-summary.json" /tmp/growth-backup/growth-debug-summary.json.gz
-          mkdir -p /tmp/growth-backup/platforms /tmp/growth-backup/history-ledger /tmp/growth-backup/platform-current
-          for platform in douyin xiaohongshu bilibili kuaishou toutiao; do
-            capture_from_fly "if [ -f /data/growth/platforms/${platform}.json ]; then gzip -c /data/growth/platforms/${platform}.json; fi" "/tmp/growth-backup/platforms/${platform}.json.gz" || true
-            capture_from_fly "if [ -f /data/growth/history-ledger/${platform}.json ]; then gzip -c /data/growth/history-ledger/${platform}.json; fi" "/tmp/growth-backup/history-ledger/${platform}.json.gz" || true
-            capture_from_fly "if [ -f /data/growth/platform-current/${platform}.current.json ]; then gzip -c /data/growth/platform-current/${platform}.current.json; fi" "/tmp/growth-backup/platform-current/${platform}.current.json.gz" || true
-          done
-          capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then gzip -c /data/growth/platform-current-manifest.json; fi" /tmp/growth-backup/platform-current-manifest.json.gz || true
+          capture_from_fly "tar -C /data/growth -czf - current.json runtime-meta.json archive-index.json history-summary.json backups/growth-debug-summary.json 2>/dev/null" /tmp/growth-backup/core.tar.gz
+          capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+          capture_from_fly "if [ -d /data/growth/history-ledger ]; then tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
+          capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/platform-current.tar.gz || true
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
-          gzip -dfc /tmp/growth-backup/current.json.gz > /tmp/growth-backup/store/current.json
-          gzip -dfc /tmp/growth-backup/runtime-meta.json.gz > /tmp/growth-backup/store/runtime-meta.json
-          gzip -dfc /tmp/growth-backup/archive-index.json.gz > /tmp/growth-backup/store/archive-index.json
-          gzip -dfc /tmp/growth-backup/history-summary.json.gz > /tmp/growth-backup/store/history-summary.json
-          gzip -dfc /tmp/growth-backup/growth-debug-summary.json.gz > /tmp/growth-backup/store/backups/growth-debug-summary.json
-          for platform in douyin xiaohongshu bilibili kuaishou toutiao; do
-            if [ -s "/tmp/growth-backup/platforms/${platform}.json.gz" ]; then
-              gzip -dfc "/tmp/growth-backup/platforms/${platform}.json.gz" > "/tmp/growth-backup/store/platforms/${platform}.json"
-            fi
-            if [ -s "/tmp/growth-backup/history-ledger/${platform}.json.gz" ]; then
-              gzip -dfc "/tmp/growth-backup/history-ledger/${platform}.json.gz" > "/tmp/growth-backup/store/history-ledger/${platform}.json"
-            fi
-            if [ -s "/tmp/growth-backup/platform-current/${platform}.current.json.gz" ]; then
-              mkdir -p /tmp/growth-backup/store/platform-current
-              gzip -dfc "/tmp/growth-backup/platform-current/${platform}.current.json.gz" > "/tmp/growth-backup/store/platform-current/${platform}.current.json"
-            fi
-          done
-          if [ -s /tmp/growth-backup/platform-current-manifest.json.gz ]; then
-            gzip -dfc /tmp/growth-backup/platform-current-manifest.json.gz > /tmp/growth-backup/store/platform-current-manifest.json
+          tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/core.tar.gz
+          if [ -s /tmp/growth-backup/platforms.tar.gz ]; then
+            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platforms.tar.gz
           fi
+          if [ -s /tmp/growth-backup/history-ledger.tar.gz ]; then
+            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/history-ledger.tar.gz
+          fi
+          if [ -s /tmp/growth-backup/platform-current.tar.gz ]; then
+            tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platform-current.tar.gz
+          fi
+          mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
@@ -159,6 +142,11 @@ jobs:
         run: |
           gh release view growth-cold-store-latest >/dev/null 2>&1 || \
             gh release create growth-cold-store-latest --title "Growth Cold Store Latest" --notes "Latest cold-store restore assets"
+          gzip -c /tmp/growth-backup/store/current.json > /tmp/growth-backup/current.json.gz
+          gzip -c /tmp/growth-backup/store/runtime-meta.json > /tmp/growth-backup/runtime-meta.json.gz
+          gzip -c /tmp/growth-backup/store/archive-index.json > /tmp/growth-backup/archive-index.json.gz
+          gzip -c /tmp/growth-backup/store/history-summary.json > /tmp/growth-backup/history-summary.json.gz
+          gzip -c /tmp/growth-backup/store/backups/growth-debug-summary.json > /tmp/growth-backup/growth-debug-summary.json.gz
           gh release upload growth-cold-store-latest \
             /tmp/growth-backup/current.json.gz#current.json.gz \
             /tmp/growth-backup/runtime-meta.json.gz#runtime-meta.json.gz \

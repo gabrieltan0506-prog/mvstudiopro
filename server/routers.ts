@@ -974,6 +974,7 @@ export const appRouter = router({
           storage = null;
         }
         const normalizeBackfill = (backfill: typeof runtimeMeta.backfill | null | undefined) => {
+          if ((runtimeControl?.mode || "auto") === "live") return null;
           if (!backfill) return null;
           const selectedWindowDays = Number(backfill.selectedWindowDays || 0) || (backfill.mode === "live" ? 30 : 90);
           const nextRunAt = backfill.nextRunAt || addMinutesToIso(backfill.updatedAt || backfill.startedAt, 15);
