@@ -89,11 +89,8 @@ jobs:
           capture_from_fly "gzip -c /data/growth/archive-index.json" /tmp/growth-backup/archive-index.json.gz
           capture_from_fly "gzip -c /data/growth/history-summary.json" /tmp/growth-backup/history-summary.json.gz
           capture_from_fly "gzip -c /data/growth/backups/growth-debug-summary.json" /tmp/growth-backup/growth-debug-summary.json.gz
-          capture_from_fly "tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth platforms" /tmp/growth-backup/platforms.tar.gz
           capture_from_fly "tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth history-ledger" /tmp/growth-backup/history-ledger.tar.gz
           capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then echo yes; else echo no; fi" /tmp/growth-backup/has-platform-current.txt
-          capture_from_fly "if [ -d /data/growth/platform-current ]; then tar --warning=no-file-changed --ignore-failed-read -czf - -C /data/growth platform-current; fi" /tmp/growth-backup/platform-current.tar.gz || true
-          capture_from_fly "if [ -f /data/growth/platform-current-manifest.json ]; then gzip -c /data/growth/platform-current-manifest.json; fi" /tmp/growth-backup/platform-current-manifest.json.gz || true
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
           mkdir -p /tmp/growth-backup/store/backups
@@ -102,39 +99,16 @@ jobs:
           gzip -dfc /tmp/growth-backup/archive-index.json.gz > /tmp/growth-backup/store/archive-index.json
           gzip -dfc /tmp/growth-backup/history-summary.json.gz > /tmp/growth-backup/store/history-summary.json
           gzip -dfc /tmp/growth-backup/growth-debug-summary.json.gz > /tmp/growth-backup/store/backups/growth-debug-summary.json
-          tar -xzf /tmp/growth-backup/platforms.tar.gz -C /tmp/growth-backup/store
-          for platform_file in /tmp/growth-backup/store/platforms/*.json; do
-            [ -f "$platform_file" ] || continue
-            gzip -c "$platform_file" > "/tmp/growth-backup/platform-$(basename "$platform_file" .json).json.gz"
-          done
           tar -xzf /tmp/growth-backup/history-ledger.tar.gz -C /tmp/growth-backup/store
           for ledger_file in /tmp/growth-backup/store/history-ledger/*.json; do
             [ -f "$ledger_file" ] || continue
             gzip -c "$ledger_file" > "/tmp/growth-backup/history-ledger-$(basename "$ledger_file" .json).json.gz"
           done
-          if [ -s /tmp/growth-backup/platform-current.tar.gz ]; then
-            tar -xzf /tmp/growth-backup/platform-current.tar.gz -C /tmp/growth-backup/store
-          fi
-          if [ -d /tmp/growth-backup/store/platform-current ]; then
-            for platform_file in /tmp/growth-backup/store/platform-current/*.json; do
-              [ -f "$platform_file" ] || continue
-              gzip -c "$platform_file" > "/tmp/growth-backup/platform-current-$(basename "$platform_file" .current.json).json.gz"
-            done
-          fi
-          if [ -s /tmp/growth-backup/platform-current-manifest.json.gz ]; then
-            gzip -dfc /tmp/growth-backup/platform-current-manifest.json.gz > /tmp/growth-backup/store/platform-current-manifest.json
-          fi
           npm run growth:build-backup-manifest -- /tmp/growth-backup/store /tmp/growth-backup/backup-manifest.json
 
           (
             cd /tmp/growth-backup/store
-            FILES="current.json runtime-meta.json archive-index.json history-summary.json backups platforms"
-            if [ -d platform-current ]; then
-              FILES="$FILES platform-current"
-            fi
-            if [ -f platform-current-manifest.json ]; then
-              FILES="$FILES platform-current-manifest.json"
-            fi
+            FILES="current.json runtime-meta.json archive-index.json history-summary.json backups"
             tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
           )
       - name: Upload GitHub backup artifact
@@ -156,16 +130,13 @@ jobs:
             /tmp/growth-backup/archive-index.json.gz#archive-index.json.gz \
             /tmp/growth-backup/history-summary.json.gz#history-summary.json.gz \
             /tmp/growth-backup/growth-debug-summary.json.gz#growth-debug-summary.json.gz \
-            /tmp/growth-backup/platforms.tar.gz#platforms.tar.gz \
             /tmp/growth-backup/history-ledger.tar.gz#history-ledger.tar.gz \
-            /tmp/growth-backup/platform-current.tar.gz#platform-current.tar.gz \
-            /tmp/growth-backup/platform-current-manifest.json.gz#platform-current-manifest.json.gz \
             /tmp/growth-backup/backup-manifest.json#backup-manifest.json \
             /tmp/growth-backup/growth-restore-bundle.tar.gz#growth-restore-bundle.tar.gz \
             --clobber
           for asset in /tmp/growth-backup/*.json.gz; do
             case "$(basename "$asset")" in
-              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz|platform-current-manifest.json.gz) continue ;;
+              current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz) continue ;;
             esac
             gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
           done
