@@ -59,6 +59,9 @@ jobs:
           if (manifest?.externalSegments?.platforms?.asset) {
             segments.push({ key: "platforms", asset: manifest.externalSegments.platforms.asset, required: Boolean(manifest.externalSegments.platforms.required) });
           }
+          if (manifest?.externalSegments?.historyLedger?.asset) {
+            segments.push({ key: "historyLedger", asset: manifest.externalSegments.historyLedger.asset, required: Boolean(manifest.externalSegments.historyLedger.required) });
+          }
           if (manifest?.externalSegments?.platformCurrent?.asset) {
             segments.push({ key: "platformCurrent", asset: manifest.externalSegments.platformCurrent.asset, required: Boolean(manifest.externalSegments.platformCurrent.required) });
           }
