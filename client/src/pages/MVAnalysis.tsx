@@ -853,6 +853,8 @@ export default function MVAnalysisPage() {
       toast.error(error.message || "burst 模式切换失败");
     },
   });
+  const growthAnomalies = growthSystemStatusQuery.data?.anomalies || [];
+  const growthHealthState = growthAnomalies.length ? "异常" : "正常";
 
   useEffect(() => {
     setSupervisorAccess(hasSupervisorAccess());
@@ -1554,6 +1556,23 @@ export default function MVAnalysisPage() {
           <section className="mt-8 space-y-6">
             <div className="rounded-[24px] border border-cyan-300/20 bg-cyan-400/10 p-5">
                 <div className="text-sm font-semibold text-cyan-100">Debug 面板</div>
+                <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                  growthAnomalies.length
+                    ? "border-red-300/40 bg-red-500/15 text-red-100"
+                    : "border-emerald-300/30 bg-emerald-500/15 text-emerald-100"
+                }`}>
+                  系统状态：{growthHealthState}
+                </div>
+                {growthAnomalies.length ? (
+                  <div className="mt-3 space-y-2 rounded-2xl border border-red-300/20 bg-red-500/10 p-4 text-sm text-red-50">
+                    {growthAnomalies.map((item, index) => (
+                      <div key={`growth-anomaly-${index}`} className="leading-6">
+                        <span className="font-semibold">{String(item.title || "异常")}</span>
+                        <span>：{String(item.message || "-")}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-2 text-sm text-white/75 md:grid-cols-2">
                   <div>输入类型：{String(debugInfo?.inputKind || inputKind || "-")}</div>
                   <div>路由：{String(debugInfo?.route || "-")}</div>

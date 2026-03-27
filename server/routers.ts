@@ -1018,6 +1018,59 @@ export const appRouter = router({
         const backfill = normalizeBackfill(runtimeMeta.backfill);
         const backfillLive = normalizeBackfill(runtimeMeta.backfillLive);
         const backfillHistory = normalizeBackfill(runtimeMeta.backfillHistory);
+        const scheduler = Object.values(runtimeMeta.scheduler || {})
+          .filter((item) => item?.platform && item.platform !== "weixin_channels")
+          .map((item) => ({
+            platform: item?.platform,
+            platformLabel: getGrowthPlatformMeta(item?.platform).label,
+            platformDescription: getGrowthPlatformMeta(item?.platform).description,
+            lastRunAt: item?.lastRunAt,
+            lastSuccessAt: item?.lastSuccessAt,
+            nextRunAt: item?.nextRunAt,
+            failureCount: item?.failureCount ?? 0,
+            burstMode: item?.burstMode ?? false,
+            burstTriggeredAt: item?.burstTriggeredAt,
+            lastCollectedCount: item?.lastCollectedCount ?? 0,
+            lastError: item?.lastError,
+          }));
+        const anomalies: Array<{ level: "warning" | "critical"; title: string; message: string }> = [];
+        if (storage?.lowSpace) {
+          anomalies.push({
+            level: "critical",
+            title: "磁碟空間過低",
+            message: `Fly /data 剩餘 ${storage.freeMb} MB，低於 300 MB 門檻。`,
+          });
+        }
+        const now = Date.now();
+        const staleSchedulers = scheduler.filter((item) => {
+          if (!item.nextRunAt) return false;
+          const nextRun = Date.parse(String(item.nextRunAt));
+          if (!Number.isFinite(nextRun)) return false;
+          return nextRun < now - 5 * 60 * 1000;
+        });
+        if (staleSchedulers.length) {
+          anomalies.push({
+            level: "critical",
+            title: "Live 排程逾期未前進",
+            message: `${staleSchedulers.map((item) => item.platformLabel || getGrowthPlatformMeta(item.platform).label).join("、")} 已超過 5 分鐘未按 nextRunAt 啟動。`,
+          });
+        }
+        const schedulerErrors = scheduler.filter((item) => item.lastError);
+        if (schedulerErrors.length) {
+          anomalies.push({
+            level: "warning",
+            title: "平台抓取出錯",
+            message: `${schedulerErrors.map((item) => `${item.platformLabel || getGrowthPlatformMeta(item.platform).label}：${String(item.lastError)}`).join("；")}`,
+          });
+        }
+        const failedBackfills = [backfillLive, backfillHistory].filter((item) => item?.active && item?.status === "failed");
+        if (failedBackfills.length) {
+          anomalies.push({
+            level: "warning",
+            title: "回填失敗",
+            message: failedBackfills.map((item) => String(item?.note || "回填失败")).join("；"),
+          });
+        }
 
         return {
           success: true,
@@ -1044,6 +1097,7 @@ export const appRouter = router({
             burstPlatforms: runtimeControl?.burstPlatforms || [],
             updatedAt: runtimeControl?.updatedAt || null,
           },
+          anomalies,
           storage,
           backfill,
           backfillLive,
@@ -1051,21 +1105,7 @@ export const appRouter = router({
           mailDigest: runtimeMeta.mailDigest || {
             lastWindowMinutes: 30,
           },
-          scheduler: Object.values(runtimeMeta.scheduler || {})
-            .filter((item) => item?.platform && item.platform !== "weixin_channels")
-            .map((item) => ({
-            platform: item?.platform,
-            platformLabel: getGrowthPlatformMeta(item?.platform).label,
-            platformDescription: getGrowthPlatformMeta(item?.platform).description,
-            lastRunAt: item?.lastRunAt,
-            lastSuccessAt: item?.lastSuccessAt,
-            nextRunAt: item?.nextRunAt,
-            failureCount: item?.failureCount ?? 0,
-            burstMode: item?.burstMode ?? false,
-            burstTriggeredAt: item?.burstTriggeredAt,
-            lastCollectedCount: item?.lastCollectedCount ?? 0,
-            lastError: item?.lastError,
-          })),
+          scheduler,
         };
       }),
 
