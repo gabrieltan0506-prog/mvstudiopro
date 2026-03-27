@@ -855,6 +855,18 @@ export default function MVAnalysisPage() {
   });
   const growthAnomalies = growthSystemStatusQuery.data?.anomalies || [];
   const growthHealthState = growthAnomalies.length ? "异常" : "正常";
+  const hasCriticalGrowthAnomaly = growthAnomalies.some((item) => item?.level === "critical");
+
+  const trySetBurstControl = useCallback((payload: {
+    burst: "auto" | "manual" | "off";
+    platforms: Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao">;
+  }) => {
+    if (payload.burst !== "off" && hasCriticalGrowthAnomaly) {
+      toast.error("当前系统状态异常，不建议执行 burst。请先恢复健康度。");
+      return;
+    }
+    setGrowthBurstControlMutation.mutate(payload);
+  }, [hasCriticalGrowthAnomaly, setGrowthBurstControlMutation]);
 
   useEffect(() => {
     setSupervisorAccess(hasSupervisorAccess());
@@ -1641,7 +1653,7 @@ export default function MVAnalysisPage() {
                         <button
                           key={item.burst}
                           type="button"
-                          onClick={() => setGrowthBurstControlMutation.mutate({
+                          onClick={() => trySetBurstControl({
                             burst: item.burst as "auto" | "manual" | "off",
                             platforms: item.burst === "manual"
                               ? (((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao"> | undefined) || []))
@@ -1671,7 +1683,7 @@ export default function MVAnalysisPage() {
                             const current = new Set(((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []));
                             if (current.has(platform)) current.delete(platform);
                             else current.add(platform);
-                            setGrowthBurstControlMutation.mutate({
+                            trySetBurstControl({
                               burst: "manual",
                               platforms: Array.from(current) as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao">,
                             });
@@ -1688,6 +1700,11 @@ export default function MVAnalysisPage() {
                       );
                     })}
                   </div>
+                  {hasCriticalGrowthAnomaly ? (
+                    <div className="mt-3 text-xs font-semibold text-red-200">
+                      当前系统状态异常，不建议开启 burst。
+                    </div>
+                  ) : null}
                 </div>
                 {growthSystemStatusQuery.data?.truthStore?.platforms?.length ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
