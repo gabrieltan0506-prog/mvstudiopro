@@ -254,6 +254,19 @@ async function startServer() {
     res.status(200).type("text/plain").send("ok");
   });
 
+  app.get("/api/getGrowthSystemStatus", async (req, res) => {
+    try {
+      const caller = appRouter.createCaller(await createContext({ req: req as any, res: res as any } as any));
+      const result = await caller.mvAnalysis.getGrowthSystemStatus();
+      res.status(200).json(result);
+    } catch (error) {
+      console.error("[Growth] GET /api/getGrowthSystemStatus failed:", error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Failed to fetch growth status",
+      });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
