@@ -1575,6 +1575,11 @@ export default function MVAnalysisPage() {
                 }`}>
                   系统状态：{growthHealthState}
                 </div>
+                <div className="mt-2 text-sm text-white/75">
+                  即时健康度：{String(growthSystemStatusQuery.data?.serviceHealth?.status || "-")}
+                  {" · "}
+                  检查时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.serviceHealth?.checkedAt || ""))}
+                </div>
                 {growthAnomalies.length ? (
                   <div className="mt-3 space-y-2 rounded-2xl border border-red-300/20 bg-red-500/10 p-4 text-sm text-red-50">
                     {growthAnomalies.map((item, index) => (
