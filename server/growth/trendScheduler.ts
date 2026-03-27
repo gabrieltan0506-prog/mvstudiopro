@@ -128,6 +128,14 @@ function getPlatformBurstIntervalMinutes(platform: GrowthPlatform) {
   return readPlatformMinutesEnv(platform, "BURST_INTERVAL_MINUTES", BURST_INTERVAL_MINUTES);
 }
 
+function getPlatformRunTimeoutMs(platform: GrowthPlatform) {
+  const preferred = Number(process.env[`GROWTH_${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`] || "");
+  if (Number.isFinite(preferred) && preferred >= 30 * 1000) return preferred;
+  const legacy = Number(process.env[`${platform.toUpperCase()}_PLATFORM_RUN_TIMEOUT_MS`] || "");
+  if (Number.isFinite(legacy) && legacy >= 30 * 1000) return legacy;
+  return PLATFORM_RUN_TIMEOUT_MS;
+}
+
 function getPlatformBurstIntervalMs(platform: GrowthPlatform) {
   return getPlatformBurstIntervalMinutes(platform) * 60 * 1000;
 }
@@ -377,7 +385,7 @@ async function runPlatform(platform: GrowthPlatform) {
   try {
     const collection = await withTimeout(
       collectPlatformTrends(platform),
-      PLATFORM_RUN_TIMEOUT_MS,
+      getPlatformRunTimeoutMs(platform),
       `[growth.scheduler] ${platform}`,
     );
     const mergedStore = await mergeTrendCollections({ [platform]: collection });
