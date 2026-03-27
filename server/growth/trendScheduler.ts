@@ -450,6 +450,22 @@ async function runDuePlatforms() {
   runInFlight = true;
   try {
     const scheduler = await readTrendSchedulerState();
+    if (runtimeModeOverride === "live") {
+      for (const platform of PRIORITY_PLATFORMS) {
+        const state = scheduler[platform];
+        const nextRunAtMs = state?.nextRunAt ? new Date(state.nextRunAt).getTime() : 0;
+        const overdueMs = nextRunAtMs > 0 ? Date.now() - nextRunAtMs : 0;
+        if (overdueMs < 5 * 60 * 1000) continue;
+        await updateTrendSchedulerState(platform, {
+          nextRunAt: nowShanghaiIso(),
+          failureCount: 0,
+          lastError: undefined,
+          burstMode: false,
+          burstTriggeredAt: undefined,
+          lastFrequencyLabel: getSchedulerFrequencyLabel(),
+        });
+      }
+    }
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
       const state = scheduler[platform];
       const nextRunAt = state?.nextRunAt;
