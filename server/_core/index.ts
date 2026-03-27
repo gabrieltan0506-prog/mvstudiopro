@@ -256,7 +256,7 @@ async function startServer() {
 
   app.get("/api/getGrowthSystemStatus", async (req, res) => {
     try {
-      const caller = appRouter.createCaller(await createContext({ req: req as any, res: res as any } as any));
+      const caller = appRouter.createCaller({} as any);
       const result = await caller.mvAnalysis.getGrowthSystemStatus();
       res.status(200).json(result);
     } catch (error) {

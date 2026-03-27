@@ -81,9 +81,9 @@ primary_region = 'sin'
 
   [[http_service.checks]]
     grace_period = "60s"
-    interval = "15s"
+    interval = "30s"
     method = "GET"
-    timeout = "20s"
+    timeout = "30s"
     path = "/api/health"
 
 [[vm]]

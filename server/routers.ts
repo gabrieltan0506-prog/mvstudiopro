@@ -28,7 +28,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -1115,6 +1115,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const current = await readGrowthRuntimeControl();
+        const schedulerState = await readTrendSchedulerState();
         const saved = await writeGrowthRuntimeControl({
           mode: input.mode,
           burst: current?.burst || "auto",
@@ -1125,14 +1126,19 @@ export const appRouter = router({
           await Promise.all(
             growthPlatformValues
               .filter((platform) => platform !== "weixin_channels")
-              .map((platform) => updateTrendSchedulerState(platform, {
-                nextRunAt,
-                failureCount: 0,
-                lastError: undefined,
-                burstMode: false,
-                burstTriggeredAt: undefined,
-                lastFrequencyLabel: "每 30 分钟一次",
-              })),
+              .map((platform) => {
+                const currentState = schedulerState[platform];
+                const currentNextRunAt = currentState?.nextRunAt ? Date.parse(String(currentState.nextRunAt)) : 0;
+                const shouldResetRunAt = !Number.isFinite(currentNextRunAt) || currentNextRunAt <= Date.now();
+                return updateTrendSchedulerState(platform, {
+                  nextRunAt: shouldResetRunAt ? nextRunAt : currentState?.nextRunAt,
+                  failureCount: 0,
+                  lastError: undefined,
+                  burstMode: false,
+                  burstTriggeredAt: undefined,
+                  lastFrequencyLabel: "每 30 分钟一次",
+                });
+              }),
           );
         }
         return {
@@ -1151,6 +1157,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const current = await readGrowthRuntimeControl();
+        const schedulerState = await readTrendSchedulerState();
         const burstPlatforms = input.burst === "manual"
           ? input.platforms.filter((platform) => platform !== "weixin_channels")
           : [];
@@ -1164,19 +1171,20 @@ export const appRouter = router({
           growthPlatformValues
             .filter((platform) => platform !== "weixin_channels")
             .map((platform) => {
+              const currentState = schedulerState[platform];
               const enabled = input.burst === "manual"
                 ? burstPlatforms.includes(platform)
                 : input.burst === "off"
                   ? false
                   : undefined;
               return updateTrendSchedulerState(platform, {
-                nextRunAt,
+                nextRunAt: enabled ? nextRunAt : (currentState?.nextRunAt || nextRunAt),
                 failureCount: 0,
                 lastError: undefined,
                 burstMode: enabled,
                 burstTriggeredAt: enabled ? nextRunAt : undefined,
                 lastFrequencyLabel: input.burst === "manual"
-                  ? (enabled ? "手动 burst / 15 分钟一次" : "每 30 分钟一次")
+                  ? (enabled ? "手动 burst / 15 分钟一次" : (currentState?.lastFrequencyLabel || "每 30 分钟一次"))
                   : input.burst === "off"
                     ? "每 30 分钟一次"
                     : undefined,
