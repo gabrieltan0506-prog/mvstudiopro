@@ -974,9 +974,6 @@ export const appRouter = router({
           }
           return {
             ...backfill,
-            currentRound: 0,
-            maxRounds: 0,
-            targetPerPlatform: 0,
             startedAt,
             nextRunAt,
             selectedWindowDays,
