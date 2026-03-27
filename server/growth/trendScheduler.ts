@@ -81,6 +81,7 @@ let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
 let runtimeModeOverride: "auto" | "live" | "backfill" = "auto";
+let livePlatformCursor = 0;
 
 async function refreshRuntimeModeOverride() {
   const control = await readGrowthRuntimeControl();
@@ -487,7 +488,19 @@ async function runDuePlatforms() {
       return new Date(nextRunAt).getTime() <= Date.now();
     });
 
-    const liveQueue = runtimeModeOverride === "live" ? queue.slice(0, 1) : queue;
+    const liveQueue = (() => {
+      if (runtimeModeOverride !== "live") return queue;
+      if (!queue.length) return [];
+      const dueSet = new Set(queue);
+      for (let offset = 0; offset < PRIORITY_PLATFORMS.length; offset += 1) {
+        const index = (livePlatformCursor + offset) % PRIORITY_PLATFORMS.length;
+        const candidate = PRIORITY_PLATFORMS[index];
+        if (!dueSet.has(candidate)) continue;
+        livePlatformCursor = (index + 1) % PRIORITY_PLATFORMS.length;
+        return [candidate];
+      }
+      return [];
+    })();
     for (let index = 0; index < liveQueue.length; index += SCHEDULER_CONCURRENCY) {
       const batch = liveQueue.slice(index, index + SCHEDULER_CONCURRENCY);
       await Promise.all(batch.map((platform) => runPlatform(platform)));
