@@ -89,10 +89,10 @@ primary_region = 'sin'
     path = "/api/health"
 
 [[vm]]
-  memory = '4gb'
-  cpu_kind = 'shared'
+  memory = '6gb'
+  cpu_kind = 'performance'
   cpus = 2
-  memory_mb = 4096
+  memory_mb = 6144
 
 [[mounts]]
   source = 'growth_data'
