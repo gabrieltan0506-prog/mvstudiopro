@@ -449,8 +449,9 @@ async function runDuePlatforms() {
   if (!isLiveWindow()) return;
   runInFlight = true;
   try {
-    const scheduler = await readTrendSchedulerState();
+    let scheduler = await readTrendSchedulerState();
     if (runtimeModeOverride === "live") {
+      let touched = false;
       for (const platform of PRIORITY_PLATFORMS) {
         const state = scheduler[platform];
         const nextRunAtMs = state?.nextRunAt ? new Date(state.nextRunAt).getTime() : 0;
@@ -464,6 +465,10 @@ async function runDuePlatforms() {
           burstTriggeredAt: undefined,
           lastFrequencyLabel: getSchedulerFrequencyLabel(),
         });
+        touched = true;
+      }
+      if (touched) {
+        scheduler = await readTrendSchedulerState();
       }
     }
     const queue = PRIORITY_PLATFORMS.filter((platform) => {
