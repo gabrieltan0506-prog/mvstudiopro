@@ -69,6 +69,10 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
   30 * 1000,
   Number(process.env.GROWTH_PLATFORM_RUN_TIMEOUT_MS || 90 * 1000) || 90 * 1000,
 );
+const SCHEDULER_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.GROWTH_SCHEDULER_CONCURRENCY || 2) || 2,
+);
 const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
   Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
@@ -483,8 +487,9 @@ async function runDuePlatforms() {
       return new Date(nextRunAt).getTime() <= Date.now();
     });
 
-    for (const platform of queue) {
-      await runPlatform(platform);
+    for (let index = 0; index < queue.length; index += SCHEDULER_CONCURRENCY) {
+      const batch = queue.slice(index, index + SCHEDULER_CONCURRENCY);
+      await Promise.all(batch.map((platform) => runPlatform(platform)));
     }
   } finally {
     runInFlight = false;
