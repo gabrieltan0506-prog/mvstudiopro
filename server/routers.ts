@@ -28,7 +28,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -943,9 +943,10 @@ export const appRouter = router({
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
         const smtp = getSmtpStatus();
-        const runtimeMeta = await readTrendRuntimeMeta();
-        const runtimeControl = await readGrowthRuntimeControl();
-        const debugSummary = await readGrowthDebugSummary();
+        const snapshot = await readGrowthStatusSnapshot();
+        const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
+        const runtimeControl = snapshot?.runtimeControl || await readGrowthRuntimeControl();
+        const debugSummary = snapshot?.debugSummary !== undefined ? snapshot.debugSummary : await readGrowthDebugSummary();
         const targetEmail = String(process.env.GROWTH_TREND_REPORT_EMAIL || "").trim();
         let storage: {
           totalBytes: number;
@@ -1039,6 +1040,8 @@ export const appRouter = router({
           },
           runtimeControl: {
             mode: runtimeControl?.mode || "auto",
+            burst: runtimeControl?.burst || "auto",
+            burstPlatforms: runtimeControl?.burstPlatforms || [],
             updatedAt: runtimeControl?.updatedAt || null,
           },
           storage,
@@ -1071,7 +1074,12 @@ export const appRouter = router({
         mode: z.enum(["auto", "live", "backfill"]),
       }))
       .mutation(async ({ input }) => {
-        const saved = await writeGrowthRuntimeControl(input.mode);
+        const current = await readGrowthRuntimeControl();
+        const saved = await writeGrowthRuntimeControl({
+          mode: input.mode,
+          burst: current?.burst || "auto",
+          burstPlatforms: current?.burstPlatforms || [],
+        });
         if (input.mode === "live") {
           const nextRunAt = nowShanghaiIso();
           await Promise.all(
@@ -1090,6 +1098,56 @@ export const appRouter = router({
         return {
           success: true,
           mode: saved.mode,
+          burst: saved.burst,
+          burstPlatforms: saved.burstPlatforms,
+          updatedAt: saved.updatedAt,
+        };
+      }),
+
+    setGrowthBurstControl: publicProcedure
+      .input(z.object({
+        burst: z.enum(["auto", "manual", "off"]),
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default([]),
+      }))
+      .mutation(async ({ input }) => {
+        const current = await readGrowthRuntimeControl();
+        const burstPlatforms = input.burst === "manual"
+          ? input.platforms.filter((platform) => platform !== "weixin_channels")
+          : [];
+        const saved = await writeGrowthRuntimeControl({
+          mode: current?.mode || "auto",
+          burst: input.burst,
+          burstPlatforms,
+        });
+        const nextRunAt = nowShanghaiIso();
+        await Promise.all(
+          growthPlatformValues
+            .filter((platform) => platform !== "weixin_channels")
+            .map((platform) => {
+              const enabled = input.burst === "manual"
+                ? burstPlatforms.includes(platform)
+                : input.burst === "off"
+                  ? false
+                  : undefined;
+              return updateTrendSchedulerState(platform, {
+                nextRunAt,
+                failureCount: 0,
+                lastError: undefined,
+                burstMode: enabled,
+                burstTriggeredAt: enabled ? nextRunAt : undefined,
+                lastFrequencyLabel: input.burst === "manual"
+                  ? (enabled ? "手动 burst / 15 分钟一次" : "每 30 分钟一次")
+                  : input.burst === "off"
+                    ? "每 30 分钟一次"
+                    : undefined,
+              });
+            }),
+        );
+        return {
+          success: true,
+          mode: saved.mode,
+          burst: saved.burst,
+          burstPlatforms: saved.burstPlatforms,
           updatedAt: saved.updatedAt,
         };
       }),

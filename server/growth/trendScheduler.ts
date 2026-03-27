@@ -71,7 +71,7 @@ const PLATFORM_RUN_TIMEOUT_MS = Math.max(
 );
 const SCHEDULER_CONCURRENCY = Math.max(
   1,
-  Number(process.env.GROWTH_SCHEDULER_CONCURRENCY || 2) || 2,
+  Number(process.env.GROWTH_SCHEDULER_CONCURRENCY || 1) || 1,
 );
 const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
@@ -81,11 +81,15 @@ let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
 let runtimeModeOverride: "auto" | "live" | "backfill" = "auto";
+let runtimeBurstOverride: "auto" | "manual" | "off" = "auto";
+let runtimeBurstPlatformsOverride = new Set<GrowthPlatform>();
 let livePlatformCursor = 0;
 
 async function refreshRuntimeModeOverride() {
   const control = await readGrowthRuntimeControl();
   runtimeModeOverride = control?.mode || "auto";
+  runtimeBurstOverride = control?.burst || "auto";
+  runtimeBurstPlatformsOverride = new Set(control?.burstPlatforms || []);
   return runtimeModeOverride;
 }
 function isStorageFullError(error: unknown) {
@@ -243,6 +247,8 @@ function getForceBurstLabel(platform: GrowthPlatform) {
 }
 
 function isForceBurstActive(platform: GrowthPlatform) {
+  if (runtimeBurstOverride === "off") return false;
+  if (runtimeBurstOverride === "manual") return runtimeBurstPlatformsOverride.has(platform);
   return isLiveWindow()
     && !isBackfillWindow()
     && FORCE_BURST_UNTIL_MS > Date.now()
@@ -250,6 +256,8 @@ function isForceBurstActive(platform: GrowthPlatform) {
 }
 
 function hasAnyForcedBurstConfig() {
+  if (runtimeBurstOverride === "off") return false;
+  if (runtimeBurstOverride === "manual") return runtimeBurstPlatformsOverride.size > 0;
   return isLiveWindow() && !isBackfillWindow() && FORCE_BURST_UNTIL_MS > Date.now() && FORCE_BURST_PLATFORMS.size > 0;
 }
 

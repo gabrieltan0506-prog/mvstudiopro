@@ -251,6 +251,7 @@ const RUNTIME_BACKFILL_HISTORY_FILE = path.join(STORE_DIR, "runtime-backfill-his
 const RUNTIME_MAIL_DIGEST_FILE = path.join(STORE_DIR, "runtime-mail-digest.json");
 const RUNTIME_RELEASE_FILE = path.join(STORE_DIR, "runtime-release.json");
 const RUNTIME_CONTROL_FILE = path.join(STORE_DIR, "runtime-control.json");
+const STATUS_SNAPSHOT_FILE = path.join(STORE_DIR, "runtime-status-snapshot.json");
 const DEBUG_SUMMARY_FILE = path.join(STORE_DIR, "backups", "growth-debug-summary.json");
 const ARCHIVE_INDEX_FILE = path.join(STORE_DIR, "archive-index.json");
 const HISTORY_SUMMARY_FILE = path.join(STORE_DIR, "history-summary.json");
@@ -390,10 +391,36 @@ export async function readGrowthDebugSummary(): Promise<GrowthDebugSummary | nul
   }
 }
 
+export async function readGrowthStatusSnapshot(): Promise<{
+  updatedAt?: string;
+  runtimeMeta?: {
+    updatedAt?: string;
+    scheduler?: Partial<Record<GrowthPlatform, TrendSchedulerState>>;
+    backfill?: TrendBackfillProgress;
+    backfillLive?: TrendBackfillProgress;
+    backfillHistory?: TrendBackfillProgress;
+    mailDigest?: TrendMailDigestState;
+  };
+  runtimeControl?: {
+    mode?: GrowthRuntimeMode;
+    burst?: GrowthBurstMode;
+    burstPlatforms?: GrowthPlatform[];
+    updatedAt?: string;
+  };
+  debugSummary?: GrowthDebugSummary | null;
+} | null> {
+  try {
+    return JSON.parse(await fs.readFile(STATUS_SNAPSHOT_FILE, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 export async function refreshTrendDebugSummary(store?: TrendStoreFile) {
   const next = store || await readTrendStore();
   const summary = buildGrowthDebugSummary(next);
   await writeJsonAtomic(DEBUG_SUMMARY_FILE, summary);
+  await refreshGrowthStatusSnapshot(summary).catch(() => {});
   return summary;
 }
 
@@ -956,24 +983,50 @@ export async function readTrendRuntimeMeta(): Promise<{
 }
 
 export type GrowthRuntimeMode = "auto" | "live" | "backfill";
+export type GrowthBurstMode = "auto" | "manual" | "off";
 
 export async function readGrowthRuntimeControl(): Promise<{
   mode: GrowthRuntimeMode;
+  burst: GrowthBurstMode;
+  burstPlatforms: GrowthPlatform[];
   updatedAt?: string;
 } | null> {
-  const control = await readRuntimeSegment<{ mode?: GrowthRuntimeMode }>(RUNTIME_CONTROL_FILE);
+  const control = await readRuntimeSegment<{ mode?: GrowthRuntimeMode; burst?: GrowthBurstMode; burstPlatforms?: GrowthPlatform[] }>(RUNTIME_CONTROL_FILE);
   const mode = control?.value?.mode;
   if (!mode || !["auto", "live", "backfill"].includes(mode)) return null;
+  const burst = control?.value?.burst && ["auto", "manual", "off"].includes(control.value.burst)
+    ? control.value.burst
+    : "auto";
+  const burstPlatforms = Array.isArray(control?.value?.burstPlatforms)
+    ? control!.value.burstPlatforms.filter((item): item is GrowthPlatform => growthPlatformValues.includes(item as GrowthPlatform))
+    : [];
   return {
     mode,
+    burst,
+    burstPlatforms,
     updatedAt: control.updatedAt,
   };
 }
 
-export async function writeGrowthRuntimeControl(mode: GrowthRuntimeMode) {
+export async function writeGrowthRuntimeControl(control: GrowthRuntimeMode | { mode: GrowthRuntimeMode; burst?: GrowthBurstMode; burstPlatforms?: GrowthPlatform[] }) {
+  const current = await readGrowthRuntimeControl();
+  const next = typeof control === "string"
+    ? {
+        mode: control,
+        burst: current?.burst || ("auto" as GrowthBurstMode),
+        burstPlatforms: current?.burstPlatforms || [],
+      }
+    : {
+        mode: control.mode,
+        burst: control.burst || current?.burst || ("auto" as GrowthBurstMode),
+        burstPlatforms: Array.isArray(control.burstPlatforms)
+          ? control.burstPlatforms
+          : (current?.burstPlatforms || []),
+      };
   const updatedAt = nowShanghaiIso();
-  await writeRuntimeSegment(RUNTIME_CONTROL_FILE, { mode }, updatedAt);
-  return { mode, updatedAt };
+  await writeRuntimeSegment(RUNTIME_CONTROL_FILE, next, updatedAt);
+  await refreshGrowthStatusSnapshot().catch(() => {});
+  return { ...next, updatedAt };
 }
 
 async function readRuntimeSegment<T>(filePath: string): Promise<{ updatedAt?: string; value: T } | null> {
@@ -1005,6 +1058,22 @@ async function writeRuntimeMetaSnapshot(updatedAt = nowShanghaiIso()) {
     backfillLive: current.backfillLive,
     backfillHistory: current.backfillHistory,
     mailDigest: current.mailDigest || {},
+  });
+  await refreshGrowthStatusSnapshot().catch(() => {});
+}
+
+async function refreshGrowthStatusSnapshot(debugSummary?: GrowthDebugSummary | null) {
+  const [runtimeMeta, runtimeControl, summary] = await Promise.all([
+    readTrendRuntimeMeta(),
+    readGrowthRuntimeControl(),
+    debugSummary === undefined ? readGrowthDebugSummary() : debugSummary,
+  ]);
+  const updatedAt = nowShanghaiIso();
+  await writeJsonAtomic(STATUS_SNAPSHOT_FILE, {
+    updatedAt,
+    runtimeMeta,
+    runtimeControl,
+    debugSummary: summary,
   });
 }
 

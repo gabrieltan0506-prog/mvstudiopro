@@ -844,6 +844,15 @@ export default function MVAnalysisPage() {
       toast.error(error.message || "运行模式切换失败");
     },
   });
+  const setGrowthBurstControlMutation = trpc.mvAnalysis.setGrowthBurstControl.useMutation({
+    onSuccess: async () => {
+      await growthSystemStatusQuery.refetch();
+      toast.success("burst 模式已切换");
+    },
+    onError: (error) => {
+      toast.error(error.message || "burst 模式切换失败");
+    },
+  });
 
   useEffect(() => {
     setSupervisorAccess(hasSupervisorAccess());
@@ -1601,6 +1610,65 @@ export default function MVAnalysisPage() {
                       );
                     })}
                   </div>
+                  <div className="mt-4 font-semibold text-fuchsia-100">Burst 控制</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {[
+                      { burst: "auto", label: "自动" },
+                      { burst: "off", label: "全部关闭" },
+                      { burst: "manual", label: "手动平台" },
+                    ].map((item) => {
+                      const active = growthSystemStatusQuery.data?.runtimeControl?.burst === item.burst;
+                      return (
+                        <button
+                          key={item.burst}
+                          type="button"
+                          onClick={() => setGrowthBurstControlMutation.mutate({
+                            burst: item.burst as "auto" | "manual" | "off",
+                            platforms: item.burst === "manual"
+                              ? (((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao"> | undefined) || []))
+                              : [],
+                          })}
+                          disabled={setGrowthBurstControlMutation.isPending}
+                          className={`rounded-full border px-3 py-1.5 transition ${
+                            active
+                              ? "border-fuchsia-300 bg-fuchsia-400/20 text-fuchsia-100"
+                              : "border-white/15 bg-white/5 text-white/75 hover:border-fuchsia-200/30 hover:text-white"
+                          } ${setGrowthBurstControlMutation.isPending ? "opacity-60" : ""}`}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(["douyin", "kuaishou", "bilibili", "xiaohongshu", "toutiao"] as const).map((platform) => {
+                      const selected = ((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []).includes(platform);
+                      const manual = growthSystemStatusQuery.data?.runtimeControl?.burst === "manual";
+                      return (
+                        <button
+                          key={platform}
+                          type="button"
+                          onClick={() => {
+                            const current = new Set(((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []));
+                            if (current.has(platform)) current.delete(platform);
+                            else current.add(platform);
+                            setGrowthBurstControlMutation.mutate({
+                              burst: "manual",
+                              platforms: Array.from(current) as Array<"douyin" | "xiaohongshu" | "bilibili" | "kuaishou" | "toutiao">,
+                            });
+                          }}
+                          disabled={setGrowthBurstControlMutation.isPending}
+                          className={`rounded-full border px-3 py-1.5 transition ${
+                            manual && selected
+                              ? "border-amber-300 bg-amber-400/20 text-amber-100"
+                              : "border-white/15 bg-white/5 text-white/75 hover:border-amber-200/30 hover:text-white"
+                          } ${setGrowthBurstControlMutation.isPending ? "opacity-60" : ""}`}
+                        >
+                          {getPlatformLabel(platform)}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 {growthSystemStatusQuery.data?.truthStore?.platforms?.length ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-sky-200/15 bg-black/15 p-4 text-xs text-white/72">
@@ -1653,8 +1721,8 @@ export default function MVAnalysisPage() {
                     <div className="font-semibold text-cyan-100">抓取调度状态</div>
                     <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
                       <div>全部平台 live：统一每 30 分钟抓取一次</div>
-                      <div>burst 模式：统一每 10 分钟抓取一次</div>
-                      <div>当前已强制开启 burst，直到你后续手动关闭</div>
+                      <div>burst 控制：{String(growthSystemStatusQuery.data?.runtimeControl?.burst || "auto")}</div>
+                      <div>burst 平台：{(((growthSystemStatusQuery.data?.runtimeControl?.burstPlatforms as string[] | undefined) || []).map((item) => getPlatformLabel(item)).join("、")) || "-"}</div>
                       <div>历史回填：仍按独立 backfill 节奏执行，不跟 live 共用频率</div>
                     </div>
                     {growthSystemStatusQuery.data.scheduler.map((item) => (
