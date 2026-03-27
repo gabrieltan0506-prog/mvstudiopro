@@ -28,7 +28,7 @@ import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizeP
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readTrendRuntimeMeta, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -58,6 +58,7 @@ import {
   growthPlatformRecommendationSchema,
   growthSnapshotSchema,
 } from "@shared/growth";
+import { nowShanghaiIso } from "./growth/time";
 
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
@@ -1070,6 +1071,21 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const saved = await writeGrowthRuntimeControl(input.mode);
+        if (input.mode === "live") {
+          const nextRunAt = nowShanghaiIso();
+          await Promise.all(
+            growthPlatformValues
+              .filter((platform) => platform !== "weixin_channels")
+              .map((platform) => updateTrendSchedulerState(platform, {
+                nextRunAt,
+                failureCount: 0,
+                lastError: undefined,
+                burstMode: false,
+                burstTriggeredAt: undefined,
+                lastFrequencyLabel: "每 30 分钟一次",
+              })),
+          );
+        }
         return {
           success: true,
           mode: saved.mode,
