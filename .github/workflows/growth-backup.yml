@@ -5,6 +5,10 @@ on:
     - cron: "0 */6 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: growth-backup
+  cancel-in-progress: false
+
 jobs:
   backup:
     name: Backup growth store from Fly
@@ -44,12 +48,18 @@ jobs:
           . /tmp/growth-backup/storage.env
           HOT_BYTES=$((CURRENT_BYTES + PLATFORMS_BYTES))
           SHOULD_OFFLOAD=false
+          EXTERNALIZE_PLATFORMS=false
+          EXTERNALIZE_PLATFORM_CURRENT=false
           if [ "${LARGEST_FILE_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${ARCHIVE_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
+          if [ "${PLATFORMS_BYTES:-0}" -gt $((400 * 1024 * 1024)) ] || [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORMS=true; fi
+          if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORM_CURRENT=true; fi
           echo "HOT_BYTES=$HOT_BYTES" >> /tmp/growth-backup/storage.env
           echo "SHOULD_OFFLOAD=$SHOULD_OFFLOAD" >> /tmp/growth-backup/storage.env
+          echo "EXTERNALIZE_PLATFORMS=$EXTERNALIZE_PLATFORMS" >> /tmp/growth-backup/storage.env
+          echo "EXTERNALIZE_PLATFORM_CURRENT=$EXTERNALIZE_PLATFORM_CURRENT" >> /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
       - name: Fetch growth store files from Fly
         env:
@@ -57,6 +67,7 @@ jobs:
         run: |
           mkdir -p /tmp/growth-backup
           mkdir -p /tmp/growth-backup/store/backups
+          . /tmp/growth-backup/storage.env
 
           wait_for_started_vm() {
             for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -73,8 +84,9 @@ jobs:
           capture_from_fly() {
             local command="$1"
             local output_path="$2"
+            local timeout_seconds="${3:-480}"
             for attempt in 1 2 3 4 5; do
-              if wait_for_started_vm && flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
+              if wait_for_started_vm && timeout "${timeout_seconds}" flyctl ssh console -a mvstudiopro -C "sh -lc '$command'" > "$output_path"; then
                 return 0
               fi
               echo "Fly fetch failed, retrying in 20s (attempt $attempt/5)"
@@ -85,20 +97,28 @@ jobs:
           }
 
           capture_from_fly "tar -C /data/growth -czf - current.json runtime-meta.json archive-index.json history-summary.json backups/growth-debug-summary.json 2>/dev/null" /tmp/growth-backup/core.tar.gz
-          capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+          if [ "${EXTERNALIZE_PLATFORMS:-false}" = "true" ]; then
+            capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/growth-platforms.tar.gz 720 || true
+          else
+            capture_from_fly "if [ -d /data/growth/platforms ]; then tar -C /data/growth -czf - platforms 2>/dev/null; fi" /tmp/growth-backup/platforms.tar.gz || true
+          fi
           capture_from_fly "if [ -d /data/growth/history-ledger ]; then tar -C /data/growth -czf - history-ledger 2>/dev/null; fi" /tmp/growth-backup/history-ledger.tar.gz || true
-          capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/platform-current.tar.gz || true
+          if [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" = "true" ]; then
+            capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/growth-platform-current.tar.gz 720 || true
+          else
+            capture_from_fly "FILES=''; if [ -d /data/growth/platform-current ]; then FILES='platform-current'; fi; if [ -f /data/growth/platform-current-manifest.json ]; then FILES=\"$FILES platform-current-manifest.json\"; fi; if [ -n \"$FILES\" ]; then tar -C /data/growth -czf - $FILES 2>/dev/null; fi" /tmp/growth-backup/platform-current.tar.gz || true
+          fi
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-backup/fetched-at.txt
 
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
           tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/core.tar.gz
-          if [ -s /tmp/growth-backup/platforms.tar.gz ]; then
+          if [ -s /tmp/growth-backup/platforms.tar.gz ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
             tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platforms.tar.gz
           fi
           if [ -s /tmp/growth-backup/history-ledger.tar.gz ]; then
             tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/history-ledger.tar.gz
           fi
-          if [ -s /tmp/growth-backup/platform-current.tar.gz ]; then
+          if [ -s /tmp/growth-backup/platform-current.tar.gz ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
             tar -C /tmp/growth-backup/store -xzf /tmp/growth-backup/platform-current.tar.gz
           fi
           mkdir -p /tmp/growth-backup/store/backups /tmp/growth-backup/store/platforms /tmp/growth-backup/store/history-ledger
@@ -117,14 +137,49 @@ jobs:
             done
           fi
           npm run growth:build-backup-manifest -- /tmp/growth-backup/store /tmp/growth-backup/backup-manifest.json
+          node <<'NODE'
+          const fs = require("fs");
+          const envFile = "/tmp/growth-backup/storage.env";
+          const env = Object.fromEntries(
+            fs.readFileSync(envFile, "utf8")
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean)
+              .map((line) => {
+                const idx = line.indexOf("=");
+                return [line.slice(0, idx), line.slice(idx + 1)];
+              }),
+          );
+          const manifest = {
+            createdAt: new Date().toISOString(),
+            baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
+            externalSegments: {
+              platforms: env.EXTERNALIZE_PLATFORMS === "true"
+                ? { asset: "growth-platforms.tar.gz", required: true }
+                : null,
+              platformCurrent: env.EXTERNALIZE_PLATFORM_CURRENT === "true"
+                ? { asset: "growth-platform-current.tar.gz", required: false }
+                : null,
+            },
+            thresholdsMb: {
+              singleFile: 400,
+              directory: 800,
+              hotData: 900,
+            },
+          };
+          fs.writeFileSync("/tmp/growth-backup/cold-restore-manifest.json", JSON.stringify(manifest, null, 2));
+          NODE
 
           (
             cd /tmp/growth-backup/store
-            FILES="current.json runtime-meta.json archive-index.json history-summary.json backups platforms history-ledger"
-            if [ -d platform-current ]; then
+            FILES="current.json runtime-meta.json archive-index.json history-summary.json backups history-ledger"
+            if [ -d platforms ] && [ "${EXTERNALIZE_PLATFORMS:-false}" != "true" ]; then
+              FILES="$FILES platforms"
+            fi
+            if [ -d platform-current ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
               FILES="$FILES platform-current"
             fi
-            if [ -f platform-current-manifest.json ]; then
+            if [ -f platform-current-manifest.json ] && [ "${EXTERNALIZE_PLATFORM_CURRENT:-false}" != "true" ]; then
               FILES="$FILES platform-current-manifest.json"
             fi
             tar -czf /tmp/growth-backup/growth-restore-bundle.tar.gz $FILES
@@ -154,8 +209,13 @@ jobs:
             /tmp/growth-backup/history-summary.json.gz#history-summary.json.gz \
             /tmp/growth-backup/growth-debug-summary.json.gz#growth-debug-summary.json.gz \
             /tmp/growth-backup/backup-manifest.json#backup-manifest.json \
+            /tmp/growth-backup/cold-restore-manifest.json#cold-restore-manifest.json \
             /tmp/growth-backup/growth-restore-bundle.tar.gz#growth-restore-bundle.tar.gz \
             --clobber
+          for asset in /tmp/growth-backup/growth-platforms.tar.gz /tmp/growth-backup/growth-platform-current.tar.gz; do
+            [ -f "$asset" ] || continue
+            gh release upload growth-cold-store-latest "$asset#$(basename "$asset")" --clobber
+          done
           for asset in /tmp/growth-backup/*.json.gz; do
             case "$(basename "$asset")" in
               current.json.gz|runtime-meta.json.gz|archive-index.json.gz|history-summary.json.gz|growth-debug-summary.json.gz) continue ;;

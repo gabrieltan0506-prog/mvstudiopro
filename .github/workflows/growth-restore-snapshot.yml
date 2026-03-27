@@ -7,6 +7,10 @@ on:
         description: Snapshot tar.gz URL
         required: true
         default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-recovery-20260323/snapshot-20260323.tar.gz
+      cold_restore_manifest_url:
+        description: Optional cold-restore manifest URL
+        required: false
+        default: https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest/cold-restore-manifest.json
 
 jobs:
   restore:
@@ -27,6 +31,54 @@ jobs:
           curl -L "${{ inputs.snapshot_asset_url }}" -o /tmp/growth-restore/snapshot.tar.gz
           tar -xzf /tmp/growth-restore/snapshot.tar.gz -C /tmp/growth-restore
           ls -lah /tmp/growth-restore
+
+      - name: Restore externalized cold-store assets
+        run: |
+          MANIFEST_URL="${{ inputs.cold_restore_manifest_url }}"
+          if [ -z "$MANIFEST_URL" ]; then
+            echo "No cold restore manifest URL provided"
+            exit 0
+          fi
+          if ! curl -fsSL "$MANIFEST_URL" -o /tmp/growth-restore/cold-restore-manifest.json; then
+            echo "Cold restore manifest not found, continue with snapshot only"
+            exit 0
+          fi
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const manifest = JSON.parse(fs.readFileSync("/tmp/growth-restore/cold-restore-manifest.json", "utf8"));
+          const rootCandidates = [
+            "/tmp/growth-restore",
+            "/tmp/growth-restore/snapshot",
+          ];
+          const root = rootCandidates.find((dir) => fs.existsSync(path.join(dir, "current.json")));
+          if (!root) {
+            throw new Error(`Snapshot root not found under: ${rootCandidates.join(", ")}`);
+          }
+          const segments = [];
+          if (manifest?.externalSegments?.platforms?.asset) {
+            segments.push({ key: "platforms", asset: manifest.externalSegments.platforms.asset, required: Boolean(manifest.externalSegments.platforms.required) });
+          }
+          if (manifest?.externalSegments?.platformCurrent?.asset) {
+            segments.push({ key: "platformCurrent", asset: manifest.externalSegments.platformCurrent.asset, required: Boolean(manifest.externalSegments.platformCurrent.required) });
+          }
+          fs.writeFileSync("/tmp/growth-restore/external-segments.json", JSON.stringify({ root, baseUrl: manifest.baseUrl, segments }, null, 2));
+          NODE
+          jq -c '.segments[]?' /tmp/growth-restore/external-segments.json | while read -r segment; do
+            asset=$(echo "$segment" | jq -r '.asset')
+            required=$(echo "$segment" | jq -r '.required')
+            base_url=$(jq -r '.baseUrl' /tmp/growth-restore/external-segments.json)
+            root=$(jq -r '.root' /tmp/growth-restore/external-segments.json)
+            target="/tmp/growth-restore/$asset"
+            if curl -fsSL "$base_url/$asset" -o "$target"; then
+              tar -xzf "$target" -C "$root"
+            elif [ "$required" = "true" ]; then
+              echo "Missing required cold-store asset: $asset"
+              exit 1
+            else
+              echo "Optional cold-store asset missing: $asset"
+            fi
+          done
 
       - name: Sanitize snapshot runtime state
         run: |
