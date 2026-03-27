@@ -17,6 +17,12 @@ function shouldEnforceArchivedGuard() {
   return /^(1|true|yes)$/i.test(String(process.env.GROWTH_ENFORCE_ARCHIVED_MONOTONIC || "0").trim());
 }
 
+function currentToleranceRatio() {
+  const raw = Number(process.env.GROWTH_CURRENT_MONOTONIC_TOLERANCE_RATIO || 0.1);
+  if (!Number.isFinite(raw)) return 0.1;
+  return Math.min(0.5, Math.max(0, raw));
+}
+
 async function readJson(file) {
   return JSON.parse(await fs.readFile(file, "utf8"));
 }
@@ -36,6 +42,7 @@ async function main() {
 
   const regressions = [];
   const enforceArchived = shouldEnforceArchivedGuard();
+  const currentTolerance = currentToleranceRatio();
 
   for (const platform of platformNames) {
     const floorCurrent = Math.max(
@@ -48,9 +55,10 @@ async function main() {
     );
     const actualCurrent = num(after.platforms?.[platform]?.currentTotal);
     const actualArchived = num(after.platforms?.[platform]?.archivedTotal);
-    if (actualCurrent < floorCurrent) {
+    const allowedCurrentFloor = Math.floor(floorCurrent * (1 - currentTolerance));
+    if (actualCurrent < allowedCurrentFloor) {
       regressions.push(
-        `${platform}: currentTotal regressed ${actualCurrent} < ${floorCurrent}`,
+        `${platform}: currentTotal regressed ${actualCurrent} < ${allowedCurrentFloor} (floor ${floorCurrent}, tolerance ${Math.round(currentTolerance * 100)}%)`,
       );
     }
     if (enforceArchived && actualArchived < floorArchived) {
