@@ -33,11 +33,12 @@ jobs:
           flyctl ssh console -a mvstudiopro -C "sh -lc '
             current=$(stat -c%s /data/growth/current.json 2>/dev/null || echo 0)
             platforms=$(du -sb /data/growth/platforms 2>/dev/null | awk \"{print \\$1}\" || echo 0)
+            platform_current=$(du -sb /data/growth/platform-current 2>/dev/null | awk \"{print \\$1}\" || echo 0)
             archive=$(du -sb /data/growth/archive 2>/dev/null | awk \"{print \\$1}\" || echo 0)
             largest=$(find /data/growth -maxdepth 2 -type f -printf \"%s\n\" 2>/dev/null | sort -nr | head -n 1)
             total=$(df -B1 /data | awk \"NR==2{print \\$2}\")
             avail=$(df -B1 /data | awk \"NR==2{print \\$4}\")
-            printf \"CURRENT_BYTES=%s\nPLATFORMS_BYTES=%s\nARCHIVE_BYTES=%s\nLARGEST_FILE_BYTES=%s\nTOTAL_BYTES=%s\nAVAILABLE_BYTES=%s\n\" \"$current\" \"$platforms\" \"$archive\" \"${largest:-0}\" \"$total\" \"$avail\"
+            printf \"CURRENT_BYTES=%s\nPLATFORMS_BYTES=%s\nPLATFORM_CURRENT_BYTES=%s\nARCHIVE_BYTES=%s\nLARGEST_FILE_BYTES=%s\nTOTAL_BYTES=%s\nAVAILABLE_BYTES=%s\n\" \"$current\" \"$platforms\" \"$platform_current\" \"$archive\" \"${largest:-0}\" \"$total\" \"$avail\"
           '" > /tmp/growth-backup/storage.env
           cat /tmp/growth-backup/storage.env
           . /tmp/growth-backup/storage.env
@@ -45,6 +46,7 @@ jobs:
           SHOULD_OFFLOAD=false
           if [ "${LARGEST_FILE_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${ARCHIVE_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
+          if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           echo "HOT_BYTES=$HOT_BYTES" >> /tmp/growth-backup/storage.env
           echo "SHOULD_OFFLOAD=$SHOULD_OFFLOAD" >> /tmp/growth-backup/storage.env
@@ -231,3 +233,19 @@ jobs:
             [ -n "$dir" ] || continue
             flyctl ssh console -a mvstudiopro -C "rm -rf /data/growth/archive/$dir"
           done < /tmp/growth-archive-offload/dirs.txt
+      - name: Delete offloaded platform-current from Fly
+        if: hashFiles('/tmp/growth-backup/storage.env') != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          . /tmp/growth-backup/storage.env
+          if [ "${PLATFORM_CURRENT_BYTES:-0}" -le $((400 * 1024 * 1024)) ]; then
+            echo "platform-current below offload threshold"
+            exit 0
+          fi
+          flyctl ssh console -a mvstudiopro -C "sh -lc '
+            if [ -f /data/growth/current.json ] && [ -d /data/growth/platforms ] && [ -d /data/growth/platform-current ]; then
+              rm -rf /data/growth/platform-current
+              rm -f /data/growth/platform-current-manifest.json
+            fi
+          '"
