@@ -1071,10 +1071,6 @@ export const appRouter = router({
             message: failedBackfills.map((item) => String(item?.note || "回填失败")).join("；"),
           });
         }
-        const serviceHealth = {
-          status: anomalies.some((item) => item.level === "critical") ? ("critical" as const) : ("health" as const),
-          checkedAt: nowShanghaiIso(),
-        };
 
         return {
           success: true,
@@ -1101,7 +1097,6 @@ export const appRouter = router({
             burstPlatforms: runtimeControl?.burstPlatforms || [],
             updatedAt: runtimeControl?.updatedAt || null,
           },
-          serviceHealth,
           anomalies,
           storage,
           backfill,
