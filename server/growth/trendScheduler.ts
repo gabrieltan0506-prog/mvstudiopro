@@ -487,8 +487,9 @@ async function runDuePlatforms() {
       return new Date(nextRunAt).getTime() <= Date.now();
     });
 
-    for (let index = 0; index < queue.length; index += SCHEDULER_CONCURRENCY) {
-      const batch = queue.slice(index, index + SCHEDULER_CONCURRENCY);
+    const liveQueue = runtimeModeOverride === "live" ? queue.slice(0, 1) : queue;
+    for (let index = 0; index < liveQueue.length; index += SCHEDULER_CONCURRENCY) {
+      const batch = liveQueue.slice(index, index + SCHEDULER_CONCURRENCY);
       await Promise.all(batch.map((platform) => runPlatform(platform)));
     }
   } finally {
