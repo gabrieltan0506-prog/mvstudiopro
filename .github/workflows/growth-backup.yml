@@ -211,6 +211,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ ! -f /tmp/growth-archive-offload/dirs.txt ] || [ ! -f /tmp/growth-archive-offload/offload-manifest.json ]; then
+            echo "Missing offload inputs, skip publish"
+            exit 0
+          fi
           mkdir -p /tmp/growth-archive-offload/assets
           while IFS= read -r dir; do
             [ -n "$dir" ] || continue
@@ -228,6 +232,10 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
+          if [ ! -f /tmp/growth-archive-offload/dirs.txt ]; then
+            echo "Missing dirs.txt, skip delete"
+            exit 0
+          fi
           while IFS= read -r dir; do
             [ -n "$dir" ] || continue
             flyctl ssh console -a mvstudiopro -C "rm -rf /data/growth/archive/$dir"
