@@ -1601,6 +1601,8 @@ export default function MVAnalysisPage() {
                     剩余空间：{growthSystemStatusQuery.data?.storage ? `${String(growthSystemStatusQuery.data.storage.freeMb)} MB` : "-"}
                   </div>
                   <div>已用空间：{growthSystemStatusQuery.data?.storage ? `${String(growthSystemStatusQuery.data.storage.usedMb)} / ${String(growthSystemStatusQuery.data.storage.totalMb)} MB` : "-"}</div>
+                  <div>服务健康度：{String(growthSystemStatusQuery.data?.serviceHealth?.label || (growthAnomalies.length ? "critical" : "passing"))}</div>
+                  <div>健康检查时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.serviceHealth?.checkedAt || ""))}</div>
                   <div>运行模式：{String(growthSystemStatusQuery.data?.runtimeControl?.mode || "auto")}</div>
                   <div>模式更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.runtimeControl?.updatedAt || ""))}</div>
                   <div>文件类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>

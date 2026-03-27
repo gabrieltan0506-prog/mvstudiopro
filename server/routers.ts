@@ -1071,6 +1071,8 @@ export const appRouter = router({
             message: failedBackfills.map((item) => String(item?.note || "回填失败")).join("；"),
           });
         }
+        const criticalAnomalies = anomalies.filter((item) => item.level === "critical");
+        const warningAnomalies = anomalies.filter((item) => item.level === "warning");
 
         return {
           success: true,
@@ -1096,6 +1098,13 @@ export const appRouter = router({
             burst: runtimeControl?.burst || "auto",
             burstPlatforms: runtimeControl?.burstPlatforms || [],
             updatedAt: runtimeControl?.updatedAt || null,
+          },
+          serviceHealth: {
+            status: criticalAnomalies.length ? "critical" : "passing",
+            label: criticalAnomalies.length ? "critical" : "passing",
+            warningCount: warningAnomalies.length,
+            criticalCount: criticalAnomalies.length,
+            checkedAt: new Date().toISOString(),
           },
           anomalies,
           storage,
