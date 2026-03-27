@@ -233,6 +233,9 @@ function getLowYieldFrequencyLabel(platform: GrowthPlatform) {
 }
 
 function getForceBurstLabel(platform: GrowthPlatform) {
+  if (runtimeBurstOverride === "manual" && runtimeBurstPlatformsOverride.has(platform)) {
+    return `手动 burst / ${getPlatformBurstIntervalMinutes(platform)} 分钟一次`;
+  }
   const until = FORCE_BURST_UNTIL_MS
     ? new Intl.DateTimeFormat("zh-CN", {
         timeZone: SCHEDULER_TIMEZONE,
@@ -294,15 +297,12 @@ function resolveNextRunPlan(params: {
   burstLowYieldRuns: number;
 }) {
   if (isForceBurstActive(params.platform)) {
-    const lowYieldRuns = isClearlyHigherThanPrevious(params.platform, params.currentCount, params.previousCount)
-      ? 0
-      : params.burstLowYieldRuns + 1;
     return {
       burstMode: true,
       nextRunAt: nextRunIso(getPlatformBurstIntervalMs(params.platform)),
       frequencyLabel: getForceBurstLabel(params.platform),
-      burstStableRuns: params.burstStableRuns,
-      burstLowYieldRuns: lowYieldRuns,
+      burstStableRuns: 0,
+      burstLowYieldRuns: 0,
       burstEvent: params.burstMode ? ("stay" as const) : ("enter" as const),
     };
   }
