@@ -77,6 +77,14 @@ const STALE_SCHEDULER_FORCE_RUN_MS = Math.max(
   5 * 60 * 1000,
   Number(process.env.GROWTH_SCHEDULER_STALE_FORCE_RUN_MS || 20 * 60 * 1000) || 20 * 60 * 1000,
 );
+const SCHEDULER_BOOT_GRACE_MS = Math.max(
+  15 * 1000,
+  Number(process.env.GROWTH_SCHEDULER_BOOT_GRACE_MS || 2 * 60 * 1000) || 2 * 60 * 1000,
+);
+const INITIAL_PLATFORM_SPACING_MS = Math.max(
+  15 * 1000,
+  Number(process.env.GROWTH_SCHEDULER_INITIAL_PLATFORM_SPACING_MS || 90 * 1000) || 90 * 1000,
+);
 let schedulerStarted = false;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let runInFlight = false;
@@ -103,6 +111,10 @@ function withJitter(baseMs: number) {
 
 function nextRunIso(baseMs: number) {
   return nowShanghaiIso(Date.now() + withJitter(baseMs));
+}
+
+function nextBootRunIso(order: number) {
+  return nowShanghaiIso(Date.now() + SCHEDULER_BOOT_GRACE_MS + (order * INITIAL_PLATFORM_SPACING_MS));
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -571,12 +583,14 @@ export async function bootstrapGrowthTrendScheduler() {
   if (isBackfillWindow()) {
     await clearStaleBurstStates("backfill-window");
   }
-  for (const platform of PRIORITY_PLATFORMS) {
+  for (let index = 0; index < PRIORITY_PLATFORMS.length; index += 1) {
+    const platform = PRIORITY_PLATFORMS[index];
     if (!scheduler[platform]?.nextRunAt) {
       await updateTrendSchedulerState(platform, {
         platform,
         failureCount: scheduler[platform]?.failureCount || 0,
-        nextRunAt: nowShanghaiIso(),
+        nextRunAt: nextBootRunIso(index),
+        lastFrequencyLabel: `启动缓冲中，${Math.round((SCHEDULER_BOOT_GRACE_MS + (index * INITIAL_PLATFORM_SPACING_MS)) / 1000)} 秒后错峰启动`,
       });
     }
   }
@@ -596,9 +610,11 @@ export async function bootstrapGrowthTrendScheduler() {
   } else {
     console.info("[growth.backfill] bootstrap skipped; set GROWTH_ENABLE_BACKFILL_BOOTSTRAP=1 to enable automatic historical backfill on boot.");
   }
-  runDuePlatforms().catch((error) => {
-    console.warn("[growth.scheduler] initial bootstrap failed:", error);
-  });
+  setTimeout(() => {
+    runDuePlatforms().catch((error) => {
+      console.warn("[growth.scheduler] initial bootstrap failed:", error);
+    });
+  }, SCHEDULER_BOOT_GRACE_MS);
 
   tickTimer = setInterval(() => {
     refreshRuntimeModeOverride().catch((error) => {
