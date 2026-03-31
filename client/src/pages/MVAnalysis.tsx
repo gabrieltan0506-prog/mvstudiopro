@@ -1754,7 +1754,7 @@ export default function MVAnalysisPage() {
                     ) : null}
                   </div>
                 ) : null}
-                {growthSystemStatusQuery.data?.scheduler?.length ? (
+                {growthSystemStatusQuery.data?.scheduler?.length && growthSystemStatusQuery.data?.runtimeControl?.mode !== "backfill" ? (
                   <div className="mt-4 space-y-2 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/72">
                     <div className="font-semibold text-cyan-100">抓取调度状态</div>
                     <div className="rounded-xl border border-cyan-200/15 bg-cyan-400/5 p-3 leading-6">
