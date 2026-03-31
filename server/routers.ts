@@ -1041,8 +1041,11 @@ export const appRouter = router({
             message: `Fly /data 剩餘 ${storage.freeMb} MB，低於 300 MB 門檻。`,
           });
         }
+        const effectiveMode = runtimeControl?.mode || "auto";
         const now = Date.now();
-        const staleSchedulers = scheduler.filter((item) => {
+        // Only check live scheduler staleness when mode is "auto" or "live".
+        // When mode is "backfill", live scheduler is intentionally paused.
+        const staleSchedulers = effectiveMode === "backfill" ? [] : scheduler.filter((item) => {
           if (!item.nextRunAt) return false;
           const nextRun = Date.parse(String(item.nextRunAt));
           if (!Number.isFinite(nextRun)) return false;
