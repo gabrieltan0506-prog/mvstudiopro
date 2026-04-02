@@ -2,7 +2,7 @@ name: Growth Backup
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -93,10 +93,11 @@ jobs:
           if [ "${LARGEST_FILE_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${ARCHIVE_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
           if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
-          if [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
-          if [ "${PLATFORMS_BYTES:-0}" -gt $((400 * 1024 * 1024)) ] || [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORMS=true; fi
+          if [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
+          if [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then SHOULD_OFFLOAD=true; fi
+          if [ "${PLATFORMS_BYTES:-0}" -gt $((400 * 1024 * 1024)) ] || [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ] || [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORMS=true; fi
           if [ "${PLATFORM_CURRENT_BYTES:-0}" -gt $((400 * 1024 * 1024)) ]; then EXTERNALIZE_PLATFORM_CURRENT=true; fi
-          if [ "${HOT_BYTES:-0}" -gt $((900 * 1024 * 1024)) ]; then EXTERNALIZE_HISTORY_LEDGER=true; fi
+          if [ "${HOT_BYTES:-0}" -gt $((800 * 1024 * 1024)) ] || [ "${AVAILABLE_BYTES:-0}" -lt $((800 * 1024 * 1024)) ]; then EXTERNALIZE_HISTORY_LEDGER=true; fi
           echo "HOT_BYTES=$HOT_BYTES" >> /tmp/growth-backup/storage.env
           echo "SHOULD_OFFLOAD=$SHOULD_OFFLOAD" >> /tmp/growth-backup/storage.env
           echo "EXTERNALIZE_PLATFORMS=$EXTERNALIZE_PLATFORMS" >> /tmp/growth-backup/storage.env
@@ -239,7 +240,8 @@ jobs:
             thresholdsMb: {
               singleFile: 400,
               directory: 800,
-              hotData: 900,
+              hotData: 800,
+              availableSpaceTrigger: 800,
             },
           };
           fs.writeFileSync("/tmp/growth-backup/cold-restore-manifest.json", JSON.stringify(manifest, null, 2));
@@ -336,7 +338,7 @@ jobs:
             createdAt: new Date().toISOString(),
             baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
             archiveDirs: dirs,
-            thresholdsMb: { singleFile: 400, directory: 800, hotData: 900 }
+            thresholdsMb: { singleFile: 400, directory: 800, hotData: 800, availableSpaceTrigger: 800 }
           };
           fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
           NODE
