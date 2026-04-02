@@ -321,7 +321,7 @@ jobs:
           cat > /tmp/growth-archive-offload/build-offload-list.sh <<'SH'
           cd /data/growth/archive || exit 0
           find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > /tmp/archive-all-dirs.txt
-          awk "/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/" /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt
+          grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt || true
           head -n -2 /tmp/archive-date-dirs.txt > /tmp/archive-offload-date-dirs.txt || true
           grep -v -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
           cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed "/^[[:space:]]*$/d" > /tmp/archive-offload-dirs.txt
