@@ -326,16 +326,18 @@ jobs:
           grep -v -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
           cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed "/^[[:space:]]*$/d" > /tmp/archive-offload-dirs.txt
           avail=$(df -B1 /data | awk "NR==2{print \$4}")
-          target=$((900 * 1024 * 1024))
+          target=$((1200 * 1024 * 1024))
           if [ ! -s /tmp/archive-offload-dirs.txt ] && [ -s /tmp/archive-date-dirs.txt ] && [ ${avail:-0} -lt $target ]; then
             need=$((target - avail))
+            selected=0
             : > /tmp/archive-offload-dirs.txt
             while IFS= read -r dir; do
               [ -n "$dir" ] || continue
               echo "$dir" >> /tmp/archive-offload-dirs.txt
               size=$(du -sb "$dir" 2>/dev/null | awk "{print \$1}")
               need=$((need - ${size:-0}))
-              if [ $need -le 0 ]; then
+              selected=$((selected + 1))
+              if [ $need -le 0 ] && [ $selected -ge 2 ]; then
                 break
               fi
             done < /tmp/archive-date-dirs.txt
@@ -355,7 +357,7 @@ jobs:
             createdAt: new Date().toISOString(),
             baseUrl: "https://github.com/gabrieltan0506-prog/mvstudiopro/releases/download/growth-cold-store-latest",
             archiveDirs: dirs,
-            thresholdsMb: { singleFile: 400, directory: 800, hotData: 800, availableSpaceTrigger: 800, targetAvailableSpace: 900 }
+            thresholdsMb: { singleFile: 400, directory: 800, hotData: 800, availableSpaceTrigger: 800, targetAvailableSpace: 1200 }
           };
           fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
           NODE
