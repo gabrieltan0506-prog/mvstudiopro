@@ -331,7 +331,7 @@ jobs:
               need=$((target - avail))
               : > /tmp/archive-offload-dirs.txt
               while IFS= read -r dir; do
-                [ -n "$dir" ] || continue
+                [ -n $dir ] || continue
                 echo $dir >> /tmp/archive-offload-dirs.txt
                 size=$(du -sb $dir 2>/dev/null | awk '\''{print $1}'\'')
                 need=$((need - ${size:-0}))
