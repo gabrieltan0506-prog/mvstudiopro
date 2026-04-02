@@ -2,7 +2,7 @@ name: Growth Archive Offload
 
 on:
   schedule:
-    - cron: "15 */6 * * *"
+    - cron: "15 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -42,7 +42,8 @@ jobs:
             thresholdsMb: {
               singleFile: 400,
               directory: 800,
-              hotData: 900
+              hotData: 800,
+              availableSpaceTrigger: 800
             }
           };
           fs.writeFileSync("/tmp/growth-archive-offload/offload-manifest.json", JSON.stringify(manifest, null, 2));
