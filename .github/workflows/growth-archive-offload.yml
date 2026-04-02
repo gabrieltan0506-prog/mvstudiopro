@@ -19,22 +19,22 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           mkdir -p /tmp/growth-archive-offload
-          flyctl ssh console -a mvstudiopro -C "sh -lc '
+          flyctl ssh console -a mvstudiopro -C '
             cd /data/growth/archive || exit 0
             find . -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort > /tmp/archive-all-dirs.txt
-            awk '\''/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/'\'' /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt
+            awk "/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/" /tmp/archive-all-dirs.txt | sort > /tmp/archive-date-dirs.txt
             head -n -2 /tmp/archive-date-dirs.txt > /tmp/archive-offload-date-dirs.txt || true
-            grep -v -E '\''^[0-9]{4}-[0-9]{2}-[0-9]{2}$'\'' /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
-            cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed '\''/^[[:space:]]*$/d'\'' > /tmp/archive-offload-dirs.txt
-            avail=$(df -B1 /data | awk '\''NR==2{print $4}'\'')
+            grep -v -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" /tmp/archive-all-dirs.txt > /tmp/archive-offload-other-dirs.txt || true
+            cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed "/^[[:space:]]*$/d" > /tmp/archive-offload-dirs.txt
+            avail=$(df -B1 /data | awk "NR==2{print \$4}")
             target=$((900 * 1024 * 1024))
             if [ ! -s /tmp/archive-offload-dirs.txt ] && [ -s /tmp/archive-date-dirs.txt ] && [ ${avail:-0} -lt $target ]; then
               need=$((target - avail))
               : > /tmp/archive-offload-dirs.txt
               while IFS= read -r dir; do
-                [ -n $dir ] || continue
-                echo $dir >> /tmp/archive-offload-dirs.txt
-                size=$(du -sb $dir 2>/dev/null | awk '\''{print $1}'\'')
+                [ -n "$dir" ] || continue
+                echo "$dir" >> /tmp/archive-offload-dirs.txt
+                size=$(du -sb "$dir" 2>/dev/null | awk "{print \$1}")
                 need=$((need - ${size:-0}))
                 if [ $need -le 0 ]; then
                   break
@@ -43,7 +43,7 @@ jobs:
             fi
             sort -u /tmp/archive-offload-dirs.txt -o /tmp/archive-offload-dirs.txt
             cat /tmp/archive-offload-dirs.txt
-          '" > /tmp/growth-archive-offload/dirs.txt
+          ' > /tmp/growth-archive-offload/dirs.txt
           date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/growth-archive-offload/fetched-at.txt
           node <<'NODE'
           const fs = require("fs");
