@@ -28,7 +28,7 @@ jobs:
             cat /tmp/archive-offload-date-dirs.txt /tmp/archive-offload-other-dirs.txt | sed '\''/^[[:space:]]*$/d'\'' > /tmp/archive-offload-dirs.txt
             avail=$(df -B1 /data | awk '\''NR==2{print $4}'\'')
             target=$((900 * 1024 * 1024))
-            if [ ! -s /tmp/archive-offload-dirs.txt ] && [ -s /tmp/archive-date-dirs.txt ] && [ "${avail:-0}" -lt "$target" ]; then
+            if [ ! -s /tmp/archive-offload-dirs.txt ] && [ -s /tmp/archive-date-dirs.txt ] && [ ${avail:-0} -lt $target ]; then
               need=$((target - avail))
               : > /tmp/archive-offload-dirs.txt
               while IFS= read -r dir; do
@@ -36,7 +36,7 @@ jobs:
                 echo "$dir" >> /tmp/archive-offload-dirs.txt
                 size=$(du -sb "$dir" 2>/dev/null | awk '\''{print $1}'\'')
                 need=$((need - ${size:-0}))
-                if [ "$need" -le 0 ]; then
+                if [ $need -le 0 ]; then
                   break
                 fi
               done < /tmp/archive-date-dirs.txt
