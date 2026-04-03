@@ -49,6 +49,14 @@ const LIVE_GAP_BUCKETS = Math.max(
   2,
   Number(process.env.GROWTH_LIVE_BACKFILL_GAP_BUCKETS || 2) || 2,
 );
+const LIVE_FINE_GAP_BUCKET_MINUTES = Math.max(
+  5,
+  Number(process.env.GROWTH_LIVE_BACKFILL_FINE_BUCKET_MINUTES || Math.max(5, Math.floor(LIVE_GAP_BUCKET_MINUTES / 2))) || Math.max(5, Math.floor(LIVE_GAP_BUCKET_MINUTES / 2)),
+);
+const LIVE_FINE_PENDING_LIMIT = Math.max(
+  1,
+  Number(process.env.GROWTH_LIVE_BACKFILL_FINE_PENDING_LIMIT || 2) || 2,
+);
 const PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili", "toutiao"];
 const BACKFILL_EXCLUDE_PLATFORMS = new Set<GrowthPlatform>(
   String(process.env.GROWTH_BACKFILL_EXCLUDE_PLATFORMS || "")
@@ -183,6 +191,12 @@ function isSchedulerGapDetected(lastSuccessAt?: string) {
   return ageMinutes >= LIVE_GAP_BUCKET_MINUTES * LIVE_GAP_BUCKETS;
 }
 
+function getLastSuccessAgeMinutes(lastSuccessAt?: string) {
+  const time = new Date(lastSuccessAt || 0).getTime();
+  if (!Number.isFinite(time) || time <= 0) return Number.POSITIVE_INFINITY;
+  return (Date.now() - time) / (60 * 1000);
+}
+
 async function scheduleNextBackfillStep(kind: BackfillKind) {
   const state = workerState[kind];
   if (!state.started) return;
@@ -257,7 +271,7 @@ async function readBackfillSnapshotFor(kind: BackfillKind): Promise<BackfillRunt
 }
 
 function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot) {
-  return PLATFORMS.filter((platform) => {
+  const ranked = PLATFORMS.filter((platform) => {
     if (BACKFILL_EXCLUDE_PLATFORMS.has(platform)) return false;
     if (kind === "live") {
       const row = stats.platforms.find((item) => item.platform === platform);
@@ -271,6 +285,26 @@ function getPendingPlatforms(kind: BackfillKind, stats: BackfillRuntimeSnapshot)
     const rightWeight = (rightRow?.currentTotal || 0) + (rightRow?.archivedTotal || 0);
     return rightWeight - leftWeight;
   });
+
+  if (kind !== "live" || ranked.length) return ranked;
+
+  return PLATFORMS
+    .filter((platform) => !BACKFILL_EXCLUDE_PLATFORMS.has(platform))
+    .map((platform) => {
+      const row = stats.platforms.find((item) => item.platform === platform);
+      return {
+        platform,
+        ageMinutes: getLastSuccessAgeMinutes(row?.lastSuccessAt),
+        totalWeight: (row?.currentTotal || 0) + (row?.archivedTotal || 0),
+      };
+    })
+    .filter((item) => item.ageMinutes >= LIVE_FINE_GAP_BUCKET_MINUTES)
+    .sort((left, right) => {
+      if (right.ageMinutes !== left.ageMinutes) return right.ageMinutes - left.ageMinutes;
+      return right.totalWeight - left.totalWeight;
+    })
+    .slice(0, LIVE_FINE_PENDING_LIMIT)
+    .map((item) => item.platform);
 }
 
 async function runBackfillStep(kind: BackfillKind) {
@@ -294,7 +328,7 @@ async function runBackfillStep(kind: BackfillKind) {
         status: "running",
         selectedWindowDays: statsBefore.selectedWindowDays,
         note: kind === "live"
-          ? `近 ${windowDays} 天回填运行中：当前未发现需要补齐的 live 断点，worker 保持运行。`
+          ? `近 ${windowDays} 天回填运行中：当前未发现硬缺口，worker 保持运行，等待更细时间桶进入补齐窗口，并继续复用跨平台关键词/话题种子。`
           : "历史回填运行中：所有平台暂时进入低产出平台期，worker 保持运行，等待下一轮继续抓取。",
         platforms: PLATFORMS.map((platform) => {
           const row = statsBefore.platforms.find((item) => item.platform === platform);
@@ -304,7 +338,7 @@ async function runBackfillStep(kind: BackfillKind) {
             currentTotal: row?.currentTotal || 0,
             archivedTotal: row?.archivedTotal || 0,
             plateauCount: state.plateau.get(platform) || 0,
-            status: "plateau",
+            status: "pending",
           };
         }),
       });
@@ -415,7 +449,7 @@ async function runBackfillStep(kind: BackfillKind) {
       selectedWindowDays: statsAfter.selectedWindowDays,
       status: "running",
       note: kind === "live"
-        ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐。`
+        ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，优先按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描硬缺口；无硬缺口时退到 ${LIVE_FINE_GAP_BUCKET_MINUTES} 分钟细桶继续补齐，并复用跨平台关键词/话题种子。`
         : `历史回填运行中：窗口 ${statsAfter.selectedWindowDays} 天，夜间模式；按有数据的平台优先回填，单平台逐一执行，小步长抓取，history-ledger 每 ${HISTORY_LEDGER_BATCH_ROUNDS} 轮再批量刷新。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsAfter.platforms.find((item) => item.platform === platform);
