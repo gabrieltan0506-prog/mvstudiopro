@@ -1157,7 +1157,7 @@ export const appRouter = router({
                   lastError: undefined,
                   burstMode: false,
                   burstTriggeredAt: undefined,
-                  lastFrequencyLabel: "每 30 分钟一次",
+                  lastFrequencyLabel: "每 20 分钟一次",
                 });
               }),
           );
@@ -1205,9 +1205,9 @@ export const appRouter = router({
                 burstMode: enabled,
                 burstTriggeredAt: enabled ? nextRunAt : undefined,
                 lastFrequencyLabel: input.burst === "manual"
-                  ? (enabled ? "手动 burst / 15 分钟一次" : (currentState?.lastFrequencyLabel || "每 30 分钟一次"))
+                  ? (enabled ? "手动 burst / 15 分钟一次" : (currentState?.lastFrequencyLabel || "每 20 分钟一次"))
                   : input.burst === "off"
-                    ? "每 30 分钟一次"
+                    ? "每 20 分钟一次"
                     : undefined,
               });
             }),
