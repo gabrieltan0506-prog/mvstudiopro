@@ -991,7 +991,7 @@ export const appRouter = router({
           const startedAt = backfill.startedAt || backfill.updatedAt;
           const note = backfill.mode === "live"
             ? `近期回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次。`
-            : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次；累计量超 150000 / 300000 / 500000 后分别降到 0.5 / 1 / 2 小时一次。`;
+            : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次。`;
           const backfillPlatforms = new Map(
             (backfill.platforms || []).map((item) => [String(item.platform), {
               ...item,
