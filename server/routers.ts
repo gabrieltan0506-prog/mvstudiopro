@@ -484,6 +484,11 @@ function buildFallbackFrameAnalysis(context?: string) {
   };
 }
 
+function formatBackfillIntervalLabel(minutes: number) {
+  if (minutes % 60 === 0) return `${minutes / 60} 小时`;
+  return `${minutes} 分钟`;
+}
+
 async function generateKlingBeijingVideo(params: {
   prompt: string;
   imageUrl?: string;
@@ -978,11 +983,15 @@ export const appRouter = router({
           if ((runtimeControl?.mode || "auto") === "live") return null;
           if (!backfill) return null;
           const selectedWindowDays = Number(backfill.selectedWindowDays || 0) || (backfill.mode === "live" ? 30 : 90);
-          const nextRunAt = backfill.nextRunAt || addMinutesToIso(backfill.updatedAt || backfill.startedAt, 15);
+          const configuredMinutes = Math.max(
+            1,
+            Math.round((Number(process.env.GROWTH_BACKFILL_ACTIVE_INTERVAL_MS || 10 * 60 * 1000) || 10 * 60 * 1000) / (60 * 1000)),
+          );
+          const nextRunAt = backfill.nextRunAt || addMinutesToIso(backfill.updatedAt || backfill.startedAt, configuredMinutes);
           const startedAt = backfill.startedAt || backfill.updatedAt;
           const note = backfill.mode === "live"
-            ? `近期回填运行中：窗口 ${selectedWindowDays} 天，夜间 burst 模式，每 15 分钟一次。`
-            : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间 burst 模式，每 15 分钟一次；累计量超 150000 / 300000 / 500000 后分别降到 0.5 / 1 / 2 小时一次。`;
+            ? `近期回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次。`
+            : `历史回填运行中：窗口 ${selectedWindowDays} 天，夜间模式，默认每 ${formatBackfillIntervalLabel(configuredMinutes)} 一次；累计量超 150000 / 300000 / 500000 后分别降到 0.5 / 1 / 2 小时一次。`;
           const backfillPlatforms = new Map(
             (backfill.platforms || []).map((item) => [String(item.platform), {
               ...item,

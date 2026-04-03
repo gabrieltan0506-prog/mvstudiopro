@@ -304,7 +304,7 @@ async function runBackfillStep(kind: BackfillKind) {
             currentTotal: row?.currentTotal || 0,
             archivedTotal: row?.archivedTotal || 0,
             plateauCount: state.plateau.get(platform) || 0,
-            status: "plateau",
+            status: "pending",
           };
         }),
       });
