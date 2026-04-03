@@ -149,11 +149,8 @@ function isBackfillWindow(now = new Date()) {
   return isHourInWindow(getShanghaiHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
-function getHistoricalCadenceMs(totalArchivedItems: number) {
-  if (totalArchivedItems >= HISTORY_STAGE_THREE_THRESHOLD) return 4 * 60 * 60 * 1000;
-  if (totalArchivedItems >= HISTORY_STAGE_TWO_THRESHOLD) return 2 * 60 * 60 * 1000;
-  if (totalArchivedItems >= HISTORY_STAGE_ONE_THRESHOLD) return 60 * 60 * 1000;
-  return HISTORY_BASE_INTERVAL_MS;
+function getHistoricalCadenceMs(_totalArchivedItems: number) {
+  return BACKFILL_ACTIVE_INTERVAL_MS;
 }
 
 function getWorkerLabel(kind: BackfillKind) {
