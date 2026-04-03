@@ -149,11 +149,8 @@ function isBackfillWindow(now = new Date()) {
   return isHourInWindow(getShanghaiHour(now), BACKFILL_WINDOW_START_HOUR, BACKFILL_WINDOW_END_HOUR);
 }
 
-function getHistoricalCadenceMs(totalArchivedItems: number) {
-  if (totalArchivedItems >= HISTORY_STAGE_THREE_THRESHOLD) return 4 * 60 * 60 * 1000;
-  if (totalArchivedItems >= HISTORY_STAGE_TWO_THRESHOLD) return 2 * 60 * 60 * 1000;
-  if (totalArchivedItems >= HISTORY_STAGE_ONE_THRESHOLD) return 60 * 60 * 1000;
-  return HISTORY_BASE_INTERVAL_MS;
+function getHistoricalCadenceMs(_totalArchivedItems: number) {
+  return BACKFILL_ACTIVE_INTERVAL_MS;
 }
 
 function getWorkerLabel(kind: BackfillKind) {
@@ -359,7 +356,7 @@ async function runBackfillStep(kind: BackfillKind) {
       status: "running",
       note: kind === "live"
         ? `近期回填运行中：窗口 ${windowDays} 天，夜间模式，按 ${LIVE_GAP_BUCKET_MINUTES} 分钟 bucket 扫描缺口，连续 ${LIVE_GAP_BUCKETS} 个 bucket 缺失即补齐，目标步长 ${stepTarget}。`
-        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，夜间模式默认每 ${formatMinutes(Math.round(BACKFILL_ACTIVE_INTERVAL_MS / (60 * 1000)))} 一次；累计量超 ${HISTORY_STAGE_ONE_THRESHOLD} / ${HISTORY_STAGE_TWO_THRESHOLD} / ${HISTORY_STAGE_THREE_THRESHOLD} 后分别降到 1 / 2 / 4 小时一次，并启用回填 burst。`,
+        : `历史回填运行中：窗口 ${statsBefore.selectedWindowDays} 天，夜间模式默认每 ${formatMinutes(Math.round(BACKFILL_ACTIVE_INTERVAL_MS / (60 * 1000)))} 一次，并启用回填 burst。`,
       platforms: PLATFORMS.map((platform) => {
         const row = statsBefore.platforms.find((item) => item.platform === platform);
         return {
