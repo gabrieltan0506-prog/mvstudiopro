@@ -21,7 +21,7 @@ import sharp from "sharp";
 const execAsync = promisify(exec);
 
 // ─── 常量 ──────────────────────────────────────────
-const MAX_DURATION_SECONDS = 600; // 10 分钟
+const MAX_DURATION_SECONDS = 1200; // 20 分钟
 const SHORT_VIDEO_THRESHOLD = 300; // 5 分钟
 const BASE_FRAME_INTERVAL_SECONDS = 3;
 const HIGHLIGHT_PADDING_SECONDS = 2;
@@ -97,7 +97,7 @@ export function validateDuration(durationSeconds: number): {
     const seconds = Math.round(durationSeconds % 60);
     return {
       valid: false,
-      error: `视频时长 ${minutes}分${seconds}秒 超过 10 分钟限制。请将视频裁剪为两段（每段不超过 10 分钟）后分别上传。`,
+      error: `视频时长 ${minutes}分${seconds}秒 超过 20 分钟限制。请将视频裁剪为两段（每段不超过 20 分钟）后分别上传。`,
     };
   }
 
