@@ -12,7 +12,6 @@ import type {
   GrowthBusinessInsight,
   GrowthCampModel,
   GrowthHandoff,
-  GrowthIndustryTemplate,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
   GrowthReferenceExample,
@@ -146,6 +145,13 @@ type PlatformCompareRow = {
 };
 
 type ReferenceExampleCard = GrowthReferenceExample;
+type PersonalizedDirectionCard = {
+  title: string;
+  scenario: string;
+  why: string;
+  action: string;
+  badge: string;
+};
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 const FULL_PLATFORM_ORDER = ["douyin", "kuaishou", "bilibili", "xiaohongshu"] as const;
@@ -353,16 +359,12 @@ function buildPositioningRows(
   analysis: AnalysisResult,
   context: string,
   tracks: CommercialTrack[],
-  industryTemplate?: GrowthIndustryTemplate | null,
 ): InsightTableRow[] {
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单|健身器材|体育用品|运动器材|器械/.test(context);
-  const audience = normalizeText(
-    industryTemplate?.audience || context || "当前没有明确写出受众与成交目标，建议后续补全。",
-  );
+  const audience = normalizeText(context || analysis.summary || "当前没有明确写出受众与成交目标，建议后续补全。");
   const bestTrack = tracks.find((track) => track.fit >= 60);
   const primaryDirection = bestTrack?.name || "先不主打变现";
-  const roleHint = industryTemplate?.positioningHint
-    || (/AIGC|开发者|平台|工具|工作流|自动化/.test(`${analysis.summary}\n${context}`)
+  const roleHint = (/AIGC|开发者|平台|工具|工作流|自动化/.test(`${analysis.summary}\n${context}`)
       ? "结果导向的案例型顾问内容"
       : "先给结果、再给做法的解决方案内容");
   return [
@@ -371,7 +373,7 @@ function buildPositioningRows(
       insight: audience,
       action: commerceDriven
         ? "把开头改成“这套器材适合谁、解决什么训练问题、为什么值得买”三连句，不再先拍氛围或人物状态。"
-        : industryTemplate?.painPoint || "先只解决一个最痛的问题。",
+        : "先只解决一个最痛的问题，不要一条内容同时解释太多层。",
       highlight: "先锁一个痛点",
     },
     {
@@ -387,19 +389,19 @@ function buildPositioningRows(
       insight: primaryDirection === "先不主打变现" ? "先把入口做成熟。" : `先主攻「${primaryDirection}」。`,
       action: commerceDriven
         ? "只留一个成交动作，统一导向商品页、橱窗或私聊，不要一条内容同时挂多个承接方式。"
-        : industryTemplate?.primaryConversion || "只留一个承接动作。",
+        : "只留一个承接动作。",
       highlight: "只留一个主方向",
     },
   ];
 }
 
-function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: GrowthIndustryTemplate | null, context = ""): InsightTableRow[] {
+function buildContentAnalysisRows(analysis: AnalysisResult, context = ""): InsightTableRow[] {
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   const sportsCommerce = /健身器材|体育用品|运动器材|器械|哑铃|跑步机|壶铃|拉力器|护具|球拍/.test(context);
   return [
     {
       label: "✅ 当前优势",
-      insight: analysis.strengths[0] || industryTemplate?.trustAsset || "素材真实、有可延展基础。",
+      insight: analysis.strengths[0] || "素材真实、有可延展基础。",
       action: sportsCommerce
         ? "把真实训练画面固定成信任证据：字幕直接点出训练场景、适用人群和器材差异，不要只让用户看运动氛围。"
         : analysis.strengths[1] || "把优势固定成标题或封面。",
@@ -410,19 +412,19 @@ function buildContentAnalysisRows(analysis: AnalysisResult, industryTemplate?: G
       insight: analysis.improvements[0] || "开头抓力不足，信息进入过慢。",
       action: sportsCommerce
         ? "前 2 到 3 秒直接说“适合哪类训练人群 + 解决什么问题 + 一个最关键差异”，不要先展示运动漫镜头。"
-        : analysis.improvements[1] || industryTemplate?.analysisHint || "先重写前 2 到 3 秒。",
+        : analysis.improvements[1] || "先重写前 2 到 3 秒。",
       highlight: "先修停留",
     },
     {
       label: "🧩 表达问题",
-      insight: analysis.improvements[2] || industryTemplate?.painPoint || "信息顺序和视觉重点不够集中。",
+      insight: analysis.improvements[2] || "信息顺序和视觉重点不够集中。",
       action: sportsCommerce
         ? "表达顺序改成“适合谁 -> 训练场景 -> 核心差异 -> 为什么值得买 -> 一个动作”。这样用户才知道该不该继续看。"
         : commerceDriven ? "先讲适合谁、值不值买、为什么值得看，再补细节。" : "先给一句结论，再补细节。",
     },
     {
       label: "🚀 建议方向",
-      insight: industryTemplate?.commercialFocus || analysis.summary || "当前内容有基础，但结构和承接不够。",
+      insight: analysis.summary || "当前内容有基础，但结构和承接不够。",
       action: sportsCommerce
         ? "按“训练场景 -> 适用人群 -> 核心利益点 -> 信任证据 -> 成交动作”重写，目标是让用户能立刻判断值不值得买。"
         : commerceDriven ? "按“适用场景 -> 核心利益点 -> 信任证据 -> 一个动作”重写。" : "按“痛点 -> 做法 -> 动作”重写。",
@@ -495,7 +497,7 @@ function buildPlatformCompareRows(
   return rows;
 }
 
-function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, industryTemplate?: GrowthIndustryTemplate | null): InsightTableRow[] {
+function buildBusinessTrackRows(tracks: CommercialTrack[], context: string): InsightTableRow[] {
   const viableTracks = tracks.filter((track) => track.fit >= 45).slice(0, 3);
   if (!viableTracks.length) {
     return [{
@@ -510,9 +512,7 @@ function buildBusinessTrackRows(tracks: CommercialTrack[], context: string, indu
     insight: replaceTerms(track.reason),
     action: replaceTerms(track.nextStep),
     highlight: index === 0
-      ? industryTemplate?.offerExamples?.length
-        ? `优先验证：${industryTemplate.offerExamples.slice(0, 2).join("、")}`
-        : "先验证一个最短可成交动作。"
+      ? "先验证一个最短可成交动作。"
       : undefined,
   }));
 }
@@ -581,6 +581,30 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
       content: "先跑出收藏、停留或咨询，再把同主题内容延展成图文、分镜脚本和视频版本，不要一开始同时写多个变现方向。",
     },
   ];
+}
+
+function buildPersonalizedDirectionCards(
+  growthSnapshot: GrowthSnapshot | null,
+  fallbackAngles: NonNullable<AnalysisResult["commercialAngles"]>,
+) {
+  const personalized = growthSnapshot?.dashboardConsole?.personalizedRecommendations || [];
+  if (personalized.length) {
+    return personalized.slice(0, 4).map((item, index) => ({
+      title: item.title,
+      scenario: item.audience,
+      why: `${item.why} ${item.evidence}`.trim(),
+      action: item.action,
+      badge: index === 0 ? "主方向" : "可扩展",
+    }));
+  }
+
+  return fallbackAngles.slice(0, 4).map((item, index) => ({
+    title: item.title,
+    scenario: item.scenario,
+    why: item.whyItFits,
+    action: item.execution,
+    badge: index === 0 ? "备选方向" : "次选方向",
+  }));
 }
 
 function buildCommercialTracks(
@@ -1179,12 +1203,12 @@ export default function MVAnalysisPage() {
   const creationAssist = growthSnapshot?.creationAssist ?? null;
   const growthHandoff = growthSnapshot?.growthHandoff ?? null;
   const positioningRows = useMemo(
-    () => analysis ? buildPositioningRows(analysis, context, commercialTracks, growthSnapshot?.industryTemplate) : [],
-    [analysis, context, commercialTracks, growthSnapshot?.industryTemplate],
+    () => analysis ? buildPositioningRows(analysis, context, commercialTracks) : [],
+    [analysis, context, commercialTracks],
   );
   const contentAnalysisRows = useMemo(
-    () => analysis ? buildContentAnalysisRows(analysis, growthSnapshot?.industryTemplate, context) : [],
-    [analysis, growthSnapshot?.industryTemplate, context],
+    () => analysis ? buildContentAnalysisRows(analysis, context) : [],
+    [analysis, context],
   );
   const trendRows = useMemo(
     () => buildTrendRows(growthSnapshot, context, platformRecommendations),
@@ -1203,8 +1227,8 @@ export default function MVAnalysisPage() {
     [commercialTracks],
   );
   const businessTrackRows = useMemo(
-    () => buildBusinessTrackRows(highConfidenceTracks.length ? highConfidenceTracks : commercialTracks, context, growthSnapshot?.industryTemplate),
-    [highConfidenceTracks, commercialTracks, context, growthSnapshot?.industryTemplate],
+    () => buildBusinessTrackRows(highConfidenceTracks.length ? highConfidenceTracks : commercialTracks, context),
+    [highConfidenceTracks, commercialTracks, context],
   );
   const executionBriefRows = useMemo(
     () => analysis ? buildExecutionBriefRows(analysis, context) : [],
@@ -1274,7 +1298,6 @@ export default function MVAnalysisPage() {
     () => conversionFunnels.find((item) => item.id === selectedFunnelSegment) || conversionFunnels[0] || null,
     [conversionFunnels, selectedFunnelSegment],
   );
-  const personalizedRecommendationCards = dashboardConsole?.personalizedRecommendations ?? [];
   const dataEvidenceNotes = useMemo(
     () => (growthSnapshot?.status?.notes || []).filter((note) => /平台数据证据|抖音创作者中心证据|数据证据/i.test(note)),
     [growthSnapshot],
@@ -1323,6 +1346,10 @@ export default function MVAnalysisPage() {
   const directCommercialAngles = useMemo(
     () => analysis?.commercialAngles?.slice(0, 4) ?? [],
     [analysis],
+  );
+  const personalizedDirectionCards = useMemo(
+    () => buildPersonalizedDirectionCards(growthSnapshot, directCommercialAngles),
+    [growthSnapshot, directCommercialAngles],
   );
   const primaryCommercialAngle = directCommercialAngles[0] ?? null;
   const directTitleSuggestions = useMemo(
@@ -2077,49 +2104,37 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  {directCommercialAngles.length ? (
+                  {personalizedDirectionCards.length ? (
                     <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 text-[#90c4ff]">
                           <Send className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">Gemini 个性化商业方向</h2>
+                          <h2 className="text-2xl font-bold">个性化增长方向</h2>
                         </div>
                         <div className="rounded-full border border-[#90c4ff]/20 bg-[#90c4ff]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#b9dbff]">
-                          直接用分析结果
+                          数据证据优先
                         </div>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {directCommercialAngles.map((angle: NonNullable<AnalysisResult["commercialAngles"]>[number], index: number) => (
+                        {personalizedDirectionCards.map((angle, index) => (
                           <div key={`${angle.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xl font-black text-white">{angle.title}</div>
                               <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">
-                                方向 {index + 1}
+                                {angle.badge}
                               </div>
                             </div>
                             <div className="mt-4 rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3 text-sm leading-7 text-white/78">
                               {stripInternalJargon(angle.scenario)}
                             </div>
                             <div className="mt-4 rounded-2xl border border-[#90c4ff]/20 bg-[#10233e] px-4 py-3">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">为什么这条素材能这样用</div>
-                              <div className="mt-2 text-sm leading-7 text-white">{stripInternalJargon(angle.whyItFits)}</div>
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">为什么这条方向对你成立</div>
+                              <div className="mt-2 text-sm leading-7 text-white">{stripInternalJargon(angle.why)}</div>
                             </div>
                             <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                               <div className="text-xs uppercase tracking-[0.16em] text-white/45">直接执行</div>
-                              <div className="mt-2 text-sm leading-7 text-white/78">{stripInternalJargon(angle.execution)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/78">{stripInternalJargon(angle.action)}</div>
                             </div>
-                            <div className="mt-4 rounded-xl border border-[#f5b7ff]/20 bg-[#24142a] px-3 py-2 text-sm leading-7 text-[#ffe3ff]">
-                              开场钩子：{stripInternalJargon(angle.hook)}
-                            </div>
-                            {angle.brands.length ? (
-                              <div className="mt-4 flex flex-wrap gap-2">
-                                {angle.brands.slice(0, 4).map((brand: string) => (
-                                  <div key={`${angle.title}-${brand}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">
-                                    {brand}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
                           </div>
                         ))}
                       </div>
