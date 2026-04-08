@@ -1866,6 +1866,16 @@ export default function MVAnalysisPage() {
           : [],
     }));
   }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
+  const referenceExamplesByPlatform = useMemo(() => {
+    const grouped = new Map<string, ReferenceExampleCard[]>();
+    referenceExamples.forEach((item) => {
+      const key = item.platformLabel || getPlatformLabel(item.platform);
+      const current = grouped.get(key) || [];
+      if (current.length < 3) current.push(item);
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.entries()).slice(0, 5);
+  }, [referenceExamples]);
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
@@ -3105,14 +3115,20 @@ export default function MVAnalysisPage() {
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                         <div className="space-y-4">
-                          {referenceExamples.slice(0, 4).map((item) => (
-                            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/55">{item.platformLabel}</span>
-                                <span className="text-base font-semibold text-white">{replaceTerms(item.account)}</span>
+                          {referenceExamplesByPlatform.map(([platformLabel, items]) => (
+                            <div key={platformLabel} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/60 inline-flex">
+                                {platformLabel}
                               </div>
-                              <div className="mt-2 text-sm font-semibold leading-7 text-white">{replaceTerms(item.title)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(item.reason)}</div>
+                              <div className="mt-3 space-y-3">
+                                {items.map((item) => (
+                                  <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                                    <div className="text-base font-semibold text-white">{replaceTerms(item.account)}</div>
+                                    <div className="mt-1 text-sm font-semibold leading-7 text-white">{replaceTerms(item.title)}</div>
+                                    <div className="mt-1 text-sm leading-7 text-white/68">{replaceTerms(item.reason)}</div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ))}
                         </div>

@@ -1593,30 +1593,36 @@ function buildReferenceExamples(
     })
     .sort((left, right) => right.score - left.score);
 
-  const deduped = new Map<string, { platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>();
+  const grouped = new Map<GrowthPlatform, Array<{ platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>>();
   for (const entry of scored) {
-    const key = `${entry.platform}:${entry.item.author || entry.item.id}`;
-    if (!deduped.has(key)) deduped.set(key, entry);
-    if (deduped.size >= 6) break;
+    const current = grouped.get(entry.platform) || [];
+    const exists = current.some((item) => (item.item.author || item.item.id) === (entry.item.author || entry.item.id));
+    if (exists) continue;
+    if (current.length >= 3) continue;
+    current.push(entry);
+    grouped.set(entry.platform, current);
   }
 
-  return Array.from(deduped.values()).slice(0, 6).map(({ platform, item }, index) => ({
-    id: `reference-${platform}-${item.id}-${index}`,
-    platform,
-    platformLabel: PLATFORM_LABELS[platform],
-    account: item.author || `${PLATFORM_LABELS[platform]} 参考账号`,
-    title: item.title,
-    url: item.url,
-    reason: commerceDriven
-      ? `这条内容和你同样偏成交场景，优先讲适合谁、解决什么、为什么值得买，比泛介绍更容易转化。`
-      : `这条内容能跑起来，是因为它把「${industryTemplate.painPoint}」讲得更具体，用户一眼能看懂自己为什么要继续看。`,
-    production: commerceDriven
-      ? "制作方式：开头先讲用户场景和结果，中段只留 2 到 3 个利益点，补一个真实证据，结尾只留一个动作。"
-      : `制作方式：按“痛点 -> 做法 -> 证据 -> 动作”组织，不平铺过程。可重点参考：${industryTemplate.trustAsset}`,
-    conversion: commerceDriven
-      ? "转化方式：优先导向橱窗、商品页、评论区关键词或私聊，不同时给多个动作。"
-      : `转化方式：围绕「${industryTemplate.primaryConversion}」做单一路径承接，不把多个商业方向混在一条内容里。`,
-  }));
+  return requestedPlatforms.flatMap((platform) => {
+    const rows = grouped.get(platform) || [];
+    return rows.slice(0, 3).map(({ item }, index) => ({
+      id: `reference-${platform}-${item.id}-${index}`,
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      account: item.author || `${PLATFORM_LABELS[platform]} 参考账号`,
+      title: item.title,
+      url: item.url,
+      reason: commerceDriven
+        ? `这条内容和你同样偏成交场景，优先讲适合谁、解决什么、为什么值得买，比泛介绍更容易转化。`
+        : `这条内容能跑起来，是因为它把「${industryTemplate.painPoint}」讲得更具体，用户一眼能看懂自己为什么要继续看。`,
+      production: commerceDriven
+        ? "制作方式：开头先讲用户场景和结果，中段只留 2 到 3 个利益点，补一个真实证据，结尾只留一个动作。"
+        : `制作方式：按“痛点 -> 做法 -> 证据 -> 动作”组织，不平铺过程。可重点参考：${industryTemplate.trustAsset}`,
+      conversion: commerceDriven
+        ? "转化方式：优先导向橱窗、商品页、评论区关键词或私聊，不同时给多个动作。"
+        : `转化方式：围绕「${industryTemplate.primaryConversion}」做单一路径承接，不把多个商业方向混在一条内容里。`,
+    }));
+  });
 }
 
 function compactAudienceReason(context: string, industryTemplate: GrowthIndustryTemplate, fallback: string) {
