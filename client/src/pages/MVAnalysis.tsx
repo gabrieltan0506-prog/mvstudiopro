@@ -390,7 +390,7 @@ function normalizeText(text: string) {
 }
 
 function mapAnalysisError(error: unknown) {
-  const message = String((error as any)?.message || "");
+  const message = replaceTerms(String((error as any)?.message || ""));
   if (message.includes("Unexpected end of JSON input") || message.includes("Failed to fetch") || message.includes("502")) {
     return "视频预处理失败，请重试或更换文件。";
   }
@@ -402,6 +402,10 @@ function mapAnalysisError(error: unknown) {
 
 function replaceTerms(text: string) {
   return String(text || "")
+    .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
+    .replace(/转写摘录/g, "视频分析提炼")
+    .replace(/无音轨，转入视觉优先保守判断/g, "未提取到清晰语音信号，已转入保守视频判断")
+    .replace(/未检测到可靠音轨证据，需要更多依靠视觉结构判断/g, "未检测到足够清晰的语音线索，当前更多依靠视频画面结构判断")
     .replace(/\bCTA\b/g, "行动引导（CTA）")
     .replace(/live sample/gi, "实时样本")
     .replace(/hybrid/gi, "混合")
@@ -984,6 +988,8 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
+    .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
+    .replace(/转写摘录/g, "视频分析提炼")
     .replace(/知识付费|社群会员|模板包|软件分销|咨询|课程|工作流案例|前后效率对比|模板|实操演示|后台分析过程|漏斗|中位数|均值|内部排序/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
