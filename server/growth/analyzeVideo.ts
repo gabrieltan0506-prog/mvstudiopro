@@ -500,6 +500,18 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
     lighting: 72,
     impact: 82,
     viralPotential: isCommercial ? 84 : 78,
+    visualSummary: "已完成关键帧抽取，但当前只保留保守视觉结论，建议重点看开头抓力、人物信任感和结果画面是否明确。",
+    openingFrameAssessment: "开头最好在 2 秒内直接出现人物状态、痛点或结果，不要只给环境铺垫。",
+    sceneConsistency: "人物、场景和动作示范需要统一服务于同一个结论，避免信息分散。",
+    trustSignals: [
+      "真实人物出镜能建立信任。",
+      "动作示范和前后对比比空镜头更容易承接转化。",
+    ],
+    visualRisks: [
+      "如果开头先铺环境、后讲重点，停留会掉得很快。",
+      "如果结果画面不够直接，用户会把它当成泛内容略过。",
+    ],
+    keyFrames: [],
     strengths: [
       "视频已经具备可拆解的节奏和视觉亮点。",
       "适合继续拆成平台适配版和商业承接版。",
@@ -547,6 +559,7 @@ async function runDeepDivePass(params: {
 5. 如果素材属于户外探店、美食旅行、人物体验这类商业视频，要优先回答“如何提高转化与复用”，而不是空泛讲故事。
 6. 秒点建议必须回到 mm:ss。
 7. weakFrameReferences 必须优先使用视觉初判里已经指出的问题帧，不要空写。
+8. 必须显式返回 visualSummary、openingFrameAssessment、sceneConsistency、trustSignals、visualRisks、keyFrames，不能把抽帧视觉结论藏在 summary 里。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -562,6 +575,14 @@ async function runDeepDivePass(params: {
   "lighting": number,
   "impact": number,
   "viralPotential": number,
+  "visualSummary": "string",
+  "openingFrameAssessment": "string",
+  "sceneConsistency": "string",
+  "trustSignals": ["string"],
+  "visualRisks": ["string"],
+  "keyFrames": [
+    { "timestamp": "00:08", "whatShows": "string", "commercialUse": "string", "issue": "string", "fix": "string" }
+  ],
   "strengths": ["string"],
   "improvements": ["string"],
   "platforms": ["string"],
@@ -753,7 +774,21 @@ export async function analyzeVideo(params: {
       videoGcsUri: storedVideo.gcsUri,
     });
 
-    const parsed = growthAnalysisScoresSchema.parse(deepDive);
+    const parsed = growthAnalysisScoresSchema.parse({
+      ...deepDive,
+      visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
+      openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
+      sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
+      trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
+        ? deepDive.trustSignals
+        : visualFirstPass.trustSignals,
+      visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
+        ? deepDive.visualRisks
+        : visualFirstPass.visualRisks,
+      keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
+        ? deepDive.keyFrames
+        : visualFirstPass.keyFrames,
+    });
     const costProfile = estimateTokenProfile(duration, sparseFrames.frames.length);
 
     return {

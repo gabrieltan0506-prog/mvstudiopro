@@ -397,6 +397,7 @@ async function personalizeGrowthSnapshot(params: {
 5. decisionFramework.assetAdaptation 必须直接说明更适合视频还是图文、开头怎么改、结构怎么改、结尾动作是什么。
 6. 平台数据和历史沉淀只能作为证据，不要暴露后台统计口径、内部排序机制或工程逻辑。
 7. 必须额外返回：
+   - 把视频抽帧视觉结论真正写进输出，不要只复述音频。尤其要吸收 keyFrames、openingFrameAssessment、visualSummary。
    - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么；并补 formatReason、graphicPlan、videoPlan。
    - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式；并补 supportActivities、supportSignal、potentialTrack、optimizationPlan。
    - monetizationStrategies：推荐平台对应的商业变现策略、CTA 和 offer 形态。
@@ -431,6 +432,12 @@ async function personalizeGrowthSnapshot(params: {
                   commercialAngles: analysis.commercialAngles || [],
                   creatorCenterSignals: analysis.creatorCenterSignals || [],
                   weakFrameReferences: analysis.weakFrameReferences || [],
+                  visualSummary: analysis.visualSummary || "",
+                  openingFrameAssessment: analysis.openingFrameAssessment || "",
+                  sceneConsistency: analysis.sceneConsistency || "",
+                  trustSignals: analysis.trustSignals || [],
+                  visualRisks: analysis.visualRisks || [],
+                  keyFrames: analysis.keyFrames || [],
                   timestampSuggestions: analysis.timestampSuggestions || [],
                   followUpPrompt: analysis.followUpPrompt || "",
                 },
