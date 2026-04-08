@@ -409,6 +409,10 @@ function mapAnalysisError(error: unknown) {
 
 function replaceTerms(text: string) {
   return String(text || "")
+    .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
+    .replace(/提取音频/g, "截取视频片段")
+    .replace(/音频中/g, "视频里")
+    .replace(/音频内/g, "视频里")
     .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
     .replace(/转写摘录/g, "视频分析提炼")
     .replace(/无音轨，转入视觉优先保守判断/g, "未提取到清晰语音信号，已转入保守视频判断")
@@ -995,6 +999,10 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
+    .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
+    .replace(/提取音频/g, "截取视频片段")
+    .replace(/音频中/g, "视频里")
+    .replace(/音频内/g, "视频里")
     .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
     .replace(/转写摘录/g, "视频分析提炼")
     .replace(/知识付费|社群会员|模板包|软件分销|咨询|课程|工作流案例|前后效率对比|模板|实操演示|后台分析过程|漏斗|中位数|均值|内部排序/g, "")
@@ -1579,6 +1587,13 @@ export default function MVAnalysisPage() {
   const platformActivityCards = useMemo(
     () => growthSnapshot?.platformActivities ?? [],
     [growthSnapshot],
+  );
+  const topRecommendedPlatforms = useMemo(
+    () => platformRecommendations.slice(0, 3).map((item) => ({
+      recommendation: item,
+      activity: platformActivityCards.find((activity) => activity.platformLabel === item.name) || null,
+    })),
+    [platformRecommendations, platformActivityCards],
   );
   const monetizationStrategyCards = useMemo(
     () => growthSnapshot?.monetizationStrategies ?? [],
@@ -2532,6 +2547,48 @@ export default function MVAnalysisPage() {
                             </div>
                           ) : null}
                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {topRecommendedPlatforms.length ? (
+                    <div className="rounded-[28px] border border-[#ffd08f]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#ffd08f]">
+                        <Send className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">推荐发布平台</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-3">
+                        {topRecommendedPlatforms.map(({ recommendation, activity }) => (
+                          <div key={recommendation.name} className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xl font-black text-white">{recommendation.name}</div>
+                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">
+                                {activity?.activityLevel ? `活跃度 ${activity.activityLevel}` : "优先平台"}
+                              </div>
+                            </div>
+                            <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(recommendation.reason)}</div>
+                            <div className="mt-4 rounded-2xl border border-[#8ab8ff]/20 bg-[#11233a] px-4 py-3 text-sm leading-7 text-white/78">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">怎么发更对</div>
+                              <div className="mt-2">{replaceTerms(recommendation.action)}</div>
+                              {recommendation.playbook ? (
+                                <div className="mt-2 text-white/65">{replaceTerms(recommendation.playbook)}</div>
+                              ) : null}
+                            </div>
+                            {activity?.supportActivities?.length ? (
+                              <div className="mt-4 rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-3 text-sm leading-7 text-white/78">
+                                <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">当前有效扶持活动</div>
+                                <div className="mt-2 space-y-2">
+                                  {activity.supportActivities.map((entry) => (
+                                    <div key={`${recommendation.name}-${entry}`}>{replaceTerms(entry)}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {activity?.potentialTrack ? (
+                              <div className="mt-4 text-sm leading-7 text-white/68">潜力赛道：{replaceTerms(activity.potentialTrack)}</div>
+                            ) : null}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : null}
