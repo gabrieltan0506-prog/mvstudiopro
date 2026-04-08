@@ -188,6 +188,8 @@ const PLATFORM_LABELS: Record<string, string> = {
   kuaishou: "快手",
   toutiao: "头条",
 };
+const COLLECTED_PLATFORM_LABELS = ["抖音", "小红书", "B站", "快手", "头条"] as const;
+const CORE_PLATFORM_LABELS = ["抖音", "小红书", "B站", "快手"] as const;
 
 const PLATFORM_DEBUG_DESCRIPTIONS: Record<string, string> = {
   douyin: "短视频主阵地，优先看热点和爆发趋势。",
@@ -205,6 +207,14 @@ function getPlatformLabel(platform?: string) {
 function getPlatformDescription(platform?: string) {
   const key = String(platform || "").trim();
   return PLATFORM_DEBUG_DESCRIPTIONS[key] || "平台说明暂未配置。";
+}
+
+function isCollectedPlatformLabel(label?: string) {
+  return COLLECTED_PLATFORM_LABELS.includes(String(label || "").trim() as (typeof COLLECTED_PLATFORM_LABELS)[number]);
+}
+
+function isCorePlatformLabel(label?: string) {
+  return CORE_PLATFORM_LABELS.includes(String(label || "").trim() as (typeof CORE_PLATFORM_LABELS)[number]);
 }
 
 function formatPlatformList(platforms: unknown) {
@@ -1683,19 +1693,35 @@ export default function MVAnalysisPage() {
     [analysis],
   );
   const platformActivityCards = useMemo(
-    () => growthSnapshot?.platformActivities ?? [],
+    () => (growthSnapshot?.platformActivities ?? []).filter((item) => isCollectedPlatformLabel(item.platformLabel)),
     [growthSnapshot],
   );
   const topRecommendedPlatforms = useMemo(
     () => {
       if (platformRecommendations.length) {
-        return platformRecommendations.slice(0, 3).map((item) => ({
+        return platformRecommendations
+          .filter((item) => isCollectedPlatformLabel(item.name))
+          .map((item) => ({
           recommendation: item,
           activity: platformActivityCards.find((activity) => activity.platformLabel === item.name) || null,
-        }));
+          }))
+          .sort((left, right) => {
+            const leftCore = isCorePlatformLabel(left.recommendation.name) ? 0 : 1;
+            const rightCore = isCorePlatformLabel(right.recommendation.name) ? 0 : 1;
+            return leftCore - rightCore;
+          })
+          .slice(0, 4);
       }
 
-      return platformActivityCards.slice(0, 3).map((activity) => ({
+      return platformActivityCards
+        .filter((activity) => isCollectedPlatformLabel(activity.platformLabel))
+        .sort((left, right) => {
+          const leftCore = isCorePlatformLabel(left.platformLabel) ? 0 : 1;
+          const rightCore = isCorePlatformLabel(right.platformLabel) ? 0 : 1;
+          return leftCore - rightCore;
+        })
+        .slice(0, 4)
+        .map((activity) => ({
         recommendation: {
           name: activity.platformLabel,
           reason: activity.summary,
@@ -1717,7 +1743,7 @@ export default function MVAnalysisPage() {
     [growthSnapshot],
   );
   const recommendedPlatformNames = useMemo(
-    () => growthSnapshot?.growthHandoff?.recommendedPlatforms?.map((platform) => getPlatformLabel(platform)) ?? [],
+    () => (growthSnapshot?.growthHandoff?.recommendedPlatforms?.map((platform) => getPlatformLabel(platform)) ?? []).filter(isCollectedPlatformLabel),
     [growthSnapshot],
   );
   const visibleTopicLibrary = useMemo(
@@ -1725,7 +1751,7 @@ export default function MVAnalysisPage() {
     [growthSnapshot],
   );
   const topPlatformSnapshots = useMemo(
-    () => growthSnapshot?.platformSnapshots.slice(0, 5) ?? [],
+    () => (growthSnapshot?.platformSnapshots ?? []).filter((item) => isCollectedPlatformLabel(item.displayName)).slice(0, 5),
     [growthSnapshot],
   );
   const fallbackPlatformLabels = useMemo(() => {
@@ -1735,9 +1761,16 @@ export default function MVAnalysisPage() {
     (analysis?.platforms || []).forEach((platform) => labels.add(getPlatformLabel(platform)));
     topPlatformSnapshots.forEach((item) => labels.add(item.displayName));
     if (!labels.size) {
-      ["小红书", "抖音", "B站"].forEach((item) => labels.add(item));
+      ["小红书", "抖音", "B站", "快手"].forEach((item) => labels.add(item));
     }
-    return Array.from(labels).slice(0, 4);
+    return Array.from(labels)
+      .filter(isCollectedPlatformLabel)
+      .sort((left, right) => {
+        const leftCore = isCorePlatformLabel(left) ? 0 : 1;
+        const rightCore = isCorePlatformLabel(right) ? 0 : 1;
+        return leftCore - rightCore;
+      })
+      .slice(0, 4);
   }, [recommendedPlatformNames, titleExecutionCards, analysis, topPlatformSnapshots]);
   const firstScreenGraphicPlan = useMemo(
     () => buildGraphicNoteDetail(
@@ -1870,11 +1903,18 @@ export default function MVAnalysisPage() {
     const grouped = new Map<string, ReferenceExampleCard[]>();
     referenceExamples.forEach((item) => {
       const key = item.platformLabel || getPlatformLabel(item.platform);
+      if (!isCollectedPlatformLabel(key)) return;
       const current = grouped.get(key) || [];
       if (current.length < 3) current.push(item);
       grouped.set(key, current);
     });
-    return Array.from(grouped.entries()).slice(0, 5);
+    return Array.from(grouped.entries())
+      .sort((left, right) => {
+        const leftCore = isCorePlatformLabel(left[0]) ? 0 : 1;
+        const rightCore = isCorePlatformLabel(right[0]) ? 0 : 1;
+        return leftCore - rightCore;
+      })
+      .slice(0, 5);
   }, [referenceExamples]);
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
