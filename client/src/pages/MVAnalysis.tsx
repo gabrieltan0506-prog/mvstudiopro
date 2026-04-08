@@ -272,6 +272,81 @@ async function uploadFileWithProgress(file: File, onProgress: (percent: number) 
   });
 }
 
+async function extractVideoPreview(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    let settled = false;
+
+    const cleanup = () => {
+      video.onloadedmetadata = null;
+      video.onseeked = null;
+      video.onerror = null;
+      URL.revokeObjectURL(url);
+    };
+
+    const fail = (message: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(message));
+    };
+
+    const done = (value: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+
+    video.onerror = () => fail("视频读取失败，请重试");
+    video.onloadedmetadata = () => {
+      const targetTime = Math.min(
+        Math.max(video.duration * 0.2, 0.15),
+        Math.max(0.15, video.duration - 0.15),
+      );
+      if (!Number.isFinite(video.duration) || video.videoWidth <= 0 || video.videoHeight <= 0) {
+        fail("视频元数据读取失败，请重试");
+        return;
+      }
+      if (targetTime <= 0.16) {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          fail("视频封面生成失败，请重试");
+          return;
+        }
+        ctx.drawImage(video, 0, 0);
+        done(canvas.toDataURL("image/jpeg", 0.9));
+        return;
+      }
+      video.currentTime = targetTime;
+    };
+
+    video.onseeked = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        fail("视频封面生成失败，请重试");
+        return;
+      }
+      ctx.drawImage(video, 0, 0);
+      done(canvas.toDataURL("image/jpeg", 0.9));
+    };
+
+    video.load();
+  });
+}
+
 function getScoreTone(score: number) {
   if (score >= 80) return { label: "强", color: "text-emerald-300", chip: "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" };
   if (score >= 65) return { label: "可放大", color: "text-amber-200", chip: "border-amber-300/20 bg-amber-400/10 text-amber-100" };
@@ -1087,36 +1162,10 @@ export default function MVAnalysisPage() {
 
         setFileBase64(null);
 
-        const video = document.createElement("video");
-        const url = URL.createObjectURL(file);
-        video.src = url;
-        video.muted = true;
-        video.currentTime = 1;
-        video.onloadeddata = () => {
-          video.currentTime = Math.min(1, video.duration / 4);
-        };
-        video.onseeked = () => {
-          const canvas = document.createElement("canvas");
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            URL.revokeObjectURL(url);
-            setError("视频读取失败，请重试");
-            setUploadStage("error");
-            return;
-          }
-          ctx.drawImage(video, 0, 0);
-          setPreviewUrl(canvas.toDataURL("image/jpeg", 0.9));
-          setUploadStage("idle");
-          setUploadProgress(100);
-          URL.revokeObjectURL(url);
-        };
-        video.onerror = () => {
-          setError("视频读取失败，请重试");
-          setUploadStage("error");
-          URL.revokeObjectURL(url);
-        };
+        const preview = await extractVideoPreview(file);
+        setPreviewUrl(preview);
+        setUploadStage("idle");
+        setUploadProgress(100);
       } catch (fileError: any) {
         setError(fileError.message || "文件读取失败");
         setUploadStage("error");
