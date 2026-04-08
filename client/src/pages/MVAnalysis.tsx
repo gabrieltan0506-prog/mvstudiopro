@@ -408,6 +408,74 @@ function inferVideoGoal(platformNames: string[]) {
   return "视频首发更适合用镜头、动作和结果对比建立信任，再承接后续行动。";
 }
 
+function buildGraphicNoteDetail(
+  platformNames: string[],
+  graphicPlan?: string,
+  openingHook?: string,
+) {
+  const names = platformNames.join("、");
+  const isXhs = platformNames.includes("小红书");
+  const isVideoPlatform = platformNames.some((item) => /抖音|快手|头条/.test(item));
+  const noteType = isXhs ? "搜索承接型种草图文" : isVideoPlatform ? "转化承接型图文" : "信任建立型图文";
+  const reason = isXhs
+    ? "这类内容更适合先让用户收藏、搜索和私信，所以图文不是简单复述视频，而是把痛点、动作、前后对比和门店承接讲透。"
+    : isVideoPlatform
+      ? "这类图文更适合作为短视频后的承接页，重点是把价格、适合谁、解决什么问题和真实对比写得足够直白。"
+      : "这类图文更适合承接解释和信任建立，让用户在看完视频后进一步理解专业判断。";
+  const structure = graphicPlan || "第一页只写最痛的问题或最直接的结果，第二页写谁最需要，第三到四页给动作和前后对比，第五页给证据，第六页只留一个行动。";
+  return {
+    noteType,
+    reason,
+    structure,
+    pages: [
+      `第 1 页：封面只放一句狠话，优先写“${openingHook || "最痛的问题 + 最直接结果"}”，不要讲背景。`,
+      "第 2 页：写清楚最适合的人群，例如久坐上班族、产后妈妈或肩颈长期不适的人。",
+      "第 3 页：放最典型的痛点场景，对比练前与练后或调整前后的状态变化。",
+      "第 4 页：给一个可执行动作或方法，但只讲最关键的 1 到 2 个动作，不要讲满整套课。",
+      "第 5 页：补充价格反差、门店环境、专业身份、真实反馈这类信任证据。",
+      "第 6 页：只保留一个行动，引导私信、预约、评论关键词或到店咨询。",
+    ],
+    footer: `优先平台：${names || "小红书、抖音"}。文案口径必须围绕“痛点、结果、证据、动作”四件事，不要写成空泛介绍。`,
+  };
+}
+
+function buildVideoStoryboard(
+  openingHook?: string,
+  videoPlan?: string,
+  storyboardPrompt?: string,
+  keyFrames?: Array<{ timestamp: string; whatShows: string; issue: string; fix: string }>,
+) {
+  const frames = keyFrames?.slice(0, 3) ?? [];
+  return [
+    {
+      time: "00:00-00:02",
+      title: "开场钩子",
+      detail: `画面先给最痛的身体状态或最强结果对比，字幕直接打出“${openingHook || "最扎心的问题或最直接结果"}”。人物不要先平铺直叙站桩开讲。`,
+    },
+    {
+      time: "00:02-00:06",
+      title: "痛点放大",
+      detail: frames[0]
+        ? `切到 ${replaceTerms(frames[0].whatShows)}，同时把用户最常见的不舒服感受说出来。改法：${replaceTerms(frames[0].fix)}。`
+        : "切到最典型的痛点动作或局部特写，强化“为什么你会不舒服、为什么要继续看”。",
+    },
+    {
+      time: "00:06-00:12",
+      title: "动作与方法",
+      detail: frames[1]
+        ? `展示主讲人示范动作或讲解时的手势变化，镜头要配合近景和字幕，不要一直同机位。改法：${replaceTerms(frames[1].fix)}。`
+        : "展示 1 到 2 个最关键动作或调整方法，镜头交替给正面、侧面和局部动作，字幕点出“适合谁、为什么有效”。",
+    },
+    {
+      time: "00:12-00:18",
+      title: "结果与行动",
+      detail: frames[2]
+        ? `结尾用 ${replaceTerms(frames[2].whatShows)} 做结果收束，再打价格、体验课或预约动作。改法：${replaceTerms(frames[2].fix)}。`
+        : `结尾只收一个动作：放价格反差、体验课、预约方式或评论关键词。${videoPlan || "不要在结尾同时塞多个动作。"}${storyboardPrompt ? ` 分镜补充：${storyboardPrompt}` : ""}`,
+    },
+  ];
+}
+
 function normalizeText(text: string) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
@@ -1660,6 +1728,80 @@ export default function MVAnalysisPage() {
     () => growthSnapshot?.platformSnapshots.slice(0, 5) ?? [],
     [growthSnapshot],
   );
+  const firstScreenGraphicPlan = useMemo(
+    () => buildGraphicNoteDetail(
+      recommendedPlatformNames,
+      titleExecutionCards[0]?.graphicPlan,
+      assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook,
+    ),
+    [recommendedPlatformNames, titleExecutionCards, assetAdaptation],
+  );
+  const firstScreenStoryboard = useMemo(
+    () => buildVideoStoryboard(
+      assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook,
+      titleExecutionCards[0]?.videoPlan,
+      growthHandoff?.storyboardPrompt,
+      visualKeyFrames,
+    ),
+    [assetAdaptation, titleExecutionCards, growthHandoff, visualKeyFrames],
+  );
+  const topPlatformReferenceCards = useMemo(() => {
+    if (topRecommendedPlatforms.length) {
+      return topRecommendedPlatforms.slice(0, 4).map(({ recommendation, activity }) => ({
+        name: recommendation.name,
+        reason: recommendation.reason,
+        supportActivities: activity?.supportActivities ?? [],
+        potentialTrack: activity?.potentialTrack || activity?.suggestedTopics?.slice(0, 2).join(" / ") || "优先走痛点解决、结果对比和专业信任建立。",
+        supportSignal: activity?.supportSignal || "",
+        relatedExamples: referenceExamples
+          .filter((example) => example.platformLabel === recommendation.name)
+          .slice(0, 2)
+          .map((item) => `${replaceTerms(item.account)}：${replaceTerms(item.title)}`),
+      }));
+    }
+
+    if (platformActivityCards.length) {
+      return platformActivityCards.slice(0, 4).map((item) => ({
+        name: item.platformLabel,
+        reason: item.summary,
+        supportActivities: item.supportActivities,
+        potentialTrack: item.potentialTrack || item.suggestedTopics.slice(0, 2).join(" / ") || "优先走细分痛点赛道。",
+        supportSignal: item.supportSignal,
+        relatedExamples: referenceExamples
+          .filter((example) => example.platformLabel === item.platformLabel)
+          .slice(0, 2)
+          .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
+      }));
+    }
+
+    return topPlatformSnapshots.slice(0, 4).map((item) => ({
+      name: item.displayName,
+      reason: item.summary,
+      supportActivities: [],
+      potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
+      supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
+      relatedExamples: referenceExamples
+        .filter((example) => example.platformLabel === item.displayName)
+        .slice(0, 2)
+        .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
+    }));
+  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples]);
+  const topPlatformDataReferences = useMemo(() => {
+    if (platformActivityCards.length) {
+      return platformActivityCards.slice(0, 4).map((item) => ({
+        title: item.platformLabel,
+        summary: item.summary,
+        topics: item.hotTopics.length ? item.hotTopics.slice(0, 3) : item.suggestedTopics.slice(0, 3),
+        supportActivities: item.supportActivities.slice(0, 2),
+      }));
+    }
+    return topPlatformSnapshots.slice(0, 4).map((item) => ({
+      title: item.displayName,
+      summary: item.summary,
+      topics: item.sampleTopics.slice(0, 3),
+      supportActivities: [],
+    }));
+  }, [platformActivityCards, topPlatformSnapshots]);
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
@@ -2312,10 +2454,17 @@ export default function MVAnalysisPage() {
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="text-sm font-semibold text-white">图文笔记怎么写</div>
-                        <div className="mt-2 text-sm leading-7 text-white/68">{inferGraphicGoal(recommendedPlatformNames)}</div>
+                        <div className="mt-2 text-sm leading-7 text-[#f6d6ff]">优先类型：{replaceTerms(firstScreenGraphicPlan.noteType)}</div>
+                        <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.reason)}</div>
                         <div className="mt-3 text-sm leading-7 text-white/82">
-                          {replaceTerms(titleExecutionCards[0]?.graphicPlan || "第一页只写最扎心的问题或结果，第二页写谁最需要，第三到四页给动作、证据和前后对比，最后一页只留一个行动。")}
+                          {replaceTerms(firstScreenGraphicPlan.structure)}
                         </div>
+                        <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-[#111b2c] px-3 py-3 text-sm leading-7 text-white/76">
+                          {firstScreenGraphicPlan.pages.map((item) => (
+                            <div key={item}>{replaceTerms(item)}</div>
+                          ))}
+                        </div>
+                        <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.footer)}</div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="text-sm font-semibold text-white">视频怎么拍</div>
@@ -2323,37 +2472,40 @@ export default function MVAnalysisPage() {
                         <div className="mt-3 text-sm leading-7 text-white/82">
                           {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，结尾只留一个行动引导。")}
                         </div>
-                        {growthHandoff?.storyboardPrompt ? (
-                          <div className="mt-3 rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,208,143,0.06)] px-3 py-3 text-sm leading-7 text-white/78">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">可直接用的分镜文案</div>
-                            <div className="mt-2">{replaceTerms(growthHandoff.storyboardPrompt)}</div>
+                        <div className="mt-3 rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,208,143,0.06)] px-3 py-3 text-sm leading-7 text-white/78">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">可直接用的分镜文案</div>
+                          <div className="mt-2 space-y-2">
+                            {firstScreenStoryboard.map((item) => (
+                              <div key={`${item.time}-${item.title}`}>
+                                <span className="font-semibold text-[#ffd08f]">{item.time} {item.title}</span>
+                                <span className="text-white/78">：{replaceTerms(item.detail)}</span>
+                              </div>
+                            ))}
                           </div>
-                        ) : null}
+                        </div>
                       </div>
                     </div>
                   </div>
                   <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">推荐平台与平台数据库证据</div>
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">推荐平台与平台数据参考</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="text-sm font-semibold text-white">推荐发布平台</div>
                         <div className="mt-3 space-y-3">
-                          {topRecommendedPlatforms.slice(0, 3).map(({ recommendation, activity }) => {
-                            const relatedExamples = referenceExamples
-                              .filter((example) => example.platformLabel === recommendation.name)
-                              .slice(0, 2);
+                          {topPlatformReferenceCards.slice(0, 4).map((item) => {
                             return (
-                              <div key={`top-${recommendation.name}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
-                                <div className="text-sm font-semibold text-white">{recommendation.name}</div>
-                                <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(recommendation.reason)}</div>
-                                {activity?.supportActivities?.length ? (
-                                  <div className="mt-2 text-sm leading-7 text-[#9df6c0]">有效扶持活动：{activity.supportActivities.map((item) => replaceTerms(item)).join(" / ")}</div>
-                                ) : null}
-                                {activity?.potentialTrack ? (
-                                  <div className="mt-1 text-sm leading-7 text-white/65">相关赛道：{replaceTerms(activity.potentialTrack)}</div>
-                                ) : null}
-                                {relatedExamples.length ? (
-                                  <div className="mt-1 text-sm leading-7 text-white/65">相关账号对比：{relatedExamples.map((item) => `${replaceTerms(item.account)} / ${replaceTerms(item.title)}`).join("；")}</div>
+                              <div key={`top-${item.name}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                                <div className="text-sm font-semibold text-white">{item.name}</div>
+                                <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.reason)}</div>
+                                <div className="mt-2 text-sm leading-7 text-white/68">相关赛道：{replaceTerms(item.potentialTrack)}</div>
+                                <div className="mt-2 text-sm leading-7 text-white/68">
+                                  当前有效扶持活动：{item.supportActivities.length ? item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ") : "当前未核验到稳定公开扶持活动，建议优先吃自然分发、搜索流量和细分赛道势能。"}
+                                </div>
+                                <div className="mt-2 text-sm leading-7 text-white/68">
+                                  相关账号对比：{item.relatedExamples.length ? item.relatedExamples.join("；") : "当前数据库未命中完全同类账号，建议对照同平台的专业服务号、同城门店号和痛点解决型账号。"}
+                                </div>
+                                {item.supportSignal ? (
+                                  <div className="mt-2 text-sm leading-7 text-[#9df6c0]">扶持判断：{replaceTerms(item.supportSignal)}</div>
                                 ) : null}
                               </div>
                             );
@@ -2361,23 +2513,26 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">已接入的平台数据库证据</div>
+                        <div className="text-sm font-semibold text-white">平台数据参考</div>
                         <div className="mt-3 space-y-3">
-                          {topPlatformSnapshots.map((item) => (
-                            <div key={`snapshot-${item.platform}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                          {topPlatformDataReferences.map((item) => (
+                            <div key={`snapshot-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
                               <div className="flex items-center justify-between gap-3">
-                                <div className="font-semibold text-white">{item.displayName}</div>
-                                <div className="text-xs text-[#90c4ff]">适配度 {item.audienceFitScore}%</div>
+                                <div className="font-semibold text-white">{item.title}</div>
+                                <div className="text-xs text-[#90c4ff]">平台数据参考</div>
                               </div>
                               <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.summary)}</div>
-                              {item.sampleTopics.length ? (
-                                <div className="mt-1 text-sm leading-7 text-white/65">数据库相关赛道：{item.sampleTopics.slice(0, 3).map((topic) => replaceTerms(topic)).join(" / ")}</div>
+                              {item.topics.length ? (
+                                <div className="mt-1 text-sm leading-7 text-white/65">数据库相关赛道：{item.topics.slice(0, 3).map((topic) => replaceTerms(topic)).join(" / ")}</div>
                               ) : null}
+                              <div className="mt-1 text-sm leading-7 text-white/65">
+                                流量扶持活动：{item.supportActivities.length ? item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ") : "当前未核验到适合长期写入报告的公开扶持活动。"}
+                              </div>
                             </div>
                           ))}
                           {dataEvidenceNotes.length ? (
                             <div className="rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.06)] px-3 py-3 text-sm leading-7 text-white/72">
-                              {dataEvidenceNotes.slice(0, 2).map((item, index) => (
+                              {dataEvidenceNotes.slice(0, 3).map((item, index) => (
                                 <div key={`evidence-${index}`}>{replaceTerms(item)}</div>
                               ))}
                             </div>
