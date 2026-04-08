@@ -87,6 +87,111 @@ function extractContextKeywords(context: string) {
   return Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 10);
 }
 
+function normalizeRoleKeywords(values: string[]) {
+  return Array.from(new Set(values
+    .flatMap((value) => String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])
+    .filter((item) => item.length >= 2)))
+    .slice(0, 12);
+}
+
+function buildIdentityKeywords(context: string, industryTemplate: GrowthIndustryTemplate) {
+  return normalizeRoleKeywords([
+    context,
+    industryTemplate.audience,
+    industryTemplate.painPoint,
+    industryTemplate.positioningHint,
+    industryTemplate.trustAsset,
+    industryTemplate.commercialFocus,
+  ]);
+}
+
+function formatHotTopicTimeliness(collectedAt?: string) {
+  const timestamp = Date.parse(String(collectedAt || ""));
+  if (!Number.isFinite(timestamp)) return "基于当前实时抓取样本生成，需结合平台实时波动判断。";
+  const diffHours = Math.max(1, Math.round((Date.now() - timestamp) / (60 * 60 * 1000)));
+  if (diffHours <= 2) return `热度时效性：近 ${diffHours} 小时内抓到的即时热点，适合优先响应。`;
+  if (diffHours <= 12) return `热度时效性：近 ${diffHours} 小时内更新过，仍适合当天跟进。`;
+  return `热度时效性：距今约 ${diffHours} 小时，适合当作近期热点参考，不宜当成强实时口径。`;
+}
+
+function buildDualTrackAnalysis(params: {
+  requestedPlatforms: GrowthPlatform[];
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
+}) {
+  const liveRows = params.requestedPlatforms.map((platform) => {
+    const collection = params.collections[platform];
+    const items = collection?.items || [];
+    const noteCount = items.filter((item) => item.contentType === "note").length;
+    const videoCount = items.filter((item) => item.contentType !== "note").length;
+    return {
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      collection,
+      currentTotal: items.length,
+      noteCount,
+      videoCount,
+    };
+  }).filter((item) => item.currentTotal > 0);
+
+  const topLivePlatforms = liveRows
+    .slice()
+    .sort((left, right) => right.currentTotal - left.currentTotal)
+    .slice(0, 2);
+
+  const liveSummary = topLivePlatforms.length
+    ? `即时主链当前优先参考 ${topLivePlatforms.map((item) => {
+        const contentMix = item.platform === "xiaohongshu"
+          ? (item.noteCount >= item.videoCount ? "图文与视频双线、且图文承接更强" : "图文与视频双线、且视频表现更强")
+          : item.platform === "douyin"
+            ? "短视频占比明显更高，结果前置和动作演示更吃量"
+            : item.platform === "bilibili"
+              ? "中长视频、案例复盘和方法拆解更有优势"
+              : item.platform === "kuaishou"
+                ? "真实口播、生活场景和短直联动更有承接力"
+                : "近期分发更看重信息密度和结论前置";
+        return `${item.platformLabel}（${contentMix}）`;
+      }).join("、")}。`
+    : "即时主链当前仍以实时采集样本为主，但尚未形成稳定的平台优先级。";
+
+  const historicalRows = params.requestedPlatforms.map((platform) => ({
+    platform,
+    platformLabel: PLATFORM_LABELS[platform],
+    archivedTotal: Number(params.historicalPlatformTotals?.[platform]?.archivedTotal || 0),
+  })).filter((item) => item.archivedTotal > 0)
+    .sort((left, right) => right.archivedTotal - left.archivedTotal)
+    .slice(0, 2);
+
+  const historicalSummary = historicalRows.length
+    ? `历史主链当前优先参考 ${historicalRows.map((item) => `${item.platformLabel}（累计沉淀 ${item.archivedTotal}）`).join("、")}，更适合提炼常青赛道、长期复用题库和跨平台稳定表达。`
+    : "历史主链暂未形成足够厚的沉淀样本，当前仍以即时样本的方向判断为主。";
+
+  const liveHotspotCandidates = liveRows.flatMap((row) =>
+    (row.collection?.items || [])
+      .filter((item) => item.title)
+      .map((item) => ({
+        platform: row.platform,
+        platformLabel: row.platformLabel,
+        title: item.title,
+        collectedAt: row.collection?.collectedAt,
+        score: (item.likes || 0) + (item.comments || 0) * 3 + (item.shares || 0) * 5 + Math.round((item.views || 0) / 1000),
+      })),
+  ).sort((left, right) => right.score - left.score);
+
+  const liveHotTopic = liveHotspotCandidates[0]
+    ? `${liveHotspotCandidates[0].platformLabel} 即时热题：${liveHotspotCandidates[0].title}`
+    : "当前尚未抓到足够强的即时热题，建议继续观察下一轮 live 样本。";
+  const hotTopicTimeliness = formatHotTopicTimeliness(liveHotspotCandidates[0]?.collectedAt);
+
+  return {
+    mode: "双主链" as const,
+    liveSummary,
+    historicalSummary,
+    liveHotTopic,
+    hotTopicTimeliness,
+  };
+}
+
 function filterRelevantTopics(topics: string[], context: string) {
   const text = String(context || "").trim();
   if (!text) return topics.slice(0, 3);
@@ -1151,7 +1256,7 @@ function filterSupportActivitiesWithReview(
   );
 }
 
-function buildPlatformSupportActivities(platform: GrowthPlatform) {
+export function buildPlatformSupportActivities(platform: GrowthPlatform) {
   const candidates = PLATFORM_SUPPORT_ACTIVITY_REGISTRY[platform] || [];
   return filterSupportActivitiesWithReview(candidates)
     .map((item) => `${item.label}：${item.summary}`);
@@ -1572,6 +1677,7 @@ function buildReferenceExamples(
   industryTemplate: GrowthIndustryTemplate,
 ): GrowthReferenceExample[] {
   const contextKeywords = extractContextKeywords(context);
+  const identityKeywords = buildIdentityKeywords(context, industryTemplate);
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
   const items = requestedPlatforms.flatMap((platform) => {
     const collection = collections[platform];
@@ -1596,19 +1702,23 @@ function buildReferenceExamples(
 
   const scored = fallbackItems
     .map(({ platform, item }) => {
-      const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
+      const haystack = `${item.title} ${item.author || ""} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
       const keywordHits = contextKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
+      const identityHits = identityKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
       const engagement = (item.likes || 0) + (item.comments || 0) * 3 + (item.shares || 0) * 5 + Math.round((item.views || 0) / 1000);
       return {
         platform,
         item,
-        score: keywordHits * 40 + engagement,
+        score: identityHits * 60 + keywordHits * 40 + engagement,
+        identityHits,
+        keywordHits,
       };
     })
     .sort((left, right) => right.score - left.score);
 
   const grouped = new Map<GrowthPlatform, Array<{ platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>>();
   for (const entry of scored) {
+    if (!entry.identityHits && !entry.keywordHits) continue;
     const current = grouped.get(entry.platform) || [];
     const exists = current.some((item) => (item.item.author || item.item.id) === (entry.item.author || entry.item.id));
     if (exists) continue;
@@ -1896,9 +2006,14 @@ export function buildMockGrowthSnapshot(params: {
   analysis: GrowthAnalysisScores;
   context?: string;
   requestedPlatforms?: string[];
+  historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
 }): GrowthSnapshot {
   const requestedPlatforms = normalizePlatforms(params.requestedPlatforms || params.analysis.platforms);
   const context = String(params.context || "").trim();
+  const historicalTotal = Object.values(params.historicalPlatformTotals || {}).reduce(
+    (sum, item) => sum + Number(item?.archivedTotal || 0),
+    0,
+  );
   const industryTemplate = matchIndustryTemplate(context, [
     params.analysis.summary,
     ...params.analysis.strengths,
@@ -1952,21 +2067,30 @@ export function buildMockGrowthSnapshot(params: {
 
   const snapshot = {
     status: {
-      source: "fallback",
+      source: historicalTotal > 0 ? "historical" : "hybrid",
       generatedAt,
       windowDays,
-      freshnessLabel: `结构化参考样本，非真实 ${windowDays} 天历史库`,
-      collectorReady: false,
+      freshnessLabel: historicalTotal > 0
+        ? `当前以历史沉淀样本为主，非完整 ${windowDays} 天全量库`
+        : `当前以结构化兜底 + 可用数据混合生成，非完整 ${windowDays} 天全量库`,
+      collectorReady: historicalTotal > 0,
       missingConnectors: [
         "douyin.trends.fetch30d",
         "xiaohongshu.trends.fetch30d",
         "bilibili.trends.fetch30d",
       ],
       notes: [
-        `当前为结构化 fallback 数据，不代表真实 ${windowDays} 天平台历史统计。`,
-        `字段已按后续真实抓取任务需要的 ${windowDays} 天窗口指标展开。`,
+        historicalTotal > 0
+          ? `当前优先参考历史沉淀样本，不代表实时全量 ${windowDays} 天平台统计。`
+          : `当前为兜底结构与可用数据混合结果，不代表实时全量 ${windowDays} 天平台统计。`,
+        `字段已按 live / historical 双主链分析需要的 ${windowDays} 天窗口指标展开。`,
       ],
     },
+    analysisTracks: buildDualTrackAnalysis({
+      requestedPlatforms,
+      collections: {},
+      historicalPlatformTotals: params.historicalPlatformTotals,
+    }),
     requestedPlatforms,
     industryTemplate,
     overview,
@@ -2032,6 +2156,7 @@ export function buildGrowthSnapshotFromCollections(params: {
   context?: string;
   requestedPlatforms?: string[];
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+  historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
   errors?: Partial<Record<GrowthPlatform, string>>;
 }): GrowthSnapshot {
   const collectedPlatforms = (Object.entries(params.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>)
@@ -2135,6 +2260,11 @@ export function buildGrowthSnapshotFromCollections(params: {
         ...Object.entries(params.errors || {}).map(([platform, error]) => `${PLATFORM_LABELS[platform as GrowthPlatform] || platform}：${error}`),
       ],
     },
+    analysisTracks: buildDualTrackAnalysis({
+      requestedPlatforms,
+      collections: params.collections,
+      historicalPlatformTotals: params.historicalPlatformTotals,
+    }),
     requestedPlatforms,
     industryTemplate,
     overview: {

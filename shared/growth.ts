@@ -386,7 +386,7 @@ export const growthHandoffSchema = z.object({
 });
 
 export const growthSnapshotStatusSchema = z.object({
-  source: z.enum(["mock", "fallback", "live", "hybrid"]),
+  source: z.enum(["live", "historical", "hybrid"]),
   generatedAt: z.string(),
   windowDays: z.number().int().positive(),
   freshnessLabel: z.string(),
@@ -395,8 +395,17 @@ export const growthSnapshotStatusSchema = z.object({
   notes: z.array(z.string()),
 });
 
+export const growthDualTrackSchema = z.object({
+  mode: z.literal("双主链"),
+  liveSummary: z.string(),
+  historicalSummary: z.string(),
+  liveHotTopic: z.string(),
+  hotTopicTimeliness: z.string(),
+});
+
 export const growthSnapshotSchema = z.object({
   status: growthSnapshotStatusSchema,
+  analysisTracks: growthDualTrackSchema,
   requestedPlatforms: z.array(growthPlatformSchema),
   industryTemplate: growthIndustryTemplateSchema,
   overview: z.object({
@@ -461,4 +470,5 @@ export type GrowthPlanStep = z.infer<typeof growthPlanStepSchema>;
 export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;
 export type GrowthHandoff = z.infer<typeof growthHandoffSchema>;
 export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
+export type GrowthDualTrack = z.infer<typeof growthDualTrackSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;
