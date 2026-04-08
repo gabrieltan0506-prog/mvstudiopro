@@ -192,12 +192,18 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
       output: {
         analysis: result.analysis,
         videoUrl: result.videoMeta.videoUrl,
+        audioUrl: result.videoMeta.audioUrl,
         transcript: result.videoMeta.transcript,
         videoDuration: result.videoMeta.videoDuration,
         debug: {
           route: "analyzeVideoJob",
           provider: result.videoMeta.provider,
           model: result.videoMeta.model,
+          pipeline: result.videoMeta.pipeline,
+          stageOneModel: result.videoMeta.stageOneModel,
+          stageTwoModel: result.videoMeta.stageTwoModel,
+          sparseFrameCount: result.videoMeta.sparseFrameCount,
+          estimatedCostProfile: result.videoMeta.estimatedCostProfile,
           fallback: result.videoMeta.fallback,
           transcriptChars: result.videoMeta.transcript.length,
           videoDuration: result.videoMeta.videoDuration,

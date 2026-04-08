@@ -6,30 +6,37 @@ import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
-import { storagePut } from "../storage";
 import { uploadBufferToGcs } from "../services/gcs";
 import { validateDuration } from "../videoAnalysis";
 
 const execFileAsync = promisify(execFile);
 
-function resolveGrowthCampFinalModel(modelName?: string): string {
-  return String(
-    modelName
-      || process.env.GROWTH_CAMP_FINAL_MODEL
-      || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-2.5-pro",
-  ).trim() || "gemini-2.5-pro";
-}
+const AUDIO_FIRST_PASS_MODEL = "gemini-2.5-pro";
+const AUDIO_TOKENS_PER_MINUTE = 1920;
+const VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS = 17700;
+const TOKENS_PER_FRAME = Math.round((VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS - AUDIO_TOKENS_PER_MINUTE) / 60);
 
 type VideoAnalysisResult = {
   analysis: GrowthAnalysisScores;
   videoMeta: {
     videoUrl: string;
+    audioUrl: string;
     transcript: string;
     videoDuration: number;
     provider: string;
     model: string;
     fallback: boolean;
+    pipeline: string;
+    stageOneModel: string;
+    stageTwoModel: string;
+    sparseFrameCount: number;
+    estimatedCostProfile: {
+      audioOnlyTokens: number;
+      video1fpsTokens: number;
+      sparseRouteTokens: number;
+      savingsVs1fpsTokens: number;
+      savingsVs1fpsPct: number;
+    };
     failureStage?: string;
     failureReason?: string;
   };
@@ -41,6 +48,32 @@ type VideoFailureStage =
   | "transcription"
   | "llm"
   | "unknown";
+
+type SparseFrame = {
+  timestamp: number;
+  dataUrl: string;
+};
+
+type AudioFirstPass = {
+  valueTier: "high" | "medium" | "low";
+  contentSummary: string;
+  hookSummary: string;
+  audiencePromise: string;
+  commercialPotential: number;
+  creatorSignals: string[];
+  priorityMoments: Array<{
+    timestamp: string;
+    reason: string;
+    action: string;
+  }>;
+  riskMoments: Array<{
+    timestamp: string;
+    issue: string;
+    fix: string;
+  }>;
+  deepDiveBrief: string;
+  transcriptSummary: string;
+};
 
 class VideoAnalysisFailure extends Error {
   failureStage: VideoFailureStage;
@@ -54,6 +87,55 @@ class VideoAnalysisFailure extends Error {
   }
 }
 
+function resolveGrowthCampFinalModel(modelName?: string): string {
+  return String(
+    modelName
+      || process.env.GROWTH_CAMP_FINAL_MODEL
+      || process.env.VERTEX_GROWTH_FINAL_MODEL
+      || "gemini-2.5-pro",
+  ).trim() || "gemini-2.5-pro";
+}
+
+function normalizeFailureReason(error: unknown) {
+  if (error instanceof Error) {
+    return error.message || error.name || "未知错误";
+  }
+  return String(error || "未知错误");
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function toTimestamp(seconds: number) {
+  const safe = Math.max(0, Math.floor(seconds));
+  const mm = Math.floor(safe / 60);
+  const ss = safe % 60;
+  return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
+function truncate(value: string, max = 5000) {
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+}
+
+function estimateTokenProfile(durationSeconds: number, sparseFrameCount: number) {
+  const minutes = durationSeconds / 60;
+  const audioOnlyTokens = Math.round(minutes * AUDIO_TOKENS_PER_MINUTE);
+  const video1fpsTokens = Math.round(minutes * VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS);
+  const sparseRouteTokens = audioOnlyTokens + sparseFrameCount * TOKENS_PER_FRAME;
+  const savingsVs1fpsTokens = Math.max(0, video1fpsTokens - sparseRouteTokens);
+  const savingsVs1fpsPct = video1fpsTokens > 0
+    ? Math.round((savingsVs1fpsTokens / video1fpsTokens) * 100)
+    : 0;
+  return {
+    audioOnlyTokens,
+    video1fpsTokens,
+    sparseRouteTokens,
+    savingsVs1fpsTokens,
+    savingsVs1fpsPct,
+  };
+}
+
 async function withTempVideo<T>(buffer: Buffer, fn: (videoPath: string) => Promise<T>): Promise<T> {
   const videoPath = path.join(
     os.tmpdir(),
@@ -65,65 +147,6 @@ async function withTempVideo<T>(buffer: Buffer, fn: (videoPath: string) => Promi
   } finally {
     await fs.unlink(videoPath).catch(() => undefined);
   }
-}
-
-async function transcribeVideoAudio(videoBuffer: Buffer): Promise<string> {
-  return withTempVideo(videoBuffer, async (videoPath) => {
-    const audioPath = videoPath.replace(/\.mp4$/, ".mp3");
-
-    try {
-      const probe = await execFileAsync("ffprobe", [
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "json",
-        videoPath,
-      ]).catch(() => ({ stdout: "{\"streams\":[]}" }));
-      const probeJson = JSON.parse(String(probe.stdout || "{\"streams\":[]}"));
-      const hasAudio = Array.isArray(probeJson.streams) && probeJson.streams.length > 0;
-      if (!hasAudio) {
-        console.info("[growth.analyzeVideo] no audio stream detected, skip transcription");
-        return "";
-      }
-
-      await execFileAsync("ffmpeg", [
-        "-y",
-        "-i",
-        videoPath,
-        "-vn",
-        "-acodec",
-        "libmp3lame",
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        audioPath,
-      ]);
-
-      const audioBuffer = await fs.readFile(audioPath);
-      const transcription = await transcribeAudio({
-        audioBase64: audioBuffer.toString("base64"),
-        mimeType: "audio/mpeg",
-        language: "zh",
-        prompt: "请转写视频里的口播、字幕或关键信息。",
-      });
-
-      if ("text" in transcription && typeof transcription.text === "string") {
-        return transcription.text.trim();
-      }
-
-      return "";
-    } catch (error) {
-      console.warn("[growth.analyzeVideo] transcript fallback:", error);
-      return "";
-    } finally {
-      await fs.unlink(audioPath).catch(() => undefined);
-    }
-  });
 }
 
 async function getVideoDurationFromPath(videoPath: string): Promise<number> {
@@ -143,24 +166,106 @@ async function getVideoDurationFromPath(videoPath: string): Promise<number> {
   return parsed;
 }
 
-async function extractKeyframes(videoBuffer: Buffer) {
+async function extractAudioTrack(videoBuffer: Buffer) {
+  return withTempVideo(videoBuffer, async (videoPath) => {
+    const audioPath = videoPath.replace(/\.mp4$/, ".mp3");
+    try {
+      const probe = await execFileAsync("ffprobe", [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "json",
+        videoPath,
+      ]).catch(() => ({ stdout: "{\"streams\":[]}" }));
+      const probeJson = JSON.parse(String(probe.stdout || "{\"streams\":[]}"));
+      const hasAudio = Array.isArray(probeJson.streams) && probeJson.streams.length > 0;
+      if (!hasAudio) {
+        return null;
+      }
+
+      await execFileAsync("ffmpeg", [
+        "-y",
+        "-i",
+        videoPath,
+        "-vn",
+        "-acodec",
+        "libmp3lame",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        audioPath,
+      ]);
+
+      return await fs.readFile(audioPath);
+    } finally {
+      await fs.unlink(audioPath).catch(() => undefined);
+    }
+  });
+}
+
+async function transcribeVideoAudio(audioBuffer: Buffer | null): Promise<string> {
+  if (!audioBuffer) return "";
+  try {
+    const transcription = await transcribeAudio({
+      audioBase64: audioBuffer.toString("base64"),
+      mimeType: "audio/mpeg",
+      language: "zh",
+      prompt: "请转写视频里的口播、字幕或关键信息，并尽量保留时间线索。",
+    });
+
+    if ("text" in transcription && typeof transcription.text === "string") {
+      return transcription.text.trim();
+    }
+  } catch (error) {
+    console.warn("[growth.analyzeVideo] transcript fallback:", error);
+  }
+  return "";
+}
+
+function buildSparseFrameTimestamps(duration: number) {
+  const intro = [1, 4, 8, 12]
+    .filter((second) => second < duration - 0.5)
+    .map((second) => Number(second.toFixed(2)));
+
+  const outroCandidates = [
+    duration - 12,
+    duration - 6,
+    duration - 1.5,
+  ]
+    .filter((second) => second > 15)
+    .map((second) => Number(clamp(second, 0.2, Math.max(0.2, duration - 0.2)).toFixed(2)));
+
+  const middleCount = duration >= 900 ? 8 : duration >= 480 ? 6 : duration >= 180 ? 5 : 4;
+  const middleStart = Math.min(duration * 0.18, Math.max(14, duration * 0.12));
+  const middleEnd = Math.max(middleStart + 6, duration - 18);
+  const middle = middleCount > 0
+    ? Array.from({ length: middleCount }, (_, index) => {
+        const ratio = (index + 1) / (middleCount + 1);
+        return Number((middleStart + (middleEnd - middleStart) * ratio).toFixed(2));
+      })
+    : [];
+
+  return Array.from(new Set([...intro, ...middle, ...outroCandidates]))
+    .filter((value) => value > 0 && value < duration)
+    .sort((a, b) => a - b);
+}
+
+async function extractSparseFrames(videoBuffer: Buffer) {
   return withTempVideo(videoBuffer, async (videoPath) => {
     const duration = await getVideoDurationFromPath(videoPath);
-    const timestamps = Array.from(
-      new Set([
-        Math.max(0.2, Math.min(duration * 0.12, Math.max(duration - 0.2, 0.2))),
-        Math.max(0.2, Math.min(duration * 0.32, Math.max(duration - 0.2, 0.2))),
-        Math.max(0.2, Math.min(duration * 0.58, Math.max(duration - 0.2, 0.2))),
-        Math.max(0.2, Math.min(duration * 0.84, Math.max(duration - 0.2, 0.2))),
-      ].map((value) => Number(value.toFixed(3)))),
-    );
+    const timestamps = buildSparseFrameTimestamps(duration);
     const frameDir = path.join(
       os.tmpdir(),
       `growth-camp-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     await fs.mkdir(frameDir, { recursive: true });
     try {
-      const frames: Array<{ timestamp: number; dataUrl: string; storageUrl: string }> = [];
+      const frames: SparseFrame[] = [];
       for (let index = 0; index < timestamps.length; index += 1) {
         const timestamp = timestamps[index];
         const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
@@ -172,20 +277,16 @@ async function extractKeyframes(videoBuffer: Buffer) {
           videoPath,
           "-frames:v",
           "1",
+          "-vf",
+          "scale='min(960,iw)':-2",
           "-q:v",
-          "3",
+          "5",
           outPath,
         ]);
         const frameBuffer = await fs.readFile(outPath);
-        const stored = await storagePut(
-          `growth-camp/frames/${Date.now()}-${index}.jpg`,
-          frameBuffer,
-          "image/jpeg",
-        );
         frames.push({
           timestamp,
           dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
-          storageUrl: stored.url,
         });
       }
       return { duration, frames };
@@ -193,6 +294,101 @@ async function extractKeyframes(videoBuffer: Buffer) {
       await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+}
+
+async function runAudioFirstPass(params: {
+  audioGcsUri: string;
+  transcript: string;
+  duration: number;
+  context?: string;
+  fileName?: string;
+}): Promise<AudioFirstPass> {
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: AUDIO_FIRST_PASS_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `你是一位短视频内容策略分析师。你现在只做第一阶段“音频优先粗筛”，目标是用更低成本先判断这条视频值不值得深挖。
+
+规则：
+1. 优先依据音频和转写，不要假装看到了完整画面。
+2. 重点识别：开头 hook、内容承诺、情绪转折、商业可承接性、需要深挖的秒点。
+3. 所有时间点都必须返回 mm:ss。
+4. creatorSignals 只写对创作者真正有帮助的经营信号，不写空话。
+5. deepDiveBrief 要给第二阶段模型，告诉它应该重点看哪些画面、哪些段落、哪些商业问题。
+
+只返回 JSON：
+{
+  "valueTier": "high|medium|low",
+  "contentSummary": "string",
+  "hookSummary": "string",
+  "audiencePromise": "string",
+  "commercialPotential": number,
+  "creatorSignals": ["string"],
+  "priorityMoments": [
+    { "timestamp": "00:08", "reason": "string", "action": "string" }
+  ],
+  "riskMoments": [
+    { "timestamp": "00:42", "issue": "string", "fix": "string" }
+  ],
+  "deepDiveBrief": "string",
+  "transcriptSummary": "string"
+}`,
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `文件名：${params.fileName || "未命名视频"}`,
+              `视频时长：${params.duration.toFixed(1)} 秒`,
+              `业务背景：${params.context?.trim() || "未提供"}`,
+              params.transcript
+                ? `已有转写摘录：\n${truncate(params.transcript, 4500)}`
+                : "已有转写摘录：暂无或转写失败，请你优先依据音频本身判断。",
+            ].join("\n\n"),
+          },
+          {
+            type: "file_url",
+            file_url: {
+              url: params.audioGcsUri,
+              mime_type: "audio/mpeg",
+            },
+          },
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  return {
+    valueTier: parsed.valueTier === "high" || parsed.valueTier === "low" ? parsed.valueTier : "medium",
+    contentSummary: String(parsed.contentSummary || ""),
+    hookSummary: String(parsed.hookSummary || ""),
+    audiencePromise: String(parsed.audiencePromise || ""),
+    commercialPotential: Number(parsed.commercialPotential || 0),
+    creatorSignals: Array.isArray(parsed.creatorSignals) ? parsed.creatorSignals.map(String) : [],
+    priorityMoments: Array.isArray(parsed.priorityMoments)
+      ? parsed.priorityMoments.map((item: any) => ({
+          timestamp: String(item?.timestamp || "00:00"),
+          reason: String(item?.reason || ""),
+          action: String(item?.action || ""),
+        }))
+      : [],
+    riskMoments: Array.isArray(parsed.riskMoments)
+      ? parsed.riskMoments.map((item: any) => ({
+          timestamp: String(item?.timestamp || "00:00"),
+          issue: String(item?.issue || ""),
+          fix: String(item?.fix || ""),
+        }))
+      : [],
+    deepDiveBrief: String(parsed.deepDiveBrief || ""),
+    transcriptSummary: String(parsed.transcriptSummary || ""),
+  };
 }
 
 function buildFallbackVideoAnalysis(summary: string, context: string) {
@@ -215,102 +411,39 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
       "最好把高潮段与 CTA 的连接再做紧一些。",
     ],
     platforms: ["抖音", "小红书", "B站"],
-    summary: summary || "视频已完成基础多帧分析，当前更适合围绕节奏、平台适配和商业承接来输出成长营报告。",
+    summary: summary || "视频已完成基础音频优先分析，当前更适合围绕节奏、平台适配和商业承接来输出成长营报告。",
   });
 }
 
-function normalizeFailureReason(error: unknown) {
-  if (error instanceof Error) {
-    return error.message || error.name || "未知错误";
-  }
-  return String(error || "未知错误");
-}
-
-function formatFrameEvidence(
-  frameAnalyses: Array<{
-    frameIndex: number;
-    timestamp: number;
-    frameScore: number;
-    analysis: { detail: string };
-  }>,
-  mode: "strong" | "weak",
-  limit: number,
-) {
-  const sorted = [...frameAnalyses].sort((a, b) =>
-    mode === "strong"
-      ? b.frameScore - a.frameScore
-      : a.frameScore - b.frameScore,
-  );
-
-  return sorted
-    .slice(0, limit)
-    .map((item) => `第${item.frameIndex + 1}帧 ${item.timestamp.toFixed(1)}s（${item.frameScore}分）：${item.analysis.detail}`)
-    .join("\n");
-}
-
-export async function analyzeVideo(params: {
-  fileBase64?: string;
-  fileUrl?: string;
-  mimeType: string;
-  fileName?: string;
+async function runDeepDivePass(params: {
+  finalModel: string;
+  sparseFrames: SparseFrame[];
+  audioFirstPass: AudioFirstPass;
+  transcript: string;
+  duration: number;
   context?: string;
-  modelName?: string;
-}): Promise<VideoAnalysisResult> {
-  try {
-    const finalModel = resolveGrowthCampFinalModel(params.modelName);
-    let buffer: Buffer;
-    if (typeof params.fileBase64 === "string" && params.fileBase64.trim()) {
-      buffer = Buffer.from(params.fileBase64, "base64");
-    } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
-      const response = await fetch(params.fileUrl);
-      if (!response.ok) {
-        throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
-      }
-      buffer = Buffer.from(await response.arrayBuffer());
-    } else {
-      throw new VideoAnalysisFailure("decode", "缺少视频内容");
-    }
-    const duration = await withTempVideo(buffer, getVideoDurationFromPath);
-    const validation = validateDuration(duration);
-    if (!validation.valid) {
-      throw new VideoAnalysisFailure("decode", validation.error || "视频时长不符合要求");
-    }
-    const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
-    const storedVideo = await uploadBufferToGcs({
-      objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
-      buffer,
-      contentType: params.mimeType || "video/mp4",
-    });
-    let keyframes;
-    try {
-      keyframes = await extractKeyframes(buffer);
-    } catch (error) {
-      console.warn("[growth.analyzeVideo] keyframe extraction failed:", error);
-      throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
-    }
+  fileName?: string;
+  videoGcsUri: string;
+}) {
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: params.finalModel,
+    messages: [
+      {
+        role: "system",
+        content: `你是一位资深短视频商业策略顾问兼生成式视频导演。你现在做第二阶段“深度洞察”，输入是：
+1. 第一阶段的音频优先粗筛结论
+2. 稀疏关键帧
+3. 转写摘录
 
-    const transcript = await transcribeVideoAudio(buffer).catch((error) => {
-      console.warn("[growth.analyzeVideo] transcript fallback:", error);
-      return "";
-    });
-
-    const response = await invokeLLM({
-      model: "pro",
-      provider: "vertex",
-      modelName: finalModel,
-      messages: [
-        {
-          role: "system",
-          content: `你是一位资深短视频商业策略顾问兼生成式视频导演。请根据关键帧、时间点证据、转写内容和用户身份，返回 Creator Growth Camp 的统一分析结构。
-
-注意：
-0. 必须优先依据“关键帧 / 时间点 / 转写”做判断，不能只根据业务背景给建议。summary、strengths、improvements 里至少要有一半内容直接来自画面或转写证据。
-1. 如果没有音轨或转写为空，只能依据关键帧和画面结构做判断，不能编造口播内容。
-2. 不要输出互相矛盾的建议。低成熟度阶段先给短期验证路径，不要同时堆多个商业化方向。
-3. 严禁输出与用户身份无关的泛模板路径，例如户外运动/美食博主不应该默认给知识付费、社群会员。商业方向必须直接解释“为什么适合这个用户”和“为什么是这条视频”。
+规则：
+1. 必须先吸收第一阶段结论，再用关键帧纠偏，不能把第二阶段写成重复摘要。
+2. 不能假装看了完整逐帧视频；你的视觉判断只能来自提供的关键帧。
+3. summary、strengths、improvements 至少一半要直接引用“音频结论或关键帧证据”。
 4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
-5. 输出要像真人顾问在给初步解决方案，不要只说“讲清楚、重构、优化”，而要说明怎么改、改哪一秒、为什么这样改。
-6. 如果用户上传的是跨域素材，例如户外/旅行/美食博主上传比赛、赛事、风景或社会事件视频，你必须先回答“这条素材怎么借回原业务”，而不是直接跳到卖课、社群或咨询。
+5. 如果素材属于户外探店、美食旅行、人物体验这类商业视频，要优先回答“如何提高转化与复用”，而不是空泛讲故事。
+6. 秒点建议必须回到 mm:ss。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -318,15 +451,6 @@ export async function analyzeVideo(params: {
 - lighting: 信息清晰度与表达可读性
 - impact: 节奏钩子与传播冲击力
 - viralPotential: 商业放大与增长潜力
-
-summary 必须覆盖：
-- 画面节奏
-- 视觉亮点
-- 叙事结构
-- 口播/字幕重点
-- 商业转化潜力
-- 平台适配建议
-- 创作延展方向
 
 只返回 JSON：
 {
@@ -342,19 +466,10 @@ summary 必须覆盖：
   "titleSuggestions": ["string"],
   "creatorCenterSignals": ["string"],
   "timestampSuggestions": [
-    {
-      "timestamp": "00:19",
-      "issue": "string",
-      "fix": "string",
-      "opportunity": "string"
-    }
+    { "timestamp": "00:19", "issue": "string", "fix": "string", "opportunity": "string" }
   ],
   "weakFrameReferences": [
-    {
-      "timestamp": "00:08",
-      "reason": "string",
-      "fix": "string"
-    }
+    { "timestamp": "00:08", "reason": "string", "fix": "string" }
   ],
   "commercialAngles": [
     {
@@ -369,51 +484,151 @@ summary 必须覆盖：
   ],
   "followUpPrompt": "string"
 }`,
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: [
-                `文件名：${params.fileName || "未命名视频"}`,
-                `业务背景：${params.context?.trim() || "未提供"}`,
-                `视频 GCS 地址：${storedVideo.gcsUri}`,
-                `视频时长：${duration.toFixed(1)} 秒`,
-                `关键帧时间点：${keyframes.frames.map((item, index) => `第${index + 1}帧 ${item.timestamp.toFixed(1)}s`).join("；")}`,
-                transcript ? `口播/字幕转写：\n${transcript.slice(0, 5000)}` : "口播/字幕转写：暂无或转写失败",
-              ].join("\n\n"),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `文件名：${params.fileName || "未命名视频"}`,
+              `业务背景：${params.context?.trim() || "未提供"}`,
+              `视频 GCS 地址：${params.videoGcsUri}`,
+              `视频时长：${params.duration.toFixed(1)} 秒`,
+              `稀疏关键帧数量：${params.sparseFrames.length}`,
+              `第一阶段音频粗筛结论：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
+              params.transcript
+                ? `转写摘录：\n${truncate(params.transcript, 5000)}`
+                : "转写摘录：暂无或转写失败，请依第一阶段音频结论和关键帧判断。",
+            ].join("\n\n"),
+          },
+          ...params.sparseFrames.map((item, index) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: item.dataUrl,
+              detail: index < 2 ? "high" as const : "auto" as const,
             },
-            {
-              type: "file_url" as const,
-              file_url: {
-                url: storedVideo.gcsUri,
-                mime_type: (params.mimeType === "video/quicktime" ? "video/quicktime" : "video/mp4"),
-              },
-            },
-            ...keyframes.frames.map((item, index) => ({
-              type: "image_url" as const,
-              image_url: {
-                url: item.dataUrl,
-                detail: index === 0 ? "high" as const : "auto" as const,
-              },
-            })),
-          ],
-        },
-      ],
-      response_format: { type: "json_object" },
+          })),
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+}
+
+export async function analyzeVideo(params: {
+  fileBase64?: string;
+  fileUrl?: string;
+  mimeType: string;
+  fileName?: string;
+  context?: string;
+  modelName?: string;
+}): Promise<VideoAnalysisResult> {
+  try {
+    const finalModel = resolveGrowthCampFinalModel(params.modelName);
+    let buffer: Buffer;
+    if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+      const response = await fetch(params.fileUrl);
+      if (!response.ok) {
+        throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
+    } else if (typeof params.fileBase64 === "string" && params.fileBase64.trim()) {
+      buffer = Buffer.from(params.fileBase64, "base64");
+    } else {
+      throw new VideoAnalysisFailure("decode", "缺少视频内容");
+    }
+
+    const duration = await withTempVideo(buffer, getVideoDurationFromPath);
+    const validation = validateDuration(duration);
+    if (!validation.valid) {
+      throw new VideoAnalysisFailure("decode", validation.error || "视频时长不符合要求");
+    }
+
+    const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
+    const storedVideo = await uploadBufferToGcs({
+      objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
+      buffer,
+      contentType: params.mimeType || "video/mp4",
     });
 
-    const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+    const audioBuffer = await extractAudioTrack(buffer).catch((error) => {
+      console.warn("[growth.analyzeVideo] audio extraction failed:", error);
+      return null;
+    });
+    const audioStorage = audioBuffer
+      ? await uploadBufferToGcs({
+          objectName: `growth-camp/audio/${Date.now()}-${safeName.replace(/\.[^.]+$/, "")}.mp3`,
+          buffer: audioBuffer,
+          contentType: "audio/mpeg",
+        })
+      : null;
+
+    let sparseFrames;
+    try {
+      sparseFrames = await extractSparseFrames(buffer);
+    } catch (error) {
+      console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
+      throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
+    }
+
+    const transcript = await transcribeVideoAudio(audioBuffer).catch((error) => {
+      console.warn("[growth.analyzeVideo] transcript fallback:", error);
+      return "";
+    });
+
+    const audioFirstPass = audioStorage
+      ? await runAudioFirstPass({
+          audioGcsUri: audioStorage.gcsUri,
+          transcript,
+          duration,
+          context: params.context,
+          fileName: params.fileName,
+        })
+      : {
+          valueTier: "medium" as const,
+          contentSummary: transcript ? truncate(transcript, 300) : "无音轨，转入视觉优先保守判断。",
+          hookSummary: "未检测到可靠音轨证据，需要更多依靠视觉结构判断。",
+          audiencePromise: "",
+          commercialPotential: 60,
+          creatorSignals: [],
+          priorityMoments: [],
+          riskMoments: [],
+          deepDiveBrief: "优先根据关键帧判断开头是否有明确 hook、信息承诺和商业承接动作。",
+          transcriptSummary: transcript ? truncate(transcript, 500) : "",
+        };
+
+    const deepDive = await runDeepDivePass({
+      finalModel,
+      sparseFrames: sparseFrames.frames,
+      audioFirstPass,
+      transcript,
+      duration,
+      context: params.context,
+      fileName: params.fileName,
+      videoGcsUri: storedVideo.gcsUri,
+    });
+
+    const parsed = growthAnalysisScoresSchema.parse(deepDive);
+    const costProfile = estimateTokenProfile(duration, sparseFrames.frames.length);
+
     return {
-      analysis: growthAnalysisScoresSchema.parse(parsed),
+      analysis: parsed,
       videoMeta: {
         videoUrl: storedVideo.gcsUri,
+        audioUrl: audioStorage?.gcsUri || "",
         transcript,
         videoDuration: duration,
-        provider: response.provider || "unknown",
-        model: response.model || "unknown",
+        provider: "vertex",
+        model: finalModel,
         fallback: false,
+        pipeline: "audio-first-sparse-frames-two-stage",
+        stageOneModel: AUDIO_FIRST_PASS_MODEL,
+        stageTwoModel: finalModel,
+        sparseFrameCount: sparseFrames.frames.length,
+        estimatedCostProfile: costProfile,
       },
     };
   } catch (error) {
