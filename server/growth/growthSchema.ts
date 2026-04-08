@@ -461,8 +461,22 @@ function buildPlatformSummaryFromCollection(
   const topItem = relevantItems[0];
   const baseSummary = buildPlatformSummary(platform, analysis);
   const reliability = assessCollectionReliability(platform, collection);
-  if (!topItem) return `${baseSummary} ${reliability.summary}`;
-  return `${baseSummary} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。${reliability.summary}`;
+  const videoCount = contentItems.filter((item) => item.contentType === "video").length;
+  const noteCount = contentItems.filter((item) => item.contentType === "note").length;
+  const dominantContent =
+    platform === "xiaohongshu"
+      ? videoCount > noteCount
+        ? "当前样本里视频表达占比更高，但图文和视频仍需双线考虑。"
+        : "当前样本里图文表达更稳，适合先做可收藏、可搜索的图文，再拆视频版。"
+      : platform === "douyin"
+        ? "当前样本明显以视频表达为主，更适合结果前置、强节奏和镜头驱动的表达。"
+        : platform === "bilibili"
+          ? "当前样本更适合完整讲解、案例复盘和中长视频承接。"
+          : platform === "kuaishou"
+            ? "当前样本更偏真实口播、生活场景和直播联动式表达。"
+            : "当前样本更适合结论前置和信息密度较高的表达。";
+  if (!topItem) return `${baseSummary} ${dominantContent} ${reliability.summary}`;
+  return `${baseSummary} ${dominantContent} 当前更值得参考的话题方向是「${topItem}」，说明最近更适合用高相关度表达，而不是追无关热点。${reliability.summary}`;
 }
 
 function buildMetricWindowFromCollection(platform: GrowthPlatform, analysis: GrowthAnalysisScores, collection: PlatformTrendCollection) {
@@ -2020,7 +2034,16 @@ export function buildGrowthSnapshotFromCollections(params: {
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   errors?: Partial<Record<GrowthPlatform, string>>;
 }): GrowthSnapshot {
-  const requestedPlatforms = normalizePlatforms(params.requestedPlatforms || params.analysis.platforms);
+  const collectedPlatforms = (Object.entries(params.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>)
+    .filter(([platform, collection]) => platform !== "weixin_channels" && Boolean(collection?.items?.length))
+    .map(([platform]) => platform);
+  const requestedPlatforms = normalizePlatforms(
+    params.requestedPlatforms?.length
+      ? params.requestedPlatforms
+      : collectedPlatforms.length
+        ? collectedPlatforms
+        : params.analysis.platforms,
+  );
   const context = String(params.context || "").trim();
   const activeCollections = requestedPlatforms
     .map((platform) => params.collections[platform])
