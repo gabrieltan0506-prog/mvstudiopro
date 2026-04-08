@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 /**
  * 取得 Vertex AI OAuth2 Access Token（使用 GOOGLE_APPLICATION_CREDENTIALS_JSON）
  */
@@ -17,7 +19,7 @@ export async function getVertexAccessToken() {
   })).toString("base64url");
 
   const unsignedToken = `${header}.${payload}`;
-  const signer = require("crypto").createSign("RSA-SHA256");
+  const signer = crypto.createSign("RSA-SHA256");
   signer.update(unsignedToken);
   signer.end();
   const privateKey = sa.private_key;
