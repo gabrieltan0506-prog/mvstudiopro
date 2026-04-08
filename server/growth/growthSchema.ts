@@ -1175,7 +1175,7 @@ function buildDataLibraryStructure(
       title: "商业承接策略层",
       purpose: "把内容表现和平台分发结果桥接到可执行的变现动作，而不是只给抽象建议。",
       dataSources: ["monetizationTracks", "platformRecommendations", "businessInsights"],
-      coreFields: ["主商业路径", "平台打法", "行动引导", "offer 类型", "验证动作"],
+      coreFields: ["主商业路径", "平台打法", "行动引导", "承接产品形态", "验证动作"],
       outputBoards: ["平台商业变现策略", "现在就能执行的版本", "7天增长规划"],
     },
   ];
