@@ -397,8 +397,8 @@ async function personalizeGrowthSnapshot(params: {
 5. decisionFramework.assetAdaptation 必须直接说明更适合视频还是图文、开头怎么改、结构怎么改、结尾动作是什么。
 6. 平台数据和历史沉淀只能作为证据，不要暴露后台统计口径、内部排序机制或工程逻辑。
 7. 必须额外返回：
-   - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么。
-   - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式。
+   - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么；并补 formatReason、graphicPlan、videoPlan。
+   - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式；并补 supportActivities、supportSignal、potentialTrack、optimizationPlan。
    - monetizationStrategies：推荐平台对应的商业变现策略、CTA 和 offer 形态。
    - dataLibraryStructure：说明这个分析结果背后应该由哪些数据层来支撑。
 8. 输出必须是结构化 JSON，不要写成散文。`,
