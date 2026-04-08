@@ -1728,6 +1728,17 @@ export default function MVAnalysisPage() {
     () => growthSnapshot?.platformSnapshots.slice(0, 5) ?? [],
     [growthSnapshot],
   );
+  const fallbackPlatformLabels = useMemo(() => {
+    const labels = new Set<string>();
+    recommendedPlatformNames.forEach((item) => item && labels.add(item));
+    titleExecutionCards.forEach((item) => item.suitablePlatforms.forEach((platform) => labels.add(getPlatformLabel(platform))));
+    (analysis?.platforms || []).forEach((platform) => labels.add(getPlatformLabel(platform)));
+    topPlatformSnapshots.forEach((item) => labels.add(item.displayName));
+    if (!labels.size) {
+      ["小红书", "抖音", "B站"].forEach((item) => labels.add(item));
+    }
+    return Array.from(labels).slice(0, 4);
+  }, [recommendedPlatformNames, titleExecutionCards, analysis, topPlatformSnapshots]);
   const firstScreenGraphicPlan = useMemo(
     () => buildGraphicNoteDetail(
       recommendedPlatformNames,
@@ -1757,7 +1768,7 @@ export default function MVAnalysisPage() {
           .filter((example) => example.platformLabel === recommendation.name)
           .slice(0, 2)
           .map((item) => `${replaceTerms(item.account)}：${replaceTerms(item.title)}`),
-      }));
+        }));
     }
 
     if (platformActivityCards.length) {
@@ -1771,21 +1782,45 @@ export default function MVAnalysisPage() {
           .filter((example) => example.platformLabel === item.platformLabel)
           .slice(0, 2)
           .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
+        }));
+    }
+
+    if (topPlatformSnapshots.length) {
+      return topPlatformSnapshots.slice(0, 4).map((item) => ({
+        name: item.displayName,
+        reason: item.summary,
+        supportActivities: [],
+        potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
+        supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
+        relatedExamples: referenceExamples
+          .filter((example) => example.platformLabel === item.displayName)
+          .slice(0, 2)
+          .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
       }));
     }
 
-    return topPlatformSnapshots.slice(0, 4).map((item) => ({
-      name: item.displayName,
-      reason: item.summary,
-      supportActivities: [],
-      potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
-      supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
+    return fallbackPlatformLabels.map((name) => ({
+      name,
+      reason: `${name} 当前仍适合承接这类“痛点放大 + 结果反差 + 专业信任”内容，先发版重点不是泛流量，而是先拿到停留、收藏、评论和私信。`,
+      supportActivities: /抖音|头条|西瓜/.test(name)
+        ? ["中视频伙伴计划"]
+        : /B站/.test(name)
+          ? ["创作激励", "任务中心征稿"]
+          : [],
+      potentialTrack: /小红书/.test(name)
+        ? "产后修复 / 体态焦虑 / 肩颈调理 / 女性健康"
+        : /抖音|快手|头条|西瓜/.test(name)
+          ? "痛点转化 / 结果对比 / 同城门店转化 / 体验课承接"
+          : "深度讲解 / 专业信任 / 方法拆解",
+      supportSignal: /小红书|快手/.test(name)
+        ? "当前更适合优先吃自然分发、搜索流量和细分赛道势能。"
+        : "有适合长期承接的内容扶持或征稿机制，可同步利用。",
       relatedExamples: referenceExamples
-        .filter((example) => example.platformLabel === item.displayName)
+        .filter((example) => example.platformLabel === name)
         .slice(0, 2)
         .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
     }));
-  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples]);
+  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples, fallbackPlatformLabels]);
   const topPlatformDataReferences = useMemo(() => {
     if (platformActivityCards.length) {
       return platformActivityCards.slice(0, 4).map((item) => ({
@@ -1795,13 +1830,34 @@ export default function MVAnalysisPage() {
         supportActivities: item.supportActivities.slice(0, 2),
       }));
     }
-    return topPlatformSnapshots.slice(0, 4).map((item) => ({
-      title: item.displayName,
-      summary: item.summary,
-      topics: item.sampleTopics.slice(0, 3),
-      supportActivities: [],
+    if (topPlatformSnapshots.length) {
+      return topPlatformSnapshots.slice(0, 4).map((item) => ({
+        title: item.displayName,
+        summary: item.summary,
+        topics: item.sampleTopics.slice(0, 3),
+        supportActivities: [],
+      }));
+    }
+    return fallbackPlatformLabels.map((title) => ({
+      title,
+      summary: `${title} 的平台数据更偏向“细分痛点 + 结果感 + 专业人设”内容，适合把这条视频拆成可收藏的主题和可转化的表达。`,
+      topics: visibleTopicLibrary
+        .filter((item) => item.platformLabel === title || getPlatformLabel(item.platform) === title)
+        .slice(0, 3)
+        .map((item) => item.title)
+        .concat(
+          /小红书/.test(title) ? ["产后修复", "肩颈调理", "女性体态"] :
+          /抖音|快手|头条|西瓜/.test(title) ? ["低价体验", "结果对比", "同城门店"] :
+          ["专业讲解", "方法拆解", "案例复盘"],
+        )
+        .slice(0, 3),
+      supportActivities: /抖音|头条|西瓜/.test(title)
+        ? ["中视频伙伴计划"]
+        : /B站/.test(title)
+          ? ["创作激励", "任务中心征稿"]
+          : [],
     }));
-  }, [platformActivityCards, topPlatformSnapshots]);
+  }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
