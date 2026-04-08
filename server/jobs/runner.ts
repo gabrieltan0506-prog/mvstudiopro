@@ -39,6 +39,7 @@ import {
   type ProducerModel,
   type ProducerQuality,
 } from "../services/aimusic-producer";
+import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
 import {
   claimNextQueuedJob,
   markJobFailed,
@@ -52,6 +53,8 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   audio: 20_000,
   video: 30_000,
 };
+
+const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 12 * 60_000;
 
 const POLL_INTERVAL_MS = 2_000;
 
@@ -173,8 +176,39 @@ async function runFalOmniFallback(
 }
 
 async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{ output: unknown; provider?: string }> {
-  ensureKlingInitialized();
   const params = input.params ?? {};
+
+  if (input.action === "growth_analyze_video") {
+    const result = await analyzeGrowthCampVideo({
+      fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
+      mimeType: String(params.mimeType ?? "video/mp4"),
+      fileName: typeof params.fileName === "string" ? params.fileName : undefined,
+      context: typeof params.context === "string" ? params.context : undefined,
+      modelName: typeof params.modelName === "string" ? params.modelName : undefined,
+    });
+
+    return {
+      provider: result.videoMeta.provider,
+      output: {
+        analysis: result.analysis,
+        videoUrl: result.videoMeta.videoUrl,
+        transcript: result.videoMeta.transcript,
+        videoDuration: result.videoMeta.videoDuration,
+        debug: {
+          route: "analyzeVideoJob",
+          provider: result.videoMeta.provider,
+          model: result.videoMeta.model,
+          fallback: result.videoMeta.fallback,
+          transcriptChars: result.videoMeta.transcript.length,
+          videoDuration: result.videoMeta.videoDuration,
+          failureStage: result.videoMeta.failureStage || null,
+          failureReason: result.videoMeta.failureReason || null,
+        },
+      },
+    };
+  }
+
+  ensureKlingInitialized();
 
   if (input.action === "omni_t2v") {
     const request = buildT2VRequest({
@@ -478,6 +512,20 @@ function normalizeAudioStatus(status: string): "PENDING" | "SUCCESS" | "FAILED" 
   return "PENDING";
 }
 
+function resolveJobTimeoutMs(type: JobType, inputRaw: unknown) {
+  const defaultTimeout = JOB_TIMEOUT_MS[type];
+  if (type !== "video") return defaultTimeout;
+  try {
+    const input = asEnvelope(inputRaw);
+    if (input.action === "growth_analyze_video") {
+      return GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS;
+    }
+  } catch {
+    return defaultTimeout;
+  }
+  return defaultTimeout;
+}
+
 async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   if (input.action !== "suno_music") {
     throw new Error(`Unsupported audio action: ${input.action}`);
@@ -599,7 +647,7 @@ async function processOneJob() {
   if (!job) return false;
 
   try {
-    const timeoutMs = JOB_TIMEOUT_MS[job.type];
+    const timeoutMs = resolveJobTimeoutMs(job.type, job.input);
     const { output, provider } = await withTimeout(
       executeJob(job.type, job.input, timeoutMs, String(job.userId)),
       timeoutMs,

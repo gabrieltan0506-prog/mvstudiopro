@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./env";
+import { isGsUri } from "../services/gcs";
 import {
   COMETAPI_GPT_5_1_MODEL_ID,
   getCometApiBaseUrl,
@@ -26,7 +27,7 @@ export type FileContent = {
   type: "file_url";
   file_url: {
     url: string;
-    mime_type?: "audio/mpeg" | "audio/wav" | "application/pdf" | "audio/mp4" | "video/mp4";
+    mime_type?: "audio/mpeg" | "audio/wav" | "application/pdf" | "audio/mp4" | "video/mp4" | "video/quicktime";
   };
 };
 
@@ -387,6 +388,15 @@ async function contentPartToGeminiPart(part: TextContent | ImageContent | FileCo
       inlineData: {
         mimeType: part.file_url.mime_type || dataUrl.mimeType,
         data: dataUrl.data,
+      },
+    };
+  }
+
+  if (isGsUri(part.file_url.url)) {
+    return {
+      fileData: {
+        mimeType: part.file_url.mime_type,
+        fileUri: part.file_url.url,
       },
     };
   }
