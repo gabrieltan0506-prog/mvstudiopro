@@ -129,6 +129,13 @@ type InsightTableRow = {
   highlight?: string;
 };
 
+type ProcessingStepCard = {
+  id: string;
+  label: string;
+  detail: string;
+  status: "done" | "active" | "pending";
+};
+
 type TrendTableRow = {
   platform: string;
   topic: string;
@@ -228,6 +235,40 @@ function readFileAsDataUrl(file: File) {
     reader.onload = (event) => resolve(String(event.target?.result || ""));
     reader.onerror = () => reject(new Error("文件读取失败"));
     reader.readAsDataURL(file);
+  });
+}
+
+async function uploadFileWithProgress(file: File, onProgress: (percent: number) => void) {
+  return new Promise<{ url?: string }>((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/upload", true);
+    xhr.withCredentials = true;
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.max(1, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      onProgress(percent);
+    };
+
+    xhr.onerror = () => reject(new Error("视频上传失败，请检查网络后重试"));
+    xhr.onabort = () => reject(new Error("视频上传已中断"));
+    xhr.onload = () => {
+      const raw = xhr.responseText || "";
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(raw || `视频上传失败 (${xhr.status})`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error(raw.startsWith("<!DOCTYPE") ? "上传接口返回了页面内容，不是 JSON。" : "上传完成但返回格式异常。"));
+      }
+    };
+
+    xhr.send(formData);
   });
 }
 
@@ -605,6 +646,89 @@ function buildPersonalizedDirectionCards(
     action: item.execution,
     badge: index === 0 ? "备选方向" : "次选方向",
   }));
+}
+
+function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadStage, uploadProgress: number, elapsedTime: number): ProcessingStepCard[] {
+  const isVideo = inputKind === "video";
+  const analyzingPhase = Math.floor(elapsedTime / 4);
+  const currentAnalyzeStep = isVideo ? Math.min(3, analyzingPhase) : Math.min(2, analyzingPhase);
+
+  if (uploadStage === "uploading") {
+    return [
+      {
+        id: "prepare",
+        label: isVideo ? "校验视频文件" : "校验文档内容",
+        detail: isVideo ? "正在确认视频格式、时长与上传可用性。" : "正在确认文档格式、大小与可解析性。",
+        status: uploadProgress >= 8 ? "done" : "active",
+      },
+      {
+        id: "transfer",
+        label: "上传到分析队列",
+        detail: isVideo ? "正在把原始文件送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入模型分析入口。",
+        status: uploadProgress >= 8 ? "active" : "pending",
+      },
+      {
+        id: "handoff",
+        label: "创建分析任务",
+        detail: "文件就绪后会立即创建任务，开始进入模型工作流。",
+        status: uploadProgress >= 96 ? "active" : "pending",
+      },
+    ];
+  }
+
+  if (uploadStage === "analyzing") {
+    const videoSteps: ProcessingStepCard[] = [
+      {
+        id: "decode",
+        label: "解读素材结构",
+        detail: "正在拆解视频节奏、主线信息和可承接的商业入口。",
+        status: currentAnalyzeStep > 0 ? "done" : "active",
+      },
+      {
+        id: "multimodal",
+        label: "多模态理解",
+        detail: "正在结合画面、字幕、口播与上下文，判断素材真正适合服务谁。",
+        status: currentAnalyzeStep === 1 ? "active" : currentAnalyzeStep > 1 ? "done" : "pending",
+      },
+      {
+        id: "bridge",
+        label: "商业桥接判断",
+        detail: "正在把这条素材桥接回你的业务，而不是套默认模板。",
+        status: currentAnalyzeStep === 2 ? "active" : currentAnalyzeStep > 2 ? "done" : "pending",
+      },
+      {
+        id: "report",
+        label: "生成最终报告",
+        detail: "正在收束平台建议、执行版本和个性化增长方向。",
+        status: currentAnalyzeStep >= 3 ? "active" : "pending",
+      },
+    ];
+
+    const documentSteps: ProcessingStepCard[] = [
+      {
+        id: "extract",
+        label: "抽取关键信息",
+        detail: "正在读取文档中的核心观点、结构与可成交线索。",
+        status: currentAnalyzeStep > 0 ? "done" : "active",
+      },
+      {
+        id: "reason",
+        label: "判断可执行方向",
+        detail: "正在判断内容定位、平台优先级与商业承接动作。",
+        status: currentAnalyzeStep === 1 ? "active" : currentAnalyzeStep > 1 ? "done" : "pending",
+      },
+      {
+        id: "assemble",
+        label: "拼装成长报告",
+        detail: "正在输出可直接拿去改稿、发布和验证的结果。",
+        status: currentAnalyzeStep >= 2 ? "active" : "pending",
+      },
+    ];
+
+    return isVideo ? videoSteps : documentSteps;
+  }
+
+  return [];
 }
 
 function buildCommercialTracks(
@@ -1039,22 +1163,9 @@ export default function MVAnalysisPage() {
               if (!selectedFile) {
                 throw new Error("请先选择视频文件");
               }
-
-              const formData = new FormData();
-              formData.append("file", selectedFile, selectedFile.name);
-
-              const uploadResp = await fetch("/api/upload", {
-                method: "POST",
-                credentials: "include",
-                body: formData,
+              const uploaded = await uploadFileWithProgress(selectedFile, (percent) => {
+                setUploadProgress(Math.min(55, Math.max(3, Math.round(percent * 0.55))));
               });
-
-              if (!uploadResp.ok) {
-                const detail = await uploadResp.text().catch(() => "");
-                throw new Error(detail || `视频上传失败 (${uploadResp.status})`);
-              }
-
-              const uploaded = await uploadResp.json() as { url?: string };
               if (!uploaded?.url) {
                 throw new Error("视频上传完成但未返回地址");
               }
@@ -1094,7 +1205,7 @@ export default function MVAnalysisPage() {
                   throw new Error(String(job.error || "视频分析失败"));
                 }
                 await new Promise((resolve) => setTimeout(resolve, 2500));
-                setUploadProgress((value) => Math.min(95, Math.max(value, 65)));
+                setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
               }
 
               throw new Error("视频分析超时，请稍后重试");
@@ -1185,10 +1296,28 @@ export default function MVAnalysisPage() {
   const isProcessing = uploadStage === "uploading" || uploadStage === "analyzing";
   const remainingTime = isProcessing ? Math.max(1, estimatedTime - elapsedTime) : 0;
   const processingStatusMessage = uploadStage === "uploading"
-    ? "正在上传和准备素材..."
+    ? inputKind === "video"
+      ? `正在上传视频 ${Math.max(1, uploadProgress)}%`
+      : "正在整理文档并创建分析任务..."
     : elapsedTime >= estimatedTime
       ? "正在整理最终报告，请稍候..."
       : `正在生成诊断中，预计还需 ${remainingTime} 秒。`;
+  const processingSteps = useMemo(
+    () => buildProcessingSteps(inputKind, uploadStage, uploadProgress, elapsedTime),
+    [inputKind, uploadStage, uploadProgress, elapsedTime],
+  );
+  const activeProcessingStep = processingSteps.find((item) => item.status === "active") || processingSteps[processingSteps.length - 1] || null;
+  const processingDetailMessages = useMemo(() => {
+    if (!processingSteps.length) return [];
+    const activeIndex = processingSteps.findIndex((item) => item.status === "active");
+    const current = activeIndex >= 0 ? activeIndex : processingSteps.length - 1;
+    const messages = [
+      processingSteps[Math.max(0, current - 1)]?.detail,
+      processingSteps[current]?.detail,
+      processingSteps[Math.min(processingSteps.length - 1, current + 1)]?.detail,
+    ].filter(Boolean) as string[];
+    return Array.from(new Set(messages));
+  }, [processingSteps]);
 
   const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
   const growthSnapshotDebug = growthSnapshotQuery.data?.debug ?? null;
@@ -1547,13 +1676,54 @@ export default function MVAnalysisPage() {
                       <div className="h-2 rounded-full bg-[#ff8a3d]" style={{ width: `${uploadProgress}%` }} />
                     </div>
                     {isProcessing ? (
-                      <div className="mt-3 space-y-2 text-xs text-white/55">
-                        <div>{processingStatusMessage}</div>
-                        <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/65">
-                          {uploadStage === "uploading"
-                            ? "正在准备文件与分析上下文。"
-                            : "正在完成多模态分析、商业桥接和平台发布建议。"}
+                      <div className="mt-3 space-y-3 text-xs text-white/55">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium text-white/78">{processingStatusMessage}</div>
+                          <div className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[11px] text-white/60">
+                            {uploadProgress}%
+                          </div>
                         </div>
+                        {activeProcessingStep ? (
+                          <div className="rounded-xl border border-[#ff8a3d]/20 bg-[#ff8a3d]/8 px-3 py-2.5 text-white/75">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-[#ffcf92]">当前步骤</div>
+                            <div className="mt-1 text-sm font-semibold text-white">{activeProcessingStep.label}</div>
+                            <div className="mt-1 leading-6 text-white/68">{activeProcessingStep.detail}</div>
+                          </div>
+                        ) : null}
+                        {processingSteps.length ? (
+                          <div className="grid gap-2 md:grid-cols-3">
+                            {processingSteps.map((step) => (
+                              <div
+                                key={step.id}
+                                className={`rounded-xl border px-3 py-2.5 ${
+                                  step.status === "done"
+                                    ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
+                                    : step.status === "active"
+                                      ? "border-[#ff8a3d]/25 bg-white/8 text-white"
+                                      : "border-white/10 bg-black/20 text-white/45"
+                                }`}
+                              >
+                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+                                  {step.status === "done" ? "已完成" : step.status === "active" ? "进行中" : "等待中"}
+                                </div>
+                                <div className="mt-1 text-sm font-semibold">{step.label}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                        {processingDetailMessages.length ? (
+                          <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.16em] text-white/45">模型正在做的事</div>
+                            <div className="mt-2 space-y-2">
+                              {processingDetailMessages.map((message, index) => (
+                                <div key={`${index}-${message}`} className="flex items-start gap-2 text-white/65">
+                                  <span className="mt-1 inline-block h-1.5 w-1.5 rounded-full bg-[#ff8a3d]" />
+                                  <span className="leading-6">{message}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
