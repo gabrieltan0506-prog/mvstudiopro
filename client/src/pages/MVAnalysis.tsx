@@ -409,6 +409,12 @@ function mapAnalysisError(error: unknown) {
 
 function replaceTerms(text: string) {
   return String(text || "")
+    .replace(/Call to Action/gi, "行动引导")
+    .replace(/call-to-action/gi, "行动引导")
+    .replace(/\bHook\b/gi, "开场钩子")
+    .replace(/\bOffer\b/gi, "承接方案")
+    .replace(/\bPlaybook\b/gi, "执行打法")
+    .replace(/\bBrief\b/gi, "简报")
     .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
     .replace(/提取音频/g, "截取视频片段")
     .replace(/音频中/g, "视频里")
@@ -417,7 +423,7 @@ function replaceTerms(text: string) {
     .replace(/转写摘录/g, "视频分析提炼")
     .replace(/无音轨，转入视觉优先保守判断/g, "未提取到清晰语音信号，已转入保守视频判断")
     .replace(/未检测到可靠音轨证据，需要更多依靠视觉结构判断/g, "未检测到足够清晰的语音线索，当前更多依靠视频画面结构判断")
-    .replace(/\bCTA\b/g, "行动引导（CTA）")
+    .replace(/\bCTA\b/g, "行动引导")
     .replace(/live sample/gi, "实时样本")
     .replace(/hybrid/gi, "混合")
     .replace(/fallback/gi, "补位");
@@ -721,7 +727,7 @@ function buildExecutionBriefRows(analysis: AnalysisResult, context: string): Exe
     },
     {
       label: "💰 商业延展",
-      content: "先跑出收藏、停留或咨询，再把同主题内容延展成图文、分镜脚本和视频版本，不要一开始同时写多个变现方向。",
+      content: "先跑出收藏、停留或咨询，再把同主题拆成图文、分镜脚本和视频版本，不要一开始同时写多个变现方向。",
     },
   ];
 }
@@ -859,7 +865,7 @@ function buildCommercialTracks(
     {
       name: "电商带货",
       fit: Math.min(96, Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 16 : 0))),
-      reason: "冲击力和节奏更适合做转化型表达，但产品利益点和 CTA 需要足够直接。",
+      reason: "冲击力和节奏更适合做转化型表达，但产品利益点和行动引导需要足够直接。",
       nextStep: "把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。",
     },
     {
@@ -894,7 +900,7 @@ function buildCreationAssistBrief(
       : "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
     commerceDriven
       ? "商业动作：结尾只保留一个成交动作，统一导向橱窗、评论区关键词或私聊入口。"
-      : "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
+      : "商业动作：结尾必须补行动引导，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
     context.trim() ? `业务背景：${context.trim()}` : "业务背景：未填写，建议补充目标受众与转化目标。",
   ].join("\n");
 }
@@ -999,12 +1005,19 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
+    .replace(/Call to Action/gi, "行动引导")
+    .replace(/call-to-action/gi, "行动引导")
+    .replace(/\bHook\b/gi, "开场钩子")
+    .replace(/\bOffer\b/gi, "承接方案")
+    .replace(/\bPlaybook\b/gi, "执行打法")
+    .replace(/\bBrief\b/gi, "简报")
     .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
     .replace(/提取音频/g, "截取视频片段")
     .replace(/音频中/g, "视频里")
     .replace(/音频内/g, "视频里")
     .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
     .replace(/转写摘录/g, "视频分析提炼")
+    .replace(/\bCTA\b/g, "行动引导")
     .replace(/知识付费|社群会员|模板包|软件分销|咨询|课程|工作流案例|前后效率对比|模板|实操演示|后台分析过程|漏斗|中位数|均值|内部排序/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -1580,6 +1593,7 @@ export default function MVAnalysisPage() {
     () => growthSnapshot?.titleExecutions ?? [],
     [growthSnapshot],
   );
+  const assetAdaptation = growthSnapshot?.decisionFramework?.assetAdaptation ?? null;
   const visualKeyFrames = useMemo(
     () => analysis?.keyFrames?.slice(0, 4) ?? [],
     [analysis],
@@ -1589,10 +1603,25 @@ export default function MVAnalysisPage() {
     [growthSnapshot],
   );
   const topRecommendedPlatforms = useMemo(
-    () => platformRecommendations.slice(0, 3).map((item) => ({
-      recommendation: item,
-      activity: platformActivityCards.find((activity) => activity.platformLabel === item.name) || null,
-    })),
+    () => {
+      if (platformRecommendations.length) {
+        return platformRecommendations.slice(0, 3).map((item) => ({
+          recommendation: item,
+          activity: platformActivityCards.find((activity) => activity.platformLabel === item.name) || null,
+        }));
+      }
+
+      return platformActivityCards.slice(0, 3).map((activity) => ({
+        recommendation: {
+          name: activity.platformLabel,
+          reason: activity.summary,
+          action: activity.optimizationPlan || activity.recommendedFormat,
+          playbook: activity.contentAngle,
+          topicIdeas: [],
+        },
+        activity,
+      }));
+    },
     [platformRecommendations, platformActivityCards],
   );
   const monetizationStrategyCards = useMemo(
@@ -2246,9 +2275,12 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="rounded-[24px] border border-[#f5b7ff]/20 bg-[linear-gradient(135deg,rgba(245,183,255,0.12),rgba(255,255,255,0.03))] p-5">
-                        <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">内容延展</div>
-                        <div className="mt-3 text-sm leading-7 text-white/78">
-                          保留用户真正需要的版本建议、平台打法和延展方向，直接服务下一步创作和发布。
+                        <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">首发形式判断</div>
+                        <div className="mt-3 text-sm leading-7 text-white/88">
+                          {replaceTerms(assetAdaptation?.format || titleExecutionCards[0]?.presentationMode || "优先短视频首发，再补图文版本。")}
+                        </div>
+                        <div className="mt-2 text-sm leading-7 text-white/68">
+                          {replaceTerms(assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook || "开头先抛一个最扎心的问题或最直接的结果。")}
                         </div>
                       </div>
                     </div>
@@ -2461,6 +2493,37 @@ export default function MVAnalysisPage() {
                           数据证据优先
                         </div>
                       </div>
+                      {(assetAdaptation || titleExecutionCards[0]) ? (
+                        <div className="mt-5 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                          <div className="rounded-2xl border border-[#f5b7ff]/18 bg-[rgba(245,183,255,0.06)] p-5">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">首发形式与改法</div>
+                            <div className="mt-3 text-lg font-bold text-white">{replaceTerms(assetAdaptation?.format || titleExecutionCards[0]?.presentationMode || "优先短视频首发")}</div>
+                            <div className="mt-3 text-sm leading-7 text-white/78">
+                              开头怎么改：{replaceTerms(assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook || "先把最扎心的问题、结果或价格反差扔到前 2 秒。")}
+                            </div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">
+                              结构怎么改：{replaceTerms(assetAdaptation?.structure || titleExecutionCards[0]?.copywriting || "按痛点、动作、证据、结果四段写，不要一上来长铺垫。")}
+                            </div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">
+                              结尾动作：{replaceTerms(assetAdaptation?.callToAction || "只保留一个行动引导，统一导向私信词、预约动作或评论词。")}
+                            </div>
+                          </div>
+                          <div className="grid gap-4 lg:grid-cols-2">
+                            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">图文怎么写</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">
+                                {replaceTerms(titleExecutionCards[0]?.graphicPlan || "第一页只写一个结果或痛点句，第二页写谁最需要，第三到四页给动作和前后对比，第五页给证据，第六页只留一个行动。")}
+                              </div>
+                            </div>
+                            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">视频怎么拍</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">
+                                {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，字幕同步点出人群和收益，结尾只留一个行动引导。")}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
                         {personalizedDirectionCards.map((angle, index) => (
                           <div key={`${angle.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
@@ -2481,6 +2544,19 @@ export default function MVAnalysisPage() {
                               <div className="text-xs uppercase tracking-[0.16em] text-white/45">直接执行</div>
                               <div className="mt-2 text-sm leading-7 text-white/78">{stripInternalJargon(angle.action)}</div>
                             </div>
+                            {titleExecutionCards[index] ? (
+                              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                                <div className="rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">更适合的呈现方式</div>
+                                  <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(titleExecutionCards[index].presentationMode || "短视频")}</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(titleExecutionCards[index].formatReason || "")}</div>
+                                </div>
+                                <div className="rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">推荐先发平台</div>
+                                  <div className="mt-2 text-sm leading-7 text-white">{formatPlatformList(titleExecutionCards[index].suitablePlatforms)}</div>
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -2491,7 +2567,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">视频抽帧视觉洞察</h2>
+                        <h2 className="text-2xl font-bold">视频分析商业洞察</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
                         <div className="space-y-4">
@@ -2574,6 +2650,10 @@ export default function MVAnalysisPage() {
                                 <div className="mt-2 text-white/65">{replaceTerms(recommendation.playbook)}</div>
                               ) : null}
                             </div>
+                            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/78">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">适合的赛道</div>
+                              <div className="mt-2">{replaceTerms(activity?.potentialTrack || "优先走痛点解决、结果对比、专业信任建立这类高转化赛道。")}</div>
+                            </div>
                             {activity?.supportActivities?.length ? (
                               <div className="mt-4 rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-3 text-sm leading-7 text-white/78">
                                 <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">当前有效扶持活动</div>
@@ -2583,9 +2663,32 @@ export default function MVAnalysisPage() {
                                   ))}
                                 </div>
                               </div>
-                            ) : null}
-                            {activity?.potentialTrack ? (
-                              <div className="mt-4 text-sm leading-7 text-white/68">潜力赛道：{replaceTerms(activity.potentialTrack)}</div>
+                            ) : (
+                              <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/68">
+                                <div className="text-xs uppercase tracking-[0.16em] text-white/45">当前有效扶持活动</div>
+                                <div className="mt-2">当前未核验到适合长期写入报告的公开扶持活动，更适合优先吃平台自然分发与细分赛道流量。</div>
+                              </div>
+                            )}
+                            {(() => {
+                              const relatedExamples = referenceExamples
+                                .filter((example) => example.platformLabel === recommendation.name)
+                                .slice(0, 2);
+                              return relatedExamples.length ? (
+                                <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">相关账号对比</div>
+                                  <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                    {relatedExamples.map((entry) => (
+                                      <div key={`${recommendation.name}-${entry.id}`}>
+                                        <span className="font-semibold text-white">{replaceTerms(entry.account)}</span>
+                                        <span className="text-white/62">：{replaceTerms(entry.title)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null;
+                            })()}
+                            {activity?.supportSignal ? (
+                              <div className="mt-4 text-sm leading-7 text-white/68">扶持判断：{replaceTerms(activity.supportSignal)}</div>
                             ) : null}
                           </div>
                         ))}
@@ -2729,7 +2832,7 @@ export default function MVAnalysisPage() {
                               <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(item.strategy)}</div>
                             </div>
                             <div className="mt-4 text-sm leading-7 text-white/72">适合承接：{replaceTerms(item.offerType)}</div>
-                            <div className="mt-2 text-sm leading-7 text-white/72">CTA：{replaceTerms(item.callToAction)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">行动引导：{replaceTerms(item.callToAction)}</div>
                             <div className="mt-2 text-sm leading-7 text-white/60">{replaceTerms(item.reason)}</div>
                           </div>
                         ))}

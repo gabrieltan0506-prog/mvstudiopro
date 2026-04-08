@@ -219,7 +219,7 @@ function buildPlatformSignalCluster(collection?: PlatformTrendCollection) {
 }
 
 function inferCarryRule(collection?: PlatformTrendCollection) {
-  if (!collection?.items.length) return "默认承接到单一 CTA，不要同时挂多个转化动作。";
+  if (!collection?.items.length) return "默认承接到单一行动引导，不要同时挂多个转化动作。";
   const avgComments = collection.items.reduce((sum, item) => sum + (item.comments || 0), 0) / Math.max(collection.items.length, 1);
   const avgShares = collection.items.reduce((sum, item) => sum + (item.shares || 0), 0) / Math.max(collection.items.length, 1);
   const avgLikes = collection.items.reduce((sum, item) => sum + (item.likes || 0), 0) / Math.max(collection.items.length, 1);
@@ -535,8 +535,8 @@ function buildOpportunitiesFromCollections(collections: PlatformTrendCollection[
     {
       id: "opp-commercial-bridge",
       title: "把内容流量桥接到明确商业入口",
-      whyNow: "热门结构不等于商业转化，内容一旦有基础吸引力，就应该立刻补上 CTA 和服务承接。",
-      nextAction: "下一条内容开始增加服务说明、案例 CTA 或私域承接动作。",
+      whyNow: "热门结构不等于商业转化，内容一旦有基础吸引力，就应该立刻补上行动引导和服务承接。",
+      nextAction: "下一条内容开始增加服务说明、案例行动引导或私域承接动作。",
       linkedPlatforms: requestedPlatforms.slice(0, 2),
     },
   ];
@@ -713,7 +713,7 @@ function buildMonetizationTracks(
       fit: clamp(Math.round((analysis.impact + analysis.viralPotential + douyinFit) / 3 + (commerceDriven ? 24 : 0) + (sportsCommerce ? 12 : 0) + (offlineDriven ? 4 : 0) + (/商品|电商|带货/.test(industryTemplate.primaryConversion) ? 8 : 0)), 12, 96),
       reason: sportsCommerce
         ? "你是卖健身器材和体育用品，当前最值钱的不是讲氛围，而是让用户立刻判断“适不适合我、能解决什么训练问题、为什么现在值得买”。这就是标准的成交型内容。"
-        : `冲击力和节奏更适合转化型表达，但产品利益点和 CTA 必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
+        : `冲击力和节奏更适合转化型表达，但产品利益点和行动引导必须更直接。当前更适合围绕「${industryTemplate.painPoint}」组织购买理由。`,
       nextStep: sportsCommerce
         ? "先做成交版：第 1 句讲适合谁，第 2 句讲训练场景，第 3 句讲和普通器材差在哪，结尾只留一个动作，统一导向商品页、橱窗或私聊。"
         : `把前三秒改成结果或利益点前置，并把行动指令明确到橱窗、评论区或私域入口。优先做：${industryTemplate.offerExamples[0] || "单品转化"}`,
@@ -1016,7 +1016,7 @@ function buildTitleExecutions(
     const videoPlan =
       presentationMode === "长视频"
         ? `视频拍法：先用 3 到 5 秒直接抛结果或错误认知，中段按「问题出现 -> 为什么会这样 -> 你怎么处理 -> 结果对比」拍成 60 到 120 秒；镜头优先保留口播特写、动作示范、${visualCue || "关键结果对比"}，不要一上来长铺垫。`
-        : `视频拍法：前 2 秒直接念标题里的主结论，中段保留 2 到 3 个高信息量镜头，分别负责痛点、动作和结果，优先借用 ${visualCue || "最有说服力的人物特写和动作示范"}，时长控制在 15 到 35 秒；结尾只留一个 CTA。`;
+        : `视频拍法：前 2 秒直接念标题里的主结论，中段保留 2 到 3 个高信息量镜头，分别负责痛点、动作和结果，优先借用 ${visualCue || "最有说服力的人物特写和动作示范"}，时长控制在 15 到 35 秒；结尾只留一个行动引导。`;
 
     return {
       title,
@@ -1175,7 +1175,7 @@ function buildDataLibraryStructure(
       title: "商业承接策略层",
       purpose: "把内容表现和平台分发结果桥接到可执行的变现动作，而不是只给抽象建议。",
       dataSources: ["monetizationTracks", "platformRecommendations", "businessInsights"],
-      coreFields: ["主商业路径", "平台打法", "CTA", "offer 类型", "验证动作"],
+      coreFields: ["主商业路径", "平台打法", "行动引导", "承接产品形态", "验证动作"],
       outputBoards: ["平台商业变现策略", "现在就能执行的版本", "7天增长规划"],
     },
   ];
@@ -1617,7 +1617,7 @@ function buildDecisionFramework(params: {
     },
     validationPlan: [
       { label: "首发验证", successSignal: `看 ${topPlatform} 的停留、收藏、评论是否真的围绕核心问题。`, nextMove: "如果反馈聚焦，就继续做第二版；如果散掉，就只改开头和标题。" },
-      { label: "承接验证", successSignal: "看用户是否愿意点击、私信、咨询或进入下一步。", nextMove: "如果没有承接动作，就先补清晰 CTA，不要继续加解释。" },
+      { label: "承接验证", successSignal: "看用户是否愿意点击、私信、咨询或进入下一步。", nextMove: "如果没有承接动作，就先补清晰行动引导，不要继续加解释。" },
       { label: "放大验证", successSignal: "确认用户是被什么理由打动，而不是只看虚高曝光。", nextMove: "只保留最有效的卖点，再决定是否扩第二平台。" },
     ],
     audienceTriggers,
@@ -1694,11 +1694,11 @@ function buildCreationAssist(
       timestampLines,
       weakFrameLines,
       "开场建议：前 2-3 秒先给结果、反差或利益点，不要从铺垫开始。",
-      "商业动作：结尾必须补 CTA，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
+      "商业动作：结尾必须补行动引导，把观众导向案例咨询、服务介绍、商品入口或私域承接。",
       backgroundLine,
     ].join("\n"),
-    storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的 CTA，并直接吸收这些秒点建议：${timestampLines}。${backgroundLine}`,
-    workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾 CTA、平台适配版本，并结合这些弱帧修正：${weakFrameLines}。优先服务于 ${primaryTrack} 转化。`,
+    storyboardPrompt: `请基于这条素材，输出一个适合 ${primaryPlatform} 的短视频脚本。要求：结果前置、3 段式结构、结尾加 ${primaryTrack} 对应的行动引导，并直接吸收这些秒点建议：${timestampLines}。${backgroundLine}`,
+    workflowPrompt: `请把这条内容拆成可执行工作流：封面标题、开场钩子、主体结构、结尾行动引导、平台适配版本，并结合这些弱帧修正：${weakFrameLines}。优先服务于 ${primaryTrack} 转化。`,
     assetExtensions,
   };
 }
@@ -1897,7 +1897,7 @@ export function buildMockGrowthSnapshot(params: {
         id: "opp-commercial-bridge",
         title: "把内容流量桥接到明确商业入口",
         whyNow: "当前内容已经有基础视觉吸引力，继续只做“好看”会浪费后续转化机会。",
-        nextAction: "下一条内容开始增加服务说明、案例 CTA 或私域承接动作。",
+        nextAction: "下一条内容开始增加服务说明、案例行动引导或私域承接动作。",
         linkedPlatforms: requestedPlatforms.slice(0, 2),
       },
     ],
