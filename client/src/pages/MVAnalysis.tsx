@@ -1535,6 +1535,26 @@ export default function MVAnalysisPage() {
     () => analysis?.titleSuggestions?.slice(0, 3) ?? [],
     [analysis],
   );
+  const titleExecutionCards = useMemo(
+    () => growthSnapshot?.titleExecutions ?? [],
+    [growthSnapshot],
+  );
+  const platformActivityCards = useMemo(
+    () => growthSnapshot?.platformActivities ?? [],
+    [growthSnapshot],
+  );
+  const monetizationStrategyCards = useMemo(
+    () => growthSnapshot?.monetizationStrategies ?? [],
+    [growthSnapshot],
+  );
+  const dataLibrarySections = useMemo(
+    () => growthSnapshot?.dataLibraryStructure ?? [],
+    [growthSnapshot],
+  );
+  const visibleTopicLibrary = useMemo(
+    () => growthSnapshot?.topicLibrary.slice(0, 6) ?? [],
+    [growthSnapshot],
+  );
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
@@ -2294,7 +2314,27 @@ export default function MVAnalysisPage() {
                         >
                           进入创作画布，直接改首发脚本和镜头
                         </a>
-                        {directTitleSuggestions.length ? (
+                        {titleExecutionCards.length ? (
+                          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="text-sm font-semibold text-white">直接可用的标题与文案</div>
+                            <div className="mt-3 space-y-3">
+                              {titleExecutionCards.map((item, index) => (
+                                <div key={`${index}-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm leading-7 text-white/76">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-semibold text-[#9df6c0]">标题 {index + 1}</span>
+                                    <span className="font-semibold text-white">{replaceTerms(item.title)}</span>
+                                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/55">{item.presentationMode}</span>
+                                    <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/55">{formatPlatformList(item.suitablePlatforms)}</span>
+                                  </div>
+                                  {item.openingHook ? (
+                                    <div className="mt-2 text-white/70">开场句：{replaceTerms(item.openingHook)}</div>
+                                  ) : null}
+                                  <div className="mt-2 text-white/70">{replaceTerms(item.copywriting)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : directTitleSuggestions.length ? (
                           <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                             <div className="text-sm font-semibold text-white">先从这几个标题开始</div>
                             <div className="mt-3 space-y-3">
@@ -2355,6 +2395,134 @@ export default function MVAnalysisPage() {
                               <div className="text-xs uppercase tracking-[0.16em] text-white/45">直接执行</div>
                               <div className="mt-2 text-sm leading-7 text-white/78">{stripInternalJargon(angle.action)}</div>
                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {platformActivityCards.length ? (
+                    <div className="rounded-[28px] border border-[#8ab8ff]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#90c4ff]">
+                        <Compass className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">平台活动与呈现方式</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                        {platformActivityCards.map((item) => (
+                          <div key={item.platform} className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xl font-black text-white">{item.platformLabel}</div>
+                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">活跃度 {item.activityLevel}</div>
+                            </div>
+                            <div className="mt-3 text-sm leading-7 text-white/74">{replaceTerms(item.summary)}</div>
+                            <div className="mt-4 rounded-2xl border border-[#8ab8ff]/20 bg-[#11233a] px-4 py-3 text-sm leading-7 text-white/78">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">更适合的呈现方式</div>
+                              <div className="mt-2">{replaceTerms(item.recommendedFormat)}</div>
+                              <div className="mt-2 text-white/65">{replaceTerms(item.contentAngle)}</div>
+                            </div>
+                            {item.hotTopics.length ? (
+                              <div className="mt-4">
+                                <div className="text-xs uppercase tracking-[0.16em] text-white/45">当前活跃主题</div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {item.hotTopics.map((topic) => (
+                                    <span key={`${item.platform}-${topic}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/72">
+                                      {replaceTerms(topic)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {item.suggestedTopics.length ? (
+                              <div className="mt-4 text-sm leading-7 text-white/68">
+                                推荐切题：{item.suggestedTopics.map((topic) => replaceTerms(topic)).join(" / ")}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {(referenceExamples.length || visibleTopicLibrary.length) ? (
+                    <div className="rounded-[28px] border border-[#7ee7ff]/18 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#7ee7ff]">
+                        <ScanSearch className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">参考账号与话题</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                        <div className="space-y-4">
+                          {referenceExamples.slice(0, 4).map((item) => (
+                            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/55">{item.platformLabel}</span>
+                                <span className="text-base font-semibold text-white">{replaceTerms(item.account)}</span>
+                              </div>
+                              <div className="mt-2 text-sm font-semibold leading-7 text-white">{replaceTerms(item.title)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(item.reason)}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                          <div className="text-sm font-semibold text-white">可延展的话题库</div>
+                          <div className="mt-3 space-y-3">
+                            {visibleTopicLibrary.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm leading-7 text-white/76">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="font-semibold text-white">{replaceTerms(item.title)}</span>
+                                  <span className="text-xs text-[#9df6c0]">{item.confidence}%</span>
+                                </div>
+                                <div className="mt-1 text-white/65">{replaceTerms(item.rationale)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {monetizationStrategyCards.length ? (
+                    <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#f5b7ff]">
+                        <CircleDollarSign className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">推荐平台商业变现策略</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                        {monetizationStrategyCards.map((item) => (
+                          <div key={`${item.platform}-${item.primaryTrack}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xl font-black text-white">{item.platformLabel}</div>
+                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">{stripInternalJargon(item.primaryTrack)}</div>
+                            </div>
+                            <div className="mt-4 rounded-2xl border border-[#f5b7ff]/20 bg-[rgba(245,183,255,0.08)] px-4 py-3">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">怎么变现</div>
+                              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(item.strategy)}</div>
+                            </div>
+                            <div className="mt-4 text-sm leading-7 text-white/72">适合承接：{replaceTerms(item.offerType)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">CTA：{replaceTerms(item.callToAction)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/60">{replaceTerms(item.reason)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {dataLibrarySections.length ? (
+                    <div className="rounded-[28px] border border-[#ffd08f]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#ffd08f]">
+                        <Workflow className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">数据分析库结构</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-3">
+                        {dataLibrarySections.map((item) => (
+                          <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                            <div className="text-lg font-black text-white">{replaceTerms(item.title)}</div>
+                            <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(item.purpose)}</div>
+                            <div className="mt-4 text-xs uppercase tracking-[0.16em] text-[#ffd08f]">数据来源</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{item.dataSources.map((source) => replaceTerms(source)).join(" / ")}</div>
+                            <div className="mt-4 text-xs uppercase tracking-[0.16em] text-[#ffd08f]">关键字段</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{item.coreFields.map((field) => replaceTerms(field)).join(" / ")}</div>
+                            <div className="mt-4 text-xs uppercase tracking-[0.16em] text-[#ffd08f]">输出板块</div>
+                            <div className="mt-2 text-sm leading-7 text-white/72">{item.outputBoards.map((board) => replaceTerms(board)).join(" / ")}</div>
                           </div>
                         ))}
                       </div>

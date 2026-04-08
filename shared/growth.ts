@@ -169,9 +169,48 @@ export const growthPlatformRecommendationSchema = z.object({
   topicIdeas: z.array(growthPlatformTopicIdeaSchema).default([]),
 });
 
+export const growthTitleExecutionSchema = z.object({
+  title: z.string(),
+  copywriting: z.string(),
+  presentationMode: z.enum(["图文", "短视频", "长视频"]),
+  suitablePlatforms: z.array(growthPlatformSchema).default([]),
+  reason: z.string(),
+  openingHook: z.string().default(""),
+});
+
 export const growthBusinessInsightSchema = z.object({
   title: z.string(),
   detail: z.string(),
+});
+
+export const growthPlatformActivitySchema = z.object({
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  summary: z.string(),
+  activityLevel: z.enum(["高", "中", "低"]).default("中"),
+  hotTopics: z.array(z.string()).default([]),
+  recommendedFormat: z.string(),
+  contentAngle: z.string(),
+  suggestedTopics: z.array(z.string()).default([]),
+});
+
+export const growthMonetizationStrategySchema = z.object({
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  primaryTrack: z.string(),
+  strategy: z.string(),
+  callToAction: z.string(),
+  offerType: z.string(),
+  reason: z.string(),
+});
+
+export const growthDataLibrarySectionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  purpose: z.string(),
+  dataSources: z.array(z.string()).default([]),
+  coreFields: z.array(z.string()).default([]),
+  outputBoards: z.array(z.string()).default([]),
 });
 
 export const growthDecisionNoteSchema = z.object({
@@ -354,6 +393,10 @@ export const growthSnapshotSchema = z.object({
   structurePatterns: z.array(growthStructurePatternSchema),
   monetizationTracks: z.array(growthMonetizationTrackSchema),
   platformRecommendations: z.array(growthPlatformRecommendationSchema),
+  titleExecutions: z.array(growthTitleExecutionSchema).default([]),
+  platformActivities: z.array(growthPlatformActivitySchema).default([]),
+  monetizationStrategies: z.array(growthMonetizationStrategySchema).default([]),
+  dataLibraryStructure: z.array(growthDataLibrarySectionSchema).default([]),
   businessInsights: z.array(growthBusinessInsightSchema),
   decisionFramework: growthDecisionFrameworkSchema,
   dashboardConsole: growthDashboardConsoleSchema,
@@ -375,7 +418,11 @@ export type GrowthStructurePattern = z.infer<typeof growthStructurePatternSchema
 export type GrowthMonetizationTrack = z.infer<typeof growthMonetizationTrackSchema>;
 export type GrowthPlatformTopicIdea = z.infer<typeof growthPlatformTopicIdeaSchema>;
 export type GrowthPlatformRecommendation = z.infer<typeof growthPlatformRecommendationSchema>;
+export type GrowthTitleExecution = z.infer<typeof growthTitleExecutionSchema>;
 export type GrowthBusinessInsight = z.infer<typeof growthBusinessInsightSchema>;
+export type GrowthPlatformActivity = z.infer<typeof growthPlatformActivitySchema>;
+export type GrowthMonetizationStrategy = z.infer<typeof growthMonetizationStrategySchema>;
+export type GrowthDataLibrarySection = z.infer<typeof growthDataLibrarySectionSchema>;
 export type GrowthDecisionNote = z.infer<typeof growthDecisionNoteSchema>;
 export type GrowthEvidenceSignal = z.infer<typeof growthEvidenceSignalSchema>;
 export type GrowthMainPath = z.infer<typeof growthMainPathSchema>;
