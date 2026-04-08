@@ -59,6 +59,8 @@ import {
   growthSnapshotSchema,
 } from "@shared/growth";
 import { nowShanghaiIso } from "./growth/time";
+import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
+import { desc, eq } from "drizzle-orm";
 
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
@@ -330,8 +332,9 @@ async function personalizeGrowthSnapshot(params: {
   requestedPlatforms: string[];
   modelName?: string;
   store: Awaited<ReturnType<typeof readTrendStore>>;
+  userEvidence?: Awaited<ReturnType<typeof readGrowthUserEvidence>>;
 }) {
-  const { snapshot, analysis, context, requestedPlatforms, modelName, store } = params;
+  const { snapshot, analysis, context, requestedPlatforms, modelName, store, userEvidence } = params;
   const backfillPlatforms = (store.backfill?.platforms || [])
     .filter((item) => requestedPlatforms.includes(item.platform))
     .map((item) => ({
@@ -378,6 +381,7 @@ async function personalizeGrowthSnapshot(params: {
 你必须先理解“这个人是谁、这条素材是什么、他想实现什么商业价值”，再给判断。
 
 输出规则：
+0. 如果 evidence 里有 userEvidence，优先把它当成这个创作者自己的历史数据库证据；不要被泛行业模板带偏。
 1. 优先依据上传内容分析、用户业务背景和平台证据，不得复读通用模板。
 2. 如果用户身份与素材主题跨域，先回答“这条素材怎么桥接回原业务”，不要直接跳到卖课、社群或咨询。
 3. 严禁把“知识付费、社群会员、咨询陪跑”当默认答案，除非证据充分。
@@ -401,7 +405,7 @@ async function personalizeGrowthSnapshot(params: {
                 requestedPlatforms,
                 analysis,
                 baseSnapshot: {
-                  industryTemplate: snapshot.industryTemplate,
+                  status: snapshot.status,
                   overview: snapshot.overview,
                   platformSnapshots: snapshot.platformSnapshots,
                   topicLibrary: snapshot.topicLibrary.slice(0, 8),
@@ -423,6 +427,7 @@ async function personalizeGrowthSnapshot(params: {
                   creatorCenterEvidence,
                   collections: collectionEvidence,
                 },
+                userEvidence,
               }, null, 2),
             ].join("\n"),
           },
@@ -442,6 +447,7 @@ async function personalizeGrowthSnapshot(params: {
 function buildGrowthDataEvidenceNotes(params: {
   requestedPlatforms: string[];
   store: Awaited<ReturnType<typeof readTrendStore>>;
+  userEvidence?: Awaited<ReturnType<typeof readGrowthUserEvidence>>;
 }) {
   const platformRows = (params.store.backfill?.platforms || [])
     .filter((item) => params.requestedPlatforms.includes(item.platform))
@@ -451,8 +457,170 @@ function buildGrowthDataEvidenceNotes(params: {
     platformRows.length
       ? `平台数据证据：${platformRows.join("；")}。`
       : "",
+    params.userEvidence?.summaryNote || "",
   ];
   return notes.filter(Boolean);
+}
+
+type GrowthUserEvidence = {
+  recentSubmissions: Array<{
+    title: string;
+    category: string;
+    viralScore: number;
+    createdAt: string;
+    scoreStatus: string;
+    platforms: Array<{
+      platform: string;
+      playCount: number;
+      likeCount: number;
+      commentCount: number;
+      shareCount: number;
+      verifyStatus: string;
+    }>;
+  }>;
+  recurringThemes: string[];
+  platformPerformance: Array<{
+    platform: string;
+    submissions: number;
+    avgPlayCount: number;
+    avgLikeCount: number;
+    avgCommentCount: number;
+    avgShareCount: number;
+    topPlayCount: number;
+    topViralScore: number;
+  }>;
+  strongestPlatforms: string[];
+  summaryNote: string;
+};
+
+function extractGrowthKeywords(values: string[]) {
+  const stopwords = new Set([
+    "视频", "内容", "作品", "分享", "记录", "日常", "今天", "这个", "那个", "一种", "一次", "真的",
+    "我们", "你们", "他们", "自己", "一下", "时候", "相关", "个人", "平台", "创作", "商业", "方向",
+  ]);
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    const matches = String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [];
+    for (const raw of matches) {
+      const token = raw.trim().toLowerCase();
+      if (!token || stopwords.has(token)) continue;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    }
+  }
+  return Array.from(counts.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 8)
+    .map(([keyword]) => keyword);
+}
+
+async function readGrowthUserEvidence(userId: number, requestedPlatforms: string[]): Promise<GrowthUserEvidence | null> {
+  const conn = await db.getDb();
+  if (!conn) return null;
+
+  const submissions = await conn
+    .select({
+      id: videoSubmissions.id,
+      title: videoSubmissions.title,
+      description: videoSubmissions.description,
+      category: videoSubmissions.category,
+      viralScore: videoSubmissions.viralScore,
+      scoreStatus: videoSubmissions.scoreStatus,
+      createdAt: videoSubmissions.createdAt,
+    })
+    .from(videoSubmissions)
+    .where(eq(videoSubmissions.userId, userId))
+    .orderBy(desc(videoSubmissions.createdAt))
+    .limit(6);
+
+  if (!submissions.length) return null;
+
+  const recentSubmissions: GrowthUserEvidence["recentSubmissions"] = [];
+  const performance = new Map<string, {
+    submissions: number;
+    playCount: number;
+    likeCount: number;
+    commentCount: number;
+    shareCount: number;
+    topPlayCount: number;
+    topViralScore: number;
+  }>();
+
+  for (const submission of submissions) {
+    const links = await conn
+      .select({
+        platform: videoPlatformLinks.platform,
+        playCount: videoPlatformLinks.playCount,
+        likeCount: videoPlatformLinks.likeCount,
+        commentCount: videoPlatformLinks.commentCount,
+        shareCount: videoPlatformLinks.shareCount,
+        verifyStatus: videoPlatformLinks.verifyStatus,
+      })
+      .from(videoPlatformLinks)
+      .where(eq(videoPlatformLinks.videoSubmissionId, submission.id));
+
+    const filteredLinks = links.filter((item) => !requestedPlatforms.length || requestedPlatforms.includes(String(item.platform)));
+    recentSubmissions.push({
+      title: submission.title,
+      category: submission.category || "",
+      viralScore: Number(submission.viralScore || 0),
+      createdAt: submission.createdAt?.toISOString?.() || new Date(submission.createdAt as any).toISOString(),
+      scoreStatus: String(submission.scoreStatus || ""),
+      platforms: filteredLinks.map((item) => ({
+        platform: String(item.platform),
+        playCount: Number(item.playCount || 0),
+        likeCount: Number(item.likeCount || 0),
+        commentCount: Number(item.commentCount || 0),
+        shareCount: Number(item.shareCount || 0),
+        verifyStatus: String(item.verifyStatus || ""),
+      })),
+    });
+
+    for (const link of filteredLinks) {
+      const key = String(link.platform);
+      const row = performance.get(key) || {
+        submissions: 0,
+        playCount: 0,
+        likeCount: 0,
+        commentCount: 0,
+        shareCount: 0,
+        topPlayCount: 0,
+        topViralScore: 0,
+      };
+      row.submissions += 1;
+      row.playCount += Number(link.playCount || 0);
+      row.likeCount += Number(link.likeCount || 0);
+      row.commentCount += Number(link.commentCount || 0);
+      row.shareCount += Number(link.shareCount || 0);
+      row.topPlayCount = Math.max(row.topPlayCount, Number(link.playCount || 0));
+      row.topViralScore = Math.max(row.topViralScore, Number(submission.viralScore || 0));
+      performance.set(key, row);
+    }
+  }
+
+  const platformPerformance = Array.from(performance.entries())
+    .map(([platform, row]) => ({
+      platform,
+      submissions: row.submissions,
+      avgPlayCount: Math.round(row.playCount / Math.max(row.submissions, 1)),
+      avgLikeCount: Math.round(row.likeCount / Math.max(row.submissions, 1)),
+      avgCommentCount: Math.round(row.commentCount / Math.max(row.submissions, 1)),
+      avgShareCount: Math.round(row.shareCount / Math.max(row.submissions, 1)),
+      topPlayCount: row.topPlayCount,
+      topViralScore: row.topViralScore,
+    }))
+    .sort((left, right) => right.avgPlayCount - left.avgPlayCount || right.topViralScore - left.topViralScore);
+
+  const strongestPlatforms = platformPerformance.slice(0, 2).map((item) => getGrowthPlatformMeta(item.platform).label);
+  const recurringThemes = extractGrowthKeywords(submissions.flatMap((item) => [item.title, item.description || "", item.category || ""]));
+  const summaryNote = `用户历史投稿证据：最近 ${recentSubmissions.length} 条投稿里，${strongestPlatforms.join("、") || "主平台"} 更强，重复主题集中在 ${recurringThemes.slice(0, 4).join("、") || "当前业务核心词"}。`;
+
+  return {
+    recentSubmissions,
+    recurringThemes,
+    platformPerformance,
+    strongestPlatforms,
+    summaryNote,
+  };
 }
 
 function buildFallbackFrameAnalysis(context?: string) {
@@ -837,9 +1005,10 @@ export const appRouter = router({
         analysis: growthAnalysisScoresSchema,
         modelName: growthCampModelSchema.optional(),
       }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const store = await readTrendStore({ preferDerivedFiles: true });
+        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const stalePlatforms = requestedPlatforms.filter((platform) =>
           isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
         );
@@ -872,6 +1041,7 @@ export const appRouter = router({
           requestedPlatforms,
           modelName: input.modelName,
           store: effectiveStore,
+          userEvidence,
         }).catch((error) => {
           console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
           return null;
@@ -879,6 +1049,7 @@ export const appRouter = router({
         const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
           requestedPlatforms,
           store: effectiveStore,
+          userEvidence,
         });
         const snapshot = personalized
           ? growthSnapshotSchema.parse({
@@ -929,6 +1100,7 @@ export const appRouter = router({
             stalePlatforms,
             hasAnyLiveCollection,
             personalizedApplied: Boolean(personalized),
+            userEvidenceApplied: Boolean(userEvidence),
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
             windowDays: snapshot.status.windowDays,
