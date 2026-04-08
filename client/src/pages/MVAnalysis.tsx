@@ -1728,6 +1728,17 @@ export default function MVAnalysisPage() {
     () => growthSnapshot?.platformSnapshots.slice(0, 5) ?? [],
     [growthSnapshot],
   );
+  const fallbackPlatformLabels = useMemo(() => {
+    const labels = new Set<string>();
+    recommendedPlatformNames.forEach((item) => item && labels.add(item));
+    titleExecutionCards.forEach((item) => item.suitablePlatforms.forEach((platform) => labels.add(getPlatformLabel(platform))));
+    (analysis?.platforms || []).forEach((platform) => labels.add(getPlatformLabel(platform)));
+    topPlatformSnapshots.forEach((item) => labels.add(item.displayName));
+    if (!labels.size) {
+      ["小红书", "抖音", "B站"].forEach((item) => labels.add(item));
+    }
+    return Array.from(labels).slice(0, 4);
+  }, [recommendedPlatformNames, titleExecutionCards, analysis, topPlatformSnapshots]);
   const firstScreenGraphicPlan = useMemo(
     () => buildGraphicNoteDetail(
       recommendedPlatformNames,
@@ -1757,7 +1768,7 @@ export default function MVAnalysisPage() {
           .filter((example) => example.platformLabel === recommendation.name)
           .slice(0, 2)
           .map((item) => `${replaceTerms(item.account)}：${replaceTerms(item.title)}`),
-      }));
+        }));
     }
 
     if (platformActivityCards.length) {
@@ -1771,21 +1782,49 @@ export default function MVAnalysisPage() {
           .filter((example) => example.platformLabel === item.platformLabel)
           .slice(0, 2)
           .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
+        }));
+    }
+
+    if (topPlatformSnapshots.length) {
+      return topPlatformSnapshots.slice(0, 4).map((item) => ({
+        name: item.displayName,
+        reason: item.summary,
+        supportActivities: [],
+        potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
+        supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
+        relatedExamples: referenceExamples
+          .filter((example) => example.platformLabel === item.displayName)
+          .slice(0, 2)
+          .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
       }));
     }
 
-    return topPlatformSnapshots.slice(0, 4).map((item) => ({
-      name: item.displayName,
-      reason: item.summary,
-      supportActivities: [],
-      potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
-      supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
+    return fallbackPlatformLabels.map((name) => ({
+      name,
+      reason: `${name} 当前仍适合承接这类“痛点放大 + 结果反差 + 专业信任”内容，先发版重点不是泛流量，而是先拿到停留、收藏、评论和私信。`,
+      supportActivities: /抖音|头条|西瓜/.test(name)
+        ? ["中视频伙伴计划"]
+        : /B站/.test(name)
+          ? ["创作激励", "任务中心征稿"]
+          : /小红书/.test(name)
+            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
+            : /快手/.test(name)
+              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
+          : [],
+      potentialTrack: /小红书/.test(name)
+        ? "产后修复 / 体态焦虑 / 肩颈调理 / 女性健康"
+        : /抖音|快手|头条|西瓜/.test(name)
+          ? "痛点转化 / 结果对比 / 同城门店转化 / 体验课承接"
+          : "深度讲解 / 专业信任 / 方法拆解",
+      supportSignal: /小红书|快手/.test(name)
+        ? "既可吃自然分发，也可结合平台公开扶持入口去做细分赛道放大。"
+        : "有适合长期承接的内容扶持或征稿机制，可同步利用。",
       relatedExamples: referenceExamples
-        .filter((example) => example.platformLabel === item.displayName)
+        .filter((example) => example.platformLabel === name)
         .slice(0, 2)
         .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
     }));
-  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples]);
+  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples, fallbackPlatformLabels]);
   const topPlatformDataReferences = useMemo(() => {
     if (platformActivityCards.length) {
       return platformActivityCards.slice(0, 4).map((item) => ({
@@ -1795,13 +1834,48 @@ export default function MVAnalysisPage() {
         supportActivities: item.supportActivities.slice(0, 2),
       }));
     }
-    return topPlatformSnapshots.slice(0, 4).map((item) => ({
-      title: item.displayName,
-      summary: item.summary,
-      topics: item.sampleTopics.slice(0, 3),
-      supportActivities: [],
+    if (topPlatformSnapshots.length) {
+      return topPlatformSnapshots.slice(0, 4).map((item) => ({
+        title: item.displayName,
+        summary: item.summary,
+        topics: item.sampleTopics.slice(0, 3),
+        supportActivities: [],
+      }));
+    }
+    return fallbackPlatformLabels.map((title) => ({
+      title,
+      summary: `${title} 的平台数据更偏向“细分痛点 + 结果感 + 专业人设”内容，适合把这条视频拆成可收藏的主题和可转化的表达。`,
+      topics: visibleTopicLibrary
+        .filter((item) => item.platformLabel === title || getPlatformLabel(item.platform) === title)
+        .slice(0, 3)
+        .map((item) => item.title)
+        .concat(
+          /小红书/.test(title) ? ["产后修复", "肩颈调理", "女性体态"] :
+          /抖音|快手|头条|西瓜/.test(title) ? ["低价体验", "结果对比", "同城门店"] :
+          ["专业讲解", "方法拆解", "案例复盘"],
+        )
+        .slice(0, 3),
+      supportActivities: /抖音|头条|西瓜/.test(title)
+        ? ["中视频伙伴计划"]
+        : /B站/.test(title)
+          ? ["创作激励", "任务中心征稿"]
+          : /小红书/.test(title)
+            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
+            : /快手/.test(title)
+              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
+          : [],
     }));
-  }, [platformActivityCards, topPlatformSnapshots]);
+  }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
+  const referenceExamplesByPlatform = useMemo(() => {
+    const grouped = new Map<string, ReferenceExampleCard[]>();
+    referenceExamples.forEach((item) => {
+      const key = item.platformLabel || getPlatformLabel(item.platform);
+      const current = grouped.get(key) || [];
+      if (current.length < 3) current.push(item);
+      grouped.set(key, current);
+    });
+    return Array.from(grouped.entries()).slice(0, 5);
+  }, [referenceExamples]);
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
@@ -2453,7 +2527,10 @@ export default function MVAnalysisPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">图文与视频首发打法</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">图文笔记怎么写</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <PanelsTopLeft className="h-4 w-4 text-[#f5b7ff]" />
+                          <span>图文笔记怎么写</span>
+                        </div>
                         <div className="mt-2 text-sm leading-7 text-[#f6d6ff]">优先类型：{replaceTerms(firstScreenGraphicPlan.noteType)}</div>
                         <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.reason)}</div>
                         <div className="mt-3 text-sm leading-7 text-white/82">
@@ -2467,13 +2544,19 @@ export default function MVAnalysisPage() {
                         <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.footer)}</div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">视频怎么拍</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Film className="h-4 w-4 text-[#ffd08f]" />
+                          <span>视频怎么拍</span>
+                        </div>
                         <div className="mt-2 text-sm leading-7 text-white/68">{inferVideoGoal(recommendedPlatformNames)}</div>
                         <div className="mt-3 text-sm leading-7 text-white/82">
                           {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，结尾只留一个行动引导。")}
                         </div>
                         <div className="mt-3 rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,208,143,0.06)] px-3 py-3 text-sm leading-7 text-white/78">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">可直接用的分镜文案</div>
+                          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffcf92]">
+                            <Workflow className="h-4 w-4" />
+                            <span>可直接用的分镜文案</span>
+                          </div>
                           <div className="mt-2 space-y-2">
                             {firstScreenStoryboard.map((item) => (
                               <div key={`${item.time}-${item.title}`}>
@@ -2490,7 +2573,10 @@ export default function MVAnalysisPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">推荐平台与平台数据参考</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">推荐发布平台</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Send className="h-4 w-4 text-[#90c4ff]" />
+                          <span>推荐发布平台</span>
+                        </div>
                         <div className="mt-3 space-y-3">
                           {topPlatformReferenceCards.slice(0, 4).map((item) => {
                             return (
@@ -2513,7 +2599,10 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">平台数据参考</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <ScanSearch className="h-4 w-4 text-[#90c4ff]" />
+                          <span>平台数据参考</span>
+                        </div>
                         <div className="mt-3 space-y-3">
                           {topPlatformDataReferences.map((item) => (
                             <div key={`snapshot-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
@@ -2829,25 +2918,37 @@ export default function MVAnalysisPage() {
                         <div className="space-y-4">
                           {analysis.visualSummary ? (
                             <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#8af0ff]">视觉总判断</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8af0ff]">
+                                <Sparkles className="h-4 w-4" />
+                                <span>视觉总判断</span>
+                              </div>
                               <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
                             </div>
                           ) : null}
                           {analysis.openingFrameAssessment ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">开头画面判断</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                                <Target className="h-4 w-4" />
+                                <span>开头画面判断</span>
+                              </div>
                               <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
                             </div>
                           ) : null}
                           {analysis.sceneConsistency ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">画面统一性</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                                <LayoutDashboard className="h-4 w-4" />
+                                <span>画面统一性</span>
+                              </div>
                               <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
                             </div>
                           ) : null}
                           {analysis.trustSignals?.length ? (
                             <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">可信画面信号</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
+                                <Sparkles className="h-4 w-4" />
+                                <span>可信画面信号</span>
+                              </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
                                 {analysis.trustSignals.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
@@ -2863,14 +2964,26 @@ export default function MVAnalysisPage() {
                                 <span className="rounded-full border border-[#8af0ff]/20 bg-[#8af0ff]/10 px-2 py-1 text-[11px] font-semibold text-[#8af0ff]">{frame.timestamp}</span>
                                 <div className="text-sm font-semibold text-white">{replaceTerms(frame.whatShows)}</div>
                               </div>
-                              <div className="mt-3 text-sm leading-7 text-white/72">可怎么用：{replaceTerms(frame.commercialUse)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/62">问题：{replaceTerms(frame.issue)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/82">改法：{replaceTerms(frame.fix)}</div>
+                              <div className="mt-3 text-sm leading-7 text-white/72">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-[#8af0ff]/15 bg-[#8af0ff]/10 px-2 py-0.5 text-[11px] font-semibold text-[#8af0ff]">可怎么用</span>
+                                {replaceTerms(frame.commercialUse)}
+                              </div>
+                              <div className="mt-2 text-sm leading-7 text-white/62">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/55">问题</span>
+                                {replaceTerms(frame.issue)}
+                              </div>
+                              <div className="mt-3 rounded-xl border border-[#ffb454]/25 bg-[rgba(255,180,84,0.12)] px-3 py-3 text-sm leading-7 text-[#ffd08f] shadow-[0_0_0_1px_rgba(255,180,84,0.08)]">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-[#ffb454]/30 bg-[rgba(255,180,84,0.18)] px-2 py-0.5 text-[11px] font-semibold text-[#ffd08f]">改法</span>
+                                {replaceTerms(frame.fix)}
+                              </div>
                             </div>
                           ))}
                           {analysis.visualRisks?.length ? (
                             <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffb87d]">视觉风险</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffb87d]">
+                                <Target className="h-4 w-4" />
+                                <span>视觉风险</span>
+                              </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
                                 {analysis.visualRisks.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
@@ -3041,14 +3154,20 @@ export default function MVAnalysisPage() {
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                         <div className="space-y-4">
-                          {referenceExamples.slice(0, 4).map((item) => (
-                            <div key={item.id} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-white/55">{item.platformLabel}</span>
-                                <span className="text-base font-semibold text-white">{replaceTerms(item.account)}</span>
+                          {referenceExamplesByPlatform.map(([platformLabel, items]) => (
+                            <div key={platformLabel} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/60 inline-flex">
+                                {platformLabel}
                               </div>
-                              <div className="mt-2 text-sm font-semibold leading-7 text-white">{replaceTerms(item.title)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(item.reason)}</div>
+                              <div className="mt-3 space-y-3">
+                                {items.map((item) => (
+                                  <div key={item.id} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                                    <div className="text-base font-semibold text-white">{replaceTerms(item.account)}</div>
+                                    <div className="mt-1 text-sm font-semibold leading-7 text-white">{replaceTerms(item.title)}</div>
+                                    <div className="mt-1 text-sm leading-7 text-white/68">{replaceTerms(item.reason)}</div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ))}
                         </div>

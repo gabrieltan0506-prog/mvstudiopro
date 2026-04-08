@@ -34,6 +34,15 @@ export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
 
 const DEFAULT_GROWTH_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
 
+type SupportActivityCandidate = {
+  label: string;
+  summary: string;
+  status: "active" | "watch";
+  verifiedBy: "web" | "web+gemini";
+  lastReviewedAt: string;
+  reviewNote: string;
+};
+
 export const PLATFORM_ALIASES = Object.fromEntries([
   ["douyin", "douyin"],
   ["抖音", "douyin"],
@@ -1037,18 +1046,101 @@ function buildTitleExecutions(
   });
 }
 
+// 平台扶持活动统一维护入口。
+// 规则：
+// 1. 只返回 status=active 的项
+// 2. 必须经过 web 或 web+gemini 比对后才允许进入前台
+// 3. 过期、年份不明、来源不稳的活动，保留在候选库外或标记为 watch
+const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, SupportActivityCandidate[]>> = {
+  douyin: [
+    {
+      label: "中视频伙伴计划",
+      summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与既有平台认知比对后保留。",
+    },
+  ],
+  toutiao: [
+    {
+      label: "中视频伙伴计划",
+      summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与既有平台认知比对后保留。",
+    },
+  ],
+  bilibili: [
+    {
+      label: "创作激励",
+      summary: "适合系列内容、案例复盘和方法拆解，是长期可关注的官方激励入口。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与平台现行创作机制比对后保留。",
+    },
+    {
+      label: "任务中心征稿",
+      summary: "适合围绕站内征稿主题做热点切入、专题化创作和活动投稿。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与平台现行征稿机制比对后保留。",
+    },
+  ],
+  xiaohongshu: [
+    {
+      label: "小红书电商与买手成长扶持",
+      summary: "更适合种草笔记、生活方式内容、细分痛点解决和交易承接一体化内容。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
+    },
+    {
+      label: "小红书商家 / 主理人 / 服务商成长扶持",
+      summary: "更适合同城门店、体验课、女性健康、家居生活方式等需要搜索承接和信任积累的内容。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
+    },
+  ],
+  kuaishou: [
+    {
+      label: "快手光合计划与创作者成长扶持",
+      summary: "更适合真实口播、强场景、生活服务承接和长期稳定更新的账号。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+    },
+    {
+      label: "快手直播与短直联动扶持",
+      summary: "更适合先用短视频打痛点，再把体验课、门店服务或直播承接接起来。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+    },
+  ],
+};
+
+function filterSupportActivitiesWithReview(
+  candidates: SupportActivityCandidate[],
+): SupportActivityCandidate[] {
+  return candidates.filter((item) =>
+    item.status === "active"
+    && (item.verifiedBy === "web" || item.verifiedBy === "web+gemini"),
+  );
+}
+
 function buildPlatformSupportActivities(platform: GrowthPlatform) {
-  if (platform === "douyin" || platform === "toutiao") {
-    return [
-      "中视频伙伴计划：西瓜 / 抖音 / 头条联动分发仍可参与，更适合有稳定口播、案例拆解和知识表达的视频。",
-    ];
-  }
-  if (platform === "bilibili") {
-    return [
-      "创作激励与任务中心征稿：当前仍是可持续关注的官方扶持入口，更适合系列内容、案例复盘和方法拆解。",
-    ];
-  }
-  return [];
+  const candidates = PLATFORM_SUPPORT_ACTIVITY_REGISTRY[platform] || [];
+  return filterSupportActivitiesWithReview(candidates)
+    .map((item) => `${item.label}：${item.summary}`);
 }
 
 function buildPlatformActivities(
@@ -1075,11 +1167,7 @@ function buildPlatformActivities(
     const supportActivities = buildPlatformSupportActivities(platform);
     const supportSignal = supportActivities.length
       ? `当前已核验到公开扶持入口，可直接结合这条内容去做适配。`
-      : platform === "xiaohongshu"
-        ? "当前没有单独锁定到可长期引用的公开扶持活动，更该吃搜索、种草和细分赛道分发。"
-        : platform === "kuaishou"
-          ? "当前没有锁定到适合长期写进报告的公开扶持活动，重点仍是吃真实口播、直播关联和强场景内容。"
-          : "当前更适合把内容本身打磨到平台偏好的表达，再去吃平台分发。";
+      : "当前更适合把内容本身打磨到平台偏好的表达，再去吃平台分发。";
     const potentialTrack = platform === "xiaohongshu"
       ? `有潜力赛道：细分痛点解决、结果对比、方法清单、女性健康/生活方式转化。`
       : platform === "douyin"
@@ -1505,30 +1593,36 @@ function buildReferenceExamples(
     })
     .sort((left, right) => right.score - left.score);
 
-  const deduped = new Map<string, { platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>();
+  const grouped = new Map<GrowthPlatform, Array<{ platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>>();
   for (const entry of scored) {
-    const key = `${entry.platform}:${entry.item.author || entry.item.id}`;
-    if (!deduped.has(key)) deduped.set(key, entry);
-    if (deduped.size >= 6) break;
+    const current = grouped.get(entry.platform) || [];
+    const exists = current.some((item) => (item.item.author || item.item.id) === (entry.item.author || entry.item.id));
+    if (exists) continue;
+    if (current.length >= 3) continue;
+    current.push(entry);
+    grouped.set(entry.platform, current);
   }
 
-  return Array.from(deduped.values()).slice(0, 6).map(({ platform, item }, index) => ({
-    id: `reference-${platform}-${item.id}-${index}`,
-    platform,
-    platformLabel: PLATFORM_LABELS[platform],
-    account: item.author || `${PLATFORM_LABELS[platform]} 参考账号`,
-    title: item.title,
-    url: item.url,
-    reason: commerceDriven
-      ? `这条内容和你同样偏成交场景，优先讲适合谁、解决什么、为什么值得买，比泛介绍更容易转化。`
-      : `这条内容能跑起来，是因为它把「${industryTemplate.painPoint}」讲得更具体，用户一眼能看懂自己为什么要继续看。`,
-    production: commerceDriven
-      ? "制作方式：开头先讲用户场景和结果，中段只留 2 到 3 个利益点，补一个真实证据，结尾只留一个动作。"
-      : `制作方式：按“痛点 -> 做法 -> 证据 -> 动作”组织，不平铺过程。可重点参考：${industryTemplate.trustAsset}`,
-    conversion: commerceDriven
-      ? "转化方式：优先导向橱窗、商品页、评论区关键词或私聊，不同时给多个动作。"
-      : `转化方式：围绕「${industryTemplate.primaryConversion}」做单一路径承接，不把多个商业方向混在一条内容里。`,
-  }));
+  return requestedPlatforms.flatMap((platform) => {
+    const rows = grouped.get(platform) || [];
+    return rows.slice(0, 3).map(({ item }, index) => ({
+      id: `reference-${platform}-${item.id}-${index}`,
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      account: item.author || `${PLATFORM_LABELS[platform]} 参考账号`,
+      title: item.title,
+      url: item.url,
+      reason: commerceDriven
+        ? `这条内容和你同样偏成交场景，优先讲适合谁、解决什么、为什么值得买，比泛介绍更容易转化。`
+        : `这条内容能跑起来，是因为它把「${industryTemplate.painPoint}」讲得更具体，用户一眼能看懂自己为什么要继续看。`,
+      production: commerceDriven
+        ? "制作方式：开头先讲用户场景和结果，中段只留 2 到 3 个利益点，补一个真实证据，结尾只留一个动作。"
+        : `制作方式：按“痛点 -> 做法 -> 证据 -> 动作”组织，不平铺过程。可重点参考：${industryTemplate.trustAsset}`,
+      conversion: commerceDriven
+        ? "转化方式：优先导向橱窗、商品页、评论区关键词或私聊，不同时给多个动作。"
+        : `转化方式：围绕「${industryTemplate.primaryConversion}」做单一路径承接，不把多个商业方向混在一条内容里。`,
+    }));
+  });
 }
 
 function compactAudienceReason(context: string, industryTemplate: GrowthIndustryTemplate, fallback: string) {
