@@ -1632,7 +1632,7 @@ export default function MVAnalysisPage() {
             </div>
 
             <div className="rounded-[28px] border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
-              {!fileBase64 ? (
+              {!selectedFile ? (
                 <button
                   onClick={handleSelectFile}
                   className="flex min-h-[320px] w-full flex-col items-center justify-center rounded-[24px] border border-dashed border-white/15 bg-white/5 px-6 text-center transition hover:bg-white/10"
@@ -1780,7 +1780,7 @@ export default function MVAnalysisPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleAnalyze}
-                  disabled={!fileBase64 || isProcessing}
+                  disabled={(!selectedFile && !fileBase64) || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
