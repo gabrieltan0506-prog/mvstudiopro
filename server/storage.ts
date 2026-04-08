@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { put } from "@vercel/blob";
 import { ENV } from "./_core/env";
 
@@ -97,4 +97,28 @@ export async function storagePut(
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
   return { key, url: key };
+}
+
+export async function storageRead(relKey: string): Promise<Buffer | null> {
+  const key = normalizeKey(relKey);
+  const s3Config = getS3Config();
+  if (!s3Config) return null;
+
+  const client = getS3Client(s3Config);
+  const response = await client.send(new GetObjectCommand({
+    Bucket: s3Config.bucket,
+    Key: key,
+  }));
+
+  const body = response.Body as any;
+  if (!body) return null;
+  if (typeof body.transformToByteArray === "function") {
+    return Buffer.from(await body.transformToByteArray());
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
 }
