@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { createJob, getJob } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
@@ -758,6 +759,7 @@ export default function MVAnalysisPage() {
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [inputKind, setInputKind] = useState<InputKind | null>(null);
   const [fileMimeType, setFileMimeType] = useState("");
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
@@ -789,7 +791,6 @@ export default function MVAnalysisPage() {
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
-  const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
@@ -914,6 +915,7 @@ export default function MVAnalysisPage() {
     setFileName(file.name);
     setFileSize(file.size);
     setFileMimeType(file.type || "");
+    setSelectedFile(file);
     setInputKind(isVideo ? "video" : "document");
     setUploadStage("reading");
     setUploadProgress(0);
@@ -927,14 +929,15 @@ export default function MVAnalysisPage() {
 
     void (async () => {
       try {
-        const dataUrl = await readFileAsDataUrl(file);
-        setFileBase64(dataUrl.split(",")[1] || "");
-
         if (isDocument) {
+          const dataUrl = await readFileAsDataUrl(file);
+          setFileBase64(dataUrl.split(",")[1] || "");
           setUploadStage("idle");
           setUploadProgress(100);
           return;
         }
+
+        setFileBase64(null);
 
         const video = document.createElement("video");
         const url = URL.createObjectURL(file);
@@ -974,7 +977,7 @@ export default function MVAnalysisPage() {
   }, []);
 
   const handleAnalyze = useCallback(async () => {
-    if (!fileBase64 || !inputKind) return;
+    if (!inputKind) return;
 
     if (!supervisorAccess) {
       try {
@@ -1002,19 +1005,76 @@ export default function MVAnalysisPage() {
     try {
       const result = inputKind === "document"
           ? await analyzeDocumentMutation.mutateAsync({
-              fileBase64,
+              fileBase64: fileBase64 || "",
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
               modelName: selectedGrowthModel,
             })
-          : await analyzeVideoMutation.mutateAsync({
-              fileBase64,
-              mimeType: fileMimeType || "video/mp4",
-              fileName,
-              context: context || undefined,
-              modelName: selectedGrowthModel,
-            });
+          : await (async () => {
+              if (!selectedFile) {
+                throw new Error("请先选择视频文件");
+              }
+
+              const formData = new FormData();
+              formData.append("file", selectedFile, selectedFile.name);
+
+              const uploadResp = await fetch("/api/upload", {
+                method: "POST",
+                credentials: "include",
+                body: formData,
+              });
+
+              if (!uploadResp.ok) {
+                const detail = await uploadResp.text().catch(() => "");
+                throw new Error(detail || `视频上传失败 (${uploadResp.status})`);
+              }
+
+              const uploaded = await uploadResp.json() as { url?: string };
+              if (!uploaded?.url) {
+                throw new Error("视频上传完成但未返回地址");
+              }
+
+              setUploadStage("analyzing");
+              setUploadProgress(60);
+
+              const { jobId } = await createJob({
+                type: "video",
+                userId: "",
+                input: {
+                  action: "growth_analyze_video",
+                  params: {
+                    fileUrl: uploaded.url,
+                    mimeType: fileMimeType || "video/mp4",
+                    fileName,
+                    context: context || undefined,
+                    modelName: selectedGrowthModel,
+                  },
+                },
+              });
+
+              const startedAt = Date.now();
+              while (Date.now() - startedAt < 12 * 60_000) {
+                const job = await getJob(jobId);
+                if (job.status === "succeeded") {
+                  return {
+                    success: true,
+                    analysis: job.output?.analysis,
+                    videoUrl: job.output?.videoUrl,
+                    transcript: job.output?.transcript,
+                    videoDuration: job.output?.videoDuration,
+                    debug: job.output?.debug,
+                  };
+                }
+                if (job.status === "failed") {
+                  throw new Error(String(job.error || "视频分析失败"));
+                }
+                await new Promise((resolve) => setTimeout(resolve, 2500));
+                setUploadProgress((value) => Math.min(95, Math.max(value, 65)));
+              }
+
+              throw new Error("视频分析超时，请稍后重试");
+            })();
       setAnalysis(normalizeAnalysisScale(result.analysis));
       setDebugInfo({
         inputKind,
@@ -1032,11 +1092,12 @@ export default function MVAnalysisPage() {
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
     }
-  }, [fileBase64, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
     setFileBase64(null);
+    setSelectedFile(null);
     setInputKind(null);
     setFileMimeType("");
     setAnalysis(null);

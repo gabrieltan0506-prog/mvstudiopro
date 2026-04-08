@@ -7,6 +7,8 @@ import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/g
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { storagePut } from "../storage";
+import { uploadBufferToGcs } from "../services/gcs";
+import { validateDuration } from "../videoAnalysis";
 
 const execFileAsync = promisify(execFile);
 
@@ -247,7 +249,8 @@ function formatFrameEvidence(
 }
 
 export async function analyzeVideo(params: {
-  fileBase64: string;
+  fileBase64?: string;
+  fileUrl?: string;
   mimeType: string;
   fileName?: string;
   context?: string;
@@ -255,12 +258,29 @@ export async function analyzeVideo(params: {
 }): Promise<VideoAnalysisResult> {
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
-    const buffer = Buffer.from(params.fileBase64, "base64");
-    const storedVideo = await storagePut(
-      `growth-camp/videos/${Date.now()}-${(params.fileName || "video").replace(/[^a-z0-9._-]/gi, "-")}`,
+    let buffer: Buffer;
+    if (typeof params.fileBase64 === "string" && params.fileBase64.trim()) {
+      buffer = Buffer.from(params.fileBase64, "base64");
+    } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+      const response = await fetch(params.fileUrl);
+      if (!response.ok) {
+        throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
+      }
+      buffer = Buffer.from(await response.arrayBuffer());
+    } else {
+      throw new VideoAnalysisFailure("decode", "缺少视频内容");
+    }
+    const duration = await withTempVideo(buffer, getVideoDurationFromPath);
+    const validation = validateDuration(duration);
+    if (!validation.valid) {
+      throw new VideoAnalysisFailure("decode", validation.error || "视频时长不符合要求");
+    }
+    const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
+    const storedVideo = await uploadBufferToGcs({
+      objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
       buffer,
-      params.mimeType,
-    );
+      contentType: params.mimeType || "video/mp4",
+    });
     let keyframes;
     try {
       keyframes = await extractKeyframes(buffer);
@@ -358,11 +378,18 @@ summary 必须覆盖：
               text: [
                 `文件名：${params.fileName || "未命名视频"}`,
                 `业务背景：${params.context?.trim() || "未提供"}`,
-                `视频公开地址：${storedVideo.url}`,
-                `视频时长：${keyframes.duration.toFixed(1)} 秒`,
+                `视频 GCS 地址：${storedVideo.gcsUri}`,
+                `视频时长：${duration.toFixed(1)} 秒`,
                 `关键帧时间点：${keyframes.frames.map((item, index) => `第${index + 1}帧 ${item.timestamp.toFixed(1)}s`).join("；")}`,
                 transcript ? `口播/字幕转写：\n${transcript.slice(0, 5000)}` : "口播/字幕转写：暂无或转写失败",
               ].join("\n\n"),
+            },
+            {
+              type: "file_url" as const,
+              file_url: {
+                url: storedVideo.gcsUri,
+                mime_type: (params.mimeType === "video/quicktime" ? "video/quicktime" : "video/mp4"),
+              },
             },
             ...keyframes.frames.map((item, index) => ({
               type: "image_url" as const,
@@ -381,9 +408,9 @@ summary 必须覆盖：
     return {
       analysis: growthAnalysisScoresSchema.parse(parsed),
       videoMeta: {
-        videoUrl: storedVideo.url,
+        videoUrl: storedVideo.gcsUri,
         transcript,
-        videoDuration: keyframes.duration,
+        videoDuration: duration,
         provider: response.provider || "unknown",
         model: response.model || "unknown",
         fallback: false,
