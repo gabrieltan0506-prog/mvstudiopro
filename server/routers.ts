@@ -400,7 +400,7 @@ async function personalizeGrowthSnapshot(params: {
    - 把视频抽帧视觉结论真正写进输出，不要只复述音频。尤其要吸收 keyFrames、openingFrameAssessment、visualSummary。
    - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么；并补 formatReason、graphicPlan、videoPlan，图文怎么写和视频怎么拍必须写到能直接执行。
    - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式；并补 supportActivities、supportSignal、potentialTrack、optimizationPlan。
-   - monetizationStrategies：推荐平台对应的商业变现策略、行动引导和 offer 形态。
+   - monetizationStrategies：推荐平台对应的商业变现策略、行动引导和承接产品形态。
    - recommendedPlatforms：至少给 2 到 3 个推荐发布平台，并给出相关账号示例或对标方向。
    - dataLibraryStructure：说明这个分析结果背后应该由哪些数据层来支撑。
 8. 输出必须是结构化 JSON，不要写成散文。`,
