@@ -2,15 +2,19 @@ import {
   type GrowthAnalysisScores,
   type GrowthAudienceTrigger,
   type GrowthBusinessInsight,
+  type GrowthDataLibrarySection,
   type GrowthDecisionFramework,
   type GrowthIndustryTemplate,
   type GrowthMonetizationTrack,
+  type GrowthMonetizationStrategy,
   type GrowthPlatform,
+  type GrowthPlatformActivity,
   type GrowthPlatformRecommendation,
   type GrowthPlatformSnapshot,
   type GrowthPlanStep,
   type GrowthReferenceExample,
   type GrowthSnapshot,
+  type GrowthTitleExecution,
   type GrowthTopicLibraryItem,
   growthSnapshotSchema,
 } from "@shared/growth";
@@ -936,6 +940,180 @@ function buildPlatformRecommendations(
   return recommendations.sort((left, right) => weightedScore(right) - weightedScore(left));
 }
 
+function parsePlatformFromRecommendation(name?: string): GrowthPlatform | null {
+  const value = String(name || "").trim();
+  const matched = Object.entries(PLATFORM_LABELS).find(([, label]) => label === value)?.[0];
+  return (matched as GrowthPlatform | undefined) || null;
+}
+
+function inferPresentationMode(
+  platform: GrowthPlatform | null,
+  analysis: GrowthAnalysisScores,
+  context: string,
+  snapshot?: GrowthPlatformSnapshot,
+  industryTemplate?: GrowthIndustryTemplate,
+) {
+  const signals = deriveContentStrategySignals(
+    analysis,
+    context,
+    snapshot,
+    industryTemplate || matchIndustryTemplate(context, [analysis.summary, ...analysis.strengths]),
+  );
+  if (platform === "xiaohongshu" && signals.noteFirst) return "图文" as const;
+  if (platform === "bilibili" && signals.longVideoFirst) return "长视频" as const;
+  return "短视频" as const;
+}
+
+function buildExecutionCopy(
+  title: string,
+  mode: "图文" | "短视频" | "长视频",
+  context: string,
+  industryTemplate: GrowthIndustryTemplate,
+  openingHook: string,
+) {
+  const audience = inferAudienceArchetype(context);
+  if (mode === "图文") {
+    return `封面先写「${title}」。正文按“什么人最需要 -> 为什么会出现这个问题 -> 一套可执行做法 -> 常见误区 -> 现在先做什么”展开。重点把 ${industryTemplate.painPoint} 讲透，让 ${audience} 看完愿意收藏。${openingHook ? `开头提示：${openingHook}` : ""}`.trim();
+  }
+  if (mode === "长视频") {
+    return `视频开头直接抛出「${title}」，前 10 秒先讲结果和适合谁，中段拆 3 个关键判断或案例，后段补方法和误区，最后只收一个动作。重点不是泛分享，而是把 ${industryTemplate.trustAsset} 讲成能建立信任的完整版本。${openingHook ? `开场可直接用：${openingHook}` : ""}`.trim();
+  }
+  return `短视频直接用「${title}」做前两秒钩子，立刻点出 ${industryTemplate.painPoint} 和结果承诺。主体只留 2 到 3 个证据镜头或动作，中段别解释过长，结尾统一导向一个行动。${openingHook ? `开场建议：${openingHook}` : ""}`.trim();
+}
+
+function buildTitleExecutions(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  platformRecommendations: GrowthPlatformRecommendation[],
+  platformSnapshots: GrowthPlatformSnapshot[],
+  industryTemplate: GrowthIndustryTemplate,
+): GrowthTitleExecution[] {
+  const titles = (analysis.titleSuggestions || []).filter(Boolean);
+  const fallbackTitles = platformRecommendations
+    .flatMap((item) => item.topicIdeas?.map((topic) => topic.title) || [])
+    .filter(Boolean);
+  const primaryHook = analysis.commercialAngles?.[0]?.hook || analysis.timestampSuggestions?.[0]?.fix || "";
+  const mergedTitles = Array.from(new Set([...titles, ...fallbackTitles])).slice(0, 3);
+
+  return mergedTitles.map((title, index) => {
+    const recommendation = platformRecommendations[index] || platformRecommendations[0] || null;
+    const platform = parsePlatformFromRecommendation(recommendation?.name);
+    const snapshot = platform ? platformSnapshots.find((item) => item.platform === platform) : platformSnapshots[0];
+    const presentationMode = inferPresentationMode(platform, analysis, context, snapshot, industryTemplate);
+    const suitablePlatforms = recommendation?.name
+      ? [platform || "xiaohongshu"]
+      : [platformSnapshots[0]?.platform || "xiaohongshu"];
+
+    return {
+      title,
+      copywriting: buildExecutionCopy(title, presentationMode, context, industryTemplate, primaryHook),
+      presentationMode,
+      suitablePlatforms,
+      reason: recommendation?.reason || snapshot?.summary || analysis.summary || `这条标题更适合承接「${industryTemplate.painPoint}」这个核心问题。`,
+      openingHook: primaryHook,
+    };
+  });
+}
+
+function buildPlatformActivities(
+  requestedPlatforms: GrowthPlatform[],
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+  platformSnapshots: GrowthPlatformSnapshot[],
+  platformRecommendations: GrowthPlatformRecommendation[],
+): GrowthPlatformActivity[] {
+  return requestedPlatforms.map((platform) => {
+    const collection = collections[platform];
+    const snapshot = platformSnapshots.find((item) => item.platform === platform);
+    const recommendation = platformRecommendations.find((item) => parsePlatformFromRecommendation(item.name) === platform);
+    const items = (collection?.items || []).filter((item) => item.contentType !== "topic" && item.bucket !== "douyin_topics");
+    const hotTopics = items
+      .slice()
+      .sort((left, right) => ((right.likes || 0) + (right.views || 0) + (right.comments || 0) * 3) - ((left.likes || 0) + (left.views || 0) + (left.comments || 0) * 3))
+      .slice(0, 4)
+      .map((item) => item.title)
+      .filter(Boolean);
+    const activityLevel = items.length >= 40 ? "高" : items.length >= 15 ? "中" : "低";
+    const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
+      || snapshot?.sampleTopics?.slice(0, 3)
+      || [];
+
+    return {
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      summary: snapshot?.summary || recommendation?.reason || "当前平台适合作为辅助发布阵地。",
+      activityLevel,
+      hotTopics,
+      recommendedFormat: snapshot?.recommendedFormats?.[0] || recommendation?.playbook || "先做适配版再验证反馈。",
+      contentAngle: snapshot?.fitLabel || "优先做结果更清楚、场景更具体的表达。",
+      suggestedTopics,
+    };
+  });
+}
+
+function buildMonetizationStrategies(
+  requestedPlatforms: GrowthPlatform[],
+  platformRecommendations: GrowthPlatformRecommendation[],
+  monetizationTracks: GrowthMonetizationTrack[],
+  context: string,
+  industryTemplate: GrowthIndustryTemplate,
+): GrowthMonetizationStrategy[] {
+  const primaryTrack = monetizationTracks[0]?.name || industryTemplate.primaryConversion;
+  const offerType = industryTemplate.offerExamples[0] || industryTemplate.primaryConversion;
+  const buildCallToAction = (track: string) => {
+    if (track.includes("电商")) return "结尾只留商品页、橱窗或私信关键词其中一个动作。";
+    if (track.includes("品牌")) return "引导用户看案例页、合作说明或留下合作关键词。";
+    if (track.includes("咨询")) return "统一导向预约、私信关键词或方案咨询页。";
+    if (track.includes("课程") || track.includes("知识")) return "引导进入方法清单、案例合集或轻量试学入口。";
+    return `统一导向「${industryTemplate.primaryConversion}」这一条动作。`;
+  };
+
+  return requestedPlatforms.slice(0, 4).map((platform) => {
+    const recommendation = platformRecommendations.find((item) => parsePlatformFromRecommendation(item.name) === platform) || platformRecommendations[0];
+    return {
+      platform,
+      platformLabel: PLATFORM_LABELS[platform],
+      primaryTrack,
+      strategy: recommendation?.playbook || recommendation?.action || `先把 ${industryTemplate.painPoint} 讲成明确可执行的价值，再做单一路径承接。`,
+      callToAction: buildCallToAction(primaryTrack),
+      offerType,
+      reason: recommendation?.reason || monetizationTracks[0]?.reason || `这个平台当前更适合验证「${primaryTrack}」这条商业路径。`,
+    };
+  });
+}
+
+function buildDataLibraryStructure(
+  requestedPlatforms: GrowthPlatform[],
+  collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+): GrowthDataLibrarySection[] {
+  const activePlatforms = requestedPlatforms.filter((platform) => (collections[platform]?.items?.length || 0) > 0);
+  return [
+    {
+      id: "creator-evidence",
+      title: "创作者历史证据层",
+      purpose: "把用户自己的投稿、表现和重复主题收进判断，不再用同一套模板回答所有人。",
+      dataSources: ["video_submissions", "video_platform_links", "用户最近投稿历史"],
+      coreFields: ["标题", "平台", "播放/点赞/评论/分享", "viral score", "重复主题"],
+      outputBoards: ["个性化增长方向", "最优首发平台", "商业方向判断"],
+    },
+    {
+      id: "platform-trend",
+      title: "平台趋势活动层",
+      purpose: "提取各平台当前活跃主题、内容结构和热点活动，决定同一主题应该怎么改写。",
+      dataSources: activePlatforms.length ? activePlatforms.map((platform) => `${PLATFORM_LABELS[platform]} live collections`) : ["平台实时抓取样本"],
+      coreFields: ["热点标题", "作者", "标签", "likes/comments/shares/views", "contentType", "bucket"],
+      outputBoards: ["平台近期活动", "参考账号/话题", "推荐呈现方式"],
+    },
+    {
+      id: "conversion-playbook",
+      title: "商业承接策略层",
+      purpose: "把内容表现和平台分发结果桥接到可执行的变现动作，而不是只给抽象建议。",
+      dataSources: ["monetizationTracks", "platformRecommendations", "businessInsights"],
+      coreFields: ["主商业路径", "平台打法", "CTA", "offer 类型", "验证动作"],
+      outputBoards: ["平台商业变现策略", "现在就能执行的版本", "7天增长规划"],
+    },
+  ];
+}
+
 function buildBusinessInsights(
   analysis: GrowthAnalysisScores,
   context: string,
@@ -1545,6 +1723,10 @@ export function buildMockGrowthSnapshot(params: {
   const referenceExamples = buildReferenceExamples(requestedPlatforms, {}, context, industryTemplate);
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, {}, context, industryTemplate);
+  const titleExecutions = buildTitleExecutions(params.analysis, context, platformRecommendations, platformSnapshots, industryTemplate);
+  const platformActivities = buildPlatformActivities(requestedPlatforms, {}, platformSnapshots, platformRecommendations);
+  const monetizationStrategies = buildMonetizationStrategies(requestedPlatforms, platformRecommendations, monetizationTracks, context, industryTemplate);
+  const dataLibraryStructure = buildDataLibraryStructure(requestedPlatforms, {});
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const dashboardConsole = buildDashboardConsole({
     analysis: params.analysis,
@@ -1643,6 +1825,10 @@ export function buildMockGrowthSnapshot(params: {
     structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, []),
     monetizationTracks,
     platformRecommendations,
+    titleExecutions,
+    platformActivities,
+    monetizationStrategies,
+    dataLibraryStructure,
     businessInsights,
     decisionFramework,
     dashboardConsole,
@@ -1707,6 +1893,10 @@ export function buildGrowthSnapshotFromCollections(params: {
   ]);
   const monetizationTracks = buildMonetizationTracks(params.analysis, context, platformSnapshots, industryTemplate);
   const platformRecommendations = buildPlatformRecommendations(requestedPlatforms, params.analysis, platformSnapshots, params.collections, context, industryTemplate);
+  const titleExecutions = buildTitleExecutions(params.analysis, context, platformRecommendations, platformSnapshots, industryTemplate);
+  const platformActivities = buildPlatformActivities(requestedPlatforms, params.collections, platformSnapshots, platformRecommendations);
+  const monetizationStrategies = buildMonetizationStrategies(requestedPlatforms, platformRecommendations, monetizationTracks, context, industryTemplate);
+  const dataLibraryStructure = buildDataLibraryStructure(requestedPlatforms, params.collections);
   const businessInsights = buildBusinessInsights(params.analysis, context, monetizationTracks, industryTemplate);
   const referenceExamples = buildReferenceExamples(requestedPlatforms, params.collections, context, industryTemplate);
   const dashboardConsole = buildDashboardConsole({
@@ -1767,6 +1957,10 @@ export function buildGrowthSnapshotFromCollections(params: {
     structurePatterns: buildStructurePatterns(params.analysis, requestedPlatforms, activeCollections),
     monetizationTracks,
     platformRecommendations,
+    titleExecutions,
+    platformActivities,
+    monetizationStrategies,
+    dataLibraryStructure,
     businessInsights,
     decisionFramework,
     dashboardConsole,
