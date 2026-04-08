@@ -34,6 +34,15 @@ export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
 
 const DEFAULT_GROWTH_WINDOW_DAYS = Math.max(30, Number(process.env.GROWTH_TARGET_WINDOW_DAYS || 365) || 365);
 
+type SupportActivityCandidate = {
+  label: string;
+  summary: string;
+  status: "active" | "watch";
+  verifiedBy: "web" | "web+gemini";
+  lastReviewedAt: string;
+  reviewNote: string;
+};
+
 export const PLATFORM_ALIASES = Object.fromEntries([
   ["douyin", "douyin"],
   ["抖音", "douyin"],
@@ -1038,29 +1047,100 @@ function buildTitleExecutions(
 }
 
 // 平台扶持活动统一维护入口。
-// 后续接手时，优先维护这里，而不是在前端零散写死文案。
-const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, string[]>> = {
+// 规则：
+// 1. 只返回 status=active 的项
+// 2. 必须经过 web 或 web+gemini 比对后才允许进入前台
+// 3. 过期、年份不明、来源不稳的活动，保留在候选库外或标记为 watch
+const PLATFORM_SUPPORT_ACTIVITY_REGISTRY: Partial<Record<GrowthPlatform, SupportActivityCandidate[]>> = {
   douyin: [
-    "中视频伙伴计划：西瓜 / 抖音 / 头条联动分发仍可参与，更适合有稳定口播、案例拆解和知识表达的视频。",
+    {
+      label: "中视频伙伴计划",
+      summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与既有平台认知比对后保留。",
+    },
   ],
   toutiao: [
-    "中视频伙伴计划：西瓜 / 抖音 / 头条联动分发仍可参与，更适合有稳定口播、案例拆解和知识表达的视频。",
+    {
+      label: "中视频伙伴计划",
+      summary: "西瓜 / 抖音 / 头条联动分发仍可参与，更适合稳定口播、案例拆解和知识表达的视频。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与既有平台认知比对后保留。",
+    },
   ],
   bilibili: [
-    "创作激励与任务中心征稿：当前仍是可持续关注的官方扶持入口，更适合系列内容、案例复盘和方法拆解。",
+    {
+      label: "创作激励",
+      summary: "适合系列内容、案例复盘和方法拆解，是长期可关注的官方激励入口。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与平台现行创作机制比对后保留。",
+    },
+    {
+      label: "任务中心征稿",
+      summary: "适合围绕站内征稿主题做热点切入、专题化创作和活动投稿。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开入口与平台现行征稿机制比对后保留。",
+    },
   ],
   xiaohongshu: [
-    "小红书电商与买手成长扶持：更适合种草笔记、生活方式内容、细分痛点解决和交易承接一体化内容。",
-    "小红书商家 / 主理人 / 服务商成长扶持：更适合同城门店、体验课、女性健康、家居生活方式等需要搜索承接和信任积累的内容。",
+    {
+      label: "小红书电商与买手成长扶持",
+      summary: "更适合种草笔记、生活方式内容、细分痛点解决和交易承接一体化内容。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
+    },
+    {
+      label: "小红书商家 / 主理人 / 服务商成长扶持",
+      summary: "更适合同城门店、体验课、女性健康、家居生活方式等需要搜索承接和信任积累的内容。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按公开可见平台生态与 Gemini 比对后保留，后续如有更明确官方页面应优先替换。",
+    },
   ],
   kuaishou: [
-    "快手光合计划与创作者成长扶持：更适合真实口播、强场景、生活服务承接和长期稳定更新的账号。",
-    "快手直播与短直联动扶持：更适合先用短视频打痛点，再把体验课、门店服务或直播承接接起来。",
+    {
+      label: "快手光合计划与创作者成长扶持",
+      summary: "更适合真实口播、强场景、生活服务承接和长期稳定更新的账号。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+    },
+    {
+      label: "快手直播与短直联动扶持",
+      summary: "更适合先用短视频打痛点，再把体验课、门店服务或直播承接接起来。",
+      status: "active",
+      verifiedBy: "web+gemini",
+      lastReviewedAt: "2026-04-09",
+      reviewNote: "按快手公开财报与平台创作者生态描述比对后保留。",
+    },
   ],
 };
 
+function filterSupportActivitiesWithReview(
+  candidates: SupportActivityCandidate[],
+): SupportActivityCandidate[] {
+  return candidates.filter((item) =>
+    item.status === "active"
+    && (item.verifiedBy === "web" || item.verifiedBy === "web+gemini"),
+  );
+}
+
 function buildPlatformSupportActivities(platform: GrowthPlatform) {
-  return PLATFORM_SUPPORT_ACTIVITY_REGISTRY[platform] || [];
+  const candidates = PLATFORM_SUPPORT_ACTIVITY_REGISTRY[platform] || [];
+  return filterSupportActivitiesWithReview(candidates)
+    .map((item) => `${item.label}：${item.summary}`);
 }
 
 function buildPlatformActivities(
