@@ -409,6 +409,12 @@ function mapAnalysisError(error: unknown) {
 
 function replaceTerms(text: string) {
   return String(text || "")
+    .replace(/Call to Action/gi, "行动引导")
+    .replace(/call-to-action/gi, "行动引导")
+    .replace(/\bHook\b/gi, "开场钩子")
+    .replace(/\bOffer\b/gi, "承接方案")
+    .replace(/\bPlaybook\b/gi, "执行打法")
+    .replace(/\bBrief\b/gi, "简报")
     .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
     .replace(/提取音频/g, "截取视频片段")
     .replace(/音频中/g, "视频里")
@@ -999,6 +1005,12 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
+    .replace(/Call to Action/gi, "行动引导")
+    .replace(/call-to-action/gi, "行动引导")
+    .replace(/\bHook\b/gi, "开场钩子")
+    .replace(/\bOffer\b/gi, "承接方案")
+    .replace(/\bPlaybook\b/gi, "执行打法")
+    .replace(/\bBrief\b/gi, "简报")
     .replace(/关于(.+?)的音频/g, "关于$1的视频片段")
     .replace(/提取音频/g, "截取视频片段")
     .replace(/音频中/g, "视频里")
