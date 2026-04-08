@@ -1806,6 +1806,10 @@ export default function MVAnalysisPage() {
         ? ["中视频伙伴计划"]
         : /B站/.test(name)
           ? ["创作激励", "任务中心征稿"]
+          : /小红书/.test(name)
+            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
+            : /快手/.test(name)
+              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
           : [],
       potentialTrack: /小红书/.test(name)
         ? "产后修复 / 体态焦虑 / 肩颈调理 / 女性健康"
@@ -1813,7 +1817,7 @@ export default function MVAnalysisPage() {
           ? "痛点转化 / 结果对比 / 同城门店转化 / 体验课承接"
           : "深度讲解 / 专业信任 / 方法拆解",
       supportSignal: /小红书|快手/.test(name)
-        ? "当前更适合优先吃自然分发、搜索流量和细分赛道势能。"
+        ? "既可吃自然分发，也可结合平台公开扶持入口去做细分赛道放大。"
         : "有适合长期承接的内容扶持或征稿机制，可同步利用。",
       relatedExamples: referenceExamples
         .filter((example) => example.platformLabel === name)
@@ -1855,6 +1859,10 @@ export default function MVAnalysisPage() {
         ? ["中视频伙伴计划"]
         : /B站/.test(title)
           ? ["创作激励", "任务中心征稿"]
+          : /小红书/.test(title)
+            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
+            : /快手/.test(title)
+              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
           : [],
     }));
   }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
