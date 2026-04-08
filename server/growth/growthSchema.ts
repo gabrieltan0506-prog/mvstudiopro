@@ -970,15 +970,16 @@ function buildExecutionCopy(
   context: string,
   industryTemplate: GrowthIndustryTemplate,
   openingHook: string,
+  visualCue?: string,
 ) {
   const audience = inferAudienceArchetype(context);
   if (mode === "图文") {
-    return `封面先写「${title}」。正文按“什么人最需要 -> 为什么会出现这个问题 -> 一套可执行做法 -> 常见误区 -> 现在先做什么”展开。重点把 ${industryTemplate.painPoint} 讲透，让 ${audience} 看完愿意收藏。${openingHook ? `开头提示：${openingHook}` : ""}`.trim();
+    return `封面先写「${title}」。正文不要空讲概念，直接按“什么人最需要 -> 为什么会出现这个问题 -> 一套可执行做法 -> 常见误区 -> 现在先做什么”展开。第二屏就把 ${industryTemplate.painPoint} 讲透，第三到四屏用真实动作、前后对比或案例图把信任立住，让 ${audience} 看完愿意收藏和转发。${visualCue ? `可直接借用这组画面证据：${visualCue}。` : ""}${openingHook ? `开头提示：${openingHook}` : ""}`.trim();
   }
   if (mode === "长视频") {
-    return `视频开头直接抛出「${title}」，前 10 秒先讲结果和适合谁，中段拆 3 个关键判断或案例，后段补方法和误区，最后只收一个动作。重点不是泛分享，而是把 ${industryTemplate.trustAsset} 讲成能建立信任的完整版本。${openingHook ? `开场可直接用：${openingHook}` : ""}`.trim();
+    return `视频开头直接抛出「${title}」，前 10 秒先讲结果和适合谁，中段拆 3 个关键判断或案例，后段补方法和误区，最后只收一个动作。镜头上要优先保留人物特写、动作示范、结果对比和可信证据，不要被空镜头拖慢节奏。重点不是泛分享，而是把 ${industryTemplate.trustAsset} 讲成能建立信任的完整版本。${visualCue ? `最该保留的视觉证据是：${visualCue}。` : ""}${openingHook ? `开场可直接用：${openingHook}` : ""}`.trim();
   }
-  return `短视频直接用「${title}」做前两秒钩子，立刻点出 ${industryTemplate.painPoint} 和结果承诺。主体只留 2 到 3 个证据镜头或动作，中段别解释过长，结尾统一导向一个行动。${openingHook ? `开场建议：${openingHook}` : ""}`.trim();
+  return `短视频直接用「${title}」做前两秒钩子，立刻点出 ${industryTemplate.painPoint} 和结果承诺。主体只留 2 到 3 个证据镜头或动作，中段别解释过长，镜头顺序按“痛点 -> 动作 -> 结果”推进，结尾统一导向一个行动。${visualCue ? `这条视频最该借用的视觉证据是：${visualCue}。` : ""}${openingHook ? `开场建议：${openingHook}` : ""}`.trim();
 }
 
 function buildTitleExecutions(
@@ -993,6 +994,7 @@ function buildTitleExecutions(
     .flatMap((item) => item.topicIdeas?.map((topic) => topic.title) || [])
     .filter(Boolean);
   const primaryHook = analysis.commercialAngles?.[0]?.hook || analysis.timestampSuggestions?.[0]?.fix || "";
+  const visualCue = analysis.keyFrames?.slice(0, 2).map((item) => `${item.timestamp} ${item.whatShows}`).join("；") || "";
   const mergedTitles = Array.from(new Set([...titles, ...fallbackTitles])).slice(0, 3);
 
   return mergedTitles.map((title, index) => {
@@ -1006,15 +1008,15 @@ function buildTitleExecutions(
     ].filter((item): item is GrowthPlatform => Boolean(item)))).slice(0, 3);
     const platformLabels = suitablePlatforms.map((item) => PLATFORM_LABELS[item]).join("、") || "小红书";
     const summaryLabel = snapshot?.summary || recommendation?.reason || analysis.summary || `这条标题更适合承接「${industryTemplate.painPoint}」这个核心问题。`;
-    const baseCopy = buildExecutionCopy(title, presentationMode, context, industryTemplate, primaryHook);
+    const baseCopy = buildExecutionCopy(title, presentationMode, context, industryTemplate, primaryHook, visualCue);
     const graphicPlan =
       presentationMode === "图文"
-        ? `图文做法：封面只放一个结果或反差句，比如「${title}」。正文按「人群痛点 -> 解决动作 -> 真实证据 -> 下一步动作」四屏到六屏展开，每一屏只讲一个点，末页加评论关键词、私信词或预约动作。`
-        : `图文补充版：把视频里的主结论改成 4 到 6 页笔记，第一页讲结果，第二页讲适合谁，第三到四页讲步骤或对比，最后一页只留一个行动。`;
+        ? `图文做法：封面只放一个结果或反差句，比如「${title}」。第一页讲谁最需要，第二页讲痛点为什么会出现，第三到四页用 ${visualCue || "真实动作、前后对比或局部细节"} 做证据，第五页写具体做法，第六页只留评论词、私信词或预约动作。`
+        : `图文补充版：把视频里的主结论改成 4 到 6 页笔记，第一页讲结果，第二页讲适合谁，第三到四页讲步骤或对比，第五页放 ${visualCue || "人物状态和动作细节"}，最后一页只留一个行动。`;
     const videoPlan =
       presentationMode === "长视频"
-        ? `视频拍法：先用 3 到 5 秒直接抛结果或错误认知，中段按「问题出现 -> 为什么会这样 -> 你怎么处理 -> 结果对比」拍成 60 到 120 秒；镜头优先保留口播特写、动作示范和前后对比，不要一上来长铺垫。`
-        : `视频拍法：前 2 秒直接念标题里的主结论，中段保留 2 到 3 个高信息量镜头，分别负责痛点、动作和结果，时长控制在 15 到 35 秒；结尾只留一个 CTA。`;
+        ? `视频拍法：先用 3 到 5 秒直接抛结果或错误认知，中段按「问题出现 -> 为什么会这样 -> 你怎么处理 -> 结果对比」拍成 60 到 120 秒；镜头优先保留口播特写、动作示范、${visualCue || "关键结果对比"}，不要一上来长铺垫。`
+        : `视频拍法：前 2 秒直接念标题里的主结论，中段保留 2 到 3 个高信息量镜头，分别负责痛点、动作和结果，优先借用 ${visualCue || "最有说服力的人物特写和动作示范"}，时长控制在 15 到 35 秒；结尾只留一个 CTA。`;
 
     return {
       title,
@@ -2056,6 +2058,12 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
     lighting: 74,
     impact: 79,
     viralPotential: 77,
+    visualSummary: "样例视觉结论",
+    openingFrameAssessment: "样例开场判断",
+    sceneConsistency: "样例画面统一性",
+    trustSignals: [],
+    visualRisks: [],
+    keyFrames: [],
     strengths: ["画面风格清晰"],
     improvements: ["开头还可以更快"],
     platforms: ["抖音", "小红书"],

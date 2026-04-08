@@ -58,6 +58,18 @@ type AnalysisResult = {
   lighting: number;
   impact: number;
   viralPotential: number;
+  visualSummary?: string;
+  openingFrameAssessment?: string;
+  sceneConsistency?: string;
+  trustSignals?: string[];
+  visualRisks?: string[];
+  keyFrames?: Array<{
+    timestamp: string;
+    whatShows: string;
+    commercialUse: string;
+    issue: string;
+    fix: string;
+  }>;
   strengths: string[];
   improvements: string[];
   platforms: string[];
@@ -378,7 +390,7 @@ function normalizeText(text: string) {
 }
 
 function mapAnalysisError(error: unknown) {
-  const message = String((error as any)?.message || "");
+  const message = replaceTerms(String((error as any)?.message || ""));
   if (message.includes("Unexpected end of JSON input") || message.includes("Failed to fetch") || message.includes("502")) {
     return "视频预处理失败，请重试或更换文件。";
   }
@@ -390,6 +402,10 @@ function mapAnalysisError(error: unknown) {
 
 function replaceTerms(text: string) {
   return String(text || "")
+    .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
+    .replace(/转写摘录/g, "视频分析提炼")
+    .replace(/无音轨，转入视觉优先保守判断/g, "未提取到清晰语音信号，已转入保守视频判断")
+    .replace(/未检测到可靠音轨证据，需要更多依靠视觉结构判断/g, "未检测到足够清晰的语音线索，当前更多依靠视频画面结构判断")
     .replace(/\bCTA\b/g, "行动引导（CTA）")
     .replace(/live sample/gi, "实时样本")
     .replace(/hybrid/gi, "混合")
@@ -972,6 +988,8 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
+    .replace(/音频优先粗筛|第一阶段音频粗筛结论|音频粗筛|音频分析|音频提取|音频结论|音轨证据|音轨/g, "视频分析")
+    .replace(/转写摘录/g, "视频分析提炼")
     .replace(/知识付费|社群会员|模板包|软件分销|咨询|课程|工作流案例|前后效率对比|模板|实操演示|后台分析过程|漏斗|中位数|均值|内部排序/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -1538,6 +1556,10 @@ export default function MVAnalysisPage() {
   const titleExecutionCards = useMemo(
     () => growthSnapshot?.titleExecutions ?? [],
     [growthSnapshot],
+  );
+  const visualKeyFrames = useMemo(
+    () => analysis?.keyFrames?.slice(0, 4) ?? [],
+    [analysis],
   );
   const platformActivityCards = useMemo(
     () => growthSnapshot?.platformActivities ?? [],
@@ -2426,6 +2448,70 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
+                  {analysis && (analysis.visualSummary || visualKeyFrames.length) ? (
+                    <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#8af0ff]">
+                        <Film className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">视频抽帧视觉洞察</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+                        <div className="space-y-4">
+                          {analysis.visualSummary ? (
+                            <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#8af0ff]">视觉总判断</div>
+                              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
+                            </div>
+                          ) : null}
+                          {analysis.openingFrameAssessment ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">开头画面判断</div>
+                              <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
+                            </div>
+                          ) : null}
+                          {analysis.sceneConsistency ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">画面统一性</div>
+                              <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
+                            </div>
+                          ) : null}
+                          {analysis.trustSignals?.length ? (
+                            <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">可信画面信号</div>
+                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                {analysis.trustSignals.slice(0, 3).map((item) => (
+                                  <div key={item}>{replaceTerms(item)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="space-y-4">
+                          {visualKeyFrames.map((frame) => (
+                            <div key={`${frame.timestamp}-${frame.whatShows}`} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="flex items-center gap-3">
+                                <span className="rounded-full border border-[#8af0ff]/20 bg-[#8af0ff]/10 px-2 py-1 text-[11px] font-semibold text-[#8af0ff]">{frame.timestamp}</span>
+                                <div className="text-sm font-semibold text-white">{replaceTerms(frame.whatShows)}</div>
+                              </div>
+                              <div className="mt-3 text-sm leading-7 text-white/72">可怎么用：{replaceTerms(frame.commercialUse)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/62">问题：{replaceTerms(frame.issue)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/82">改法：{replaceTerms(frame.fix)}</div>
+                            </div>
+                          ))}
+                          {analysis.visualRisks?.length ? (
+                            <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffb87d]">视觉风险</div>
+                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                {analysis.visualRisks.slice(0, 3).map((item) => (
+                                  <div key={item}>{replaceTerms(item)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
                   {platformActivityCards.length ? (
                     <div className="rounded-[28px] border border-[#8ab8ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#90c4ff]">
@@ -2433,7 +2519,11 @@ export default function MVAnalysisPage() {
                         <h2 className="text-2xl font-bold">平台活动与呈现方式</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {platformActivityCards.map((item) => (
+                        {platformActivityCards.map((item) => {
+                          const relatedExamples = referenceExamples
+                            .filter((example) => example.platformLabel === item.platformLabel)
+                            .slice(0, 2);
+                          return (
                           <div key={item.platform} className="rounded-2xl border border-white/10 bg-black/15 p-5">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-xl font-black text-white">{item.platformLabel}</div>
@@ -2462,6 +2552,19 @@ export default function MVAnalysisPage() {
                                 推荐切题：{item.suggestedTopics.map((topic) => replaceTerms(topic)).join(" / ")}
                               </div>
                             ) : null}
+                            {relatedExamples.length ? (
+                              <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                                <div className="text-xs uppercase tracking-[0.16em] text-white/45">相关账号参考</div>
+                                <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                  {relatedExamples.map((example) => (
+                                    <div key={example.id}>
+                                      <span className="font-semibold text-white">{replaceTerms(example.account)}</span>
+                                      <span className="text-white/62">：{replaceTerms(example.title)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                             {item.supportActivities.length ? (
                               <div className="mt-4 rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-3">
                                 <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">当前有效扶持活动</div>
@@ -2485,7 +2588,7 @@ export default function MVAnalysisPage() {
                               </div>
                             ) : null}
                           </div>
-                        ))}
+                        )})}
                       </div>
                     </div>
                   ) : null}
