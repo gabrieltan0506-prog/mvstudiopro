@@ -13,6 +13,7 @@ import { validateDuration } from "../videoAnalysis";
 const execFileAsync = promisify(execFile);
 
 const AUDIO_FIRST_PASS_MODEL = "gemini-2.5-pro";
+const VISUAL_FIRST_PASS_MODEL = "gemini-2.5-pro";
 const AUDIO_TOKENS_PER_MINUTE = 1920;
 const VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS = 17700;
 const TOKENS_PER_FRAME = Math.round((VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS - AUDIO_TOKENS_PER_MINUTE) / 60);
@@ -74,6 +75,21 @@ type AudioFirstPass = {
   }>;
   deepDiveBrief: string;
   transcriptSummary: string;
+};
+
+type VisualFirstPass = {
+  visualSummary: string;
+  openingFrameAssessment: string;
+  sceneConsistency: string;
+  trustSignals: string[];
+  visualRisks: string[];
+  keyFrames: Array<{
+    timestamp: string;
+    whatShows: string;
+    commercialUse: string;
+    issue: string;
+    fix: string;
+  }>;
 };
 
 class VideoAnalysisFailure extends Error {
@@ -392,6 +408,89 @@ async function runAudioFirstPass(params: {
   };
 }
 
+async function runVisualFirstPass(params: {
+  sparseFrames: SparseFrame[];
+  context?: string;
+  duration: number;
+  fileName?: string;
+}): Promise<VisualFirstPass> {
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: VISUAL_FIRST_PASS_MODEL,
+    messages: [
+      {
+        role: "system",
+        content: `你是一位短视频视觉策略分析师。你现在只做“关键帧视觉初判”，不要分析音频，不要假装看了完整视频。
+
+规则：
+1. 只能依据给你的关键帧做判断。
+2. 必须判断开头画面是否足够抓人、人物/场景是否建立信任、画面风格是否统一、是否存在可直接转化的演示证据。
+3. keyFrames 至少返回 4 条，时间点必须回 mm:ss。
+4. 每条 keyFrame 都要回答：这帧展示了什么、可用于什么商业表达、问题是什么、怎么修。
+
+只返回 JSON：
+{
+  "visualSummary": "string",
+  "openingFrameAssessment": "string",
+  "sceneConsistency": "string",
+  "trustSignals": ["string"],
+  "visualRisks": ["string"],
+  "keyFrames": [
+    {
+      "timestamp": "00:08",
+      "whatShows": "string",
+      "commercialUse": "string",
+      "issue": "string",
+      "fix": "string"
+    }
+  ]
+}`,
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `文件名：${params.fileName || "未命名视频"}`,
+              `业务背景：${params.context?.trim() || "未提供"}`,
+              `视频时长：${params.duration.toFixed(1)} 秒`,
+              `关键帧时间点：${params.sparseFrames.map((item) => toTimestamp(item.timestamp)).join("、")}`,
+            ].join("\n\n"),
+          },
+          ...params.sparseFrames.map((item, index) => ({
+            type: "image_url" as const,
+            image_url: {
+              url: item.dataUrl,
+              detail: index < 3 ? "high" as const : "auto" as const,
+            },
+          })),
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  return {
+    visualSummary: String(parsed.visualSummary || ""),
+    openingFrameAssessment: String(parsed.openingFrameAssessment || ""),
+    sceneConsistency: String(parsed.sceneConsistency || ""),
+    trustSignals: Array.isArray(parsed.trustSignals) ? parsed.trustSignals.map(String) : [],
+    visualRisks: Array.isArray(parsed.visualRisks) ? parsed.visualRisks.map(String) : [],
+    keyFrames: Array.isArray(parsed.keyFrames)
+      ? parsed.keyFrames.map((item: any) => ({
+          timestamp: String(item?.timestamp || "00:00"),
+          whatShows: String(item?.whatShows || ""),
+          commercialUse: String(item?.commercialUse || ""),
+          issue: String(item?.issue || ""),
+          fix: String(item?.fix || ""),
+        }))
+      : [],
+  };
+}
+
 function buildFallbackVideoAnalysis(summary: string, context: string) {
   const normalized = `${summary}\n${context}`;
   const isCommercial = /品牌|招商|服务|转化|案例/.test(normalized);
@@ -420,6 +519,7 @@ async function runDeepDivePass(params: {
   finalModel: string;
   sparseFrames: SparseFrame[];
   audioFirstPass: AudioFirstPass;
+  visualFirstPass: VisualFirstPass;
   transcript: string;
   duration: number;
   context?: string;
@@ -435,16 +535,18 @@ async function runDeepDivePass(params: {
         role: "system",
         content: `你是一位资深短视频商业策略顾问兼生成式视频导演。你现在做第二阶段“深度洞察”，输入是：
 1. 第一阶段的音频优先粗筛结论
-2. 稀疏关键帧
-3. 转写摘录
+2. 第一阶段的关键帧视觉初判
+3. 稀疏关键帧
+4. 转写摘录
 
 规则：
-1. 必须先吸收第一阶段结论，再用关键帧纠偏，不能把第二阶段写成重复摘要。
+1. 必须先吸收第一阶段音频结论和视觉结论，再用关键帧纠偏，不能把第二阶段写成重复摘要。
 2. 不能假装看了完整逐帧视频；你的视觉判断只能来自提供的关键帧。
-3. summary、strengths、improvements 至少一半要直接引用“音频结论或关键帧证据”。
+3. summary、strengths、improvements 至少一半要直接引用“音频结论、视觉结论或关键帧证据”。
 4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
 5. 如果素材属于户外探店、美食旅行、人物体验这类商业视频，要优先回答“如何提高转化与复用”，而不是空泛讲故事。
 6. 秒点建议必须回到 mm:ss。
+7. weakFrameReferences 必须优先使用视觉初判里已经指出的问题帧，不要空写。
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -498,6 +600,7 @@ async function runDeepDivePass(params: {
               `视频时长：${params.duration.toFixed(1)} 秒`,
               `稀疏关键帧数量：${params.sparseFrames.length}`,
               `第一阶段音频粗筛结论：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
+              `第一阶段关键帧视觉初判：\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
               params.transcript
                 ? `转写摘录：\n${truncate(params.transcript, 5000)}`
                 : "转写摘录：暂无或转写失败，请依第一阶段音频结论和关键帧判断。",
@@ -615,10 +718,34 @@ export async function analyzeVideo(params: {
           transcriptSummary: transcript ? truncate(transcript, 500) : "",
         };
 
+    const visualFirstPass = await runVisualFirstPass({
+      sparseFrames: sparseFrames.frames,
+      context: params.context,
+      duration,
+      fileName: params.fileName,
+    }).catch((error) => {
+      console.warn("[growth.analyzeVideo] visual first pass fallback:", error);
+      return {
+        visualSummary: "已抽取关键帧，但视觉初判失败，转入保守视觉判断。",
+        openingFrameAssessment: "需重点复查开头是否足够直接、是否能一眼建立问题感。",
+        sceneConsistency: "优先保证人物、场景和动作示范能建立信任。",
+        trustSignals: [],
+        visualRisks: [],
+        keyFrames: sparseFrames.frames.slice(0, 4).map((item) => ({
+          timestamp: toTimestamp(item.timestamp),
+          whatShows: "关键帧已抽取，待进一步视觉判断。",
+          commercialUse: "可用来承接人物状态、动作示范或前后对比。",
+          issue: "视觉初判暂缺，需人工或下一轮模型补看。",
+          fix: "优先检查开头帧、人物主体和结果证据帧。",
+        })),
+      };
+    });
+
     const deepDive = await runDeepDivePass({
       finalModel,
       sparseFrames: sparseFrames.frames,
       audioFirstPass,
+      visualFirstPass,
       transcript,
       duration,
       context: params.context,
@@ -644,6 +771,8 @@ export async function analyzeVideo(params: {
         stageTwoModel: finalModel,
         sparseFrameCount: sparseFrames.frames.length,
         estimatedCostProfile: costProfile,
+        failureStage: undefined,
+        failureReason: undefined,
       },
     };
   } catch (error) {

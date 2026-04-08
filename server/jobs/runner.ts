@@ -204,6 +204,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
           stageOneModel: result.videoMeta.stageOneModel,
           stageTwoModel: result.videoMeta.stageTwoModel,
           sparseFrameCount: result.videoMeta.sparseFrameCount,
+          visualPassModel: "gemini-2.5-pro",
           estimatedCostProfile: result.videoMeta.estimatedCostProfile,
           fallback: result.videoMeta.fallback,
           transcriptChars: result.videoMeta.transcript.length,
