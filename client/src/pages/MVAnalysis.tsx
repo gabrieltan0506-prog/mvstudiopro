@@ -2527,7 +2527,10 @@ export default function MVAnalysisPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">图文与视频首发打法</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">图文笔记怎么写</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <PanelsTopLeft className="h-4 w-4 text-[#f5b7ff]" />
+                          <span>图文笔记怎么写</span>
+                        </div>
                         <div className="mt-2 text-sm leading-7 text-[#f6d6ff]">优先类型：{replaceTerms(firstScreenGraphicPlan.noteType)}</div>
                         <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.reason)}</div>
                         <div className="mt-3 text-sm leading-7 text-white/82">
@@ -2541,13 +2544,19 @@ export default function MVAnalysisPage() {
                         <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.footer)}</div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">视频怎么拍</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Film className="h-4 w-4 text-[#ffd08f]" />
+                          <span>视频怎么拍</span>
+                        </div>
                         <div className="mt-2 text-sm leading-7 text-white/68">{inferVideoGoal(recommendedPlatformNames)}</div>
                         <div className="mt-3 text-sm leading-7 text-white/82">
                           {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，结尾只留一个行动引导。")}
                         </div>
                         <div className="mt-3 rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,208,143,0.06)] px-3 py-3 text-sm leading-7 text-white/78">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">可直接用的分镜文案</div>
+                          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffcf92]">
+                            <Workflow className="h-4 w-4" />
+                            <span>可直接用的分镜文案</span>
+                          </div>
                           <div className="mt-2 space-y-2">
                             {firstScreenStoryboard.map((item) => (
                               <div key={`${item.time}-${item.title}`}>
@@ -2564,7 +2573,10 @@ export default function MVAnalysisPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">推荐平台与平台数据参考</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">推荐发布平台</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <Send className="h-4 w-4 text-[#90c4ff]" />
+                          <span>推荐发布平台</span>
+                        </div>
                         <div className="mt-3 space-y-3">
                           {topPlatformReferenceCards.slice(0, 4).map((item) => {
                             return (
@@ -2587,7 +2599,10 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="text-sm font-semibold text-white">平台数据参考</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                          <ScanSearch className="h-4 w-4 text-[#90c4ff]" />
+                          <span>平台数据参考</span>
+                        </div>
                         <div className="mt-3 space-y-3">
                           {topPlatformDataReferences.map((item) => (
                             <div key={`snapshot-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
@@ -2903,25 +2918,37 @@ export default function MVAnalysisPage() {
                         <div className="space-y-4">
                           {analysis.visualSummary ? (
                             <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#8af0ff]">视觉总判断</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8af0ff]">
+                                <Sparkles className="h-4 w-4" />
+                                <span>视觉总判断</span>
+                              </div>
                               <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
                             </div>
                           ) : null}
                           {analysis.openingFrameAssessment ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">开头画面判断</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                                <Target className="h-4 w-4" />
+                                <span>开头画面判断</span>
+                              </div>
                               <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
                             </div>
                           ) : null}
                           {analysis.sceneConsistency ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">画面统一性</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                                <LayoutDashboard className="h-4 w-4" />
+                                <span>画面统一性</span>
+                              </div>
                               <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
                             </div>
                           ) : null}
                           {analysis.trustSignals?.length ? (
                             <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">可信画面信号</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
+                                <Sparkles className="h-4 w-4" />
+                                <span>可信画面信号</span>
+                              </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
                                 {analysis.trustSignals.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
@@ -2937,14 +2964,26 @@ export default function MVAnalysisPage() {
                                 <span className="rounded-full border border-[#8af0ff]/20 bg-[#8af0ff]/10 px-2 py-1 text-[11px] font-semibold text-[#8af0ff]">{frame.timestamp}</span>
                                 <div className="text-sm font-semibold text-white">{replaceTerms(frame.whatShows)}</div>
                               </div>
-                              <div className="mt-3 text-sm leading-7 text-white/72">可怎么用：{replaceTerms(frame.commercialUse)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/62">问题：{replaceTerms(frame.issue)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/82">改法：{replaceTerms(frame.fix)}</div>
+                              <div className="mt-3 text-sm leading-7 text-white/72">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-[#8af0ff]/15 bg-[#8af0ff]/10 px-2 py-0.5 text-[11px] font-semibold text-[#8af0ff]">可怎么用</span>
+                                {replaceTerms(frame.commercialUse)}
+                              </div>
+                              <div className="mt-2 text-sm leading-7 text-white/62">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/55">问题</span>
+                                {replaceTerms(frame.issue)}
+                              </div>
+                              <div className="mt-3 rounded-xl border border-[#ffb454]/25 bg-[rgba(255,180,84,0.12)] px-3 py-3 text-sm leading-7 text-[#ffd08f] shadow-[0_0_0_1px_rgba(255,180,84,0.08)]">
+                                <span className="mr-2 inline-flex items-center rounded-full border border-[#ffb454]/30 bg-[rgba(255,180,84,0.18)] px-2 py-0.5 text-[11px] font-semibold text-[#ffd08f]">改法</span>
+                                {replaceTerms(frame.fix)}
+                              </div>
                             </div>
                           ))}
                           {analysis.visualRisks?.length ? (
                             <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffb87d]">视觉风险</div>
+                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffb87d]">
+                                <Target className="h-4 w-4" />
+                                <span>视觉风险</span>
+                              </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
                                 {analysis.visualRisks.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
