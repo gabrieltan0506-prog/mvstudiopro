@@ -7,6 +7,7 @@ import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/g
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { uploadBufferToGcs } from "../services/gcs";
+import { storageRead } from "../storage";
 import { validateDuration } from "../videoAnalysis";
 
 const execFileAsync = promisify(execFile);
@@ -521,6 +522,7 @@ async function runDeepDivePass(params: {
 export async function analyzeVideo(params: {
   fileBase64?: string;
   fileUrl?: string;
+  fileKey?: string;
   mimeType: string;
   fileName?: string;
   context?: string;
@@ -529,7 +531,20 @@ export async function analyzeVideo(params: {
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
     let buffer: Buffer;
-    if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+    if (typeof params.fileKey === "string" && params.fileKey.trim()) {
+      const storedBuffer = await storageRead(params.fileKey).catch(() => null);
+      if (storedBuffer?.length) {
+        buffer = storedBuffer;
+      } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
+        const response = await fetch(params.fileUrl);
+        if (!response.ok) {
+          throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);
+        }
+        buffer = Buffer.from(await response.arrayBuffer());
+      } else {
+        throw new VideoAnalysisFailure("decode", "无法读取上传视频");
+      }
+    } else if (typeof params.fileUrl === "string" && params.fileUrl.trim()) {
       const response = await fetch(params.fileUrl);
       if (!response.ok) {
         throw new VideoAnalysisFailure("decode", `下载上传视频失败: ${response.status}`);

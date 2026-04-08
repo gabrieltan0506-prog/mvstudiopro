@@ -239,7 +239,7 @@ function readFileAsDataUrl(file: File) {
 }
 
 async function uploadFileWithProgress(file: File, onProgress: (percent: number) => void) {
-  return new Promise<{ url?: string }>((resolve, reject) => {
+  return new Promise<{ url?: string; key?: string }>((resolve, reject) => {
     const formData = new FormData();
     formData.append("file", file, file.name);
 
@@ -1229,6 +1229,7 @@ export default function MVAnalysisPage() {
                   action: "growth_analyze_video",
                   params: {
                     fileUrl: uploaded.url,
+                    fileKey: uploaded.key,
                     mimeType: fileMimeType || "video/mp4",
                     fileName,
                     context: context || undefined,
