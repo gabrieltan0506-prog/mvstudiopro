@@ -148,6 +148,13 @@ type ProcessingStepCard = {
   status: "done" | "active" | "pending";
 };
 
+function revealText(text: string, elapsedTime: number, seed = 0, speed = 22) {
+  const normalized = String(text || "");
+  if (!normalized) return "";
+  const visibleCount = Math.max(1, Math.min(normalized.length, Math.floor(elapsedTime * speed) - seed));
+  return normalized.slice(0, visibleCount);
+}
+
 type TrendTableRow = {
   platform: string;
   topic: string;
@@ -1386,6 +1393,14 @@ export default function MVAnalysisPage() {
     ].filter(Boolean) as string[];
     return Array.from(new Set(messages));
   }, [processingSteps]);
+  const animatedProcessingSteps = useMemo(
+    () => processingSteps.map((step, index) => ({
+      ...step,
+      animatedLabel: step.status === "done" ? step.label : revealText(step.label, elapsedTime, index * 10, 10),
+      animatedDetail: step.status === "done" ? step.detail : revealText(step.detail, elapsedTime, index * 16, 18),
+    })),
+    [processingSteps, elapsedTime],
+  );
 
   const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
   const growthSnapshotDebug = growthSnapshotQuery.data?.debug ?? null;
@@ -1786,23 +1801,32 @@ export default function MVAnalysisPage() {
                             <div className="mt-1 leading-6 text-white/68">{activeProcessingStep.detail}</div>
                           </div>
                         ) : null}
-                        {processingSteps.length ? (
+                        {animatedProcessingSteps.length ? (
                           <div className="grid gap-2 md:grid-cols-3">
-                            {processingSteps.map((step) => (
+                            {animatedProcessingSteps.map((step) => (
                               <div
                                 key={step.id}
                                 className={`rounded-xl border px-3 py-2.5 ${
                                   step.status === "done"
-                                    ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100"
+                                    ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.12),0_0_24px_rgba(52,211,153,0.16)]"
                                     : step.status === "active"
-                                      ? "border-[#ff8a3d]/25 bg-white/8 text-white"
-                                      : "border-white/10 bg-black/20 text-white/45"
+                                      ? "animate-pulse border-[#ff8a3d]/35 bg-[rgba(255,138,61,0.14)] text-white shadow-[0_0_0_1px_rgba(255,138,61,0.1),0_0_24px_rgba(255,138,61,0.14)]"
+                                      : "animate-pulse border-white/12 bg-[rgba(255,255,255,0.05)] text-white/60"
                                 }`}
                               >
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">
                                   {step.status === "done" ? "已完成" : step.status === "active" ? "进行中" : "等待中"}
                                 </div>
-                                <div className="mt-1 text-sm font-semibold">{step.label}</div>
+                                <div className="mt-1 text-sm font-semibold">{step.animatedLabel || "…"}</div>
+                                <div className={`mt-1 text-xs leading-5 ${
+                                  step.status === "done"
+                                    ? "text-emerald-100/80"
+                                    : step.status === "active"
+                                      ? "text-white/82"
+                                      : "text-white/55"
+                                }`}>
+                                  {step.animatedDetail || "…"}
+                                </div>
                               </div>
                             ))}
                           </div>
