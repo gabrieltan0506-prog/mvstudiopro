@@ -1551,6 +1551,10 @@ export default function MVAnalysisPage() {
     () => growthSnapshot?.dataLibraryStructure ?? [],
     [growthSnapshot],
   );
+  const recommendedPlatformNames = useMemo(
+    () => growthSnapshot?.growthHandoff?.recommendedPlatforms?.map((platform) => getPlatformLabel(platform)) ?? [],
+    [growthSnapshot],
+  );
   const visibleTopicLibrary = useMemo(
     () => growthSnapshot?.topicLibrary.slice(0, 6) ?? [],
     [growthSnapshot],
@@ -2316,7 +2320,12 @@ export default function MVAnalysisPage() {
                         </a>
                         {titleExecutionCards.length ? (
                           <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="text-sm font-semibold text-white">直接可用的标题与文案</div>
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-sm font-semibold text-white">直接可用的标题与文案</div>
+                              {recommendedPlatformNames.length ? (
+                                <div className="text-xs text-white/55">推荐平台：{recommendedPlatformNames.join("、")}</div>
+                              ) : null}
+                            </div>
                             <div className="mt-3 space-y-3">
                               {titleExecutionCards.map((item, index) => (
                                 <div key={`${index}-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm leading-7 text-white/76">
@@ -2330,6 +2339,22 @@ export default function MVAnalysisPage() {
                                     <div className="mt-2 text-white/70">开场句：{replaceTerms(item.openingHook)}</div>
                                   ) : null}
                                   <div className="mt-2 text-white/70">{replaceTerms(item.copywriting)}</div>
+                                  {item.formatReason ? (
+                                    <div className="mt-3 rounded-xl border border-[#8ab8ff]/20 bg-[#11233a] px-3 py-3 text-white/78">
+                                      <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">为什么用这种呈现方式</div>
+                                      <div className="mt-2">{replaceTerms(item.formatReason)}</div>
+                                    </div>
+                                  ) : null}
+                                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                                    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
+                                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">图文怎么做</div>
+                                      <div className="mt-2 text-white/72">{replaceTerms(item.graphicPlan || "当前不建议先做图文首发。")}</div>
+                                    </div>
+                                    <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
+                                      <div className="text-xs uppercase tracking-[0.16em] text-white/45">视频怎么拍</div>
+                                      <div className="mt-2 text-white/72">{replaceTerms(item.videoPlan || "当前不建议先做视频首发。")}</div>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -2435,6 +2460,28 @@ export default function MVAnalysisPage() {
                             {item.suggestedTopics.length ? (
                               <div className="mt-4 text-sm leading-7 text-white/68">
                                 推荐切题：{item.suggestedTopics.map((topic) => replaceTerms(topic)).join(" / ")}
+                              </div>
+                            ) : null}
+                            {item.supportActivities.length ? (
+                              <div className="mt-4 rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-3">
+                                <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">当前有效扶持活动</div>
+                                <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                  {item.supportActivities.map((activity) => (
+                                    <div key={`${item.platform}-activity-${activity}`}>{replaceTerms(activity)}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {item.supportSignal ? (
+                              <div className="mt-4 text-sm leading-7 text-white/68">扶持判断：{replaceTerms(item.supportSignal)}</div>
+                            ) : null}
+                            {item.potentialTrack ? (
+                              <div className="mt-2 text-sm leading-7 text-white/68">潜力赛道：{replaceTerms(item.potentialTrack)}</div>
+                            ) : null}
+                            {item.optimizationPlan ? (
+                              <div className="mt-4 rounded-2xl border border-[#f5b7ff]/18 bg-[rgba(245,183,255,0.06)] px-4 py-3 text-sm leading-7 text-white/78">
+                                <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">更深层的优化方案</div>
+                                <div className="mt-2">{replaceTerms(item.optimizationPlan)}</div>
                               </div>
                             ) : null}
                           </div>

@@ -176,6 +176,9 @@ export const growthTitleExecutionSchema = z.object({
   suitablePlatforms: z.array(growthPlatformSchema).default([]),
   reason: z.string(),
   openingHook: z.string().default(""),
+  formatReason: z.string().default(""),
+  graphicPlan: z.string().default(""),
+  videoPlan: z.string().default(""),
 });
 
 export const growthBusinessInsightSchema = z.object({
@@ -192,6 +195,10 @@ export const growthPlatformActivitySchema = z.object({
   recommendedFormat: z.string(),
   contentAngle: z.string(),
   suggestedTopics: z.array(z.string()).default([]),
+  supportActivities: z.array(z.string()).default([]),
+  supportSignal: z.string().default(""),
+  potentialTrack: z.string().default(""),
+  optimizationPlan: z.string().default(""),
 });
 
 export const growthMonetizationStrategySchema = z.object({

@@ -1000,19 +1000,53 @@ function buildTitleExecutions(
     const platform = parsePlatformFromRecommendation(recommendation?.name);
     const snapshot = platform ? platformSnapshots.find((item) => item.platform === platform) : platformSnapshots[0];
     const presentationMode = inferPresentationMode(platform, analysis, context, snapshot, industryTemplate);
-    const suitablePlatforms = recommendation?.name
-      ? [platform || "xiaohongshu"]
-      : [platformSnapshots[0]?.platform || "xiaohongshu"];
+    const suitablePlatforms = Array.from(new Set([
+      platform,
+      ...platformRecommendations.map((item) => parsePlatformFromRecommendation(item.name)),
+    ].filter((item): item is GrowthPlatform => Boolean(item)))).slice(0, 3);
+    const platformLabels = suitablePlatforms.map((item) => PLATFORM_LABELS[item]).join("、") || "小红书";
+    const summaryLabel = snapshot?.summary || recommendation?.reason || analysis.summary || `这条标题更适合承接「${industryTemplate.painPoint}」这个核心问题。`;
+    const baseCopy = buildExecutionCopy(title, presentationMode, context, industryTemplate, primaryHook);
+    const graphicPlan =
+      presentationMode === "图文"
+        ? `图文做法：封面只放一个结果或反差句，比如「${title}」。正文按「人群痛点 -> 解决动作 -> 真实证据 -> 下一步动作」四屏到六屏展开，每一屏只讲一个点，末页加评论关键词、私信词或预约动作。`
+        : `图文补充版：把视频里的主结论改成 4 到 6 页笔记，第一页讲结果，第二页讲适合谁，第三到四页讲步骤或对比，最后一页只留一个行动。`;
+    const videoPlan =
+      presentationMode === "长视频"
+        ? `视频拍法：先用 3 到 5 秒直接抛结果或错误认知，中段按「问题出现 -> 为什么会这样 -> 你怎么处理 -> 结果对比」拍成 60 到 120 秒；镜头优先保留口播特写、动作示范和前后对比，不要一上来长铺垫。`
+        : `视频拍法：前 2 秒直接念标题里的主结论，中段保留 2 到 3 个高信息量镜头，分别负责痛点、动作和结果，时长控制在 15 到 35 秒；结尾只留一个 CTA。`;
 
     return {
       title,
-      copywriting: buildExecutionCopy(title, presentationMode, context, industryTemplate, primaryHook),
+      copywriting: `${baseCopy} 更适合先发到 ${platformLabels}，先验证点击和完播，再决定是否拆系列。`,
       presentationMode,
       suitablePlatforms,
-      reason: recommendation?.reason || snapshot?.summary || analysis.summary || `这条标题更适合承接「${industryTemplate.painPoint}」这个核心问题。`,
+      reason: summaryLabel,
       openingHook: primaryHook,
+      formatReason:
+        presentationMode === "图文"
+          ? `这条更适合图文首发，因为用户需要快速看懂“适合谁、怎么做、为什么有效”，而不是先听长口播。首发跑通后再拆视频。`
+          : presentationMode === "长视频"
+            ? `这条更适合视频，因为它需要通过口播节奏、动作示范和前后对比来建立信任，单纯图文不够承接。`
+            : `这条更适合短视频，因为结论够集中，冲突够明确，前 2 秒就能把用户拉住。`,
+      graphicPlan,
+      videoPlan,
     };
   });
+}
+
+function buildPlatformSupportActivities(platform: GrowthPlatform) {
+  if (platform === "douyin" || platform === "toutiao") {
+    return [
+      "中视频伙伴计划：西瓜 / 抖音 / 头条联动分发仍可参与，更适合有稳定口播、案例拆解和知识表达的视频。",
+    ];
+  }
+  if (platform === "bilibili") {
+    return [
+      "创作激励与任务中心征稿：当前仍是可持续关注的官方扶持入口，更适合系列内容、案例复盘和方法拆解。",
+    ];
+  }
+  return [];
 }
 
 function buildPlatformActivities(
@@ -1036,6 +1070,33 @@ function buildPlatformActivities(
     const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
       || snapshot?.sampleTopics?.slice(0, 3)
       || [];
+    const supportActivities = buildPlatformSupportActivities(platform);
+    const supportSignal = supportActivities.length
+      ? `当前已核验到公开扶持入口，可直接结合这条内容去做适配。`
+      : platform === "xiaohongshu"
+        ? "当前没有单独锁定到可长期引用的公开扶持活动，更该吃搜索、种草和细分赛道分发。"
+        : platform === "kuaishou"
+          ? "当前没有锁定到适合长期写进报告的公开扶持活动，重点仍是吃真实口播、直播关联和强场景内容。"
+          : "当前更适合把内容本身打磨到平台偏好的表达，再去吃平台分发。";
+    const potentialTrack = platform === "xiaohongshu"
+      ? `有潜力赛道：细分痛点解决、结果对比、方法清单、女性健康/生活方式转化。`
+      : platform === "douyin"
+        ? `有潜力赛道：强开场结果流、口播解决方案流、前后对比和场景演示流。`
+        : platform === "bilibili"
+          ? `有潜力赛道：案例拆解、方法复盘、系列教程、专业信任建立。`
+          : platform === "kuaishou"
+            ? `有潜力赛道：真实口播、直给解决方案、直播前置种草、线下服务承接。`
+            : `有潜力赛道：结论前置、实用信息密度高、能被继续分发的内容。`;
+    const optimizationPlan =
+      platform === "xiaohongshu"
+        ? "深层优化：先做 6 页以内的图文首发版，封面只讲一个结果；正文用痛点、动作、证据、动作四段式，跑通收藏和搜索词后，再拆 30 秒视频。"
+        : platform === "douyin"
+          ? "深层优化：把视频前两秒改成结论句或痛点句，中段只留 2 到 3 个有效镜头，字幕必须同步说人群和结果，结尾只留一个评论词或预约动作。"
+          : platform === "bilibili"
+            ? "深层优化：把当前素材升级成 60 到 120 秒复盘版，讲清为什么有效、哪些人适合、常见误区和改法，用连续更新建立信任。"
+            : platform === "kuaishou"
+              ? "深层优化：去掉绕弯表达，改成生活场景口播和真实示范，优先讲值不值、适不适合、怎么做更省事，再接直播或私域。"
+              : "深层优化：先把一个核心问题讲透，再决定是否延展成系列，不要把多个商业方向混在同一条里。";
 
     return {
       platform,
@@ -1046,6 +1107,10 @@ function buildPlatformActivities(
       recommendedFormat: snapshot?.recommendedFormats?.[0] || recommendation?.playbook || "先做适配版再验证反馈。",
       contentAngle: snapshot?.fitLabel || "优先做结果更清楚、场景更具体的表达。",
       suggestedTopics,
+      supportActivities,
+      supportSignal,
+      potentialTrack,
+      optimizationPlan,
     };
   });
 }
@@ -1415,8 +1480,17 @@ function buildReferenceExamples(
         return contextKeywords.some((keyword) => haystack.includes(keyword));
       });
   });
+  const fallbackItems = items.length
+    ? items
+    : requestedPlatforms.flatMap((platform) => {
+      const collection = collections[platform];
+      if (!collection?.items?.length) return [];
+      return collection.items
+        .filter((item) => item.title)
+        .map((item) => ({ platform, item }));
+    });
 
-  const scored = items
+  const scored = fallbackItems
     .map(({ platform, item }) => {
       const haystack = `${item.title} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
       const keywordHits = contextKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
@@ -1635,16 +1709,19 @@ function buildGrowthHandoff(
   creationAssist: ReturnType<typeof buildCreationAssist>,
 ) {
   const recommendedTrack = monetizationTracks[0]?.name || "品牌合作";
-  const recommendedPlatform =
-    PLATFORM_BY_LABEL[platformRecommendations[0]?.name || ""]
-    || requestedPlatforms[0]
-    || "xiaohongshu";
+  const recommendedPlatforms: GrowthPlatform[] = Array.from(new Set([
+    ...platformRecommendations
+      .map((item) => PLATFORM_BY_LABEL[item.name || ""])
+      .filter((item): item is GrowthPlatform => Boolean(item)),
+    ...requestedPlatforms,
+  ])).slice(0, 3);
+  const finalRecommendedPlatforms: GrowthPlatform[] = recommendedPlatforms.length ? recommendedPlatforms : ["xiaohongshu"];
   return {
     brief: creationAssist.brief,
     storyboardPrompt: creationAssist.storyboardPrompt,
     workflowPrompt: creationAssist.workflowPrompt,
     recommendedTrack,
-    recommendedPlatforms: [recommendedPlatform],
+    recommendedPlatforms: finalRecommendedPlatforms,
     businessGoal: context.trim() || `优先验证「${recommendedTrack}」这条商业承接路径。`,
   };
 }
