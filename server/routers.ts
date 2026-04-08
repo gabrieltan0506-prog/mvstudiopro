@@ -53,10 +53,14 @@ import {
   growthDecisionFrameworkSchema,
   growthDashboardConsoleSchema,
   growthHandoffSchema,
+  growthDataLibrarySectionSchema,
   growthMonetizationTrackSchema,
+  growthMonetizationStrategySchema,
   growthPlanStepSchema,
+  growthPlatformActivitySchema,
   growthPlatformRecommendationSchema,
   growthSnapshotSchema,
+  growthTitleExecutionSchema,
 } from "@shared/growth";
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
@@ -316,6 +320,10 @@ const growthSnapshotPersonalizationSchema = z.object({
   }),
   monetizationTracks: z.array(growthMonetizationTrackSchema),
   platformRecommendations: z.array(growthPlatformRecommendationSchema),
+  titleExecutions: z.array(growthTitleExecutionSchema).default([]),
+  platformActivities: z.array(growthPlatformActivitySchema).default([]),
+  monetizationStrategies: z.array(growthMonetizationStrategySchema).default([]),
+  dataLibraryStructure: z.array(growthDataLibrarySectionSchema).default([]),
   businessInsights: z.array(growthBusinessInsightSchema),
   decisionFramework: growthDecisionFrameworkSchema,
   dashboardConsole: growthDashboardConsoleSchema,
@@ -388,7 +396,12 @@ async function personalizeGrowthSnapshot(params: {
 4. decisionFramework 是主输出，必须保留一条 mainPath 和至少一条 avoidPath。
 5. decisionFramework.assetAdaptation 必须直接说明更适合视频还是图文、开头怎么改、结构怎么改、结尾动作是什么。
 6. 平台数据和历史沉淀只能作为证据，不要暴露后台统计口径、内部排序机制或工程逻辑。
-7. 输出必须是结构化 JSON，不要写成散文。`,
+7. 必须额外返回：
+   - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么。
+   - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式。
+   - monetizationStrategies：推荐平台对应的商业变现策略、CTA 和 offer 形态。
+   - dataLibraryStructure：说明这个分析结果背后应该由哪些数据层来支撑。
+8. 输出必须是结构化 JSON，不要写成散文。`,
       },
       {
         role: "user",
@@ -1057,6 +1070,10 @@ export const appRouter = router({
               overview: personalized.overview,
               monetizationTracks: personalized.monetizationTracks,
               platformRecommendations: personalized.platformRecommendations,
+              titleExecutions: personalized.titleExecutions?.length ? personalized.titleExecutions : baseSnapshot.titleExecutions,
+              platformActivities: personalized.platformActivities?.length ? personalized.platformActivities : baseSnapshot.platformActivities,
+              monetizationStrategies: personalized.monetizationStrategies?.length ? personalized.monetizationStrategies : baseSnapshot.monetizationStrategies,
+              dataLibraryStructure: personalized.dataLibraryStructure?.length ? personalized.dataLibraryStructure : baseSnapshot.dataLibraryStructure,
               businessInsights: personalized.businessInsights,
               decisionFramework: personalized.decisionFramework,
               dashboardConsole: personalized.dashboardConsole,
