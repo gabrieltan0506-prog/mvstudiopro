@@ -84,13 +84,17 @@ function isSportsCommerceContext(text: string) {
 }
 
 function extractContextKeywords(context: string) {
-  return Array.from(new Set(String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])).slice(0, 10);
+  const stopwords = new Set(["我是", "想", "分析", "这条", "视频", "内容", "平台", "怎么", "如何", "做", "增长", "转化", "当前", "用户", "老师"]);
+  return Array.from(new Set((String(context || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])
+    .filter((item) => !stopwords.has(item))))
+    .slice(0, 10);
 }
 
 function normalizeRoleKeywords(values: string[]) {
+  const stopwords = new Set(["视频", "内容", "平台", "分析", "增长", "转化", "用户", "当前", "适合", "专业", "老师"]);
   return Array.from(new Set(values
     .flatMap((value) => String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || [])
-    .filter((item) => item.length >= 2)))
+    .filter((item) => item.length >= 2 && !stopwords.has(item))))
     .slice(0, 12);
 }
 
@@ -1679,61 +1683,94 @@ function buildReferenceExamples(
   const contextKeywords = extractContextKeywords(context);
   const identityKeywords = buildIdentityKeywords(context, industryTemplate);
   const commerceDriven = /卖家|商品|电商|带货|陶瓷|瓷砖|家居|建材|橱窗|下单/.test(context);
+  const deriveReferenceLabel = (
+    platform: GrowthPlatform,
+    item: PlatformTrendCollection["items"][number],
+  ) => {
+    const commentAuthor = item.commentSamples?.find((entry) => entry.author)?.author;
+    const firstTag = normalizeStringList(item.tags).find((value) => !/^\d|^1_u\//.test(value || ""));
+    const firstIndustry = normalizeStringList(item.industryLabels).find((value) => !/待判定|未知|其他/.test(value || ""));
+    const titleSeed = String(item.title || "").replace(/[《》【】#]/g, "").slice(0, 14);
+    return String(
+      item.author
+      || commentAuthor
+      || firstTag
+      || firstIndustry
+      || `${PLATFORM_LABELS[platform]}参考案例${titleSeed ? `·${titleSeed}` : ""}`,
+    ).trim() || `${PLATFORM_LABELS[platform]}参考案例${titleSeed ? `·${titleSeed}` : ""}`;
+  };
+
   const items = requestedPlatforms.flatMap((platform) => {
     const collection = collections[platform];
     if (!collection?.items?.length) return [];
-    return collection.items
+    const mapped = collection.items
       .map((item) => ({ platform, item }))
       .filter(({ item }) => {
-        const haystack = `${item.title} ${item.author || ""} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
+        const commentText = (item.commentSamples || []).map((entry) => `${entry.author || ""} ${entry.text || ""}`).join(" ");
+        const haystack = `${item.title} ${item.author || ""} ${commentText} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
         if (!contextKeywords.length) return true;
         return contextKeywords.some((keyword) => haystack.includes(keyword));
       });
+    if (mapped.length) return mapped;
+    return collection.items
+      .filter((item) => item.title)
+      .map((item) => ({ platform, item }));
   });
-  const fallbackItems = items.length
-    ? items
-    : requestedPlatforms.flatMap((platform) => {
-      const collection = collections[platform];
-      if (!collection?.items?.length) return [];
-      return collection.items
-        .filter((item) => item.title)
-        .map((item) => ({ platform, item }));
-    });
 
-  const scored = fallbackItems
+  const structuralSignalScore = (platform: GrowthPlatform, haystack: string, title: string) => {
+    const baseScore = /教程|方法|怎么|为什么|体验|测评|攻略|避坑|对比|变化|结果|打卡|跟练|改造|开箱|复盘/.test(haystack) ? 20 : 0;
+    if (platform === "douyin") {
+      return baseScore + (/结果|变化|对比|体验|同城|门店|直播|开箱|测评|打卡/.test(haystack) ? 16 : 0);
+    }
+    if (platform === "xiaohongshu") {
+      return baseScore + (/笔记|清单|体态|肩颈|产后|宝妈|女性|种草|好物|攻略/.test(haystack) ? 16 : 0);
+    }
+    if (platform === "bilibili") {
+      return baseScore + (/教程|复盘|案例|拆解|方法|合集|入门|保姆级/.test(haystack) ? 16 : 0);
+    }
+    if (platform === "kuaishou") {
+      return baseScore + (/宝妈|带娃|日常|真实|同城|探店|体验|家人|生活/.test(haystack) ? 16 : 0);
+    }
+    return baseScore + (title.length >= 10 ? 8 : 0);
+  };
+
+  const scored = items
     .map(({ platform, item }) => {
-      const haystack = `${item.title} ${item.author || ""} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
+      const commentText = (item.commentSamples || []).map((entry) => `${entry.author || ""} ${entry.text || ""}`).join(" ");
+      const haystack = `${item.title} ${item.author || ""} ${commentText} ${normalizeStringList(item.tags).join(" ")} ${normalizeStringList(item.industryLabels).join(" ")}`;
       const keywordHits = contextKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
       const identityHits = identityKeywords.reduce((sum, keyword) => sum + (haystack.includes(keyword) ? 1 : 0), 0);
       const engagement = (item.likes || 0) + (item.comments || 0) * 3 + (item.shares || 0) * 5 + Math.round((item.views || 0) / 1000);
+      const titleLengthBoost = String(item.title || "").length >= 8 ? 20 : 0;
+      const commentSignalBoost = (item.commentSamples?.length || 0) ? 12 : 0;
+      const structuralBoost = structuralSignalScore(platform, haystack, String(item.title || ""));
       return {
         platform,
         item,
-        score: identityHits * 60 + keywordHits * 40 + engagement,
+        score: identityHits * 60 + keywordHits * 40 + engagement + titleLengthBoost + commentSignalBoost + structuralBoost,
         identityHits,
         keywordHits,
       };
     })
     .sort((left, right) => right.score - left.score);
 
-  const grouped = new Map<GrowthPlatform, Array<{ platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }>>();
-  for (const entry of scored) {
-    if (!entry.identityHits && !entry.keywordHits) continue;
-    const current = grouped.get(entry.platform) || [];
-    const exists = current.some((item) => (item.item.author || item.item.id) === (entry.item.author || entry.item.id));
-    if (exists) continue;
-    if (current.length >= 3) continue;
-    current.push(entry);
-    grouped.set(entry.platform, current);
-  }
-
   return requestedPlatforms.flatMap((platform) => {
-    const rows = grouped.get(platform) || [];
+    const platformRows = scored.filter((entry) => entry.platform === platform);
+    const strictRows = platformRows.filter((entry) => entry.identityHits || entry.keywordHits);
+    const candidateRows = strictRows.length ? strictRows : platformRows;
+    const rows: Array<{ platform: GrowthPlatform; item: PlatformTrendCollection["items"][number]; score: number }> = [];
+    for (const entry of candidateRows) {
+      const currentLabel = deriveReferenceLabel(entry.platform, entry.item);
+      const exists = rows.some((item) => deriveReferenceLabel(item.platform, item.item) === currentLabel);
+      if (exists) continue;
+      rows.push(entry);
+      if (rows.length >= 3) break;
+    }
     return rows.slice(0, 3).map(({ item }, index) => ({
       id: `reference-${platform}-${item.id}-${index}`,
       platform,
       platformLabel: PLATFORM_LABELS[platform],
-      account: item.author || `${PLATFORM_LABELS[platform]} 参考账号`,
+      account: deriveReferenceLabel(platform, item),
       title: item.title,
       url: item.url,
       reason: commerceDriven
