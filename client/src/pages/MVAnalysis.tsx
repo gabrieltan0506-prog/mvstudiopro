@@ -191,6 +191,34 @@ const PLATFORM_LABELS: Record<string, string> = {
 const COLLECTED_PLATFORM_LABELS = ["抖音", "小红书", "B站", "快手", "头条"] as const;
 const CORE_PLATFORM_LABELS = ["抖音", "小红书", "B站", "快手"] as const;
 
+const PLATFORM_REFERENCE_SUMMARY: Record<(typeof CORE_PLATFORM_LABELS)[number], string> = {
+  抖音: "抖音更偏短视频结果前置、动作演示、强钩子口播和同城到店承接，适合把同一主题压缩成 15 到 45 秒的高反差内容。",
+  小红书: "小红书更适合图文笔记 + 视频双轨表达，重点不是硬成交，而是先拿收藏、搜索、评论，再承接咨询和私信。",
+  "B站": "B站更适合中长视频、案例复盘、方法拆解和系列化更新，能把专业信任和长期搜索流量做起来。",
+  快手: "快手更适合真实口播、生活场景、同城服务和直播联动，讲法要更直给、更生活化、更强调真实体验。",
+};
+
+const PLATFORM_REFERENCE_TRACKS: Record<(typeof CORE_PLATFORM_LABELS)[number], string[]> = {
+  抖音: ["结果前置", "动作演示", "同城门店", "体验课承接"],
+  小红书: ["产后修复", "肩颈调理", "女性体态", "收藏型种草"],
+  "B站": ["方法拆解", "案例复盘", "长视频问答", "系列化教程"],
+  快手: ["宝妈日常", "真实体验", "直播联动", "同城服务"],
+};
+
+const PLATFORM_SUPPORT_ACTIVITY_FALLBACK: Record<(typeof CORE_PLATFORM_LABELS)[number], string[]> = {
+  抖音: ["中视频伙伴计划"],
+  小红书: ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"],
+  "B站": ["创作激励", "任务中心征稿"],
+  快手: ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"],
+};
+
+const PLATFORM_SUPPORT_SIGNAL_FALLBACK: Record<(typeof CORE_PLATFORM_LABELS)[number], string> = {
+  抖音: "优先走结果前置和动作演示，适合用短视频先验证停留、评论和门店转化。",
+  小红书: "优先走图文收藏和搜索承接，再把跑通的主题拆成短视频版本。",
+  "B站": "优先走方法拆解和复盘长视频，先建立信任，再延展成系列内容。",
+  快手: "优先走真实口播和生活场景表达，适合同城服务与直播联动放大。",
+};
+
 const PLATFORM_DEBUG_DESCRIPTIONS: Record<string, string> = {
   douyin: "短视频主阵地，优先看热点和爆发趋势。",
   xiaohongshu: "种草与搜索场景，优先看内容沉淀和转化线索。",
@@ -1170,7 +1198,7 @@ export default function MVAnalysisPage() {
     {
       context: context || undefined,
       modelName: selectedGrowthModel,
-      requestedPlatforms: analysis?.platforms?.length ? analysis.platforms : [...FULL_PLATFORM_ORDER],
+      requestedPlatforms: [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
         color: 0,
@@ -1789,23 +1817,8 @@ export default function MVAnalysisPage() {
     [growthSnapshot],
   );
   const fallbackPlatformLabels = useMemo(() => {
-    const labels = new Set<string>();
-    recommendedPlatformNames.forEach((item) => item && labels.add(item));
-    titleExecutionCards.forEach((item) => item.suitablePlatforms.forEach((platform) => labels.add(getPlatformLabel(platform))));
-    (analysis?.platforms || []).forEach((platform) => labels.add(getPlatformLabel(platform)));
-    topPlatformSnapshots.forEach((item) => labels.add(item.displayName));
-    if (!labels.size) {
-      ["小红书", "抖音", "B站", "快手"].forEach((item) => labels.add(item));
-    }
-    return Array.from(labels)
-      .filter(isCollectedPlatformLabel)
-      .sort((left, right) => {
-        const leftCore = isCorePlatformLabel(left) ? 0 : 1;
-        const rightCore = isCorePlatformLabel(right) ? 0 : 1;
-        return leftCore - rightCore;
-      })
-      .slice(0, 4);
-  }, [recommendedPlatformNames, titleExecutionCards, analysis, topPlatformSnapshots]);
+    return ["抖音", "小红书", "B站", "快手"];
+  }, []);
   const firstScreenGraphicPlan = useMemo(
     () => buildGraphicNoteDetail(
       recommendedPlatformNames,
@@ -1824,114 +1837,43 @@ export default function MVAnalysisPage() {
     [assetAdaptation, titleExecutionCards, growthHandoff, visualKeyFrames],
   );
   const topPlatformReferenceCards = useMemo(() => {
-    if (topRecommendedPlatforms.length) {
-      return topRecommendedPlatforms.slice(0, 4).map(({ recommendation, activity }) => ({
-        name: recommendation.name,
-        reason: recommendation.reason,
-        supportActivities: activity?.supportActivities ?? [],
-        potentialTrack: activity?.potentialTrack || activity?.suggestedTopics?.slice(0, 2).join(" / ") || "优先走痛点解决、结果对比和专业信任建立。",
-        supportSignal: activity?.supportSignal || "",
-        relatedExamples: referenceExamples
-          .filter((example) => example.platformLabel === recommendation.name)
-          .slice(0, 2)
-          .map((item) => `${replaceTerms(item.account)}：${replaceTerms(item.title)}`),
-        }));
-    }
-
-    if (platformActivityCards.length) {
-      return platformActivityCards.slice(0, 4).map((item) => ({
-        name: item.platformLabel,
-        reason: item.summary,
-        supportActivities: item.supportActivities,
-        potentialTrack: item.potentialTrack || item.suggestedTopics.slice(0, 2).join(" / ") || "优先走细分痛点赛道。",
-        supportSignal: item.supportSignal,
-        relatedExamples: referenceExamples
-          .filter((example) => example.platformLabel === item.platformLabel)
-          .slice(0, 2)
-          .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
-        }));
-    }
-
-    if (topPlatformSnapshots.length) {
-      return topPlatformSnapshots.slice(0, 4).map((item) => ({
-        name: item.displayName,
-        reason: item.summary,
-        supportActivities: [],
-        potentialTrack: item.sampleTopics.slice(0, 3).join(" / ") || "优先走平台当前高互动的细分主题。",
-        supportSignal: item.watchouts[0] ? `当前要规避：${replaceTerms(item.watchouts[0])}` : "",
-        relatedExamples: referenceExamples
-          .filter((example) => example.platformLabel === item.displayName)
-          .slice(0, 2)
-          .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
-      }));
-    }
-
-    return fallbackPlatformLabels.map((name) => ({
-      name,
-      reason: `${name} 当前仍适合承接这类“痛点放大 + 结果反差 + 专业信任”内容，先发版重点不是泛流量，而是先拿到停留、收藏、评论和私信。`,
-      supportActivities: /抖音|头条|西瓜/.test(name)
-        ? ["中视频伙伴计划"]
-        : /B站/.test(name)
-          ? ["创作激励", "任务中心征稿"]
-          : /小红书/.test(name)
-            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
-            : /快手/.test(name)
-              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
-          : [],
-      potentialTrack: /小红书/.test(name)
-        ? "产后修复 / 体态焦虑 / 肩颈调理 / 女性健康"
-        : /抖音|快手|头条|西瓜/.test(name)
-          ? "痛点转化 / 结果对比 / 同城门店转化 / 体验课承接"
-          : "深度讲解 / 专业信任 / 方法拆解",
-      supportSignal: /小红书|快手/.test(name)
-        ? "既可吃自然分发，也可结合平台公开扶持入口去做细分赛道放大。"
-        : "有适合长期承接的内容扶持或征稿机制，可同步利用。",
-      relatedExamples: referenceExamples
+    return fallbackPlatformLabels.map((name) => {
+      const recommendation = topRecommendedPlatforms.find((item) => item.recommendation.name === name)?.recommendation || null;
+      const activity = platformActivityCards.find((item) => item.platformLabel === name) || null;
+      const snapshot = topPlatformSnapshots.find((item) => item.displayName === name) || null;
+      const relatedExamples = referenceExamples
         .filter((example) => example.platformLabel === name)
-        .slice(0, 2)
-        .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`),
-    }));
-  }, [topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples, fallbackPlatformLabels]);
-  const topPlatformDataReferences = useMemo(() => {
-    if (platformActivityCards.length) {
-      return platformActivityCards.slice(0, 4).map((item) => ({
-        title: item.platformLabel,
-        summary: item.summary,
-        topics: item.hotTopics.length ? item.hotTopics.slice(0, 3) : item.suggestedTopics.slice(0, 3),
-        supportActivities: item.supportActivities.slice(0, 2),
-      }));
-    }
-    if (topPlatformSnapshots.length) {
-      return topPlatformSnapshots.slice(0, 4).map((item) => ({
-        title: item.displayName,
-        summary: item.summary,
-        topics: item.sampleTopics.slice(0, 3),
-        supportActivities: [],
-      }));
-    }
-    return fallbackPlatformLabels.map((title) => ({
-      title,
-      summary: `${title} 的平台数据更偏向“细分痛点 + 结果感 + 专业人设”内容，适合把这条视频拆成可收藏的主题和可转化的表达。`,
-      topics: visibleTopicLibrary
-        .filter((item) => item.platformLabel === title || getPlatformLabel(item.platform) === title)
         .slice(0, 3)
-        .map((item) => item.title)
-        .concat(
-          /小红书/.test(title) ? ["产后修复", "肩颈调理", "女性体态"] :
-          /抖音|快手|头条|西瓜/.test(title) ? ["低价体验", "结果对比", "同城门店"] :
-          ["专业讲解", "方法拆解", "案例复盘"],
-        )
-        .slice(0, 3),
-      supportActivities: /抖音|头条|西瓜/.test(title)
-        ? ["中视频伙伴计划"]
-        : /B站/.test(title)
-          ? ["创作激励", "任务中心征稿"]
-          : /小红书/.test(title)
-            ? ["小红书电商与买手成长扶持", "小红书商家 / 主理人 / 服务商成长扶持"]
-            : /快手/.test(title)
-              ? ["快手光合计划与创作者成长扶持", "快手直播与短直联动扶持"]
-          : [],
-    }));
+        .map((example) => `${replaceTerms(example.account)}：${replaceTerms(example.title)}`);
+      return {
+        name,
+        reason: recommendation?.reason || activity?.summary || snapshot?.summary || PLATFORM_REFERENCE_SUMMARY[name as keyof typeof PLATFORM_REFERENCE_SUMMARY],
+        supportActivities: (activity?.supportActivities?.length ? activity.supportActivities : PLATFORM_SUPPORT_ACTIVITY_FALLBACK[name as keyof typeof PLATFORM_SUPPORT_ACTIVITY_FALLBACK]).slice(0, 3),
+        potentialTrack: activity?.potentialTrack || activity?.suggestedTopics?.slice(0, 3).join(" / ") || snapshot?.sampleTopics?.slice(0, 3).join(" / ") || PLATFORM_REFERENCE_TRACKS[name as keyof typeof PLATFORM_REFERENCE_TRACKS].join(" / "),
+        supportSignal: activity?.supportSignal || snapshot?.watchouts?.[0] ? `当前要注意：${replaceTerms(snapshot?.watchouts?.[0] || activity?.supportSignal || "")}` : PLATFORM_SUPPORT_SIGNAL_FALLBACK[name as keyof typeof PLATFORM_SUPPORT_SIGNAL_FALLBACK],
+        relatedExamples,
+      };
+    });
+  }, [fallbackPlatformLabels, topRecommendedPlatforms, platformActivityCards, topPlatformSnapshots, referenceExamples]);
+  const topPlatformDataReferences = useMemo(() => {
+    return fallbackPlatformLabels.map((title) => {
+      const activity = platformActivityCards.find((item) => item.platformLabel === title) || null;
+      const snapshot = topPlatformSnapshots.find((item) => item.displayName === title) || null;
+      return {
+        title,
+        summary: activity?.summary || snapshot?.summary || PLATFORM_REFERENCE_SUMMARY[title as keyof typeof PLATFORM_REFERENCE_SUMMARY],
+        topics: (
+          activity?.hotTopics?.length ? activity.hotTopics.slice(0, 3)
+            : activity?.suggestedTopics?.length ? activity.suggestedTopics.slice(0, 3)
+            : snapshot?.sampleTopics?.length ? snapshot.sampleTopics.slice(0, 3)
+            : visibleTopicLibrary
+              .filter((item) => item.platformLabel === title || getPlatformLabel(item.platform) === title)
+              .slice(0, 3)
+              .map((item) => item.title)
+        ).concat(PLATFORM_REFERENCE_TRACKS[title as keyof typeof PLATFORM_REFERENCE_TRACKS]).slice(0, 3),
+        supportActivities: (activity?.supportActivities?.length ? activity.supportActivities : PLATFORM_SUPPORT_ACTIVITY_FALLBACK[title as keyof typeof PLATFORM_SUPPORT_ACTIVITY_FALLBACK]).slice(0, 3),
+      };
+    });
   }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
   const referenceExamplesByPlatform = useMemo(() => {
     const grouped = new Map<string, ReferenceExampleCard[]>();
@@ -2723,7 +2665,7 @@ export default function MVAnalysisPage() {
                                 </div>
                                 {item.relatedExamples.length ? (
                                   <div className="mt-2 text-sm leading-7 text-white/68">
-                                    相关账号对比：{item.relatedExamples.join("；")}
+                                    相关案例参考：{item.relatedExamples.join("；")}
                                   </div>
                                 ) : null}
                                 {item.supportSignal ? (
@@ -3180,7 +3122,7 @@ export default function MVAnalysisPage() {
                                 .slice(0, 2);
                               return relatedExamples.length ? (
                                 <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">相关账号对比</div>
+                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">相关案例参考</div>
                                   <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
                                     {relatedExamples.map((entry) => (
                                       <div key={`${recommendation.name}-${entry.id}`}>
@@ -3286,7 +3228,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-[28px] border border-[#7ee7ff]/18 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#7ee7ff]">
                         <ScanSearch className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">参考账号与话题</h2>
+                        <h2 className="text-2xl font-bold">参考案例与话题</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                         <div className="space-y-4">
