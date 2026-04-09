@@ -1147,6 +1147,7 @@ export default function MVAnalysisPage() {
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
   const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
+  const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1192,9 +1193,9 @@ export default function MVAnalysisPage() {
     },
   );
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
-    enabled: supervisorAccess && debugMode,
+    enabled: (supervisorAccess && debugMode) || uploadStage === "analyzing",
     staleTime: 30_000,
-    refetchInterval: supervisorAccess && debugMode ? 10_000 : false,
+    refetchInterval: (supervisorAccess && debugMode) || uploadStage === "analyzing" ? 10_000 : false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: false,
@@ -1220,6 +1221,27 @@ export default function MVAnalysisPage() {
   const growthAnomalies = growthSystemStatusQuery.data?.anomalies || [];
   const growthHealthState = growthAnomalies.length ? "异常" : "正常";
   const hasCriticalGrowthAnomaly = growthAnomalies.some((item) => item?.level === "critical");
+  const rotatingPlatformActivities = useMemo(() => {
+    const rows = (growthSystemStatusQuery.data?.currentSupportActivities || []) as Array<{
+      platform?: string;
+      platformLabel?: string;
+      summary?: string;
+      hotTopic?: string;
+      supportActivities?: string[];
+    }>;
+    return rows
+      .filter((item) => isCollectedPlatformLabel(item.platformLabel))
+      .map((item) => ({
+        platform: item.platform || "",
+        platformLabel: item.platformLabel || getPlatformLabel(item.platform),
+        summary: replaceTerms(String(item.summary || "")),
+        hotTopic: replaceTerms(String(item.hotTopic || "")),
+        supportActivities: (item.supportActivities || []).map((entry) => replaceTerms(String(entry))),
+      }));
+  }, [growthSystemStatusQuery.data]);
+  const activeCarouselActivity = rotatingPlatformActivities.length
+    ? rotatingPlatformActivities[activityCarouselIndex % rotatingPlatformActivities.length]
+    : null;
 
   const trySetBurstControl = useCallback((payload: {
     burst: "auto" | "manual" | "off";
@@ -1239,6 +1261,17 @@ export default function MVAnalysisPage() {
   useEffect(() => {
     if (!loading && !isAuthenticated && !supervisorAccess) navigate("/login");
   }, [loading, isAuthenticated, supervisorAccess, navigate]);
+
+  useEffect(() => {
+    if (uploadStage !== "analyzing" || rotatingPlatformActivities.length <= 1) {
+      setActivityCarouselIndex(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setActivityCarouselIndex((prev) => (prev + 1) % rotatingPlatformActivities.length);
+    }, 10_000);
+    return () => clearInterval(timer);
+  }, [uploadStage, rotatingPlatformActivities]);
 
   useEffect(() => {
     if (uploadStage === "uploading" || uploadStage === "analyzing") {
@@ -1519,6 +1552,7 @@ export default function MVAnalysisPage() {
 
   const growthSnapshot: GrowthSnapshot | null = growthSnapshotQuery.data?.snapshot ?? null;
   const growthSnapshotDebug = growthSnapshotQuery.data?.debug ?? null;
+  const analysisTracks = growthSnapshot?.analysisTracks ?? null;
   const dashboardConsole = growthSnapshot?.dashboardConsole ?? null;
   const platformRecommendations = growthSnapshot?.platformRecommendations ?? [];
   const businessInsights: GrowthBusinessInsight[] = growthSnapshot?.businessInsights ?? [];
@@ -2122,33 +2156,70 @@ export default function MVAnalysisPage() {
                           </div>
                         ) : null}
                         {animatedProcessingSteps.length ? (
-                          <div className="grid gap-2 md:grid-cols-3">
-                            {animatedProcessingSteps.map((step) => (
-                              <div
-                                key={step.id}
-                                className={`rounded-xl border px-3 py-2.5 ${
-                                  step.status === "done"
-                                    ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.12),0_0_24px_rgba(52,211,153,0.16)]"
-                                    : step.status === "active"
-                                      ? "animate-pulse border-[#ff8a3d]/35 bg-[rgba(255,138,61,0.14)] text-white shadow-[0_0_0_1px_rgba(255,138,61,0.1),0_0_24px_rgba(255,138,61,0.14)]"
-                                      : "animate-pulse border-white/12 bg-[rgba(255,255,255,0.05)] text-white/60"
-                                }`}
-                              >
-                                <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">
-                                  {step.status === "done" ? "已完成" : step.status === "active" ? "进行中" : "等待中"}
+                          <div className="grid gap-3 xl:grid-cols-[1.15fr_0.85fr]">
+                            <div className="grid gap-2 md:grid-cols-3">
+                              {animatedProcessingSteps.map((step) => (
+                                <div
+                                  key={step.id}
+                                  className={`rounded-xl border px-3 py-2.5 ${
+                                    step.status === "done"
+                                      ? "border-emerald-300/30 bg-emerald-400/15 text-emerald-50 shadow-[0_0_0_1px_rgba(110,231,183,0.12),0_0_24px_rgba(52,211,153,0.16)]"
+                                      : step.status === "active"
+                                        ? "animate-pulse border-[#ff8a3d]/35 bg-[rgba(255,138,61,0.14)] text-white shadow-[0_0_0_1px_rgba(255,138,61,0.1),0_0_24px_rgba(255,138,61,0.14)]"
+                                        : "animate-pulse border-white/12 bg-[rgba(255,255,255,0.05)] text-white/60"
+                                  }`}
+                                >
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+                                    {step.status === "done" ? "已完成" : step.status === "active" ? "进行中" : "等待中"}
+                                  </div>
+                                  <div className="mt-1 text-sm font-semibold">{step.animatedLabel || "…"}</div>
+                                  <div className={`mt-1 text-xs leading-5 ${
+                                    step.status === "done"
+                                      ? "text-emerald-100/80"
+                                      : step.status === "active"
+                                        ? "text-white/82"
+                                        : "text-white/55"
+                                  }`}>
+                                    {step.animatedDetail || "…"}
+                                  </div>
                                 </div>
-                                <div className="mt-1 text-sm font-semibold">{step.animatedLabel || "…"}</div>
-                                <div className={`mt-1 text-xs leading-5 ${
-                                  step.status === "done"
-                                    ? "text-emerald-100/80"
-                                    : step.status === "active"
-                                      ? "text-white/82"
-                                      : "text-white/55"
-                                }`}>
-                                  {step.animatedDetail || "…"}
-                                </div>
+                              ))}
+                            </div>
+                            <div className="rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] px-4 py-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[11px] uppercase tracking-[0.16em] text-[#90c4ff]">平台当下活动</div>
+                                {activeCarouselActivity ? (
+                                  <div className="rounded-full border border-white/10 bg-black/15 px-2 py-1 text-[11px] text-white/60">
+                                    每 10 秒轮播
+                                  </div>
+                                ) : null}
                               </div>
-                            ))}
+                              {activeCarouselActivity ? (
+                                <div className="mt-3 space-y-3">
+                                  <div>
+                                    <div className="text-base font-bold text-white">{activeCarouselActivity.platformLabel}</div>
+                                    <div className="mt-1 text-sm leading-6 text-white/72">{activeCarouselActivity.summary}</div>
+                                  </div>
+                                  {activeCarouselActivity.hotTopic ? (
+                                    <div className="rounded-lg border border-white/10 bg-black/15 px-3 py-2 text-sm leading-6 text-white/78">
+                                      <span className="mr-2 inline-flex rounded-full border border-[#ffcf92]/20 bg-[#ffcf92]/10 px-2 py-0.5 text-[11px] text-[#ffd08f]">即时热题</span>
+                                      {activeCarouselActivity.hotTopic}
+                                    </div>
+                                  ) : null}
+                                  <div className="space-y-2 text-sm leading-6 text-white/78">
+                                    {activeCarouselActivity.supportActivities.slice(0, 2).map((entry) => (
+                                      <div key={`${activeCarouselActivity.platformLabel}-${entry}`} className="rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+                                        {entry}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-3 text-sm leading-6 text-white/55">
+                                  正在拉取当前有公开活动的平台信息，分析过程中会自动轮播展示。
+                                </div>
+                              )}
+                            </div>
                           </div>
                         ) : null}
                         {processingDetailMessages.length ? (
@@ -2563,6 +2634,29 @@ export default function MVAnalysisPage() {
                   </div>
                 </div>
                 <div className="grid gap-6 xl:grid-cols-2">
+                  {analysisTracks ? (
+                    <div className="xl:col-span-2 rounded-[28px] border border-[#7ee7ff]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex items-center gap-3 text-[#7ee7ff]">
+                        <Orbit className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">历史与即时双主链分析</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_1fr_0.9fr]">
+                        <div className="rounded-2xl border border-[#7ee7ff]/20 bg-[#10233a] px-4 py-4">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#7ee7ff]">即时主链</div>
+                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.liveSummary)}</div>
+                        </div>
+                        <div className="rounded-2xl border border-[#f5b7ff]/20 bg-[rgba(245,183,255,0.08)] px-4 py-4">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">历史主链</div>
+                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.historicalSummary)}</div>
+                        </div>
+                        <div className="rounded-2xl border border-[#ffd08f]/20 bg-[rgba(255,208,143,0.08)] px-4 py-4">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">即时热题</div>
+                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.liveHotTopic)}</div>
+                          <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(analysisTracks.hotTopicTimeliness)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#0f1a2c] p-6">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">图文与视频首发打法</div>
                     <div className="mt-4 grid gap-4">

@@ -24,7 +24,7 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
-import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, normalizePlatforms } from "./growth/growthSchema";
+import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
@@ -1030,6 +1030,15 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const store = await readTrendStore({ preferDerivedFiles: true });
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
+        const historicalPlatformTotals = Object.fromEntries(
+          requestedPlatforms.map((platform) => [
+            platform,
+            {
+              currentTotal: Number(store.collections?.[platform]?.items?.length || 0),
+              archivedTotal: Number(store.history?.platforms?.[platform]?.archivedItems || 0),
+            },
+          ]),
+        ) as Partial<Record<typeof requestedPlatforms[number], { currentTotal?: number; archivedTotal?: number }>>;
         const stalePlatforms = requestedPlatforms.filter((platform) =>
           isTrendCollectionStale(store.collections[platform]?.collectedAt, 6),
         );
@@ -1048,12 +1057,14 @@ export const appRouter = router({
               context: input.context,
               requestedPlatforms,
               collections,
+              historicalPlatformTotals,
               errors,
             })
           : buildMockGrowthSnapshot({
               analysis: input.analysis,
               context: input.context,
               requestedPlatforms,
+              historicalPlatformTotals,
             });
         const personalized = await personalizeGrowthSnapshot({
           snapshot: baseSnapshot,
@@ -1144,6 +1155,7 @@ export const appRouter = router({
 
     getGrowthSystemStatus: publicProcedure
       .query(async () => {
+        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
         const smtp = getSmtpStatus();
         const snapshot = await readGrowthStatusSnapshot();
         const runtimeMeta = snapshot?.runtimeMeta || await readTrendRuntimeMeta();
@@ -1282,6 +1294,24 @@ export const appRouter = router({
         }
         const criticalAnomalies = anomalies.filter((item) => item.level === "critical");
         const warningAnomalies = anomalies.filter((item) => item.level === "warning");
+        const currentSupportActivities = growthPlatformValues
+          .filter((platform) => platform !== "weixin_channels")
+          .map((platform) => {
+            const platformLabel = getGrowthPlatformMeta(platform).label;
+            const collection = store?.collections?.[platform];
+            const topItem = (collection?.items || [])
+              .filter((item) => item.title)
+              .sort((left, right) => ((right.likes || 0) + (right.comments || 0) * 3 + (right.shares || 0) * 5 + Math.round((right.views || 0) / 1000))
+                - ((left.likes || 0) + (left.comments || 0) * 3 + (left.shares || 0) * 5 + Math.round((left.views || 0) / 1000)))[0];
+            return {
+              platform,
+              platformLabel,
+              summary: getGrowthPlatformMeta(platform).description,
+              hotTopic: topItem?.title || "",
+              supportActivities: buildPlatformSupportActivities(platform),
+            };
+          })
+          .filter((item) => item.supportActivities.length || item.hotTopic);
 
         return {
           success: true,
@@ -1316,6 +1346,7 @@ export const appRouter = router({
             checkedAt: new Date().toISOString(),
           },
           anomalies,
+          currentSupportActivities,
           storage,
           backfill,
           backfillLive,
