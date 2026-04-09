@@ -2721,9 +2721,11 @@ export default function MVAnalysisPage() {
                                 <div className="mt-2 text-sm leading-7 text-white/68">
                                   当前有效扶持活动：{item.supportActivities.length ? item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ") : "当前未核验到稳定公开扶持活动，建议优先吃自然分发、搜索流量和细分赛道势能。"}
                                 </div>
-                                <div className="mt-2 text-sm leading-7 text-white/68">
-                                  相关账号对比：{item.relatedExamples.length ? item.relatedExamples.join("；") : "当前数据库未命中完全同类账号，建议对照同平台的专业服务号、同城门店号和痛点解决型账号。"}
-                                </div>
+                                {item.relatedExamples.length ? (
+                                  <div className="mt-2 text-sm leading-7 text-white/68">
+                                    相关账号对比：{item.relatedExamples.join("；")}
+                                  </div>
+                                ) : null}
                                 {item.supportSignal ? (
                                   <div className="mt-2 text-sm leading-7 text-[#9df6c0]">扶持判断：{replaceTerms(item.supportSignal)}</div>
                                 ) : null}
