@@ -426,6 +426,87 @@ export const growthDataAnalystSummarySchema = z.object({
   recommendationReason: z.string(),
 });
 
+export const growthPremiumRemixCharacterSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  role: z.string(),
+  visualPrompt: z.string(),
+  consistencyRules: z.array(z.string()).default([]),
+  referenceImageUrl: z.string().default(""),
+});
+
+export const growthPremiumRemixShotSchema = z.object({
+  shotId: z.number().int().positive(),
+  durationSeconds: z.number().positive(),
+  characterId: z.string().default(""),
+  purpose: z.string(),
+  framing: z.string(),
+  cameraMovement: z.string(),
+  lighting: z.string(),
+  pacingRole: z.string(),
+  sceneDescription: z.string(),
+  onScreenText: z.string().default(""),
+  voiceover: z.string().default(""),
+  performanceNote: z.string().default(""),
+  veoPrompt: z.string(),
+  negativePrompt: z.string().default(""),
+});
+
+export const growthPremiumRemixLoopSegmentSchema = z.object({
+  segmentIndex: z.number().int().min(1).max(4),
+  startSecond: z.number().min(0),
+  endSecond: z.number().min(0),
+  prompt: z.string(),
+  stabilityPrompt: z.string(),
+  referenceHint: z.string().default(""),
+});
+
+export const growthPremiumRemixTransitionNodeSchema = z.object({
+  nodeId: z.string(),
+  label: z.string(),
+  prompt: z.string(),
+  imageUrl: z.string().default(""),
+});
+
+export const growthPremiumRemixTrackPlanSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  whyItWorks: z.string(),
+});
+
+export const growthPremiumRemixSchema = z.object({
+  title: z.literal("优质视频二创"),
+  sourceSummary: z.string(),
+  visualDnaSummary: z.string(),
+  contentRebuildSummary: z.string(),
+  personaFit: z.string(),
+  performanceDirection: z.string(),
+  characterAnchors: z.array(growthPremiumRemixCharacterSchema).default([]),
+  storyboard: z.array(growthPremiumRemixShotSchema).default([]),
+  loopTrack: z.object({
+    plan: growthPremiumRemixTrackPlanSchema,
+    segments: z.array(growthPremiumRemixLoopSegmentSchema).default([]),
+  }),
+  interpolationTrack: z.object({
+    plan: growthPremiumRemixTrackPlanSchema,
+    nodes: z.array(growthPremiumRemixTransitionNodeSchema).default([]),
+  }),
+  deliveryNotes: z.array(z.string()).default([]),
+});
+
+export const growthPremiumRemixAssetsSchema = z.object({
+  mode: z.enum(["loop", "interpolation"]),
+  referenceImages: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    imageUrl: z.string(),
+  })).default([]),
+  clips: z.array(z.object({
+    label: z.string(),
+    videoUrl: z.string(),
+  })).default([]),
+});
+
 // ── Author Identity & Monetization Value ─────────────────────────────────
 export const growthAuthorTierSchema = z.enum(["素人", "腰部达人", "头部创作者"]);
 
@@ -523,6 +604,7 @@ export const growthSnapshotSchema = z.object({
   creationAssist: growthCreationAssistSchema,
   growthHandoff: growthHandoffSchema,
   authorAnalysis: growthAuthorAnalysisSchema.optional(),
+  premiumRemix: growthPremiumRemixSchema.optional(),
 });
 
 export type GrowthPlatform = z.infer<typeof growthPlatformSchema>;
@@ -571,4 +653,10 @@ export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
 export type GrowthDualTrack = z.infer<typeof growthDualTrackSchema>;
 export type GrowthDataAnalystPlatformRow = z.infer<typeof growthDataAnalystPlatformRowSchema>;
 export type GrowthDataAnalystSummary = z.infer<typeof growthDataAnalystSummarySchema>;
+export type GrowthPremiumRemixCharacter = z.infer<typeof growthPremiumRemixCharacterSchema>;
+export type GrowthPremiumRemixShot = z.infer<typeof growthPremiumRemixShotSchema>;
+export type GrowthPremiumRemixTrackPlan = z.infer<typeof growthPremiumRemixTrackPlanSchema>;
+export type GrowthPremiumRemixTransitionNode = z.infer<typeof growthPremiumRemixTransitionNodeSchema>;
+export type GrowthPremiumRemix = z.infer<typeof growthPremiumRemixSchema>;
+export type GrowthPremiumRemixAssets = z.infer<typeof growthPremiumRemixAssetsSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;

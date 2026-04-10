@@ -28,6 +28,7 @@ import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowt
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
+import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
@@ -58,6 +59,8 @@ import {
   growthMonetizationTrackSchema,
   growthMonetizationStrategySchema,
   growthPlanStepSchema,
+  growthPremiumRemixAssetsSchema,
+  growthPremiumRemixSchema,
   growthPlatformActivitySchema,
   growthPlatformRecommendationSchema,
   growthSnapshotSchema,
@@ -1024,6 +1027,50 @@ export const appRouter = router({
             videoDuration: result.videoMeta.videoDuration,
             failureStage: result.videoMeta.failureStage || null,
             failureReason: result.videoMeta.failureReason || null,
+          },
+        };
+      }),
+
+    buildPremiumRemix: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        transcript: z.string().optional(),
+        analysis: growthAnalysisScoresSchema,
+        modelName: growthCampModelSchema.optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const remix = await buildPremiumRemixPlan({
+          context: input.context,
+          transcript: input.transcript,
+          analysis: input.analysis,
+          modelName: input.modelName,
+        });
+        return {
+          success: true,
+          remix: growthPremiumRemixSchema.parse(remix),
+          debug: {
+            route: "mvAnalysis.buildPremiumRemix",
+            strategistModel: resolveGrowthCampFinalModel(input.modelName),
+          },
+        };
+      }),
+
+    generatePremiumRemixAssets: publicProcedure
+      .input(z.object({
+        remix: growthPremiumRemixSchema,
+        mode: z.enum(["loop", "interpolation"]).default("loop"),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await generatePremiumRemixAssets({
+          remix: input.remix,
+          mode: input.mode,
+        });
+        return {
+          success: true,
+          assets: growthPremiumRemixAssetsSchema.parse(result),
+          debug: {
+            route: "mvAnalysis.generatePremiumRemixAssets",
+            mode: input.mode,
           },
         };
       }),
