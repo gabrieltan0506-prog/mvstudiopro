@@ -2057,11 +2057,11 @@ function buildAuthorIdentity(
   const commercialAnglesCount = (analysis.commercialAngles || []).length;
 
   const tier: GrowthAuthorIdentity["tier"] =
-    viralScore >= 80 && commercialAnglesCount >= 3 ? "头部KOL" :
+    viralScore >= 80 && commercialAnglesCount >= 3 ? "头部创作者" :
     viralScore >= 60 && (hasCreatorCenterSignals || commercialAnglesCount >= 1) ? "腰部达人" :
     "素人";
 
-  const tierReason = tier === "头部KOL"
+  const tierReason = tier === "头部创作者"
     ? "视频爆款潜力评分超过80，已有多个商业化方向信号，具备头部创作者特征。"
     : tier === "腰部达人"
     ? "视频具有稳定的内容质量与一定商业潜力，但还未到头部规模，适合持续深耕垂类。"
@@ -2079,7 +2079,7 @@ function buildAuthorIdentity(
 
   const verticalCategory = identityTags[0] || industryTemplate.name;
   const estimatedFollowers =
-    tier === "头部KOL" ? "预计 50 万+ 粉丝" :
+    tier === "头部创作者" ? "预计 50 万+ 粉丝" :
     tier === "腰部达人" ? "预计 1 万 - 50 万粉丝" :
     "预计 1 万以下粉丝";
 
@@ -2116,9 +2116,9 @@ function buildAuthorMonetizationValue(
   const avgEngagement = Math.round(
     platformSnapshots.reduce((sum, s) => sum + s.audienceFitScore, 0) / Math.max(platformSnapshots.length, 1),
   );
-  const cpmBase = analysis.viralPotential >= 80 ? "¥35-80 / 千次播放" :
-    analysis.viralPotential >= 65 ? "¥15-35 / 千次播放" :
-    "¥5-15 / 千次播放";
+  const cpmBase = analysis.viralPotential >= 80 ? "¥35-80 / 千次播放（优质内容推算区间）" :
+    analysis.viralPotential >= 65 ? "¥15-35 / 千次播放（稳定内容推算区间）" :
+    "¥5-15 / 千次播放（初期内容推算区间）";
   const commerceDriven = /带货|商品|电商|卖家/.test(context);
   const ecommerceScore = Math.min(96, Math.round(
     analysis.impact * 0.5 + analysis.viralPotential * 0.3 + (commerceDriven ? 20 : 0),
@@ -2143,7 +2143,7 @@ function buildAuthorMonetizationValue(
   }
   return {
     cpmEstimate: cpmBase,
-    cpmReason: `基于当前视频爆款潜力（${analysis.viralPotential}分）与平台互动表现综合估算，非实际收益保证。`,
+    cpmReason: `基于当前视频爆款潜力评分与平台互动表现综合推算，为参考区间而非保证收益。`,
     ecommerceConversionScore: ecommerceScore,
     ecommerceConversionReason: commerceDriven
       ? "内容本身具备成交型表达特征，带货转化潜力较强。"

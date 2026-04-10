@@ -2612,7 +2612,7 @@ export default function MVAnalysisPage() {
                       </div>
                       <div className="space-y-4">
                         <div className="rounded-xl bg-black/20 p-4">
-                          <div className="mb-1 text-xs text-white/50">CPM 估值预判</div>
+                          <div className="mb-1 text-xs text-white/50">千次播放单价预判</div>
                           <div className="font-medium text-[#f5b7ff]">{authorAnalysis.monetizationValue.cpmEstimate}</div>
                           <div className="mt-1 text-xs text-white/50">{authorAnalysis.monetizationValue.cpmReason}</div>
                         </div>
