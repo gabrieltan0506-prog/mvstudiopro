@@ -167,7 +167,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const model = tier === "pro"
         ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-2.5-flash-image");
+        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
 
       const location = (s(process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
       const base = baseUrlFor(location);

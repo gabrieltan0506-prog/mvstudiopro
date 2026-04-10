@@ -25,7 +25,7 @@ export function routeModel(kind: RouteKind, input: RouteInput = {}): RouteResult
   if (kind === "image") {
     return {
       provider: "vertex",
-      model: input.preferredModel || "gemini-2.5-flash-image",
+      model: input.preferredModel || "imagen-4.0-generate-001",
       config: {},
     };
   }

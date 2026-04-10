@@ -1,6 +1,6 @@
 /**
  * Vertex AI image generation service.
- * - Nano Banana 2 equivalent route: gemini-2.5-flash-image
+ * - Nano Banana 2 equivalent route: imagen-4.0-generate-001
  * - Nano Banana Pro equivalent route: gemini-3-pro-image-preview
  * Fixed region: us-central1
  */
@@ -29,7 +29,7 @@ export interface GeminiImageResult {
 }
 
 function pickImageModels(quality: ImageQuality) {
-  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-2.5-flash-image").trim();
+  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001").trim();
   const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview").trim();
   return quality === "1k" ? [flashModel, proModel] : [proModel, flashModel];
 }
