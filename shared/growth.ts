@@ -404,7 +404,7 @@ export const growthDualTrackSchema = z.object({
 });
 
 // ── Author Identity & Monetization Value ─────────────────────────────────
-export const growthAuthorTierSchema = z.enum(["素人", "腰部达人", "头部KOL"]);
+export const growthAuthorTierSchema = z.enum(["素人", "腰部达人", "头部创作者"]);
 
 export const growthAuthorIdentitySchema = z.object({
   tier: growthAuthorTierSchema,
