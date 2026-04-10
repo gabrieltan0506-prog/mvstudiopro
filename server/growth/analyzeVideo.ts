@@ -92,6 +92,18 @@ type VisualFirstPass = {
   }>;
 };
 
+type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
+  | "summary"
+  | "strengths"
+  | "improvements"
+  | "titleSuggestions"
+  | "creatorCenterSignals"
+  | "timestampSuggestions"
+  | "weakFrameReferences"
+  | "commercialAngles"
+  | "followUpPrompt"
+>>;
+
 class VideoAnalysisFailure extends Error {
   failureStage: VideoFailureStage;
   failureReason: string;
@@ -133,6 +145,10 @@ function toTimestamp(seconds: number) {
 
 function truncate(value: string, max = 5000) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
+}
+
+function isDeepStrategistModel(modelName: string) {
+  return /3\.1/i.test(String(modelName || ""));
 }
 
 function estimateTokenProfile(durationSeconds: number, sparseFrameCount: number) {
@@ -538,6 +554,7 @@ async function runDeepDivePass(params: {
   fileName?: string;
   videoGcsUri: string;
 }) {
+  const strategistMode = isDeepStrategistModel(params.finalModel);
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
@@ -560,6 +577,9 @@ async function runDeepDivePass(params: {
 6. 秒点建议必须回到 mm:ss。
 7. weakFrameReferences 必须优先使用视觉初判里已经指出的问题帧，不要空写。
 8. 必须显式返回 visualSummary、openingFrameAssessment、sceneConsistency、trustSignals、visualRisks、keyFrames，不能把抽帧视觉结论藏在 summary 里。
+9. ${strategistMode
+    ? "当前模型是 3.1 Pro，你必须拉开与 2.5 Pro 的差距：除结构判断外，还要明显强化商业定位、情绪张力、图文成文能力和分镜语言，输出不能只是把问题复述一遍。"
+    : "当前模型是 2.5 Pro，优先给执行性强、结构清楚、可立刻修改的结论，不要为了华丽语言牺牲明确度。"}
 
 评分字段语义：
 - composition: 叙事结构与段落组织
@@ -641,6 +661,71 @@ async function runDeepDivePass(params: {
   });
 
   return JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+}
+
+async function runStrategistRefinementPass(params: {
+  finalModel: string;
+  context?: string;
+  duration: number;
+  transcript: string;
+  audioFirstPass: AudioFirstPass;
+  visualFirstPass: VisualFirstPass;
+  deepDive: unknown;
+}) {
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: params.finalModel,
+    messages: [
+      {
+        role: "system",
+        content: `你现在是第三阶段“成文操盘手”。不要重新看视频，也不要回到泛分析。你只基于前两阶段提炼出来的结构化文本证据，把结果打磨成明显优于 2.5 Pro 的版本。
+
+要求：
+1. 重点拉开差异的字段只有：summary、strengths、improvements、titleSuggestions、commercialAngles、followUpPrompt、timestampSuggestions。
+2. 不要改变前面已经确定的事实与时间点，只能把它们写得更精准、更有商业判断、更像能直接拿去用的报告。
+3. titleSuggestions 不能只是换近义词，要能拉开情绪张力、结果承诺和平台适配。
+4. commercialAngles 必须更像“内容操盘方案”，而不是泛泛场景描述。
+5. followUpPrompt 必须能直接交给下一个 Gemini 会话继续产出图文稿或视频脚本。
+
+只返回 JSON：
+{
+  "summary": "string",
+  "strengths": ["string"],
+  "improvements": ["string"],
+  "titleSuggestions": ["string"],
+  "timestampSuggestions": [
+    { "timestamp": "00:08", "issue": "string", "fix": "string", "opportunity": "string" }
+  ],
+  "commercialAngles": [
+    {
+      "title": "string",
+      "scenario": "string",
+      "whyItFits": "string",
+      "brands": ["string"],
+      "execution": "string",
+      "hook": "string",
+      "veoPrompt": "string"
+    }
+  ],
+  "followUpPrompt": "string"
+}`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          context: params.context || "",
+          duration: params.duration,
+          transcript: truncate(params.transcript, 3000),
+          audioFirstPass: params.audioFirstPass,
+          visualFirstPass: params.visualFirstPass,
+          deepDive: params.deepDive,
+        }, null, 2),
+      },
+    ],
+    response_format: { type: "json_object" },
+  });
+  return JSON.parse(String(response.choices[0]?.message?.content || "{}")) as StrategistRefinement;
 }
 
 export async function analyzeVideo(params: {
@@ -774,8 +859,24 @@ export async function analyzeVideo(params: {
       videoGcsUri: storedVideo.gcsUri,
     });
 
+    const strategistRefinement = isDeepStrategistModel(finalModel)
+      ? await runStrategistRefinementPass({
+          finalModel,
+          context: params.context,
+          duration,
+          transcript,
+          audioFirstPass,
+          visualFirstPass,
+          deepDive,
+        }).catch((error) => {
+          console.warn("[growth.analyzeVideo] strategist refinement fallback:", error);
+          return null;
+        })
+      : null;
+
     const parsed = growthAnalysisScoresSchema.parse({
       ...deepDive,
+      ...(strategistRefinement || {}),
       visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
       openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
       sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
@@ -801,7 +902,9 @@ export async function analyzeVideo(params: {
         provider: "vertex",
         model: finalModel,
         fallback: false,
-        pipeline: "audio-first-sparse-frames-two-stage",
+        pipeline: isDeepStrategistModel(finalModel)
+          ? "audio-visual-extract-plus-3.1-strategist"
+          : "audio-first-sparse-frames-two-stage",
         stageOneModel: AUDIO_FIRST_PASS_MODEL,
         stageTwoModel: finalModel,
         sparseFrameCount: sparseFrames.frames.length,
