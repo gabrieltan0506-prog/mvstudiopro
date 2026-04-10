@@ -403,6 +403,29 @@ export const growthDualTrackSchema = z.object({
   hotTopicTimeliness: z.string(),
 });
 
+export const growthDataAnalystPlatformRowSchema = z.object({
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  currentTotal: z.number().int().nonnegative(),
+  archivedTotal: z.number().int().nonnegative(),
+  datedCurrentCount: z.number().int().nonnegative(),
+  undatedCurrentCount: z.number().int().nonnegative(),
+  liveCoverageStart: z.string().default(""),
+  liveCoverageEnd: z.string().default(""),
+  dominantFormat: z.string(),
+  note: z.string(),
+});
+
+export const growthDataAnalystSummarySchema = z.object({
+  platformRows: z.array(growthDataAnalystPlatformRowSchema).default([]),
+  liveCoverageWindow: z.string(),
+  historicalCoverageWindow: z.string(),
+  undatedRetainedItems: z.array(z.string()).default([]),
+  missingRangesOrBrokenLayers: z.array(z.string()).default([]),
+  recommendation: z.enum(["keep", "backfill", "restore", "verify"]),
+  recommendationReason: z.string(),
+});
+
 // ── Author Identity & Monetization Value ─────────────────────────────────
 export const growthAuthorTierSchema = z.enum(["素人", "腰部达人", "头部创作者"]);
 
@@ -473,6 +496,7 @@ export const growthAuthorAnalysisSchema = z.object({
 export const growthSnapshotSchema = z.object({
   status: growthSnapshotStatusSchema,
   analysisTracks: growthDualTrackSchema,
+  dataAnalystSummary: growthDataAnalystSummarySchema,
   requestedPlatforms: z.array(growthPlatformSchema),
   industryTemplate: growthIndustryTemplateSchema,
   overview: z.object({
@@ -545,4 +569,6 @@ export type GrowthAuthorAnalysis = z.infer<typeof growthAuthorAnalysisSchema>;
 
 export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
 export type GrowthDualTrack = z.infer<typeof growthDualTrackSchema>;
+export type GrowthDataAnalystPlatformRow = z.infer<typeof growthDataAnalystPlatformRowSchema>;
+export type GrowthDataAnalystSummary = z.infer<typeof growthDataAnalystSummarySchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;

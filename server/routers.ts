@@ -27,6 +27,7 @@ import { sunoRouter } from "./routers/suno";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
+import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
@@ -105,12 +106,7 @@ function getCollectionBucketCounts(items: Array<{ bucket?: string }> = []) {
 }
 
 function resolveGrowthCampFinalModel(modelName?: string) {
-  return String(
-    modelName
-      || process.env.GROWTH_CAMP_FINAL_MODEL
-      || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-2.5-pro",
-  ).trim() || "gemini-2.5-pro";
+  return resolveGrowthCampStrategistModel(modelName);
 }
 
 type GrowthArchiveSummaryPlatform = {
@@ -454,8 +450,14 @@ async function personalizeGrowthSnapshot(params: {
                   currentVsArchiveByPlatform: backfillPlatforms,
                   creatorCenterEvidence,
                   collections: collectionEvidence,
+                  dataAnalystSummary: snapshot.dataAnalystSummary,
                 },
                 userEvidence,
+                pipelineRouting: {
+                  extractorModel: resolveGrowthCampExtractorModel(),
+                  strategistModel: finalModel,
+                  pipelineMode: resolveGrowthCampPipelineMode(finalModel),
+                },
               }, null, 2),
             ].join("\n"),
           },

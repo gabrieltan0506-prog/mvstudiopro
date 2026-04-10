@@ -9,11 +9,10 @@ import { invokeLLM } from "../_core/llm";
 import { uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
 import { validateDuration } from "../videoAnalysis";
+import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
 const execFileAsync = promisify(execFile);
 
-const AUDIO_FIRST_PASS_MODEL = "gemini-2.5-pro";
-const VISUAL_FIRST_PASS_MODEL = "gemini-2.5-pro";
 const AUDIO_TOKENS_PER_MINUTE = 1920;
 const VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS = 17700;
 const TOKENS_PER_FRAME = Math.round((VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS - AUDIO_TOKENS_PER_MINUTE) / 60);
@@ -117,12 +116,7 @@ class VideoAnalysisFailure extends Error {
 }
 
 function resolveGrowthCampFinalModel(modelName?: string): string {
-  return String(
-    modelName
-      || process.env.GROWTH_CAMP_FINAL_MODEL
-      || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-2.5-pro",
-  ).trim() || "gemini-2.5-pro";
+  return resolveGrowthCampStrategistModel(modelName);
 }
 
 function normalizeFailureReason(error: unknown) {
@@ -336,10 +330,11 @@ async function runAudioFirstPass(params: {
   context?: string;
   fileName?: string;
 }): Promise<AudioFirstPass> {
+  const extractorModel = resolveGrowthCampExtractorModel();
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: AUDIO_FIRST_PASS_MODEL,
+    modelName: extractorModel,
     messages: [
       {
         role: "system",
@@ -430,10 +425,11 @@ async function runVisualFirstPass(params: {
   duration: number;
   fileName?: string;
 }): Promise<VisualFirstPass> {
+  const extractorModel = resolveGrowthCampExtractorModel();
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: VISUAL_FIRST_PASS_MODEL,
+    modelName: extractorModel,
     messages: [
       {
         role: "system",
@@ -739,6 +735,7 @@ export async function analyzeVideo(params: {
 }): Promise<VideoAnalysisResult> {
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
+    const extractorModel = resolveGrowthCampExtractorModel();
     let buffer: Buffer;
     if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
@@ -902,10 +899,8 @@ export async function analyzeVideo(params: {
         provider: "vertex",
         model: finalModel,
         fallback: false,
-        pipeline: isDeepStrategistModel(finalModel)
-          ? "audio-visual-extract-plus-3.1-strategist"
-          : "audio-first-sparse-frames-two-stage",
-        stageOneModel: AUDIO_FIRST_PASS_MODEL,
+        pipeline: resolveGrowthCampPipelineMode(finalModel),
+        stageOneModel: extractorModel,
         stageTwoModel: finalModel,
         sparseFrameCount: sparseFrames.frames.length,
         estimatedCostProfile: costProfile,

@@ -1,5 +1,6 @@
 import {
   type GrowthAnalysisScores,
+  type GrowthDataAnalystSummary,
   type GrowthAudienceTrigger,
   type GrowthAuthorAnalysis,
   type GrowthAuthorIdentity,
@@ -27,6 +28,7 @@ import { matchIndustryTemplate } from "./industryTemplates";
 import { getPlatformTemplate } from "./platformTemplates";
 import type { PlatformTrendCollection } from "./trendCollector";
 import { normalizeStringList } from "./trendNormalize";
+import { buildGrowthDataAnalystSummary } from "./growthDataAnalyst";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   douyin: "抖音",
@@ -128,6 +130,7 @@ function buildDualTrackAnalysis(params: {
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
 }) {
+  const analystSummary = buildGrowthDataAnalystSummary(params);
   const liveRows = params.requestedPlatforms.map((platform) => {
     const collection = params.collections[platform];
     const items = collection?.items || [];
@@ -194,8 +197,8 @@ function buildDualTrackAnalysis(params: {
 
   return {
     mode: "双主链" as const,
-    liveSummary,
-    historicalSummary,
+    liveSummary: `${liveSummary} ${analystSummary.liveCoverageWindow}`,
+    historicalSummary: `${historicalSummary} ${analystSummary.historicalCoverageWindow}`,
     liveHotTopic,
     hotTopicTimeliness,
   };
@@ -2376,6 +2379,11 @@ export function buildMockGrowthSnapshot(params: {
   const today = new Date();
   const generatedAt = today.toISOString();
   const windowDays = DEFAULT_GROWTH_WINDOW_DAYS;
+  const dataAnalystSummary: GrowthDataAnalystSummary = buildGrowthDataAnalystSummary({
+    requestedPlatforms,
+    collections: {},
+    historicalPlatformTotals: params.historicalPlatformTotals,
+  });
   const overview = {
     summary: `趋势模块当前返回的是可落地 mock/fallback 结构，但字段已经按 ${windowDays} 天平台抓取需求设计，后续接入真实采集后可直接替换数据源。`,
     trendNarrative:
@@ -2411,6 +2419,7 @@ export function buildMockGrowthSnapshot(params: {
       collections: {},
       historicalPlatformTotals: params.historicalPlatformTotals,
     }),
+    dataAnalystSummary,
     requestedPlatforms,
     industryTemplate,
     overview,
@@ -2573,6 +2582,12 @@ export function buildGrowthSnapshotFromCollections(params: {
     platformSnapshots,
   });
 
+  const dataAnalystSummary: GrowthDataAnalystSummary = buildGrowthDataAnalystSummary({
+    requestedPlatforms,
+    collections: params.collections,
+    historicalPlatformTotals: params.historicalPlatformTotals,
+  });
+
   const snapshot = {
     status: {
       source: missingPlatforms.length ? "hybrid" : "live",
@@ -2595,6 +2610,7 @@ export function buildGrowthSnapshotFromCollections(params: {
       collections: params.collections,
       historicalPlatformTotals: params.historicalPlatformTotals,
     }),
+    dataAnalystSummary,
     requestedPlatforms,
     industryTemplate,
     overview: {
