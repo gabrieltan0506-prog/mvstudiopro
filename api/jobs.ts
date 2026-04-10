@@ -2009,8 +2009,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
           ),
           storyboardImages: nextStoryboardImages,
-          videoProvider: "fal",
-          videoModel: "fal-ai/veo3.1/reference-to-video",
+          videoProvider: "vertex",
+          videoModel: "veo-3.1-generate-001",
           videoErrorMessage: generated.errorMessage || "",
         },
       });

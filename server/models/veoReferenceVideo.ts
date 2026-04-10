@@ -1,4 +1,4 @@
-import { fal } from "@fal-ai/client";
+import { generateVideo } from "../veo";
 
 export async function veoReferenceVideo(input: {
   prompt: string;
@@ -14,27 +14,15 @@ export async function veoReferenceVideo(input: {
   if (!prompt) throw new Error("prompt is required");
   if (!referenceImages.length) throw new Error("reference_images is required");
 
-  const key = String(process.env.FAL_API_KEY || process.env.FAL_KEY || "").trim();
-  if (!key) {
-    throw new Error("FAL_API_KEY/FAL_KEY is not configured");
-  }
+  const result = await generateVideo({
+    prompt,
+    imageUrl: referenceImages[0],
+    quality: "standard",
+    aspectRatio: "16:9",
+    resolution: input.resolution || "720p",
+    negativePrompt: "multiple people, extra limbs, animal, pet, duplicate subject, distorted face",
+  });
 
-  fal.config({ credentials: key });
-  const result = (await fal.subscribe("fal-ai/veo3.1/reference-to-video", {
-    input: {
-      prompt,
-      image_urls: referenceImages,
-      duration: "8s",
-      resolution: input.resolution || "720p",
-    } as any,
-    logs: false,
-  })) as any;
-
-  const videoUrl =
-    String(result?.data?.video?.url || "").trim() ||
-    String(result?.video?.url || "").trim() ||
-    String(result?.data?.url || "").trim();
-
-  if (!videoUrl) throw new Error("veo reference-to-video returned empty video url");
-  return { videoUrl };
+  if (!result.videoUrl) throw new Error("vertex veo returned empty video url");
+  return { videoUrl: result.videoUrl };
 }

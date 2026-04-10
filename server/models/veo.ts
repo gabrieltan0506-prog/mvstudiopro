@@ -1,34 +1,4 @@
-import { put } from "@vercel/blob";
-
-const FAL_CREATE_URL = "https://queue.fal.run/fal-ai/veo3.1/reference-to-video";
-const FAL_REQUESTS_BASE_URL = "https://queue.fal.run/fal-ai/veo3.1/requests";
-
-function falAuthHeaders(key: string) {
-  return {
-    Authorization: `Key ${key}`,
-    "Content-Type": "application/json",
-  };
-}
-
-async function parseJsonSafe(resp: Response) {
-  const text = await resp.text();
-  try {
-    return { text, json: JSON.parse(text) as any };
-  } catch {
-    return { text, json: null as any };
-  }
-}
-
-function serializeFalError(value: any) {
-  if (value == null) return "";
-  if (typeof value === "string") return value.trim();
-  if (value instanceof Error) return `${value.name}: ${value.message}`.trim();
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value).trim();
-  }
-}
+import { generateVideo } from "../veo";
 
 function sanitizeVideoPrompt(value: string) {
   return String(value || "")
@@ -38,213 +8,59 @@ function sanitizeVideoPrompt(value: string) {
     .slice(0, 700);
 }
 
-async function waitForFalVideoResult(requestId: string, key: string) {
-  const safeRequestId = encodeURIComponent(String(requestId || "").trim());
-  if (!safeRequestId) throw new Error("missing_fal_request_id");
-
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const statusResp = await fetch(`${FAL_REQUESTS_BASE_URL}/${safeRequestId}/status`, {
-      method: "GET",
-      headers: falAuthHeaders(key),
-    });
-    const statusBody = await parseJsonSafe(statusResp);
-    if (!statusResp.ok) {
-      throw new Error([
-        `fal_status_${statusResp.status}`,
-        serializeFalError(statusBody?.json?.detail),
-        serializeFalError(statusBody?.json?.error),
-        serializeFalError(statusBody?.json),
-        serializeFalError(statusBody?.text),
-      ].filter(Boolean).join(" | "));
-    }
-
-    const status = String(
-      statusBody?.json?.status ||
-      statusBody?.json?.state ||
-      statusBody?.json?.request_status ||
-      ""
-    ).trim().toUpperCase();
-
-    if (status === "COMPLETED") {
-      const resultResp = await fetch(`${FAL_REQUESTS_BASE_URL}/${safeRequestId}`, {
-        method: "GET",
-        headers: falAuthHeaders(key),
-      });
-      const resultBody = await parseJsonSafe(resultResp);
-      if (!resultResp.ok) {
-        throw new Error([
-          `fal_result_${resultResp.status}`,
-          serializeFalError(resultBody?.json?.detail),
-          serializeFalError(resultBody?.json?.error),
-          serializeFalError(resultBody?.json),
-          serializeFalError(resultBody?.text),
-        ].filter(Boolean).join(" | "));
-      }
-      return resultBody.json;
-    }
-
-    if (status === "FAILED" || status === "ERROR" || status === "CANCELLED") {
-      throw new Error([
-        `fal_request_${status.toLowerCase()}`,
-        serializeFalError(statusBody?.json?.error),
-        serializeFalError(statusBody?.json?.detail),
-        serializeFalError(statusBody?.json?.message),
-        serializeFalError(statusBody?.json),
-      ].filter(Boolean).join(" | "));
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-  }
-
-  throw new Error("fal_request_timeout");
-}
-
-async function uploadVideoToMvspBlob(videoUrl: string) {
-  const sourceUrl = String(videoUrl || "").trim();
-  if (!sourceUrl) throw new Error("videoUrl is required");
-
-  const token = String(process.env.MVSP_READ_WRITE_TOKEN || "").trim();
-  if (!token) throw new Error("missing_env_MVSP_READ_WRITE_TOKEN");
-
-  const resp = await fetch(sourceUrl);
-  if (!resp.ok) throw new Error(`failed_to_fetch_generated_video_${resp.status}`);
-
-  const buf = Buffer.from(await resp.arrayBuffer());
-  if (!buf.length) throw new Error("generated_video_is_empty");
-
-  const blob = await put(`scene-videos/${Date.now()}-scene-video.mp4`, buf, {
-    access: "public",
-    token,
-    contentType: "video/mp4",
-  });
-
-  return String(blob.url || "").trim();
-}
-
 export async function generateVideoWithVeo(input: {
   scenePrompt: string;
   referenceImages: string[];
   imageUrls: string[];
 }) {
-  const key = String(process.env.FAL_API_KEY || process.env.FAL_KEY || "").trim();
   const scenePrompt = sanitizeVideoPrompt(String(input.scenePrompt || "").trim());
 
   if (!scenePrompt) {
     return {
       videoUrl: "",
-      provider: "fal",
-      model: "fal-ai/veo3.1/reference-to-video",
+      provider: "vertex",
+      model: "veo-3.1-generate-001",
       isFallback: true,
       errorMessage: "scenePrompt is required",
     };
   }
 
-  if (!key) {
+  const images = Array.from(
+    new Set([...(input.referenceImages || []), ...(input.imageUrls || [])].map((value) => String(value || "").trim())),
+  ).filter(Boolean).slice(0, 3);
+
+  if (!images.length) {
     return {
       videoUrl: "",
-      provider: "fal",
-      model: "fal-ai/veo3.1/reference-to-video",
+      provider: "vertex",
+      model: "veo-3.1-generate-001",
       isFallback: true,
-      errorMessage: "FAL_API_KEY/FAL_KEY is not configured",
+      errorMessage: "reference image is required",
     };
   }
 
   try {
-    const images = Array.from(
-      new Set([...(input.referenceImages || []), ...(input.imageUrls || [])].map((value) => String(value || "").trim()))
-    ).filter(Boolean).slice(0, 3);
-
-    if (!images.length) {
-      return {
-        videoUrl: "",
-        provider: "fal",
-        model: "fal-ai/veo3.1/reference-to-video",
-        isFallback: true,
-        errorMessage: "reference image is required",
-      };
-    }
-
-    const createResp = await fetch(FAL_CREATE_URL, {
-      method: "POST",
-      headers: falAuthHeaders(key),
-      body: JSON.stringify({
-        prompt: scenePrompt,
-        image_urls: images,
-        aspect_ratio: "16:9",
-        duration: "8s",
-        resolution: "720p",
-        generate_audio: false,
-      }),
+    const result = await generateVideo({
+      prompt: scenePrompt,
+      imageUrl: images[0],
+      quality: "standard",
+      aspectRatio: "16:9",
+      resolution: "720p",
+      negativePrompt: "multiple people, extra limbs, animal, pet, duplicate subject, distorted face",
     });
-    const createBody = await parseJsonSafe(createResp);
-    if (!createResp.ok) {
-      return {
-        videoUrl: "",
-        provider: "fal",
-        model: "fal-ai/veo3.1/reference-to-video",
-        isFallback: true,
-        errorMessage: [
-          `fal_create_${createResp.status}`,
-          serializeFalError(createBody?.json?.detail),
-          serializeFalError(createBody?.json?.error),
-          serializeFalError(createBody?.json?.message),
-          serializeFalError(createBody?.json),
-          serializeFalError(createBody?.text),
-        ].filter(Boolean).join(" | "),
-      };
-    }
-
-    const requestId = String(
-      createBody?.json?.request_id ||
-      createBody?.json?.requestId ||
-      createBody?.json?.id ||
-      ""
-    ).trim();
-    if (!requestId) {
-      return {
-        videoUrl: "",
-        provider: "fal",
-        model: "fal-ai/veo3.1/reference-to-video",
-        isFallback: true,
-        errorMessage: "fal request_id missing",
-      };
-    }
-
-    const result = await waitForFalVideoResult(requestId, key);
-
-    const videoUrl =
-      String(result?.data?.video?.url || "").trim() ||
-      String(result?.video?.url || "").trim() ||
-      String(result?.output?.video?.url || "").trim() ||
-      String(result?.output?.url || "").trim() ||
-      String(result?.video?.url || "").trim() ||
-      String(result?.data?.url || "").trim() ||
-      "";
-
-    if (!videoUrl) {
-      return {
-        videoUrl: "",
-        provider: "fal",
-        model: "fal-ai/veo3.1/reference-to-video",
-        isFallback: true,
-        errorMessage: "veo returned no videoUrl",
-      };
-    }
-
-    const persistedVideoUrl = await uploadVideoToMvspBlob(videoUrl);
 
     return {
-      videoUrl: persistedVideoUrl,
-      provider: "fal",
-      model: "fal-ai/veo3.1/reference-to-video",
+      videoUrl: result.videoUrl,
+      provider: "vertex",
+      model: "veo-3.1-generate-001",
       isFallback: false,
       errorMessage: "",
     };
   } catch (error: any) {
     return {
       videoUrl: "",
-      provider: "fal",
-      model: "fal-ai/veo3.1/reference-to-video",
+      provider: "vertex",
+      model: "veo-3.1-generate-001",
       isFallback: true,
       errorMessage: error?.message || String(error),
     };

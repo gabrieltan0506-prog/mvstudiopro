@@ -21,14 +21,14 @@ export function routeModel(type: ModelType): ModelRoute {
 
     case "image":
       return {
-        provider:"fal",
-        model:"fal-ai/nano-banana-2"
+        provider:"vertex",
+        model:"gemini-2.5-flash-image"
       }
 
     case "video":
       return {
-        provider:"kling",
-        model:"kling-video"
+        provider:"vertex",
+        model:"veo-3.1-generate-001"
       }
 
     case "music":

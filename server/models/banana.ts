@@ -1,64 +1,44 @@
-import { fal } from "@fal-ai/client";
+import { generateGeminiImage } from "../gemini-image";
 
 export async function generateStoryboardSceneImages(input: {
   scenePrompt: string;
   count?: number;
 }) {
-  const key = String(process.env.FAL_API_KEY || process.env.FAL_KEY || "").trim();
   const scenePrompt = String(input.scenePrompt || "").trim();
-  const count = Number(input.count || 2);
+  const count = Math.max(1, Math.min(3, Number(input.count || 2)));
 
   if (!scenePrompt) {
     return {
       imageUrls: [] as string[],
-      provider: "fal",
-      model: "fal-ai/nano-banana-2",
+      provider: "vertex",
+      model: "gemini-2.5-flash-image",
       isFallback: true,
       errorMessage: "scenePrompt is required",
     };
   }
 
-  if (!key) {
-    return {
-      imageUrls: [] as string[],
-      provider: "fal",
-      model: "fal-ai/nano-banana-2",
-      isFallback: true,
-      errorMessage: "FAL_API_KEY/FAL_KEY is not configured",
-    };
-  }
-
-  fal.config({ credentials: key });
   try {
-    const result = (await fal.subscribe("fal-ai/nano-banana-2", {
-      input: {
-        prompt: scenePrompt,
-        num_images: count,
-        image_size: "1536x864",
-      },
-      logs: false,
-    })) as any;
-
-    const images = result?.data?.images || result?.images || [];
-    const urls = Array.isArray(images)
-      ? images
-          .map((item: any) => String(item?.url || "").trim())
-          .filter(Boolean)
-          .slice(0, count)
-      : [];
+    const imageUrls: string[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const result = await generateGeminiImage({
+        prompt: `${scenePrompt}\n版本提示：生成第 ${index + 1} 张分镜参考图，保持主体一致，适合 16:9 视频分镜。`,
+        quality: "1k",
+      });
+      imageUrls.push(result.imageUrl);
+    }
 
     return {
-      imageUrls: urls,
-      provider: "fal",
-      model: "fal-ai/nano-banana-2",
-      isFallback: urls.length < count,
-      errorMessage: urls.length < count ? "banana returned insufficient images" : "",
+      imageUrls,
+      provider: "vertex",
+      model: "gemini-2.5-flash-image",
+      isFallback: false,
+      errorMessage: "",
     };
   } catch (error: any) {
     return {
       imageUrls: [] as string[],
-      provider: "fal",
-      model: "fal-ai/nano-banana-2",
+      provider: "vertex",
+      model: "gemini-2.5-flash-image",
       isFallback: true,
       errorMessage: error?.message || String(error),
     };

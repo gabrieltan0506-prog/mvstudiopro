@@ -167,9 +167,9 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const model = tier === "pro"
         ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
+        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-2.5-flash-image");
 
-      const location = (s(process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
+      const location = (s(process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
@@ -204,7 +204,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const location = mode === "rapid"
         ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
+        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
 
       const base = baseUrlFor(location);
 
@@ -241,7 +241,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const location = mode === "rapid"
         ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
+        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
 
       const base = baseUrlFor(location);
       const operationName = normalizePredictOperationName(taskId, projectId, location, model);
