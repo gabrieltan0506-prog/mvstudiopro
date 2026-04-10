@@ -98,7 +98,8 @@
     "tencentcloud-sdk-nodejs": "^4.1.114",
     "vaul": "^1.1.2",
     "wouter": "^3.3.5",
-    "zod": "^4.1.12"
+    "zod": "^4.1.12",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "@builder.io/vite-plugin-jsx-loc": "^0.1.1",

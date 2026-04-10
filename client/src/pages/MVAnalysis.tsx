@@ -1129,6 +1129,163 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
   execution: ["execution", "content"],
 };
 
+function HotTopicWindowPanel({ analysis }: { analysis: any }) {
+  const [windowDays, setWindowDays] = React.useState(15);
+  const [activePlatform, setActivePlatform] = React.useState("all");
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
+  const hotTopicsQuery = (trpc as any).mvAnalysis.getHotTopicsByWindow.useQuery(
+    { windowDays, platforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"] },
+    { staleTime: 120_000, refetchOnWindowFocus: false, retry: false },
+  );
+
+  const platforms: Array<{ key: string; label: string }> = [
+    { key: "all", label: "全部" },
+    { key: "douyin", label: "抖音" },
+    { key: "xiaohongshu", label: "小红书" },
+    { key: "bilibili", label: "B站" },
+    { key: "kuaishou", label: "快手" },
+  ];
+
+  const allPlatformData: Array<{ platform: string; platformLabel: string; hotTopics: any[] }> =
+    hotTopicsQuery.data?.platforms || [];
+
+  const filteredData = activePlatform === "all"
+    ? allPlatformData
+    : allPlatformData.filter((p) => p.platform === activePlatform);
+
+  const handleDownloadPng = () => {
+    if (!panelRef.current) return;
+    import("html2canvas").then(({ default: html2canvas }) => {
+      html2canvas(panelRef.current!, { backgroundColor: "#1a0f00", scale: 2 }).then((canvas) => {
+        const link = document.createElement("a");
+        link.download = `热点趋势_${windowDays}天_${new Date().toISOString().slice(0, 10)}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      });
+    }).catch(() => {
+      // fallback: browser screenshot hint
+      alert("请使用浏览器截图功能保存图片。");
+    });
+  };
+
+  return (
+    <div
+      ref={panelRef}
+      className="mb-8 overflow-hidden rounded-[28px] border border-[#ff8a3d]/30 bg-gradient-to-br from-[#2d1400] via-[#1e0c00] to-[#120800] shadow-[0_18px_40px_rgba(255,100,0,0.12)]"
+    >
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#ff8a3d]/20 px-8 py-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff8a3d]/30 to-[#ffcf92]/10">
+            <TrendingUp className="h-5 w-5 text-[#ffcf92]" />
+          </div>
+          <div>
+            <h3 className="text-xl font-bold text-[#ffcf92]">内容热点选择器</h3>
+            <p className="mt-0.5 text-xs text-[#ff8a3d]/80">选择时间窗口，查看各平台内热点话题</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Window Day Selector */}
+          <div className="flex items-center gap-1 rounded-xl border border-[#ff8a3d]/20 bg-black/30 p-1">
+            {[7, 15, 30].map((days) => (
+              <button
+                key={days}
+                type="button"
+                onClick={() => setWindowDays(days)}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-all ${
+                  windowDays === days
+                    ? "bg-[#ff8a3d] text-black shadow-sm"
+                    : "text-[#ff8a3d]/70 hover:text-[#ffcf92]"
+                }`}
+              >
+                {days}天
+              </button>
+            ))}
+          </div>
+          {/* Download PNG */}
+          <button
+            type="button"
+            onClick={handleDownloadPng}
+            className="flex items-center gap-2 rounded-xl border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-4 py-2 text-sm font-medium text-[#ffcf92] transition hover:bg-[#ff8a3d]/20"
+          >
+            <FileUp className="h-4 w-4" />
+            下载图片
+          </button>
+        </div>
+      </div>
+
+      {/* Platform Tabs */}
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-[#ff8a3d]/10 px-8 py-4">
+        {platforms.map((p) => (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => setActivePlatform(p.key)}
+            className={`shrink-0 rounded-lg px-4 py-1.5 text-sm font-medium transition-all ${
+              activePlatform === p.key
+                ? "bg-[#ff8a3d]/20 text-[#ffcf92] ring-1 ring-[#ff8a3d]/40"
+                : "text-white/50 hover:text-white/80"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+        {hotTopicsQuery.isFetching && (
+          <Loader2 className="ml-2 h-4 w-4 animate-spin text-[#ff8a3d]/60" />
+        )}
+      </div>
+
+      {/* Content */}
+      <div className="p-8">
+        {hotTopicsQuery.isLoading ? (
+          <div className="flex h-40 items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-[#ff8a3d]/60" />
+          </div>
+        ) : filteredData.length === 0 ? (
+          <div className="flex h-40 items-center justify-center rounded-xl border border-white/5 bg-black/20 text-sm text-white/40">
+            当前 {windowDays} 天内暂无足够的平台采集样本
+          </div>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+            {filteredData.map((platform) => (
+              <div key={platform.platform} className="rounded-2xl border border-[#ff8a3d]/15 bg-black/20 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-[#ffcf92]">{platform.platformLabel}</span>
+                  <span className="text-xs text-white/40">近 {windowDays} 天 · {platform.hotTopics.length} 条</span>
+                </div>
+                <div className="space-y-2">
+                  {platform.hotTopics.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-white/40">暂无采集数据</div>
+                  ) : (
+                    platform.hotTopics.map((topic: any, ti: number) => (
+                      <div
+                        key={ti}
+                        className="flex items-start gap-3 rounded-xl bg-gradient-to-r from-[#ff8a3d]/10 to-transparent p-3"
+                      >
+                        <span className={`mt-0.5 shrink-0 text-sm font-bold ${ti === 0 ? "text-[#ff8a3d]" : ti === 1 ? "text-[#ffcf92]" : "text-white/40"}`}>
+                          {ti + 1}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm text-[#f7f4ef]">{topic.title}</div>
+                          <div className="mt-1 flex items-center gap-2 text-xs text-white/40">
+                            <span className="rounded bg-white/10 px-1.5 py-0.5">{topic.type}</span>
+                            {topic.likes > 0 && <span>👍 {topic.likes > 10000 ? `${Math.round(topic.likes / 1000)}k` : topic.likes}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
     .replace(/Call to Action/gi, "行动引导")
@@ -2548,6 +2705,11 @@ export default function MVAnalysisPage() {
             {showPremiumReport ? (
               <div className="space-y-6">
         
+                {/* === 15天内热点选择器 (Standalone Panel) === */}
+                {showPremiumReport && (
+                  <HotTopicWindowPanel analysis={analysis} />
+                )}
+
                 {/* === AUTHOR ANALYSIS: IDENTITY + COMMERCIAL VALUE === */}
                 {authorAnalysis && (
                   <div className="mb-8 grid gap-6 md:grid-cols-2">
