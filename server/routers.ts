@@ -1494,6 +1494,54 @@ export const appRouter = router({
         };
       }),
 
+    getHotTopicsByWindow: publicProcedure
+      .input(z.object({
+        windowDays: z.number().int().min(7).max(90).default(15),
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "toutiao"])).default(["douyin", "xiaohongshu", "bilibili", "kuaishou"]),
+      }))
+      .query(async ({ input }) => {
+        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
+        const windowCutoff = Date.now() - input.windowDays * 24 * 60 * 60 * 1000;
+
+        const results = input.platforms.map((platform) => {
+          const collection = store?.collections?.[platform as keyof typeof store.collections];
+          const items = (collection?.items || []).filter((item: any) => {
+            if (!item?.title) return false;
+            const collectedAt = Date.parse(String(collection?.collectedAt || ""));
+            return !Number.isFinite(collectedAt) || collectedAt >= windowCutoff;
+          });
+          const topicItems = items.filter((item: any) => item.bucket === "douyin_topics" || item.contentType === "topic");
+          const contentItems = items.filter((item: any) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+          const scored = [...topicItems, ...contentItems]
+            .map((item: any) => ({
+              title: String(item.title || ""),
+              type: (topicItems.includes(item) ? "热词" : "热门内容") as string,
+              likes: Number(item.likes || item.hotValue || 0),
+              comments: Number(item.comments || 0),
+              shares: Number(item.shares || 0),
+              views: Number(item.views || 0),
+              score: (item.likes || item.hotValue || 0) + (item.comments || 0) * 3 + (item.shares || 0) * 5 + Math.round((item.views || 0) / 1000),
+            }))
+            .sort((a: any, b: any) => b.score - a.score)
+            .slice(0, 8);
+          return {
+            platform,
+            platformLabel: { douyin: "抖音", xiaohongshu: "小红书", bilibili: "B站", kuaishou: "快手", toutiao: "今日头条" }[platform] || platform,
+            windowDays: input.windowDays,
+            itemCount: items.length,
+            hotTopics: scored,
+            collectedAt: collection?.collectedAt || null,
+          };
+        });
+
+        return {
+          success: true,
+          windowDays: input.windowDays,
+          fetchedAt: new Date().toISOString(),
+          platforms: results,
+        };
+      }),
+
     refreshGrowthTrends: publicProcedure
       .input(z.object({
         platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).default(["douyin", "kuaishou", "bilibili", "xiaohongshu"]),
