@@ -1,6 +1,11 @@
 import {
   type GrowthAnalysisScores,
   type GrowthAudienceTrigger,
+  type GrowthAuthorAnalysis,
+  type GrowthAuthorIdentity,
+  type GrowthAuthorMonetizationValue,
+  type GrowthHotWordMatch,
+  type GrowthPushActivity,
   type GrowthBusinessInsight,
   type GrowthDataLibrarySection,
   type GrowthDecisionFramework,
@@ -2039,6 +2044,284 @@ function buildPlatformSnapshot(platform: GrowthPlatform, analysis: GrowthAnalysi
   };
 }
 
+// ── Author Analysis Build Functions ──────────────────────────────────────
+
+function buildAuthorIdentity(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  industryTemplate: GrowthIndustryTemplate,
+): GrowthAuthorIdentity {
+  const text = String(context || "").trim();
+  const hasCreatorCenterSignals = (analysis.creatorCenterSignals || []).length > 0;
+  const viralScore = analysis.viralPotential;
+  const commercialAnglesCount = (analysis.commercialAngles || []).length;
+
+  const tier: GrowthAuthorIdentity["tier"] =
+    viralScore >= 80 && commercialAnglesCount >= 3 ? "头部KOL" :
+    viralScore >= 60 && (hasCreatorCenterSignals || commercialAnglesCount >= 1) ? "腰部达人" :
+    "素人";
+
+  const tierReason = tier === "头部KOL"
+    ? "视频爆款潜力评分超过80，已有多个商业化方向信号，具备头部创作者特征。"
+    : tier === "腰部达人"
+    ? "视频具有稳定的内容质量与一定商业潜力，但还未到头部规模，适合持续深耕垂类。"
+    : "当前素材更像初期创作者，建议先专注垂类定位和内容稳定性。";
+
+  const identityTags: string[] = [];
+  if (/教练|老师|导师|讲师|专家|顾问/.test(text)) identityTags.push("专业知识达人");
+  if (/健身|体态|运动|瑜伽|普拉提|形体/.test(text)) identityTags.push("健身体态类");
+  if (/美食|烹饪|料理|厨师/.test(text)) identityTags.push("美食类");
+  if (/美妆|护肤|穿搭|时尚/.test(text)) identityTags.push("美妆时尚类");
+  if (/带货|电商|卖货|橱窗/.test(text)) identityTags.push("电商带货型");
+  if (/社群|会员|训练营|陪跑/.test(text)) identityTags.push("社群运营型");
+  if (/医生|医学|健康|康复/.test(text)) identityTags.push("医疗健康类");
+  if (!identityTags.length) identityTags.push("内容创作者");
+
+  const verticalCategory = identityTags[0] || industryTemplate.name;
+  const estimatedFollowers =
+    tier === "头部KOL" ? "预计 50 万+ 粉丝" :
+    tier === "腰部达人" ? "预计 1 万 - 50 万粉丝" :
+    "预计 1 万以下粉丝";
+
+  const commercialPotentialScore = Math.min(96, Math.round(
+    analysis.viralPotential * 0.4 + analysis.impact * 0.3 + analysis.composition * 0.3,
+  ));
+
+  const monetizationPaths: string[] = [];
+  if (/带货|商品|电商/.test(text)) monetizationPaths.push("电商带货");
+  if (/品牌|合作|招商/.test(text)) monetizationPaths.push("品牌合作");
+  if (/课程|教学|训练营/.test(text)) monetizationPaths.push("知识付费");
+  if (/社群|私域|会员/.test(text)) monetizationPaths.push("社群会员");
+  if (!monetizationPaths.length) monetizationPaths.push("内容变现", "品牌合作");
+
+  return {
+    tier,
+    tierReason,
+    identityTags,
+    verticalCategory,
+    estimatedFollowers,
+    commercialPotentialScore,
+    commercialPotentialReason: `基于视频内容质量、商业信号密度和平台适配度综合判断。${industryTemplate.commercialFocus}`,
+    monetizationPaths,
+  };
+}
+
+function buildAuthorMonetizationValue(
+  analysis: GrowthAnalysisScores,
+  context: string,
+  platformSnapshots: GrowthPlatformSnapshot[],
+  monetizationTracks: GrowthMonetizationTrack[],
+  industryTemplate: GrowthIndustryTemplate,
+): GrowthAuthorMonetizationValue {
+  const avgEngagement = Math.round(
+    platformSnapshots.reduce((sum, s) => sum + s.audienceFitScore, 0) / Math.max(platformSnapshots.length, 1),
+  );
+  const cpmBase = analysis.viralPotential >= 80 ? "¥35-80 / 千次播放" :
+    analysis.viralPotential >= 65 ? "¥15-35 / 千次播放" :
+    "¥5-15 / 千次播放";
+  const commerceDriven = /带货|商品|电商|卖家/.test(context);
+  const ecommerceScore = Math.min(96, Math.round(
+    analysis.impact * 0.5 + analysis.viralPotential * 0.3 + (commerceDriven ? 20 : 0),
+  ));
+  const topTrack = monetizationTracks[0];
+  const brandMatchScore = Math.min(96, Math.round(
+    analysis.color * 0.4 + analysis.composition * 0.4 + avgEngagement * 0.2,
+  ));
+  const recommendedPaths: GrowthAuthorMonetizationValue["recommendedPaths"] = platformSnapshots
+    .slice(0, 3)
+    .map((snapshot) => ({
+      path: topTrack?.name || "品牌合作",
+      platform: snapshot.displayName,
+      reason: `${snapshot.displayName}平台受众匹配度 ${snapshot.audienceFitScore}%，适合承接${topTrack?.name || "内容合作"}。`,
+    }));
+  if (!recommendedPaths.length) {
+    recommendedPaths.push({
+      path: "内容变现",
+      platform: "小红书",
+      reason: "小红书图文笔记适合种草，带动后续服务或产品承接。",
+    });
+  }
+  return {
+    cpmEstimate: cpmBase,
+    cpmReason: `基于当前视频爆款潜力（${analysis.viralPotential}分）与平台互动表现综合估算，非实际收益保证。`,
+    ecommerceConversionScore: ecommerceScore,
+    ecommerceConversionReason: commerceDriven
+      ? "内容本身具备成交型表达特征，带货转化潜力较强。"
+      : `内容具备一定转化基础，配合明确行动引导后可提升转化效率。围绕「${industryTemplate.painPoint}」的表达更容易触发购买意向。`,
+    brandMatchScore,
+    brandMatchReason: `视觉完成度（${analysis.color}分）与内容结构（${analysis.composition}分）支撑品牌合作的基础表达质量。`,
+    recommendedPaths,
+  };
+}
+
+function buildHotWordMatches(
+  requestedPlatforms: GrowthPlatform[],
+  collections: Partial<Record<GrowthPlatform, import("./trendCollector").PlatformTrendCollection>>,
+  context: string,
+  analysis: GrowthAnalysisScores,
+): GrowthHotWordMatch[] {
+  const contextKeywords = extractContextKeywords(context);
+  const results: GrowthHotWordMatch[] = [];
+  for (const platform of requestedPlatforms) {
+    const collection = collections[platform];
+    const items = collection?.items || [];
+    const topicItems = items.filter((item) => item.bucket === "douyin_topics" || item.contentType === "topic");
+    const contentItems = items.filter((item) => item.bucket !== "douyin_topics" && item.contentType !== "topic");
+    const candidates = [
+      ...topicItems.slice(0, 5).map((item) => ({
+        word: item.title,
+        type: "热词" as const,
+        source: (platform === "douyin" && item.bucket === "douyin_topics" ? "creator_center" : "live_collection") as GrowthHotWordMatch["source"],
+        score: (item.likes || item.hotValue || 0),
+      })),
+      ...contentItems.slice(0, 3).map((item) => ({
+        word: item.title,
+        type: "飙升话题" as const,
+        source: "live_collection" as GrowthHotWordMatch["source"],
+        score: (item.likes || 0) + (item.comments || 0) * 3,
+      })),
+    ];
+    if (!candidates.length) {
+      if (contextKeywords.length) {
+        results.push({
+          platform,
+          platformLabel: PLATFORM_LABELS[platform],
+          hotWord: contextKeywords[0] || "当前主题",
+          hotWordType: "热词",
+          matchScore: 55,
+          matchReason: "基于业务背景关键词推断，暂无实时热榜数据印证。",
+          contentSuggestion: `把「${contextKeywords[0]}」相关内容与平台当前表达结构结合，先做测试版。`,
+          source: "fallback",
+        });
+      }
+      continue;
+    }
+    for (const candidate of candidates.slice(0, 3)) {
+      if (!candidate.word) continue;
+      const wordKeywords = (candidate.word.match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6);
+      const keywordHits = contextKeywords.filter((kw) =>
+        wordKeywords.some((wk) => wk.includes(kw) || kw.includes(wk)),
+      ).length;
+      const matchScore = Math.min(95, Math.round(40 + keywordHits * 20 + (analysis.viralPotential > 70 ? 10 : 0)));
+      results.push({
+        platform,
+        platformLabel: PLATFORM_LABELS[platform],
+        hotWord: candidate.word.slice(0, 50),
+        hotWordType: candidate.type,
+        matchScore,
+        matchReason: keywordHits > 0
+          ? `内容标签与热词「${candidate.word.slice(0, 20)}」有 ${keywordHits} 个关键词重叠，匹配信号明确。`
+          : "当前热词与内容方向存在关联，建议参考用于标题或话题标签。",
+        contentSuggestion: `可在标题或话题标签中融入「${candidate.word.slice(0, 20)}」，提升内容搜索和推流命中率。`,
+        source: candidate.source,
+      });
+    }
+  }
+  return results.sort((a, b) => b.matchScore - a.matchScore).slice(0, 8);
+}
+
+const PUSH_ACTIVITY_REGISTRY_DATA: Array<{
+  platform: GrowthPlatform;
+  activityName: string;
+  activityType: GrowthPushActivity["activityType"];
+  status: GrowthPushActivity["status"];
+  deadline: string;
+  matchers: string[];
+  submissionSuggestion: string;
+  dataSource: string;
+}> = [
+  { platform: "douyin", activityName: "中视频伙伴计划", activityType: "官方推流活动", status: "进行中", deadline: "长期有效", matchers: ["口播", "讲解", "知识", "案例", "教程", "拆解", "方法", "课程", "分析"], submissionSuggestion: "视频时长需超过 1 分钟，画质清晰，口播或讲解类内容优先。申请后需等待官方审核，通过后自动参与分成。", dataSource: "douyin_creator_center_static" },
+  { platform: "douyin", activityName: "抖音知识节", activityType: "节点营销", status: "进行中", deadline: "季度活动", matchers: ["知识", "方法", "教育", "成长", "技能", "学习", "课程"], submissionSuggestion: "在视频主题中融入知识输出视角，使用官方话题标签参与投稿。", dataSource: "douyin_creator_center_static" },
+  { platform: "xiaohongshu", activityName: "小红书电商与买手成长扶持", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["带货", "电商", "种草", "好物", "推荐", "穿搭", "美妆", "生活方式"], submissionSuggestion: "发布种草笔记，绑定商品橱窗或服务链接，以'一人店'模式参与买手成长计划。", dataSource: "xiaohongshu_static" },
+  { platform: "xiaohongshu", activityName: "小红书健康生活主题月", activityType: "节点营销", status: "进行中", deadline: "月度活动", matchers: ["健身", "健康", "体态", "养生", "减脂", "运动", "瑜伽", "普拉提", "体重"], submissionSuggestion: "以健康生活为主题发布笔记，使用相关话题标签，可获得平台推流加权。", dataSource: "xiaohongshu_static" },
+  { platform: "bilibili", activityName: "创作激励计划", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["教程", "拆解", "复盘", "案例", "知识", "方法", "分析", "科普"], submissionSuggestion: "上传 60 秒以上的正式视频，开通创作激励后自动参与，系列内容月更稳定更有优势。", dataSource: "bilibili_static" },
+  { platform: "bilibili", activityName: "任务中心征稿活动", activityType: "品牌挑战赛", status: "进行中", deadline: "每月更新", matchers: ["创作", "视频", "教程", "生活", "记录", "日常", "分享"], submissionSuggestion: "进入 B 站创作者中心任务中心查看当月征稿主题，投稿符合主题的视频即可参与奖励。", dataSource: "bilibili_static" },
+  { platform: "kuaishou", activityName: "快手光合计划", activityType: "创作激励", status: "进行中", deadline: "长期有效", matchers: ["生活", "口播", "真实", "日常", "服务", "技能", "帮助", "经验"], submissionSuggestion: "稳定更新、真实内容，申请光合创作者认证后可享平台流量扶持与收益激励。", dataSource: "kuaishou_static" },
+  { platform: "kuaishou", activityName: "快手直播与短直联动扶持", activityType: "官方推流活动", status: "进行中", deadline: "长期有效", matchers: ["直播", "电商", "服务", "同城", "带货", "销售", "促销"], submissionSuggestion: "先用短视频积累流量，再通过直播承接咨询或带货，平台会给短直联动账号额外流量加权。", dataSource: "kuaishou_static" },
+];
+
+function buildPushActivityMatches(
+  requestedPlatforms: GrowthPlatform[],
+  context: string,
+  analysis: GrowthAnalysisScores,
+  douyinCreatorCenterAvailable: boolean,
+): GrowthPushActivity[] {
+  const contextKeywords = extractContextKeywords(context);
+  const results: GrowthPushActivity[] = [];
+  for (const activity of PUSH_ACTIVITY_REGISTRY_DATA) {
+    if (!requestedPlatforms.includes(activity.platform)) continue;
+    const hits = contextKeywords.filter((kw) =>
+      activity.matchers.some((m) => m.includes(kw) || kw.includes(m)),
+    ).length;
+    const analysisBoost = analysis.viralPotential >= 70 ? 15 : analysis.viralPotential >= 55 ? 8 : 0;
+    const matchScore = Math.min(96, Math.round(42 + hits * 18 + analysisBoost));
+    if (matchScore < 45) continue;
+    results.push({
+      platform: activity.platform,
+      platformLabel: PLATFORM_LABELS[activity.platform],
+      activityName: activity.activityName,
+      activityType: activity.activityType,
+      status: activity.status,
+      deadline: activity.deadline,
+      matchScore,
+      matchReason: hits > 0
+        ? `内容标签与活动主题有 ${hits} 个关键词匹配，建议优先参与。`
+        : "内容方向与活动定位存在关联，可根据活动要求调整投稿版本。",
+      submissionSuggestion: activity.submissionSuggestion,
+      dataSource: (douyinCreatorCenterAvailable && activity.platform === "douyin")
+        ? "douyin_creator_center_live"
+        : activity.dataSource,
+    });
+  }
+  return results.sort((a, b) => b.matchScore - a.matchScore);
+}
+
+export function buildAuthorAnalysis(params: {
+  analysis: GrowthAnalysisScores;
+  context: string;
+  requestedPlatforms: GrowthPlatform[];
+  collections: Partial<Record<GrowthPlatform, import("./trendCollector").PlatformTrendCollection>>;
+  platformSnapshots: GrowthPlatformSnapshot[];
+  monetizationTracks: GrowthMonetizationTrack[];
+  industryTemplate: GrowthIndustryTemplate;
+  douyinCreatorCenterStats?: { currentTotal: number; archivedTotal: number };
+}): GrowthAuthorAnalysis {
+  const identity = buildAuthorIdentity(params.analysis, params.context, params.industryTemplate);
+  const monetizationValue = buildAuthorMonetizationValue(
+    params.analysis, params.context, params.platformSnapshots, params.monetizationTracks, params.industryTemplate,
+  );
+  const hotWordMatches = buildHotWordMatches(
+    params.requestedPlatforms, params.collections, params.context, params.analysis,
+  );
+  const pushActivityMatches = buildPushActivityMatches(
+    params.requestedPlatforms, params.context, params.analysis,
+    Boolean(params.douyinCreatorCenterStats?.currentTotal),
+  );
+  const ccAvailable = Boolean(params.douyinCreatorCenterStats?.currentTotal);
+  const hasSomeCollection = params.requestedPlatforms.some(
+    (p) => (params.collections[p]?.items?.length || 0) > 0,
+  );
+  return {
+    identity,
+    monetizationValue,
+    hotWordMatches,
+    pushActivityMatches,
+    douyinIndexStatus: {
+      connected: hasSomeCollection,
+      creatorCenterConnected: ccAvailable,
+      lastSyncAt: ccAvailable ? new Date().toISOString() : undefined,
+      notes: [
+        hasSomeCollection
+          ? "平台数据接口已连通，热词与活动匹配基于实时采集样本。"
+          : "当前平台数据接口尚未返回样本，热词与活动匹配基于结构化兜底数据。",
+        ccAvailable
+          ? `抖音创作者中心已连通，当前样本量：${params.douyinCreatorCenterStats?.currentTotal}。`
+          : "抖音创作者中心当前未返回实时数据，请检查 DOUYIN_CREATOR_CENTER_COOKIE 与 DOUYIN_CREATOR_INDEX_COOKIE 配置。",
+      ],
+    },
+  };
+}
+
 export function buildMockGrowthSnapshot(params: {
   analysis: GrowthAnalysisScores;
   context?: string;
@@ -2183,6 +2466,16 @@ export function buildMockGrowthSnapshot(params: {
     growthPlan,
     creationAssist,
     growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),
+    authorAnalysis: buildAuthorAnalysis({
+      analysis: params.analysis,
+      context,
+      requestedPlatforms,
+      collections: {},
+      platformSnapshots,
+      monetizationTracks,
+      industryTemplate,
+      douyinCreatorCenterStats: undefined,
+    }),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);
@@ -2330,6 +2623,16 @@ export function buildGrowthSnapshotFromCollections(params: {
     growthPlan,
     creationAssist,
     growthHandoff: buildGrowthHandoff(context, requestedPlatforms, platformRecommendations, monetizationTracks, creationAssist),
+    authorAnalysis: buildAuthorAnalysis({
+      analysis: params.analysis,
+      context,
+      requestedPlatforms,
+      collections: params.collections,
+      platformSnapshots,
+      monetizationTracks,
+      industryTemplate,
+      douyinCreatorCenterStats: undefined,
+    }),
   } satisfies GrowthSnapshot;
 
   return growthSnapshotSchema.parse(snapshot);

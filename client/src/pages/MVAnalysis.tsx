@@ -9,11 +9,14 @@ import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
 import type {
+  GrowthAuthorAnalysis,
   GrowthBusinessInsight,
   GrowthCampModel,
   GrowthHandoff,
+  GrowthHotWordMatch,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
+  GrowthPushActivity,
   GrowthReferenceExample,
   GrowthSnapshot,
 } from "@shared/growth";
@@ -36,6 +39,7 @@ import {
   Target,
   TrendingUp,
   Upload,
+  User,
   Workflow,
 } from "lucide-react";
 import {
@@ -1221,7 +1225,7 @@ export default function MVAnalysisPage() {
     },
   );
   const growthSystemStatusQuery = trpc.mvAnalysis.getGrowthSystemStatus.useQuery(undefined, {
-    enabled: (supervisorAccess && debugMode) || uploadStage === "analyzing",
+    enabled: supervisorAccess || uploadStage === "analyzing",
     staleTime: 30_000,
     refetchInterval: (supervisorAccess && debugMode) || uploadStage === "analyzing" ? 10_000 : false,
     refetchOnWindowFocus: false,
@@ -1892,6 +1896,10 @@ export default function MVAnalysisPage() {
       })
       .slice(0, 5);
   }, [referenceExamples]);
+  const authorAnalysis: GrowthAuthorAnalysis | null = (growthSnapshot as any)?.authorAnalysis ?? null;
+  const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
+  const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
+  const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
@@ -2539,7 +2547,176 @@ export default function MVAnalysisPage() {
           <section className="mt-8 space-y-6">
             {showPremiumReport ? (
               <div className="space-y-6">
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+        
+                {/* === AUTHOR ANALYSIS: IDENTITY + COMMERCIAL VALUE === */}
+                {authorAnalysis && (
+                  <div className="mb-8 grid gap-6 md:grid-cols-2">
+                    <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#122039] p-8 shadow-[0_18px_40px_rgba(7,14,26,0.32)]">
+                      <div className="mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#ffcf92]/20 to-[#ff8a3d]/10">
+                            <User className="h-5 w-5 text-[#ffcf92]" />
+                          </div>
+                          <h3 className="text-xl font-bold text-[#f7f4ef]">作者身份深度画像</h3>
+                        </div>
+                        <span className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm font-medium text-[#ffcf92]">
+                          {authorAnalysis.identity.tier}
+                        </span>
+                      </div>
+                      <div className="space-y-4">
+                        <div>
+                          <div className="mb-1 text-sm text-white/50">判定依据</div>
+                          <p className="text-sm leading-relaxed text-[#f7f4ef]">{authorAnalysis.identity.tierReason}</p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 rounded-xl bg-black/20 p-4">
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">垂类定位</div>
+                            <div className="font-medium text-[#ffcf92]">{authorAnalysis.identity.verticalCategory}</div>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">预估规模</div>
+                            <div className="font-medium text-[#ffcf92]">{authorAnalysis.identity.estimatedFollowers}</div>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-sm text-white/50">内容标签</div>
+                          <div className="flex flex-wrap gap-2">
+                            {authorAnalysis.identity.identityTags.map((tag: string, tagIdx: number) => (
+                              <span key={tagIdx} className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-white/70">{tag}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-sm text-white/50">推荐变现路径</div>
+                          <div className="flex flex-wrap gap-2">
+                            {authorAnalysis.identity.monetizationPaths.map((p: string, pIdx: number) => (
+                              <span key={pIdx} className="rounded-lg border border-[#ffcf92]/20 bg-[#ffcf92]/10 px-2.5 py-1 text-xs text-[#ffcf92]">{p}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#122039] p-8 shadow-[0_18px_40px_rgba(7,14,26,0.32)]">
+                      <div className="mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#f5b7ff]/20 to-[#ff8cf0]/10">
+                            <CircleDollarSign className="h-5 w-5 text-[#f5b7ff]" />
+                          </div>
+                          <h3 className="text-xl font-bold text-[#f7f4ef]">商业变现潜力</h3>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-white/50">转化指数</span>
+                          <span className="text-lg font-bold text-[#f5b7ff]">{authorAnalysis.monetizationValue.ecommerceConversionScore}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="rounded-xl bg-black/20 p-4">
+                          <div className="mb-1 text-xs text-white/50">CPM 估值预判</div>
+                          <div className="font-medium text-[#f5b7ff]">{authorAnalysis.monetizationValue.cpmEstimate}</div>
+                          <div className="mt-1 text-xs text-white/50">{authorAnalysis.monetizationValue.cpmReason}</div>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-sm text-white/50">带货转化潜力</div>
+                          <p className="text-sm leading-relaxed text-[#f7f4ef]">{authorAnalysis.monetizationValue.ecommerceConversionReason}</p>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-sm text-white/50">品牌合作匹配</div>
+                          <p className="text-sm leading-relaxed text-[#f7f4ef]">{authorAnalysis.monetizationValue.brandMatchReason}</p>
+                        </div>
+                        <div>
+                          <div className="mb-2 text-sm text-white/50">推荐变现路径</div>
+                          <div className="space-y-2">
+                            {authorAnalysis.monetizationValue.recommendedPaths.map((path: any, rpIdx: number) => (
+                              <div key={rpIdx} className="flex items-start gap-3 rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                                <span className="shrink-0 rounded bg-white/10 px-2 py-0.5 text-xs text-white/80">{path.platform}</span>
+                                <div>
+                                  <div className="text-sm font-medium text-[#f7f4ef]">{path.path}</div>
+                                  <div className="mt-1 text-xs text-white/60">{path.reason}</div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* === HOT WORDS & PUSH ACTIVITIES === */}
+                {authorAnalysis && (hotWordMatches.length > 0 || pushActivityMatches.length > 0) && (
+                  <div className="mb-8 grid gap-6 md:grid-cols-2">
+                    <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-8">
+                      <div className="mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#90c4ff]/20 to-[#2684ff]/10">
+                            <TrendingUp className="h-5 w-5 text-[#90c4ff]" />
+                          </div>
+                          <h3 className="text-xl font-bold text-[#f7f4ef]">平台热词匹配</h3>
+                        </div>
+                        {douyinIndexStatus?.connected && (
+                          <span className="flex items-center gap-1.5 text-xs text-emerald-400">
+                            <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" /></span>
+                            实时连通
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-3">
+                        {hotWordMatches.slice(0, 4).map((match: any, hwIdx: number) => (
+                          <div key={hwIdx} className="rounded-xl border border-white/5 bg-black/20 p-4">
+                            <div className="mb-2 flex items-start justify-between">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded bg-[#90c4ff]/20 px-2 py-0.5 text-xs text-[#90c4ff]">{match.platformLabel}</span>
+                                <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-white/70">{match.hotWordType}</span>
+                                <span className="font-medium text-[#f7f4ef]">{match.hotWord}</span>
+                              </div>
+                              <span className="shrink-0 text-sm font-bold text-[#9df6c0]">{match.matchScore}分</span>
+                            </div>
+                            <div className="mb-1 text-xs text-white/60">{match.matchReason}</div>
+                            {match.contentSuggestion && <div className="text-xs text-[#ffcf92]">{match.contentSuggestion}</div>}
+                          </div>
+                        ))}
+                        {hotWordMatches.length === 0 && (
+                          <div className="flex h-32 items-center justify-center rounded-xl border border-white/5 bg-black/20 text-sm text-white/40">
+                            当前平台热词数据待同步
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-8">
+                      <div className="mb-6 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#15ff9b]/20 to-[#9df6c0]/10">
+                            <Rocket className="h-5 w-5 text-[#9df6c0]" />
+                          </div>
+                          <h3 className="text-xl font-bold text-[#f7f4ef]">官方推流活动推荐</h3>
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        {pushActivityMatches.length > 0 ? (
+                          pushActivityMatches.slice(0, 4).map((activity: any, paIdx: number) => (
+                            <div key={paIdx} className="rounded-xl border border-[#9df6c0]/10 bg-[#9df6c0]/5 p-4">
+                              <div className="mb-2 flex flex-wrap items-center gap-2">
+                                <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-white/80">{activity.platformLabel}</span>
+                                <span className="rounded bg-[#9df6c0]/20 px-2 py-0.5 text-xs text-[#9df6c0]">{activity.activityType}</span>
+                                <span className="font-medium text-[#f7f4ef]">{activity.activityName}</span>
+                                {activity.deadline && <span className="ml-auto text-xs text-white/50">{activity.deadline}</span>}
+                              </div>
+                              <p className="mb-2 text-xs leading-relaxed text-white/70">{activity.submissionSuggestion}</p>
+                              <div className="text-xs text-white/50"><span className="text-[#f5b7ff]">匹配理由：</span>{activity.matchReason}</div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex h-32 items-center justify-center rounded-xl border border-white/5 bg-black/20 text-sm text-white/40">
+                            当前无高匹配度的官方推流活动
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+        <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center gap-3 text-[#ffcf92]">
                     <LayoutDashboard className="h-5 w-5" />
                     <h2 className="text-2xl font-bold">本次个性化判断</h2>

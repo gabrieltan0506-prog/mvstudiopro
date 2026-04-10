@@ -403,6 +403,73 @@ export const growthDualTrackSchema = z.object({
   hotTopicTimeliness: z.string(),
 });
 
+// ── Author Identity & Monetization Value ─────────────────────────────────
+export const growthAuthorTierSchema = z.enum(["素人", "腰部达人", "头部KOL"]);
+
+export const growthAuthorIdentitySchema = z.object({
+  tier: growthAuthorTierSchema,
+  tierReason: z.string(),
+  identityTags: z.array(z.string()).default([]),
+  verticalCategory: z.string().default(""),
+  estimatedFollowers: z.string().default(""),
+  commercialPotentialScore: z.number().min(0).max(100).default(0),
+  commercialPotentialReason: z.string().default(""),
+  monetizationPaths: z.array(z.string()).default([]),
+});
+
+export const growthAuthorMonetizationValueSchema = z.object({
+  cpmEstimate: z.string().default(""),
+  cpmReason: z.string().default(""),
+  ecommerceConversionScore: z.number().min(0).max(100).default(0),
+  ecommerceConversionReason: z.string().default(""),
+  brandMatchScore: z.number().min(0).max(100).default(0),
+  brandMatchReason: z.string().default(""),
+  recommendedPaths: z.array(z.object({
+    path: z.string(),
+    platform: z.string(),
+    reason: z.string(),
+  })).default([]),
+});
+
+// ── Hot Word Matching ─────────────────────────────────────────────────────
+export const growthHotWordMatchSchema = z.object({
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  hotWord: z.string(),
+  hotWordType: z.enum(["热词", "飙升话题", "挑战赛", "官方推流活动"]),
+  matchScore: z.number().min(0).max(100),
+  matchReason: z.string(),
+  contentSuggestion: z.string().default(""),
+  source: z.enum(["douyin_index", "creator_center", "live_collection", "fallback"]),
+});
+
+// ── Push Activity Match ───────────────────────────────────────────────────
+export const growthPushActivitySchema = z.object({
+  platform: growthPlatformSchema,
+  platformLabel: z.string(),
+  activityName: z.string(),
+  activityType: z.enum(["官方推流活动", "品牌挑战赛", "节点营销", "创作激励"]),
+  status: z.enum(["进行中", "即将开始", "已结束"]),
+  deadline: z.string().default(""),
+  matchScore: z.number().min(0).max(100),
+  matchReason: z.string(),
+  submissionSuggestion: z.string().default(""),
+  dataSource: z.string().default(""),
+});
+
+export const growthAuthorAnalysisSchema = z.object({
+  identity: growthAuthorIdentitySchema,
+  monetizationValue: growthAuthorMonetizationValueSchema,
+  hotWordMatches: z.array(growthHotWordMatchSchema).default([]),
+  pushActivityMatches: z.array(growthPushActivitySchema).default([]),
+  douyinIndexStatus: z.object({
+    connected: z.boolean(),
+    creatorCenterConnected: z.boolean(),
+    lastSyncAt: z.string().optional(),
+    notes: z.array(z.string()).default([]),
+  }).default({ connected: false, creatorCenterConnected: false, notes: [] }),
+});
+
 export const growthSnapshotSchema = z.object({
   status: growthSnapshotStatusSchema,
   analysisTracks: growthDualTrackSchema,
@@ -431,6 +498,7 @@ export const growthSnapshotSchema = z.object({
   growthPlan: z.array(growthPlanStepSchema),
   creationAssist: growthCreationAssistSchema,
   growthHandoff: growthHandoffSchema,
+  authorAnalysis: growthAuthorAnalysisSchema.optional(),
 });
 
 export type GrowthPlatform = z.infer<typeof growthPlatformSchema>;
@@ -469,6 +537,12 @@ export type GrowthDashboardConsole = z.infer<typeof growthDashboardConsoleSchema
 export type GrowthPlanStep = z.infer<typeof growthPlanStepSchema>;
 export type GrowthCreationAssist = z.infer<typeof growthCreationAssistSchema>;
 export type GrowthHandoff = z.infer<typeof growthHandoffSchema>;
+export type GrowthAuthorIdentity = z.infer<typeof growthAuthorIdentitySchema>;
+export type GrowthAuthorMonetizationValue = z.infer<typeof growthAuthorMonetizationValueSchema>;
+export type GrowthHotWordMatch = z.infer<typeof growthHotWordMatchSchema>;
+export type GrowthPushActivity = z.infer<typeof growthPushActivitySchema>;
+export type GrowthAuthorAnalysis = z.infer<typeof growthAuthorAnalysisSchema>;
+
 export type GrowthSnapshotStatus = z.infer<typeof growthSnapshotStatusSchema>;
 export type GrowthDualTrack = z.infer<typeof growthDualTrackSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;

@@ -24,7 +24,7 @@ import { showcaseRouter } from "./routers/showcase";
 import { klingRouter } from "./routers/kling";
 import { hunyuan3dRouter } from "./routers/hunyuan3d";
 import { sunoRouter } from "./routers/suno";
-import { buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
+import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
 import { collectTrendPlatforms } from "./growth/trendCollector";
@@ -331,6 +331,7 @@ const growthSnapshotPersonalizationSchema = z.object({
   creationAssist: growthCreationAssistSchema,
   growthHandoff: growthHandoffSchema,
   statusNotes: z.array(z.string()).default([]),
+  authorAnalysis: z.any().optional(),
 });
 
 async function personalizeGrowthSnapshot(params: {
@@ -1099,6 +1100,7 @@ export const appRouter = router({
               growthPlan: personalized.growthPlan,
               creationAssist: personalized.creationAssist,
               growthHandoff: personalized.growthHandoff,
+              authorAnalysis: personalized.authorAnalysis ?? baseSnapshot.authorAnalysis,
               status: {
                 ...baseSnapshot.status,
                 notes: [
