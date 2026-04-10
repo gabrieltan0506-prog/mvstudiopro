@@ -57,3 +57,30 @@ export async function uploadBufferToGcs(params: {
     gcsUri: `gs://${bucket}/${objectName}`,
   };
 }
+
+export async function deleteGcsObject(params: {
+  bucket?: string;
+  objectName: string;
+}): Promise<void> {
+  const bucket = params.bucket || getGcsBucketName();
+  if (!bucket) {
+    throw new Error("GCS bucket is not configured");
+  }
+
+  const objectName = normalizeObjectName(params.objectName);
+  const accessToken = await getVertexAccessToken();
+  const deleteUrl = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(objectName)}`);
+
+  const response = await fetch(deleteUrl, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (response.status === 404) return;
+  if (!response.ok) {
+    const json = await response.json().catch(() => null);
+    throw new Error(`gcs_delete_failed:${response.status}:${JSON.stringify(json || {})}`);
+  }
+}

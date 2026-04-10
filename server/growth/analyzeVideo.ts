@@ -6,9 +6,8 @@ import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
-import { uploadBufferToGcs } from "../services/gcs";
+import { deleteGcsObject, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
-import { validateDuration } from "../videoAnalysis";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +15,13 @@ const execFileAsync = promisify(execFile);
 const AUDIO_TOKENS_PER_MINUTE = 1920;
 const VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS = 17700;
 const TOKENS_PER_FRAME = Math.round((VIDEO_AUDIO_TOKENS_PER_MINUTE_AT_1FPS - AUDIO_TOKENS_PER_MINUTE) / 60);
+const EXTRACTOR_SEGMENT_SECONDS = Math.max(300, Number(process.env.GROWTH_CAMP_SEGMENT_SECONDS || 35 * 60) || 35 * 60);
+const STRATEGIST_MAX_FRAMES = Math.max(8, Number(process.env.GROWTH_CAMP_STRATEGIST_MAX_FRAMES || 12) || 12);
+const GROWTH_ANALYSIS_MAX_CONCURRENCY = Math.max(1, Number(process.env.GROWTH_CAMP_ANALYSIS_CONCURRENCY || 3) || 3);
+const SHOULD_CLEAN_GCS_TEMP = !/^(0|false|no)$/i.test(String(process.env.GROWTH_CAMP_KEEP_GCS_TEMP || ""));
+
+let growthAnalysisActive = 0;
+const growthAnalysisWaiters: Array<() => void> = [];
 
 type VideoAnalysisResult = {
   analysis: GrowthAnalysisScores;
@@ -141,6 +147,22 @@ function truncate(value: string, max = 5000) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
+async function withGrowthAnalysisSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (growthAnalysisActive >= GROWTH_ANALYSIS_MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      growthAnalysisWaiters.push(resolve);
+    });
+  }
+  growthAnalysisActive += 1;
+  try {
+    return await fn();
+  } finally {
+    growthAnalysisActive = Math.max(0, growthAnalysisActive - 1);
+    const next = growthAnalysisWaiters.shift();
+    if (next) next();
+  }
+}
+
 function isDeepStrategistModel(modelName: string) {
   return /3\.1/i.test(String(modelName || ""));
 }
@@ -161,6 +183,32 @@ function estimateTokenProfile(durationSeconds: number, sparseFrameCount: number)
     savingsVs1fpsTokens,
     savingsVs1fpsPct,
   };
+}
+
+function buildChunkRanges(durationSeconds: number) {
+  if (durationSeconds <= EXTRACTOR_SEGMENT_SECONDS) {
+    return [{ start: 0, duration: durationSeconds, index: 0 }];
+  }
+  const chunks: Array<{ start: number; duration: number; index: number }> = [];
+  let start = 0;
+  let index = 0;
+  while (start < durationSeconds) {
+    const duration = Math.min(EXTRACTOR_SEGMENT_SECONDS, durationSeconds - start);
+    chunks.push({ start, duration, index });
+    start += duration;
+    index += 1;
+  }
+  return chunks;
+}
+
+function pickStrategistFrames(frames: SparseFrame[]) {
+  if (frames.length <= STRATEGIST_MAX_FRAMES) return frames;
+  const selected: SparseFrame[] = [];
+  const step = (frames.length - 1) / Math.max(1, STRATEGIST_MAX_FRAMES - 1);
+  for (let index = 0; index < STRATEGIST_MAX_FRAMES; index += 1) {
+    selected.push(frames[Math.round(step * index)]);
+  }
+  return Array.from(new Map(selected.map((frame) => [frame.timestamp, frame])).values());
 }
 
 async function withTempVideo<T>(buffer: Buffer, fn: (videoPath: string) => Promise<T>): Promise<T> {
@@ -193,46 +241,47 @@ async function getVideoDurationFromPath(videoPath: string): Promise<number> {
   return parsed;
 }
 
-async function extractAudioTrack(videoBuffer: Buffer) {
-  return withTempVideo(videoBuffer, async (videoPath) => {
-    const audioPath = videoPath.replace(/\.mp4$/, ".mp3");
-    try {
-      const probe = await execFileAsync("ffprobe", [
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
-        "-show_entries",
-        "stream=codec_type",
-        "-of",
-        "json",
-        videoPath,
-      ]).catch(() => ({ stdout: "{\"streams\":[]}" }));
-      const probeJson = JSON.parse(String(probe.stdout || "{\"streams\":[]}"));
-      const hasAudio = Array.isArray(probeJson.streams) && probeJson.streams.length > 0;
-      if (!hasAudio) {
-        return null;
-      }
-
-      await execFileAsync("ffmpeg", [
-        "-y",
-        "-i",
-        videoPath,
-        "-vn",
-        "-acodec",
-        "libmp3lame",
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        audioPath,
-      ]);
-
-      return await fs.readFile(audioPath);
-    } finally {
-      await fs.unlink(audioPath).catch(() => undefined);
+async function extractAudioTrackFromPath(videoPath: string, startSeconds = 0, durationSeconds?: number) {
+  const audioPath = videoPath.replace(/\.mp4$/, `.${startSeconds}.mp3`);
+  try {
+    const probe = await execFileAsync("ffprobe", [
+      "-v",
+      "error",
+      "-select_streams",
+      "a:0",
+      "-show_entries",
+      "stream=codec_type",
+      "-of",
+      "json",
+      videoPath,
+    ]).catch(() => ({ stdout: "{\"streams\":[]}" }));
+    const probeJson = JSON.parse(String(probe.stdout || "{\"streams\":[]}"));
+    const hasAudio = Array.isArray(probeJson.streams) && probeJson.streams.length > 0;
+    if (!hasAudio) {
+      return null;
     }
-  });
+
+    const args = [
+      "-y",
+      ...(startSeconds > 0 ? ["-ss", String(startSeconds)] : []),
+      "-i",
+      videoPath,
+      ...(durationSeconds && durationSeconds > 0 ? ["-t", String(durationSeconds)] : []),
+      "-vn",
+      "-acodec",
+      "libmp3lame",
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      audioPath,
+    ];
+    await execFileAsync("ffmpeg", args);
+
+    return await fs.readFile(audioPath);
+  } finally {
+    await fs.unlink(audioPath).catch(() => undefined);
+  }
 }
 
 async function transcribeVideoAudio(audioBuffer: Buffer | null): Promise<string> {
@@ -282,45 +331,96 @@ function buildSparseFrameTimestamps(duration: number) {
     .sort((a, b) => a - b);
 }
 
-async function extractSparseFrames(videoBuffer: Buffer) {
-  return withTempVideo(videoBuffer, async (videoPath) => {
-    const duration = await getVideoDurationFromPath(videoPath);
-    const timestamps = buildSparseFrameTimestamps(duration);
-    const frameDir = path.join(
-      os.tmpdir(),
-      `growth-camp-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    );
-    await fs.mkdir(frameDir, { recursive: true });
-    try {
-      const frames: SparseFrame[] = [];
-      for (let index = 0; index < timestamps.length; index += 1) {
-        const timestamp = timestamps[index];
-        const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
-        await execFileAsync("ffmpeg", [
-          "-y",
-          "-ss",
-          String(timestamp),
-          "-i",
-          videoPath,
-          "-frames:v",
-          "1",
-          "-vf",
-          "scale='min(960,iw)':-2",
-          "-q:v",
-          "5",
-          outPath,
-        ]);
-        const frameBuffer = await fs.readFile(outPath);
-        frames.push({
-          timestamp,
-          dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
-        });
-      }
-      return { duration, frames };
-    } finally {
-      await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
+async function extractSparseFramesFromPath(videoPath: string, startSeconds = 0, durationSeconds?: number) {
+  const boundedDuration = durationSeconds ?? await getVideoDurationFromPath(videoPath);
+  const timestamps = buildSparseFrameTimestamps(boundedDuration);
+  const frameDir = path.join(
+    os.tmpdir(),
+    `growth-camp-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  await fs.mkdir(frameDir, { recursive: true });
+  try {
+    const frames: SparseFrame[] = [];
+    for (let index = 0; index < timestamps.length; index += 1) {
+      const chunkTimestamp = timestamps[index];
+      const absoluteTimestamp = startSeconds + chunkTimestamp;
+      const outPath = path.join(frameDir, `frame-${String(index).padStart(2, "0")}.jpg`);
+      await execFileAsync("ffmpeg", [
+        "-y",
+        "-ss",
+        String(absoluteTimestamp),
+        "-i",
+        videoPath,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale='min(960,iw)':-2",
+        "-q:v",
+        "5",
+        outPath,
+      ]);
+      const frameBuffer = await fs.readFile(outPath);
+      frames.push({
+        timestamp: absoluteTimestamp,
+        dataUrl: `data:image/jpeg;base64,${frameBuffer.toString("base64")}`,
+      });
     }
-  });
+    return { duration: boundedDuration, frames };
+  } finally {
+    await fs.rm(frameDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function mergeAudioPasses(chunks: AudioFirstPass[]) {
+  if (!chunks.length) {
+    return {
+      valueTier: "medium" as const,
+      contentSummary: "",
+      hookSummary: "",
+      audiencePromise: "",
+      commercialPotential: 0,
+      creatorSignals: [],
+      priorityMoments: [],
+      riskMoments: [],
+      deepDiveBrief: "",
+      transcriptSummary: "",
+    };
+  }
+  const tierScore = { low: 1, medium: 2, high: 3 } as const;
+  const bestTier = chunks.slice().sort((left, right) => tierScore[right.valueTier] - tierScore[left.valueTier])[0]?.valueTier || "medium";
+  return {
+    valueTier: bestTier,
+    contentSummary: chunks.map((item) => item.contentSummary).filter(Boolean).join("；"),
+    hookSummary: chunks.map((item) => item.hookSummary).filter(Boolean).slice(0, 3).join("；"),
+    audiencePromise: chunks.map((item) => item.audiencePromise).filter(Boolean).slice(0, 3).join("；"),
+    commercialPotential: Math.round(chunks.reduce((sum, item) => sum + item.commercialPotential, 0) / chunks.length),
+    creatorSignals: Array.from(new Set(chunks.flatMap((item) => item.creatorSignals))).slice(0, 8),
+    priorityMoments: chunks.flatMap((item) => item.priorityMoments).slice(0, 8),
+    riskMoments: chunks.flatMap((item) => item.riskMoments).slice(0, 8),
+    deepDiveBrief: chunks.map((item) => item.deepDiveBrief).filter(Boolean).join("；"),
+    transcriptSummary: chunks.map((item) => item.transcriptSummary).filter(Boolean).join("；"),
+  };
+}
+
+function mergeVisualPasses(chunks: VisualFirstPass[]) {
+  if (!chunks.length) {
+    return {
+      visualSummary: "",
+      openingFrameAssessment: "",
+      sceneConsistency: "",
+      trustSignals: [],
+      visualRisks: [],
+      keyFrames: [],
+    };
+  }
+  return {
+    visualSummary: chunks.map((item) => item.visualSummary).filter(Boolean).join("；"),
+    openingFrameAssessment: chunks.map((item) => item.openingFrameAssessment).filter(Boolean).slice(0, 2).join("；"),
+    sceneConsistency: chunks.map((item) => item.sceneConsistency).filter(Boolean).slice(0, 2).join("；"),
+    trustSignals: Array.from(new Set(chunks.flatMap((item) => item.trustSignals))).slice(0, 10),
+    visualRisks: Array.from(new Set(chunks.flatMap((item) => item.visualRisks))).slice(0, 10),
+    keyFrames: chunks.flatMap((item) => item.keyFrames).sort((left, right) => left.timestamp.localeCompare(right.timestamp)).slice(0, 12),
+  };
 }
 
 async function runAudioFirstPass(params: {
@@ -736,6 +836,7 @@ export async function analyzeVideo(params: {
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
     const extractorModel = resolveGrowthCampExtractorModel();
+    const uploadedObjects: string[] = [];
     let buffer: Buffer;
     if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
@@ -762,152 +863,167 @@ export async function analyzeVideo(params: {
       throw new VideoAnalysisFailure("decode", "缺少视频内容");
     }
 
-    const duration = await withTempVideo(buffer, getVideoDurationFromPath);
-    const validation = validateDuration(duration);
-    if (!validation.valid) {
-      throw new VideoAnalysisFailure("decode", validation.error || "视频时长不符合要求");
-    }
-
     const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
     const storedVideo = await uploadBufferToGcs({
       objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
       buffer,
       contentType: params.mimeType || "video/mp4",
     });
+    uploadedObjects.push(storedVideo.objectName);
 
-    const audioBuffer = await extractAudioTrack(buffer).catch((error) => {
-      console.warn("[growth.analyzeVideo] audio extraction failed:", error);
-      return null;
-    });
-    const audioStorage = audioBuffer
-      ? await uploadBufferToGcs({
-          objectName: `growth-camp/audio/${Date.now()}-${safeName.replace(/\.[^.]+$/, "")}.mp3`,
-          buffer: audioBuffer,
-          contentType: "audio/mpeg",
-        })
-      : null;
+    const result = await withTempVideo(buffer, async (videoPath) => {
+      const duration = await getVideoDurationFromPath(videoPath);
+      if (!Number.isFinite(duration) || duration <= 0) {
+        throw new VideoAnalysisFailure("decode", "无法读取视频时长");
+      }
 
-    let sparseFrames;
-    try {
-      sparseFrames = await extractSparseFrames(buffer);
-    } catch (error) {
-      console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
-      throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
-    }
+      const chunkRanges = buildChunkRanges(duration);
+      const transcriptChunks: string[] = [];
+      const audioPassChunks: AudioFirstPass[] = [];
+      const visualPassChunks: VisualFirstPass[] = [];
+      const allFrames: SparseFrame[] = [];
 
-    const transcript = await transcribeVideoAudio(audioBuffer).catch((error) => {
-      console.warn("[growth.analyzeVideo] transcript fallback:", error);
-      return "";
-    });
+      for (const chunk of chunkRanges) {
+        const audioBuffer = await extractAudioTrackFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
+          console.warn("[growth.analyzeVideo] audio extraction failed:", error);
+          return null;
+        });
 
-    const audioFirstPass = audioStorage
-      ? await runAudioFirstPass({
-          audioGcsUri: audioStorage.gcsUri,
-          transcript,
-          duration,
+        const transcriptChunk = await transcribeVideoAudio(audioBuffer).catch((error) => {
+          console.warn("[growth.analyzeVideo] transcript fallback:", error);
+          return "";
+        });
+        if (transcriptChunk) {
+          transcriptChunks.push(`[${toTimestamp(chunk.start)}-${toTimestamp(chunk.start + chunk.duration)}]\n${transcriptChunk}`);
+        }
+
+        if (audioBuffer) {
+          const audioStorage = await uploadBufferToGcs({
+            objectName: `growth-camp/audio/${Date.now()}-${chunk.index}-${safeName.replace(/\.[^.]+$/, "")}.mp3`,
+            buffer: audioBuffer,
+            contentType: "audio/mpeg",
+          });
+          uploadedObjects.push(audioStorage.objectName);
+          const audioPass = await withGrowthAnalysisSlot(() => runAudioFirstPass({
+            audioGcsUri: audioStorage.gcsUri,
+            transcript: transcriptChunk,
+            duration: chunk.duration,
+            context: params.context,
+            fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
+          }));
+          audioPassChunks.push(audioPass);
+        }
+
+        const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
+          console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
+          throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
+        });
+        allFrames.push(...sparseFrames.frames);
+
+        const visualPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
+          sparseFrames: sparseFrames.frames,
           context: params.context,
-          fileName: params.fileName,
-        })
-      : {
-          valueTier: "medium" as const,
-          contentSummary: transcript ? truncate(transcript, 300) : "无音轨，转入视觉优先保守判断。",
-          hookSummary: "未检测到可靠音轨证据，需要更多依靠视觉结构判断。",
-          audiencePromise: "",
-          commercialPotential: 60,
-          creatorSignals: [],
-          priorityMoments: [],
-          riskMoments: [],
-          deepDiveBrief: "优先根据关键帧判断开头是否有明确 hook、信息承诺和商业承接动作。",
-          transcriptSummary: transcript ? truncate(transcript, 500) : "",
-        };
+          duration: chunk.duration,
+          fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
+        }).catch((error) => {
+          console.warn("[growth.analyzeVideo] visual first pass fallback:", error);
+          return {
+            visualSummary: "已抽取关键帧，但视觉初判失败，转入保守视觉判断。",
+            openingFrameAssessment: "需重点复查开头是否足够直接、是否能一眼建立问题感。",
+            sceneConsistency: "优先保证人物、场景和动作示范能建立信任。",
+            trustSignals: [],
+            visualRisks: [],
+            keyFrames: sparseFrames.frames.slice(0, 4).map((item) => ({
+              timestamp: toTimestamp(item.timestamp),
+              whatShows: "关键帧已抽取，待进一步视觉判断。",
+              commercialUse: "可用来承接人物状态、动作示范或前后对比。",
+              issue: "视觉初判暂缺，需人工或下一轮模型补看。",
+              fix: "优先检查开头帧、人物主体和结果证据帧。",
+            })),
+          };
+        }));
+        visualPassChunks.push(visualPass);
+      }
 
-    const visualFirstPass = await runVisualFirstPass({
-      sparseFrames: sparseFrames.frames,
-      context: params.context,
-      duration,
-      fileName: params.fileName,
-    }).catch((error) => {
-      console.warn("[growth.analyzeVideo] visual first pass fallback:", error);
+      const transcript = transcriptChunks.join("\n\n");
+      const audioFirstPass = mergeAudioPasses(audioPassChunks);
+      const visualFirstPass = mergeVisualPasses(visualPassChunks);
+      const strategistFrames = pickStrategistFrames(allFrames);
+
+      const deepDive = await withGrowthAnalysisSlot(() => runDeepDivePass({
+        finalModel,
+        sparseFrames: strategistFrames,
+        audioFirstPass,
+        visualFirstPass,
+        transcript,
+        duration,
+        context: params.context,
+        fileName: params.fileName,
+        videoGcsUri: storedVideo.gcsUri,
+      }));
+
+      const strategistRefinement = isDeepStrategistModel(finalModel)
+        ? await withGrowthAnalysisSlot(() => runStrategistRefinementPass({
+            finalModel,
+            context: params.context,
+            duration,
+            transcript,
+            audioFirstPass,
+            visualFirstPass,
+            deepDive,
+          }).catch((error) => {
+            console.warn("[growth.analyzeVideo] strategist refinement fallback:", error);
+            return null;
+          }))
+        : null;
+
+      const parsed = growthAnalysisScoresSchema.parse({
+        ...deepDive,
+        ...(strategistRefinement || {}),
+        visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
+        openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
+        sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
+        trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
+          ? deepDive.trustSignals
+          : visualFirstPass.trustSignals,
+        visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
+          ? deepDive.visualRisks
+          : visualFirstPass.visualRisks,
+        keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
+          ? deepDive.keyFrames
+          : visualFirstPass.keyFrames,
+      });
+      const costProfile = estimateTokenProfile(duration, allFrames.length);
+
       return {
-        visualSummary: "已抽取关键帧，但视觉初判失败，转入保守视觉判断。",
-        openingFrameAssessment: "需重点复查开头是否足够直接、是否能一眼建立问题感。",
-        sceneConsistency: "优先保证人物、场景和动作示范能建立信任。",
-        trustSignals: [],
-        visualRisks: [],
-        keyFrames: sparseFrames.frames.slice(0, 4).map((item) => ({
-          timestamp: toTimestamp(item.timestamp),
-          whatShows: "关键帧已抽取，待进一步视觉判断。",
-          commercialUse: "可用来承接人物状态、动作示范或前后对比。",
-          issue: "视觉初判暂缺，需人工或下一轮模型补看。",
-          fix: "优先检查开头帧、人物主体和结果证据帧。",
-        })),
+        analysis: parsed,
+        videoMeta: {
+          videoUrl: storedVideo.gcsUri,
+          audioUrl: "",
+          transcript,
+          videoDuration: duration,
+          provider: "vertex",
+          model: finalModel,
+          fallback: false,
+          pipeline: resolveGrowthCampPipelineMode(finalModel),
+          stageOneModel: extractorModel,
+          stageTwoModel: finalModel,
+          sparseFrameCount: allFrames.length,
+          estimatedCostProfile: costProfile,
+          failureStage: undefined,
+          failureReason: undefined,
+        },
       };
     });
 
-    const deepDive = await runDeepDivePass({
-      finalModel,
-      sparseFrames: sparseFrames.frames,
-      audioFirstPass,
-      visualFirstPass,
-      transcript,
-      duration,
-      context: params.context,
-      fileName: params.fileName,
-      videoGcsUri: storedVideo.gcsUri,
-    });
+    if (SHOULD_CLEAN_GCS_TEMP) {
+      await Promise.all(uploadedObjects.map((objectName) =>
+        deleteGcsObject({ objectName }).catch((error) => {
+          console.warn("[growth.analyzeVideo] gcs cleanup failed:", objectName, error);
+        })));
+    }
 
-    const strategistRefinement = isDeepStrategistModel(finalModel)
-      ? await runStrategistRefinementPass({
-          finalModel,
-          context: params.context,
-          duration,
-          transcript,
-          audioFirstPass,
-          visualFirstPass,
-          deepDive,
-        }).catch((error) => {
-          console.warn("[growth.analyzeVideo] strategist refinement fallback:", error);
-          return null;
-        })
-      : null;
-
-    const parsed = growthAnalysisScoresSchema.parse({
-      ...deepDive,
-      ...(strategistRefinement || {}),
-      visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
-      openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
-      sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
-      trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
-        ? deepDive.trustSignals
-        : visualFirstPass.trustSignals,
-      visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
-        ? deepDive.visualRisks
-        : visualFirstPass.visualRisks,
-      keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
-        ? deepDive.keyFrames
-        : visualFirstPass.keyFrames,
-    });
-    const costProfile = estimateTokenProfile(duration, sparseFrames.frames.length);
-
-    return {
-      analysis: parsed,
-      videoMeta: {
-        videoUrl: storedVideo.gcsUri,
-        audioUrl: audioStorage?.gcsUri || "",
-        transcript,
-        videoDuration: duration,
-        provider: "vertex",
-        model: finalModel,
-        fallback: false,
-        pipeline: resolveGrowthCampPipelineMode(finalModel),
-        stageOneModel: extractorModel,
-        stageTwoModel: finalModel,
-        sparseFrameCount: sparseFrames.frames.length,
-        estimatedCostProfile: costProfile,
-        failureStage: undefined,
-        failureReason: undefined,
-      },
-    };
+    return result;
   } catch (error) {
     if (error instanceof VideoAnalysisFailure) {
       throw error;
