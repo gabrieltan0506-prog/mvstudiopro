@@ -1367,7 +1367,6 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
   );
 }
 
-}
 
 export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
