@@ -11,8 +11,8 @@ import {
   fetchRemoteAssetAsBase64,
   fetchVertexJson,
   getVertexAuthHeaders,
-  getVertexMediaLocation,
   getVertexProjectId,
+  getVertexVideoLocation,
   normalizePredictOperationName,
 } from "./services/vertexMedia";
 
@@ -39,7 +39,7 @@ function pickVeoModel(quality: VeoGenerateOptions["quality"]) {
 
 export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult> {
   const projectId = getVertexProjectId();
-  const location = getVertexMediaLocation();
+  const location = getVertexVideoLocation();
   const model = pickVeoModel(opts.quality);
   const baseUrl = baseUrlForVertex(location);
   const headers = await getVertexAuthHeaders();
@@ -91,7 +91,7 @@ export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult
       method: "POST",
       headers,
       body: JSON.stringify({
-        operationName: normalizePredictOperationName(operationName, projectId, model),
+        operationName: normalizePredictOperationName(operationName, projectId, model, location),
       }),
     });
 

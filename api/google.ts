@@ -165,16 +165,25 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
 
-      const model = tier === "pro"
-        ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
+      const requestedModel = s(b.model || q.model || "");
+      const resolvedTier = requestedModel
+        ? (requestedModel === "gemini-3.1-flash-image-preview" ? "pro" : "flash")
+        : tier;
 
-      const location = (s(process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
+      const model = requestedModel
+        ? requestedModel
+        : resolvedTier === "pro"
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3.1-flash-image-preview")
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
+
+      const location = resolvedTier === "pro"
+        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "global").trim()
+        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
-      if(tier === "pro") imageConfig.imageSize = size;
+      if(resolvedTier === "pro") imageConfig.imageSize = size;
 
       const r = await fetchJson(url,{
         method:"POST",

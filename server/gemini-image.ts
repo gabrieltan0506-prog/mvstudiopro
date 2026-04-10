@@ -1,8 +1,7 @@
 /**
  * Vertex AI image generation service.
- * - Nano Banana 2 equivalent route: imagen-4.0-generate-001
- * - Nano Banana Pro equivalent route: gemini-3-pro-image-preview
- * Fixed region: us-central1
+ * - Nano Banana route: imagen-4.0-generate-001 @ us-central1
+ * - Nano Banana Pro route: gemini-3.1-flash-image-preview @ global
  */
 import { storagePut } from "./storage";
 import {
@@ -11,7 +10,8 @@ import {
   fetchRemoteAssetAsBase64,
   fetchVertexJson,
   getVertexAuthHeaders,
-  getVertexMediaLocation,
+  getVertexImageFlashLocation,
+  getVertexImageProLocation,
   getVertexProjectId,
 } from "./services/vertexMedia";
 
@@ -30,15 +30,13 @@ export interface GeminiImageResult {
 
 function pickImageModels(quality: ImageQuality) {
   const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001").trim();
-  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview").trim();
+  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3.1-flash-image-preview").trim();
   return quality === "1k" ? [flashModel, proModel] : [proModel, flashModel];
 }
 
 export async function generateGeminiImage(opts: GeminiImageOptions): Promise<GeminiImageResult> {
   const projectId = getVertexProjectId();
-  const location = getVertexMediaLocation();
   const headers = await getVertexAuthHeaders();
-  const baseUrl = baseUrlForVertex(location);
 
   const reference = opts.referenceImageUrl
     ? await fetchRemoteAssetAsBase64(opts.referenceImageUrl)
@@ -57,10 +55,15 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
   ];
 
   const models = pickImageModels(opts.quality);
+  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3.1-flash-image-preview").trim();
   let generated: { data: string; mimeType: string } | null = null;
   let lastError = "";
 
   for (const model of models) {
+    const location = model === proModel
+      ? getVertexImageProLocation()
+      : getVertexImageFlashLocation();
+    const baseUrl = baseUrlForVertex(location);
     const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
     const response = await fetchVertexJson(url, {
       method: "POST",

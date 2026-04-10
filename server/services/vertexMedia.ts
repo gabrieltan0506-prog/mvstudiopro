@@ -1,6 +1,8 @@
 import { getVertexAccessToken } from "../utils/vertex";
 
-export const VERTEX_MEDIA_LOCATION = "us-central1";
+export const VERTEX_IMAGE_LOCATION_FLASH = "us-central1";
+export const VERTEX_IMAGE_LOCATION_PRO = "global";
+export const VERTEX_VIDEO_LOCATION = "us-central1";
 
 function s(v: unknown) {
   if (v == null) return "";
@@ -24,12 +26,28 @@ export function getVertexProjectId() {
   return projectId;
 }
 
-export function getVertexMediaLocation() {
-  return VERTEX_MEDIA_LOCATION;
+export function getVertexImageFlashLocation() {
+  return (
+    String(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION || VERTEX_IMAGE_LOCATION_FLASH).trim() ||
+    VERTEX_IMAGE_LOCATION_FLASH
+  );
 }
 
-export function baseUrlForVertex(location = VERTEX_MEDIA_LOCATION) {
-  return `https://${location}-aiplatform.googleapis.com`;
+export function getVertexImageProLocation() {
+  return (
+    String(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION || VERTEX_IMAGE_LOCATION_PRO).trim() ||
+    VERTEX_IMAGE_LOCATION_PRO
+  );
+}
+
+export function getVertexVideoLocation() {
+  return String(process.env.VERTEX_VIDEO_LOCATION || VERTEX_VIDEO_LOCATION).trim() || VERTEX_VIDEO_LOCATION;
+}
+
+export function baseUrlForVertex(location: string) {
+  return location === "global"
+    ? "https://aiplatform.googleapis.com"
+    : `https://${location}-aiplatform.googleapis.com`;
 }
 
 export async function fetchVertexJson(url: string, init: RequestInit) {
@@ -89,10 +107,10 @@ export function extractVideoOperationName(responseJson: any) {
   return s(responseJson?.name).trim();
 }
 
-export function normalizePredictOperationName(taskIdOrName: string, projectId: string, model: string) {
+export function normalizePredictOperationName(taskIdOrName: string, projectId: string, model: string, location: string) {
   const input = s(taskIdOrName).trim();
   if (!input) return "";
-  const prefix = `projects/${projectId}/locations/${VERTEX_MEDIA_LOCATION}/publishers/google/models/${model}/operations/`;
+  const prefix = `projects/${projectId}/locations/${location}/publishers/google/models/${model}/operations/`;
   if (input.startsWith(prefix)) return input;
   const matched = input.match(/operations\/([^/?\s]+)/);
   const operationId = matched?.[1] || input;

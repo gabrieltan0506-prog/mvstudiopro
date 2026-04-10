@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 
 type TabKey = "script" | "image" | "video" | "music";
-type GoogleImageTier = "flash" | "pro";
+type GoogleImageModel = "imagen-4.0-generate-001" | "gemini-3.1-flash-image-preview";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
@@ -78,7 +78,7 @@ export default function TestLab() {
   const [scriptText, setScriptText] = useState("");
 
   // Image
-  const [googleTier, setGoogleTier] = useState<GoogleImageTier>("flash");
+  const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("imagen-4.0-generate-001");
   const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
   const [imageProvider, setImageProvider] = useState<"google" | "kling">("google");
   const [imageResolution, setImageResolution] = useState("1k");
@@ -173,15 +173,17 @@ export default function TestLab() {
 
     try {
       if (imageProvider === "google") {
-        const tier = googleTier;
+        const model = googleImageModel;
+        const tier = model === "gemini-3.1-flash-image-preview" ? "pro" : "flash";
         const r = await fetchJsonish(
-          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}`,
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               prompt,
               tier,
+              model,
               imageSize: imageResolution,
               aspectRatio,
             }),
@@ -519,12 +521,12 @@ export default function TestLab() {
               <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
                 <select
-                  value={googleTier}
-                  onChange={(e) => setGoogleTier(e.target.value as GoogleImageTier)}
+                  value={googleImageModel}
+                  onChange={(e) => setGoogleImageModel(e.target.value as GoogleImageModel)}
                   style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
                 >
-                  <option value="flash">Nano Banana Flash（当前俗称 Nano Banana 2）</option>
-                  <option value="pro">Nano Banana Pro</option>
+                  <option value="imagen-4.0-generate-001">Nano Banana 2（imagen-4.0-generate-001）</option>
+                  <option value="gemini-3.1-flash-image-preview">Nano Banana Pro（gemini-3.1-flash-image-preview）</option>
                 </select>
               </div>
             ) : (
