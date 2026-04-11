@@ -194,8 +194,9 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
 
   try {
     const response = await invokeLLM({
-      model: strategistModel,
-      temperature: strategistModel.includes("3.1") ? 0.75 : 0.45,
+      model: "pro",
+      provider: "vertex",
+      modelName: strategistModel,
       messages: [
         { role: "system", content: "你擅长将参考视频的节奏抽象成可执行的商业二创脚本，并且严格输出 JSON。" },
         { role: "user", content: prompt },
