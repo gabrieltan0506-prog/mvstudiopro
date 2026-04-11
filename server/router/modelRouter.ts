@@ -22,7 +22,7 @@ export function routeModel(type: ModelType): ModelRoute {
     case "image":
       return {
         provider:"vertex",
-        model:"imagen-4.0-generate-001"
+        model:"gemini-3-flash-image-001"
       }
 
     case "video":
