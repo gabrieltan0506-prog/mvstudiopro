@@ -215,9 +215,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
-      if(negativePrompt) imageConfig.negativePrompt = negativePrompt;
       if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
-      if(Number.isFinite(guidanceScale) && guidanceScale > 0) imageConfig.guidanceScale = guidanceScale;
       if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
       if(personGeneration) imageConfig.personGeneration = personGeneration;
       if(resolvedTier === "pro") imageConfig.imageSize = size;
