@@ -1035,14 +1035,17 @@ export const appRouter = router({
       .input(z.object({
         context: z.string().optional(),
         transcript: z.string().optional(),
-        analysis: growthAnalysisScoresSchema,
+        analysis: growthAnalysisScoresSchema.optional(),
         modelName: growthCampModelSchema.optional(),
       }))
       .mutation(async ({ input }) => {
         const remix = await buildPremiumRemixPlan({
           context: input.context,
           transcript: input.transcript,
-          analysis: input.analysis,
+          analysis: input.analysis || {
+            composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+            visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
+          },
           modelName: input.modelName,
         });
         return {
