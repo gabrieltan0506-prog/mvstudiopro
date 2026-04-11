@@ -22,6 +22,7 @@ import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
 import workflowJobsHandler from "../../api/jobs";
 import blobPutImageHandler from "../../api/blob-put-image";
 import exportHandler from "../../api/export";
+import googleHandler from "../../api/google";
 import klingImageHandler from "../../api/kling-image";
 
 function isGrowthTrendSchedulerDisabled() {
@@ -95,6 +96,10 @@ async function startServer() {
 
   app.all("/api/export", async (req, res) => {
     return exportHandler(req as any, res as any);
+  });
+
+  app.all("/api/google", async (req, res) => {
+    return googleHandler(req as any, res as any);
   });
 
   app.all("/api/kling-image", async (req, res) => {

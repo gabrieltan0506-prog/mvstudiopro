@@ -2276,7 +2276,7 @@ export default function MVAnalysisPage() {
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
-  const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
+  const showPremiumReport = hasPaidGrowthAccess;
   const shouldHideGraphicBoard = isProcessing && inputKind === "video";
   const handleDownloadGraphicBoard = useCallback(() => {
     const cards = platformGraphicAnalysisCards.filter((item) => item.summary || item.topics.length || item.examples.length);
@@ -3591,68 +3591,71 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  {inputKind === "video" ? (
-                    <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 text-[#ffb37f]">
-                          <Film className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">优质视频二创</h2>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {!hasPremiumRemix ? (
-                            <button
-                              type="button"
-                              onClick={() => void handleBuildPremiumRemix()}
-                              disabled={buildPremiumRemixMutation.isPending}
-                              className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                              生成二创方案
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => void handleBuildPremiumRemix()}
-                              disabled={buildPremiumRemixMutation.isPending}
-                              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                              重新生成
-                            </button>
-                          )}
-                          {hasPremiumRemix ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => void handleGeneratePremiumRemixAssets("loop")}
-                                disabled={generatePremiumRemixAssetsMutation.isPending}
-                                className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                                生成 32 秒延展版
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
-                                disabled={generatePremiumRemixAssetsMutation.isPending}
-                                className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
-                                生成 32 秒插值版
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
+                  <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 text-[#ffb37f]">
+                        <Film className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">优质视频二创</h2>
                       </div>
-                      <p className="mt-3 text-sm leading-7 text-white/60">
-                        这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。多人或动物污染会被改写成单主体镜头与正反打结构。
-                      </p>
-                      {analyzedVideoUrl ? (
-                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                          已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
-                        </div>
-                      ) : null}
-                      {premiumRemix ? (
+                      <div className="flex flex-wrap gap-2">
+                        {!hasPremiumRemix ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleBuildPremiumRemix()}
+                            disabled={buildPremiumRemixMutation.isPending}
+                            className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            生成二创方案
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void handleBuildPremiumRemix()}
+                            disabled={buildPremiumRemixMutation.isPending}
+                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                            重新生成
+                          </button>
+                        )}
+                        {hasPremiumRemix ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => void handleGeneratePremiumRemixAssets("loop")}
+                              disabled={generatePremiumRemixAssetsMutation.isPending}
+                              className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                              生成 32 秒延展版
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
+                              disabled={generatePremiumRemixAssetsMutation.isPending}
+                              className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
+                              生成 32 秒插值版
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm leading-7 text-white/60">
+                      这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。多人或动物污染会被改写成单主体镜头与正反打结构。
+                    </p>
+                    {analyzedVideoUrl ? (
+                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                        已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                        当前没有绑定视频分析结果时，也可以直接生成二创方案；系统会优先使用上下文、转写和已有分析字段做逆向重构。
+                      </div>
+                    )}
+                    {premiumRemix ? (
                         <div className="mt-5 space-y-4">
                           <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
                             <div className="rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
@@ -3782,9 +3785,8 @@ export default function MVAnalysisPage() {
                             </div>
                           ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
 
                   {personalizedDirectionCards.length ? (
                     <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">
