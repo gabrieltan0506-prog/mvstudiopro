@@ -124,7 +124,8 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
   }
 
   const imageUrls: string[] = [];
-  for (const [index, image] of generated.entries()) {
+  for (let index = 0; index < generated.length; index += 1) {
+    const image = generated[index];
     const buffer = Buffer.from(image.data, "base64");
     const mimeType = image.mimeType || "image/png";
     const ext = mimeType.includes("jpeg") ? "jpg" : "png";
