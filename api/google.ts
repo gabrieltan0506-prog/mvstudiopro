@@ -179,9 +179,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       });
 
       const raw = r.json ?? r.rawText;
-      const images = r.ok ? extractGeneratedImages(r.json) : [];
-      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw });
     }
 
     // ---------------- Nano Banana (image) ----------------
@@ -235,7 +233,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const raw = r.json ?? r.rawText;
       const images = r.ok ? extractGeneratedImages(r.json) : [];
-      const imageUrls = images.map((item) => `data:;base64,`);
+      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
     }
 

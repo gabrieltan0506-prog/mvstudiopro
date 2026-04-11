@@ -2242,12 +2242,14 @@ export default function MVAnalysisPage() {
   const hasPremiumRemix = Boolean(premiumRemix);
 
   const handleBuildPremiumRemix = useCallback(async () => {
-    if (!analysis) return;
     try {
       const result = await buildPremiumRemixMutation.mutateAsync({
         context: context || undefined,
         transcript: analysisTranscript || undefined,
-        analysis,
+        analysis: analysis || {
+          composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+          visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
+        },
         modelName: selectedGrowthModel,
       });
       setPremiumRemix(result.remix);
@@ -3241,7 +3243,7 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                   <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">推荐平台与平台数据参考</div>
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">平台数据分析</div>
                     <div className="mt-4 grid gap-4">
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -3274,7 +3276,7 @@ export default function MVAnalysisPage() {
                       <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                         <div className="flex items-center gap-2 text-sm font-semibold text-white">
                           <ScanSearch className="h-4 w-4 text-[#90c4ff]" />
-                          <span>平台数据参考</span>
+                          <span>平台数据分析</span>
                         </div>
                         <div className="mt-3 space-y-3">
                           {topPlatformDataReferences.map((item) => (
@@ -3601,7 +3603,7 @@ export default function MVAnalysisPage() {
                             <button
                               type="button"
                               onClick={() => void handleBuildPremiumRemix()}
-                              disabled={buildPremiumRemixMutation.isPending || !analysis}
+                              disabled={buildPremiumRemixMutation.isPending}
                               className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -3611,7 +3613,7 @@ export default function MVAnalysisPage() {
                             <button
                               type="button"
                               onClick={() => void handleBuildPremiumRemix()}
-                              disabled={buildPremiumRemixMutation.isPending || !analysis}
+                              disabled={buildPremiumRemixMutation.isPending}
                               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
