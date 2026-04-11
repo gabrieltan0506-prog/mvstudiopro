@@ -27,6 +27,8 @@ import { sunoRouter } from "./routers/suno";
 import { buildAuthorAnalysis, buildGrowthSnapshotFromCollections, buildMockGrowthSnapshot, buildPlatformSupportActivities, normalizePlatforms } from "./growth/growthSchema";
 import { analyzeDocument } from "./growth/analyzeDocument";
 import { analyzeVideo } from "./growth/analyzeVideo";
+import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
+import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
@@ -57,6 +59,8 @@ import {
   growthMonetizationTrackSchema,
   growthMonetizationStrategySchema,
   growthPlanStepSchema,
+  growthPremiumRemixAssetsSchema,
+  growthPremiumRemixSchema,
   growthPlatformActivitySchema,
   growthPlatformRecommendationSchema,
   growthSnapshotSchema,
@@ -105,12 +109,7 @@ function getCollectionBucketCounts(items: Array<{ bucket?: string }> = []) {
 }
 
 function resolveGrowthCampFinalModel(modelName?: string) {
-  return String(
-    modelName
-      || process.env.GROWTH_CAMP_FINAL_MODEL
-      || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-2.5-pro",
-  ).trim() || "gemini-2.5-pro";
+  return resolveGrowthCampStrategistModel(modelName);
 }
 
 type GrowthArchiveSummaryPlatform = {
@@ -344,6 +343,8 @@ async function personalizeGrowthSnapshot(params: {
   userEvidence?: Awaited<ReturnType<typeof readGrowthUserEvidence>>;
 }) {
   const { snapshot, analysis, context, requestedPlatforms, modelName, store, userEvidence } = params;
+  const finalModel = resolveGrowthCampFinalModel(modelName);
+  const is31 = /3\.1/i.test(finalModel);
   const backfillPlatforms = (store.backfill?.platforms || [])
     .filter((item) => requestedPlatforms.includes(item.platform))
     .map((item) => ({
@@ -380,7 +381,7 @@ async function personalizeGrowthSnapshot(params: {
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: resolveGrowthCampFinalModel(modelName),
+    modelName: finalModel,
     messages: [
       {
         role: "system",
@@ -400,11 +401,15 @@ async function personalizeGrowthSnapshot(params: {
 7. 必须额外返回：
    - 把视频抽帧视觉结论真正写进输出，不要只复述音频。尤其要吸收 keyFrames、openingFrameAssessment、visualSummary。
    - titleExecutions：3 条标题，每条都要有详细文案、适合图文还是视频、适合的平台和为什么；并补 formatReason、graphicPlan、videoPlan，图文怎么写和视频怎么拍必须写到能直接执行。
-   - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式；并补 supportActivities、supportSignal、potentialTrack、optimizationPlan。
+   - platformActivities：各平台当前活跃方向、热点主题和最适合的呈现方式；并补 supportActivities、supportSignal、potentialTrack、optimizationPlan。抖音、小红书、B站、快手的描述必须明显不同，不能复用同一句平台画像。
    - monetizationStrategies：推荐平台对应的商业变现策略、行动引导和承接产品形态。
    - recommendedPlatforms：至少给 2 到 3 个推荐发布平台，并给出相关账号示例或对标方向。
    - dataLibraryStructure：说明这个分析结果背后应该由哪些数据层来支撑。
-8. 输出必须是结构化 JSON，不要写成散文。`,
+   - 如果 evidence 里已经有 collections / platformSnapshots / currentVsArchiveByPlatform，就必须把它们吃进分析，不能脱离数据库空写平台特征。
+8. ${is31
+    ? "当前模型是 3.1 Pro。请把输出拉到“操盘手级”细度：图文怎么写要写出页数与每页职责，视频怎么拍要写到几秒出现什么画面、字幕和动作，推荐平台要更明确说明为什么这个平台优先。"
+    : "当前模型是 2.5 Pro。输出仍然要细，但优先保证结构清楚、执行明确，少讲抽象的情绪渲染。"}
+9. 输出必须是结构化 JSON，不要写成散文。`,
       },
       {
         role: "user",
@@ -448,8 +453,14 @@ async function personalizeGrowthSnapshot(params: {
                   currentVsArchiveByPlatform: backfillPlatforms,
                   creatorCenterEvidence,
                   collections: collectionEvidence,
+                  dataAnalystSummary: snapshot.dataAnalystSummary,
                 },
                 userEvidence,
+                pipelineRouting: {
+                  extractorModel: resolveGrowthCampExtractorModel(),
+                  strategistModel: finalModel,
+                  pipelineMode: resolveGrowthCampPipelineMode(finalModel),
+                },
               }, null, 2),
             ].join("\n"),
           },
@@ -1016,6 +1027,50 @@ export const appRouter = router({
             videoDuration: result.videoMeta.videoDuration,
             failureStage: result.videoMeta.failureStage || null,
             failureReason: result.videoMeta.failureReason || null,
+          },
+        };
+      }),
+
+    buildPremiumRemix: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        transcript: z.string().optional(),
+        analysis: growthAnalysisScoresSchema,
+        modelName: growthCampModelSchema.optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const remix = await buildPremiumRemixPlan({
+          context: input.context,
+          transcript: input.transcript,
+          analysis: input.analysis,
+          modelName: input.modelName,
+        });
+        return {
+          success: true,
+          remix: growthPremiumRemixSchema.parse(remix),
+          debug: {
+            route: "mvAnalysis.buildPremiumRemix",
+            strategistModel: resolveGrowthCampFinalModel(input.modelName),
+          },
+        };
+      }),
+
+    generatePremiumRemixAssets: publicProcedure
+      .input(z.object({
+        remix: growthPremiumRemixSchema,
+        mode: z.enum(["loop", "interpolation"]).default("loop"),
+      }))
+      .mutation(async ({ input }) => {
+        const result = await generatePremiumRemixAssets({
+          remix: input.remix,
+          mode: input.mode,
+        });
+        return {
+          success: true,
+          assets: growthPremiumRemixAssetsSchema.parse(result),
+          debug: {
+            route: "mvAnalysis.generatePremiumRemixAssets",
+            mode: input.mode,
           },
         };
       }),

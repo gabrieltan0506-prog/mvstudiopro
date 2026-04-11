@@ -24,16 +24,16 @@ export function routeModel(kind: RouteKind, input: RouteInput = {}): RouteResult
 
   if (kind === "image") {
     return {
-      provider: "kling",
-      model: input.preferredModel || "kling-image",
+      provider: "vertex",
+      model: input.preferredModel || "imagen-4.0-generate-001",
       config: {},
     };
   }
 
   if (kind === "video") {
     return {
-      provider: "kling",
-      model: input.preferredModel || "kling-video",
+      provider: "vertex",
+      model: input.preferredModel || "veo-3.1-generate-001",
       config: {},
     };
   }

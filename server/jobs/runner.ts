@@ -40,6 +40,7 @@ import {
   type ProducerQuality,
 } from "../services/aimusic-producer";
 import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
+import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import {
   claimNextQueuedJob,
   markJobFailed,
@@ -204,7 +205,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
           stageOneModel: result.videoMeta.stageOneModel,
           stageTwoModel: result.videoMeta.stageTwoModel,
           sparseFrameCount: result.videoMeta.sparseFrameCount,
-          visualPassModel: "gemini-2.5-pro",
+          visualPassModel: resolveGrowthCampExtractorModel(),
           estimatedCostProfile: result.videoMeta.estimatedCostProfile,
           fallback: result.videoMeta.fallback,
           transcriptChars: result.videoMeta.transcript.length,

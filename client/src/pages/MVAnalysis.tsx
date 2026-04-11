@@ -16,6 +16,8 @@ import type {
   GrowthHotWordMatch,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
+  GrowthPremiumRemix,
+  GrowthPremiumRemixAssets,
   GrowthPushActivity,
   GrowthReferenceExample,
   GrowthSnapshot,
@@ -32,6 +34,7 @@ import {
   Loader2,
   Orbit,
   PanelsTopLeft,
+  RefreshCw,
   Rocket,
   ScanSearch,
   Send,
@@ -221,6 +224,67 @@ const PLATFORM_SUPPORT_SIGNAL_FALLBACK: Record<(typeof CORE_PLATFORM_LABELS)[num
   小红书: "优先走图文收藏和搜索承接，再把跑通的主题拆成短视频版本。",
   "B站": "优先走方法拆解和复盘长视频，先建立信任，再延展成系列内容。",
   快手: "优先走真实口播和生活场景表达，适合同城服务与直播联动放大。",
+};
+
+const PLATFORM_GRAPHIC_ANALYSIS_PROFILE: Record<(typeof CORE_PLATFORM_LABELS)[number], {
+  contentForm: string;
+  noteType: string;
+  valueMode: string;
+  structure: string[];
+  why: string;
+}> = {
+  抖音: {
+    contentForm: "短视频主发，图文只做转化承接页",
+    noteType: "结果前置型转化图文",
+    valueMode: "先拿停留、评论和同城咨询，再承接到店或体验课",
+    structure: [
+      "封面只写一个结果句或价格反差，不写长说明。",
+      "第 1 屏直接讲最痛的问题或最大结果，别先讲背景。",
+      "第 2 到 3 屏放动作前后对比、局部特写或服务步骤。",
+      "第 4 屏只讲一个可信证据，例如学员反馈、门店场景或价格锚点。",
+      "最后 1 屏只留一个动作，引导评论词、私信词或预约。",
+    ],
+    why: "抖音更吃结果、动作和反差，图文不是拿来深读，而是拿来承接短视频种下来的强意图流量。",
+  },
+  小红书: {
+    contentForm: "图文和视频双轨并行，但图文优先验证",
+    noteType: "搜索承接型种草图文",
+    valueMode: "先拿收藏、搜索和评论，再承接私信、咨询或体验课",
+    structure: [
+      "封面写一个可收藏的问题或结果，例如肩颈、产后、体态这类高搜索词。",
+      "第 1 屏讲谁最需要和为什么会出现这个问题。",
+      "第 2 到 4 屏用图示、动作、前后对比或误区解释拉高收藏价值。",
+      "第 5 屏补信任证据，例如专业身份、真实反馈、门店环境或价格结构。",
+      "最后 1 屏只保留一个动作，优先是评论关键词、收藏后私信或咨询入口。",
+    ],
+    why: "小红书的图文承担的是搜索和收藏资产，不是像抖音那样直接硬成交，所以笔记必须写得更完整、更可保存。",
+  },
+  "B站": {
+    contentForm: "中长视频主发，图文负责方法拆解和系列目录",
+    noteType: "信任建立型方法图文",
+    valueMode: "先积累专业信任、系列更新和搜索长尾，再做服务或课程承接",
+    structure: [
+      "封面先写方法结论或常见误区，明确这是给谁看的。",
+      "第 1 屏先给结果，再交代本期会拆哪 3 个点。",
+      "第 2 到 4 屏讲方法逻辑、误区和案例，不要只放金句。",
+      "第 5 屏补一条可执行清单，让用户觉得这篇值得反复看。",
+      "最后 1 屏引导去看长视频、合集或下一篇系列内容。",
+    ],
+    why: "B站用户愿意花时间理解方法和案例，所以图文要承担目录、知识索引和系列承接，而不是只做种草。",
+  },
+  快手: {
+    contentForm: "短视频和直播联动主发，图文负责同城服务补充",
+    noteType: "生活场景型服务图文",
+    valueMode: "先吃同城和真实表达，再承接直播、到店、私聊或社群复访",
+    structure: [
+      "封面用最直白的话讲值不值、适不适合，不写抽象标题。",
+      "第 1 屏讲真实生活场景和用户为什么现在就需要。",
+      "第 2 到 3 屏放真实体验、门店氛围或家人/学员反馈。",
+      "第 4 屏讲最省事的做法，避免专业术语太重。",
+      "最后 1 屏引导直播、同城咨询或私聊，不要塞多个动作。",
+    ],
+    why: "快手更吃真实、生活化和同城关系，图文是视频和直播之外的补充承接，不是做精致排版竞赛。",
+  },
 };
 
 const PLATFORM_DEBUG_DESCRIPTIONS: Record<string, string> = {
@@ -470,12 +534,12 @@ function buildGraphicNoteDetail(
     reason,
     structure,
     pages: [
-      `第 1 页：封面只放一句狠话，优先写“${openingHook || "最痛的问题 + 最直接结果"}”，不要讲背景。`,
-      "第 2 页：写清楚最适合的人群，例如久坐上班族、产后妈妈或肩颈长期不适的人。",
-      "第 3 页：放最典型的痛点场景，对比练前与练后或调整前后的状态变化。",
-      "第 4 页：给一个可执行动作或方法，但只讲最关键的 1 到 2 个动作，不要讲满整套课。",
-      "第 5 页：补充价格反差、门店环境、专业身份、真实反馈这类信任证据。",
-      "第 6 页：只保留一个行动，引导私信、预约、评论关键词或到店咨询。",
+      `第 1 页：封面只放一句狠话，优先写“${openingHook || "最痛的问题 + 最直接结果"}”，让用户 1 秒内知道这是一篇结果型笔记。`,
+      "第 2 页：写清楚最适合的人群和痛点，例如久坐上班族、产后妈妈、体态焦虑人群，别写成泛人群安慰。",
+      "第 3 页：放最典型的痛点场景，最好是练前与练后、调整前与调整后的明显反差图或局部体态图。",
+      "第 4 页：给一个可执行动作或方法，但只讲最关键的 1 到 2 个动作，不要把整套课一次讲完，避免信息过载。",
+      "第 5 页：补充价格反差、门店环境、专业身份、真实反馈、案例截图这类信任证据，让用户觉得不是空口承诺。",
+      "第 6 页：只保留一个行动，引导私信、预约、评论关键词或到店咨询，不要同时出现多个转化入口。",
     ],
     footer: `优先平台：${names || "小红书、抖音"}。文案口径必须围绕“痛点、结果、证据、动作”四件事，不要写成空泛介绍。`,
   };
@@ -492,27 +556,27 @@ function buildVideoStoryboard(
     {
       time: "00:00-00:02",
       title: "开场钩子",
-      detail: `画面先给最痛的身体状态或最强结果对比，字幕直接打出“${openingHook || "最扎心的问题或最直接结果"}”。人物不要先平铺直叙站桩开讲。`,
+      detail: `画面先给最痛的身体状态或最强结果对比，字幕直接打出“${openingHook || "最扎心的问题或最直接结果"}”。镜头建议用近景或局部特写，不要先给远景站桩口播；人物动作最好是扶肩、摸肚、转身受限这类一眼能看懂的问题姿势。`,
     },
     {
       time: "00:02-00:06",
       title: "痛点放大",
       detail: frames[0]
-        ? `切到 ${replaceTerms(frames[0].whatShows)}，同时把用户最常见的不舒服感受说出来。改法：${replaceTerms(frames[0].fix)}。`
-        : "切到最典型的痛点动作或局部特写，强化“为什么你会不舒服、为什么要继续看”。",
+        ? `切到 ${replaceTerms(frames[0].whatShows)}，同时配一句用户会立刻对号入座的话，例如“你是不是一坐久就肩颈发紧、肚子也收不回去？”字幕和口播同步，别只靠口播。改法：${replaceTerms(frames[0].fix)}。`
+        : "切到最典型的痛点动作或局部特写，强化“为什么你会不舒服、为什么要继续看”，字幕里直接点人群与症状。",
     },
     {
       time: "00:06-00:12",
       title: "动作与方法",
       detail: frames[1]
-        ? `展示主讲人示范动作或讲解时的手势变化，镜头要配合近景和字幕，不要一直同机位。改法：${replaceTerms(frames[1].fix)}。`
+        ? `展示主讲人示范动作或讲解时的手势变化，镜头要交替给正面、侧面、局部特写三种视角；字幕只写“动作名称 + 为什么有效”，别写大段解释。改法：${replaceTerms(frames[1].fix)}。`
         : "展示 1 到 2 个最关键动作或调整方法，镜头交替给正面、侧面和局部动作，字幕点出“适合谁、为什么有效”。",
     },
     {
       time: "00:12-00:18",
       title: "结果与行动",
       detail: frames[2]
-        ? `结尾用 ${replaceTerms(frames[2].whatShows)} 做结果收束，再打价格、体验课或预约动作。改法：${replaceTerms(frames[2].fix)}。`
+        ? `结尾用 ${replaceTerms(frames[2].whatShows)} 做结果收束，再打价格、体验课或预约动作。字幕只留一个动作句，例如“评论关键词领取方案”或“到店体验 147 元”。改法：${replaceTerms(frames[2].fix)}。`
         : `结尾只收一个动作：放价格反差、体验课、预约方式或评论关键词。${videoPlan || "不要在结尾同时塞多个动作。"}${storyboardPrompt ? ` 分镜补充：${storyboardPrompt}` : ""}`,
     },
   ];
@@ -1407,6 +1471,8 @@ export default function MVAnalysisPage() {
   const [fileSize, setFileSize] = useState(0);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
+  const [analysisTranscript, setAnalysisTranscript] = useState("");
+  const [analyzedVideoUrl, setAnalyzedVideoUrl] = useState("");
   const [debugMode, setDebugMode] = useState(() => {
     if (typeof window === "undefined") return false;
     return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
@@ -1419,6 +1485,8 @@ export default function MVAnalysisPage() {
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
   const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
+  const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
+  const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1426,6 +1494,8 @@ export default function MVAnalysisPage() {
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
+  const buildPremiumRemixMutation = trpc.mvAnalysis.buildPremiumRemix.useMutation();
+  const generatePremiumRemixAssetsMutation = trpc.mvAnalysis.generatePremiumRemixAssets.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
@@ -1705,6 +1775,8 @@ export default function MVAnalysisPage() {
               throw new Error("视频分析超时，请稍后重试");
             })();
       setAnalysis(normalizeAnalysisScale(result.analysis));
+      setAnalysisTranscript(String((result as any).transcript || ""));
+      setAnalyzedVideoUrl(String((result as any).videoUrl || ""));
       setDebugInfo({
         inputKind,
         fileName,
@@ -1732,7 +1804,11 @@ export default function MVAnalysisPage() {
     setAnalysis(null);
     setError(null);
     setContext("");
+    setAnalysisTranscript("");
+    setAnalyzedVideoUrl("");
     setDebugInfo(null);
+    setPremiumRemix(null);
+    setPremiumRemixAssets(null);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
@@ -2118,6 +2194,33 @@ export default function MVAnalysisPage() {
       };
     });
   }, [platformActivityCards, topPlatformSnapshots, fallbackPlatformLabels, visibleTopicLibrary]);
+  const platformGraphicAnalysisCards = useMemo(() => {
+    return fallbackPlatformLabels.map((label) => {
+      const profile = PLATFORM_GRAPHIC_ANALYSIS_PROFILE[label as keyof typeof PLATFORM_GRAPHIC_ANALYSIS_PROFILE];
+      const snapshot = topPlatformSnapshots.find((item) => item.displayName === label) || null;
+      const activity = platformActivityCards.find((item) => item.platformLabel === label) || null;
+      const recommendation = topRecommendedPlatforms.find((item) => item.recommendation.name === label)?.recommendation || null;
+      const examples = referenceExamples
+        .filter((item) => item.platformLabel === label)
+        .slice(0, 3);
+      const topics = (
+        activity?.hotTopics?.length ? activity.hotTopics
+          : activity?.suggestedTopics?.length ? activity.suggestedTopics
+          : snapshot?.sampleTopics?.length ? snapshot.sampleTopics
+          : visibleTopicLibrary.filter((item) => item.platformLabel === label || getPlatformLabel(item.platform) === label).map((item) => item.title)
+      ).slice(0, 4);
+      return {
+        label,
+        profile,
+        summary: snapshot?.summary || activity?.summary || recommendation?.reason || PLATFORM_REFERENCE_SUMMARY[label as keyof typeof PLATFORM_REFERENCE_SUMMARY],
+        recommendation: recommendation?.action || activity?.optimizationPlan || "",
+        topics,
+        supportActivities: (activity?.supportActivities?.length ? activity.supportActivities : PLATFORM_SUPPORT_ACTIVITY_FALLBACK[label as keyof typeof PLATFORM_SUPPORT_ACTIVITY_FALLBACK]).slice(0, 3),
+        supportSignal: activity?.supportSignal || PLATFORM_SUPPORT_SIGNAL_FALLBACK[label as keyof typeof PLATFORM_SUPPORT_SIGNAL_FALLBACK],
+        examples,
+      };
+    });
+  }, [fallbackPlatformLabels, topPlatformSnapshots, platformActivityCards, topRecommendedPlatforms, referenceExamples, visibleTopicLibrary]);
   const referenceExamplesByPlatform = useMemo(() => {
     const grouped = new Map<string, ReferenceExampleCard[]>();
     referenceExamples.forEach((item) => {
@@ -2136,10 +2239,81 @@ export default function MVAnalysisPage() {
       .slice(0, 5);
   }, [referenceExamples]);
   const authorAnalysis: GrowthAuthorAnalysis | null = (growthSnapshot as any)?.authorAnalysis ?? null;
+  const hasPremiumRemix = Boolean(premiumRemix);
+
+  const handleBuildPremiumRemix = useCallback(async () => {
+    if (!analysis) return;
+    try {
+      const result = await buildPremiumRemixMutation.mutateAsync({
+        context: context || undefined,
+        transcript: analysisTranscript || undefined,
+        analysis,
+        modelName: selectedGrowthModel,
+      });
+      setPremiumRemix(result.remix);
+      setPremiumRemixAssets(null);
+      toast.success("优质视频二创方案已生成");
+    } catch (error: any) {
+      toast.error(error.message || "优质视频二创生成失败");
+    }
+  }, [analysis, analysisTranscript, buildPremiumRemixMutation, context, selectedGrowthModel]);
+
+  const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
+    if (!premiumRemix) return;
+    try {
+      const result = await generatePremiumRemixAssetsMutation.mutateAsync({
+        remix: premiumRemix,
+        mode,
+      });
+      setPremiumRemixAssets(result.assets);
+      toast.success(mode === "loop" ? "32秒延展素材已生成" : "32秒插值素材已生成");
+    } catch (error: any) {
+      toast.error(error.message || "二创素材生成失败");
+    }
+  }, [generatePremiumRemixAssetsMutation, premiumRemix]);
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
   const showPremiumReport = Boolean(analysis && hasPaidGrowthAccess);
+  const shouldHideGraphicBoard = isProcessing && inputKind === "video";
+  const handleDownloadGraphicBoard = useCallback(() => {
+    const cards = platformGraphicAnalysisCards.filter((item) => item.summary || item.topics.length || item.examples.length);
+    if (!cards.length) {
+      toast.error("当前没有可下载的图文分析内容");
+      return;
+    }
+    const html = cards.map((item) => `
+      <section style="background:#ffffff;border:1px solid #ffd0c0;border-radius:18px;padding:18px 20px;margin-bottom:16px;box-shadow:0 2px 16px rgba(255,80,60,.10)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div style="font-size:22px;font-weight:900;color:#2d1a0e">${item.label}</div>
+          <div style="font-size:12px;color:#ff2442;font-weight:700">平台图文分析</div>
+        </div>
+        <div style="margin-top:10px;font-size:14px;line-height:1.8;color:#6b4634">${replaceTerms(item.summary)}</div>
+        <div style="margin-top:12px;padding:12px;border-radius:12px;background:#fff8f5;border-left:4px solid #ff6633">
+          <div style="font-size:13px;font-weight:800;color:#ff2442">平台适合形式</div>
+          <div style="margin-top:6px;font-size:13px;line-height:1.8;color:#2d1a0e">${replaceTerms(item.profile.contentForm)}</div>
+          <div style="margin-top:6px;font-size:13px;line-height:1.8;color:#2d1a0e">图文类型：${replaceTerms(item.profile.noteType)}</div>
+          <div style="margin-top:6px;font-size:13px;line-height:1.8;color:#2d1a0e">商业价值：${replaceTerms(item.profile.valueMode)}</div>
+        </div>
+        <div style="margin-top:12px">
+          <div style="font-size:13px;font-weight:800;color:#ff2442">图文结构</div>
+          ${item.profile.structure.map((row) => `<div style="margin-top:6px;font-size:13px;line-height:1.8;color:#6b4634">• ${replaceTerms(row)}</div>`).join("")}
+        </div>
+        ${item.topics.length ? `<div style="margin-top:12px;font-size:13px;line-height:1.8;color:#2d1a0e"><b>相关赛道：</b>${item.topics.map((entry) => replaceTerms(entry)).join(" / ")}</div>` : ""}
+        ${item.supportActivities.length ? `<div style="margin-top:10px;font-size:13px;line-height:1.8;color:#2d1a0e"><b>当前有效扶持活动：</b>${item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ")}</div>` : ""}
+        ${item.examples.length ? `<div style="margin-top:10px"><div style="font-size:13px;font-weight:800;color:#ff2442">参考案例</div>${item.examples.map((entry) => `<div style="margin-top:6px;font-size:13px;line-height:1.8;color:#6b4634">• ${replaceTerms(entry.account)}：${replaceTerms(entry.title)}</div>`).join("")}</div>` : ""}
+      </section>
+    `).join("");
+    const printWin = window.open("", "_blank", "width=1280,height=900");
+    if (!printWin) {
+      toast.error("请允许弹出窗口后再试");
+      return;
+    }
+    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>平台图文分析</title><style>body{background:#fff5f0;margin:0;padding:24px;font-family:\"PingFang SC\",\"Microsoft YaHei\",sans-serif;color:#2d1a0e}@media print{body{-webkit-print-color-adjust:exact;color-adjust:exact}}</style></head><body>${html}</body></html>`);
+    printWin.document.close();
+    printWin.focus();
+    setTimeout(() => { printWin.print(); }, 600);
+  }, [platformGraphicAnalysisCards]);
   const getSectionCardClass = useCallback(
     (panelId: string, accent: string) => isPanelLinked(activeDashboardPanel, panelId)
       ? `relative overflow-hidden rounded-[28px] border ${accent} bg-[#122039] p-6 shadow-[0_0_0_1px_rgba(255,255,255,0.08),0_18px_40px_rgba(7,14,26,0.32)]`
@@ -3130,6 +3304,95 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 </div>
+                {shouldHideGraphicBoard ? (
+                  <div className="mt-6 rounded-[28px] border border-[#ffcf92]/20 bg-[#0f1a2c] p-6">
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div>
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">图文分析已暂时隐藏</div>
+                        <div className="mt-2 text-lg font-bold text-white">视频分析进行中，若需保留平台图文分析，请先下载</div>
+                        <div className="mt-2 text-sm leading-7 text-white/68">为了让用户专注等待视频结果，细化图文面板会在视频分析过程中临时隐藏。你可以先下载保存当前版本。</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleDownloadGraphicBoard}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-[#ffcf92]/30 bg-[rgba(255,208,143,0.08)] px-5 py-3 text-sm font-semibold text-[#ffcf92] transition hover:bg-[rgba(255,208,143,0.14)]"
+                      >
+                        <FileUp className="h-4 w-4" />
+                        下载图文分析
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-6 rounded-[28px] border border-[#ffb37f]/20 bg-[#0f1a2c] p-6">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3 text-[#ffb37f]">
+                        <PanelsTopLeft className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">平台图文分析</h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleDownloadGraphicBoard}
+                        className="inline-flex items-center gap-2 rounded-2xl border border-[#ffb37f]/25 bg-[rgba(255,179,127,0.08)] px-4 py-2 text-sm font-semibold text-[#ffcf92] transition hover:bg-[rgba(255,179,127,0.14)]"
+                      >
+                        <FileUp className="h-4 w-4" />
+                        下载图文分析
+                      </button>
+                    </div>
+                    <div className="mt-2 text-sm leading-7 text-white/62">这一块单独讲图文笔记、搜索/收藏/转化承接和平台图文风格，不跟视频镜头分析混在一起。</div>
+                    <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                      {platformGraphicAnalysisCards.map((item) => (
+                        <div key={`graphic-board-${item.label}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-xl font-black text-white">{item.label}</div>
+                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/60">图文承接</div>
+                          </div>
+                          <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(item.summary)}</div>
+                          <div className="mt-4 rounded-2xl border border-[#f5b7ff]/18 bg-[rgba(245,183,255,0.08)] px-4 py-3 text-sm leading-7 text-white/80">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">平台适合形式与商业价值</div>
+                            <div className="mt-2">平台适合形式：{replaceTerms(item.profile.contentForm)}</div>
+                            <div className="mt-2">图文类型：{replaceTerms(item.profile.noteType)}</div>
+                            <div className="mt-2">商业价值：{replaceTerms(item.profile.valueMode)}</div>
+                            <div className="mt-2 text-white/68">{replaceTerms(item.profile.why)}</div>
+                          </div>
+                          <div className="mt-4 rounded-2xl border border-[#8ab8ff]/18 bg-[#11233a] px-4 py-3 text-sm leading-7 text-white/80">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">图文怎么写</div>
+                            <div className="mt-2 space-y-2">
+                              {item.profile.structure.map((row) => (
+                                <div key={`${item.label}-${row}`}>{replaceTerms(row)}</div>
+                              ))}
+                            </div>
+                          </div>
+                          {item.topics.length ? (
+                            <div className="mt-4 text-sm leading-7 text-white/72">相关赛道：{item.topics.map((entry) => replaceTerms(entry)).join(" / ")}</div>
+                          ) : null}
+                          {item.supportActivities.length ? (
+                            <div className="mt-2 text-sm leading-7 text-white/72">当前有效扶持活动：{item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ")}</div>
+                          ) : null}
+                          <div className="mt-2 text-sm leading-7 text-[#9df6c0]">扶持判断：{replaceTerms(item.supportSignal)}</div>
+                          {item.examples.length ? (
+                            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">参考案例</div>
+                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                                {item.examples.map((example) => (
+                                  <div key={`${item.label}-${example.id}`}>
+                                    <span className="font-semibold text-white">{replaceTerms(example.account)}</span>
+                                    <span className="text-white/62">：{replaceTerms(example.title)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {item.recommendation ? (
+                            <div className="mt-4 rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] px-4 py-3 text-sm leading-7 text-white/80">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">发布建议</div>
+                              <div className="mt-2">{replaceTerms(item.recommendation)}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
@@ -3325,6 +3588,201 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
                   </div>
+
+                  {inputKind === "video" ? (
+                    <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 text-[#ffb37f]">
+                          <Film className="h-5 w-5" />
+                          <h2 className="text-2xl font-bold">优质视频二创</h2>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {!hasPremiumRemix ? (
+                            <button
+                              type="button"
+                              onClick={() => void handleBuildPremiumRemix()}
+                              disabled={buildPremiumRemixMutation.isPending || !analysis}
+                              className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                              生成二创方案
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => void handleBuildPremiumRemix()}
+                              disabled={buildPremiumRemixMutation.isPending || !analysis}
+                              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                              重新生成
+                            </button>
+                          )}
+                          {hasPremiumRemix ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void handleGeneratePremiumRemixAssets("loop")}
+                                disabled={generatePremiumRemixAssetsMutation.isPending}
+                                className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                                生成 32 秒延展版
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
+                                disabled={generatePremiumRemixAssetsMutation.isPending}
+                                className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
+                                生成 32 秒插值版
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </div>
+                      <p className="mt-3 text-sm leading-7 text-white/60">
+                        这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。多人或动物污染会被改写成单主体镜头与正反打结构。
+                      </p>
+                      {analyzedVideoUrl ? (
+                        <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                          已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
+                        </div>
+                      ) : null}
+                      {premiumRemix ? (
+                        <div className="mt-5 space-y-4">
+                          <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                            <div className="rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">逆向核心</div>
+                              <div className="mt-3 text-xl font-black text-white">{premiumRemix.title}</div>
+                              <div className="mt-3 text-sm leading-7 text-white/76">{replaceTerms(premiumRemix.sourceSummary)}</div>
+                              <div className="mt-3 text-sm leading-7 text-white/72">视觉 DNA：{replaceTerms(premiumRemix.visualDnaSummary)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">内容重构：{replaceTerms(premiumRemix.contentRebuildSummary)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">人设贴合：{replaceTerms(premiumRemix.personaFit)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">演绎方向：{replaceTerms(premiumRemix.performanceDirection)}</div>
+                            </div>
+                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">角色锚定与防污染</div>
+                              <div className="mt-3 space-y-3">
+                                {premiumRemix.characterAnchors.map((item) => (
+                                  <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 px-4 py-3">
+                                    <div className="text-base font-semibold text-white">{replaceTerms(item.label)}</div>
+                                    <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.role)}</div>
+                                    <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(item.visualPrompt)}</div>
+                                    {item.consistencyRules.length ? (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        {item.consistencyRules.map((rule) => (
+                                          <span key={`${item.id}-${rule}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">
+                                            {replaceTerms(rule)}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                            <div className="text-sm font-semibold text-white">可直接拍摄的 32 秒分镜</div>
+                            <div className="mt-4 space-y-3">
+                              {premiumRemix.storyboard.map((shot) => (
+                                <div key={shot.shotId} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-semibold text-[#ffd08f]">镜头 {shot.shotId}</span>
+                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{shot.durationSeconds} 秒</span>
+                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.framing)}</span>
+                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.cameraMovement)}</span>
+                                  </div>
+                                  <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(shot.sceneDescription)}</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/70">作用：{replaceTerms(shot.purpose)} / 节奏：{replaceTerms(shot.pacingRole)}</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/70">画外音：{replaceTerms(shot.voiceover)}</div>
+                                  <div className="mt-2 text-sm leading-7 text-white/70">字幕：{replaceTerms(shot.onScreenText)}</div>
+                                  <div className="mt-2 rounded-xl border border-[#ffb347]/18 bg-[rgba(255,179,71,0.08)] px-3 py-3 text-sm leading-7 text-[#ffd08f]">
+                                    表演与拍摄要点：{replaceTerms(shot.performanceNote)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-4 xl:grid-cols-2">
+                            <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">32 秒自动延展轨</div>
+                              <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.loopTrack.plan.title)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.summary)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.whyItWorks)}</div>
+                              <div className="mt-4 space-y-2">
+                                {premiumRemix.loopTrack.segments.map((segment) => (
+                                  <div key={segment.segmentIndex} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
+                                    <div className="font-semibold text-white">{segment.startSecond}-{segment.endSecond} 秒</div>
+                                    <div className="mt-1">{replaceTerms(segment.prompt)}</div>
+                                    <div className="mt-1 text-[#ffd08f]">{replaceTerms(segment.stabilityPrompt)}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">32 秒关键帧插值轨</div>
+                              <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.interpolationTrack.plan.title)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.summary)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.whyItWorks)}</div>
+                              <div className="mt-4 space-y-2">
+                                {premiumRemix.interpolationTrack.nodes.map((node) => (
+                                  <div key={node.nodeId} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
+                                    <div className="font-semibold text-white">{replaceTerms(node.label)}</div>
+                                    <div className="mt-1">{replaceTerms(node.prompt)}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          {premiumRemix.deliveryNotes.length ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                              <div className="text-sm font-semibold text-white">制作提醒</div>
+                              <div className="mt-3 space-y-2 text-sm leading-7 text-white/72">
+                                {premiumRemix.deliveryNotes.map((note, index) => (
+                                  <div key={`${index}-${note}`}>{replaceTerms(note)}</div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {premiumRemixAssets ? (
+                            <div className="rounded-2xl border border-[#9df6c0]/18 bg-[rgba(157,246,192,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">已生成素材</div>
+                              <div className="mt-3 text-base font-bold text-white">
+                                {premiumRemixAssets.mode === "loop" ? "32 秒自动延展素材" : "32 秒关键帧插值素材"}
+                              </div>
+                              {premiumRemixAssets.referenceImages.length ? (
+                                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                                  {premiumRemixAssets.referenceImages.map((item) => (
+                                    <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 p-3">
+                                      <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
+                                      <img src={item.imageUrl} alt={item.label} className="mt-3 h-32 w-full rounded-lg object-cover" />
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {premiumRemixAssets.clips.length ? (
+                                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                                  {premiumRemixAssets.clips.map((item) => (
+                                    <div key={`${item.label}-${item.videoUrl}`} className="rounded-xl border border-white/10 bg-black/15 p-3">
+                                      <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
+                                      <video src={item.videoUrl} controls className="mt-3 w-full rounded-lg" />
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {personalizedDirectionCards.length ? (
                     <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">

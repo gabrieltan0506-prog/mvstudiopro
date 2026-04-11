@@ -1,123 +1,135 @@
 /**
  * Veo 3.1 Video Generation Service
- * Uses Google GenAI SDK with async polling for video generation
+ * Vertex AI only, fixed to us-central1.
  */
-import { GoogleGenAI } from "@google/genai";
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-function getClient() {
-  if (!GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is not configured");
-  }
-  return new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-}
+import { nanoid } from "nanoid";
+import { storagePut } from "./storage";
+import {
+  baseUrlForVertex,
+  extractVideoOperationName,
+  extractVideoUrl,
+  fetchRemoteAssetAsBase64,
+  fetchVertexJson,
+  getVertexAuthHeaders,
+  getVertexProjectId,
+  getVertexVideoLocation,
+  normalizePredictOperationName,
+} from "./services/vertexMedia";
 
 export interface VeoGenerateOptions {
-  /** Text prompt describing the video to generate */
   prompt: string;
-  /** Optional reference image URL for image-to-video */
   imageUrl?: string;
-  /** Video quality: "fast" uses veo-3.1-fast, "standard" uses veo-3.1-generate */
   quality?: "fast" | "standard";
-  /** Desired aspect ratio */
   aspectRatio?: "16:9" | "9:16";
-  /** Resolution: "720p" | "1080p" */
   resolution?: "720p" | "1080p";
-  /** Negative prompt */
   negativePrompt?: string;
 }
 
 export interface VeoResult {
-  /** Generated video URL (stored in S3) */
   videoUrl: string;
-  /** Mime type */
   mimeType: string;
 }
 
-/**
- * Generate a video using Veo 3.1
- * This is a long-running operation that polls until complete
- */
-export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult> {
-  const ai = getClient();
-  const modelId = opts.quality === "fast"
-    ? "veo-3.1-fast-generate-preview"
-    : "veo-3.1-generate-preview";
-
-  // Build image parameter if provided
-  let image: { imageBytes: string; mimeType: string } | undefined;
-  if (opts.imageUrl) {
-    const imgRes = await fetch(opts.imageUrl);
-    const imgBuffer = await imgRes.arrayBuffer();
-    const base64 = Buffer.from(imgBuffer).toString("base64");
-    const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
-    image = { imageBytes: base64, mimeType };
+function pickVeoModel(quality: VeoGenerateOptions["quality"]) {
+  if (quality === "fast") {
+    return String(process.env.VERTEX_VEO_MODEL_FAST || "veo-3.1-fast-generate-001").trim();
   }
-
-  // Start video generation (returns a long-running operation)
-  let operation = await ai.models.generateVideos({
-    model: modelId,
-    prompt: opts.prompt,
-    ...(image ? { image } : {}),
-    config: {
-      aspectRatio: opts.aspectRatio || "16:9",
-      resolution: opts.resolution || "720p",
-      numberOfVideos: 1,
-      negativePrompt: opts.negativePrompt,
-    },
-  });
-
-  // Poll until the operation is done (typically 30-120 seconds)
-  const maxWait = 300_000; // 5 minutes max
-  const pollInterval = 10_000; // 10 seconds
-  const startTime = Date.now();
-
-  while (!operation.done) {
-    if (Date.now() - startTime > maxWait) {
-      throw new Error("视频生成超时，请稍后重试");
-    }
-    await new Promise(resolve => setTimeout(resolve, pollInterval));
-    operation = await ai.operations.getVideosOperation({ operation });
-  }
-
-  // Check for errors
-  if (operation.error) {
-    console.error("[Veo] Generation error:", operation.error);
-    throw new Error("视频生成失败: " + JSON.stringify(operation.error));
-  }
-
-  // Extract generated video
-  const generatedVideos = operation.response?.generatedVideos;
-  if (!generatedVideos || generatedVideos.length === 0) {
-    throw new Error("视频生成失败，未返回视频结果");
-  }
-
-  const video = generatedVideos[0];
-  const videoUri = video.video?.uri;
-  if (!videoUri) {
-    throw new Error("视频生成成功但无法获取下载链接");
-  }
-
-  // Download video bytes and upload to S3
-  const { storagePut } = await import("./storage");
-  const { nanoid } = await import("nanoid");
-
-  const videoRes = await fetch(videoUri);
-  const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-  const fileKey = `veo-videos/${nanoid(12)}.mp4`;
-
-  const { url } = await storagePut(fileKey, videoBuffer, "video/mp4");
-
-  return {
-    videoUrl: url,
-    mimeType: "video/mp4",
-  };
+  return String(process.env.VERTEX_VEO_MODEL_STANDARD || "veo-3.1-generate-001").trim();
 }
 
-/**
- * Check if Veo API is available
- */
-export function isVeoAvailable(): boolean {
-  return !!GEMINI_API_KEY;
+export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult> {
+  const projectId = getVertexProjectId();
+  const location = getVertexVideoLocation();
+  const model = pickVeoModel(opts.quality);
+  const baseUrl = baseUrlForVertex(location);
+  const headers = await getVertexAuthHeaders();
+
+  const image = opts.imageUrl ? await fetchRemoteAssetAsBase64(opts.imageUrl) : null;
+  const url = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
+
+  const createResp = await fetchVertexJson(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      instances: [
+        {
+          prompt: opts.prompt,
+          ...(image
+            ? { image: { bytesBase64Encoded: image.base64, mimeType: image.mimeType } }
+            : {}),
+        },
+      ],
+      parameters: {
+        aspectRatio: opts.aspectRatio || "16:9",
+        resolution: opts.resolution || "720p",
+        durationSeconds: 8,
+        generateAudio: false,
+        upscale: false,
+        ...(opts.negativePrompt ? { negativePrompt: opts.negativePrompt } : {}),
+      },
+    }),
+  });
+
+  if (!createResp.ok) {
+    throw new Error(`vertex_veo_create_failed_${createResp.status}: ${createResp.rawText.slice(0, 500)}`);
+  }
+
+  const operationName = extractVideoOperationName(createResp.json);
+  if (!operationName) {
+    throw new Error("vertex_veo_missing_operation_name");
+  }
+
+  const pollUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
+  const startedAt = Date.now();
+  let videoUrl = "";
+  let raw: any = null;
+
+  while (Date.now() - startedAt < 300_000) {
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+
+    const pollResp = await fetchVertexJson(pollUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        operationName: normalizePredictOperationName(operationName, projectId, model, location),
+      }),
+    });
+
+    if (!pollResp.ok) {
+      throw new Error(`vertex_veo_poll_failed_${pollResp.status}: ${pollResp.rawText.slice(0, 500)}`);
+    }
+
+    raw = pollResp.json;
+    videoUrl = extractVideoUrl(raw);
+    if (raw?.done && raw?.error) {
+      throw new Error(`vertex_veo_failed: ${JSON.stringify(raw.error)}`);
+    }
+    if (videoUrl) break;
+  }
+
+  if (!videoUrl) {
+    throw new Error(`vertex_veo_timeout: ${JSON.stringify(raw || {})}`.slice(0, 800));
+  }
+
+  const downloadResp = await fetch(videoUrl);
+  if (!downloadResp.ok) {
+    throw new Error(`vertex_veo_download_failed_${downloadResp.status}`);
+  }
+
+  const buffer = Buffer.from(await downloadResp.arrayBuffer());
+  if (!buffer.length) {
+    throw new Error("vertex_veo_empty_video");
+  }
+
+  const fileKey = `veo-videos/${nanoid(12)}.mp4`;
+  const { url: persistedUrl } = await storagePut(fileKey, buffer, "video/mp4");
+
+  return { videoUrl: persistedUrl, mimeType: "video/mp4" };
+}
+
+export function isVeoAvailable() {
+  return Boolean(
+    String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim() &&
+      String(process.env.VERTEX_PROJECT_ID || "").trim(),
+  );
 }

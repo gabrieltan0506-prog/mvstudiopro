@@ -85,9 +85,9 @@ function routeModel(type: "script" | "image" | "video" | "music") {
     case "script":
       return { provider: "google", model: "gemini-3.1" };
     case "image":
-      return { provider: "fal", model: "fal-ai/nano-banana-2" };
+      return { provider: "vertex", model: "imagen-4.0-generate-001" };
     case "video":
-      return { provider: "kling", model: "kling-v2-6" };
+      return { provider: "vertex", model: "veo-3.1-generate-001" };
     default:
       return { provider: "suno", model: "suno" };
   }

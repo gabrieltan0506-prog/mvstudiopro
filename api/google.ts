@@ -164,17 +164,36 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const tier = s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
       const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
+      const negativePrompt = s(b.negativePrompt || q.negativePrompt || "");
+      const numberOfImages = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
+      const guidanceScale = Number(b.guidanceScale || q.guidanceScale || 0);
+      const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
+      const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      const model = tier === "pro"
-        ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
-        : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
+      const requestedModel = s(b.model || q.model || "");
+      const resolvedTier = requestedModel
+        ? (requestedModel === "imagen-4.0-ultra-generate-001" ? "pro" : "flash")
+        : tier;
 
-      const location = (s(process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
+      const model = requestedModel
+        ? requestedModel
+        : resolvedTier === "pro"
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001")
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
+
+      const location = resolvedTier === "pro"
+        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim()
+        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
-      if(tier === "pro") imageConfig.imageSize = size;
+      if(negativePrompt) imageConfig.negativePrompt = negativePrompt;
+      if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
+      if(Number.isFinite(guidanceScale) && guidanceScale > 0) imageConfig.guidanceScale = guidanceScale;
+      if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
+      if(personGeneration) imageConfig.personGeneration = personGeneration;
+      if(resolvedTier === "pro") imageConfig.imageSize = size;
 
       const r = await fetchJson(url,{
         method:"POST",
@@ -204,7 +223,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const location = mode === "rapid"
         ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
+        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
 
       const base = baseUrlFor(location);
 
@@ -241,7 +260,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const location = mode === "rapid"
         ? s(process.env.VERTEX_VIDEO_LOCATION_RAPID || "us-central1")
-        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "global");
+        : s(process.env.VERTEX_VIDEO_LOCATION_PRO || "us-central1");
 
       const base = baseUrlFor(location);
       const operationName = normalizePredictOperationName(taskId, projectId, location, model);
