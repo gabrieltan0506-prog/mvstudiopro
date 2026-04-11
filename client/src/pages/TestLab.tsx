@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 
 type TabKey = "script" | "image" | "video" | "music";
-type GoogleImageModel = "imagen-4.0-generate-001" | "imagen-4.0-ultra-generate-001";
+type GoogleImageModel = "gemini-3-flash-image-001" | "gemini-3-pro-image-001";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
@@ -78,7 +78,7 @@ export default function TestLab() {
   const [scriptText, setScriptText] = useState("");
 
   // Image
-  const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("imagen-4.0-generate-001");
+  const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3-flash-image-001");
   const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
   const [imageProvider, setImageProvider] = useState<"google" | "kling">("google");
   const [imageResolution, setImageResolution] = useState("1k");
@@ -178,7 +178,7 @@ export default function TestLab() {
     try {
       if (imageProvider === "google") {
         const model = googleImageModel;
-        const tier = model === "imagen-4.0-ultra-generate-001" ? "pro" : "flash";
+        const tier = model === "gemini-3-pro-image-001" ? "pro" : "flash";
         const r = await fetchJsonish(
           `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
           {
@@ -530,8 +530,8 @@ export default function TestLab() {
                   onChange={(e) => setGoogleImageModel(e.target.value as GoogleImageModel)}
                   style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
                 >
-                  <option value="imagen-4.0-generate-001">Nano Banana 2（imagen-4.0-generate-001）</option>
-                  <option value="imagen-4.0-ultra-generate-001">Nano Banana Pro（imagen-4.0-ultra-generate-001）</option>
+                  <option value="gemini-3-flash-image-001">Nano Banana 2（gemini-3-flash-image-001）</option>
+                  <option value="gemini-3-pro-image-001">Nano Banana Pro（gemini-3-pro-image-001）</option>
                 </select>
               </div>
             ) : (
