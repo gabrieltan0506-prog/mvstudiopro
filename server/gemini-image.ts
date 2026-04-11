@@ -1,7 +1,7 @@
 /**
  * Vertex AI image generation service.
- * - Nano Banana route: imagen-4.0-generate @ asia-east1
- * - Nano Banana Pro route: imagen-4.0-ultra-generate @ asia-east1
+ * - Nano Banana route: imagen-4.0-generate-001 @ asia-east1
+ * - Nano Banana Pro route: imagen-4.0-ultra-generate-001 @ asia-east1
  */
 import { storagePut } from "./storage";
 import {
@@ -38,8 +38,8 @@ export interface GeminiImageResult {
 }
 
 function pickImageModels(quality: ImageQuality) {
-  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate").trim();
-  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate").trim();
+  const flashModel = String(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001").trim();
+  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001").trim();
   return quality === "1k" ? [flashModel, proModel] : [proModel, flashModel];
 }
 
@@ -73,7 +73,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
   ];
 
   const models = pickImageModels(opts.quality);
-  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate").trim();
+  const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001").trim();
   let generated: { data: string; mimeType: string }[] | null = null;
   let selectedModel = "";
   let selectedLocation = "";

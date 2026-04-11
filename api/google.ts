@@ -214,8 +214,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const model = requestedModel
         ? requestedModel
         : resolvedTier === "pro"
-          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate")
-          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate");
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001")
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
 
       const location = resolvedTier === "pro"
         ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "asia-east1").trim()
