@@ -201,17 +201,13 @@ export default function TestLab() {
         setDebug(r);
         if (!r.ok) throw new Error("google_image_failed");
 
-        // Google image currently returns inlineData in raw
-        const parts =
-          r?.json?.raw?.candidates?.[0]?.content?.parts ||
-          [];
-        const inline = parts.find((p: any) => p?.inlineData?.data);
-        if (!inline?.inlineData?.data) {
-          throw new Error("google_image_missing_inlineData");
+        const dataUrl = String(r?.json?.imageUrl || "").trim();
+        const multi = Array.isArray(r?.json?.imageUrls) ? r.json.imageUrls : [];
+        const firstUrl = dataUrl || String(multi[0] || "").trim();
+        if (!firstUrl) {
+          throw new Error("google_image_missing_imageUrl");
         }
-        const mime = inline.inlineData.mimeType || "image/png";
-        const dataUrl = `data:${mime};base64,${inline.inlineData.data}`;
-        setImageUrl(dataUrl);
+        setImageUrl(firstUrl);
         return;
       }
 
