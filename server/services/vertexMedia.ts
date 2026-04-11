@@ -1,7 +1,7 @@
 import { getVertexAccessToken } from "../utils/vertex";
 
-export const VERTEX_IMAGE_LOCATION_FLASH = "asia-east1";
-export const VERTEX_IMAGE_LOCATION_PRO = "asia-east1";
+export const VERTEX_IMAGE_LOCATION_FLASH = "us-central1";
+export const VERTEX_IMAGE_LOCATION_PRO = "us-central1";
 export const VERTEX_IMAGE_LOCATION_UPSCALE = "us-central1";
 export const VERTEX_VIDEO_LOCATION = "us-central1";
 
