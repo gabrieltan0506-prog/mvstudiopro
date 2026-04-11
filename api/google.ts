@@ -129,6 +129,15 @@ async function fetchJson(url:string, init:RequestInit){
   return { ok:r.ok, status:r.status, url, json:j, rawText:t.slice(0,4000) };
 }
 
+function shouldRetryVertexImage(status:number, json:any, rawText:string){
+  const message = String(json?.error?.status || json?.error?.message || rawText || "").toUpperCase();
+  return status === 429 || message.includes("RESOURCE_EXHAUSTED");
+}
+
+async function sleep(ms:number){
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchImageAsBase64(imageUrl:string){
   const url = s(imageUrl).trim();
   if(!url) throw new Error("missing_image_url");
@@ -199,18 +208,18 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const requestedModel = s(b.model || q.model || "");
       const resolvedTier = requestedModel
-        ? (requestedModel === "imagen-4.0-ultra-generate-001" ? "pro" : "flash")
+        ? ((requestedModel === "imagen-4.0-ultra-generate-001" || requestedModel === "imagen-4.0-ultra-generate") ? "pro" : "flash")
         : tier;
 
       const model = requestedModel
         ? requestedModel
         : resolvedTier === "pro"
-          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001")
-          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate")
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate");
 
       const location = resolvedTier === "pro"
-        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim()
-        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
+        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "asia-east1").trim()
+        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "asia-east1").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
@@ -220,14 +229,19 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(personGeneration) imageConfig.personGeneration = personGeneration;
       if(resolvedTier === "pro") imageConfig.imageSize = size;
 
-      const r = await fetchJson(url,{
+      const requestInit: RequestInit = {
         method:"POST",
         headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
         body: JSON.stringify({
           contents:[{role:"user",parts:[{text:prompt}]}],
           generationConfig:{ responseModalities:["IMAGE"], imageConfig }
         })
-      });
+      };
+      let r = await fetchJson(url, requestInit);
+      for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
+        await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+        r = await fetchJson(url, requestInit);
+      }
 
       const raw = r.json ?? r.rawText;
       const images = r.ok ? extractGeneratedImages(r.json) : [];
