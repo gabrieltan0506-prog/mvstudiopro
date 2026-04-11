@@ -87,6 +87,32 @@ function extractVideoUrl(raw:any): string {
   return "";
 }
 
+function extractGeneratedImages(raw:any): Array<{ data: string; mimeType: string }> {
+  const images: Array<{ data: string; mimeType: string }> = [];
+  const parts = Array.isArray(raw?.candidates?.[0]?.content?.parts) ? raw.candidates[0].content.parts : [];
+  for (const part of parts) {
+    const data = s(part?.inlineData?.data).trim();
+    if (data) {
+      images.push({ data, mimeType: s(part?.inlineData?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  const generatedImages = Array.isArray(raw?.generatedImages) ? raw.generatedImages : [];
+  for (const item of generatedImages) {
+    const data = s(item?.image?.bytesBase64Encoded || item?.bytesBase64Encoded || item?.imageBytes).trim();
+    if (data) {
+      images.push({ data, mimeType: s(item?.image?.mimeType || item?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  const predictions = Array.isArray(raw?.predictions) ? raw.predictions : [];
+  for (const item of predictions) {
+    const data = s(item?.bytesBase64Encoded || item?.image?.bytesBase64Encoded || item?.b64Json).trim();
+    if (data) {
+      images.push({ data, mimeType: s(item?.mimeType || item?.image?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  return images;
+}
+
 function normalizePredictOperationName(taskIdOrName: string, projectId: string, location: string, model: string): string {
   const input = s(taskIdOrName).trim();
   if (!input) return "";
@@ -152,7 +178,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         body: JSON.stringify({ contents:[{role:"user",parts:[{text:prompt}]}] })
       });
 
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+      const raw = r.json ?? r.rawText;
+      const images = r.ok ? extractGeneratedImages(r.json) : [];
+      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
     }
 
     // ---------------- Nano Banana (image) ----------------
@@ -204,7 +233,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         })
       });
 
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+      const raw = r.json ?? r.rawText;
+      const images = r.ok ? extractGeneratedImages(r.json) : [];
+      const imageUrls = images.map((item) => `data:;base64,`);
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
     }
 
     // ---------------- Veo (video) ----------------
