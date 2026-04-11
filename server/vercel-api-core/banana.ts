@@ -10,7 +10,7 @@ export interface BananaGenerateInput {
 export interface BananaGenerateResult {
   imageUrls: string[];
   provider: "vertex";
-  model: "imagen-4.0-generate-001" | "gemini-3.1-flash-image-preview";
+  model: "imagen-4.0-generate-001" | "imagen-4.0-ultra-generate-001";
 }
 
 export async function generateImageWithBanana(input: BananaGenerateInput): Promise<BananaGenerateResult> {
@@ -34,6 +34,6 @@ export async function generateImageWithBanana(input: BananaGenerateInput): Promi
   return {
     imageUrls,
     provider: "vertex",
-    model: quality === "1k" ? "imagen-4.0-generate-001" : "gemini-3.1-flash-image-preview",
+    model: quality === "1k" ? "imagen-4.0-generate-001" : "imagen-4.0-ultra-generate-001",
   };
 }

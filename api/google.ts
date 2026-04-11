@@ -167,17 +167,17 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const requestedModel = s(b.model || q.model || "");
       const resolvedTier = requestedModel
-        ? (requestedModel === "gemini-3.1-flash-image-preview" ? "pro" : "flash")
+        ? (requestedModel === "imagen-4.0-ultra-generate-001" ? "pro" : "flash")
         : tier;
 
       const model = requestedModel
         ? requestedModel
         : resolvedTier === "pro"
-          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3.1-flash-image-preview")
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001")
           : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "imagen-4.0-generate-001");
 
       const location = resolvedTier === "pro"
-        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "global").trim()
+        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim()
         : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
