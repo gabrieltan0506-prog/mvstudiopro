@@ -164,6 +164,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const tier = s(b.tier || q.tier || "flash").toLowerCase(); // flash|pro
       const size = s(b.imageSize || q.imageSize || "1K").toUpperCase(); // 1K|2K|4K
       const aspectRatio = s(b.aspectRatio || q.aspectRatio || "16:9");
+      const negativePrompt = s(b.negativePrompt || q.negativePrompt || "");
+      const numberOfImages = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
+      const guidanceScale = Number(b.guidanceScale || q.guidanceScale || 0);
+      const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
+      const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
       const requestedModel = s(b.model || q.model || "");
       const resolvedTier = requestedModel
@@ -183,6 +188,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
+      if(negativePrompt) imageConfig.negativePrompt = negativePrompt;
+      if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
+      if(Number.isFinite(guidanceScale) && guidanceScale > 0) imageConfig.guidanceScale = guidanceScale;
+      if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
+      if(personGeneration) imageConfig.personGeneration = personGeneration;
       if(resolvedTier === "pro") imageConfig.imageSize = size;
 
       const r = await fetchJson(url,{

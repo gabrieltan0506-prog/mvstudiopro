@@ -82,6 +82,10 @@ export default function TestLab() {
   const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
   const [imageProvider, setImageProvider] = useState<"google" | "kling">("google");
   const [imageResolution, setImageResolution] = useState("1k");
+  const [imageCount, setImageCount] = useState("1");
+  const [guidanceScale, setGuidanceScale] = useState("4.0");
+  const [imageSeed, setImageSeed] = useState("");
+  const [personGeneration, setPersonGeneration] = useState<"ALLOW_ADULT" | "ALLOW_ALL" | "DONT_ALLOW">("ALLOW_ADULT");
   const [imageBusy, setImageBusy] = useState(false);
   const [imageTaskId, setImageTaskId] = useState("");
   const [imageUrl, setImageUrl] = useState("");
@@ -176,7 +180,7 @@ export default function TestLab() {
         const model = googleImageModel;
         const tier = model === "imagen-4.0-ultra-generate-001" ? "pro" : "flash";
         const r = await fetchJsonish(
-          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}`,
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -186,6 +190,11 @@ export default function TestLab() {
               model,
               imageSize: imageResolution,
               aspectRatio,
+              negativePrompt,
+              numberOfImages: Number(imageCount || 1),
+              guidanceScale: Number(guidanceScale || 4),
+              seed: imageSeed ? Number(imageSeed) : undefined,
+              personGeneration,
             }),
           }
         );
@@ -554,6 +563,57 @@ export default function TestLab() {
                 <option value="2k">2K</option>
               </select>
             </div>
+
+            {imageProvider === "google" ? (
+              <>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>图片数量</div>
+                  <select
+                    value={imageCount}
+                    onChange={(e) => setImageCount(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>引导系数</div>
+                  <input
+                    value={guidanceScale}
+                    onChange={(e) => setGuidanceScale(e.target.value)}
+                    placeholder="4.0"
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)", width: 110 }}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>随机种子</div>
+                  <input
+                    value={imageSeed}
+                    onChange={(e) => setImageSeed(e.target.value)}
+                    placeholder="可选"
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)", width: 110 }}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>人物生成</div>
+                  <select
+                    value={personGeneration}
+                    onChange={(e) => setPersonGeneration(e.target.value as any)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="ALLOW_ADULT">允许成人</option>
+                    <option value="ALLOW_ALL">允许全部</option>
+                    <option value="DONT_ALLOW">不允许人物</option>
+                  </select>
+                </div>
+              </>
+            ) : null}
           </div>
 
           {imageProvider === "kling" ? (

@@ -21,11 +21,20 @@ export interface GeminiImageOptions {
   prompt: string;
   quality: ImageQuality;
   referenceImageUrl?: string;
+  negativePrompt?: string;
+  aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+  numberOfImages?: number;
+  guidanceScale?: number;
+  seed?: number;
+  personGeneration?: "DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL";
 }
 
 export interface GeminiImageResult {
   imageUrl: string;
+  imageUrls?: string[];
   quality: ImageQuality;
+  model?: string;
+  location?: string;
 }
 
 function pickImageModels(quality: ImageQuality) {
@@ -56,7 +65,9 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
 
   const models = pickImageModels(opts.quality);
   const proModel = String(process.env.VERTEX_IMAGE_MODEL_PRO || "imagen-4.0-ultra-generate-001").trim();
-  let generated: { data: string; mimeType: string } | null = null;
+  let generated: { data: string; mimeType: string }[] | null = null;
+  let selectedModel = "";
+  let selectedLocation = "";
   let lastError = "";
 
   for (const model of models) {
@@ -73,7 +84,12 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
         generationConfig: {
           responseModalities: ["IMAGE"],
           imageConfig: {
-            aspectRatio: "16:9",
+            aspectRatio: opts.aspectRatio || "16:9",
+            ...(opts.negativePrompt ? { negativePrompt: opts.negativePrompt } : {}),
+            ...(typeof opts.numberOfImages === "number" ? { numberOfImages: Math.max(1, Math.min(4, Math.floor(opts.numberOfImages))) } : {}),
+            ...(typeof opts.guidanceScale === "number" ? { guidanceScale: opts.guidanceScale } : {}),
+            ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
+            ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
             ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
           },
         },
@@ -85,8 +101,21 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
       continue;
     }
 
-    generated = extractGeneratedImage(response.json);
-    if (generated) break;
+    const parts = response.json?.candidates?.[0]?.content?.parts;
+    const images = Array.isArray(parts)
+      ? parts
+          .filter((part: any) => part?.inlineData?.data)
+          .map((part: any) => ({
+            data: String(part.inlineData.data),
+            mimeType: String(part.inlineData.mimeType || "image/png"),
+          }))
+      : [];
+    if (images.length) {
+      generated = images;
+      selectedModel = model;
+      selectedLocation = location;
+      break;
+    }
     lastError = `model=${model} returned no image`;
   }
 
@@ -94,13 +123,23 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
     throw new Error(`vertex_image_failed: ${lastError}`);
   }
 
-  const buffer = Buffer.from(generated.data, "base64");
-  const mimeType = generated.mimeType || "image/png";
-  const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-  const fileKey = `vertex-images/${opts.quality}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  const { url } = await storagePut(fileKey, buffer, mimeType);
+  const imageUrls: string[] = [];
+  for (const [index, image] of generated.entries()) {
+    const buffer = Buffer.from(image.data, "base64");
+    const mimeType = image.mimeType || "image/png";
+    const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+    const fileKey = `vertex-images/${opts.quality}/${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { url } = await storagePut(fileKey, buffer, mimeType);
+    imageUrls.push(url);
+  }
 
-  return { imageUrl: url, quality: opts.quality };
+  return {
+    imageUrl: imageUrls[0] || "",
+    imageUrls,
+    quality: opts.quality,
+    model: selectedModel,
+    location: selectedLocation,
+  };
 }
 
 export function isGeminiImageAvailable() {

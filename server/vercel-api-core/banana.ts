@@ -5,6 +5,10 @@ export interface BananaGenerateInput {
   numImages?: number;
   aspectRatio?: string;
   imageSize?: string;
+  negativePrompt?: string;
+  guidanceScale?: number;
+  seed?: number;
+  personGeneration?: "DONT_ALLOW" | "ALLOW_ADULT" | "ALLOW_ALL";
 }
 
 export interface BananaGenerateResult {
@@ -27,6 +31,11 @@ export async function generateImageWithBanana(input: BananaGenerateInput): Promi
     const result = await generateGeminiImage({
       prompt: `${prompt}\n第 ${index + 1} 张，保持主体与风格一致。`,
       quality: quality as "1k" | "2k",
+      aspectRatio: (input.aspectRatio as any) || "16:9",
+      negativePrompt: input.negativePrompt,
+      guidanceScale: input.guidanceScale,
+      seed: typeof input.seed === "number" ? input.seed + index : undefined,
+      personGeneration: input.personGeneration,
     });
     imageUrls.push(result.imageUrl);
   }
