@@ -89,6 +89,9 @@ export default function TestLab() {
   const [imageBusy, setImageBusy] = useState(false);
   const [imageTaskId, setImageTaskId] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [upscaleBusy, setUpscaleBusy] = useState(false);
+  const [upscaleFactor, setUpscaleFactor] = useState<"x2" | "x3" | "x4">("x2");
+  const [upscaledImageUrl, setUpscaledImageUrl] = useState("");
 
   // Video
   const [videoProvider, setVideoProvider] = useState<"google" | "kling">("google");
@@ -138,6 +141,7 @@ export default function TestLab() {
       // reset downstream outputs when ref image changes
       setImageTaskId("");
       setImageUrl("");
+      setUpscaledImageUrl("");
       setVideoTaskId("");
       setVideoUrl("");
     } catch (e: any) {
@@ -173,6 +177,7 @@ export default function TestLab() {
     setImageBusy(true);
     setImageTaskId("");
     setImageUrl("");
+    setUpscaledImageUrl("");
     setDebug({ ok: true, action: "image:start" });
 
     try {
@@ -347,6 +352,45 @@ export default function TestLab() {
       setDebug({ ok: false, error: e?.message || String(e) });
     } finally {
       setVideoBusy(false);
+    }
+  }
+
+  async function runUpscale() {
+    const inputImage = imageUrl || refImageUrl;
+    if (!inputImage) {
+      setDebug({ ok: false, error: "missing_image_for_upscale" });
+      return;
+    }
+
+    setUpscaleBusy(true);
+    setUpscaledImageUrl("");
+    setDebug({ ok: true, action: "upscale:start" });
+
+    try {
+      const r = await fetchJsonish("/api/google?op=upscaleImage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageUrl: inputImage,
+          upscaleFactor,
+          prompt,
+          outputMimeType: "image/png",
+        }),
+      });
+      setDebug(r);
+      if (!r.ok) throw new Error("google_upscale_failed");
+
+      const dataUrl = String(r?.json?.imageUrl || "").trim();
+      const multi = Array.isArray(r?.json?.imageUrls) ? r.json.imageUrls : [];
+      const firstUrl = dataUrl || String(multi[0] || "").trim();
+      if (!firstUrl) {
+        throw new Error("google_upscale_missing_imageUrl");
+      }
+      setUpscaledImageUrl(firstUrl);
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setUpscaleBusy(false);
     }
   }
 
@@ -653,6 +697,50 @@ export default function TestLab() {
                   设为参考图
                 </button>
               </div>
+            </div>
+          ) : null}
+
+          {(imageUrl || refImageUrl) ? (
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <div style={{ fontWeight: 900, marginBottom: 8 }}>Google Upscale</div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>倍率</div>
+                  <select
+                    value={upscaleFactor}
+                    onChange={(e) => setUpscaleFactor(e.target.value as "x2" | "x3" | "x4")}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="x2">x2</option>
+                    <option value="x3">x3</option>
+                    <option value="x4">x4</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={runUpscale}
+                  disabled={upscaleBusy}
+                  style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+                >
+                  {upscaleBusy ? "放大中…" : "放大当前图片"}
+                </button>
+              </div>
+
+              {upscaledImageUrl ? (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>放大结果</div>
+                  <img src={upscaledImageUrl} style={{ width: "100%", borderRadius: 14, background: "black" }} />
+                  <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <a href={upscaledImageUrl} target="_blank" rel="noreferrer" style={{ color: "white" }}>打开放大图</a>
+                    <button
+                      onClick={() => setRefImageUrl(upscaledImageUrl)}
+                      style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+                    >
+                      设为参考图
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

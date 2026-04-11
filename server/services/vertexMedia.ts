@@ -2,7 +2,7 @@ import { getVertexAccessToken } from "../utils/vertex";
 
 export const VERTEX_IMAGE_LOCATION_FLASH = "global";
 export const VERTEX_IMAGE_LOCATION_PRO = "global";
-export const VERTEX_IMAGE_LOCATION_UPSCALE = "us-central1";
+export const VERTEX_IMAGE_LOCATION_UPSCALE = "global";
 export const VERTEX_VIDEO_LOCATION = "us-central1";
 
 function s(v: unknown) {
