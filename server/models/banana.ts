@@ -11,7 +11,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls: [] as string[],
       provider: "vertex",
-      model: "imagen-4.0-generate-001",
+      model: "imagen-4.0-generate",
       isFallback: true,
       errorMessage: "scenePrompt is required",
     };
@@ -30,7 +30,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls,
       provider: "vertex",
-      model: "imagen-4.0-generate-001",
+      model: "imagen-4.0-generate",
       isFallback: false,
       errorMessage: "",
     };
@@ -38,7 +38,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls: [] as string[],
       provider: "vertex",
-      model: "imagen-4.0-generate-001",
+      model: "imagen-4.0-generate",
       isFallback: true,
       errorMessage: error?.message || String(error),
     };
