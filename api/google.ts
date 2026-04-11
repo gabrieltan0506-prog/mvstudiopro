@@ -208,18 +208,18 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const requestedModel = s(b.model || q.model || "");
       const resolvedTier = requestedModel
-        ? ((requestedModel === "imagen-4.0-ultra-generate-001" || requestedModel === "imagen-4.0-ultra-generate" || requestedModel === "gemini-3-pro-image-001") ? "pro" : "flash")
+        ? ((requestedModel === "imagen-4.0-ultra-generate-001" || requestedModel === "imagen-4.0-ultra-generate" || requestedModel === "gemini-3-pro-image-001" || requestedModel === "gemini-3-pro-image-preview") ? "pro" : "flash")
         : tier;
 
       const model = requestedModel
         ? requestedModel
         : resolvedTier === "pro"
-          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-001")
-          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3-flash-image-001");
+          ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
+          : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
 
       const location = resolvedTier === "pro"
-        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim()
-        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "us-central1").trim();
+        ? (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "global").trim()
+        : (s(process.env.VERTEX_IMAGE_LOCATION_FLASH || process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 

@@ -11,7 +11,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls: [] as string[],
       provider: "vertex",
-      model: "gemini-3-flash-image-001",
+      model: "gemini-3.1-flash-image-preview",
       isFallback: true,
       errorMessage: "scenePrompt is required",
     };
@@ -30,7 +30,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls,
       provider: "vertex",
-      model: "gemini-3-flash-image-001",
+      model: "gemini-3.1-flash-image-preview",
       isFallback: false,
       errorMessage: "",
     };
@@ -38,7 +38,7 @@ export async function generateStoryboardSceneImages(input: {
     return {
       imageUrls: [] as string[],
       provider: "vertex",
-      model: "gemini-3-flash-image-001",
+      model: "gemini-3.1-flash-image-preview",
       isFallback: true,
       errorMessage: error?.message || String(error),
     };
