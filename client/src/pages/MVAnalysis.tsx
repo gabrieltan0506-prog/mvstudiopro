@@ -8,7 +8,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
-import { readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
+import { clearPremiumRemixDraft, readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -1459,6 +1459,8 @@ export default function MVAnalysisPage() {
     .trim();
 
   const [location, navigate] = useLocation();
+  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
+  const utils = trpc.useUtils();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
@@ -1491,6 +1493,7 @@ export default function MVAnalysisPage() {
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
   const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
+  const [isPremiumRemixPipelineRunning, setIsPremiumRemixPipelineRunning] = useState(false);
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
   const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
   const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
@@ -1784,9 +1787,12 @@ export default function MVAnalysisPage() {
 
               throw new Error("视频分析超时，请稍后重试");
             })();
-      setAnalysis(normalizeAnalysisScale(result.analysis));
-      setAnalysisTranscript(String((result as any).transcript || ""));
-      setAnalyzedVideoUrl(String((result as any).videoUrl || ""));
+      const normalizedAnalysis = normalizeAnalysisScale(result.analysis);
+      const nextTranscript = String((result as any).transcript || "");
+      const nextVideoUrl = String((result as any).videoUrl || "");
+      setAnalysis(normalizedAnalysis);
+      setAnalysisTranscript(nextTranscript);
+      setAnalyzedVideoUrl(nextVideoUrl);
       setDebugInfo({
         inputKind,
         fileName,
@@ -1794,6 +1800,30 @@ export default function MVAnalysisPage() {
         fileSize,
         ...((result as any).debug || {}),
       });
+      if (isPremiumRemixPage) {
+        setIsPremiumRemixPipelineRunning(true);
+        const growthResult = await utils.mvAnalysis.getGrowthSnapshot.fetch({
+          context: context || undefined,
+          modelName: "gemini-3.1-pro-preview",
+          requestedPlatforms: [...FULL_PLATFORM_ORDER],
+          analysis: normalizedAnalysis,
+        });
+        const snapshot = growthResult?.snapshot || null;
+        const remixResult = await buildPremiumRemixMutation.mutateAsync({
+          context: context || undefined,
+          transcript: nextTranscript || undefined,
+          analysis: normalizedAnalysis,
+          modelName: "gemini-3.1-pro-preview",
+          titleExecutions: snapshot?.titleExecutions?.length ? snapshot.titleExecutions : premiumRemixDraftMeta?.titleExecutions || [],
+          assetAdaptation: snapshot?.decisionFramework?.assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
+          growthHandoff: snapshot?.growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
+          creationStoryboardPrompt: snapshot?.creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
+        });
+        setPremiumRemix(remixResult.remix);
+        setPremiumRemixAssets(null);
+        setPremiumRemixDebug(remixResult.debug || null);
+        setPremiumRemixAssetsDebug(null);
+      }
       setUploadProgress(100);
       setUploadStage("done");
       if (!supervisorAccess) {
@@ -1802,8 +1832,12 @@ export default function MVAnalysisPage() {
     } catch (analysisError: any) {
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
+    } finally {
+      if (isPremiumRemixPage) {
+        setIsPremiumRemixPipelineRunning(false);
+      }
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage, utils.mvAnalysis.getGrowthSnapshot, buildPremiumRemixMutation, premiumRemixDraftMeta]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -1819,11 +1853,15 @@ export default function MVAnalysisPage() {
     setDebugInfo(null);
     setPremiumRemix(null);
     setPremiumRemixAssets(null);
+    setPremiumRemixDraftMeta(null);
+    setPremiumRemixDebug(null);
+    setPremiumRemixAssetsDebug(null);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
     setFileName("");
     setFileSize(0);
+    clearPremiumRemixDraft();
   }, []);
 
   const handleRefreshGrowth = useCallback(async () => {
@@ -2310,32 +2348,60 @@ export default function MVAnalysisPage() {
   const handleBuildPremiumRemix = useCallback(async () => {
     try {
       setPremiumRemixDebug(null);
-      const result = await buildPremiumRemixMutation.mutateAsync({
-        context: context || undefined,
-        transcript: analysisTranscript || undefined,
-        analysis: analysis || {
-          composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-          visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
-        },
-        modelName: "gemini-3.1-pro-preview",
-        titleExecutions: titleExecutionCards.length ? titleExecutionCards : premiumRemixDraftMeta?.titleExecutions || [],
-        assetAdaptation: assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
-        growthHandoff: growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
-        creationStoryboardPrompt: creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
-      });
-      setPremiumRemix(result.remix);
-      setPremiumRemixAssets(null);
-      setPremiumRemixDebug(result.debug || null);
-      setPremiumRemixAssetsDebug(null);
-      persistPremiumRemixDraft(result.remix, null);
+      await runPremiumRemixUpgrade(analysis || {
+        composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+        visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
+        languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
+        bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
+        trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [],
+        platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [],
+        timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: "",
+      }, analysisTranscript || "");
       toast.success("优质视频二创方案已生成");
     } catch (error: any) {
       toast.error(error.message || "优质视频二创生成失败");
     }
-  }, [analysis, analysisTranscript, assetAdaptation, buildPremiumRemixMutation, context, creationAssist?.storyboardPrompt, growthHandoff, persistPremiumRemixDraft, premiumRemixDraftMeta, titleExecutionCards]);
+  }, [analysis, analysisTranscript, runPremiumRemixUpgrade]);
 
   const showPremiumReport = hasPaidGrowthAccess;
-  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
+
+  useEffect(() => {
+    if (isPremiumRemixPage && selectedGrowthModel !== "gemini-3.1-pro-preview") {
+      setSelectedGrowthModel("gemini-3.1-pro-preview");
+    }
+  }, [isPremiumRemixPage, selectedGrowthModel]);
+
+  async function runPremiumRemixUpgrade(
+    nextAnalysis: AnalysisResult,
+    nextTranscript: string,
+    snapshotOverride?: GrowthSnapshot | null,
+  ) {
+    const snapshot = snapshotOverride || growthSnapshot;
+    const result = await buildPremiumRemixMutation.mutateAsync({
+      context: context || undefined,
+      transcript: nextTranscript || undefined,
+      analysis: nextAnalysis || {
+        composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+        visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
+        languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
+        bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
+        trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [],
+        platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [],
+        timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: "",
+      },
+      modelName: "gemini-3.1-pro-preview",
+      titleExecutions: snapshot?.titleExecutions?.length ? snapshot.titleExecutions : premiumRemixDraftMeta?.titleExecutions || [],
+      assetAdaptation: snapshot?.decisionFramework?.assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
+      growthHandoff: snapshot?.growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
+      creationStoryboardPrompt: snapshot?.creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
+    });
+    setPremiumRemix(result.remix);
+    setPremiumRemixAssets(null);
+    setPremiumRemixDebug(result.debug || null);
+    setPremiumRemixAssetsDebug(null);
+    persistPremiumRemixDraft(result.remix, null);
+    return result;
+  }
 
   const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
     if (!premiumRemix) return;
@@ -2750,38 +2816,44 @@ export default function MVAnalysisPage() {
 
               <div className="mt-5">
                 <div className="mb-2 block text-sm font-semibold text-white/80">分析模型</div>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-                    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
-                  ].map((option) => {
-                    const isActive = selectedGrowthModel === option.value;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setSelectedGrowthModel(option.value as GrowthCampModel)}
-                        className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
-                          isActive
-                            ? "border-[#ff8a3d] bg-[#ff8a3d]/15 text-[#ffb37f]"
-                            : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                {isPremiumRemixPage ? (
+                  <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7]">
+                    二创页固定流程：先用 Gemini 3.1 Pro 生成成长营判断，再用 Gemini 3.1 Pro 做二创升级。
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+                      { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
+                    ].map((option) => {
+                      const isActive = selectedGrowthModel === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setSelectedGrowthModel(option.value as GrowthCampModel)}
+                          className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
+                            isActive
+                              ? "border-[#ff8a3d] bg-[#ff8a3d]/15 text-[#ffb37f]"
+                              : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleAnalyze}
-                  disabled={(!selectedFile && !fileBase64) || isProcessing}
+                  disabled={(!selectedFile && !fileBase64) || isProcessing || isPremiumRemixPipelineRunning}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  生成成长营报告
+                  {isProcessing || isPremiumRemixPipelineRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                  {isPremiumRemixPage ? "二创分析" : "生成成长营报告"}
                 </button>
                 <button
                   onClick={handleReset}
