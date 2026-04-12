@@ -101,6 +101,12 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "summary"
   | "strengths"
   | "improvements"
+  | "languageExpression"
+  | "emotionalExpression"
+  | "cameraEmotionTension"
+  | "bgmAnalysis"
+  | "musicRecommendation"
+  | "sunoPrompt"
   | "titleSuggestions"
   | "creatorCenterSignals"
   | "timestampSuggestions"
@@ -615,6 +621,12 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
     visualSummary: "已完成关键帧抽取，但当前只保留保守视觉结论，建议重点看开头抓力、人物信任感和结果画面是否明确。",
     openingFrameAssessment: "开头最好在 2 秒内直接出现人物状态、痛点或结果，不要只给环境铺垫。",
     sceneConsistency: "人物、场景和动作示范需要统一服务于同一个结论，避免信息分散。",
+    languageExpression: "当前语言表达以基础信息传达为主，但缺少更强的结果句、反差句和能直接刺中目标用户的短促表达。",
+    emotionalExpression: "情绪表达偏稳，适合专业感建立，但如果想提高停留，需要在开头和结尾加更强的担忧、期待或结果释压。",
+    cameraEmotionTension: "镜头信息足够，但情绪张力还不够集中。建议把开头镜头、动作镜头和结果镜头的情绪功能分得更明确。",
+    bgmAnalysis: "当前保守分析无法确认真实 BGM 编排，建议优先选择不会压住口播的人声下垫型配乐，用节奏和质感来承接专业感。",
+    musicRecommendation: "适合选择低频稳定、轻鼓点、带空气感钢琴或氛围 pad 的现代商业配乐；如果是健康、知识、咨询类内容，避免太热血或太戏剧化。",
+    sunoPrompt: "Warm modern ambient corporate soundtrack, gentle pulse, soft piano, subtle electronic texture, calm confidence, premium wellness brand mood, supports spoken voiceover, no aggressive drops, 95 BPM.",
     trustSignals: [
       "真实人物出镜能建立信任。",
       "动作示范和前后对比比空镜头更容易承接转化。",
@@ -673,6 +685,12 @@ async function runDeepDivePass(params: {
 6. 秒点建议必须回到 mm:ss。
 7. weakFrameReferences 必须优先使用视觉初判里已经指出的问题帧，不要空写。
 8. 必须显式返回 visualSummary、openingFrameAssessment、sceneConsistency、trustSignals、visualRisks、keyFrames，不能把抽帧视觉结论藏在 summary 里。
+10. 必须额外分析并返回：languageExpression、emotionalExpression、cameraEmotionTension、bgmAnalysis、musicRecommendation、sunoPrompt。
+11. languageExpression 必须回答口播是否啰嗦、是否有结果句、是否有钩子句、适合怎么改成更有成交力的话术。
+12. emotionalExpression 必须回答情绪是克制、紧张、安抚、煽动还是鼓舞，以及是否和内容目标一致。
+13. cameraEmotionTension 必须回答镜头景别、运动、切换和情绪推进之间是否匹配，不能只讲“画面好不好看”。
+14. bgmAnalysis 和 musicRecommendation 必须具体到节奏、乐器、氛围、情绪和适合什么业务场景，不能只说“轻快”或“高级”。
+15. sunoPrompt 必须是可直接丢给 Suno 的英文提示词，控制在 1 到 3 句，强调情绪、节奏、乐器和用途。
 9. ${strategistMode
     ? "当前模型是 3.1 Pro，你必须拉开与 2.5 Pro 的差距：除结构判断外，还要明显强化商业定位、情绪张力、图文成文能力和分镜语言，输出不能只是把问题复述一遍。"
     : "当前模型是 2.5 Pro，优先给执行性强、结构清楚、可立刻修改的结论，不要为了华丽语言牺牲明确度。"}
@@ -694,6 +712,12 @@ async function runDeepDivePass(params: {
   "visualSummary": "string",
   "openingFrameAssessment": "string",
   "sceneConsistency": "string",
+  "languageExpression": "string",
+  "emotionalExpression": "string",
+  "cameraEmotionTension": "string",
+  "bgmAnalysis": "string",
+  "musicRecommendation": "string",
+  "sunoPrompt": "string",
   "trustSignals": ["string"],
   "visualRisks": ["string"],
   "keyFrames": [
@@ -778,7 +802,7 @@ async function runStrategistRefinementPass(params: {
         content: `你现在是第三阶段“成文操盘手”。不要重新看视频，也不要回到泛分析。你只基于前两阶段提炼出来的结构化文本证据，把结果打磨成明显优于 2.5 Pro 的版本。
 
 要求：
-1. 重点拉开差异的字段只有：summary、strengths、improvements、titleSuggestions、commercialAngles、followUpPrompt、timestampSuggestions。
+1. 重点拉开差异的字段只有：summary、strengths、improvements、languageExpression、emotionalExpression、cameraEmotionTension、bgmAnalysis、musicRecommendation、sunoPrompt、titleSuggestions、commercialAngles、followUpPrompt、timestampSuggestions。
 2. 不要改变前面已经确定的事实与时间点，只能把它们写得更精准、更有商业判断、更像能直接拿去用的报告。
 3. titleSuggestions 不能只是换近义词，要能拉开情绪张力、结果承诺和平台适配。
 4. commercialAngles 必须更像“内容操盘方案”，而不是泛泛场景描述。
@@ -786,9 +810,15 @@ async function runStrategistRefinementPass(params: {
 
 只返回 JSON：
 {
-  "summary": "string",
+ "summary": "string",
   "strengths": ["string"],
   "improvements": ["string"],
+  "languageExpression": "string",
+  "emotionalExpression": "string",
+  "cameraEmotionTension": "string",
+  "bgmAnalysis": "string",
+  "musicRecommendation": "string",
+  "sunoPrompt": "string",
   "titleSuggestions": ["string"],
   "timestampSuggestions": [
     { "timestamp": "00:08", "issue": "string", "fix": "string", "opportunity": "string" }

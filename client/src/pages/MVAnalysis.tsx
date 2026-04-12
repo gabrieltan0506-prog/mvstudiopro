@@ -69,6 +69,12 @@ type AnalysisResult = {
   visualSummary?: string;
   openingFrameAssessment?: string;
   sceneConsistency?: string;
+  languageExpression?: string;
+  emotionalExpression?: string;
+  cameraEmotionTension?: string;
+  bgmAnalysis?: string;
+  musicRecommendation?: string;
+  sunoPrompt?: string;
   trustSignals?: string[];
   visualRisks?: string[];
   keyFrames?: Array<{
@@ -2251,6 +2257,12 @@ export default function MVAnalysisPage() {
       visualSummary: analysis.visualSummary || "",
       openingFrameAssessment: analysis.openingFrameAssessment || "",
       sceneConsistency: analysis.sceneConsistency || "",
+      languageExpression: analysis.languageExpression || "",
+      emotionalExpression: analysis.emotionalExpression || "",
+      cameraEmotionTension: analysis.cameraEmotionTension || "",
+      bgmAnalysis: analysis.bgmAnalysis || "",
+      musicRecommendation: analysis.musicRecommendation || "",
+      sunoPrompt: analysis.sunoPrompt || "",
       trustSignals: analysis.trustSignals || [],
       visualRisks: analysis.visualRisks || [],
       keyFrames: analysis.keyFrames || [],
@@ -2975,6 +2987,47 @@ export default function MVAnalysisPage() {
                           </div>
                         </div>
                       </div>
+
+                      {(premiumRemix.languageExpression || premiumRemix.emotionalExpression || premiumRemix.cameraEmotionTension || premiumRemix.bgmAnalysis || premiumRemix.musicRecommendation || premiumRemix.sunoPrompt) ? (
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          {premiumRemix.languageExpression ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.languageExpression)}</div>
+                            </div>
+                          ) : null}
+                          {premiumRemix.emotionalExpression ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">情感表达方式</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.emotionalExpression)}</div>
+                            </div>
+                          ) : null}
+                          {premiumRemix.cameraEmotionTension ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">镜头表现与情绪张力</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.cameraEmotionTension)}</div>
+                            </div>
+                          ) : null}
+                          {premiumRemix.bgmAnalysis ? (
+                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">BGM 分析</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.bgmAnalysis)}</div>
+                            </div>
+                          ) : null}
+                          {premiumRemix.musicRecommendation ? (
+                            <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">适合的配乐</div>
+                              <div className="mt-3 text-sm leading-7 text-white/82">{replaceTerms(premiumRemix.musicRecommendation)}</div>
+                            </div>
+                          ) : null}
+                          {premiumRemix.sunoPrompt ? (
+                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Suno Prompt</div>
+                              <div className="mt-3 break-words text-sm leading-7 text-white/82">{premiumRemix.sunoPrompt}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
 
                       <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
                         <div className="text-sm font-semibold text-white">可直接拍摄的 32 秒分镜</div>
@@ -4192,6 +4245,53 @@ export default function MVAnalysisPage() {
                             </div>
                           ) : null}
                         </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                    <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
+                      <div className="flex items-center gap-3 text-[#f5b7ff]">
+                        <Orbit className="h-5 w-5" />
+                        <h2 className="text-2xl font-bold">表达与配乐分析</h2>
+                      </div>
+                      <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                        {analysis.languageExpression ? (
+                          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.languageExpression)}</div>
+                          </div>
+                        ) : null}
+                        {analysis.emotionalExpression ? (
+                          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">情感表达方式</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.emotionalExpression)}</div>
+                          </div>
+                        ) : null}
+                        {analysis.cameraEmotionTension ? (
+                          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">镜头表现与情绪张力</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.cameraEmotionTension)}</div>
+                          </div>
+                        ) : null}
+                        {analysis.bgmAnalysis ? (
+                          <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">BGM 分析</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.bgmAnalysis)}</div>
+                          </div>
+                        ) : null}
+                        {analysis.musicRecommendation ? (
+                          <div className="rounded-2xl border border-[#ffd08f]/20 bg-[rgba(255,208,143,0.08)] px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">适合的配乐</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.musicRecommendation)}</div>
+                          </div>
+                        ) : null}
+                        {analysis.sunoPrompt ? (
+                          <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Suno Prompt</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82 break-words">{analysis.sunoPrompt}</div>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}

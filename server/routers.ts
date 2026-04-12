@@ -1049,7 +1049,10 @@ export const appRouter = router({
           transcript: input.transcript,
           analysis: input.analysis || {
             composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-            visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
+            visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
+            languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
+            bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
+            trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
           },
           modelName: input.modelName,
           titleExecutions: input.titleExecutions,

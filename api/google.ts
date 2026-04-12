@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
+import { put } from "@vercel/blob";
 
 /**
  * Google Gateway (single function)
@@ -69,6 +70,15 @@ function baseUrlFor(location:string){
   return location==="global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 }
 
+function getPublicAssetBaseUrl() {
+  return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.fly.dev";
+}
+
+function buildBlobMediaUrlFromPath(pathname: string) {
+  const normalized = String(pathname || "").replace(/^\/+/, "").trim();
+  return `${getPublicAssetBaseUrl()}/api/jobs?op=blobMedia&blobPath=${encodeURIComponent(normalized)}`;
+}
+
 function extractVideoUrl(raw:any): string {
   const candidates = [
     raw?.response?.generatedVideos?.[0]?.video?.uri,
@@ -85,6 +95,58 @@ function extractVideoUrl(raw:any): string {
     if (v) return v;
   }
   return "";
+}
+
+function extractGeneratedVideo(raw:any): { data: string; mimeType: string } | null {
+  const candidates = [
+    raw?.response?.generatedVideos?.[0]?.video,
+    raw?.response?.videos?.[0],
+    raw?.generatedVideos?.[0]?.video,
+    raw?.videos?.[0],
+  ];
+
+  for (const item of candidates) {
+    const data = s(item?.bytesBase64Encoded || item?.bytesBase64EncodedVideo || item?.videoBytes).trim();
+    if (data) {
+      return {
+        data,
+        mimeType: s(item?.mimeType || "video/mp4").trim() || "video/mp4",
+      };
+    }
+  }
+
+  return null;
+}
+
+async function materializeGeneratedVideo(taskId: string, raw:any) {
+  const extracted = extractGeneratedVideo(raw);
+  if (!extracted) return { videoUrl: "", materialized: false };
+
+  const token = s(process.env.MVSP_READ_WRITE_TOKEN).trim();
+  if (!token) {
+    return {
+      videoUrl: `data:${extracted.mimeType};base64,${extracted.data}`,
+      materialized: false,
+    };
+  }
+
+  const safeTaskId = s(taskId).split("/").pop() || `veo-${Date.now()}`;
+  const extension = extracted.mimeType.includes("quicktime")
+    ? "mov"
+    : extracted.mimeType.includes("webm")
+      ? "webm"
+      : "mp4";
+
+  const blob = await put(`videos/${Date.now()}-${safeTaskId}.${extension}`, Buffer.from(extracted.data, "base64"), {
+    access: "public",
+    token,
+    contentType: extracted.mimeType,
+  });
+
+  return {
+    videoUrl: buildBlobMediaUrlFromPath(String(blob.pathname || "")),
+    materialized: true,
+  };
 }
 
 function extractGeneratedImages(raw:any): Array<{ data: string; mimeType: string }> {
@@ -379,12 +441,19 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       if(!r.ok) return res.status(502).json({ ok:false, status:r.status, raw:r.json ?? r.rawText });
 
-      const videoUrl = extractVideoUrl(r.json);
+      let videoUrl = extractVideoUrl(r.json);
       const done = Boolean(r.json?.done);
       const failed = done && !!r.json?.error;
       const status = failed ? "failed" : done ? "succeeded" : "running";
 
-      return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, raw:r.json });
+      let materialized = false;
+      if (done && !failed && !videoUrl) {
+        const uploaded = await materializeGeneratedVideo(taskId, r.json).catch(() => ({ videoUrl: "", materialized: false }));
+        videoUrl = uploaded.videoUrl || "";
+        materialized = Boolean(uploaded.materialized);
+      }
+
+      return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, materialized, raw:r.json });
     }
 
     return res.status(400).json({ok:false,error:"unknown_op",op});
