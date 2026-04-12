@@ -47,6 +47,7 @@ import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBeta
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
 import {
+  growthAssetAdaptationSchema,
   growthPlatformValues,
   growthAnalysisScoresSchema,
   growthBusinessInsightSchema,
@@ -1037,6 +1038,10 @@ export const appRouter = router({
         transcript: z.string().optional(),
         analysis: growthAnalysisScoresSchema.optional(),
         modelName: growthCampModelSchema.optional(),
+        titleExecutions: z.array(growthTitleExecutionSchema).optional(),
+        assetAdaptation: growthAssetAdaptationSchema.optional(),
+        growthHandoff: growthHandoffSchema.optional(),
+        creationStoryboardPrompt: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
         const remix = await buildPremiumRemixPlan({
@@ -1047,13 +1052,17 @@ export const appRouter = router({
             visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
           },
           modelName: input.modelName,
+          titleExecutions: input.titleExecutions,
+          assetAdaptation: input.assetAdaptation,
+          growthHandoff: input.growthHandoff,
+          creationStoryboardPrompt: input.creationStoryboardPrompt,
         });
         return {
           success: true,
           remix: growthPremiumRemixSchema.parse(remix),
           debug: {
             route: "mvAnalysis.buildPremiumRemix",
-            strategistModel: resolveGrowthCampFinalModel(input.modelName),
+            strategistModel: "gemini-3.1-pro-preview",
           },
         };
       }),

@@ -8,6 +8,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
+import { readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -1487,6 +1488,7 @@ export default function MVAnalysisPage() {
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
   const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
   const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
+  const [premiumRemixDraftMeta, setPremiumRemixDraftMeta] = useState<PersistedPremiumRemixDraft | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2241,6 +2243,56 @@ export default function MVAnalysisPage() {
   const authorAnalysis: GrowthAuthorAnalysis | null = (growthSnapshot as any)?.authorAnalysis ?? null;
   const hasPremiumRemix = Boolean(premiumRemix);
 
+  const normalizedPremiumRemixAnalysis = useMemo(() => (
+    analysis ? {
+      ...analysis,
+      visualSummary: analysis.visualSummary || "",
+      openingFrameAssessment: analysis.openingFrameAssessment || "",
+      sceneConsistency: analysis.sceneConsistency || "",
+      trustSignals: analysis.trustSignals || [],
+      visualRisks: analysis.visualRisks || [],
+      keyFrames: analysis.keyFrames || [],
+      strengths: analysis.strengths || [],
+      improvements: analysis.improvements || [],
+      platforms: analysis.platforms || [],
+      summary: analysis.summary || "",
+      titleSuggestions: analysis.titleSuggestions || [],
+      creatorCenterSignals: analysis.creatorCenterSignals || [],
+      timestampSuggestions: (analysis.timestampSuggestions || []).map((item) => ({
+        ...item,
+        opportunity: item.opportunity || "",
+      })),
+      weakFrameReferences: analysis.weakFrameReferences || [],
+      commercialAngles: (analysis.commercialAngles || []).map((item) => ({
+        ...item,
+        brands: item.brands || [],
+        veoPrompt: item.veoPrompt || "",
+      })),
+      followUpPrompt: analysis.followUpPrompt || "",
+    } : null
+  ), [analysis]);
+
+  const persistPremiumRemixDraft = useCallback((nextRemix?: GrowthPremiumRemix | null, nextAssets?: GrowthPremiumRemixAssets | null) => {
+    const payload = savePremiumRemixDraft({
+      context,
+      transcript: analysisTranscript,
+      analyzedVideoUrl,
+      analysis: normalizedPremiumRemixAnalysis,
+      titleExecutions: titleExecutionCards,
+      assetAdaptation,
+      growthHandoff,
+      creationStoryboardPrompt: creationAssist?.storyboardPrompt || "",
+      premiumRemix: nextRemix === undefined ? premiumRemix : nextRemix,
+      premiumRemixAssets: nextAssets === undefined ? premiumRemixAssets : nextAssets,
+    });
+    if (payload) setPremiumRemixDraftMeta(payload);
+  }, [analysisTranscript, analyzedVideoUrl, assetAdaptation, creationAssist?.storyboardPrompt, growthHandoff, normalizedPremiumRemixAnalysis, premiumRemix, premiumRemixAssets, titleExecutionCards, context]);
+
+  const handleOpenPremiumRemixPage = useCallback(() => {
+    persistPremiumRemixDraft();
+    navigate("/creator-growth-camp/premium-remix");
+  }, [navigate, persistPremiumRemixDraft]);
+
   const handleBuildPremiumRemix = useCallback(async () => {
     try {
       const result = await buildPremiumRemixMutation.mutateAsync({
@@ -2250,15 +2302,23 @@ export default function MVAnalysisPage() {
           composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
           visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
         },
-        modelName: selectedGrowthModel,
+        modelName: "gemini-3.1-pro-preview",
+        titleExecutions: titleExecutionCards.length ? titleExecutionCards : premiumRemixDraftMeta?.titleExecutions || [],
+        assetAdaptation: assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
+        growthHandoff: growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
+        creationStoryboardPrompt: creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
       });
       setPremiumRemix(result.remix);
       setPremiumRemixAssets(null);
+      persistPremiumRemixDraft(result.remix, null);
       toast.success("优质视频二创方案已生成");
     } catch (error: any) {
       toast.error(error.message || "优质视频二创生成失败");
     }
-  }, [analysis, analysisTranscript, buildPremiumRemixMutation, context, selectedGrowthModel]);
+  }, [analysis, analysisTranscript, assetAdaptation, buildPremiumRemixMutation, context, creationAssist?.storyboardPrompt, growthHandoff, persistPremiumRemixDraft, premiumRemixDraftMeta, titleExecutionCards]);
+
+  const showPremiumReport = hasPaidGrowthAccess;
+  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
 
   const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
     if (!premiumRemix) return;
@@ -2268,16 +2328,28 @@ export default function MVAnalysisPage() {
         mode,
       });
       setPremiumRemixAssets(result.assets);
+      persistPremiumRemixDraft(undefined, result.assets);
       toast.success(mode === "loop" ? "32秒延展素材已生成" : "32秒插值素材已生成");
     } catch (error: any) {
       toast.error(error.message || "二创素材生成失败");
     }
-  }, [generatePremiumRemixAssetsMutation, premiumRemix]);
+  }, [generatePremiumRemixAssetsMutation, persistPremiumRemixDraft, premiumRemix]);
+
+  useEffect(() => {
+    if (!isPremiumRemixPage || analysis || premiumRemix || premiumRemixAssets || context || analysisTranscript) return;
+    const draft = readPremiumRemixDraft();
+    if (!draft) return;
+    setPremiumRemixDraftMeta(draft);
+    if (draft.context) setContext(draft.context);
+    if (draft.transcript) setAnalysisTranscript(draft.transcript);
+    if (draft.analyzedVideoUrl) setAnalyzedVideoUrl(draft.analyzedVideoUrl);
+    if (draft.analysis) setAnalysis(draft.analysis);
+    if (draft.premiumRemix) setPremiumRemix(draft.premiumRemix);
+    if (draft.premiumRemixAssets) setPremiumRemixAssets(draft.premiumRemixAssets);
+  }, [analysis, analysisTranscript, context, isPremiumRemixPage, premiumRemix, premiumRemixAssets]);
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
-  const showPremiumReport = hasPaidGrowthAccess;
-  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
   const shouldHideGraphicBoard = isProcessing && inputKind === "video";
   const handleDownloadGraphicBoard = useCallback(() => {
     const cards = platformGraphicAnalysisCards.filter((item) => item.summary || item.topics.length || item.examples.length);
@@ -2821,10 +2893,20 @@ export default function MVAnalysisPage() {
                                 <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.framing)}</span>
                                 <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.cameraMovement)}</span>
                               </div>
+                              {shot.referenceImageUrl ? (
+                                <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-black/20">
+                                  <img src={shot.referenceImageUrl} alt={`镜头 ${shot.shotId} 参考图`} className="h-56 w-full object-cover" />
+                                </div>
+                              ) : null}
                               <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(shot.sceneDescription)}</div>
                               <div className="mt-2 text-sm leading-7 text-white/70">作用：{replaceTerms(shot.purpose)} / 节奏：{replaceTerms(shot.pacingRole)}</div>
                               <div className="mt-2 text-sm leading-7 text-white/70">画外音：{replaceTerms(shot.voiceover)}</div>
                               <div className="mt-2 text-sm leading-7 text-white/70">字幕：{replaceTerms(shot.onScreenText)}</div>
+                              {shot.referencePrompt ? (
+                                <div className="mt-2 rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] px-3 py-3 text-sm leading-7 text-white/72">
+                                  分镜参考图提示词：{replaceTerms(shot.referencePrompt)}
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -2840,6 +2922,8 @@ export default function MVAnalysisPage() {
                               <div key={segment.segmentIndex} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
                                 <div className="font-semibold text-white">{segment.startSecond}-{segment.endSecond} 秒</div>
                                 <div className="mt-1">{replaceTerms(segment.prompt)}</div>
+                                <div className="mt-1 text-[#ffd08f]">{replaceTerms(segment.stabilityPrompt)}</div>
+                                {segment.referenceHint ? <div className="mt-1 text-white/55">参考图：{replaceTerms(segment.referenceHint)}</div> : null}
                               </div>
                             ))}
                           </div>
@@ -3832,195 +3916,21 @@ export default function MVAnalysisPage() {
                         <Film className="h-5 w-5" />
                         <h2 className="text-2xl font-bold">优质视频二创</h2>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        {!hasPremiumRemix ? (
-                          <button
-                            type="button"
-                            onClick={() => void handleBuildPremiumRemix()}
-                            disabled={buildPremiumRemixMutation.isPending}
-                            className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                            生成二创方案
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void handleBuildPremiumRemix()}
-                            disabled={buildPremiumRemixMutation.isPending}
-                            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                            重新生成
-                          </button>
-                        )}
-                        {hasPremiumRemix ? (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => void handleGeneratePremiumRemixAssets("loop")}
-                              disabled={generatePremiumRemixAssetsMutation.isPending}
-                              className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                              生成 32 秒延展版
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
-                              disabled={generatePremiumRemixAssetsMutation.isPending}
-                              className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
-                              生成 32 秒插值版
-                            </button>
-                          </>
-                        ) : null}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={handleOpenPremiumRemixPage}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)]"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        进入视频二创页
+                      </button>
                     </div>
                     <p className="mt-3 text-sm leading-7 text-white/60">
-                      这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。多人或动物污染会被改写成单主体镜头与正反打结构。
+                      二创逆向工程已单独拆页，并固定使用 Gemini 3.1 Pro Preview。成长营主页面只保留入口，不再在这里展开详细分镜、参考图和 32 秒轨道。
                     </p>
-                    {analyzedVideoUrl ? (
-                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                        已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
-                      </div>
-                    ) : (
-                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                        当前没有绑定视频分析结果时，也可以直接生成二创方案；系统会优先使用上下文、转写和已有分析字段做逆向重构。
-                      </div>
-                    )}
-                    {premiumRemix ? (
-                        <div className="mt-5 space-y-4">
-                          <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                            <div className="rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">逆向核心</div>
-                              <div className="mt-3 text-xl font-black text-white">{premiumRemix.title}</div>
-                              <div className="mt-3 text-sm leading-7 text-white/76">{replaceTerms(premiumRemix.sourceSummary)}</div>
-                              <div className="mt-3 text-sm leading-7 text-white/72">视觉 DNA：{replaceTerms(premiumRemix.visualDnaSummary)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">内容重构：{replaceTerms(premiumRemix.contentRebuildSummary)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">人设贴合：{replaceTerms(premiumRemix.personaFit)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">演绎方向：{replaceTerms(premiumRemix.performanceDirection)}</div>
-                            </div>
-                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">角色锚定与防污染</div>
-                              <div className="mt-3 space-y-3">
-                                {premiumRemix.characterAnchors.map((item) => (
-                                  <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 px-4 py-3">
-                                    <div className="text-base font-semibold text-white">{replaceTerms(item.label)}</div>
-                                    <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.role)}</div>
-                                    <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(item.visualPrompt)}</div>
-                                    {item.consistencyRules.length ? (
-                                      <div className="mt-2 flex flex-wrap gap-2">
-                                        {item.consistencyRules.map((rule) => (
-                                          <span key={`${item.id}-${rule}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/65">
-                                            {replaceTerms(rule)}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                            <div className="text-sm font-semibold text-white">可直接拍摄的 32 秒分镜</div>
-                            <div className="mt-4 space-y-3">
-                              {premiumRemix.storyboard.map((shot) => (
-                                <div key={shot.shotId} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="font-semibold text-[#ffd08f]">镜头 {shot.shotId}</span>
-                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{shot.durationSeconds} 秒</span>
-                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.framing)}</span>
-                                    <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.cameraMovement)}</span>
-                                  </div>
-                                  <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(shot.sceneDescription)}</div>
-                                  <div className="mt-2 text-sm leading-7 text-white/70">作用：{replaceTerms(shot.purpose)} / 节奏：{replaceTerms(shot.pacingRole)}</div>
-                                  <div className="mt-2 text-sm leading-7 text-white/70">画外音：{replaceTerms(shot.voiceover)}</div>
-                                  <div className="mt-2 text-sm leading-7 text-white/70">字幕：{replaceTerms(shot.onScreenText)}</div>
-                                  <div className="mt-2 rounded-xl border border-[#ffb347]/18 bg-[rgba(255,179,71,0.08)] px-3 py-3 text-sm leading-7 text-[#ffd08f]">
-                                    表演与拍摄要点：{replaceTerms(shot.performanceNote)}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="grid gap-4 xl:grid-cols-2">
-                            <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">32 秒自动延展轨</div>
-                              <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.loopTrack.plan.title)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.summary)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.whyItWorks)}</div>
-                              <div className="mt-4 space-y-2">
-                                {premiumRemix.loopTrack.segments.map((segment) => (
-                                  <div key={segment.segmentIndex} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
-                                    <div className="font-semibold text-white">{segment.startSecond}-{segment.endSecond} 秒</div>
-                                    <div className="mt-1">{replaceTerms(segment.prompt)}</div>
-                                    <div className="mt-1 text-[#ffd08f]">{replaceTerms(segment.stabilityPrompt)}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">32 秒关键帧插值轨</div>
-                              <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.interpolationTrack.plan.title)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.summary)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.whyItWorks)}</div>
-                              <div className="mt-4 space-y-2">
-                                {premiumRemix.interpolationTrack.nodes.map((node) => (
-                                  <div key={node.nodeId} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
-                                    <div className="font-semibold text-white">{replaceTerms(node.label)}</div>
-                                    <div className="mt-1">{replaceTerms(node.prompt)}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                          {premiumRemix.deliveryNotes.length ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                              <div className="text-sm font-semibold text-white">制作提醒</div>
-                              <div className="mt-3 space-y-2 text-sm leading-7 text-white/72">
-                                {premiumRemix.deliveryNotes.map((note, index) => (
-                                  <div key={`${index}-${note}`}>{replaceTerms(note)}</div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {premiumRemixAssets ? (
-                            <div className="rounded-2xl border border-[#9df6c0]/18 bg-[rgba(157,246,192,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">已生成素材</div>
-                              <div className="mt-3 text-base font-bold text-white">
-                                {premiumRemixAssets.mode === "loop" ? "32 秒自动延展素材" : "32 秒关键帧插值素材"}
-                              </div>
-                              {premiumRemixAssets.referenceImages.length ? (
-                                <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                                  {premiumRemixAssets.referenceImages.map((item) => (
-                                    <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                                      <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
-                                      <img src={item.imageUrl} alt={item.label} className="mt-3 h-32 w-full rounded-lg object-cover" />
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                              {premiumRemixAssets.clips.length ? (
-                                <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                                  {premiumRemixAssets.clips.map((item) => (
-                                    <div key={`${item.label}-${item.videoUrl}`} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                                      <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
-                                      <video src={item.videoUrl} controls className="mt-3 w-full rounded-lg" />
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                    ) : null}
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                      点击后会自动带上当前成长营报告里的上下文、转写、标题执行、改编建议和商业交接信息。
+                    </div>
                   </div>
 
                   {personalizedDirectionCards.length ? (

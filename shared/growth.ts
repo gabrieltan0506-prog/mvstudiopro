@@ -448,6 +448,8 @@ export const growthPremiumRemixShotSchema = z.object({
   onScreenText: z.string().default(""),
   voiceover: z.string().default(""),
   performanceNote: z.string().default(""),
+  referencePrompt: z.string().default(""),
+  referenceImageUrl: z.string().default(""),
   veoPrompt: z.string(),
   negativePrompt: z.string().default(""),
 });
