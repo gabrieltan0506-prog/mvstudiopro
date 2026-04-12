@@ -1043,19 +1043,87 @@ export const appRouter = router({
         growthHandoff: growthHandoffSchema.optional(),
         creationStoryboardPrompt: z.string().optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        const fallbackAnalysis = input.analysis || {
+          composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+          visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
+          languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
+          bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
+          trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
+        };
+        const requestedPlatforms = normalizePlatforms(fallbackAnalysis.platforms);
+        const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
+        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms).catch(() => null) : null;
+        const dataEvidence = (() => {
+          if (!store) return null;
+          const historicalPlatformTotals = Object.fromEntries(
+            requestedPlatforms.map((platform) => [
+              platform,
+              {
+                currentTotal: Number(store.collections?.[platform]?.items?.length || 0),
+                archivedTotal: Number(store.history?.platforms?.[platform]?.archivedItems || 0),
+              },
+            ]),
+          ) as Partial<Record<typeof requestedPlatforms[number], { currentTotal?: number; archivedTotal?: number }>>;
+          const hasAnyLiveCollection = requestedPlatforms.some((platform) => (store.collections?.[platform]?.items?.length || 0) > 0);
+          const baseSnapshot = hasAnyLiveCollection
+            ? buildGrowthSnapshotFromCollections({
+                analysis: fallbackAnalysis,
+                context: input.context,
+                requestedPlatforms,
+                collections: store.collections,
+                historicalPlatformTotals,
+                errors: {},
+              })
+            : buildMockGrowthSnapshot({
+                analysis: fallbackAnalysis,
+                context: input.context,
+                requestedPlatforms,
+                historicalPlatformTotals,
+              });
+
+          return {
+            source: baseSnapshot.status.source,
+            liveSummary: baseSnapshot.analysisTracks?.liveSummary || "",
+            historicalSummary: baseSnapshot.analysisTracks?.historicalSummary || "",
+            hotTopic: baseSnapshot.analysisTracks?.liveHotTopic || "",
+            recommendationReason: baseSnapshot.dataAnalystSummary?.recommendationReason || "",
+            platformRows: (baseSnapshot.dataAnalystSummary?.platformRows || []).slice(0, 4).map((item) => ({
+              platformLabel: item.platformLabel,
+              currentTotal: item.currentTotal,
+              archivedTotal: item.archivedTotal,
+              note: item.note || "",
+            })),
+            platformSnapshots: (baseSnapshot.platformSnapshots || []).slice(0, 4).map((item) => ({
+              platformLabel: item.displayName,
+              summary: item.summary,
+              fitLabel: item.fitLabel,
+              sampleTopics: item.sampleTopics.slice(0, 3),
+              recommendedFormats: item.recommendedFormats.slice(0, 2),
+            })),
+            topicLibrary: (baseSnapshot.topicLibrary || []).slice(0, 6).map((item) => ({
+              platformLabel: item.platformLabel,
+              title: item.title,
+              rationale: item.rationale,
+            })),
+            userEvidence: userEvidence ? {
+              strongestPlatforms: userEvidence.strongestPlatforms,
+              recurringThemes: userEvidence.recurringThemes,
+              summaryNote: userEvidence.summaryNote,
+            } : null,
+          };
+        })();
+
         const result = await buildPremiumRemixPlan({
           context: input.context,
           transcript: input.transcript,
-          analysis: input.analysis || {
-            composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-            visualSummary: "", openingFrameAssessment: "", sceneConsistency: "", trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [], platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [], timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: ""
-          },
+          analysis: fallbackAnalysis,
           modelName: input.modelName,
           titleExecutions: input.titleExecutions,
           assetAdaptation: input.assetAdaptation,
           growthHandoff: input.growthHandoff,
           creationStoryboardPrompt: input.creationStoryboardPrompt,
+          dataEvidence: dataEvidence || undefined,
         });
         return {
           success: true,
