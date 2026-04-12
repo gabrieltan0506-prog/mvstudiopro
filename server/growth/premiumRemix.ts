@@ -60,6 +60,36 @@ type BuildPremiumRemixInput = {
   assetAdaptation?: GrowthAssetAdaptation;
   growthHandoff?: GrowthHandoff;
   creationStoryboardPrompt?: string;
+  dataEvidence?: {
+    source: string;
+    liveSummary?: string;
+    historicalSummary?: string;
+    hotTopic?: string;
+    recommendationReason?: string;
+    platformRows?: Array<{
+      platformLabel: string;
+      currentTotal: number;
+      archivedTotal: number;
+      note?: string;
+    }>;
+    platformSnapshots?: Array<{
+      platformLabel: string;
+      summary: string;
+      fitLabel: string;
+      sampleTopics: string[];
+      recommendedFormats: string[];
+    }>;
+    topicLibrary?: Array<{
+      platformLabel?: string;
+      title: string;
+      rationale: string;
+    }>;
+    userEvidence?: {
+      strongestPlatforms: string[];
+      recurringThemes: string[];
+      summaryNote: string;
+    } | null;
+  };
 };
 
 type GeneratePremiumRemixAssetsInput = {
@@ -541,6 +571,7 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     `BGM 分析：${analysis.bgmAnalysis || ""}`,
     `配乐建议：${analysis.musicRecommendation || ""}`,
     `Suno 提示词：${analysis.sunoPrompt || ""}`,
+    input.dataEvidence ? `后台数据库证据（只可作为判断依据，不要在前端文本里暴露“数据库”“后台”这些字眼）：${JSON.stringify(input.dataEvidence)}` : "",
     `亮点：${(analysis.strengths || []).join(" / ")}`,
     `缺点：${(analysis.improvements || []).join(" / ")}`,
     `时间点改法：${(analysis.timestampSuggestions || []).map((item) => `${item.timestamp} ${item.issue} -> ${item.fix}`).join(" | ")}`,
