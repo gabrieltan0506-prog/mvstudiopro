@@ -1054,7 +1054,7 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(fallbackAnalysis.platforms);
         const store = await readTrendStore({ preferDerivedFiles: true }).catch(() => null);
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms).catch(() => null) : null;
-        const dataEvidence = (() => {
+        const remixEvidence = await (async () => {
           if (!store) return null;
           const historicalPlatformTotals = Object.fromEntries(
             requestedPlatforms.map((platform) => [
@@ -1081,6 +1081,22 @@ export const appRouter = router({
                 requestedPlatforms,
                 historicalPlatformTotals,
               });
+          const effectiveStore = {
+            ...store,
+            collections: store.collections,
+          };
+          const personalized = await personalizeGrowthSnapshot({
+            snapshot: baseSnapshot,
+            analysis: fallbackAnalysis,
+            context: input.context,
+            requestedPlatforms,
+            modelName: input.modelName,
+            store: effectiveStore,
+            userEvidence,
+          }).catch((error) => {
+            console.warn("[growth.buildPremiumRemix] personalization fallback:", error);
+            return null;
+          });
 
           return {
             source: baseSnapshot.status.source,
@@ -1088,6 +1104,20 @@ export const appRouter = router({
             historicalSummary: baseSnapshot.analysisTracks?.historicalSummary || "",
             hotTopic: baseSnapshot.analysisTracks?.liveHotTopic || "",
             recommendationReason: baseSnapshot.dataAnalystSummary?.recommendationReason || "",
+            personalizedOverview: personalized ? {
+              summary: personalized.overview?.summary || "",
+              trendNarrative: personalized.overview?.trendNarrative || "",
+              nextCollectionPlan: personalized.overview?.nextCollectionPlan || "",
+            } : undefined,
+            decisionFramework: personalized ? {
+              recommendedFormat: personalized.decisionFramework?.assetAdaptation?.format || "",
+              mainPathTitle: personalized.decisionFramework?.mainPath?.title || "",
+              mainPathWhyNow: personalized.decisionFramework?.mainPath?.whyNow || "",
+              mainPathExecution: personalized.decisionFramework?.mainPath?.nextAction || "",
+              avoidPathTitle: personalized.decisionFramework?.avoidPaths?.[0]?.title || "",
+              avoidPathReason: personalized.decisionFramework?.avoidPaths?.[0]?.reason || "",
+              assetAdaptation: personalized.decisionFramework?.assetAdaptation,
+            } : undefined,
             platformRows: (baseSnapshot.dataAnalystSummary?.platformRows || []).slice(0, 4).map((item) => ({
               platformLabel: item.platformLabel,
               currentTotal: item.currentTotal,
@@ -1106,11 +1136,38 @@ export const appRouter = router({
               title: item.title,
               rationale: item.rationale,
             })),
+            platformRecommendations: (personalized?.platformRecommendations || []).slice(0, 4).map((item) => ({
+              platformLabel: item.name,
+              strategy: item.playbook,
+              action: item.action,
+              reason: item.reason,
+            })),
+            businessInsights: (personalized?.businessInsights || []).slice(0, 4).map((item) => ({
+              title: item.title,
+              detail: item.detail,
+            })),
+            growthPlan: (personalized?.growthPlan || []).slice(0, 4).map((item) => ({
+              title: `Day ${item.day} ${item.title}`,
+              nextStep: item.action,
+            })),
+            referenceExamples: (personalized?.dashboardConsole?.referenceExamples || []).slice(0, 4).map((item) => ({
+              title: `${item.platformLabel} / ${item.account} / ${item.title}`,
+              reason: item.reason,
+            })),
+            authorSummary: personalized?.authorAnalysis
+              ? [
+                  personalized.authorAnalysis.identity?.tierReason,
+                  personalized.authorAnalysis.identity?.identityTags?.join("、"),
+                  personalized.authorAnalysis.identity?.verticalCategory,
+                  personalized.authorAnalysis.monetizationValue?.recommendedPaths?.[0]?.reason,
+                ].filter(Boolean).join("；")
+              : "",
             userEvidence: userEvidence ? {
               strongestPlatforms: userEvidence.strongestPlatforms,
               recurringThemes: userEvidence.recurringThemes,
               summaryNote: userEvidence.summaryNote,
             } : null,
+            personalized,
           };
         })();
 
@@ -1119,17 +1176,42 @@ export const appRouter = router({
           transcript: input.transcript,
           analysis: fallbackAnalysis,
           modelName: input.modelName,
-          titleExecutions: input.titleExecutions,
-          assetAdaptation: input.assetAdaptation,
-          growthHandoff: input.growthHandoff,
-          creationStoryboardPrompt: input.creationStoryboardPrompt,
-          dataEvidence: dataEvidence || undefined,
+          titleExecutions: input.titleExecutions?.length
+            ? input.titleExecutions
+            : remixEvidence?.personalized?.titleExecutions,
+          assetAdaptation: input.assetAdaptation
+            || remixEvidence?.personalized?.decisionFramework?.assetAdaptation,
+          growthHandoff: input.growthHandoff
+            || remixEvidence?.personalized?.growthHandoff,
+          creationStoryboardPrompt: input.creationStoryboardPrompt
+            || remixEvidence?.personalized?.creationAssist?.storyboardPrompt,
+          dataEvidence: remixEvidence
+            ? {
+                source: remixEvidence.source,
+                liveSummary: remixEvidence.liveSummary,
+                historicalSummary: remixEvidence.historicalSummary,
+                hotTopic: remixEvidence.hotTopic,
+                recommendationReason: remixEvidence.recommendationReason,
+                personalizedOverview: remixEvidence.personalizedOverview,
+                decisionFramework: remixEvidence.decisionFramework,
+                platformRows: remixEvidence.platformRows,
+                platformSnapshots: remixEvidence.platformSnapshots,
+                topicLibrary: remixEvidence.topicLibrary,
+                platformRecommendations: remixEvidence.platformRecommendations,
+                businessInsights: remixEvidence.businessInsights,
+                growthPlan: remixEvidence.growthPlan,
+                referenceExamples: remixEvidence.referenceExamples,
+                authorSummary: remixEvidence.authorSummary,
+                userEvidence: remixEvidence.userEvidence,
+              }
+            : undefined,
         });
         return {
           success: true,
           remix: growthPremiumRemixSchema.parse(result.remix),
           debug: {
             route: "mvAnalysis.buildPremiumRemix",
+            personalizedApplied: Boolean(remixEvidence?.personalized),
             ...result.debug,
           },
         };

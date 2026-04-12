@@ -66,6 +66,25 @@ type BuildPremiumRemixInput = {
     historicalSummary?: string;
     hotTopic?: string;
     recommendationReason?: string;
+    personalizedOverview?: {
+      summary?: string;
+      trendNarrative?: string;
+      nextCollectionPlan?: string;
+    };
+    decisionFramework?: {
+      recommendedFormat?: string;
+      mainPathTitle?: string;
+      mainPathWhyNow?: string;
+      mainPathExecution?: string;
+      avoidPathTitle?: string;
+      avoidPathReason?: string;
+      assetAdaptation?: {
+        format?: string;
+        firstHook?: string;
+        structure?: string;
+        callToAction?: string;
+      };
+    };
     platformRows?: Array<{
       platformLabel: string;
       currentTotal: number;
@@ -84,6 +103,25 @@ type BuildPremiumRemixInput = {
       title: string;
       rationale: string;
     }>;
+    platformRecommendations?: Array<{
+      platformLabel: string;
+      strategy: string;
+      action?: string;
+      reason?: string;
+    }>;
+    businessInsights?: Array<{
+      title: string;
+      detail: string;
+    }>;
+    growthPlan?: Array<{
+      title: string;
+      nextStep: string;
+    }>;
+    referenceExamples?: Array<{
+      title: string;
+      reason?: string;
+    }>;
+    authorSummary?: string;
     userEvidence?: {
       strongestPlatforms: string[];
       recurringThemes: string[];
@@ -142,11 +180,15 @@ function buildPremiumRemixBrief(input: BuildPremiumRemixInput) {
   const primaryAngle = input.analysis.commercialAngles?.[0];
   const primaryTitleExecution = input.titleExecutions?.[0];
   const keyFrames = Array.isArray(input.analysis.keyFrames) ? input.analysis.keyFrames.slice(0, 4) : [];
+  const dataEvidence = input.dataEvidence;
+  const decisionFramework = dataEvidence?.decisionFramework;
+  const assetAdaptation = input.assetAdaptation || decisionFramework?.assetAdaptation;
 
   return {
     persona: toConciseSeed(
       input.context ||
       input.growthHandoff?.brief ||
+      dataEvidence?.authorSummary ||
       "专业单人知识型创作者，强调可信度、专业度和商业承接。",
       160,
     ),
@@ -155,28 +197,33 @@ function buildPremiumRemixBrief(input: BuildPremiumRemixInput) {
       input.analysis.openingFrameAssessment,
       input.analysis.sceneConsistency,
       keyFrames[0]?.whatShows,
+      dataEvidence?.personalizedOverview?.summary,
     ]).join("；"),
     structure: uniqueLines([
-      input.assetAdaptation?.structure,
+      assetAdaptation?.structure,
       primaryTitleExecution?.videoPlan,
       input.growthHandoff?.storyboardPrompt,
+      decisionFramework?.mainPathExecution,
       "按开头钩子、动作解释、证据抬信任、结尾单一行动引导四段推进",
     ]).join("；"),
     hook: uniqueLines([
-      input.assetAdaptation?.firstHook,
+      assetAdaptation?.firstHook,
       primaryTitleExecution?.openingHook,
       primaryAngle?.hook,
       input.analysis.timestampSuggestions?.[0]?.fix,
+      decisionFramework?.mainPathWhyNow,
     ]).join("；"),
     proof: uniqueLines([
       keyFrames[2]?.fix,
       input.growthHandoff?.brief,
       input.analysis.timestampSuggestions?.[1]?.fix,
+      dataEvidence?.businessInsights?.[0]?.detail,
       "加入证据、案例、前后对比或资料细节，不要只剩口播",
     ]).join("；"),
     cta: toConciseSeed(
-      input.assetAdaptation?.callToAction ||
+      assetAdaptation?.callToAction ||
       input.growthHandoff?.businessGoal ||
+      dataEvidence?.platformRecommendations?.[0]?.action ||
       "结尾只给一个行动引导，导向咨询、预约或私信关键词。",
       100,
     ),
@@ -234,9 +281,24 @@ function collectRemixQualityIssues(remix: ReturnType<typeof growthPremiumRemixSc
     issues.push("多个镜头的参考图提示词重复");
   }
 
+  const shotSceneKeys = remix.storyboard.map((shot) => normalizeComparableText(shot.sceneDescription));
+  if (new Set(shotSceneKeys.filter(Boolean)).size < shotSceneKeys.filter(Boolean).length) {
+    issues.push("多个镜头的画面描述重复");
+  }
+
+  const shotVoiceKeys = remix.storyboard.map((shot) => normalizeComparableText(shot.voiceover));
+  if (new Set(shotVoiceKeys.filter(Boolean)).size < shotVoiceKeys.filter(Boolean).length) {
+    issues.push("多个镜头的画外音重复");
+  }
+
   const loopPromptKeys = remix.loopTrack.segments.map((segment) => normalizeComparableText(segment.prompt));
   if (new Set(loopPromptKeys.filter(Boolean)).size < loopPromptKeys.filter(Boolean).length) {
     issues.push("32 秒延展轨的分段提示词重复");
+  }
+
+  const interpolationPromptKeys = remix.interpolationTrack.nodes.map((node) => normalizeComparableText(node.prompt));
+  if (new Set(interpolationPromptKeys.filter(Boolean)).size < interpolationPromptKeys.filter(Boolean).length) {
+    issues.push("32 秒关键帧插值轨的节点提示词重复");
   }
 
   return Array.from(new Set(issues));
@@ -268,6 +330,43 @@ async function polishPremiumRemixPlan(
     messages: [
       { role: "system", content: "你擅长做高质量的短视频逆向重写，并且严格输出 JSON。" },
       { role: "user", content: polishPrompt },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return {
+    parsed: growthPremiumRemixSchema.parse(asJsonObject(response.choices[0].message.content as string)),
+    raw: String(response.choices[0].message.content || ""),
+  };
+}
+
+async function rewritePremiumRemixCopyFromKeyMoments(
+  strategistModel: string,
+  input: BuildPremiumRemixInput,
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+) {
+  const rewritePrompt = [
+    "你要基于原视频的关键时间节点、关键帧和转写，再次重写这份二创方案里的文案部分。",
+    "这不是润色，也不是简单改写，而是重新创作更有成交力、更具体、更能拍的文案。",
+    "必须保留完全相同的 JSON 结构和镜头数量，不允许改字段名。",
+    "重点重写这些字段：sourceSummary、visualDnaSummary、contentRebuildSummary、personaFit、performanceDirection、languageExpression、emotionalExpression、cameraEmotionTension、bgmAnalysis、musicRecommendation、sunoPrompt。",
+    "同时重写 storyboard 里每个镜头的 sceneDescription、onScreenText、voiceover、performanceNote，确保每个镜头职责不同、文案不同、执行动作不同。",
+    "loopTrack 和 interpolationTrack 里的每一段也要重写，必须明确各自承担的商业任务和画面动作。",
+    "必须根据关键时间节点重新生成文案，不能只是换同义词。",
+    "严禁复读用户背景，严禁把同一段中文塞进多个字段。",
+    `关键帧：${(input.analysis.keyFrames || []).map((item) => `${item.timestamp} ${item.whatShows} | 商业用途:${item.commercialUse} | 问题:${item.issue} | 改法:${item.fix}`).join(" | ")}`,
+    `时间点改法：${(input.analysis.timestampSuggestions || []).map((item) => `${item.timestamp} ${item.issue} -> ${item.fix}`).join(" | ")}`,
+    input.transcript ? `原视频转写：${String(input.transcript).slice(0, 6000)}` : "",
+    `待重写 JSON：${JSON.stringify(remix)}`,
+  ].filter(Boolean).join("\n");
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: strategistModel,
+    messages: [
+      { role: "system", content: "你擅长基于关键时间节点重写商业视频文案，并且严格输出 JSON。" },
+      { role: "user", content: rewritePrompt },
     ],
     response_format: { type: "json_object" },
   });
@@ -528,11 +627,27 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
   const assetAdaptation = input.assetAdaptation;
   const growthHandoff = input.growthHandoff;
   const creationStoryboardPrompt = String(input.creationStoryboardPrompt || "").trim();
+  const dataEvidence = input.dataEvidence;
 
   const brief = buildPremiumRemixBrief(input);
+  const decisionFramework = dataEvidence?.decisionFramework;
+  const platformRecommendationSummary = (dataEvidence?.platformRecommendations || [])
+    .map((item, index) => `平台${index + 1} ${item.platformLabel} | 策略:${item.strategy} | 动作:${item.action || "-"} | 原因:${item.reason || "-"}`)
+    .join(" || ");
+  const businessInsightSummary = (dataEvidence?.businessInsights || [])
+    .map((item, index) => `洞察${index + 1} ${item.title}: ${item.detail}`)
+    .join(" || ");
+  const growthPlanSummary = (dataEvidence?.growthPlan || [])
+    .map((item, index) => `步骤${index + 1} ${item.title}: ${item.nextStep}`)
+    .join(" || ");
+  const referenceExampleSummary = (dataEvidence?.referenceExamples || [])
+    .map((item, index) => `案例${index + 1} ${item.title}${item.reason ? ` | 原因:${item.reason}` : ""}`)
+    .join(" || ");
   const prompt = [
     "你是 MVStudioPro 的优质视频逆向工程导演。",
     "任务：把参考视频的成功节奏、镜头语言和商业推进抽离出来，再重写成一个新的二创版本。",
+    "重要：你不是重新做一遍泛化分析，而是要把成长营已经得出的成熟判断翻译成可直接拍、可直接生成、可直接卖的二创方案。",
+    "二创输出至少要达到成长营交付的执行密度，不能比成长营更空、更短、更模板化。",
     "必须严格输出 JSON，本体只能是 JSON，不允许 markdown 或解释。",
     "输出字段：title/sourceSummary/visualDnaSummary/contentRebuildSummary/personaFit/performanceDirection/languageExpression/emotionalExpression/cameraEmotionTension/bgmAnalysis/musicRecommendation/sunoPrompt/characterAnchors/storyboard/loopTrack/interpolationTrack/deliveryNotes。",
     "规则：",
@@ -545,6 +660,7 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     "6. 文案与分镜必须可直接用于商业短视频重制，而不是泛泛而谈。",
     "7. 不允许使用“建立人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
     "8. 必须尽量复用输入里的 titleExecutions、assetAdaptation、growthHandoff、关键帧、时间点改法，而不是重新发明一套空泛模板。",
+    "8.1 如果 dataEvidence 里已经有 decisionFramework / platformRecommendations / businessInsights / growthPlan / referenceExamples，你必须把它们当成上游定论，再转译成二创。",
     "9. 如果用户上下文里有职业、人设、服装、场景、道具要求，必须写进角色锚定和 referencePrompt。",
     "10. sourceSummary/visualDnaSummary/contentRebuildSummary/personaFit/performanceDirection 这五个字段必须各写各的，不允许内容互相重复或改写同一句。",
     "11. 每个镜头的 sceneDescription、voiceover、performanceNote 都必须详细、具体、有拍摄执行感。",
@@ -571,7 +687,23 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     `BGM 分析：${analysis.bgmAnalysis || ""}`,
     `配乐建议：${analysis.musicRecommendation || ""}`,
     `Suno 提示词：${analysis.sunoPrompt || ""}`,
-    input.dataEvidence ? `后台数据库证据（只可作为判断依据，不要在前端文本里暴露“数据库”“后台”这些字眼）：${JSON.stringify(input.dataEvidence)}` : "",
+    decisionFramework ? `成长营主判断：主路径=${decisionFramework.mainPathTitle || ""} | 为什么现在做=${decisionFramework.mainPathWhyNow || ""} | 执行方式=${decisionFramework.mainPathExecution || ""} | 避免路径=${decisionFramework.avoidPathTitle || ""} | 避免原因=${decisionFramework.avoidPathReason || ""}` : "",
+    platformRecommendationSummary ? `成长营推荐平台：${platformRecommendationSummary}` : "",
+    businessInsightSummary ? `成长营商业洞察：${businessInsightSummary}` : "",
+    growthPlanSummary ? `成长营执行计划：${growthPlanSummary}` : "",
+    referenceExampleSummary ? `成长营参考案例：${referenceExampleSummary}` : "",
+    dataEvidence?.personalizedOverview ? `成长营总判断概述：summary=${dataEvidence.personalizedOverview.summary || ""} | trendNarrative=${dataEvidence.personalizedOverview.trendNarrative || ""} | nextCollectionPlan=${dataEvidence.personalizedOverview.nextCollectionPlan || ""}` : "",
+    dataEvidence ? `后台数据库证据（只可作为判断依据，不要在前端文本里暴露“数据库”“后台”这些字眼）：${JSON.stringify({
+      source: dataEvidence.source,
+      liveSummary: dataEvidence.liveSummary,
+      historicalSummary: dataEvidence.historicalSummary,
+      hotTopic: dataEvidence.hotTopic,
+      recommendationReason: dataEvidence.recommendationReason,
+      platformRows: dataEvidence.platformRows,
+      platformSnapshots: dataEvidence.platformSnapshots,
+      topicLibrary: dataEvidence.topicLibrary,
+      userEvidence: dataEvidence.userEvidence,
+    })}` : "",
     `亮点：${(analysis.strengths || []).join(" / ")}`,
     `缺点：${(analysis.improvements || []).join(" / ")}`,
     `时间点改法：${(analysis.timestampSuggestions || []).map((item) => `${item.timestamp} ${item.issue} -> ${item.fix}`).join(" | ")}`,
@@ -607,9 +739,11 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     });
     const rawPrimary = String(response.choices[0].message.content || "");
     let parsed = growthPremiumRemixSchema.parse(asJsonObject(rawPrimary));
+    const rewritten = await rewritePremiumRemixCopyFromKeyMoments(strategistModel, input, parsed);
+    parsed = rewritten.parsed;
     let qualityIssues = collectRemixQualityIssues(parsed);
     let source: PremiumRemixBuildDebug["source"] = "primary";
-    let rawPreview = rawPrimary;
+    let rawPreview = rewritten.raw || rawPrimary;
 
     if (qualityIssues.length) {
       const polished = await polishPremiumRemixPlan(strategistModel, prompt, parsed, qualityIssues);
