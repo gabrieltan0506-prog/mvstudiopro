@@ -11,7 +11,7 @@ import { Loader2 } from "lucide-react";
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
 const Showcase = lazy(() => import("./pages/Showcase"));
-const GrowthCampPage = lazy(() => import("./pages/GrowthCampPage"));
+const GrowthCampPage = lazy(() => import("./pages/MVAnalysis"));
 const PlatformPage = lazy(() => import("./pages/PlatformPage"));
 const PremiumRemixPage = lazy(() => import("./pages/PremiumRemixPage"));
 const VirtualIdol = lazy(() => import("./pages/VirtualIdol"));

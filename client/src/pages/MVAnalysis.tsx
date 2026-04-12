@@ -1438,16 +1438,7 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
   );
 }
 
-
-type MVAnalysisPageProps = {
-  forcePremiumRemixMode?: boolean;
-  forcePlatformMode?: boolean;
-};
-
-export default function MVAnalysisPage({
-  forcePremiumRemixMode = false,
-  forcePlatformMode = false,
-}: MVAnalysisPageProps = {}) {
+export default function MVAnalysisPage() {
   const stripInternalJargon = (value: string) => String(value || "")
     .replace(/Call to Action/gi, "行动引导")
     .replace(/call-to-action/gi, "行动引导")
@@ -1467,8 +1458,8 @@ export default function MVAnalysisPage({
     .trim();
 
   const [, navigate] = useLocation();
-  const isPremiumRemixPage = forcePremiumRemixMode;
-  const isPlatformPage = forcePlatformMode;
+  const isPremiumRemixPage = false;
+  const isPlatformPage = false;
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
@@ -1500,7 +1491,6 @@ export default function MVAnalysisPage({
   const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
-  const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
   const [isPremiumRemixPipelineRunning, setIsPremiumRemixPipelineRunning] = useState(false);
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
   const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
@@ -1532,7 +1522,7 @@ export default function MVAnalysisPage({
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
-      modelName: selectedGrowthModel,
+      modelName: "gemini-2.5-pro",
       requestedPlatforms: [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
@@ -1742,7 +1732,7 @@ export default function MVAnalysisPage({
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
-              modelName: selectedGrowthModel,
+              modelName: "gemini-2.5-pro",
             })
           : await (async () => {
               if (!selectedFile) {
@@ -1788,7 +1778,7 @@ export default function MVAnalysisPage({
                     mimeType: fileMimeType || "video/mp4",
                     fileName,
                     context: context || undefined,
-                    modelName: selectedGrowthModel,
+                    modelName: "gemini-2.5-pro",
                   },
                 },
               });
@@ -1849,7 +1839,7 @@ export default function MVAnalysisPage({
         setIsPremiumRemixPipelineRunning(false);
       }
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, "gemini-2.5-pro", usageStatsQuery, isPremiumRemixPage]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -2378,11 +2368,7 @@ export default function MVAnalysisPage({
 
   const showPremiumReport = hasPaidGrowthAccess;
 
-  useEffect(() => {
-    if (isPremiumRemixPage && selectedGrowthModel !== "gemini-3.1-pro-preview") {
-      setSelectedGrowthModel("gemini-3.1-pro-preview");
-    }
-  }, [isPremiumRemixPage, selectedGrowthModel]);
+  
 
   async function runPremiumRemixUpgrade(
     nextAnalysis: AnalysisResult,
@@ -2849,35 +2835,6 @@ export default function MVAnalysisPage({
               </div>
 
               <div className="mt-5">
-                <div className="mb-2 block text-sm font-semibold text-white/80">分析模型</div>
-                {isPremiumRemixPage ? (
-                  <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7]">
-                    二创页固定流程：先用 Gemini 3.1 Pro 生成成长营判断，再用 Gemini 3.1 Pro 做二创升级。
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-                      { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro Preview" },
-                    ].map((option) => {
-                      const isActive = selectedGrowthModel === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setSelectedGrowthModel(option.value as GrowthCampModel)}
-                          className={`rounded-2xl border px-4 py-2 text-sm font-semibold transition ${
-                            isActive
-                              ? "border-[#ff8a3d] bg-[#ff8a3d]/15 text-[#ffb37f]"
-                              : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
               </div>
 
               <div className="mt-5 flex flex-wrap gap-3">
@@ -2887,7 +2844,7 @@ export default function MVAnalysisPage({
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isProcessing || isPremiumRemixPipelineRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  {isPremiumRemixPage ? "二创分析" : "生成成长营报告"}
+                  开始进行商业分析
                 </button>
                 <button
                   onClick={handleReset}
@@ -3296,7 +3253,7 @@ export default function MVAnalysisPage({
                   <div>路由：{String(debugInfo?.route || "-")}</div>
                   <div>服务提供方：{String(debugInfo?.provider || "-")}</div>
                   <div>模型：{String(debugInfo?.model || "-")}</div>
-                  <div>当前选择模型：{selectedGrowthModel}</div>
+                  <div>当前选择模型：{"gemini-2.5-pro"}</div>
                   <div>降级补位：{String(debugInfo?.fallback ?? "-")}</div>
                   <div>趋势数据来源：{String(growthSnapshot?.status.source || "-")}</div>
                   <div>真值口径：{formatTruthSource(growthSystemStatusQuery.data?.truthStore?.source)}</div>
