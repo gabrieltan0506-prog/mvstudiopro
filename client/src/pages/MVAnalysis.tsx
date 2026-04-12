@@ -8,7 +8,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
-import { readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
+import { clearPremiumRemixDraft, readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -1853,11 +1853,15 @@ export default function MVAnalysisPage() {
     setDebugInfo(null);
     setPremiumRemix(null);
     setPremiumRemixAssets(null);
+    setPremiumRemixDraftMeta(null);
+    setPremiumRemixDebug(null);
+    setPremiumRemixAssetsDebug(null);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
     setFileName("");
     setFileSize(0);
+    clearPremiumRemixDraft();
   }, []);
 
   const handleRefreshGrowth = useCallback(async () => {

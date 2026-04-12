@@ -8,9 +8,10 @@ import type {
 } from "@shared/growth";
 
 export const PREMIUM_REMIX_DRAFT_STORAGE_KEY = "mvsp-premium-remix-draft";
+const PREMIUM_REMIX_DRAFT_VERSION = 2;
 
 export type PersistedPremiumRemixDraft = {
-  version: 1;
+  version: number;
   savedAt: string;
   context: string;
   transcript: string;
@@ -27,7 +28,7 @@ export type PersistedPremiumRemixDraft = {
 export function savePremiumRemixDraft(draft: Omit<PersistedPremiumRemixDraft, "version" | "savedAt">) {
   if (typeof window === "undefined") return null;
   const payload: PersistedPremiumRemixDraft = {
-    version: 1,
+    version: PREMIUM_REMIX_DRAFT_VERSION,
     savedAt: new Date().toISOString(),
     ...draft,
   };
@@ -40,9 +41,19 @@ export function readPremiumRemixDraft(): PersistedPremiumRemixDraft | null {
   const raw = window.localStorage.getItem(PREMIUM_REMIX_DRAFT_STORAGE_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as PersistedPremiumRemixDraft;
+    const parsed = JSON.parse(raw) as PersistedPremiumRemixDraft;
+    if (!parsed || Number(parsed.version) !== PREMIUM_REMIX_DRAFT_VERSION) {
+      window.localStorage.removeItem(PREMIUM_REMIX_DRAFT_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
+    window.localStorage.removeItem(PREMIUM_REMIX_DRAFT_STORAGE_KEY);
     return null;
   }
 }
 
+export function clearPremiumRemixDraft() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(PREMIUM_REMIX_DRAFT_STORAGE_KEY);
+}
