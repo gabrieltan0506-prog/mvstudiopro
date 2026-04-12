@@ -987,7 +987,9 @@ export const appRouter = router({
 
     analyzeVideo: publicProcedure
       .input(z.object({
-        fileBase64: z.string().min(1),
+        fileBase64: z.string().optional(),
+        fileUrl: z.string().optional(),
+        fileKey: z.string().optional(),
         mimeType: z.string().min(1),
         fileName: z.string().optional(),
         context: z.string().optional(),

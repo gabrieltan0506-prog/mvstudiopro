@@ -1507,6 +1507,7 @@ export default function MVAnalysisPage() {
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
+  const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
   const buildPremiumRemixMutation = trpc.mvAnalysis.buildPremiumRemix.useMutation();
   const generatePremiumRemixAssetsMutation = trpc.mvAnalysis.generatePremiumRemixAssets.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -1749,6 +1750,25 @@ export default function MVAnalysisPage() {
               setUploadStage("analyzing");
               setUploadProgress(60);
 
+              if (isPremiumRemixPage) {
+                const directResult = await analyzeVideoMutation.mutateAsync({
+                  fileUrl: uploaded.url,
+                  fileKey: uploaded.key,
+                  mimeType: fileMimeType || "video/mp4",
+                  fileName,
+                  context: context || undefined,
+                  modelName: "gemini-3.1-pro-preview",
+                } as any);
+                return {
+                  success: true,
+                  analysis: directResult.analysis,
+                  videoUrl: directResult.videoUrl,
+                  transcript: directResult.transcript,
+                  videoDuration: directResult.videoDuration,
+                  debug: directResult.debug,
+                };
+              }
+
               const { jobId } = await createJob({
                 type: "video",
                 userId: "",
@@ -1817,7 +1837,7 @@ export default function MVAnalysisPage() {
         setIsPremiumRemixPipelineRunning(false);
       }
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
