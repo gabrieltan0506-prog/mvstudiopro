@@ -1,8 +1,11 @@
 import {
   type GrowthAnalysisScores,
   type GrowthCampModel,
+  type GrowthHandoff,
   growthPremiumRemixAssetsSchema,
   growthPremiumRemixSchema,
+  type GrowthTitleExecution,
+  type GrowthAssetAdaptation,
 } from "@shared/growth";
 import { invokeLLM } from "../_core/llm";
 import { generateGeminiImage } from "../gemini-image";
@@ -10,11 +13,17 @@ import { generateVideo } from "../veo";
 import { buildCharacterLockPrompt } from "../workflow/prompts/characterLockPrompt";
 import { resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
+const PREMIUM_REMIX_MODEL: GrowthCampModel = "gemini-3.1-pro-preview";
+
 type BuildPremiumRemixInput = {
   context?: string;
   transcript?: string;
   analysis: GrowthAnalysisScores;
   modelName?: GrowthCampModel;
+  titleExecutions?: GrowthTitleExecution[];
+  assetAdaptation?: GrowthAssetAdaptation;
+  growthHandoff?: GrowthHandoff;
+  creationStoryboardPrompt?: string;
 };
 
 type GeneratePremiumRemixAssetsInput = {
@@ -33,26 +42,38 @@ function asJsonObject<T>(raw: string): T {
 function buildFallbackRemix(input: BuildPremiumRemixInput) {
   const keyFrames = Array.isArray(input.analysis.keyFrames) ? input.analysis.keyFrames.slice(0, 4) : [];
   const primaryAngle = input.analysis.commercialAngles?.[0];
+  const primaryTitleExecution = input.titleExecutions?.[0];
+  const assetAdaptation = input.assetAdaptation;
+  const growthHandoff = input.growthHandoff;
+  const personaContext = input.context || "围绕当前账号身份，重构成更可信、更专业的单人商业表达。";
   const title = primaryAngle?.title || input.analysis.titleSuggestions?.[0] || "优质视频二创";
   const visualSummary = input.analysis.visualSummary || "保留参考视频的景别节奏、口播推进和结果前置结构。";
   const sceneA = keyFrames[0];
   const sceneB = keyFrames[1];
   const sceneC = keyFrames[2];
   const sceneD = keyFrames[3];
+  const openingHook = assetAdaptation?.firstHook || primaryTitleExecution?.openingHook || primaryAngle?.hook || "前 2 秒先抛最扎心的问题和最直接的结果。";
+  const structureLine = assetAdaptation?.structure || primaryTitleExecution?.videoPlan || growthHandoff?.storyboardPrompt || "按问题、动作、证据、行动引导四段推进。";
+  const callToAction = assetAdaptation?.callToAction || growthHandoff?.businessGoal || "只保留一个行动引导，导向咨询、预约或私信关键词。";
+  const visualBase = [
+    personaContext,
+    visualSummary,
+    structureLine,
+  ].filter(Boolean).join(" ");
 
   return growthPremiumRemixSchema.parse({
     title: "优质视频二创",
     sourceSummary: `${title}，核心可借鉴的是节奏、镜头推进和商业承接，而不是照搬原内容。`,
     visualDnaSummary: visualSummary,
-    contentRebuildSummary: primaryAngle?.whyItFits || input.analysis.summary || "将参考视频的高留存结构重写为符合当前赛道的商业短视频脚本。",
-    personaFit: input.context || "围绕用户当前身份、人设和赛道，重构成更可执行的二创版本。",
-    performanceDirection: "保留高留存镜头节奏，但把画面、角色和台词全部改写为自己的商业表达。",
+    contentRebuildSummary: primaryAngle?.whyItFits || input.analysis.summary || structureLine || "将参考视频的高留存结构重写为符合当前赛道的商业短视频脚本。",
+    personaFit: personaContext,
+    performanceDirection: `保留高留存镜头节奏，但把画面、角色和台词全部改写为自己的商业表达。重点执行：${structureLine}`,
     characterAnchors: [
       {
         id: "host",
         label: "主讲人",
-        role: "单人主视角",
-        visualPrompt: "cinematic chinese creator, clean studio outfit, high-trust expert, premium lighting, single person, no crowd",
+        role: personaContext,
+        visualPrompt: `${personaContext} cinematic chinese creator, clean studio outfit, high-trust expert, premium lighting, single person, no crowd, no animal`,
         consistencyRules: [
           "始终保持单人出镜",
           "避免多人同框正面镜头",
@@ -72,9 +93,10 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         pacingRole: "直接抛问题和结果",
         sceneDescription: sceneA?.whatShows || "主讲人正面出镜，先抛出最扎心的问题或最大结果。",
         onScreenText: sceneA?.timestamp ? `${sceneA.timestamp} 对应问题点` : "把最扎心的问题直接打到屏幕上",
-        voiceover: sceneA?.commercialUse || "先讲谁最痛、为什么现在要看。",
-        performanceNote: "眼神直接看镜头，语速快一点，不铺垫。",
-        veoPrompt: "single subject, medium close-up, clean premium background, direct-to-camera hook, subtle push-in, high-trust expert tone, no extra people, no animal",
+        voiceover: sceneA?.commercialUse || openingHook,
+        performanceNote: "眼神直接看镜头，语速快一点，不铺垫，第一句必须直接落在痛点或结果上。",
+        referencePrompt: `${visualBase} 开场镜头，单人出镜，中近景，直接看镜头，抛出核心问题与结果，专业可信，高级布光，留字幕位。`,
+        veoPrompt: `${visualBase} single subject, medium close-up, clean premium background, direct-to-camera hook, subtle push-in, high-trust expert tone, opening hook: ${openingHook}`,
         negativePrompt: "multiple people, crowd, extra limbs, animal, distorted face, background clutter",
       },
       {
@@ -88,9 +110,10 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         pacingRole: "解释动作或方法",
         sceneDescription: sceneB?.whatShows || "主讲人用手势示范动作或解释原理。",
         onScreenText: sceneB?.issue || "只讲一个动作或一个机制",
-        voiceover: sceneB?.fix || "这里讲具体怎么做，不要空泛。",
-        performanceNote: "加入手势或对比道具，避免全程一模一样的站姿。",
-        veoPrompt: "single subject, medium shot, clear gesture demonstration, soft key light, practical instruction vibe, no extra person",
+        voiceover: sceneB?.fix || primaryTitleExecution?.videoPlan || "这里讲具体怎么做，不要空泛。",
+        performanceNote: "加入手势、道具或资料画面，动作要服务解释，不要全程站桩。",
+        referencePrompt: `${visualBase} 中景讲解镜头，单人手势示范或展示资料，道具清楚，动作服务解释，画面干净，专业场景。`,
+        veoPrompt: `${visualBase} single subject, medium shot, clear gesture demonstration, soft key light, practical instruction vibe, show one concrete action or method`,
         negativePrompt: "group shot, duplicated body, extra hands, pet, cluttered decor",
       },
       {
@@ -104,9 +127,10 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         pacingRole: "抬信任和可信度",
         sceneDescription: sceneC?.whatShows || "切到局部特写、案例细节或前后对比。",
         onScreenText: sceneC?.commercialUse || "这里放前后对比、案例或服务场景",
-        voiceover: sceneC?.fix || "告诉用户为什么这个方案可信。",
-        performanceNote: "保留 1 到 2 个有证据感的镜头，不要再重复站桩口播。",
-        veoPrompt: "single subject with insert shots, premium detail close-ups, before-after evidence, polished commercial lighting, no crowd",
+        voiceover: sceneC?.fix || growthHandoff?.brief || "告诉用户为什么这个方案可信。",
+        performanceNote: "这里必须出现证据感，不要继续空口讲，加入资料、局部特写或对比信息。",
+        referencePrompt: `${visualBase} 证据镜头，单人主体配资料细节或前后对比，局部特写，高级商业布光，强调可信度与专业度。`,
+        veoPrompt: `${visualBase} single subject with insert shots, premium detail close-ups, before-after evidence, polished commercial lighting, trust-building visual proof`,
         negativePrompt: "multi-character frame, random props, inconsistent face, duplicate subject",
       },
       {
@@ -119,38 +143,39 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         lighting: "统一稳定",
         pacingRole: "结尾收动作",
         sceneDescription: sceneD?.whatShows || "主讲人收束结论，给出明确行动引导。",
-        onScreenText: sceneD?.fix || "评论关键词 / 私信 / 预约",
-        voiceover: "只保留一个动作，引导咨询、收藏或预约，不要同时塞多个动作。",
-        performanceNote: "语气收紧，结尾必须只给一个行动。",
-        veoPrompt: "single subject closing call-to-action, subtle push-in, clean premium set, confident gesture, no extra people or animals",
+        onScreenText: sceneD?.fix || callToAction,
+        voiceover: callToAction,
+        performanceNote: "语气收紧，结尾必须只给一个行动，不要同时塞多个动作。",
+        referencePrompt: `${visualBase} 收束镜头，单人中景，轻推近，眼神坚定，明确行动引导，保留字幕与行动词位置。`,
+        veoPrompt: `${visualBase} single subject closing call-to-action, subtle push-in, clean premium set, confident gesture, one clear CTA: ${callToAction}`,
         negativePrompt: "crowd, second person, pet, distorted hands, messy background",
       },
     ],
     loopTrack: {
       plan: {
         title: "32秒自动延展",
-        summary: "用 4 段 8 秒视频连续延展，适合单人连续讲解或稳定场景。",
-        whyItWorks: "固定节奏最稳，适合把主讲人口播和动作示范串成 32 秒商业短视频。",
+        summary: "用 4 段 8 秒视频连续延展，每段都对应一个明确商业任务和画面动作。",
+        whyItWorks: "按问题、动作、证据、行动引导四段推进，比空泛口播更容易直接拿去生成与拍摄。",
       },
       segments: [
-        { segmentIndex: 1, startSecond: 0, endSecond: 8, prompt: "建立人物和问题", stabilityPrompt: "保持主讲人脸部、服装和背景绝对一致", referenceHint: "优先用主讲人角色图作为首段参考" },
-        { segmentIndex: 2, startSecond: 8, endSecond: 16, prompt: "展开动作示范和解释", stabilityPrompt: "保持主讲人一致，避免任何多人污染", referenceHint: "延用上一段尾帧" },
-        { segmentIndex: 3, startSecond: 16, endSecond: 24, prompt: "加入证据和局部特写", stabilityPrompt: "保持风格与主体稳定", referenceHint: "可加入局部特写镜头" },
-        { segmentIndex: 4, startSecond: 24, endSecond: 32, prompt: "收束行动引导", stabilityPrompt: "结尾人物和背景保持一致，动作清晰", referenceHint: "结尾留行动引导字幕位" },
+        { segmentIndex: 1, startSecond: 0, endSecond: 8, prompt: `${openingHook} 单人中近景，直接看镜头，镜头轻推近，背景干净，专业可信。`, stabilityPrompt: "保持主讲人脸部、服装、发型和背景绝对一致，禁止多人污染", referenceHint: "优先复用镜头 1 的分镜参考图" },
+        { segmentIndex: 2, startSecond: 8, endSecond: 16, prompt: `${primaryTitleExecution?.videoPlan || "展示一个具体动作或解释方法"}，加入手势或资料道具，强调做法与原理。`, stabilityPrompt: "保持主讲人一致，动作自然，避免任何多人污染", referenceHint: "优先复用镜头 2 的分镜参考图" },
+        { segmentIndex: 3, startSecond: 16, endSecond: 24, prompt: `${growthHandoff?.brief || "加入案例、证据或前后对比"}，让可信度明显抬升，保留局部细节特写。`, stabilityPrompt: "保持风格与主体稳定，允许局部特写，但主体身份不能漂移", referenceHint: "优先复用镜头 3 的分镜参考图" },
+        { segmentIndex: 4, startSecond: 24, endSecond: 32, prompt: `${callToAction} 结尾镜头收束，人物姿态稳定，给出唯一行动引导。`, stabilityPrompt: "结尾人物和背景保持一致，动作清晰，字幕位置稳定", referenceHint: "优先复用镜头 4 的分镜参考图" },
       ],
     },
     interpolationTrack: {
       plan: {
         title: "32秒关键帧插值",
-        summary: "用 5 个关键节点做 4 段插值，适合时空演化、概念转化或强视觉过渡。",
-        whyItWorks: "关键帧锚定能有效避免 Veo 在长段生成里的主体漂移和风格污染。",
+        summary: "用 5 个关键节点做 4 段插值，每个节点都对应一个明确商业画面，而不是空泛概念。",
+        whyItWorks: "关键帧锚定能有效避免 Veo 在长段生成里的主体漂移和风格污染，也能让过渡更贴合成交逻辑。",
       },
       nodes: [
-        { nodeId: "A", label: "起始状态", prompt: "主讲人专业开场镜头，干净背景，建立信任" },
-        { nodeId: "M1", label: "过渡一", prompt: "加入动作示范或局部对比，画面更具体" },
-        { nodeId: "M2", label: "过渡二", prompt: "引入结果证据或案例细节，强化商业可信度" },
-        { nodeId: "M3", label: "过渡三", prompt: "准备收束，动作和视线导向行动引导" },
-        { nodeId: "B", label: "结束状态", prompt: "结尾行动引导镜头，人物姿态稳定，保留字幕位" },
+        { nodeId: "A", label: "起始状态", prompt: `${visualBase} 开场镜头，单人出镜，干净背景，建立信任，直接抛问题。` },
+        { nodeId: "M1", label: "过渡一", prompt: `${visualBase} 加入动作示范或资料画面，突出“怎么做”。` },
+        { nodeId: "M2", label: "过渡二", prompt: `${visualBase} 引入结果证据、案例细节或前后对比，强化商业可信度。` },
+        { nodeId: "M3", label: "过渡三", prompt: `${visualBase} 准备收束，人物视线和手势导向最后的行动引导。` },
+        { nodeId: "B", label: "结束状态", prompt: `${visualBase} 结尾行动引导镜头，人物姿态稳定，保留字幕位和行动词。` },
       ],
     },
     deliveryNotes: [
@@ -161,11 +186,64 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
   });
 }
 
+async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof growthPremiumRemixSchema.parse>) {
+  const remix = growthPremiumRemixSchema.parse(remixInput);
+  const anchors = [...remix.characterAnchors];
+
+  for (let index = 0; index < anchors.length; index += 1) {
+    const anchor = anchors[index];
+    if (anchor.referenceImageUrl) continue;
+    try {
+      const image = await generateGeminiImage({
+        prompt: anchor.visualPrompt,
+        quality: "1k",
+        aspectRatio: "16:9",
+      });
+      anchors[index] = { ...anchor, referenceImageUrl: image.imageUrl };
+    } catch (error) {
+      console.warn("[growth.hydratePremiumRemixReferenceImages] anchor failed:", error);
+    }
+  }
+
+  const primaryReference = anchors[0]?.referenceImageUrl;
+  const storyboard = [];
+  for (const shot of remix.storyboard) {
+    let referenceImageUrl = shot.referenceImageUrl;
+    if (!referenceImageUrl && shot.referencePrompt) {
+      try {
+        const image = await generateGeminiImage({
+          prompt: shot.referencePrompt,
+          quality: "1k",
+          aspectRatio: "16:9",
+          referenceImageUrl: primaryReference || undefined,
+        });
+        referenceImageUrl = image.imageUrl;
+      } catch (error) {
+        console.warn("[growth.hydratePremiumRemixReferenceImages] shot failed:", error);
+      }
+    }
+    storyboard.push({
+      ...shot,
+      referenceImageUrl: referenceImageUrl || "",
+    });
+  }
+
+  return growthPremiumRemixSchema.parse({
+    ...remix,
+    characterAnchors: anchors,
+    storyboard,
+  });
+}
+
 export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
-  const strategistModel = resolveGrowthCampStrategistModel(input.modelName);
+  const strategistModel = resolveGrowthCampStrategistModel(PREMIUM_REMIX_MODEL);
   const transcript = String(input.transcript || "").trim();
   const context = String(input.context || "").trim();
   const analysis = input.analysis;
+  const titleExecutions = input.titleExecutions || [];
+  const assetAdaptation = input.assetAdaptation;
+  const growthHandoff = input.growthHandoff;
+  const creationStoryboardPrompt = String(input.creationStoryboardPrompt || "").trim();
 
   const prompt = [
     "你是 MVStudioPro 的优质视频逆向工程导演。",
@@ -175,10 +253,14 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     "规则：",
     "1. title 固定写“优质视频二创”。",
     "2. storyboard 必须精确输出 4 个镜头，每个镜头 8 秒，总计 32 秒。",
+    "2.1 每个 storyboard 镜头都必须填写 referencePrompt，内容要能直接用于生成该镜头的分镜参考图。",
     "3. characterAnchors 只允许 1 到 3 个角色锚点，且每个角色都要有 visualPrompt 和 consistencyRules。",
     "4. 所有 veoPrompt 都必须强调单主体，禁止多人同框正面镜头，禁止宠物和动物造成主体污染。",
     "5. loopTrack 必须适合 4 个 8 秒延展段；interpolationTrack 必须输出 5 个关键节点 A/M1/M2/M3/B。",
     "6. 文案与分镜必须可直接用于商业短视频重制，而不是泛泛而谈。",
+    "7. 不允许使用“建立人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
+    "8. 必须尽量复用输入里的 titleExecutions、assetAdaptation、growthHandoff、关键帧、时间点改法，而不是重新发明一套空泛模板。",
+    "9. 如果用户上下文里有职业、人设、服装、场景、道具要求，必须写进角色锚定和 referencePrompt。",
     "",
     `上下文：${context || "未提供额外背景，按当前视频分析结果重构。"}`,
     `视频总结：${analysis.summary || ""}`,
@@ -189,6 +271,11 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     `缺点：${(analysis.improvements || []).join(" / ")}`,
     `时间点改法：${(analysis.timestampSuggestions || []).map((item) => `${item.timestamp} ${item.issue} -> ${item.fix}`).join(" | ")}`,
     `关键帧证据：${(analysis.keyFrames || []).map((item) => `${item.timestamp} ${item.whatShows} | 改法:${item.fix}`).join(" | ")}`,
+    `弱帧提醒：${(analysis.weakFrameReferences || []).map((item) => `${item.timestamp} ${item.reason} -> ${item.fix}`).join(" | ")}`,
+    titleExecutions.length ? `标题与执行：${titleExecutions.map((item, index) => `标题${index + 1} ${item.title} | 开场:${item.openingHook} | 文案:${item.copywriting} | 视频怎么拍:${item.videoPlan}`).join(" || ")}` : "",
+    assetAdaptation ? `资产改编建议：形式=${assetAdaptation.format} | 开头=${assetAdaptation.firstHook} | 结构=${assetAdaptation.structure} | 结尾=${assetAdaptation.callToAction}` : "",
+    growthHandoff ? `成长营交接：brief=${growthHandoff.brief} | storyboardPrompt=${growthHandoff.storyboardPrompt} | workflowPrompt=${growthHandoff.workflowPrompt} | recommendedTrack=${growthHandoff.recommendedTrack} | businessGoal=${growthHandoff.businessGoal}` : "",
+    creationStoryboardPrompt ? `创作画布分镜提示：${creationStoryboardPrompt}` : "",
     transcript ? `转写：${transcript.slice(0, 14000)}` : "",
   ].filter(Boolean).join("\n");
 
@@ -204,10 +291,10 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
       response_format: { type: "json_object" },
     });
     const parsed = growthPremiumRemixSchema.parse(asJsonObject(response.choices[0].message.content as string));
-    return parsed;
+    return await hydratePremiumRemixReferenceImages(parsed);
   } catch (error) {
     console.warn("[growth.buildPremiumRemixPlan] fallback:", error);
-    return buildFallbackRemix(input);
+    return await hydratePremiumRemixReferenceImages(buildFallbackRemix(input));
   }
 }
 
@@ -237,9 +324,10 @@ export async function generatePremiumRemixAssets(input: GeneratePremiumRemixAsse
   const clips = [];
   if (mode === "loop") {
     for (const segment of remix.loopTrack.segments.slice(0, 4)) {
+      const storyboardShot = remix.storyboard.find((item) => item.shotId === segment.segmentIndex);
       const video = await generateVideo({
-        prompt: `${segment.prompt}. ${segment.stabilityPrompt}.`,
-        imageUrl: referenceImages[0]?.imageUrl,
+        prompt: `${segment.prompt}. ${segment.stabilityPrompt}. ${storyboardShot?.veoPrompt || ""}`.trim(),
+        imageUrl: storyboardShot?.referenceImageUrl || referenceImages[0]?.imageUrl,
         quality: "standard",
         aspectRatio: "16:9",
         resolution: "720p",
