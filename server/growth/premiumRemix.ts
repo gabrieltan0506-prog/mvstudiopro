@@ -177,6 +177,14 @@ function hasTooMuchChinese(text: string) {
   return matches.length >= 10;
 }
 
+function stripChinese(text: string, max = 240) {
+  return String(text || "")
+    .replace(/[\u4e00-\u9fff]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return await Promise.race<T>([
     promise,
@@ -346,15 +354,109 @@ function buildShotReferencePrompt(
   anchorRole: string,
   shot: ReturnType<typeof growthPremiumRemixSchema.parse>["storyboard"][number],
 ) {
+  const cleanRole = stripChinese(anchorRole, 180) || "single Chinese expert creator";
+  const shotType = shot.shotId === 1
+    ? "opening hook shot"
+    : shot.shotId === 2
+      ? "instructional method shot"
+      : shot.shotId === 3
+        ? "trust-building evidence shot"
+        : "closing call-to-action shot";
   return [
     "Single Chinese expert creator in a premium studio or clinic-like interior, one person only, no crowd, no animal, no extra limbs.",
-    `Identity and role: ${anchorRole}.`,
-    `Shot purpose: ${shot.purpose}.`,
-    `Framing and movement: ${shot.framing}, ${shot.cameraMovement}.`,
-    `Scene action: ${shot.sceneDescription}.`,
-    `Performance cue: ${shot.performanceNote}.`,
-    `Lighting and mood: ${shot.lighting}, polished commercial realism, cinematic texture, subtitle-safe composition, detailed wardrobe, credible posture, clean negative space, highly usable as a storyboard reference frame.`,
+    `Identity and role: ${cleanRole}.`,
+    `Shot type: ${shotType}.`,
+    `Framing: ${stripChinese(shot.framing, 80) || "medium close-up"}, camera: ${stripChinese(shot.cameraMovement, 80) || "subtle push-in"}, lighting: ${stripChinese(shot.lighting, 80) || "clean premium key light"}.`,
+    "Professional wardrobe, calm authoritative expression, steady body posture, polished commercial realism, cinematic texture, subtitle-safe composition, clean negative space.",
+    shot.shotId === 1 ? "Use direct eye contact and opening-hook energy, with a credible studio or clinic background and a result-first expression." : "",
+    shot.shotId === 2 ? "Show one clear explanatory hand gesture and one visible prop, document, report, or teaching aid to make the method feel practical and teachable." : "",
+    shot.shotId === 3 ? "Include evidence-oriented visual proof such as a report, case document, diagram, medical note, or before-after comparison while keeping the same single subject." : "",
+    shot.shotId === 4 ? "Keep the frame cleaner and calmer, with a stable medium shot, direct confident gaze, and one clear call-to-action posture." : "",
   ].join(" ");
+}
+
+function normalizeLoosePremiumRemixCandidate(candidate: any, input: BuildPremiumRemixInput) {
+  const fallback = buildFallbackRemix(input);
+  const obj = candidate && typeof candidate === "object" ? candidate : {};
+  const rawAnchors = Array.isArray(obj.characterAnchors) ? obj.characterAnchors : [];
+  const rawStoryboard = Array.isArray(obj.storyboard) ? obj.storyboard : [];
+  const rawLoopSegments = Array.isArray(obj.loopTrack)
+    ? obj.loopTrack
+    : Array.isArray(obj.loopTrack?.segments)
+      ? obj.loopTrack.segments
+      : [];
+  const rawInterpolationNodes = Array.isArray(obj.interpolationTrack)
+    ? obj.interpolationTrack
+    : Array.isArray(obj.interpolationTrack?.nodes)
+      ? obj.interpolationTrack.nodes
+      : [];
+
+  return {
+    ...fallback,
+    ...obj,
+    title: "优质视频二创",
+    characterAnchors: rawAnchors.length
+      ? rawAnchors.slice(0, 3).map((anchor: any, index: number) => ({
+          id: String(anchor?.id || `anchor_${index + 1}`),
+          label: String(anchor?.label || anchor?.name || `角色 ${index + 1}`),
+          role: String(anchor?.role || anchor?.persona || anchor?.identity || input.context || fallback.characterAnchors[0]?.role || "single expert creator"),
+          visualPrompt: String(anchor?.visualPrompt || anchor?.prompt || anchor?.anchorPrompt || fallback.characterAnchors[0]?.visualPrompt || ""),
+          consistencyRules: Array.isArray(anchor?.consistencyRules)
+            ? anchor.consistencyRules.map((item: any) => String(item))
+            : String(anchor?.consistencyRules || "").split(/[；;|]/).map((item) => item.trim()).filter(Boolean),
+          referenceImageUrl: String(anchor?.referenceImageUrl || ""),
+        }))
+      : fallback.characterAnchors,
+    storyboard: (rawStoryboard.length ? rawStoryboard : fallback.storyboard).slice(0, 4).map((shot: any, index: number) => ({
+      ...fallback.storyboard[index],
+      ...shot,
+      shotId: Number(shot?.shotId || shot?.id || index + 1),
+      durationSeconds: Number(shot?.durationSeconds || shot?.duration || 8),
+      characterId: String(shot?.characterId || fallback.storyboard[index]?.characterId || "host"),
+      purpose: String(shot?.purpose || shot?.goal || fallback.storyboard[index]?.purpose || ""),
+      framing: String(shot?.framing || shot?.shotType || fallback.storyboard[index]?.framing || ""),
+      cameraMovement: String(shot?.cameraMovement || shot?.camera || fallback.storyboard[index]?.cameraMovement || ""),
+      lighting: String(shot?.lighting || fallback.storyboard[index]?.lighting || ""),
+      pacingRole: String(shot?.pacingRole || shot?.beat || fallback.storyboard[index]?.pacingRole || ""),
+      sceneDescription: String(shot?.sceneDescription || shot?.visual || shot?.description || fallback.storyboard[index]?.sceneDescription || ""),
+      onScreenText: String(shot?.onScreenText || shot?.subtitle || fallback.storyboard[index]?.onScreenText || ""),
+      voiceover: String(shot?.voiceover || shot?.dialogue || shot?.script || fallback.storyboard[index]?.voiceover || ""),
+      performanceNote: String(shot?.performanceNote || shot?.performance || fallback.storyboard[index]?.performanceNote || ""),
+      referencePrompt: String(shot?.referencePrompt || shot?.imagePrompt || fallback.storyboard[index]?.referencePrompt || ""),
+      referenceImageUrl: String(shot?.referenceImageUrl || ""),
+      veoPrompt: String(shot?.veoPrompt || shot?.videoPrompt || fallback.storyboard[index]?.veoPrompt || ""),
+      negativePrompt: String(shot?.negativePrompt || fallback.storyboard[index]?.negativePrompt || ""),
+    })),
+    loopTrack: {
+      ...fallback.loopTrack,
+      ...(obj.loopTrack && typeof obj.loopTrack === "object" && !Array.isArray(obj.loopTrack) ? obj.loopTrack : {}),
+      segments: (rawLoopSegments.length ? rawLoopSegments : fallback.loopTrack.segments).slice(0, 4).map((segment: any, index: number) => ({
+        ...fallback.loopTrack.segments[index],
+        ...segment,
+        segmentIndex: Number(segment?.segmentIndex || index + 1),
+        startSecond: Number(segment?.startSecond ?? index * 8),
+        endSecond: Number(segment?.endSecond ?? index * 8 + 8),
+        prompt: String(segment?.prompt || segment?.summary || fallback.loopTrack.segments[index]?.prompt || ""),
+        stabilityPrompt: String(segment?.stabilityPrompt || fallback.loopTrack.segments[index]?.stabilityPrompt || ""),
+        referenceHint: String(segment?.referenceHint || fallback.loopTrack.segments[index]?.referenceHint || ""),
+      })),
+    },
+    interpolationTrack: {
+      ...fallback.interpolationTrack,
+      ...(obj.interpolationTrack && typeof obj.interpolationTrack === "object" && !Array.isArray(obj.interpolationTrack) ? obj.interpolationTrack : {}),
+      nodes: (rawInterpolationNodes.length ? rawInterpolationNodes : fallback.interpolationTrack.nodes).slice(0, 5).map((node: any, index: number) => ({
+        ...fallback.interpolationTrack.nodes[index],
+        ...node,
+        nodeId: String(node?.nodeId || node?.id || ["A", "M1", "M2", "M3", "B"][index] || `N${index + 1}`),
+        label: String(node?.label || fallback.interpolationTrack.nodes[index]?.label || ""),
+        prompt: String(node?.prompt || node?.summary || fallback.interpolationTrack.nodes[index]?.prompt || ""),
+        imageUrl: String(node?.imageUrl || ""),
+      })),
+    },
+    deliveryNotes: Array.isArray(obj.deliveryNotes)
+      ? obj.deliveryNotes.map((item: any) => String(item))
+      : String(obj.deliveryNotes || "").split(/[；;\n]/).map((item) => item.trim()).filter(Boolean),
+  };
 }
 
 function rebuildStoryboardForExecutionDensity(
@@ -462,26 +564,31 @@ function rebuildInterpolationTrack(
         nodeId: "A",
         label: "起始状态",
         prompt: `${shot1?.sceneDescription || intro} One subject only, opening hook energy, medium close-up, direct gaze, clean premium background.`,
+        imageUrl: shot1?.referenceImageUrl || "",
       },
       {
         nodeId: "M1",
         label: "动作解释",
         prompt: `${shot2?.sceneDescription || ""} Show one clear explanatory gesture or prop, still one subject only, same wardrobe and set, practical instruction mood.`,
+        imageUrl: shot2?.referenceImageUrl || "",
       },
       {
         nodeId: "M2",
         label: "证据出现",
         prompt: `${shot3?.sceneDescription || ""} Bring in proof, report, material, comparison, or visual evidence, premium close details, still one subject logic.`,
+        imageUrl: shot3?.referenceImageUrl || "",
       },
       {
         nodeId: "M3",
         label: "收束前准备",
         prompt: `${shot4?.sceneDescription || ""} Transition from evidence to decision, body language steadier, trust fully established, CTA about to land.`,
+        imageUrl: shot4?.referenceImageUrl || "",
       },
       {
         nodeId: "B",
         label: "结束状态",
         prompt: `${closing} Single subject, stable medium shot, polished commercial finish, one clear action cue, subtitle-safe composition, no clutter.`,
+        imageUrl: shot4?.referenceImageUrl || shot1?.referenceImageUrl || "",
       },
     ],
   };
@@ -967,16 +1074,16 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
       response_format: { type: "json_object" },
     });
     const rawPrimary = String(response.choices[0].message.content || "");
-    let parsed = growthPremiumRemixSchema.parse(asJsonObject(rawPrimary));
+    let parsed = growthPremiumRemixSchema.parse(normalizeLoosePremiumRemixCandidate(asJsonObject(rawPrimary), input));
     const rewritten = await rewritePremiumRemixCopyFromKeyMoments(strategistModel, input, parsed);
-    parsed = enforcePremiumRemixExecutionDensity(rewritten.parsed, input);
+    parsed = enforcePremiumRemixExecutionDensity(normalizeLoosePremiumRemixCandidate(rewritten.parsed, input), input);
     let qualityIssues = collectRemixQualityIssues(parsed);
     let source: PremiumRemixBuildDebug["source"] = "primary";
     let rawPreview = rewritten.raw || rawPrimary;
 
     if (qualityIssues.length) {
       const polished = await polishPremiumRemixPlan(strategistModel, prompt, parsed, qualityIssues);
-      const polishedRemix = enforcePremiumRemixExecutionDensity(polished.parsed, input);
+      const polishedRemix = enforcePremiumRemixExecutionDensity(normalizeLoosePremiumRemixCandidate(polished.parsed, input), input);
       const polishedIssues = collectRemixQualityIssues(polishedRemix);
       if (polishedIssues.length <= qualityIssues.length) {
         parsed = polishedRemix;
