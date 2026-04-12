@@ -1,6 +1,6 @@
 /**
  * Vertex AI image generation service.
- * - Nano Banana route: gemini-3.1-flash-image-preview @ global
+ * - Nano Banana 2 route: gemini-3.1-flash-image-preview @ global
  * - Nano Banana Pro route: gemini-3-pro-image-preview @ global
  */
 import { storagePut } from "./storage";

@@ -15,6 +15,42 @@ import { resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
 const PREMIUM_REMIX_MODEL: GrowthCampModel = "gemini-3.1-pro-preview";
 
+type PremiumRemixDebugStep = {
+  step: string;
+  status: "ok" | "failed" | "skipped";
+  label?: string;
+  promptPreview?: string;
+  model?: string;
+  location?: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  error?: string;
+};
+
+type PremiumRemixBuildDebug = {
+  strategistModel: string;
+  source: "primary" | "polished" | "fallback";
+  promptPreview: string;
+  rawPreview: string;
+  inputSummary: {
+    contextChars: number;
+    transcriptChars: number;
+    keyFrameCount: number;
+    titleExecutionCount: number;
+    hasAssetAdaptation: boolean;
+    hasGrowthHandoff: boolean;
+    hasStoryboardPrompt: boolean;
+  };
+  qualityIssues: string[];
+  hydrationSteps: PremiumRemixDebugStep[];
+};
+
+type PremiumRemixAssetsDebug = {
+  mode: "loop" | "interpolation";
+  referenceSteps: PremiumRemixDebugStep[];
+  clipSteps: PremiumRemixDebugStep[];
+};
+
 type BuildPremiumRemixInput = {
   context?: string;
   transcript?: string;
@@ -39,27 +75,193 @@ function asJsonObject<T>(raw: string): T {
   return JSON.parse(stripFence(raw)) as T;
 }
 
+function previewText(text: string, limit = 280) {
+  return String(text || "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function normalizeComparableText(text: string) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "")
+    .trim();
+}
+
+function uniqueLines(items: Array<string | undefined | null>) {
+  const seen = new Set<string>();
+  return items
+    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = normalizeComparableText(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function toConciseSeed(text: string, max = 120) {
+  return previewText(text, max).replace(/[。！!？?；;]+$/g, "");
+}
+
+function hasTooMuchChinese(text: string) {
+  const matches = String(text || "").match(/[\u4e00-\u9fff]/g) || [];
+  return matches.length >= 10;
+}
+
+function buildPremiumRemixBrief(input: BuildPremiumRemixInput) {
+  const primaryAngle = input.analysis.commercialAngles?.[0];
+  const primaryTitleExecution = input.titleExecutions?.[0];
+  const keyFrames = Array.isArray(input.analysis.keyFrames) ? input.analysis.keyFrames.slice(0, 4) : [];
+
+  return {
+    persona: toConciseSeed(
+      input.context ||
+      input.growthHandoff?.brief ||
+      "专业单人知识型创作者，强调可信度、专业度和商业承接。",
+      160,
+    ),
+    visual: uniqueLines([
+      input.analysis.visualSummary,
+      input.analysis.openingFrameAssessment,
+      input.analysis.sceneConsistency,
+      keyFrames[0]?.whatShows,
+    ]).join("；"),
+    structure: uniqueLines([
+      input.assetAdaptation?.structure,
+      primaryTitleExecution?.videoPlan,
+      input.growthHandoff?.storyboardPrompt,
+      "按开头钩子、动作解释、证据抬信任、结尾单一行动引导四段推进",
+    ]).join("；"),
+    hook: uniqueLines([
+      input.assetAdaptation?.firstHook,
+      primaryTitleExecution?.openingHook,
+      primaryAngle?.hook,
+      input.analysis.timestampSuggestions?.[0]?.fix,
+    ]).join("；"),
+    proof: uniqueLines([
+      keyFrames[2]?.fix,
+      input.growthHandoff?.brief,
+      input.analysis.timestampSuggestions?.[1]?.fix,
+      "加入证据、案例、前后对比或资料细节，不要只剩口播",
+    ]).join("；"),
+    cta: toConciseSeed(
+      input.assetAdaptation?.callToAction ||
+      input.growthHandoff?.businessGoal ||
+      "结尾只给一个行动引导，导向咨询、预约或私信关键词。",
+      100,
+    ),
+  };
+}
+
+function collectRemixQualityIssues(remix: ReturnType<typeof growthPremiumRemixSchema.parse>) {
+  const issues: string[] = [];
+  const overviewFields = [
+    remix.sourceSummary,
+    remix.visualDnaSummary,
+    remix.contentRebuildSummary,
+    remix.personaFit,
+    remix.performanceDirection,
+  ];
+
+  overviewFields.forEach((field, index) => {
+    if (String(field || "").trim().length < 60) {
+      issues.push(`概述字段 ${index + 1} 过短`);
+    }
+  });
+
+  for (let index = 0; index < overviewFields.length; index += 1) {
+    for (let inner = index + 1; inner < overviewFields.length; inner += 1) {
+      const left = normalizeComparableText(overviewFields[index]);
+      const right = normalizeComparableText(overviewFields[inner]);
+      if (left && right && (left === right || left.includes(right) || right.includes(left))) {
+        issues.push(`概述字段 ${index + 1} 与 ${inner + 1} 发生重复`);
+      }
+    }
+  }
+
+  remix.storyboard.forEach((shot) => {
+    if (String(shot.sceneDescription || "").trim().length < 35) {
+      issues.push(`镜头 ${shot.shotId} 画面描述过短`);
+    }
+    if (String(shot.voiceover || "").trim().length < 25) {
+      issues.push(`镜头 ${shot.shotId} 画外音过短`);
+    }
+    if (!shot.referencePrompt || String(shot.referencePrompt).trim().length < 80) {
+      issues.push(`镜头 ${shot.shotId} 参考图提示词过短`);
+    }
+    if (hasTooMuchChinese(shot.referencePrompt)) {
+      issues.push(`镜头 ${shot.shotId} 参考图提示词仍含大量中文`);
+    }
+  });
+
+  const shotPromptKeys = remix.storyboard.map((shot) => normalizeComparableText(shot.referencePrompt));
+  if (new Set(shotPromptKeys.filter(Boolean)).size < shotPromptKeys.filter(Boolean).length) {
+    issues.push("多个镜头的参考图提示词重复");
+  }
+
+  const loopPromptKeys = remix.loopTrack.segments.map((segment) => normalizeComparableText(segment.prompt));
+  if (new Set(loopPromptKeys.filter(Boolean)).size < loopPromptKeys.filter(Boolean).length) {
+    issues.push("32 秒延展轨的分段提示词重复");
+  }
+
+  return Array.from(new Set(issues));
+}
+
+async function polishPremiumRemixPlan(
+  strategistModel: string,
+  prompt: string,
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+  issues: string[],
+) {
+  const polishPrompt = [
+    "你要重写一份低质量的二创 JSON 方案。",
+    "要求：",
+    "1. 必须保留完全相同的 JSON 字段结构。",
+    "2. 所有概述字段必须互不重复，不能反复复制用户上下文。",
+    "3. 每个镜头都要写成可以直接拍摄的具体内容，不能写模板套话。",
+    "4. referencePrompt 必须是英文，只描述镜头画面、主体、服装、场景、景别、动作、光影、镜头语言，不要夹带中文上下文。",
+    "5. 32 秒延展轨和关键帧插值轨的每一段都必须对应不同商业任务，不能只换说法。",
+    `当前问题：${issues.join("；")}`,
+    `原始输入摘要：${previewText(prompt, 2200)}`,
+    `待重写 JSON：${JSON.stringify(remix)}`,
+  ].join("\n");
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: strategistModel,
+    messages: [
+      { role: "system", content: "你擅长做高质量的短视频逆向重写，并且严格输出 JSON。" },
+      { role: "user", content: polishPrompt },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  return {
+    parsed: growthPremiumRemixSchema.parse(asJsonObject(response.choices[0].message.content as string)),
+    raw: String(response.choices[0].message.content || ""),
+  };
+}
+
 function buildFallbackRemix(input: BuildPremiumRemixInput) {
   const keyFrames = Array.isArray(input.analysis.keyFrames) ? input.analysis.keyFrames.slice(0, 4) : [];
   const primaryAngle = input.analysis.commercialAngles?.[0];
   const primaryTitleExecution = input.titleExecutions?.[0];
   const assetAdaptation = input.assetAdaptation;
   const growthHandoff = input.growthHandoff;
-  const personaContext = input.context || "围绕当前账号身份，重构成更可信、更专业的单人商业表达。";
+  const brief = buildPremiumRemixBrief(input);
+  const personaContext = brief.persona || "围绕当前账号身份，重构成更可信、更专业的单人商业表达。";
   const title = primaryAngle?.title || input.analysis.titleSuggestions?.[0] || "优质视频二创";
-  const visualSummary = input.analysis.visualSummary || "保留参考视频的景别节奏、口播推进和结果前置结构。";
+  const visualSummary = brief.visual || input.analysis.visualSummary || "保留参考视频的景别节奏、口播推进和结果前置结构。";
   const sceneA = keyFrames[0];
   const sceneB = keyFrames[1];
   const sceneC = keyFrames[2];
   const sceneD = keyFrames[3];
-  const openingHook = assetAdaptation?.firstHook || primaryTitleExecution?.openingHook || primaryAngle?.hook || "前 2 秒先抛最扎心的问题和最直接的结果。";
-  const structureLine = assetAdaptation?.structure || primaryTitleExecution?.videoPlan || growthHandoff?.storyboardPrompt || "按问题、动作、证据、行动引导四段推进。";
-  const callToAction = assetAdaptation?.callToAction || growthHandoff?.businessGoal || "只保留一个行动引导，导向咨询、预约或私信关键词。";
-  const visualBase = [
-    personaContext,
-    visualSummary,
-    structureLine,
-  ].filter(Boolean).join(" ");
+  const openingHook = brief.hook || assetAdaptation?.firstHook || primaryTitleExecution?.openingHook || primaryAngle?.hook || "前 2 秒先抛最扎心的问题和最直接的结果。";
+  const structureLine = brief.structure || assetAdaptation?.structure || primaryTitleExecution?.videoPlan || growthHandoff?.storyboardPrompt || "按问题、动作、证据、行动引导四段推进。";
+  const proofLine = brief.proof || growthHandoff?.brief || "加入案例、证据、前后对比或资料细节，抬高可信度。";
+  const callToAction = brief.cta || assetAdaptation?.callToAction || growthHandoff?.businessGoal || "只保留一个行动引导，导向咨询、预约或私信关键词。";
+  const visualBase = `${personaContext}；${visualSummary}；${structureLine}`;
 
   return growthPremiumRemixSchema.parse({
     title: "优质视频二创",
@@ -73,7 +275,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         id: "host",
         label: "主讲人",
         role: personaContext,
-        visualPrompt: `${personaContext} cinematic chinese creator, clean studio outfit, high-trust expert, premium lighting, single person, no crowd, no animal`,
+        visualPrompt: `cinematic Chinese expert creator, single subject, premium studio lighting, clean set, trustworthy expression, tailored wardrobe, no crowd, no animal, identity brief: ${personaContext}`,
         consistencyRules: [
           "始终保持单人出镜",
           "避免多人同框正面镜头",
@@ -95,8 +297,8 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         onScreenText: sceneA?.timestamp ? `${sceneA.timestamp} 对应问题点` : "把最扎心的问题直接打到屏幕上",
         voiceover: sceneA?.commercialUse || openingHook,
         performanceNote: "眼神直接看镜头，语速快一点，不铺垫，第一句必须直接落在痛点或结果上。",
-        referencePrompt: `${visualBase} 开场镜头，单人出镜，中近景，直接看镜头，抛出核心问题与结果，专业可信，高级布光，留字幕位。`,
-        veoPrompt: `${visualBase} single subject, medium close-up, clean premium background, direct-to-camera hook, subtle push-in, high-trust expert tone, opening hook: ${openingHook}`,
+        referencePrompt: `Single Chinese expert creator in a premium clinical or cultural studio, medium close-up, direct eye contact, subtle push-in camera, refined wardrobe, confident posture, dramatic but clean key light, negative space for subtitles, opening hook energy, trustworthy and commercial, no crowd, no animal, no extra limbs.`,
+        veoPrompt: `single subject, medium close-up, clean premium background, direct-to-camera hook, subtle push-in, high-trust expert tone, opening hook: ${openingHook}, visual direction: ${visualSummary}`,
         negativePrompt: "multiple people, crowd, extra limbs, animal, distorted face, background clutter",
       },
       {
@@ -112,8 +314,8 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         onScreenText: sceneB?.issue || "只讲一个动作或一个机制",
         voiceover: sceneB?.fix || primaryTitleExecution?.videoPlan || "这里讲具体怎么做，不要空泛。",
         performanceNote: "加入手势、道具或资料画面，动作要服务解释，不要全程站桩。",
-        referencePrompt: `${visualBase} 中景讲解镜头，单人手势示范或展示资料，道具清楚，动作服务解释，画面干净，专业场景。`,
-        veoPrompt: `${visualBase} single subject, medium shot, clear gesture demonstration, soft key light, practical instruction vibe, show one concrete action or method`,
+        referencePrompt: `Single expert creator in a medium shot, explaining one concrete method with hand gestures and one visible prop or report, clean premium set, realistic body posture, soft key light, detail-rich wardrobe texture, composition designed for practical instruction, no second person, no animal.`,
+        veoPrompt: `single subject, medium shot, clear gesture demonstration, soft key light, practical instruction vibe, show one concrete action or method, structure cue: ${structureLine}`,
         negativePrompt: "group shot, duplicated body, extra hands, pet, cluttered decor",
       },
       {
@@ -129,8 +331,8 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         onScreenText: sceneC?.commercialUse || "这里放前后对比、案例或服务场景",
         voiceover: sceneC?.fix || growthHandoff?.brief || "告诉用户为什么这个方案可信。",
         performanceNote: "这里必须出现证据感，不要继续空口讲，加入资料、局部特写或对比信息。",
-        referencePrompt: `${visualBase} 证据镜头，单人主体配资料细节或前后对比，局部特写，高级商业布光，强调可信度与专业度。`,
-        veoPrompt: `${visualBase} single subject with insert shots, premium detail close-ups, before-after evidence, polished commercial lighting, trust-building visual proof`,
+        referencePrompt: `Trust-building evidence shot with a single expert creator, premium detail close-ups of reports, historical material, diagrams, or before-after proof, cinematic inserts, clean composition, high-end commercial lighting, rich texture, visual proof over empty talk, no crowd, no animal.`,
+        veoPrompt: `single subject with insert shots, premium detail close-ups, before-after evidence, polished commercial lighting, trust-building visual proof, proof cue: ${proofLine}`,
         negativePrompt: "multi-character frame, random props, inconsistent face, duplicate subject",
       },
       {
@@ -146,8 +348,8 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         onScreenText: sceneD?.fix || callToAction,
         voiceover: callToAction,
         performanceNote: "语气收紧，结尾必须只给一个行动，不要同时塞多个动作。",
-        referencePrompt: `${visualBase} 收束镜头，单人中景，轻推近，眼神坚定，明确行动引导，保留字幕与行动词位置。`,
-        veoPrompt: `${visualBase} single subject closing call-to-action, subtle push-in, clean premium set, confident gesture, one clear CTA: ${callToAction}`,
+        referencePrompt: `Closing call-to-action shot, single expert creator in a medium shot, subtle push-in, steady body language, direct confident gaze, premium clean set, one clear action cue, subtitle-safe framing, polished commercial finish, no crowd, no animal, no visual clutter.`,
+        veoPrompt: `single subject closing call-to-action, subtle push-in, clean premium set, confident gesture, one clear CTA: ${callToAction}`,
         negativePrompt: "crowd, second person, pet, distorted hands, messy background",
       },
     ],
@@ -158,10 +360,10 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         whyItWorks: "按问题、动作、证据、行动引导四段推进，比空泛口播更容易直接拿去生成与拍摄。",
       },
       segments: [
-        { segmentIndex: 1, startSecond: 0, endSecond: 8, prompt: `${openingHook} 单人中近景，直接看镜头，镜头轻推近，背景干净，专业可信。`, stabilityPrompt: "保持主讲人脸部、服装、发型和背景绝对一致，禁止多人污染", referenceHint: "优先复用镜头 1 的分镜参考图" },
-        { segmentIndex: 2, startSecond: 8, endSecond: 16, prompt: `${primaryTitleExecution?.videoPlan || "展示一个具体动作或解释方法"}，加入手势或资料道具，强调做法与原理。`, stabilityPrompt: "保持主讲人一致，动作自然，避免任何多人污染", referenceHint: "优先复用镜头 2 的分镜参考图" },
-        { segmentIndex: 3, startSecond: 16, endSecond: 24, prompt: `${growthHandoff?.brief || "加入案例、证据或前后对比"}，让可信度明显抬升，保留局部细节特写。`, stabilityPrompt: "保持风格与主体稳定，允许局部特写，但主体身份不能漂移", referenceHint: "优先复用镜头 3 的分镜参考图" },
-        { segmentIndex: 4, startSecond: 24, endSecond: 32, prompt: `${callToAction} 结尾镜头收束，人物姿态稳定，给出唯一行动引导。`, stabilityPrompt: "结尾人物和背景保持一致，动作清晰，字幕位置稳定", referenceHint: "优先复用镜头 4 的分镜参考图" },
+        { segmentIndex: 1, startSecond: 0, endSecond: 8, prompt: `${openingHook} 开场必须在前 2 秒完成冲击表达，人物单独出镜，镜头轻推近。`, stabilityPrompt: "保持主讲人脸部、服装、发型和背景绝对一致，禁止多人污染", referenceHint: "优先复用镜头 1 的分镜参考图" },
+        { segmentIndex: 2, startSecond: 8, endSecond: 16, prompt: `${primaryTitleExecution?.videoPlan || "展示一个具体动作或解释方法"}，画面中必须出现手势、资料或道具，让信息不是空口讲。`, stabilityPrompt: "保持主讲人一致，动作自然，避免任何多人污染", referenceHint: "优先复用镜头 2 的分镜参考图" },
+        { segmentIndex: 3, startSecond: 16, endSecond: 24, prompt: `${proofLine}，重点是把可信证据放到画面里，而不是重复解释。`, stabilityPrompt: "保持风格与主体稳定，允许局部特写，但主体身份不能漂移", referenceHint: "优先复用镜头 3 的分镜参考图" },
+        { segmentIndex: 4, startSecond: 24, endSecond: 32, prompt: `${callToAction} 结尾镜头收束，人物姿态稳定，只保留一个清晰行动。`, stabilityPrompt: "结尾人物和背景保持一致，动作清晰，字幕位置稳定", referenceHint: "优先复用镜头 4 的分镜参考图" },
       ],
     },
     interpolationTrack: {
@@ -189,10 +391,14 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
 async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof growthPremiumRemixSchema.parse>) {
   const remix = growthPremiumRemixSchema.parse(remixInput);
   const anchors = [...remix.characterAnchors];
+  const steps: PremiumRemixDebugStep[] = [];
 
   for (let index = 0; index < anchors.length; index += 1) {
     const anchor = anchors[index];
-    if (anchor.referenceImageUrl) continue;
+    if (anchor.referenceImageUrl) {
+      steps.push({ step: "anchor-image", status: "skipped", label: anchor.label, imageUrl: anchor.referenceImageUrl });
+      continue;
+    }
     try {
       const image = await generateGeminiImage({
         prompt: anchor.visualPrompt,
@@ -200,8 +406,24 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
         aspectRatio: "16:9",
       });
       anchors[index] = { ...anchor, referenceImageUrl: image.imageUrl };
+      steps.push({
+        step: "anchor-image",
+        status: "ok",
+        label: anchor.label,
+        promptPreview: previewText(anchor.visualPrompt),
+        model: image.model,
+        location: image.location,
+        imageUrl: image.imageUrl,
+      });
     } catch (error) {
       console.warn("[growth.hydratePremiumRemixReferenceImages] anchor failed:", error);
+      steps.push({
+        step: "anchor-image",
+        status: "failed",
+        label: anchor.label,
+        promptPreview: previewText(anchor.visualPrompt),
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -218,9 +440,27 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
           referenceImageUrl: primaryReference || undefined,
         });
         referenceImageUrl = image.imageUrl;
+        steps.push({
+          step: "shot-reference-image",
+          status: "ok",
+          label: `镜头 ${shot.shotId}`,
+          promptPreview: previewText(shot.referencePrompt),
+          model: image.model,
+          location: image.location,
+          imageUrl: image.imageUrl,
+        });
       } catch (error) {
         console.warn("[growth.hydratePremiumRemixReferenceImages] shot failed:", error);
+        steps.push({
+          step: "shot-reference-image",
+          status: "failed",
+          label: `镜头 ${shot.shotId}`,
+          promptPreview: previewText(shot.referencePrompt),
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
+    } else if (referenceImageUrl) {
+      steps.push({ step: "shot-reference-image", status: "skipped", label: `镜头 ${shot.shotId}`, imageUrl: referenceImageUrl });
     }
     storyboard.push({
       ...shot,
@@ -228,11 +468,14 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
     });
   }
 
-  return growthPremiumRemixSchema.parse({
-    ...remix,
-    characterAnchors: anchors,
-    storyboard,
-  });
+  return {
+    remix: growthPremiumRemixSchema.parse({
+      ...remix,
+      characterAnchors: anchors,
+      storyboard,
+    }),
+    steps,
+  };
 }
 
 export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
@@ -245,6 +488,7 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
   const growthHandoff = input.growthHandoff;
   const creationStoryboardPrompt = String(input.creationStoryboardPrompt || "").trim();
 
+  const brief = buildPremiumRemixBrief(input);
   const prompt = [
     "你是 MVStudioPro 的优质视频逆向工程导演。",
     "任务：把参考视频的成功节奏、镜头语言和商业推进抽离出来，再重写成一个新的二创版本。",
@@ -261,8 +505,16 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     "7. 不允许使用“建立人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
     "8. 必须尽量复用输入里的 titleExecutions、assetAdaptation、growthHandoff、关键帧、时间点改法，而不是重新发明一套空泛模板。",
     "9. 如果用户上下文里有职业、人设、服装、场景、道具要求，必须写进角色锚定和 referencePrompt。",
+    "10. sourceSummary/visualDnaSummary/contentRebuildSummary/personaFit/performanceDirection 这五个字段必须各写各的，不允许内容互相重复或改写同一句。",
+    "11. 每个镜头的 sceneDescription、voiceover、performanceNote 都必须详细、具体、有拍摄执行感。",
+    "12. referencePrompt 必须是英文，至少 80 个英文单词，不要复制中文背景，不要出现泛泛的模板词。",
     "",
-    `上下文：${context || "未提供额外背景，按当前视频分析结果重构。"}`,
+    `人物与业务背景：${brief.persona || context || "未提供额外背景，按当前视频分析结果重构。"}`,
+    `视觉基调：${brief.visual || "未提供"}`,
+    `结构策略：${brief.structure || "未提供"}`,
+    `开头钩子：${brief.hook || "未提供"}`,
+    `证据策略：${brief.proof || "未提供"}`,
+    `结尾动作：${brief.cta || "未提供"}`,
     `视频总结：${analysis.summary || ""}`,
     `视觉总判断：${analysis.visualSummary || ""}`,
     `开头画面判断：${analysis.openingFrameAssessment || ""}`,
@@ -276,8 +528,18 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     assetAdaptation ? `资产改编建议：形式=${assetAdaptation.format} | 开头=${assetAdaptation.firstHook} | 结构=${assetAdaptation.structure} | 结尾=${assetAdaptation.callToAction}` : "",
     growthHandoff ? `成长营交接：brief=${growthHandoff.brief} | storyboardPrompt=${growthHandoff.storyboardPrompt} | workflowPrompt=${growthHandoff.workflowPrompt} | recommendedTrack=${growthHandoff.recommendedTrack} | businessGoal=${growthHandoff.businessGoal}` : "",
     creationStoryboardPrompt ? `创作画布分镜提示：${creationStoryboardPrompt}` : "",
-    transcript ? `转写：${transcript.slice(0, 14000)}` : "",
+    transcript ? `转写：${transcript.slice(0, 8000)}` : "",
   ].filter(Boolean).join("\n");
+
+  const inputSummary = {
+    contextChars: context.length,
+    transcriptChars: transcript.length,
+    keyFrameCount: analysis.keyFrames?.length || 0,
+    titleExecutionCount: titleExecutions.length,
+    hasAssetAdaptation: Boolean(assetAdaptation),
+    hasGrowthHandoff: Boolean(growthHandoff),
+    hasStoryboardPrompt: Boolean(creationStoryboardPrompt),
+  };
 
   try {
     const response = await invokeLLM({
@@ -290,11 +552,51 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
       ],
       response_format: { type: "json_object" },
     });
-    const parsed = growthPremiumRemixSchema.parse(asJsonObject(response.choices[0].message.content as string));
-    return await hydratePremiumRemixReferenceImages(parsed);
+    const rawPrimary = String(response.choices[0].message.content || "");
+    let parsed = growthPremiumRemixSchema.parse(asJsonObject(rawPrimary));
+    let qualityIssues = collectRemixQualityIssues(parsed);
+    let source: PremiumRemixBuildDebug["source"] = "primary";
+    let rawPreview = rawPrimary;
+
+    if (qualityIssues.length) {
+      const polished = await polishPremiumRemixPlan(strategistModel, prompt, parsed, qualityIssues);
+      const polishedIssues = collectRemixQualityIssues(polished.parsed);
+      if (polishedIssues.length <= qualityIssues.length) {
+        parsed = polished.parsed;
+        qualityIssues = polishedIssues;
+        source = "polished";
+        rawPreview = polished.raw;
+      }
+    }
+
+    const hydrated = await hydratePremiumRemixReferenceImages(parsed);
+    return {
+      remix: hydrated.remix,
+      debug: {
+        strategistModel,
+        source,
+        promptPreview: previewText(prompt, 2400),
+        rawPreview: previewText(rawPreview, 2400),
+        inputSummary,
+        qualityIssues,
+        hydrationSteps: hydrated.steps,
+      } satisfies PremiumRemixBuildDebug,
+    };
   } catch (error) {
     console.warn("[growth.buildPremiumRemixPlan] fallback:", error);
-    return await hydratePremiumRemixReferenceImages(buildFallbackRemix(input));
+    const hydrated = await hydratePremiumRemixReferenceImages(buildFallbackRemix(input));
+    return {
+      remix: hydrated.remix,
+      debug: {
+        strategistModel,
+        source: "fallback",
+        promptPreview: previewText(prompt, 2400),
+        rawPreview: error instanceof Error ? error.message : String(error),
+        inputSummary,
+        qualityIssues: ["主模型输出失败，已切换 fallback 方案"],
+        hydrationSteps: hydrated.steps,
+      } satisfies PremiumRemixBuildDebug,
+    };
   }
 }
 
@@ -303,72 +605,151 @@ export async function generatePremiumRemixAssets(input: GeneratePremiumRemixAsse
   const mode = input.mode;
 
   const referenceImages = [];
+  const referenceSteps: PremiumRemixDebugStep[] = [];
   for (const character of remix.characterAnchors.slice(0, 3)) {
-    const image = await generateGeminiImage({
-      prompt: `${character.visualPrompt}\n${buildCharacterLockPrompt({
-        appearance: character.role,
-        outfit: "consistent wardrobe",
-        hair: "consistent hairstyle",
-        optionalReferenceImage: character.referenceImageUrl || "",
-      })}`,
-      quality: "1k",
-      referenceImageUrl: character.referenceImageUrl || undefined,
-    });
-    referenceImages.push({
-      id: character.id,
-      label: character.label,
-      imageUrl: image.imageUrl,
-    });
+    try {
+      const image = await generateGeminiImage({
+        prompt: `${character.visualPrompt}\n${buildCharacterLockPrompt({
+          appearance: character.role,
+          outfit: "consistent wardrobe",
+          hair: "consistent hairstyle",
+          optionalReferenceImage: character.referenceImageUrl || "",
+        })}`,
+        quality: "1k",
+        referenceImageUrl: character.referenceImageUrl || undefined,
+      });
+      referenceImages.push({
+        id: character.id,
+        label: character.label,
+        imageUrl: image.imageUrl,
+      });
+      referenceSteps.push({
+        step: "asset-reference-image",
+        status: "ok",
+        label: character.label,
+        model: image.model,
+        location: image.location,
+        imageUrl: image.imageUrl,
+      });
+    } catch (error) {
+      referenceSteps.push({
+        step: "asset-reference-image",
+        status: "failed",
+        label: character.label,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   const clips = [];
+  const clipSteps: PremiumRemixDebugStep[] = [];
   if (mode === "loop") {
     for (const segment of remix.loopTrack.segments.slice(0, 4)) {
       const storyboardShot = remix.storyboard.find((item) => item.shotId === segment.segmentIndex);
-      const video = await generateVideo({
-        prompt: `${segment.prompt}. ${segment.stabilityPrompt}. ${storyboardShot?.veoPrompt || ""}`.trim(),
-        imageUrl: storyboardShot?.referenceImageUrl || referenceImages[0]?.imageUrl,
-        quality: "standard",
-        aspectRatio: "16:9",
-        resolution: "720p",
-        negativePrompt: "multiple people, extra arms, extra legs, animal, pet, distorted face, duplicate subject",
-      });
-      clips.push({
-        label: `${segment.segmentIndex * 8 - 8}-${segment.segmentIndex * 8}秒`,
-        videoUrl: video.videoUrl,
-      });
+      try {
+        const video = await generateVideo({
+          prompt: `${segment.prompt}. ${segment.stabilityPrompt}. ${storyboardShot?.veoPrompt || ""}`.trim(),
+          imageUrl: storyboardShot?.referenceImageUrl || referenceImages[0]?.imageUrl,
+          quality: "standard",
+          aspectRatio: "16:9",
+          resolution: "720p",
+          negativePrompt: "multiple people, extra arms, extra legs, animal, pet, distorted face, duplicate subject",
+        });
+        clips.push({
+          label: `${segment.segmentIndex * 8 - 8}-${segment.segmentIndex * 8}秒`,
+          videoUrl: video.videoUrl,
+        });
+        clipSteps.push({
+          step: "loop-clip",
+          status: "ok",
+          label: `${segment.startSecond}-${segment.endSecond}秒`,
+          promptPreview: previewText(segment.prompt),
+          videoUrl: video.videoUrl,
+        });
+      } catch (error) {
+        clipSteps.push({
+          step: "loop-clip",
+          status: "failed",
+          label: `${segment.startSecond}-${segment.endSecond}秒`,
+          promptPreview: previewText(segment.prompt),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   } else {
     const nodes = [...remix.interpolationTrack.nodes];
     for (let index = 0; index < nodes.length; index += 1) {
       if (!nodes[index].imageUrl) {
-        const generated = await generateGeminiImage({
-          prompt: nodes[index].prompt,
-          quality: "1k",
-          referenceImageUrl: referenceImages[0]?.imageUrl,
-        });
-        nodes[index].imageUrl = generated.imageUrl;
+        try {
+          const generated = await generateGeminiImage({
+            prompt: nodes[index].prompt,
+            quality: "1k",
+            referenceImageUrl: referenceImages[0]?.imageUrl,
+          });
+          nodes[index].imageUrl = generated.imageUrl;
+          referenceSteps.push({
+            step: "interpolation-node-image",
+            status: "ok",
+            label: nodes[index].label,
+            promptPreview: previewText(nodes[index].prompt),
+            model: generated.model,
+            location: generated.location,
+            imageUrl: generated.imageUrl,
+          });
+        } catch (error) {
+          referenceSteps.push({
+            step: "interpolation-node-image",
+            status: "failed",
+            label: nodes[index].label,
+            promptPreview: previewText(nodes[index].prompt),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
     }
     for (let index = 0; index < nodes.length - 1; index += 1) {
-      const video = await generateVideo({
-        prompt: `Smooth cinematic transition from ${nodes[index].label} to ${nodes[index + 1].label}. ${nodes[index + 1].prompt}`,
-        imageUrl: nodes[index].imageUrl,
-        quality: "standard",
-        aspectRatio: "16:9",
-        resolution: "720p",
-        negativePrompt: "multiple people, animal, extra limbs, duplicate face, identity drift",
-      });
-      clips.push({
-        label: `${nodes[index].label} -> ${nodes[index + 1].label}`,
-        videoUrl: video.videoUrl,
-      });
+      try {
+        const video = await generateVideo({
+          prompt: `Smooth cinematic transition from ${nodes[index].label} to ${nodes[index + 1].label}. ${nodes[index + 1].prompt}`,
+          imageUrl: nodes[index].imageUrl,
+          quality: "standard",
+          aspectRatio: "16:9",
+          resolution: "720p",
+          negativePrompt: "multiple people, animal, extra limbs, duplicate face, identity drift",
+        });
+        clips.push({
+          label: `${nodes[index].label} -> ${nodes[index + 1].label}`,
+          videoUrl: video.videoUrl,
+        });
+        clipSteps.push({
+          step: "interpolation-clip",
+          status: "ok",
+          label: `${nodes[index].label} -> ${nodes[index + 1].label}`,
+          promptPreview: previewText(nodes[index + 1].prompt),
+          videoUrl: video.videoUrl,
+        });
+      } catch (error) {
+        clipSteps.push({
+          step: "interpolation-clip",
+          status: "failed",
+          label: `${nodes[index].label} -> ${nodes[index + 1].label}`,
+          promptPreview: previewText(nodes[index + 1].prompt),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 
-  return growthPremiumRemixAssetsSchema.parse({
-    mode,
-    referenceImages,
-    clips,
-  });
+  return {
+    assets: growthPremiumRemixAssetsSchema.parse({
+      mode,
+      referenceImages,
+      clips,
+    }),
+    debug: {
+      mode,
+      referenceSteps,
+      clipSteps,
+    } satisfies PremiumRemixAssetsDebug,
+  };
 }
