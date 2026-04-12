@@ -14,6 +14,7 @@ import { buildCharacterLockPrompt } from "../workflow/prompts/characterLockPromp
 import { resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
 const PREMIUM_REMIX_MODEL: GrowthCampModel = "gemini-3.1-pro-preview";
+const PREMIUM_REMIX_IMAGE_TIMEOUT_MS = Math.max(12_000, Number(process.env.PREMIUM_REMIX_IMAGE_TIMEOUT_MS || 28_000) || 28_000);
 
 type PremiumRemixDebugStep = {
   step: string;
@@ -174,6 +175,15 @@ function toConciseSeed(text: string, max = 120) {
 function hasTooMuchChinese(text: string) {
   const matches = String(text || "").match(/[\u4e00-\u9fff]/g) || [];
   return matches.length >= 10;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return await Promise.race<T>([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}`)), ms);
+    }),
+  ]);
 }
 
 function buildPremiumRemixBrief(input: BuildPremiumRemixInput) {
@@ -730,11 +740,11 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
       continue;
     }
     try {
-      const image = await generateGeminiImage({
+      const image = await withTimeout(generateGeminiImage({
         prompt: anchor.visualPrompt,
         quality: "1k",
         aspectRatio: "16:9",
-      });
+      }), PREMIUM_REMIX_IMAGE_TIMEOUT_MS, `anchor_${anchor.label || index}`);
       anchors[index] = { ...anchor, referenceImageUrl: image.imageUrl };
       steps.push({
         step: "anchor-image",
@@ -758,17 +768,16 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
   }
 
   const primaryReference = anchors[0]?.referenceImageUrl;
-  const storyboard = [];
-  for (const shot of remix.storyboard) {
+  const storyboard = await Promise.all(remix.storyboard.map(async (shot) => {
     let referenceImageUrl = shot.referenceImageUrl;
     if (!referenceImageUrl && shot.referencePrompt) {
       try {
-        const image = await generateGeminiImage({
+        const image = await withTimeout(generateGeminiImage({
           prompt: shot.referencePrompt,
           quality: "1k",
           aspectRatio: "16:9",
           referenceImageUrl: primaryReference || undefined,
-        });
+        }), PREMIUM_REMIX_IMAGE_TIMEOUT_MS, `shot_${shot.shotId}`);
         referenceImageUrl = image.imageUrl;
         steps.push({
           step: "shot-reference-image",
@@ -782,11 +791,11 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
       } catch (error) {
         console.warn("[growth.hydratePremiumRemixReferenceImages] shot failed:", error);
         try {
-          const image = await generateGeminiImage({
+          const image = await withTimeout(generateGeminiImage({
             prompt: shot.referencePrompt,
             quality: "1k",
             aspectRatio: "16:9",
-          });
+          }), PREMIUM_REMIX_IMAGE_TIMEOUT_MS, `shot_retry_${shot.shotId}`);
           referenceImageUrl = image.imageUrl;
           steps.push({
             step: "shot-reference-image-retry",
@@ -822,11 +831,11 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
     } else if (referenceImageUrl) {
       steps.push({ step: "shot-reference-image", status: "skipped", label: `镜头 ${shot.shotId}`, imageUrl: referenceImageUrl });
     }
-    storyboard.push({
+    return {
       ...shot,
       referenceImageUrl: referenceImageUrl || "",
-    });
-  }
+    };
+  }));
 
   return {
     remix: growthPremiumRemixSchema.parse({
