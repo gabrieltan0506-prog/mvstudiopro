@@ -129,9 +129,28 @@ async function fetchJson(url:string, init:RequestInit){
   return { ok:r.ok, status:r.status, url, json:j, rawText:t.slice(0,4000) };
 }
 
+function shouldRetryVertexImage(status:number, json:any, rawText:string){
+  const message = String(json?.error?.status || json?.error?.message || rawText || "").toUpperCase();
+  return status === 429 || message.includes("RESOURCE_EXHAUSTED");
+}
+
+async function sleep(ms:number){
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchImageAsBase64(imageUrl:string){
   const url = s(imageUrl).trim();
   if(!url) throw new Error("missing_image_url");
+
+  const dataMatch = url.match(/^data:([^;,]+);base64,(.+)$/);
+  if (dataMatch?.[1] && dataMatch?.[2]) {
+    const mimeType = String(dataMatch[1] || "image/png");
+    const b64 = String(dataMatch[2] || "").trim();
+    const buf = Buffer.from(b64, "base64");
+    if(!buf.length) throw new Error("empty_image");
+    if(buf.length > 10*1024*1024) throw new Error("image_too_large");
+    return { mimeType, b64, bytes: buf.length };
+  }
 
   const token = s(process.env.BLOB_READ_WRITE_TOKEN).trim();
   const headers:any = { "User-Agent":"mvstudiopro/1.0 (+google-fetch)" };
@@ -146,7 +165,7 @@ async function fetchImageAsBase64(imageUrl:string){
   const mimeType = String(r.headers.get("content-type") || "image/png");
   const buf = Buffer.from(await r.arrayBuffer());
   if(!buf.length) throw new Error("empty_image");
-  if(buf.length > 8*1024*1024) throw new Error("image_too_large");
+  if(buf.length > 10*1024*1024) throw new Error("image_too_large");
   return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
 }
 
@@ -199,7 +218,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
       const requestedModel = s(b.model || q.model || "");
       const resolvedTier = requestedModel
-        ? (requestedModel === "imagen-4.0-ultra-generate-001" ? "pro" : "flash")
+        ? ((requestedModel === "imagen-4.0-ultra-generate-001" || requestedModel === "imagen-4.0-ultra-generate" || requestedModel === "gemini-3-pro-image-001" || requestedModel === "gemini-3-pro-image-preview") ? "pro" : "flash")
         : tier;
 
       const model = requestedModel
@@ -215,26 +234,81 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 
       const imageConfig:any = { aspectRatio };
-      if(negativePrompt) imageConfig.negativePrompt = negativePrompt;
       if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
-      if(Number.isFinite(guidanceScale) && guidanceScale > 0) imageConfig.guidanceScale = guidanceScale;
       if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
       if(personGeneration) imageConfig.personGeneration = personGeneration;
       if(resolvedTier === "pro") imageConfig.imageSize = size;
 
-      const r = await fetchJson(url,{
+      const requestInit: RequestInit = {
         method:"POST",
         headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
         body: JSON.stringify({
           contents:[{role:"user",parts:[{text:prompt}]}],
           generationConfig:{ responseModalities:["IMAGE"], imageConfig }
         })
-      });
+      };
+      let r = await fetchJson(url, requestInit);
+      for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
+        await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+        r = await fetchJson(url, requestInit);
+      }
 
       const raw = r.json ?? r.rawText;
       const images = r.ok ? extractGeneratedImages(r.json) : [];
       const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
+    }
+
+    if(op === "upscaleImage"){
+      const imageUrl = s(b.imageUrl || q.imageUrl || "");
+      if(!imageUrl) return res.status(400).json({ok:false,error:"missing_image_url"});
+
+      const prompt = s(b.prompt || q.prompt || "");
+      const outputMimeType = s(b.outputMimeType || q.outputMimeType || "image/png").trim() || "image/png";
+      const requestedFactor = s(b.upscaleFactor || q.upscaleFactor || "x2").toLowerCase();
+      const upscaleFactor = requestedFactor === "x4" ? "x4" : requestedFactor === "x3" ? "x3" : "x2";
+      const location = (s(process.env.VERTEX_IMAGE_LOCATION_UPSCALE || process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
+      const model = (s(process.env.VERTEX_IMAGE_MODEL_UPSCALE) || "imagen-4.0-upscale-preview").trim();
+      const base = baseUrlFor(location);
+      const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predict`;
+      const img = await fetchImageAsBase64(imageUrl);
+
+      const requestInit: RequestInit = {
+        method:"POST",
+        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
+        body: JSON.stringify({
+          instances: [{
+            prompt,
+            image: { bytesBase64Encoded: img.b64 }
+          }],
+          parameters: {
+            sampleCount: 1,
+            mode: "upscale",
+            outputOptions: { mimeType: outputMimeType },
+            upscaleConfig: { upscaleFactor }
+          }
+        })
+      };
+
+      let r = await fetchJson(url, requestInit);
+      for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
+        await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+        r = await fetchJson(url, requestInit);
+      }
+
+      const raw = r.json ?? r.rawText;
+      const images = r.ok ? extractGeneratedImages(r.json) : [];
+      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+      return res.status(r.ok?200:502).json({
+        ok:r.ok,
+        status:r.status,
+        url:r.url,
+        raw,
+        imageUrl: imageUrls[0] || "",
+        imageUrls,
+        imageCount: imageUrls.length,
+        upscaleFactor
+      });
     }
 
     // ---------------- Veo (video) ----------------

@@ -43,6 +43,15 @@ function pickImageModels(quality: ImageQuality) {
   return quality === "1k" ? [flashModel, proModel] : [proModel, flashModel];
 }
 
+function shouldRetryVertexImage(status: number, json: any, rawText: string) {
+  const message = String(json?.error?.status || json?.error?.message || rawText || "").toUpperCase();
+  return status === 429 || message.includes("RESOURCE_EXHAUSTED");
+}
+
+async function sleep(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function generateGeminiImage(opts: GeminiImageOptions): Promise<GeminiImageResult> {
   const projectId = getVertexProjectId();
   const headers = await getVertexAuthHeaders();
@@ -76,7 +85,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
       : getVertexImageFlashLocation();
     const baseUrl = baseUrlForVertex(location);
     const url = `${baseUrl}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
-    const response = await fetchVertexJson(url, {
+    let response = await fetchVertexJson(url, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -85,9 +94,7 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
           responseModalities: ["IMAGE"],
           imageConfig: {
             aspectRatio: opts.aspectRatio || "16:9",
-            ...(opts.negativePrompt ? { negativePrompt: opts.negativePrompt } : {}),
             ...(typeof opts.numberOfImages === "number" ? { numberOfImages: Math.max(1, Math.min(4, Math.floor(opts.numberOfImages))) } : {}),
-            ...(typeof opts.guidanceScale === "number" ? { guidanceScale: opts.guidanceScale } : {}),
             ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
             ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
             ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
@@ -95,6 +102,27 @@ export async function generateGeminiImage(opts: GeminiImageOptions): Promise<Gem
         },
       }),
     });
+
+    for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(response.status, response.json, response.rawText); attempt += 1) {
+      await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+      response = await fetchVertexJson(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            responseModalities: ["IMAGE"],
+            imageConfig: {
+              aspectRatio: opts.aspectRatio || "16:9",
+              ...(typeof opts.numberOfImages === "number" ? { numberOfImages: Math.max(1, Math.min(4, Math.floor(opts.numberOfImages))) } : {}),
+              ...(typeof opts.seed === "number" ? { seed: Math.floor(opts.seed) } : {}),
+              ...(opts.personGeneration ? { personGeneration: opts.personGeneration } : {}),
+              ...(opts.quality !== "1k" ? { imageSize: opts.quality.toUpperCase() } : {}),
+            },
+          },
+        }),
+      });
+    }
 
     if (!response.ok) {
       lastError = `model=${model} status=${response.status} raw=${response.rawText.slice(0, 300)}`;

@@ -2,6 +2,7 @@ import { getVertexAccessToken } from "../utils/vertex";
 
 export const VERTEX_IMAGE_LOCATION_FLASH = "global";
 export const VERTEX_IMAGE_LOCATION_PRO = "global";
+export const VERTEX_IMAGE_LOCATION_UPSCALE = "global";
 export const VERTEX_VIDEO_LOCATION = "us-central1";
 
 function s(v: unknown) {
@@ -37,6 +38,13 @@ export function getVertexImageProLocation() {
   return (
     String(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION || VERTEX_IMAGE_LOCATION_PRO).trim() ||
     VERTEX_IMAGE_LOCATION_PRO
+  );
+}
+
+export function getVertexImageUpscaleLocation() {
+  return (
+    String(process.env.VERTEX_IMAGE_LOCATION_UPSCALE || VERTEX_IMAGE_LOCATION_UPSCALE).trim() ||
+    VERTEX_IMAGE_LOCATION_UPSCALE
   );
 }
 
