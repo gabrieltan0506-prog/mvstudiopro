@@ -1,114 +1,67 @@
 import { Router } from "express";
-import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
+import { storagePut } from "./storage";
 
 const uploadRouter = Router();
+const MAX_UPLOAD_BYTES = Math.max(10 * 1024 * 1024, Number(process.env.UPLOAD_MAX_BYTES || 80 * 1024 * 1024) || 80 * 1024 * 1024);
+
+async function parseMultipartFile(req: any) {
+  const request = new Request("http://local/upload", {
+    method: req.method,
+    headers: req.headers as HeadersInit,
+    body: req,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" });
+
+  const formData = await request.formData();
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    throw new Error("No file found");
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!buffer.length) {
+    throw new Error("Uploaded file is empty");
+  }
+  if (buffer.length > MAX_UPLOAD_BYTES) {
+    const error = new Error(`File too large: ${buffer.length}`);
+    (error as any).statusCode = 413;
+    throw error;
+  }
+
+  const filename = file.name || "upload";
+  const ext = filename.includes(".") ? filename.split(".").pop() || "bin" : "bin";
+  const mimeType = file.type || "application/octet-stream";
+
+  return {
+    buffer,
+    filename,
+    ext,
+    mimeType,
+  };
+}
+
+async function handleUpload(req: any, res: any, keyPrefix: string, fallbackBaseName: string) {
+  try {
+    const { buffer, filename, ext, mimeType } = await parseMultipartFile(req);
+    const key = `${keyPrefix}/${nanoid(12)}.${ext || fallbackBaseName}`;
+    const { url } = await storagePut(key, buffer, mimeType);
+    res.json({ url, key });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "Upload failed");
+    const statusCode = Number((error as any)?.statusCode || 500);
+    console.error(`[Upload ${keyPrefix}] Error:`, error);
+    res.status(statusCode).json({ error: statusCode === 413 ? "Upload too large" : message || "Upload failed" });
+  }
+}
 
 uploadRouter.post("/api/upload", async (req, res) => {
-  try {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", async () => {
-      const body = Buffer.concat(chunks);
-      // Parse multipart form data manually (simple version)
-      const contentType = req.headers["content-type"] || "";
-      if (!contentType.includes("multipart/form-data")) {
-        res.status(400).json({ error: "Expected multipart/form-data" });
-        return;
-      }
-      const boundary = contentType.split("boundary=")[1];
-      if (!boundary) {
-        res.status(400).json({ error: "No boundary found" });
-        return;
-      }
-
-      const boundaryBuffer = Buffer.from(`--${boundary}`);
-      const parts = [];
-      let start = body.indexOf(boundaryBuffer) + boundaryBuffer.length;
-
-      while (start < body.length) {
-        const nextBoundary = body.indexOf(boundaryBuffer, start);
-        if (nextBoundary === -1) break;
-        parts.push(body.subarray(start, nextBoundary));
-        start = nextBoundary + boundaryBuffer.length;
-      }
-
-      if (parts.length === 0) {
-        res.status(400).json({ error: "No file found" });
-        return;
-      }
-
-      const part = parts[0];
-      const headerEnd = part.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        res.status(400).json({ error: "Malformed part" });
-        return;
-      }
-
-      const headers = part.subarray(0, headerEnd).toString();
-      const fileData = part.subarray(headerEnd + 4, part.length - 2); // trim trailing \r\n
-
-      // Extract filename
-      const filenameMatch = headers.match(/filename="([^"]+)"/);
-      const filename = filenameMatch?.[1] || "upload";
-      const ext = filename.split(".").pop() || "bin";
-
-      // Detect content type
-      const ctMatch = headers.match(/Content-Type:\s*(.+)/i);
-      const fileMime = ctMatch?.[1]?.trim() || "application/octet-stream";
-
-      const key = `uploads/${nanoid(12)}.${ext}`;
-      const { url } = await storagePut(key, fileData, fileMime);
-      res.json({ url, key });
-    });
-  } catch (error) {
-    console.error("[Upload] Error:", error);
-    res.status(500).json({ error: "Upload failed" });
-  }
+  return handleUpload(req, res, "uploads", "bin");
 });
 
-// Alias for image upload (used by VirtualIdol 2D->3D)
 uploadRouter.post("/api/upload-image", async (req, res) => {
-  try {
-    const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
-    req.on("end", async () => {
-      const body = Buffer.concat(chunks);
-      const contentType = req.headers["content-type"] || "";
-      if (!contentType.includes("multipart/form-data")) {
-        res.status(400).json({ error: "Expected multipart/form-data" });
-        return;
-      }
-      const boundary = contentType.split("boundary=")[1];
-      if (!boundary) { res.status(400).json({ error: "No boundary found" }); return; }
-      const boundaryBuffer = Buffer.from(`--${boundary}`);
-      const parts: Buffer[] = [];
-      let start = body.indexOf(boundaryBuffer) + boundaryBuffer.length;
-      while (start < body.length) {
-        const nextBoundary = body.indexOf(boundaryBuffer, start);
-        if (nextBoundary === -1) break;
-        parts.push(body.subarray(start, nextBoundary));
-        start = nextBoundary + boundaryBuffer.length;
-      }
-      if (parts.length === 0) { res.status(400).json({ error: "No file found" }); return; }
-      const part = parts[0];
-      const headerEnd = part.indexOf("\r\n\r\n");
-      if (headerEnd === -1) { res.status(400).json({ error: "Malformed part" }); return; }
-      const headers = part.subarray(0, headerEnd).toString();
-      const fileData = part.subarray(headerEnd + 4, part.length - 2);
-      const filenameMatch = headers.match(/filename="([^"]+)"/);
-      const filename = filenameMatch?.[1] || "image";
-      const ext = filename.split(".").pop() || "png";
-      const ctMatch = headers.match(/Content-Type:\s*(.+)/i);
-      const fileMime = ctMatch?.[1]?.trim() || "image/png";
-      const key = `idol-3d/${nanoid(12)}.${ext}`;
-      const { url } = await storagePut(key, fileData, fileMime);
-      res.json({ url, key });
-    });
-  } catch (error) {
-    console.error("[Upload-Image] Error:", error);
-    res.status(500).json({ error: "Upload failed" });
-  }
+  return handleUpload(req, res, "idol-3d", "png");
 });
 
 export default uploadRouter;
