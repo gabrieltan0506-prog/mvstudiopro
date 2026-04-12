@@ -1439,7 +1439,15 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
 }
 
 
-export default function MVAnalysisPage() {
+type MVAnalysisPageProps = {
+  forcePremiumRemixMode?: boolean;
+  forcePlatformMode?: boolean;
+};
+
+export default function MVAnalysisPage({
+  forcePremiumRemixMode = false,
+  forcePlatformMode = false,
+}: MVAnalysisPageProps = {}) {
   const stripInternalJargon = (value: string) => String(value || "")
     .replace(/Call to Action/gi, "行动引导")
     .replace(/call-to-action/gi, "行动引导")
@@ -1458,8 +1466,9 @@ export default function MVAnalysisPage() {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  const [location, navigate] = useLocation();
-  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
+  const [, navigate] = useLocation();
+  const isPremiumRemixPage = forcePremiumRemixMode;
+  const isPlatformPage = forcePlatformMode;
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
@@ -2602,7 +2611,7 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                {isPremiumRemixPage ? "优质视频二创" : "创作商业成长营"}
+                {isPremiumRemixPage ? "优质视频二创" : isPlatformPage ? "平台数据分析" : "创作商业成长营"}
               </div>
               <h1 className="mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]">
                 {isPremiumRemixPage ? (
@@ -2612,6 +2621,14 @@ export default function MVAnalysisPage() {
                       32 秒二创版本
                     </span>
                     <span className="ml-2 inline-block text-white/90">。</span>
+                  </>
+                ) : isPlatformPage ? (
+                  <>
+                    <span className="block whitespace-nowrap">把平台趋势、数据库证据与</span>
+                    <span className="mt-3 inline-block rounded-[24px] border border-[#90c4ff]/45 bg-[#90c4ff]/8 px-5 py-2 text-[#e9f5ff] shadow-[0_0_0_1px_rgba(144,196,255,0.12)]">
+                      发布判断
+                    </span>
+                    <span className="ml-2 inline-block text-white/90">拆开看清楚。</span>
                   </>
                 ) : (
                   <>
@@ -2626,7 +2643,9 @@ export default function MVAnalysisPage() {
               <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
                 {isPremiumRemixPage
                   ? "上传参考视频或补充业务背景，系统会先做逆向拆解，再输出角色锚定、32 秒分镜和 Veo 可执行提示词。"
-                  : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
+                  : isPlatformPage
+                    ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二创流程混进来。"
+                    : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 {isPremiumRemixPage ? (
@@ -2637,6 +2656,15 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">延展素材</div>
                     <a href="/creator-growth-camp" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">返回成长营全页</a>
                   </>
+                ) : isPlatformPage ? (
+                  <>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">平台推荐</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">数据库证据</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">扶持信号</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">发平台判断</div>
+                    <a href="/creator-growth-camp" className="rounded-2xl border border-[#ffcf92]/25 bg-[rgba(255,207,146,0.08)] px-4 py-3 text-sm text-[#fff0d4] transition hover:bg-[rgba(255,207,146,0.12)]">返回成长营全页</a>
+                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入视频二创页</a>
+                  </>
                 ) : (
                   <>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
@@ -2644,6 +2672,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
+                    <a href="/creator-growth-camp/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
                     <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入视频二创页</a>
                   </>
                 )}
@@ -2659,11 +2688,15 @@ export default function MVAnalysisPage() {
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
-                  <div className="mt-5 text-2xl font-bold">{isPremiumRemixPage ? "上传参考视频或脚本背景" : "上传图文档案或视频素材"}</div>
+                  <div className="mt-5 text-2xl font-bold">
+                    {isPremiumRemixPage ? "上传参考视频或脚本背景" : isPlatformPage ? "上传图文档案或视频素材，专看平台判断" : "上传图文档案或视频素材"}
+                  </div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
                     {isPremiumRemixPage
                       ? "支持 Word、PDF、MP4。优先推荐上传视频参考素材；没有视频时，也可以只靠背景信息先生成二创方案。"
-                      : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
+                      : isPlatformPage
+                        ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二创模块一起展开。"
+                        : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
                   </p>
                 </button>
               ) : (

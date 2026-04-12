@@ -7,8 +7,8 @@ import type {
   GrowthTitleExecution,
 } from "@shared/growth";
 
-export const PREMIUM_REMIX_DRAFT_STORAGE_KEY = "mvsp-premium-remix-draft";
-const PREMIUM_REMIX_DRAFT_VERSION = 2;
+export const PREMIUM_REMIX_DRAFT_STORAGE_KEY = "mvsp-premium-remix-draft-v3";
+const PREMIUM_REMIX_DRAFT_VERSION = 3;
 
 export type PersistedPremiumRemixDraft = {
   version: number;
