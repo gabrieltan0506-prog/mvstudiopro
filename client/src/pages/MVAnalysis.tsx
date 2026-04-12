@@ -1451,7 +1451,7 @@ export default function MVAnalysisPage() {
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
@@ -2277,6 +2277,7 @@ export default function MVAnalysisPage() {
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
   const showPremiumReport = hasPaidGrowthAccess;
+  const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
   const shouldHideGraphicBoard = isProcessing && inputKind === "video";
   const handleDownloadGraphicBoard = useCallback(() => {
     const cards = platformGraphicAnalysisCards.filter((item) => item.summary || item.topics.length || item.examples.length);
@@ -2440,24 +2441,51 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                创作商业成长营
+                {isPremiumRemixPage ? "优质视频二创" : "创作商业成长营"}
               </div>
               <h1 className="mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]">
-                <span className="block whitespace-nowrap">让你的图文与视频创意，发挥它们的</span>
-                <span className="mt-3 inline-block rounded-[24px] border border-[#ffcf92]/45 bg-[#ffcf92]/8 px-5 py-2 text-[#fff6e7] shadow-[0_0_0_1px_rgba(255,207,146,0.12)]">
-                  商业价值
-                </span>
-                <span className="ml-2 inline-block text-white/90">。</span>
+                {isPremiumRemixPage ? (
+                  <>
+                    <span className="block whitespace-nowrap">把高完成度视频拆成你的</span>
+                    <span className="mt-3 inline-block rounded-[24px] border border-[#ffcf92]/45 bg-[#ffcf92]/8 px-5 py-2 text-[#fff6e7] shadow-[0_0_0_1px_rgba(255,207,146,0.12)]">
+                      32 秒二创版本
+                    </span>
+                    <span className="ml-2 inline-block text-white/90">。</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="block whitespace-nowrap">让你的图文与视频创意，发挥它们的</span>
+                    <span className="mt-3 inline-block rounded-[24px] border border-[#ffcf92]/45 bg-[#ffcf92]/8 px-5 py-2 text-[#fff6e7] shadow-[0_0_0_1px_rgba(255,207,146,0.12)]">
+                      商业价值
+                    </span>
+                    <span className="ml-2 inline-block text-white/90">。</span>
+                  </>
+                )}
               </h1>
               <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
-                直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。
+                {isPremiumRemixPage
+                  ? "上传参考视频或补充业务背景，系统会先做逆向拆解，再输出角色锚定、32 秒分镜和 Veo 可执行提示词。"
+                  : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
-                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">趋势洞察</div>
-                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
-                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
-                <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
+                {isPremiumRemixPage ? (
+                  <>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">逆向拆解</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">角色锚定</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">32 秒分镜</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">延展素材</div>
+                    <a href="/creator-growth-camp" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">返回成长营全页</a>
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">内容分析</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">趋势洞察</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">商业洞察</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
+                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
+                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入视频二创页</a>
+                  </>
+                )}
               </div>
             </div>
 
@@ -2470,9 +2498,11 @@ export default function MVAnalysisPage() {
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#ff8a3d] text-black">
                     <Upload className="h-7 w-7" />
                   </div>
-                  <div className="mt-5 text-2xl font-bold">上传图文档案或视频素材</div>
+                  <div className="mt-5 text-2xl font-bold">{isPremiumRemixPage ? "上传参考视频或脚本背景" : "上传图文档案或视频素材"}</div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。
+                    {isPremiumRemixPage
+                      ? "支持 Word、PDF、MP4。优先推荐上传视频参考素材；没有视频时，也可以只靠背景信息先生成二创方案。"
+                      : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
                   </p>
                 </button>
               ) : (
@@ -2675,6 +2705,211 @@ export default function MVAnalysisPage() {
           </div>
             </section>
 
+        {isPremiumRemixPage ? (
+          <section className="mt-8 space-y-6">
+            <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 text-[#ffb37f]">
+                  <Film className="h-5 w-5" />
+                  <h2 className="text-2xl font-bold">优质视频二创</h2>
+                </div>
+                {showPremiumReport ? (
+                  <div className="flex flex-wrap gap-2">
+                    {!hasPremiumRemix ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleBuildPremiumRemix()}
+                        disabled={buildPremiumRemixMutation.isPending}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        生成二创方案
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleBuildPremiumRemix()}
+                        disabled={buildPremiumRemixMutation.isPending}
+                        className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                        重新生成
+                      </button>
+                    )}
+                    {hasPremiumRemix ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void handleGeneratePremiumRemixAssets("loop")}
+                          disabled={generatePremiumRemixAssetsMutation.isPending}
+                          className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                          生成 32 秒延展版
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
+                          disabled={generatePremiumRemixAssetsMutation.isPending}
+                          className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
+                          生成 32 秒插值版
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <p className="mt-3 text-sm leading-7 text-white/60">
+                这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。
+              </p>
+
+              {!showPremiumReport ? (
+                <div className="mt-5 rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
+                  <div className="text-sm font-semibold text-[#ffd4b7]">当前账号还没有解锁二创页面权限</div>
+                  <div className="mt-2 text-sm leading-7 text-white/72">
+                    这个独立页已经拆出来了，但生成二创方案、32 秒延展版和插值版仍然需要付费权限或 supervisor 权限。
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {analyzedVideoUrl ? (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                      已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
+                      当前没有绑定视频分析结果时，也可以直接生成二创方案；系统会优先使用上下文、转写和已有分析字段做逆向重构。
+                    </div>
+                  )}
+
+                  {premiumRemix ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+                        <div className="rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">逆向核心</div>
+                          <div className="mt-3 text-xl font-black text-white">{premiumRemix.title}</div>
+                          <div className="mt-3 text-sm leading-7 text-white/76">{replaceTerms(premiumRemix.sourceSummary)}</div>
+                          <div className="mt-3 text-sm leading-7 text-white/72">视觉 DNA：{replaceTerms(premiumRemix.visualDnaSummary)}</div>
+                          <div className="mt-2 text-sm leading-7 text-white/72">内容重构：{replaceTerms(premiumRemix.contentRebuildSummary)}</div>
+                          <div className="mt-2 text-sm leading-7 text-white/72">人设贴合：{replaceTerms(premiumRemix.personaFit)}</div>
+                          <div className="mt-2 text-sm leading-7 text-white/72">演绎方向：{replaceTerms(premiumRemix.performanceDirection)}</div>
+                        </div>
+                        <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-5">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">角色锚定与防污染</div>
+                          <div className="mt-3 space-y-3">
+                            {premiumRemix.characterAnchors.map((item) => (
+                              <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 px-4 py-3">
+                                <div className="text-base font-semibold text-white">{replaceTerms(item.label)}</div>
+                                <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.role)}</div>
+                                <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(item.visualPrompt)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                        <div className="text-sm font-semibold text-white">可直接拍摄的 32 秒分镜</div>
+                        <div className="mt-4 space-y-3">
+                          {premiumRemix.storyboard.map((shot) => (
+                            <div key={shot.shotId} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-[#ffd08f]">镜头 {shot.shotId}</span>
+                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{shot.durationSeconds} 秒</span>
+                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.framing)}</span>
+                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.cameraMovement)}</span>
+                              </div>
+                              <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(shot.sceneDescription)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/70">作用：{replaceTerms(shot.purpose)} / 节奏：{replaceTerms(shot.pacingRole)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/70">画外音：{replaceTerms(shot.voiceover)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white/70">字幕：{replaceTerms(shot.onScreenText)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">32 秒自动延展轨</div>
+                          <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.loopTrack.plan.title)}</div>
+                          <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.summary)}</div>
+                          <div className="mt-4 space-y-2">
+                            {premiumRemix.loopTrack.segments.map((segment) => (
+                              <div key={segment.segmentIndex} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
+                                <div className="font-semibold text-white">{segment.startSecond}-{segment.endSecond} 秒</div>
+                                <div className="mt-1">{replaceTerms(segment.prompt)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">32 秒关键帧插值轨</div>
+                          <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.interpolationTrack.plan.title)}</div>
+                          <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.summary)}</div>
+                          <div className="mt-4 space-y-2">
+                            {premiumRemix.interpolationTrack.nodes.map((node) => (
+                              <div key={node.nodeId} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
+                                <div className="font-semibold text-white">{replaceTerms(node.label)}</div>
+                                <div className="mt-1">{replaceTerms(node.prompt)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {premiumRemixAssets ? (
+                        <div className="rounded-2xl border border-[#9df6c0]/18 bg-[rgba(157,246,192,0.08)] p-5">
+                          <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">已生成素材</div>
+                          <div className="mt-3 text-base font-bold text-white">
+                            {premiumRemixAssets.mode === "loop" ? "32 秒自动延展素材" : "32 秒关键帧插值素材"}
+                          </div>
+                          {premiumRemixAssets.referenceImages.length ? (
+                            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                              {premiumRemixAssets.referenceImages.map((item) => (
+                                <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 p-3">
+                                  <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
+                                  <img src={item.imageUrl} alt={item.label} className="mt-3 h-32 w-full rounded-lg object-cover" />
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          {premiumRemixAssets.clips.length ? (
+                            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                              {premiumRemixAssets.clips.map((item) => (
+                                <div key={`${item.label}-${item.videoUrl}`} className="rounded-xl border border-white/10 bg-black/15 p-3">
+                                  <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
+                                  <video src={item.videoUrl} controls className="mt-3 w-full rounded-lg" />
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="mt-5 grid gap-4 md:grid-cols-3">
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">先做什么</div>
+                        <div className="mt-2">先上传参考视频，或者补充业务背景与目标，然后直接生成二创方案。</div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">会产出什么</div>
+                        <div className="mt-2">角色锚定、32 秒分镜、延展轨、插值轨，以及 Veo 可执行提示词。</div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">适合什么时候用</div>
+                        <div className="mt-2">当你已经找到一条完成度高的视频，想快速拆成自己的商业版本时。</div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+        ) : (
+          <>
         {!analysis ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -4203,6 +4438,8 @@ export default function MVAnalysisPage() {
             </div>
           </section>
         ) : null}
+          </>
+        )}
       </div>
 
       <QuotaExhaustedModal

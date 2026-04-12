@@ -57,6 +57,7 @@ function Router() {
         <Route path={"/analysis"} component={MVAnalysis} />
         <Route path={"/viral"} component={MVAnalysis} />
         <Route path={"/creator-growth-camp"} component={MVAnalysis} />
+        <Route path={"/creator-growth-camp/premium-remix"} component={MVAnalysis} />
         <Route path={"/idol"} component={VirtualIdol} />
         <Route path={"/storyboard"} component={Storyboard} />
         <Route path={"/vfx"} component={VFXEngine} />
