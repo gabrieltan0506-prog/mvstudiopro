@@ -11,7 +11,9 @@ import { Loader2 } from "lucide-react";
 // Lazy load pages for performance
 const Home = lazy(() => import("./pages/Home"));
 const Showcase = lazy(() => import("./pages/Showcase"));
-const MVAnalysis = lazy(() => import("./pages/MVAnalysis"));
+const GrowthCampPage = lazy(() => import("./pages/GrowthCampPage"));
+const PlatformPage = lazy(() => import("./pages/PlatformPage"));
+const PremiumRemixPage = lazy(() => import("./pages/PremiumRemixPage"));
 const VirtualIdol = lazy(() => import("./pages/VirtualIdol"));
 const Storyboard = lazy(() => import("./pages/Storyboard"));
 const VFXEngine = lazy(() => import("./pages/VFXEngine"));
@@ -54,10 +56,11 @@ function Router() {
       <Switch>
         <Route path={"/"} component={Home} />
         <Route path={"/showcase"} component={Showcase} />
-        <Route path={"/analysis"} component={MVAnalysis} />
-        <Route path={"/viral"} component={MVAnalysis} />
-        <Route path={"/creator-growth-camp"} component={MVAnalysis} />
-        <Route path={"/creator-growth-camp/premium-remix"} component={MVAnalysis} />
+        <Route path={"/analysis"} component={GrowthCampPage} />
+        <Route path={"/viral"} component={GrowthCampPage} />
+        <Route path={"/creator-growth-camp"} component={GrowthCampPage} />
+        <Route path={"/creator-growth-camp/platform"} component={PlatformPage} />
+        <Route path={"/creator-growth-camp/premium-remix"} component={PremiumRemixPage} />
         <Route path={"/idol"} component={VirtualIdol} />
         <Route path={"/storyboard"} component={Storyboard} />
         <Route path={"/vfx"} component={VFXEngine} />
