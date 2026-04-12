@@ -304,6 +304,196 @@ function collectRemixQualityIssues(remix: ReturnType<typeof growthPremiumRemixSc
   return Array.from(new Set(issues));
 }
 
+function buildOverviewFromEvidence(input: BuildPremiumRemixInput, brief: ReturnType<typeof buildPremiumRemixBrief>) {
+  const analysis = input.analysis;
+  const titleExecution = input.titleExecutions?.[0];
+  const decisionFramework = input.dataEvidence?.decisionFramework;
+  const platformSummary = (input.dataEvidence?.platformRecommendations || [])
+    .slice(0, 2)
+    .map((item) => `${item.platformLabel}${item.reason ? `更适合，因为${item.reason}` : ""}`)
+    .join("；");
+  const businessSummary = (input.dataEvidence?.businessInsights || [])
+    .slice(0, 2)
+    .map((item) => `${item.title}：${item.detail}`)
+    .join("；");
+
+  return {
+    sourceSummary: `这次二创不是照搬原片，而是抽离它“结果前置、动作解释、证据抬信任、结尾只留一个行动”的成交结构，再改写成符合当前人设与业务目标的新版本。原片最值得借的不是题材本身，而是它如何在前 8 秒内建立可信度、如何用镜头和信息密度推动用户继续看下去。`,
+    visualDnaSummary: `${brief.visual || analysis.visualSummary || "保留原视频的高完成度景别节奏和可信口播氛围"}。画面上优先保留单人出镜、近中景推进、干净背景和证据插入，不做多人物戏剧化表演，也不做廉价冲突感。`,
+    contentRebuildSummary: `${decisionFramework?.mainPathExecution || brief.structure || "内容重构遵循开头钩子、动作解释、证据抬信任、结尾收动作四段结构"}。${titleExecution?.videoPlan ? `具体执行上参考成长营建议：${titleExecution.videoPlan}。` : ""}${businessSummary ? `这次还会把后台数据里最强的商业判断折进文案：${businessSummary}` : ""}`,
+    personaFit: `${brief.persona || "当前账号适合走高可信单人专业表达"}。二创不做炫技复刻，而是把参考视频的结构翻译成“你本人为什么值得相信、你的方法为什么值得执行、你的结尾为什么值得行动”的商业表达。`,
+    performanceDirection: `演绎上维持克制、可信、专业，但每个镜头都要承担不同任务：开头先压问题和结果，中段讲一个具体动作或判断，第三段给证据与材料，最后只留一个行动引导。${platformSummary ? `平台落地优先考虑：${platformSummary}。` : ""}`,
+    languageExpression: analysis.languageExpression || `口播必须走短句、结果句前置、动作句紧跟、证据句补刀的路线。开头不要先做背景交代，先把用户最在意的问题或结论砸出来；中段只讲一个方法，不要三四个要点并列；结尾只给一个动作，别把咨询、私信、预约同时塞进去。`,
+    emotionalExpression: analysis.emotionalExpression || `情绪推进不能全程平。前 2 秒先制造“这个问题就在你身上”的压力感，中段把压力切成“我告诉你怎么处理”的可执行感，第三段用证据带来“这不是空话”的信任感，结尾再收成“现在行动就可以减少损失”的确定感。`,
+    cameraEmotionTension: analysis.cameraEmotionTension || `镜头张力必须跟情绪任务绑定：镜头 1 用中近景或轻推近制造压迫感；镜头 2 用半身和手势动作把方法讲清；镜头 3 切证据、材料、局部特写抬高可信度；镜头 4 回到稳定中景收束，引导行动。不要四个镜头全都只是站着说话。`,
+    bgmAnalysis: analysis.bgmAnalysis || `BGM 要服务成交而不是抢口播。前 2 秒给轻脉冲或呼吸感底噪，让钩子有压迫感；中段保持稳定节拍，支持方法解释；证据段稍微增加层次和空间感，给观众“这件事更真实”的质地；结尾往收束走，不要突然煽情或炸场。`,
+    musicRecommendation: analysis.musicRecommendation || `适合偏 premium knowledge / medical wellness / high-trust consulting 风格的配乐。建议低中速节奏、轻鼓点、空气感 pad、少量钢琴或拨弦，避免 EDM、大鼓史诗、流行舞曲和会抢走普通话口播的高频旋律。`,
+    sunoPrompt: analysis.sunoPrompt || "Premium trust-building commercial soundtrack for a single-expert short video, restrained tempo around 88-96 BPM, subtle pulse, soft piano, warm ambient pad, light percussion, understated Chinese tonal texture, designed to support Mandarin voiceover, no aggressive drop, no pop chorus, elegant and high-conviction.",
+  };
+}
+
+function buildShotReferencePrompt(
+  anchorRole: string,
+  shot: ReturnType<typeof growthPremiumRemixSchema.parse>["storyboard"][number],
+) {
+  return [
+    "Single Chinese expert creator in a premium studio or clinic-like interior, one person only, no crowd, no animal, no extra limbs.",
+    `Identity and role: ${anchorRole}.`,
+    `Shot purpose: ${shot.purpose}.`,
+    `Framing and movement: ${shot.framing}, ${shot.cameraMovement}.`,
+    `Scene action: ${shot.sceneDescription}.`,
+    `Performance cue: ${shot.performanceNote}.`,
+    `Lighting and mood: ${shot.lighting}, polished commercial realism, cinematic texture, subtitle-safe composition, detailed wardrobe, credible posture, clean negative space, highly usable as a storyboard reference frame.`,
+  ].join(" ");
+}
+
+function rebuildStoryboardForExecutionDensity(
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+  input: BuildPremiumRemixInput,
+) {
+  const analysis = input.analysis;
+  const brief = buildPremiumRemixBrief(input);
+  const anchorRole = remix.characterAnchors[0]?.role || brief.persona || "single expert creator";
+  const keyFrames = Array.isArray(analysis.keyFrames) ? analysis.keyFrames.slice(0, 4) : [];
+  const timestamps = Array.isArray(analysis.timestampSuggestions) ? analysis.timestampSuggestions.slice(0, 4) : [];
+  const titleExecution = input.titleExecutions?.[0];
+  const structureLine = brief.structure || input.assetAdaptation?.structure || titleExecution?.videoPlan || "";
+  const proofLine = brief.proof || input.growthHandoff?.brief || "";
+  const actionLine = brief.cta || input.assetAdaptation?.callToAction || input.growthHandoff?.businessGoal || "";
+
+  return remix.storyboard.slice(0, 4).map((shot, index) => {
+    const keyFrame = keyFrames[index];
+    const timestamp = timestamps[index];
+    const sceneDescription = [
+      keyFrame?.whatShows,
+      shot.sceneDescription,
+      index === 0 ? `开头不要寒暄，人物直接看镜头，把最扎心的问题或结果先压出来。` : "",
+      index === 1 ? `画面里必须出现能解释方法的动作、手势、道具或资料，避免继续空口口播。` : "",
+      index === 2 ? `这段必须出现可被观众当成“证据”的东西，比如报告、材料、前后对比、历史片段或数据。` : "",
+      index === 3 ? `结尾保持镜头干净，人物姿态稳定，只留一个明确行动，不要同时抛多个动作。` : "",
+    ].filter(Boolean).join(" ");
+    const voiceover = [
+      timestamp?.fix,
+      shot.voiceover,
+      index === 1 ? structureLine : "",
+      index === 2 ? proofLine : "",
+      index === 3 ? actionLine : "",
+    ].filter(Boolean).join(" ");
+    const onScreenText = [
+      timestamp?.issue,
+      shot.onScreenText,
+      index === 0 ? "直接把最大问题或结果打到字幕上" : "",
+      index === 2 ? "字幕可以只保留一个证据结论，不要堆太多字" : "",
+    ].filter(Boolean).join("；");
+    const performanceNote = [
+      shot.performanceNote,
+      index === 0 ? "第一句必须短、狠、直接，不做背景铺垫。" : "",
+      index === 1 ? "动作必须服务讲解，语速稳定，不要演讲式抒情。" : "",
+      index === 2 ? "把证明力放到画面里，语气收紧，不要继续大段重复说明。" : "",
+      index === 3 ? "收尾只给一个行动，眼神和手势都要稳，形成成交收束。" : "",
+    ].filter(Boolean).join(" ");
+    const nextShot = {
+      ...shot,
+      sceneDescription,
+      voiceover,
+      onScreenText,
+      performanceNote,
+      veoPrompt: [
+        shot.veoPrompt,
+        `Commercial task: ${shot.purpose}.`,
+        `Use only one visible subject and keep wardrobe, face, hairstyle, and set consistent.`,
+      ].filter(Boolean).join(" "),
+    };
+    return {
+      ...nextShot,
+      referencePrompt: buildShotReferencePrompt(anchorRole, nextShot),
+    };
+  });
+}
+
+function rebuildLoopTrack(
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+  input: BuildPremiumRemixInput,
+) {
+  const titleExecution = input.titleExecutions?.[0];
+  const fallbackSummary = input.assetAdaptation?.structure || titleExecution?.videoPlan || "每一段都对应一个明确商业任务和具体动作。";
+  return {
+    plan: {
+      title: "32秒自动延展",
+      summary: `把 4 个 8 秒镜头连续延展成一条可直接生成的视频，每一段都承担不同商业任务，不允许只是同一段话换说法。${fallbackSummary}`,
+      whyItWorks: "它把“钩子、解释、证据、行动”拆成了连续推进，不是泛泛的四段套话，更适合直接生成和直接拍摄。",
+    },
+    segments: remix.storyboard.slice(0, 4).map((shot, index) => ({
+      segmentIndex: index + 1,
+      startSecond: index * 8,
+      endSecond: index * 8 + 8,
+      prompt: `${shot.sceneDescription}。镜头任务：${shot.purpose}。画外音核心：${shot.voiceover}。字幕重点：${shot.onScreenText}。`,
+      stabilityPrompt: `保持单主体、服装、发型、面部特征、背景和光位一致。禁止多人污染，禁止出现动物，禁止额外手脚。`,
+      referenceHint: `优先复用镜头 ${shot.shotId} 的分镜参考图`,
+    })),
+  };
+}
+
+function rebuildInterpolationTrack(
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+  input: BuildPremiumRemixInput,
+) {
+  const [shot1, shot2, shot3, shot4] = remix.storyboard;
+  const intro = input.analysis.openingFrameAssessment || input.analysis.summary || shot1?.sceneDescription || "";
+  const closing = input.assetAdaptation?.callToAction || input.growthHandoff?.businessGoal || shot4?.voiceover || "";
+  return {
+    plan: {
+      title: "32秒关键帧插值",
+      summary: "用 5 个关键节点锁住起承转合：开头钩子、方法展开、证据抬信任、行动前收束、最终 CTA，避免插值轨继续复读总述。",
+      whyItWorks: "节点直接从分镜反推，每一帧都绑定明确的商业任务和画面变化，能明显减少主体漂移和文案重复。",
+    },
+    nodes: [
+      {
+        nodeId: "A",
+        label: "起始状态",
+        prompt: `${shot1?.sceneDescription || intro} One subject only, opening hook energy, medium close-up, direct gaze, clean premium background.`,
+      },
+      {
+        nodeId: "M1",
+        label: "动作解释",
+        prompt: `${shot2?.sceneDescription || ""} Show one clear explanatory gesture or prop, still one subject only, same wardrobe and set, practical instruction mood.`,
+      },
+      {
+        nodeId: "M2",
+        label: "证据出现",
+        prompt: `${shot3?.sceneDescription || ""} Bring in proof, report, material, comparison, or visual evidence, premium close details, still one subject logic.`,
+      },
+      {
+        nodeId: "M3",
+        label: "收束前准备",
+        prompt: `${shot4?.sceneDescription || ""} Transition from evidence to decision, body language steadier, trust fully established, CTA about to land.`,
+      },
+      {
+        nodeId: "B",
+        label: "结束状态",
+        prompt: `${closing} Single subject, stable medium shot, polished commercial finish, one clear action cue, subtitle-safe composition, no clutter.`,
+      },
+    ],
+  };
+}
+
+function enforcePremiumRemixExecutionDensity(
+  remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
+  input: BuildPremiumRemixInput,
+) {
+  const brief = buildPremiumRemixBrief(input);
+  const overview = buildOverviewFromEvidence(input, brief);
+  const storyboard = rebuildStoryboardForExecutionDensity(remix, input);
+  return growthPremiumRemixSchema.parse({
+    ...remix,
+    title: "优质视频二创",
+    ...overview,
+    storyboard,
+    loopTrack: rebuildLoopTrack({ ...remix, storyboard } as ReturnType<typeof growthPremiumRemixSchema.parse>, input),
+    interpolationTrack: rebuildInterpolationTrack({ ...remix, storyboard } as ReturnType<typeof growthPremiumRemixSchema.parse>, input),
+  });
+}
+
 async function polishPremiumRemixPlan(
   strategistModel: string,
   prompt: string,
@@ -591,13 +781,43 @@ async function hydratePremiumRemixReferenceImages(remixInput: ReturnType<typeof 
         });
       } catch (error) {
         console.warn("[growth.hydratePremiumRemixReferenceImages] shot failed:", error);
-        steps.push({
-          step: "shot-reference-image",
-          status: "failed",
-          label: `镜头 ${shot.shotId}`,
-          promptPreview: previewText(shot.referencePrompt),
-          error: error instanceof Error ? error.message : String(error),
-        });
+        try {
+          const image = await generateGeminiImage({
+            prompt: shot.referencePrompt,
+            quality: "1k",
+            aspectRatio: "16:9",
+          });
+          referenceImageUrl = image.imageUrl;
+          steps.push({
+            step: "shot-reference-image-retry",
+            status: "ok",
+            label: `镜头 ${shot.shotId}`,
+            promptPreview: previewText(shot.referencePrompt),
+            model: image.model,
+            location: image.location,
+            imageUrl: image.imageUrl,
+          });
+        } catch (retryError) {
+          if (primaryReference) {
+            referenceImageUrl = primaryReference;
+            steps.push({
+              step: "shot-reference-image-fallback",
+              status: "ok",
+              label: `镜头 ${shot.shotId}`,
+              promptPreview: previewText(shot.referencePrompt),
+              imageUrl: primaryReference,
+              error: retryError instanceof Error ? retryError.message : String(retryError),
+            });
+          } else {
+            steps.push({
+              step: "shot-reference-image",
+              status: "failed",
+              label: `镜头 ${shot.shotId}`,
+              promptPreview: previewText(shot.referencePrompt),
+              error: retryError instanceof Error ? retryError.message : String(retryError),
+            });
+          }
+        }
       }
     } else if (referenceImageUrl) {
       steps.push({ step: "shot-reference-image", status: "skipped", label: `镜头 ${shot.shotId}`, imageUrl: referenceImageUrl });
@@ -740,16 +960,17 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     const rawPrimary = String(response.choices[0].message.content || "");
     let parsed = growthPremiumRemixSchema.parse(asJsonObject(rawPrimary));
     const rewritten = await rewritePremiumRemixCopyFromKeyMoments(strategistModel, input, parsed);
-    parsed = rewritten.parsed;
+    parsed = enforcePremiumRemixExecutionDensity(rewritten.parsed, input);
     let qualityIssues = collectRemixQualityIssues(parsed);
     let source: PremiumRemixBuildDebug["source"] = "primary";
     let rawPreview = rewritten.raw || rawPrimary;
 
     if (qualityIssues.length) {
       const polished = await polishPremiumRemixPlan(strategistModel, prompt, parsed, qualityIssues);
-      const polishedIssues = collectRemixQualityIssues(polished.parsed);
+      const polishedRemix = enforcePremiumRemixExecutionDensity(polished.parsed, input);
+      const polishedIssues = collectRemixQualityIssues(polishedRemix);
       if (polishedIssues.length <= qualityIssues.length) {
-        parsed = polished.parsed;
+        parsed = polishedRemix;
         qualityIssues = polishedIssues;
         source = "polished";
         rawPreview = polished.raw;
@@ -771,7 +992,9 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     };
   } catch (error) {
     console.warn("[growth.buildPremiumRemixPlan] fallback:", error);
-    const hydrated = await hydratePremiumRemixReferenceImages(buildFallbackRemix(input));
+    const hydrated = await hydratePremiumRemixReferenceImages(
+      enforcePremiumRemixExecutionDensity(buildFallbackRemix(input), input),
+    );
     return {
       remix: hydrated.remix,
       debug: {
