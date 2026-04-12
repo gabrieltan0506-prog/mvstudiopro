@@ -8,7 +8,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
-import { clearPremiumRemixDraft, readPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
+import { clearPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -2434,17 +2434,14 @@ export default function MVAnalysisPage({
   }, [generatePremiumRemixAssetsMutation, persistPremiumRemixDraft, premiumRemix]);
 
   useEffect(() => {
-    if (!isPremiumRemixPage || analysis || premiumRemix || premiumRemixAssets || context || analysisTranscript) return;
-    const draft = readPremiumRemixDraft();
-    if (!draft) return;
-    setPremiumRemixDraftMeta(draft);
-    if (draft.context) setContext(draft.context);
-    if (draft.transcript) setAnalysisTranscript(draft.transcript);
-    if (draft.analyzedVideoUrl) setAnalyzedVideoUrl(draft.analyzedVideoUrl);
-    if (draft.analysis) setAnalysis(draft.analysis);
-    if (draft.premiumRemix) setPremiumRemix(draft.premiumRemix);
-    if (draft.premiumRemixAssets) setPremiumRemixAssets(draft.premiumRemixAssets);
-  }, [analysis, analysisTranscript, context, isPremiumRemixPage, premiumRemix, premiumRemixAssets]);
+    if (!isPremiumRemixPage) return;
+    clearPremiumRemixDraft();
+    setPremiumRemixDraftMeta(null);
+    setPremiumRemix(null);
+    setPremiumRemixAssets(null);
+    setPremiumRemixDebug(null);
+    setPremiumRemixAssetsDebug(null);
+  }, [isPremiumRemixPage]);
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
