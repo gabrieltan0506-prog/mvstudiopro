@@ -1489,6 +1489,8 @@ export default function MVAnalysisPage() {
   const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
   const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
   const [premiumRemixDraftMeta, setPremiumRemixDraftMeta] = useState<PersistedPremiumRemixDraft | null>(null);
+  const [premiumRemixDebug, setPremiumRemixDebug] = useState<Record<string, any> | null>(null);
+  const [premiumRemixAssetsDebug, setPremiumRemixAssetsDebug] = useState<Record<string, any> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -2295,6 +2297,7 @@ export default function MVAnalysisPage() {
 
   const handleBuildPremiumRemix = useCallback(async () => {
     try {
+      setPremiumRemixDebug(null);
       const result = await buildPremiumRemixMutation.mutateAsync({
         context: context || undefined,
         transcript: analysisTranscript || undefined,
@@ -2310,6 +2313,8 @@ export default function MVAnalysisPage() {
       });
       setPremiumRemix(result.remix);
       setPremiumRemixAssets(null);
+      setPremiumRemixDebug(result.debug || null);
+      setPremiumRemixAssetsDebug(null);
       persistPremiumRemixDraft(result.remix, null);
       toast.success("优质视频二创方案已生成");
     } catch (error: any) {
@@ -2323,11 +2328,13 @@ export default function MVAnalysisPage() {
   const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
     if (!premiumRemix) return;
     try {
+      setPremiumRemixAssetsDebug(null);
       const result = await generatePremiumRemixAssetsMutation.mutateAsync({
         remix: premiumRemix,
         mode,
       });
       setPremiumRemixAssets(result.assets);
+      setPremiumRemixAssetsDebug(result.debug || null);
       persistPremiumRemixDraft(undefined, result.assets);
       toast.success(mode === "loop" ? "32秒延展素材已生成" : "32秒插值素材已生成");
     } catch (error: any) {
@@ -2855,6 +2862,93 @@ export default function MVAnalysisPage() {
                       当前没有绑定视频分析结果时，也可以直接生成二创方案；系统会优先使用上下文、转写和已有分析字段做逆向重构。
                     </div>
                   )}
+                  {(premiumRemixDebug || premiumRemixAssetsDebug) ? (
+                    <details open className="mt-4 rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-4">
+                      <summary className="cursor-pointer list-none text-sm font-semibold text-[#c7e3ff]">
+                        Debug 模式（每个步骤）
+                      </summary>
+                      <div className="mt-4 space-y-4 text-sm leading-7 text-white/74">
+                        {premiumRemixDebug ? (
+                          <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+                            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#90c4ff]">
+                              <ScanSearch className="h-4 w-4" />
+                              <span>二创方案生成</span>
+                            </div>
+                            <div className="mt-2">模型：{String(premiumRemixDebug.strategistModel || "-")}</div>
+                            <div>来源：{String(premiumRemixDebug.source || "-")}</div>
+                            {premiumRemixDebug.inputSummary ? (
+                              <div className="text-white/62">
+                                输入长度：context {premiumRemixDebug.inputSummary.contextChars || 0} 字，transcript {premiumRemixDebug.inputSummary.transcriptChars || 0} 字，关键帧 {premiumRemixDebug.inputSummary.keyFrameCount || 0}，标题执行 {premiumRemixDebug.inputSummary.titleExecutionCount || 0}
+                              </div>
+                            ) : null}
+                            {Array.isArray(premiumRemixDebug.qualityIssues) && premiumRemixDebug.qualityIssues.length ? (
+                              <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.08)] p-3 text-[#ffd4b7]">
+                                质量闸门：{premiumRemixDebug.qualityIssues.join("；")}
+                              </div>
+                            ) : null}
+                            {premiumRemixDebug.promptPreview ? (
+                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-white/64">
+                                Prompt 预览：{String(premiumRemixDebug.promptPreview)}
+                              </div>
+                            ) : null}
+                            {premiumRemixDebug.rawPreview ? (
+                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-white/58">
+                                模型输出预览：{String(premiumRemixDebug.rawPreview)}
+                              </div>
+                            ) : null}
+                            {Array.isArray(premiumRemixDebug.hydrationSteps) && premiumRemixDebug.hydrationSteps.length ? (
+                              <div className="mt-3 space-y-2">
+                                {premiumRemixDebug.hydrationSteps.map((step: any, index: number) => (
+                                  <div key={`premium-remix-debug-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
+                                    <div className="text-white/62">状态：{String(step.status || "-")}{step.model ? ` | model: ${step.model}` : ""}{step.location ? ` | region: ${step.location}` : ""}</div>
+                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
+                                    {step.imageUrl ? <div className="mt-1 break-all text-[#9df6c0]">image: {String(step.imageUrl)}</div> : null}
+                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {premiumRemixAssetsDebug ? (
+                          <div className="rounded-xl border border-white/10 bg-black/15 p-4">
+                            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
+                              <ScanSearch className="h-4 w-4" />
+                              <span>素材生成</span>
+                            </div>
+                            <div className="mt-2">模式：{String(premiumRemixAssetsDebug.mode || "-")}</div>
+                            {Array.isArray(premiumRemixAssetsDebug.referenceSteps) && premiumRemixAssetsDebug.referenceSteps.length ? (
+                              <div className="mt-3 space-y-2">
+                                {premiumRemixAssetsDebug.referenceSteps.map((step: any, index: number) => (
+                                  <div key={`premium-remix-asset-ref-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
+                                    <div className="text-white/62">状态：{String(step.status || "-")}{step.model ? ` | model: ${step.model}` : ""}{step.location ? ` | region: ${step.location}` : ""}</div>
+                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
+                                    {step.imageUrl ? <div className="mt-1 break-all text-[#9df6c0]">image: {String(step.imageUrl)}</div> : null}
+                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {Array.isArray(premiumRemixAssetsDebug.clipSteps) && premiumRemixAssetsDebug.clipSteps.length ? (
+                              <div className="mt-3 space-y-2">
+                                {premiumRemixAssetsDebug.clipSteps.map((step: any, index: number) => (
+                                  <div key={`premium-remix-asset-clip-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
+                                    <div className="text-white/62">状态：{String(step.status || "-")}</div>
+                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
+                                    {step.videoUrl ? <div className="mt-1 break-all text-[#9df6c0]">video: {String(step.videoUrl)}</div> : null}
+                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </details>
+                  ) : null}
 
                   {premiumRemix ? (
                     <div className="mt-5 space-y-4">

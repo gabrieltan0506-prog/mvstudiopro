@@ -1044,7 +1044,7 @@ export const appRouter = router({
         creationStoryboardPrompt: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const remix = await buildPremiumRemixPlan({
+        const result = await buildPremiumRemixPlan({
           context: input.context,
           transcript: input.transcript,
           analysis: input.analysis || {
@@ -1059,10 +1059,10 @@ export const appRouter = router({
         });
         return {
           success: true,
-          remix: growthPremiumRemixSchema.parse(remix),
+          remix: growthPremiumRemixSchema.parse(result.remix),
           debug: {
             route: "mvAnalysis.buildPremiumRemix",
-            strategistModel: "gemini-3.1-pro-preview",
+            ...result.debug,
           },
         };
       }),
@@ -1079,10 +1079,10 @@ export const appRouter = router({
         });
         return {
           success: true,
-          assets: growthPremiumRemixAssetsSchema.parse(result),
+          assets: growthPremiumRemixAssetsSchema.parse(result.assets),
           debug: {
             route: "mvAnalysis.generatePremiumRemixAssets",
-            mode: input.mode,
+            ...result.debug,
           },
         };
       }),
