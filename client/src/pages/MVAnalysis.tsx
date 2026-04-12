@@ -1460,7 +1460,6 @@ export default function MVAnalysisPage() {
 
   const [location, navigate] = useLocation();
   const isPremiumRemixPage = location === "/creator-growth-camp/premium-remix";
-  const utils = trpc.useUtils();
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
   const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
 
@@ -1494,6 +1493,7 @@ export default function MVAnalysisPage() {
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
   const [selectedGrowthModel, setSelectedGrowthModel] = useState<GrowthCampModel>("gemini-2.5-pro");
   const [isPremiumRemixPipelineRunning, setIsPremiumRemixPipelineRunning] = useState(false);
+  const [pendingPremiumRemixAutoRun, setPendingPremiumRemixAutoRun] = useState(false);
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
   const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
   const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
@@ -1802,27 +1802,7 @@ export default function MVAnalysisPage() {
       });
       if (isPremiumRemixPage) {
         setIsPremiumRemixPipelineRunning(true);
-        const growthResult = await utils.mvAnalysis.getGrowthSnapshot.fetch({
-          context: context || undefined,
-          modelName: "gemini-3.1-pro-preview",
-          requestedPlatforms: [...FULL_PLATFORM_ORDER],
-          analysis: normalizedAnalysis,
-        });
-        const snapshot = growthResult?.snapshot || null;
-        const remixResult = await buildPremiumRemixMutation.mutateAsync({
-          context: context || undefined,
-          transcript: nextTranscript || undefined,
-          analysis: normalizedAnalysis,
-          modelName: "gemini-3.1-pro-preview",
-          titleExecutions: snapshot?.titleExecutions?.length ? snapshot.titleExecutions : premiumRemixDraftMeta?.titleExecutions || [],
-          assetAdaptation: snapshot?.decisionFramework?.assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
-          growthHandoff: snapshot?.growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
-          creationStoryboardPrompt: snapshot?.creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
-        });
-        setPremiumRemix(remixResult.remix);
-        setPremiumRemixAssets(null);
-        setPremiumRemixDebug(remixResult.debug || null);
-        setPremiumRemixAssetsDebug(null);
+        setPendingPremiumRemixAutoRun(true);
       }
       setUploadProgress(100);
       setUploadStage("done");
@@ -1837,7 +1817,7 @@ export default function MVAnalysisPage() {
         setIsPremiumRemixPipelineRunning(false);
       }
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage, utils.mvAnalysis.getGrowthSnapshot, buildPremiumRemixMutation, premiumRemixDraftMeta]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, selectedGrowthModel, usageStatsQuery, isPremiumRemixPage]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -1856,6 +1836,8 @@ export default function MVAnalysisPage() {
     setPremiumRemixDraftMeta(null);
     setPremiumRemixDebug(null);
     setPremiumRemixAssetsDebug(null);
+    setPendingPremiumRemixAutoRun(false);
+    setIsPremiumRemixPipelineRunning(false);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
@@ -2402,6 +2384,37 @@ export default function MVAnalysisPage() {
     persistPremiumRemixDraft(result.remix, null);
     return result;
   }
+
+  useEffect(() => {
+    if (!pendingPremiumRemixAutoRun || !isPremiumRemixPage || !analysis) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const growthResult = await growthSnapshotQuery.refetch();
+        if (cancelled) return;
+        await runPremiumRemixUpgrade(
+          analysis,
+          analysisTranscript || "",
+          growthResult.data?.snapshot || growthSnapshot || null,
+        );
+      } catch (error: any) {
+        if (!cancelled) {
+          setError(error?.message || "二创分析升级失败");
+          setUploadStage("error");
+        }
+      } finally {
+        if (!cancelled) {
+          setPendingPremiumRemixAutoRun(false);
+          setIsPremiumRemixPipelineRunning(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingPremiumRemixAutoRun, isPremiumRemixPage, analysis, analysisTranscript, growthSnapshotQuery, growthSnapshot]);
 
   const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
     if (!premiumRemix) return;
