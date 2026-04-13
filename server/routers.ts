@@ -1510,13 +1510,18 @@ export const appRouter = router({
         interactivePlatform: z.boolean().optional(),
       }))
       .query(async ({ input, ctx }) => {
+        const t0 = Date.now();
+        const timing: Record<string, number> = {};
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const interactivePlatform = Boolean(input.interactivePlatform);
         const store = interactivePlatform
           ? await readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true })
           : await readTrendStore({ preferDerivedFiles: true });
+        timing.storeMs = Date.now() - t0;
+        console.log(`[platform.getGrowthSnapshot] store read done in ${timing.storeMs}ms`);
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
+        timing.userEvidenceMs = Date.now() - t0 - timing.storeMs;
         const historicalPlatformTotals = Object.fromEntries(
           requestedPlatforms.map((platform) => [
             platform,
@@ -1555,19 +1560,31 @@ export const appRouter = router({
               historicalPlatformTotals,
               windowDaysOverride: selectedWindowDays,
             });
-        const personalized = await personalizeGrowthSnapshot({
-          snapshot: baseSnapshot,
-          analysis: input.analysis,
-          context: input.context,
-          requestedPlatforms,
-          modelName: input.modelName,
-          store: effectiveStore,
-          userEvidence,
-          windowDays: selectedWindowDays,
-        }).catch((error) => {
+        const t1 = Date.now();
+        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 18_000 : 30_000;
+        const personalized = await Promise.race([
+          personalizeGrowthSnapshot({
+            snapshot: baseSnapshot,
+            analysis: input.analysis,
+            context: input.context,
+            requestedPlatforms,
+            modelName: input.modelName,
+            store: effectiveStore,
+            userEvidence,
+            windowDays: selectedWindowDays,
+          }),
+          new Promise<null>((resolve) => {
+            setTimeout(() => {
+              console.warn(`[platform.getGrowthSnapshot] personalization timed out after ${PERSONALIZATION_TIMEOUT_MS}ms`);
+              resolve(null);
+            }, PERSONALIZATION_TIMEOUT_MS);
+          }),
+        ]).catch((error) => {
           console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
           return null;
         });
+        timing.personalizationMs = Date.now() - t1;
+        console.log(`[platform.getGrowthSnapshot] personalization done in ${timing.personalizationMs}ms (result=${Boolean(personalized)})`);
         const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
           requestedPlatforms,
           store: effectiveStore,
@@ -1617,6 +1634,8 @@ export const appRouter = router({
             });
 
         const platformDashboardSource = snapshot;
+        const t2 = Date.now();
+        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 20_000 : 18_000;
         const platformDashboard = await Promise.race([
           buildPlatformDashboard({
             snapshot: platformDashboardSource,
@@ -1627,12 +1646,13 @@ export const appRouter = router({
           }),
           new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
             setTimeout(() => {
+              console.warn(`[platform.getGrowthSnapshot] dashboard timed out after ${DASHBOARD_TIMEOUT_MS}ms, using fallback`);
               resolve(buildFallbackPlatformDashboard({
                 snapshot: platformDashboardSource,
                 context: input.context,
                 windowDays: selectedWindowDays,
               }));
-            }, interactivePlatform ? 35_000 : 18_000);
+            }, DASHBOARD_TIMEOUT_MS);
           }),
         ]).catch((error) => {
           console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
@@ -1642,6 +1662,9 @@ export const appRouter = router({
             windowDays: selectedWindowDays,
           });
         });
+        timing.dashboardMs = Date.now() - t2;
+        const totalMs = Date.now() - t0;
+        console.log(`[platform.getGrowthSnapshot] dashboard done in ${timing.dashboardMs}ms | total=${totalMs}ms | personalization=${timing.personalizationMs}ms | store=${timing.storeMs}ms`);
 
         return {
           success: true,
@@ -1672,6 +1695,8 @@ export const appRouter = router({
             businessInsightCount: snapshot.businessInsights.length,
             growthPlanCount: snapshot.growthPlan.length,
             creationAssetExtensionCount: snapshot.creationAssist.assetExtensions.length,
+            timing,
+            totalMs: Date.now() - t0,
           },
         };
       }),
