@@ -57,6 +57,16 @@ type AskResult = {
   nextQuestions: string[];
 };
 
+type PlatformDashboard = {
+  headline: string;
+  subheadline: string;
+  topSignals: Array<{ title: string; detail: string; badge?: string }>;
+  platformMenu: Array<{ platform: string; label: string; trend: string; lane: string; whyNow: string; nextMove: string }>;
+  hotTopics: Array<{ title: string; whyHot: string; howToUse: string }>;
+  actionCards: Array<{ title: string; detail: string }>;
+  conversationStarters: string[];
+};
+
 function extractFocusKeywords(value: string) {
   return Array.from(
     new Set((String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6)),
@@ -104,43 +114,75 @@ export default function PlatformPage() {
   });
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
+  const platformDashboard = growthSnapshotQuery.data?.platformDashboard as PlatformDashboard | null | undefined;
 
   const primaryPlatforms = useMemo(() => snapshot?.platformSnapshots.slice(0, 4) ?? [], [snapshot]);
   const maxFit = Math.max(...primaryPlatforms.map((item) => item.audienceFitScore), 100);
   const maxMomentum = Math.max(...primaryPlatforms.map((item) => item.momentumScore), 100);
-  const topTopics = useMemo(() => snapshot?.topicLibrary.slice(0, 9) ?? [], [snapshot]);
+  const topTopics = useMemo(
+    () =>
+      platformDashboard?.hotTopics.length
+        ? platformDashboard.hotTopics
+        : (snapshot?.topicLibrary.slice(0, 9).map((item) => ({
+            title: item.title,
+            whyHot: item.rationale,
+            howToUse: item.executionHint,
+          })) ?? []),
+    [platformDashboard, snapshot],
+  );
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
-  const actionSteps = useMemo(() => snapshot?.growthPlan.slice(0, 4) ?? [], [snapshot]);
-  const keyInsights = useMemo(() => snapshot?.businessInsights.slice(0, 4) ?? [], [snapshot]);
+  const actionSteps = useMemo(
+    () =>
+      platformDashboard?.actionCards.length
+        ? platformDashboard.actionCards.map((item, index) => ({ day: index + 1, title: item.title, action: item.detail }))
+        : (snapshot?.growthPlan.slice(0, 4) ?? []),
+    [platformDashboard, snapshot],
+  );
+  const keyInsights = useMemo(
+    () =>
+      platformDashboard?.topSignals.length
+        ? platformDashboard.topSignals.map((item) => ({ title: item.title, detail: item.detail }))
+        : (snapshot?.businessInsights.slice(0, 4) ?? []),
+    [platformDashboard, snapshot],
+  );
   const recommendationHighlights = useMemo(
     () =>
-      recommendedPlatforms.slice(0, 3).map((item, index) => ({
-        id: `${item.name}-${index}`,
-        title: item.name,
-        summary: index === 0 ? "现在先拿反馈" : index === 1 ? "第二站补量" : "后续扩展位",
-        action: item.action,
-      })),
-    [recommendedPlatforms],
+      platformDashboard?.platformMenu.length
+        ? platformDashboard.platformMenu.slice(0, 3).map((item, index) => ({
+            id: `${item.platform}-${index}`,
+            title: item.label,
+            summary: item.lane,
+            action: `${item.trend} ${item.nextMove}`,
+          }))
+        : recommendedPlatforms.slice(0, 3).map((item, index) => ({
+            id: `${item.name}-${index}`,
+            title: item.name,
+            summary: index === 0 ? "现在先拿反馈" : index === 1 ? "第二站补量" : "后续扩展位",
+            action: item.action,
+          })),
+    [platformDashboard, recommendedPlatforms],
   );
   const focusKeywords = useMemo(() => extractFocusKeywords(focusPrompt), [focusPrompt]);
   const personalizedSubject = useMemo(() => {
     if (focusKeywords.length) return focusKeywords.join(" / ");
-    return topTopics[0]?.title || "当前内容方向";
-  }, [focusKeywords, topTopics]);
+    return topTopics[0]?.title || platformDashboard?.headline || "当前内容方向";
+  }, [focusKeywords, platformDashboard, topTopics]);
   const recommendationHeadline = useMemo(() => {
+    if (platformDashboard?.headline) return platformDashboard.headline;
     const topPlatform = recommendedPlatforms[0]?.name || "当前优先平台";
     return `围绕 ${personalizedSubject}，先把 ${topPlatform} 做透`;
-  }, [personalizedSubject, recommendedPlatforms]);
+  }, [personalizedSubject, platformDashboard, recommendedPlatforms]);
   const hotQuestionSuggestions = useMemo(() => {
     const platformLead = recommendedPlatforms[0]?.name || "小红书";
     const topicLead = topTopics[0]?.title || personalizedSubject;
+    if (platformDashboard?.conversationStarters.length) return platformDashboard.conversationStarters.slice(0, 4);
     return [
       `如果我先发${platformLead}，围绕“${topicLead}”应该先做哪三个选题？`,
       `在${selectedWindowDays}天维度里，现在哪个平台最值得优先押注？`,
       `如果我只做图文，不做视频，围绕“${personalizedSubject}”应该怎么切入？`,
       `结合这轮趋势，${personalizedSubject} 最容易做成哪种商业承接？`,
     ];
-  }, [personalizedSubject, recommendedPlatforms, selectedWindowDays, topTopics]);
+  }, [personalizedSubject, platformDashboard, recommendedPlatforms, selectedWindowDays, topTopics]);
 
   const handleAnalyze = async () => {
     setAskResult(null);
@@ -213,7 +255,7 @@ export default function PlatformPage() {
                   </span>
                 </h1>
                 <p className="mt-5 max-w-3xl text-sm leading-8 text-[#c8bfe7] md:text-base">
-                  这里不上传素材，不做二创。只看 15 天、30 天、45 天这三种时间维度下，和你当前关注方向最相关的平台趋势、结构判断和商业机会，再给你一个可继续追问的平台顾问。
+                  {platformDashboard?.subheadline || "这里不上传素材，不做二创。只看 15 天、30 天、45 天这三种时间维度下，和你当前关注方向最相关的平台趋势、结构判断和商业机会，再给你一个可继续追问的平台顾问。"}
                 </p>
               </div>
 
@@ -375,12 +417,11 @@ export default function PlatformPage() {
                   热点主题与切入角度
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {topTopics.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  {topTopics.map((item, index) => (
+                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                       <div className="text-sm font-semibold text-white">{item.title}</div>
-                      <div className="mt-2 text-xs text-[#ff7fd5]">置信度 {item.confidence}</div>
-                      <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">{item.rationale}</div>
-                      <div className="mt-3 text-sm leading-7 text-[#8cefff]">{item.executionHint}</div>
+                      <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">{item.whyHot}</div>
+                      <div className="mt-3 text-sm leading-7 text-[#8cefff]">{item.howToUse}</div>
                     </div>
                   ))}
                 </div>

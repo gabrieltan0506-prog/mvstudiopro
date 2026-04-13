@@ -341,6 +341,101 @@ const platformFollowUpResponseSchema = z.object({
   nextQuestions: z.array(z.string()).default([]),
 });
 
+const platformDashboardResponseSchema = z.object({
+  headline: z.string(),
+  subheadline: z.string(),
+  topSignals: z.array(z.object({
+    title: z.string(),
+    detail: z.string(),
+    badge: z.string().default(""),
+  })).default([]),
+  platformMenu: z.array(z.object({
+    platform: z.string(),
+    label: z.string(),
+    trend: z.string(),
+    lane: z.string(),
+    whyNow: z.string(),
+    nextMove: z.string(),
+  })).default([]),
+  hotTopics: z.array(z.object({
+    title: z.string(),
+    whyHot: z.string(),
+    howToUse: z.string(),
+  })).default([]),
+  actionCards: z.array(z.object({
+    title: z.string(),
+    detail: z.string(),
+  })).default([]),
+  conversationStarters: z.array(z.string()).default([]),
+});
+
+async function buildPlatformDashboard(params: {
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+  context?: string;
+  requestedPlatforms: string[];
+  store: Awaited<ReturnType<typeof readTrendStore>>;
+  windowDays: number;
+}) {
+  const collectionEvidence = params.requestedPlatforms.map((platform) => {
+    const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
+    const bucketCounts = collection?.stats?.bucketCounts || getCollectionBucketCounts(collection?.items || []);
+    return {
+      platform,
+      collectedAt: collection?.collectedAt || null,
+      itemCount: collection?.items?.length || 0,
+      hotTitles: (collection?.items || []).slice(0, 10).map((item) => item.title).filter(Boolean),
+      topBuckets: Object.entries(bucketCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 6)
+        .map(([bucket, count]) => ({ bucket, count })),
+    };
+  });
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: "gemini-2.5-pro",
+    messages: [
+      {
+        role: "system",
+        content: `你是一位专业的数据策略顾问和平台操盘手。
+
+你的任务是基于当前时间窗口的平台实时数据，生成一个给客户看的互动看板。
+
+要求：
+1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
+2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
+3. 每个平台都要结合“当前热点标题 + 当前主要赛道/桶 + 当前平台适配结论”生成一句当下有效的判断。
+4. hotTopics 必须来自当前数据，不要凭空杜撰泛热点。
+5. 语气专业、清楚、有温度，但不要鸡汤。
+6. 输出严格 JSON，字段为 headline、subheadline、topSignals、platformMenu、hotTopics、actionCards、conversationStarters。`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          context: params.context || "",
+          windowDays: params.windowDays,
+          snapshot: {
+            overview: params.snapshot.overview,
+            analysisTracks: params.snapshot.analysisTracks,
+            platformSnapshots: params.snapshot.platformSnapshots,
+            platformRecommendations: params.snapshot.platformRecommendations,
+            businessInsights: params.snapshot.businessInsights,
+            growthPlan: params.snapshot.growthPlan,
+            topicLibrary: params.snapshot.topicLibrary.slice(0, 12),
+            dataAnalystSummary: params.snapshot.dataAnalystSummary,
+          },
+          collections: collectionEvidence,
+        }),
+      },
+    ],
+  });
+
+  return platformDashboardResponseSchema.parse(
+    JSON.parse(String(response.choices[0]?.message?.content || "{}")),
+  );
+}
+
 async function personalizeGrowthSnapshot(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   analysis: z.infer<typeof growthAnalysisScoresSchema>;
@@ -1360,10 +1455,22 @@ export const appRouter = router({
               },
             });
 
+        const platformDashboard = await buildPlatformDashboard({
+          snapshot,
+          context: input.context,
+          requestedPlatforms,
+          store: effectiveStore,
+          windowDays: selectedWindowDays,
+        }).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+          return null;
+        });
+
         return {
           success: true,
           source: snapshot.status.source,
           snapshot,
+          platformDashboard,
           debug: {
             route: "mvAnalysis.getGrowthSnapshot",
             modelName: resolveGrowthCampFinalModel(input.modelName),
@@ -1389,14 +1496,15 @@ export const appRouter = router({
         };
       }),
 
-    askPlatformFollowUp: publicProcedure
+    askPlatformFollowUp: protectedProcedure
       .input(z.object({
         question: z.string().min(3).max(1200),
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         snapshot: growthSnapshotSchema,
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ ctx, input }) => {
+        await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
         const response = await invokeLLM({
           model: "pro",
           provider: "vertex",
