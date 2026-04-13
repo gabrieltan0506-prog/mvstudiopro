@@ -425,7 +425,7 @@ async function buildPlatformDashboard(params: {
 
   const response = await invokeLLM({
     model: "pro",
-    provider: "vertex",
+    provider: "gemini",
     modelName: "gemini-2.5-pro",
     messages: [
       {
@@ -696,7 +696,7 @@ async function personalizeGrowthSnapshot(params: {
 
   const response = await invokeLLM({
     model: "pro",
-    provider: "vertex",
+    provider: "gemini",
     modelName: finalModel,
     messages: [
       {
@@ -1795,7 +1795,7 @@ export const appRouter = router({
         try {
           const response = await invokeLLM({
             model: "pro",
-            provider: "vertex",
+            provider: "gemini",
             modelName: "gemini-2.5-pro",
             messages: [
               {
