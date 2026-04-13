@@ -1153,6 +1153,68 @@ export async function readTrendStore(options?: { preferDerivedFiles?: boolean })
   return createEmptyStore();
 }
 
+export async function readTrendStoreForPlatforms(
+  platforms: GrowthPlatform[],
+  options?: { preferDerivedFiles?: boolean },
+): Promise<TrendStoreFile> {
+  await ensureStoreDir();
+  const uniquePlatforms = Array.from(new Set(platforms.filter(Boolean)));
+  const meta = await readRuntimeMeta();
+  const history = await readHistorySummaryFile();
+
+  if (options?.preferDerivedFiles) {
+    const truthEntries = await Promise.all(
+      uniquePlatforms.map(async (platform) => [platform, await readPlatformCurrentTruthFile(platform)] as const),
+    );
+    const truthCollections = Object.fromEntries(
+      truthEntries.filter(([, entry]) => Boolean(entry)).map(([platform, entry]) => [platform, entry!.collection]),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+    if (Object.keys(truthCollections).length) {
+      return {
+        updatedAt: meta.updatedAt || nowShanghaiIso(),
+        collections: truthCollections,
+        scheduler: meta.scheduler || {},
+        archiveIndex: [],
+        history: history || createEmptyHistoryState(),
+        backfill: meta.backfill || createEmptyStore().backfill,
+        backfillLive: meta.backfillLive || createEmptyStore().backfillLive,
+        backfillHistory: meta.backfillHistory || createEmptyStore().backfillHistory,
+        mailDigest: meta.mailDigest || {},
+      };
+    }
+
+    const derivedEntries = await Promise.all(
+      uniquePlatforms.map(async (platform) => [platform, await readPlatformCollectionFile(platform)] as const),
+    );
+    const derivedCollections = Object.fromEntries(
+      derivedEntries.filter(([, collection]) => Boolean(collection)).map(([platform, collection]) => [platform, collection!]),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
+    if (Object.keys(derivedCollections).length) {
+      return {
+        updatedAt: meta.updatedAt || nowShanghaiIso(),
+        collections: derivedCollections,
+        scheduler: meta.scheduler || {},
+        archiveIndex: [],
+        history: history || createEmptyHistoryState(),
+        backfill: meta.backfill || createEmptyStore().backfill,
+        backfillLive: meta.backfillLive || createEmptyStore().backfillLive,
+        backfillHistory: meta.backfillHistory || createEmptyStore().backfillHistory,
+        mailDigest: meta.mailDigest || {},
+      };
+    }
+  }
+
+  const full = await readTrendStore(options);
+  return {
+    ...full,
+    collections: Object.fromEntries(
+      uniquePlatforms.map((platform) => [platform, full.collections?.[platform]]).filter(([, collection]) => Boolean(collection)),
+    ) as Partial<Record<GrowthPlatform, PlatformTrendCollection>>,
+    history: full.history || createEmptyHistoryState(),
+    archiveIndex: [],
+  };
+}
+
 export async function reconcileTrendHistoryState(options?: { force?: boolean }) {
   if (!options?.force && historyReconcilePromise) return historyReconcilePromise;
 

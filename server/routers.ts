@@ -30,7 +30,7 @@ import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -1355,9 +1355,11 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
-        const store = await readTrendStore({ preferDerivedFiles: true });
-        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const interactivePlatform = Boolean(input.interactivePlatform);
+        const store = interactivePlatform
+          ? await readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true })
+          : await readTrendStore({ preferDerivedFiles: true });
+        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const historicalPlatformTotals = Object.fromEntries(
           requestedPlatforms.map((platform) => [
             platform,
