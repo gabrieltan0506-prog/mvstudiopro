@@ -440,6 +440,64 @@ async function buildPlatformDashboard(params: {
   );
 }
 
+function buildFallbackPlatformDashboard(params: {
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+  context?: string;
+  windowDays: number;
+}) {
+  const topPlatform = params.snapshot.platformRecommendations[0];
+  const topTopic = params.snapshot.topicLibrary[0];
+  const contextLabel = String(params.context || "").trim() || topTopic?.title || "当前方向";
+
+  return platformDashboardResponseSchema.parse({
+    headline: topPlatform
+      ? `围绕 ${contextLabel}，先从 ${topPlatform.name} 入手更容易拿到第一轮反馈`
+      : `围绕 ${contextLabel}，先用 ${params.windowDays} 天窗口做轻量验证`,
+    subheadline: params.snapshot.dataAnalystSummary.recommendationReason
+      || params.snapshot.overview.trendNarrative
+      || `这版先基于近 ${params.windowDays} 天快照给出可执行判断，避免首轮分析长时间卡住。`,
+    topSignals: [
+      {
+        title: "优先平台",
+        detail: topPlatform?.reason || params.snapshot.overview.summary,
+        badge: "先做",
+      },
+      {
+        title: "热点切口",
+        detail: topTopic?.executionHint || params.snapshot.analysisTracks.liveSummary,
+        badge: "热点",
+      },
+      {
+        title: "承接方式",
+        detail: params.snapshot.businessInsights[0]?.detail || params.snapshot.dataAnalystSummary.recommendation,
+        badge: "承接",
+      },
+    ].filter((item) => item.detail),
+    platformMenu: params.snapshot.platformSnapshots.slice(0, 4).map((item, index) => ({
+      platform: item.platform,
+      label: item.displayName,
+      trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
+      lane: item.sampleTopics[0] || item.summary,
+      whyNow: item.summary,
+      nextMove: params.snapshot.platformRecommendations[index]?.action || params.snapshot.growthPlan[index]?.action || "先用一个轻量主题验证反馈。",
+    })),
+    hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item) => ({
+      title: item.title,
+      whyHot: item.rationale,
+      howToUse: item.executionHint,
+    })),
+    actionCards: params.snapshot.growthPlan.slice(0, 4).map((item) => ({
+      title: item.title,
+      detail: item.action,
+    })),
+    conversationStarters: [
+      `如果我先做 ${topPlatform?.name || "当前优先平台"}，第一批内容应该先发图文还是视频？`,
+      `围绕“${topTopic?.title || contextLabel}”，最值得先验证的商业化承接是什么？`,
+      `在近 ${params.windowDays} 天窗口里，哪些方向应该先不做？`,
+    ],
+  });
+}
+
 async function personalizeGrowthSnapshot(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   analysis: z.infer<typeof growthAnalysisScoresSchema>;
@@ -1466,16 +1524,31 @@ export const appRouter = router({
             });
 
         const platformDashboardSource = interactivePlatform ? baseSnapshot : snapshot;
-        const platformDashboard = await buildPlatformDashboard({
-              snapshot: platformDashboardSource,
-              context: input.context,
-              requestedPlatforms,
-              store: effectiveStore,
-              windowDays: selectedWindowDays,
-            }).catch((error) => {
-              console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
-              return null;
-            });
+        const platformDashboard = await Promise.race([
+          buildPlatformDashboard({
+            snapshot: platformDashboardSource,
+            context: input.context,
+            requestedPlatforms,
+            store: effectiveStore,
+            windowDays: selectedWindowDays,
+          }),
+          new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
+            setTimeout(() => {
+              resolve(buildFallbackPlatformDashboard({
+                snapshot: platformDashboardSource,
+                context: input.context,
+                windowDays: selectedWindowDays,
+              }));
+            }, interactivePlatform ? 9000 : 12000);
+          }),
+        ]).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+          return buildFallbackPlatformDashboard({
+            snapshot: platformDashboardSource,
+            context: input.context,
+            windowDays: selectedWindowDays,
+          });
+        });
 
         return {
           success: true,
