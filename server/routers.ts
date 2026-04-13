@@ -412,6 +412,17 @@ async function buildPlatformDashboard(params: {
     };
   });
 
+  // Phase 1-A: Persona-bound context hint injected into system prompt
+  const personaContextLine = params.context
+    ? `\n\n用户背景补充（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 300)}`
+    : "";
+  // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
+  const hasMedicalPersona = /医生|医师|医疗|心脏|临床|doctor/i.test(params.context || "");
+  const hasCulturePersona = /文化|艺术|历史|书画|收藏|人文/i.test(params.context || "");
+  const personaConstraint = (hasMedicalPersona || hasCulturePersona)
+    ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。platformMenu 中的第一顺位必须是与知识型/审美型内容适配度最高的平台（通常是小红书或B站），而非纯流量平台。`
+    : "";
+
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
@@ -426,18 +437,18 @@ async function buildPlatformDashboard(params: {
 要求：
 1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
 2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
-3. 整个看板要有“可卖”感：headline 要像成熟顾问给出的核心判断，而不是中性标题；subheadline 要说明为什么现在值得看这件事。
+3. 整个看板要有"可卖"感：headline 要像成熟顾问给出的核心判断，而不是中性标题；subheadline 要说明为什么现在值得看这件事。
 4. personaSummary 必须先用一句话讲清这个用户的身份、可建立的IP心智、以及为什么这个身份有商业价值。
 5. platformMenu 不是平台介绍。每个平台至少要回答：适合切什么赛道、用什么形式更好、首发内容标题示例、开头一句怎么说、先验证什么、商业承接走哪条线。
 6. contentBlueprints 必须给出至少 3 个具体内容方案，每个都要写：标题、形式、开头文案、主体文案方向、图文怎么写、视频怎么拍。不能只写原则。
 7. monetizationLanes 不能只写电商带货，也不能把一堆通用变现方式全部列上来。只保留 1 到 3 条和这个用户身份、题材、平台表达强相关的路径。每条都必须明确回答：为什么这个人适合做、适合卖什么或接什么、先怎么验证。没有强证据就不要写。
-8. 如果用户背景是“专业人士 + 文化/历史/艺术兴趣”这类复合身份，优先考虑与身份信任、审美内容、知识解释力相关的变现，而不是默认带货。
+8. 如果用户背景是"专业人士 + 文化/历史/艺术兴趣"这类复合身份，优先考虑与身份信任、审美内容、知识解释力相关的变现，而不是默认带货。
 9. 如果你给出的变现路径可以直接套在任何人身上，那就是错的，必须重写。
 10. hotTopics 必须来自当前数据，但要翻译成这个用户能做的切入，不是解释平台热点本身。
-11. actionCards 必须是能立刻执行的动作，优先写“先做什么、别做什么、怎么验证”。
+11. actionCards 必须是能立刻执行的动作，优先写"先做什么、别做什么、怎么验证"。
 12. conversationStarters 要像真人顾问继续推进选题、形式、承接和验证的问题。
-13. 绝对不要出现“可能都可以”“先试试”“做个人IP”这种空话。
-14. 输出严格 JSON，字段为 headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。`,
+13. 绝对不要出现"可能都可以""先试试""做个人IP"这种空话。
+14. 输出严格 JSON，字段为 headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。${personaContextLine}${personaConstraint}`,
       },
       {
         role: "user",
@@ -446,25 +457,69 @@ async function buildPlatformDashboard(params: {
           windowDays: params.windowDays,
           snapshot: {
             overview: params.snapshot.overview,
-            platformSnapshots: params.snapshot.platformSnapshots,
-            platformRecommendations: params.snapshot.platformRecommendations,
-            titleExecutions: params.snapshot.titleExecutions.slice(0, 8),
-            monetizationStrategies: params.snapshot.monetizationStrategies.slice(0, 6),
-            businessInsights: params.snapshot.businessInsights,
-            growthPlan: params.snapshot.growthPlan,
-            topicLibrary: params.snapshot.topicLibrary.slice(0, 12),
+            // Phase 0-D: Reduced from full arrays to smaller slices to cut token usage
+            platformSnapshots: params.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
+              platform: item.platform,
+              displayName: item.displayName,
+              audienceFitScore: item.audienceFitScore,
+              momentumScore: item.momentumScore,
+              competitionLevel: item.competitionLevel,
+              summary: item.summary,
+              fitLabel: item.fitLabel,
+              sampleTopics: item.sampleTopics.slice(0, 5),
+            })),
+            platformRecommendations: params.snapshot.platformRecommendations.slice(0, 3),
+            titleExecutions: params.snapshot.titleExecutions.slice(0, 4),
+            monetizationStrategies: params.snapshot.monetizationStrategies.slice(0, 3),
+            businessInsights: params.snapshot.businessInsights.slice(0, 4),
+            growthPlan: params.snapshot.growthPlan.slice(0, 3),
+            topicLibrary: params.snapshot.topicLibrary.slice(0, 6),
             decisionFramework: params.snapshot.decisionFramework,
-            creationAssist: params.snapshot.creationAssist,
+            creationAssist: {
+              brief: params.snapshot.creationAssist.brief,
+            },
           },
-          collections: collectionEvidence,
+          collections: collectionEvidence.map((item) => ({
+            platform: item.platform,
+            itemCount: item.itemCount,
+            hotTitles: item.hotTitles.slice(0, 6),
+            topBuckets: item.topBuckets.slice(0, 4),
+          })),
         }),
       },
     ],
   });
 
-  return platformDashboardResponseSchema.parse(
-    JSON.parse(String(response.choices[0]?.message?.content || "{}")),
-  );
+  // Phase 0-C: Robust JSON extraction with code-block fallback + soft-merge with fallback on schema error
+  const rawContent = String(response.choices[0]?.message?.content || "{}");
+  let parsedRaw: unknown;
+  try {
+    parsedRaw = JSON.parse(rawContent);
+  } catch {
+    const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+    try {
+      parsedRaw = match ? JSON.parse(match[1].trim()) : {};
+    } catch {
+      parsedRaw = {};
+    }
+  }
+
+  // Phase 1-B: Soft-parse — merge Gemini partial output with deterministic fallback so schema parse never blocks the whole response
+  const fallback = buildFallbackPlatformDashboard({ snapshot: params.snapshot, context: params.context, windowDays: params.windowDays });
+  const partial = (parsedRaw || {}) as Record<string, unknown>;
+  const merged = {
+    headline: typeof partial.headline === "string" && partial.headline ? partial.headline : fallback.headline,
+    subheadline: typeof partial.subheadline === "string" && partial.subheadline ? partial.subheadline : fallback.subheadline,
+    personaSummary: typeof partial.personaSummary === "string" && partial.personaSummary ? partial.personaSummary : fallback.personaSummary,
+    topSignals: Array.isArray(partial.topSignals) && partial.topSignals.length ? partial.topSignals : fallback.topSignals,
+    platformMenu: Array.isArray(partial.platformMenu) && partial.platformMenu.length ? partial.platformMenu : fallback.platformMenu,
+    hotTopics: Array.isArray(partial.hotTopics) && partial.hotTopics.length ? partial.hotTopics : fallback.hotTopics,
+    contentBlueprints: Array.isArray(partial.contentBlueprints) && partial.contentBlueprints.length ? partial.contentBlueprints : fallback.contentBlueprints,
+    monetizationLanes: Array.isArray(partial.monetizationLanes) && partial.monetizationLanes.length ? partial.monetizationLanes : fallback.monetizationLanes,
+    actionCards: Array.isArray(partial.actionCards) && partial.actionCards.length ? partial.actionCards : fallback.actionCards,
+    conversationStarters: Array.isArray(partial.conversationStarters) && partial.conversationStarters.length ? partial.conversationStarters : fallback.conversationStarters,
+  };
+  return platformDashboardResponseSchema.parse(merged);
 }
 
 function buildFallbackPlatformDashboard(params: {
@@ -1531,7 +1586,14 @@ export const appRouter = router({
         ]);
         timing.storeMs = Date.now() - t0;
         console.log(`[platform.getGrowthSnapshot] store read done in ${timing.storeMs}ms`);
-        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
+        // Phase 0-B: Guard readGrowthUserEvidence against slow DB connections
+        const USER_EVIDENCE_TIMEOUT_MS = 3_000;
+        const userEvidence = ctx.user
+          ? await Promise.race([
+              readGrowthUserEvidence(ctx.user.id, requestedPlatforms),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), USER_EVIDENCE_TIMEOUT_MS)),
+            ]).catch(() => null)
+          : null;
         timing.userEvidenceMs = Date.now() - t0 - timing.storeMs;
         const historicalPlatformTotals = Object.fromEntries(
           requestedPlatforms.map((platform) => [
@@ -1761,17 +1823,31 @@ export const appRouter = router({
                   windowDays: input.windowDays,
                   context: input.context || "",
                   question: input.question,
+                  // Phase 1-C: Slim snapshot to reduce Gemini token usage for follow-up calls
                   snapshot: {
                     overview: input.snapshot.overview,
-                    platformSnapshots: input.snapshot.platformSnapshots,
-                    platformRecommendations: input.snapshot.platformRecommendations,
-                    topicLibrary: input.snapshot.topicLibrary.slice(0, 12),
-                    businessInsights: input.snapshot.businessInsights,
-                    growthPlan: input.snapshot.growthPlan,
-                    titleExecutions: input.snapshot.titleExecutions.slice(0, 6),
-                    monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 4),
-                    decisionFramework: input.snapshot.decisionFramework,
-                    creationAssist: input.snapshot.creationAssist,
+                    platformSnapshots: input.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
+                      platform: item.platform,
+                      displayName: item.displayName,
+                      audienceFitScore: item.audienceFitScore,
+                      momentumScore: item.momentumScore,
+                      summary: item.summary,
+                      fitLabel: item.fitLabel,
+                    })),
+                    platformRecommendations: input.snapshot.platformRecommendations.slice(0, 3),
+                    topicLibrary: input.snapshot.topicLibrary.slice(0, 5),
+                    businessInsights: input.snapshot.businessInsights.slice(0, 3),
+                    growthPlan: input.snapshot.growthPlan.slice(0, 2),
+                    titleExecutions: input.snapshot.titleExecutions.slice(0, 3),
+                    monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 2),
+                    decisionFramework: {
+                      mainPath: input.snapshot.decisionFramework.mainPath,
+                      validationPlan: input.snapshot.decisionFramework.validationPlan.slice(0, 2),
+                      assetAdaptation: input.snapshot.decisionFramework.assetAdaptation,
+                    },
+                    creationAssist: {
+                      brief: input.snapshot.creationAssist.brief,
+                    },
                   },
                 }),
               },

@@ -807,6 +807,12 @@ export default function PlatformPage() {
               <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">
                 这一版会先读取近 {selectedWindowDays} 天平台快照，再整理热点、赛道和商业化建议。就算需要更长时间，也会把每一步拆给用户看。
               </div>
+              {/* Phase 2-A: Show wait notice after 20s to prevent user from thinking the page is frozen */}
+              {elapsedTime >= 20 ? (
+                <div className="mt-4 rounded-2xl border border-[#ffdd44]/20 bg-[rgba(255,221,68,0.06)] p-4 text-sm leading-7 text-[#ffeea0]">
+                  ⏳ 顾问报告正在生成中，通常需要 15–35 秒。请勿关闭页面，结果会自动显示。
+                </div>
+              ) : null}
               {activeProcessingStep ? (
                 <div className="mt-5 rounded-2xl border border-[#2f2558] bg-[rgba(255,255,255,0.04)] p-4">
                   <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">当前阶段</div>
