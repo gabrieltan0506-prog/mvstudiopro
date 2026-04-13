@@ -57,6 +57,12 @@ type AskResult = {
   nextQuestions: string[];
 };
 
+function extractFocusKeywords(value: string) {
+  return Array.from(
+    new Set((String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6)),
+  );
+}
+
 function getRelativeBar(value: number, max: number) {
   if (!max || max <= 0) return 0;
   return Math.max(8, Math.round((value / max) * 100));
@@ -104,16 +110,37 @@ export default function PlatformPage() {
   const maxMomentum = Math.max(...primaryPlatforms.map((item) => item.momentumScore), 100);
   const topTopics = useMemo(() => snapshot?.topicLibrary.slice(0, 9) ?? [], [snapshot]);
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
-  const dataRows = useMemo(() => snapshot?.dataAnalystSummary.platformRows.slice(0, 4) ?? [], [snapshot]);
+  const actionSteps = useMemo(() => snapshot?.growthPlan.slice(0, 4) ?? [], [snapshot]);
+  const keyInsights = useMemo(() => snapshot?.businessInsights.slice(0, 4) ?? [], [snapshot]);
+  const recommendationHighlights = useMemo(
+    () =>
+      recommendedPlatforms.slice(0, 3).map((item, index) => ({
+        id: `${item.name}-${index}`,
+        title: item.name,
+        summary: index === 0 ? "现在先拿反馈" : index === 1 ? "第二站补量" : "后续扩展位",
+        action: item.action,
+      })),
+    [recommendedPlatforms],
+  );
+  const focusKeywords = useMemo(() => extractFocusKeywords(focusPrompt), [focusPrompt]);
+  const personalizedSubject = useMemo(() => {
+    if (focusKeywords.length) return focusKeywords.join(" / ");
+    return topTopics[0]?.title || "当前内容方向";
+  }, [focusKeywords, topTopics]);
+  const recommendationHeadline = useMemo(() => {
+    const topPlatform = recommendedPlatforms[0]?.name || "当前优先平台";
+    return `围绕 ${personalizedSubject}，先把 ${topPlatform} 做透`;
+  }, [personalizedSubject, recommendedPlatforms]);
   const hotQuestionSuggestions = useMemo(() => {
     const platformLead = recommendedPlatforms[0]?.name || "小红书";
+    const topicLead = topTopics[0]?.title || personalizedSubject;
     return [
-      `如果我先发${platformLead}，应该先做哪三个选题？`,
+      `如果我先发${platformLead}，围绕“${topicLead}”应该先做哪三个选题？`,
       `在${selectedWindowDays}天维度里，现在哪个平台最值得优先押注？`,
-      "如果我只做图文，不做视频，应该怎么切入？",
-      "这轮趋势里，最容易做成商业化承接的方向是什么？",
+      `如果我只做图文，不做视频，围绕“${personalizedSubject}”应该怎么切入？`,
+      `结合这轮趋势，${personalizedSubject} 最容易做成哪种商业承接？`,
     ];
-  }, [recommendedPlatforms, selectedWindowDays]);
+  }, [personalizedSubject, recommendedPlatforms, selectedWindowDays, topTopics]);
 
   const handleAnalyze = async () => {
     setAskResult(null);
@@ -182,11 +209,11 @@ export default function PlatformPage() {
                 <h1 className="mt-4 text-4xl font-black leading-[0.96] text-white md:text-[68px]">
                   按时间维度拆开看
                   <span className="mt-3 block bg-[linear-gradient(135deg,#49e6ff,#b25cff,#ff5ab8)] bg-clip-text text-transparent">
-                    你的平台机会
+                    {personalizedSubject} 的平台机会
                   </span>
                 </h1>
                 <p className="mt-5 max-w-3xl text-sm leading-8 text-[#c8bfe7] md:text-base">
-                  这里不上传素材，不做二创。只看 15 天、30 天、45 天这三种时间维度下的平台趋势、结构判断和商业机会，再给你一个可继续追问的平台顾问。
+                  这里不上传素材，不做二创。只看 15 天、30 天、45 天这三种时间维度下，和你当前关注方向最相关的平台趋势、结构判断和商业机会，再给你一个可继续追问的平台顾问。
                 </p>
               </div>
 
@@ -271,9 +298,9 @@ export default function PlatformPage() {
                 <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.overview.trendNarrative}</div>
               </div>
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">推荐动作</div>
-                <div className="mt-3 text-xl font-bold text-white">{snapshot.platformRecommendations[0]?.name || "平台待判断"}</div>
-                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.platformRecommendations[0]?.action || snapshot.dataAnalystSummary.recommendationReason}</div>
+                <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">优先动作</div>
+                <div className="mt-3 text-xl font-bold text-white">{recommendationHeadline}</div>
+                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.dataAnalystSummary.recommendationReason}</div>
               </div>
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
                 <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">实时热点</div>
@@ -362,17 +389,18 @@ export default function PlatformPage() {
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <ChevronRight className="h-4 w-4 text-[#6fffb0]" />
-                  平台推荐与扶持判断
+                  当前建议怎么做
                 </div>
                 <div className="mt-4 space-y-3">
-                  {recommendedPlatforms.map((item) => (
-                    <div key={`recommend-${item.name}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                      <div className="text-sm font-semibold text-white">{item.name}</div>
-                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.reason}</div>
-                      <div className="mt-2 text-sm leading-7 text-[#8cefff]">{item.action}</div>
-                      {item.playbook ? (
-                        <div className="mt-2 text-xs leading-6 text-[#aa95dc]">{item.playbook}</div>
-                      ) : null}
+                  {recommendationHighlights.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                        <div className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1 text-[11px] text-[#8cefff]">
+                          {item.summary}
+                        </div>
+                      </div>
+                      <div className="mt-3 text-sm leading-7 text-[#8cefff]">{item.action}</div>
                     </div>
                   ))}
                 </div>
@@ -381,27 +409,22 @@ export default function PlatformPage() {
 
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-sm font-semibold text-white">平台数据参考</div>
+                <div className="text-sm font-semibold text-white">现在就能执行的动作清单</div>
                 <div className="mt-4 space-y-3">
-                  {dataRows.map((item) => (
-                    <div key={`row-${item.platform}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  {actionSteps.map((item) => (
+                    <div key={`step-${item.day}-${item.title}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="font-semibold text-white">{item.platformLabel}</div>
-                        <div className="text-xs text-[#8cefff]">{snapshot.status.windowDays} 天窗口</div>
+                        <div className="font-semibold text-white">{item.title}</div>
+                        <div className="text-xs text-[#8cefff]">第 {item.day} 天</div>
                       </div>
-                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.note}</div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-[#b7add8]">
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">当前量 {item.currentTotal}</span>
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">归档量 {item.archivedTotal}</span>
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">主要形式 {item.dominantFormat}</span>
-                      </div>
+                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.action}</div>
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-sm font-semibold text-white">双主链判断</div>
+                <div className="text-sm font-semibold text-white">判断依据提炼</div>
                 <div className="mt-4 space-y-4">
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">Live</div>
@@ -411,9 +434,12 @@ export default function PlatformPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Historical</div>
                     <div className="mt-2 text-sm leading-7 text-[#d7d0ef]">{snapshot.analysisTracks.historicalSummary}</div>
                   </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4 text-sm leading-7 text-[#c8bfe7]">
-                    推荐动作：{snapshot.dataAnalystSummary.recommendationReason}
-                  </div>
+                  {keyInsights.map((item) => (
+                    <div key={`insight-${item.title}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                      <div className="text-sm font-semibold text-white">{item.title}</div>
+                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.detail}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -426,7 +452,7 @@ export default function PlatformPage() {
                     你还想了解什么？
                   </div>
                   <p className="mt-2 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                    这里会再调用 Gemini 2.5 Pro，基于当前 {selectedWindowDays} 天窗口分析继续回答。回答会保持专业判断，也会给你一句真诚的鼓励，帮你把方向走稳。
+                    这里会再调用 Gemini 2.5 Pro，基于当前 {selectedWindowDays} 天窗口和你此刻最关心的“{personalizedSubject}”继续回答。回答会保持专业判断，也会给你一句真诚的鼓励，帮你把方向走稳。
                   </p>
                 </div>
                 <div className="rounded-2xl border border-[#2f2260] bg-[#130b31] px-4 py-3 text-xs text-[#aa95dc]">

@@ -1414,7 +1414,10 @@ export const appRouter = router({
 3. 鼓励语只能简短真诚，不要鸡汤，不要夸张。
 4. 不要泄露后台工程逻辑，不要说“数据库里显示”这类话，只把证据转成商业判断。
 5. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
-6. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+6. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
+7. 如果 snapshot 里已经有 topicLibrary、businessInsights、growthPlan，请把它们优先翻译成“这个用户现在该怎么做”的表达。
+8. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
+9. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
             },
             {
               role: "user",
