@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
@@ -75,6 +75,13 @@ type PlatformDashboard = {
   conversationStarters: string[];
 };
 
+type ProcessingStepCard = {
+  id: string;
+  label: string;
+  detail: string;
+  status: "done" | "active" | "pending";
+};
+
 function extractFocusKeywords(value: string) {
   return Array.from(
     new Set((String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6)),
@@ -94,6 +101,45 @@ function hasSupervisorAccess() {
 function getRelativeBar(value: number, max: number) {
   if (!max || max <= 0) return 0;
   return Math.max(10, Math.round((value / max) * 100));
+}
+
+function revealText(text: string, elapsedTime: number, seed = 0, speed = 18) {
+  const normalized = String(text || "");
+  if (!normalized) return "";
+  const visibleCount = Math.max(1, Math.min(normalized.length, Math.floor(elapsedTime * speed) - seed));
+  return normalized.slice(0, visibleCount);
+}
+
+function buildPlatformProcessingSteps(selectedWindowDays: 15 | 30 | 45, elapsedTime: number, focusPrompt: string): ProcessingStepCard[] {
+  const phase = Math.floor(elapsedTime / 4);
+  const subject = String(focusPrompt || "").trim() || "当前平台机会";
+  const currentStep = Math.min(3, phase);
+  return [
+    {
+      id: "collect",
+      label: `读取近 ${selectedWindowDays} 天平台快照`,
+      detail: "先把当前窗口里的平台热度、动量和样本结构取出来。",
+      status: currentStep > 0 ? "done" : "active",
+    },
+    {
+      id: "sort",
+      label: "整理热点赛道与平台优先级",
+      detail: `围绕“${subject}”筛出更值得先做的平台与切入方向。`,
+      status: currentStep === 1 ? "active" : currentStep > 1 ? "done" : "pending",
+    },
+    {
+      id: "advice",
+      label: "生成商业化与动作建议",
+      detail: "把热点翻译成可执行的选题、形式和承接动作。",
+      status: currentStep === 2 ? "active" : currentStep > 2 ? "done" : "pending",
+    },
+    {
+      id: "polish",
+      label: "整理成顾问看板",
+      detail: "把结论压缩成用户一眼能看懂、愿意继续追问的版本。",
+      status: currentStep >= 3 ? "active" : "pending",
+    },
+  ];
 }
 
 function getWindowLabel(value: 15 | 30 | 45) {
@@ -127,6 +173,8 @@ export default function PlatformPage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -300,8 +348,87 @@ export default function PlatformPage() {
     ].filter(Boolean);
   }, [snapshot]);
 
+  const isAnalyzing = growthSnapshotQuery.isFetching;
+  const processingSteps = useMemo(
+    () => buildPlatformProcessingSteps(selectedWindowDays, elapsedTime, focusPrompt),
+    [selectedWindowDays, elapsedTime, focusPrompt],
+  );
+  const activeProcessingStep = processingSteps.find((item) => item.status === "active") || processingSteps[processingSteps.length - 1] || null;
+  const animatedProcessingSteps = useMemo(
+    () => processingSteps.map((step, index) => ({
+      ...step,
+      animatedLabel: step.status === "done" ? step.label : revealText(step.label, elapsedTime, index * 10, 10),
+      animatedDetail: step.status === "done" ? step.detail : revealText(step.detail, elapsedTime, index * 14, 16),
+    })),
+    [processingSteps, elapsedTime],
+  );
+  const immersiveRotatingCards = useMemo(() => {
+    const platformCards = primaryPlatforms.slice(0, 3).map((item) => ({
+      title: `${item.displayName} 当前信号`,
+      summary: item.summary,
+      detail: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore} / 竞争 ${item.competitionLevel}`,
+      tone: "platform",
+    }));
+    const topicCards = topTopics.slice(0, 3).map((item) => ({
+      title: item.title,
+      summary: item.whyHot,
+      detail: item.howToUse,
+      tone: "topic",
+    }));
+    const actionCards = actionSteps.slice(0, 3).map((item) => ({
+      title: item.title,
+      summary: item.action,
+      detail: `第 ${item.day} 步先做这个。`,
+      tone: "action",
+    }));
+    const fallback = [
+      {
+        title: "平台优先级正在整理",
+        summary: "先把近窗口里的平台动量和适配度压成一页看板。",
+        detail: "你最终看到的是“先做哪里、为什么、先验证什么”。",
+        tone: "platform",
+      },
+      {
+        title: "热点赛道正在筛选",
+        summary: "不是泛热点，而是与你当前方向更接近的切口。",
+        detail: "会直接翻成可执行题目和表达方式。",
+        tone: "topic",
+      },
+      {
+        title: "商业化建议正在整理",
+        summary: "重点不是平台介绍，而是怎么形成真实承接。",
+        detail: "会优先告诉你先做什么、别做什么、怎么验证。",
+        tone: "action",
+      },
+    ];
+    return [...platformCards, ...topicCards, ...actionCards].length ? [...platformCards, ...topicCards, ...actionCards] : fallback;
+  }, [actionSteps, primaryPlatforms, topTopics]);
+  const activeRotatingCard = immersiveRotatingCards[rotatingCardIndex % immersiveRotatingCards.length] || null;
+
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setElapsedTime(0);
+      setRotatingCardIndex(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setElapsedTime((value) => value + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isAnalyzing]);
+
+  useEffect(() => {
+    if (!isAnalyzing || immersiveRotatingCards.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setRotatingCardIndex((value) => (value + 1) % immersiveRotatingCards.length);
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [immersiveRotatingCards.length, isAnalyzing]);
+
   const handleAnalyze = async () => {
     setAskResult(null);
+    setElapsedTime(0);
+    setRotatingCardIndex(0);
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
       toast.error("平台分析暂时没有返回结果");
@@ -489,6 +616,89 @@ export default function PlatformPage() {
             </div>
           </div>
         </section>
+
+        {isAnalyzing ? (
+          <section className="mt-6 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className={shellCardClasses("p-6")}>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]" />
+                平台分析进行中
+              </div>
+              <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">
+                这一版会先读取近 {selectedWindowDays} 天平台快照，再整理热点、赛道和商业化建议。就算需要更长时间，也会把每一步拆给用户看。
+              </div>
+              {activeProcessingStep ? (
+                <div className="mt-5 rounded-2xl border border-[#2f2558] bg-[rgba(255,255,255,0.04)] p-4">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">当前阶段</div>
+                  <div className="mt-2 text-lg font-semibold text-white">{activeProcessingStep.label}</div>
+                  <div className="mt-2 text-sm leading-7 text-[#d3caef]">{activeProcessingStep.detail}</div>
+                </div>
+              ) : null}
+              <div className="mt-5 space-y-3">
+                {animatedProcessingSteps.map((step) => (
+                  <div key={step.id} className={`rounded-2xl border p-4 transition ${
+                    step.status === "done"
+                      ? "border-[#284f4c] bg-[rgba(111,255,176,0.08)]"
+                      : step.status === "active"
+                        ? "border-[#2f5a7a] bg-[rgba(73,230,255,0.10)]"
+                        : "border-white/10 bg-[rgba(255,255,255,0.04)]"
+                  }`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-white">{step.animatedLabel}</div>
+                      <div className={`rounded-full px-2 py-1 text-[11px] ${
+                        step.status === "done"
+                          ? "bg-[rgba(111,255,176,0.12)] text-[#92ffc1]"
+                          : step.status === "active"
+                            ? "bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                            : "bg-[rgba(255,255,255,0.05)] text-[#b5abd5]"
+                      }`}>
+                        {step.status === "done" ? "完成" : step.status === "active" ? "进行中" : "待处理"}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm leading-7 text-[#d3caef]">{step.animatedDetail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className={shellCardClasses("p-6")}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Sparkles className="h-4 w-4 text-[#ffdd44]" />
+                    轮播看板
+                  </div>
+                  <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">
+                    在报告生成过程中，先把当前窗口里最关键的平台、热点和承接线索轮播出来，避免用户空等。
+                  </div>
+                </div>
+                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#b7add8]">
+                  每 4.5 秒轮播
+                </div>
+              </div>
+              {activeRotatingCard ? (
+                <div className="mt-5 rounded-[28px] border border-[#2f2558] bg-[linear-gradient(135deg,rgba(73,230,255,0.10),rgba(125,115,255,0.08),rgba(255,117,189,0.08))] p-6">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
+                    {activeRotatingCard.tone === "platform" ? "平台信号" : activeRotatingCard.tone === "topic" ? "热点切口" : "动作建议"}
+                  </div>
+                  <div className="mt-3 text-2xl font-bold text-white">{activeRotatingCard.title}</div>
+                  <div className="mt-4 text-sm leading-8 text-[#eef5ff]">{activeRotatingCard.summary}</div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-[rgba(9,6,24,0.36)] p-4 text-sm leading-7 text-[#d3caef]">
+                    {activeRotatingCard.detail}
+                  </div>
+                </div>
+              ) : null}
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {immersiveRotatingCards.slice(0, 3).map((item, index) => (
+                  <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                    <div className="text-sm font-semibold text-white">{item.title}</div>
+                    <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.summary}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : null}
 
         <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {resultSummaryCards.map((item, index) => (
