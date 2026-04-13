@@ -93,6 +93,10 @@ function getRelativeBar(value: number, max: number) {
 
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
+  const [debugMode, setDebugMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
+  });
   const { isAuthenticated, loading } = useAuth({
     autoFetch: !supervisorAccess,
     redirectOnUnauthenticated: !supervisorAccess,
@@ -133,6 +137,8 @@ export default function PlatformPage() {
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
   const platformDashboard = growthSnapshotQuery.data?.platformDashboard as PlatformDashboard | null | undefined;
+  const snapshotDebug = growthSnapshotQuery.data?.debug as Record<string, unknown> | undefined;
+  const askDebug = askPlatformFollowUpMutation.data?.debug as Record<string, unknown> | undefined;
 
   const primaryPlatforms = useMemo(() => snapshot?.platformSnapshots.slice(0, 4) ?? [], [snapshot]);
   const maxFit = Math.max(...primaryPlatforms.map((item) => item.audienceFitScore), 100);
@@ -276,6 +282,22 @@ export default function PlatformPage() {
           </div>
         </div>
 
+        {supervisorAccess ? (
+          <div className="mb-6 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setDebugMode((value) => !value)}
+              className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition ${
+                debugMode
+                  ? "border-[#49e6ff]/30 bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                  : "border-white/10 bg-white/5 text-[#b7add8] hover:bg-white/10"
+              }`}
+            >
+              {debugMode ? "Debug On" : "Debug Off"}
+            </button>
+          </div>
+        ) : null}
+
         <section className="rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] md:p-8">
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -369,6 +391,65 @@ export default function PlatformPage() {
 
         {snapshot ? (
           <section className="mt-8 space-y-6">
+            {debugMode ? (
+              <div className="rounded-[24px] border border-[#2a1c55] bg-[#0d0722] p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Bot className="h-4 w-4 text-[#49e6ff]" />
+                  Debug Flow
+                </div>
+                <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">前端状态</div>
+                    <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
+                      <div>auth: {supervisorAccess ? "supervisor" : isAuthenticated ? "user" : "guest"}</div>
+                      <div>windowDays: {selectedWindowDays}</div>
+                      <div>focusPrompt: {focusPrompt || "-"}</div>
+                      <div>query.status: {growthSnapshotQuery.status}</div>
+                      <div>query.fetchStatus: {growthSnapshotQuery.fetchStatus}</div>
+                      <div>query.isFetching: {String(growthSnapshotQuery.isFetching)}</div>
+                      <div>ask.isPending: {String(askPlatformFollowUpMutation.isPending)}</div>
+                      <div>hasSnapshot: {String(Boolean(snapshot))}</div>
+                      <div>hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
+                    <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
+                      <div>1. getGrowthSnapshot 请求: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
+                      <div>2. snapshot 构建: {snapshotDebug?.baseSource ? "已完成" : "未知"}</div>
+                      <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
+                      <div>4. platformDashboard: {String(Boolean(platformDashboard))}</div>
+                      <div>5. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
+                    <div className="mt-3 text-xs leading-6 text-[#d7d0ef] whitespace-pre-wrap">
+                      {String(
+                        growthSnapshotQuery.error?.message ||
+                          askPlatformFollowUpMutation.error?.message ||
+                          "-"
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
+                    <pre className="mt-3 overflow-x-auto text-[11px] leading-6 text-[#d7d0ef] whitespace-pre-wrap">
+                      {JSON.stringify(snapshotDebug || null, null, 2)}
+                    </pre>
+                  </div>
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">askPlatformFollowUp.debug</div>
+                    <pre className="mt-3 overflow-x-auto text-[11px] leading-6 text-[#d7d0ef] whitespace-pre-wrap">
+                      {JSON.stringify(askDebug || null, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
                 <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">当前结论</div>
