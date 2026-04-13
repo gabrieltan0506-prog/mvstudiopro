@@ -135,7 +135,7 @@ export default function PlatformPage() {
       requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
       analysis: EMPTY_ANALYSIS,
       windowDays: selectedWindowDays,
-      interactivePlatform: true,
+      interactivePlatform: false,
     },
     {
       enabled: false,
