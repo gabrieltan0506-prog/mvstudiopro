@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
@@ -8,9 +8,14 @@ import {
   Bot,
   CalendarRange,
   ChevronRight,
+  CircleDollarSign,
+  Clock3,
   Loader2,
   MessageSquareText,
+  Rocket,
+  ShieldCheck,
   Sparkles,
+  Target,
   TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -70,6 +75,13 @@ type PlatformDashboard = {
   conversationStarters: string[];
 };
 
+type ProcessingStepCard = {
+  id: string;
+  label: string;
+  detail: string;
+  status: "done" | "active" | "pending";
+};
+
 function extractFocusKeywords(value: string) {
   return Array.from(
     new Set((String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6)),
@@ -88,7 +100,61 @@ function hasSupervisorAccess() {
 
 function getRelativeBar(value: number, max: number) {
   if (!max || max <= 0) return 0;
-  return Math.max(8, Math.round((value / max) * 100));
+  return Math.max(10, Math.round((value / max) * 100));
+}
+
+function revealText(text: string, elapsedTime: number, seed = 0, speed = 18) {
+  const normalized = String(text || "");
+  if (!normalized) return "";
+  const visibleCount = Math.max(1, Math.min(normalized.length, Math.floor(elapsedTime * speed) - seed));
+  return normalized.slice(0, visibleCount);
+}
+
+function buildPlatformProcessingSteps(selectedWindowDays: 15 | 30 | 45, elapsedTime: number, focusPrompt: string): ProcessingStepCard[] {
+  const phase = Math.floor(elapsedTime / 4);
+  const subject = String(focusPrompt || "").trim() || "当前平台机会";
+  const currentStep = Math.min(3, phase);
+  return [
+    {
+      id: "collect",
+      label: `读取近 ${selectedWindowDays} 天平台快照`,
+      detail: "先把当前窗口里的平台热度、动量和样本结构取出来。",
+      status: currentStep > 0 ? "done" : "active",
+    },
+    {
+      id: "sort",
+      label: "整理热点赛道与平台优先级",
+      detail: `围绕“${subject}”筛出更值得先做的平台与切入方向。`,
+      status: currentStep === 1 ? "active" : currentStep > 1 ? "done" : "pending",
+    },
+    {
+      id: "advice",
+      label: "生成商业化与动作建议",
+      detail: "把热点翻译成可执行的选题、形式和承接动作。",
+      status: currentStep === 2 ? "active" : currentStep > 2 ? "done" : "pending",
+    },
+    {
+      id: "polish",
+      label: "整理成顾问看板",
+      detail: "把结论压缩成用户一眼能看懂、愿意继续追问的版本。",
+      status: currentStep >= 3 ? "active" : "pending",
+    },
+  ];
+}
+
+function getWindowLabel(value: 15 | 30 | 45) {
+  return WINDOW_OPTIONS.find((item) => item.days === value)?.label || `${value}天`;
+}
+
+function shellCardClasses(extra = "") {
+  return `rounded-[28px] border border-white/10 bg-[rgba(14,9,32,0.88)] shadow-[0_18px_80px_rgba(0,0,0,0.28)] backdrop-blur ${extra}`.trim();
+}
+
+function splitAnswerParagraphs(value: string) {
+  return String(value || "")
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 export default function PlatformPage() {
@@ -107,6 +173,8 @@ export default function PlatformPage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -148,7 +216,7 @@ export default function PlatformPage() {
     () =>
       platformDashboard?.hotTopics.length
         ? platformDashboard.hotTopics
-        : (snapshot?.topicLibrary.slice(0, 9).map((item) => ({
+        : (snapshot?.topicLibrary.slice(0, 8).map((item) => ({
             title: item.title,
             whyHot: item.rationale,
             howToUse: item.executionHint,
@@ -166,26 +234,13 @@ export default function PlatformPage() {
   const keyInsights = useMemo(
     () =>
       platformDashboard?.topSignals.length
-        ? platformDashboard.topSignals.map((item) => ({ title: item.title, detail: item.detail }))
-        : (snapshot?.businessInsights.slice(0, 4) ?? []),
+        ? platformDashboard.topSignals.map((item) => ({ title: item.title, detail: item.detail, badge: item.badge || "" }))
+        : (snapshot?.businessInsights.slice(0, 4).map((item) => ({
+            title: item.title,
+            detail: item.detail,
+            badge: "结论",
+          })) ?? []),
     [platformDashboard, snapshot],
-  );
-  const recommendationHighlights = useMemo(
-    () =>
-      platformDashboard?.platformMenu.length
-        ? platformDashboard.platformMenu.slice(0, 3).map((item, index) => ({
-            id: `${item.platform}-${index}`,
-            title: item.label,
-            summary: item.lane,
-            action: `${item.trend} ${item.nextMove}`,
-          }))
-        : recommendedPlatforms.slice(0, 3).map((item, index) => ({
-            id: `${item.name}-${index}`,
-            title: item.name,
-            summary: index === 0 ? "现在先拿反馈" : index === 1 ? "第二站补量" : "后续扩展位",
-            action: item.action,
-          })),
-    [platformDashboard, recommendedPlatforms],
   );
   const focusKeywords = useMemo(() => extractFocusKeywords(focusPrompt), [focusPrompt]);
   const personalizedSubject = useMemo(() => {
@@ -209,8 +264,171 @@ export default function PlatformPage() {
     ];
   }, [personalizedSubject, platformDashboard, recommendedPlatforms, selectedWindowDays, topTopics]);
 
+  const heroTrustPoints = useMemo(
+    () => [
+      { label: "交付内容", value: "平台优先级 + 热点赛道 + 商业化建议" },
+      { label: "分析方式", value: `${getWindowLabel(selectedWindowDays)} 时间窗口，不做泛建议` },
+      { label: "使用场景", value: "适合你决定先做哪个平台、发什么形式、怎么承接时使用" },
+    ],
+    [selectedWindowDays],
+  );
+
+  const resultSummaryCards = useMemo(() => {
+    if (!snapshot) {
+      return [
+        { label: "你会拿到", value: "优先平台判断", detail: "不是平台百科，而是告诉你先打哪里" },
+        { label: "你会拿到", value: "热点和赛道切口", detail: "把热点翻成可执行题目和表达方式" },
+        { label: "你会拿到", value: "商业化承接建议", detail: "告诉你什么能接单、什么暂时别做" },
+        { label: "你会拿到", value: "顾问式追问", detail: "继续问到形式、节奏、承接动作这一级" },
+      ];
+    }
+    return [
+      { label: "当前判断", value: snapshot.overview.summary, detail: snapshot.overview.trendNarrative },
+      { label: "优先动作", value: recommendationHeadline, detail: snapshot.dataAnalystSummary.recommendationReason },
+      { label: "实时热点", value: snapshot.analysisTracks.liveHotTopic, detail: snapshot.analysisTracks.hotTopicTimeliness },
+      { label: "下一步", value: snapshot.dataAnalystSummary.recommendation, detail: snapshot.overview.nextCollectionPlan },
+    ];
+  }, [recommendationHeadline, snapshot]);
+
+  const platformDecisionRows = useMemo(
+    () =>
+      platformDashboard?.platformMenu.length
+        ? platformDashboard.platformMenu.slice(0, 4).map((item) => ({
+            id: `${item.platform}-${item.label}`,
+            name: item.label,
+            lane: item.lane,
+            trend: item.trend,
+            whyNow: item.whyNow,
+            nextMove: item.nextMove,
+          }))
+        : primaryPlatforms.map((item, index) => ({
+            id: `${item.platform}-${index}`,
+            name: item.displayName,
+            lane: item.summary,
+            trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
+            whyNow: item.summary,
+            nextMove: recommendedPlatforms[index]?.action || snapshot?.growthPlan[index]?.action || "先拿一个小样本验证。",
+          })),
+    [platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot],
+  );
+
+  const monetizationCards = useMemo(() => {
+    const businessInsights = snapshot?.businessInsights.slice(0, 4) ?? [];
+    if (businessInsights.length) {
+      return businessInsights.map((item, index) => ({
+        id: `${item.title}-${index}`,
+        title: item.title,
+        summary: item.detail,
+        action:
+          actionSteps[index]?.action
+          || platformDecisionRows[index]?.nextMove
+          || "先做一个最容易拿到反馈的轻量承接。",
+      }));
+    }
+    return platformDecisionRows.slice(0, 3).map((item, index) => ({
+      id: `${item.name}-${index}`,
+      title: `${item.name} 的商业化切口`,
+      summary: item.whyNow,
+      action: item.nextMove,
+    }));
+  }, [actionSteps, platformDecisionRows, snapshot]);
+
+  const evidenceNotes = useMemo(() => {
+    if (!snapshot) {
+      return [
+        "分析按 15 天 / 30 天 / 45 天三种窗口切开看，不把短期噪音和中期趋势混在一起。",
+        "输出重点是先做哪个平台、切哪条赛道、怎样承接商业价值。",
+        "追问继续基于本轮分析，不会把问题重新打回泛泛的平台介绍。",
+      ];
+    }
+    return [
+      snapshot.analysisTracks.liveSummary,
+      snapshot.analysisTracks.historicalSummary,
+      snapshot.dataAnalystSummary.recommendationReason,
+    ].filter(Boolean);
+  }, [snapshot]);
+
+  const isAnalyzing = growthSnapshotQuery.isFetching;
+  const processingSteps = useMemo(
+    () => buildPlatformProcessingSteps(selectedWindowDays, elapsedTime, focusPrompt),
+    [selectedWindowDays, elapsedTime, focusPrompt],
+  );
+  const activeProcessingStep = processingSteps.find((item) => item.status === "active") || processingSteps[processingSteps.length - 1] || null;
+  const animatedProcessingSteps = useMemo(
+    () => processingSteps.map((step, index) => ({
+      ...step,
+      animatedLabel: step.status === "done" ? step.label : revealText(step.label, elapsedTime, index * 10, 10),
+      animatedDetail: step.status === "done" ? step.detail : revealText(step.detail, elapsedTime, index * 14, 16),
+    })),
+    [processingSteps, elapsedTime],
+  );
+  const immersiveRotatingCards = useMemo(() => {
+    const platformCards = primaryPlatforms.slice(0, 3).map((item) => ({
+      title: `${item.displayName} 当前信号`,
+      summary: item.summary,
+      detail: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore} / 竞争 ${item.competitionLevel}`,
+      tone: "platform",
+    }));
+    const topicCards = topTopics.slice(0, 3).map((item) => ({
+      title: item.title,
+      summary: item.whyHot,
+      detail: item.howToUse,
+      tone: "topic",
+    }));
+    const actionCards = actionSteps.slice(0, 3).map((item) => ({
+      title: item.title,
+      summary: item.action,
+      detail: `第 ${item.day} 步先做这个。`,
+      tone: "action",
+    }));
+    const fallback = [
+      {
+        title: "平台优先级正在整理",
+        summary: "先把近窗口里的平台动量和适配度压成一页看板。",
+        detail: "你最终看到的是“先做哪里、为什么、先验证什么”。",
+        tone: "platform",
+      },
+      {
+        title: "热点赛道正在筛选",
+        summary: "不是泛热点，而是与你当前方向更接近的切口。",
+        detail: "会直接翻成可执行题目和表达方式。",
+        tone: "topic",
+      },
+      {
+        title: "商业化建议正在整理",
+        summary: "重点不是平台介绍，而是怎么形成真实承接。",
+        detail: "会优先告诉你先做什么、别做什么、怎么验证。",
+        tone: "action",
+      },
+    ];
+    return [...platformCards, ...topicCards, ...actionCards].length ? [...platformCards, ...topicCards, ...actionCards] : fallback;
+  }, [actionSteps, primaryPlatforms, topTopics]);
+  const activeRotatingCard = immersiveRotatingCards[rotatingCardIndex % immersiveRotatingCards.length] || null;
+
+  useEffect(() => {
+    if (!isAnalyzing) {
+      setElapsedTime(0);
+      setRotatingCardIndex(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setElapsedTime((value) => value + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isAnalyzing]);
+
+  useEffect(() => {
+    if (!isAnalyzing || immersiveRotatingCards.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setRotatingCardIndex((value) => (value + 1) % immersiveRotatingCards.length);
+    }, 4500);
+    return () => window.clearInterval(timer);
+  }, [immersiveRotatingCards.length, isAnalyzing]);
+
   const handleAnalyze = async () => {
     setAskResult(null);
+    setElapsedTime(0);
+    setRotatingCardIndex(0);
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
       toast.error("平台分析暂时没有返回结果");
@@ -268,8 +486,8 @@ export default function PlatformPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(44,16,88,0.45),transparent_28%),radial-gradient(circle_at_top_right,rgba(31,67,132,0.28),transparent_22%),linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] text-[#f4efff]">
-      <div className="mx-auto max-w-[1480px] px-4 py-8 md:px-6">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
+      <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
             type="button"
@@ -299,38 +517,42 @@ export default function PlatformPage() {
           </div>
         ) : null}
 
-        <section className="rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] md:p-8">
-          <div className="flex flex-col gap-6">
-            <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-              <div className="max-w-4xl">
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#362561] bg-[#170d35] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#aa95dc]">
-                  <TrendingUp className="h-3.5 w-3.5" />
-                  平台数据分析
-                </div>
-                <h1 className="mt-4 text-4xl font-black leading-[0.96] text-white md:text-[68px]">
-                  按时间维度拆开看
-                  <span className="mt-3 block bg-[linear-gradient(135deg,#49e6ff,#b25cff,#ff5ab8)] bg-clip-text text-transparent">
-                    {personalizedSubject} 的平台机会
-                  </span>
-                </h1>
-                <p className="mt-5 max-w-3xl text-sm leading-8 text-[#c8bfe7] md:text-base">
-                  {platformDashboard?.subheadline || "这里不上传素材，不做二创。只看 15 天、30 天、45 天这三种时间维度下，和你当前关注方向最相关的平台趋势、结构判断和商业机会，再给你一个可继续追问的平台顾问。"}
-                </p>
+        <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
+          <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
+          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[#362561] bg-[rgba(23,13,53,0.9)] px-3 py-1 text-xs uppercase tracking-[0.22em] text-[#aa95dc]">
+                <TrendingUp className="h-3.5 w-3.5" />
+                平台顾问台
               </div>
+              <h1 className="mt-5 max-w-5xl text-[40px] font-black leading-[0.92] text-white md:text-[64px] xl:text-[76px]">
+                不是告诉你“平台都能做”
+                <span className="mt-2 block bg-[linear-gradient(135deg,#5af2ff,#7d73ff_45%,#ff75bd_85%)] bg-clip-text text-transparent">
+                  而是告诉你 {personalizedSubject} 现在该先打哪里
+                </span>
+              </h1>
+              <p className="mt-5 max-w-3xl text-sm leading-8 text-[#d3caef] md:text-base">
+                {platformDashboard?.subheadline
+                  || "这个页面不做视频上传，不做二创，不讲空泛平台画像。它只解决三件事：当前时间窗口里，哪个平台值得优先做；热点赛道该怎么切；以及你怎样把这轮内容机会变成真实商业承接。"}
+              </p>
 
-              <div className="rounded-2xl border border-[#2f2260] bg-[#130b31] px-4 py-3 text-sm leading-7 text-[#d7d0ef]">
-                <div className="font-semibold text-[#8cefff]">分析模型</div>
-                <div className="mt-1">Gemini 2.5 Pro</div>
+              <div className="mt-6 grid gap-3 md:grid-cols-3">
+                {heroTrustPoints.map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">{item.label}</div>
+                    <div className="mt-2 text-sm leading-7 text-white">{item.value}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#12092b] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[#f4efff]">
+            <div className="grid gap-4">
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[linear-gradient(180deg,rgba(28,16,60,0.96),rgba(12,8,28,0.96))] p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <CalendarRange className="h-4 w-4 text-[#49e6ff]" />
-                  选择时间维度
+                  选择分析窗口
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="mt-4 grid gap-3">
                   {WINDOW_OPTIONS.map((item) => {
                     const active = item.days === selectedWindowDays;
                     return (
@@ -340,11 +562,14 @@ export default function PlatformPage() {
                         onClick={() => setSelectedWindowDays(item.days)}
                         className={`rounded-2xl border px-4 py-4 text-left transition ${
                           active
-                            ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.12)] shadow-[0_0_0_1px_rgba(73,230,255,0.12)]"
+                            ? "border-[#49e6ff]/45 bg-[linear-gradient(135deg,rgba(73,230,255,0.14),rgba(125,115,255,0.10))] shadow-[0_0_0_1px_rgba(73,230,255,0.15)]"
                             : "border-white/10 bg-white/5 hover:bg-white/10"
                         }`}
                       >
-                        <div className={`text-lg font-bold ${active ? "text-[#8cefff]" : "text-white"}`}>{item.label}</div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className={`text-lg font-bold ${active ? "text-[#8cefff]" : "text-white"}`}>{item.label}</div>
+                          {active ? <div className="rounded-full bg-[rgba(73,230,255,0.12)] px-2 py-1 text-[11px] text-[#8cefff]">当前窗口</div> : null}
+                        </div>
                         <div className="mt-1 text-sm leading-6 text-[#b7add8]">{item.description}</div>
                       </button>
                     );
@@ -352,48 +577,143 @@ export default function PlatformPage() {
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#12092b] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-[#f4efff]">
-                  <Sparkles className="h-4 w-4 text-[#ffdd44]" />
-                  本轮想聚焦什么
+              <div className="rounded-[26px] border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-5">
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Target className="h-4 w-4 text-[#ffdd44]" />
+                  你这轮最想判断什么
                 </div>
                 <textarea
                   value={focusPrompt}
                   onChange={(event) => setFocusPrompt(event.target.value)}
-                  placeholder="可选：例如我更想知道小红书适不适合先做，或这轮该优先做图文还是视频。"
-                  className="mt-4 min-h-[120px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                  placeholder="例如：我现在是做女性健康/本地服务，想知道先做小红书还是抖音；应该先做图文、短视频，还是先验证某个商业化切口。"
+                  className="mt-4 min-h-[136px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
                 />
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleAnalyze()}
+                    disabled={growthSnapshotQuery.isFetching}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    开始平台分析
+                  </button>
+                  <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-[#c8bfe7]">
+                    分析模型：Gemini 2.5 Pro
+                  </div>
+                  {hasAnalyzed ? (
+                    <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
+                      当前窗口：近 {selectedWindowDays} 天
+                    </div>
+                  ) : null}
+                </div>
+                {growthSnapshotQuery.data?.debug ? (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs leading-6 text-[#aa95dc]">
+                    route: {String(growthSnapshotQuery.data.debug.route || "-")} / source: {String(growthSnapshotQuery.data.source || "-")}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {isAnalyzing ? (
+          <section className="mt-6 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+            <div className={shellCardClasses("p-6")}>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Loader2 className="h-4 w-4 animate-spin text-[#49e6ff]" />
+                平台分析进行中
+              </div>
+              <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">
+                这一版会先读取近 {selectedWindowDays} 天平台快照，再整理热点、赛道和商业化建议。就算需要更长时间，也会把每一步拆给用户看。
+              </div>
+              {activeProcessingStep ? (
+                <div className="mt-5 rounded-2xl border border-[#2f2558] bg-[rgba(255,255,255,0.04)] p-4">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">当前阶段</div>
+                  <div className="mt-2 text-lg font-semibold text-white">{activeProcessingStep.label}</div>
+                  <div className="mt-2 text-sm leading-7 text-[#d3caef]">{activeProcessingStep.detail}</div>
+                </div>
+              ) : null}
+              <div className="mt-5 space-y-3">
+                {animatedProcessingSteps.map((step) => (
+                  <div key={step.id} className={`rounded-2xl border p-4 transition ${
+                    step.status === "done"
+                      ? "border-[#284f4c] bg-[rgba(111,255,176,0.08)]"
+                      : step.status === "active"
+                        ? "border-[#2f5a7a] bg-[rgba(73,230,255,0.10)]"
+                        : "border-white/10 bg-[rgba(255,255,255,0.04)]"
+                  }`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-white">{step.animatedLabel}</div>
+                      <div className={`rounded-full px-2 py-1 text-[11px] ${
+                        step.status === "done"
+                          ? "bg-[rgba(111,255,176,0.12)] text-[#92ffc1]"
+                          : step.status === "active"
+                            ? "bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                            : "bg-[rgba(255,255,255,0.05)] text-[#b5abd5]"
+                      }`}>
+                        {step.status === "done" ? "完成" : step.status === "active" ? "进行中" : "待处理"}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm leading-7 text-[#d3caef]">{step.animatedDetail}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => void handleAnalyze()}
-                disabled={growthSnapshotQuery.isFetching}
-                className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                开始进行平台分析
-              </button>
-              {hasAnalyzed ? (
-                <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-sm text-[#d7d0ef]">
-                  当前窗口：近 {selectedWindowDays} 天
+            <div className={shellCardClasses("p-6")}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Sparkles className="h-4 w-4 text-[#ffdd44]" />
+                    轮播看板
+                  </div>
+                  <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">
+                    在报告生成过程中，先把当前窗口里最关键的平台、热点和承接线索轮播出来，避免用户空等。
+                  </div>
+                </div>
+                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-[#b7add8]">
+                  每 4.5 秒轮播
+                </div>
+              </div>
+              {activeRotatingCard ? (
+                <div className="mt-5 rounded-[28px] border border-[#2f2558] bg-[linear-gradient(135deg,rgba(73,230,255,0.10),rgba(125,115,255,0.08),rgba(255,117,189,0.08))] p-6">
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
+                    {activeRotatingCard.tone === "platform" ? "平台信号" : activeRotatingCard.tone === "topic" ? "热点切口" : "动作建议"}
+                  </div>
+                  <div className="mt-3 text-2xl font-bold text-white">{activeRotatingCard.title}</div>
+                  <div className="mt-4 text-sm leading-8 text-[#eef5ff]">{activeRotatingCard.summary}</div>
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-[rgba(9,6,24,0.36)] p-4 text-sm leading-7 text-[#d3caef]">
+                    {activeRotatingCard.detail}
+                  </div>
                 </div>
               ) : null}
-              {growthSnapshotQuery.data?.debug ? (
-                <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-[#aa95dc]">
-                  route: {String(growthSnapshotQuery.data.debug.route || "-")} / source: {String(growthSnapshotQuery.data.source || "-")}
-                </div>
-              ) : null}
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {immersiveRotatingCards.slice(0, 3).map((item, index) => (
+                  <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                    <div className="text-sm font-semibold text-white">{item.title}</div>
+                    <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.summary}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </section>
+        ) : null}
+
+        <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {resultSummaryCards.map((item, index) => (
+            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5")}>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
+              <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
+              <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+            </div>
+          ))}
         </section>
 
         {snapshot ? (
           <section className="mt-8 space-y-6">
             {debugMode ? (
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#0d0722] p-5">
+              <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Bot className="h-4 w-4 text-[#49e6ff]" />
                   Debug Flow
@@ -425,25 +745,21 @@ export default function PlatformPage() {
                   </div>
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
-                    <div className="mt-3 text-xs leading-6 text-[#d7d0ef] whitespace-pre-wrap">
-                      {String(
-                        growthSnapshotQuery.error?.message ||
-                          askPlatformFollowUpMutation.error?.message ||
-                          "-"
-                      )}
+                    <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
+                      {String(growthSnapshotQuery.error?.message || askPlatformFollowUpMutation.error?.message || "-")}
                     </div>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
-                    <pre className="mt-3 overflow-x-auto text-[11px] leading-6 text-[#d7d0ef] whitespace-pre-wrap">
+                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
                       {JSON.stringify(snapshotDebug || null, null, 2)}
                     </pre>
                   </div>
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">askPlatformFollowUp.debug</div>
-                    <pre className="mt-3 overflow-x-auto text-[11px] leading-6 text-[#d7d0ef] whitespace-pre-wrap">
+                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
                       {JSON.stringify(askDebug || null, null, 2)}
                     </pre>
                   </div>
@@ -451,240 +767,303 @@ export default function PlatformPage() {
               </div>
             ) : null}
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">当前结论</div>
-                <div className="mt-3 text-xl font-bold text-white">{snapshot.overview.summary}</div>
-                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.overview.trendNarrative}</div>
-              </div>
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">优先动作</div>
-                <div className="mt-3 text-xl font-bold text-white">{recommendationHeadline}</div>
-                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.dataAnalystSummary.recommendationReason}</div>
-              </div>
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">实时热点</div>
-                <div className="mt-3 text-xl font-bold text-white">{snapshot.analysisTracks.liveHotTopic}</div>
-                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.analysisTracks.hotTopicTimeliness}</div>
-              </div>
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-xs uppercase tracking-[0.16em] text-[#6fffb0]">下一步</div>
-                <div className="mt-3 text-xl font-bold text-white">{snapshot.dataAnalystSummary.recommendation}</div>
-                <div className="mt-3 text-sm leading-7 text-[#bdb4dc]">{snapshot.overview.nextCollectionPlan}</div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-2">
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
-                  平台适配度排行
-                </div>
-                <div className="mt-4 space-y-4">
-                  {primaryPlatforms.map((item) => (
-                    <div key={`fit-${item.platform}`}>
-                      <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                        <div className="font-semibold text-white">{item.displayName}</div>
-                        <div className="text-[#8cefff]">{item.audienceFitScore} / 100</div>
-                      </div>
-                      <div className="h-3 rounded-full bg-[#1a103d]">
-                        <div
-                          className="h-3 rounded-full bg-[linear-gradient(90deg,#2ef0ff,#7f67ff,#ff4fb8)]"
-                          style={{ width: `${getRelativeBar(item.audienceFitScore, maxFit)}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 text-xs leading-6 text-[#b7add8]">{item.summary}</div>
+            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="inline-flex items-center gap-2 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      为什么这个方向现在值得做
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <TrendingUp className="h-4 w-4 text-[#ffdd44]" />
-                  平台动量与竞争强度
-                </div>
-                <div className="mt-4 space-y-4">
-                  {primaryPlatforms.map((item) => (
-                    <div key={`momentum-${item.platform}`}>
-                      <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                        <div className="font-semibold text-white">{item.displayName}</div>
-                        <div className="text-[#ffe27b]">动量 {item.momentumScore}</div>
-                      </div>
-                      <div className="h-3 rounded-full bg-[#1a103d]">
-                        <div
-                          className="h-3 rounded-full bg-[linear-gradient(90deg,#ffdd44,#ff9944,#ff4fb8)]"
-                          style={{ width: `${getRelativeBar(item.momentumScore, maxMomentum)}%` }}
-                        />
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#b7add8]">
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">竞争：{item.competitionLevel}</span>
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">互动率中位数：{item.last30d.engagementRateMedian}</span>
-                        <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">样本：{item.last30d.sampleSizeLabel}</span>
-                      </div>
+                    <div className="mt-4 max-w-3xl text-3xl font-black leading-tight text-white md:text-4xl">
+                      {recommendationHeadline}
                     </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
-                  热点主题与切入角度
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {topTopics.map((item, index) => (
-                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                      <div className="text-sm font-semibold text-white">{item.title}</div>
-                      <div className="mt-3 text-sm leading-7 text-[#c8bfe7]">{item.whyHot}</div>
-                      <div className="mt-3 text-sm leading-7 text-[#8cefff]">{item.howToUse}</div>
+                    <div className="mt-4 max-w-3xl text-sm leading-8 text-[#d3caef]">
+                      {platformDashboard?.subheadline || snapshot.dataAnalystSummary.recommendationReason}
                     </div>
-                  ))}
+                  </div>
+                  <div className="rounded-2xl border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-4 py-3 text-right">
+                    <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">时间口径</div>
+                    <div className="mt-2 text-xl font-bold text-white">{getWindowLabel(selectedWindowDays)}</div>
+                  </div>
                 </div>
-              </div>
 
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <ChevronRight className="h-4 w-4 text-[#6fffb0]" />
-                  当前建议怎么做
-                </div>
-                <div className="mt-4 space-y-3">
-                  {recommendationHighlights.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                <div className="mt-6 grid gap-3 md:grid-cols-3">
+                  {keyInsights.slice(0, 3).map((item, index) => (
+                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold text-white">{item.title}</div>
-                        <div className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1 text-[11px] text-[#8cefff]">
-                          {item.summary}
+                        {item.badge ? (
+                          <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                            {item.badge}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Clock3 className="h-4 w-4 text-[#ffdd44]" />
+                  这页会帮你直接判断
+                </div>
+                <div className="mt-4 space-y-3">
+                  {evidenceNotes.map((item, index) => (
+                    <div key={`${item}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4 text-sm leading-7 text-[#d3caef]">
+                      {item}
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 rounded-2xl border border-[#2f2558] bg-[linear-gradient(135deg,rgba(73,230,255,0.08),rgba(255,117,189,0.06))] p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-[#8cefff]">顾问结论风格</div>
+                  <div className="mt-2 text-sm leading-7 text-white">
+                    先给判断，再给原因，再给动作建议；不讲“可能都可以”，而是明确告诉你先从哪里试，哪里暂时别浪费时间。
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
+                  平台优先级与切入方式
+                </div>
+                <div className="mt-5 grid gap-4">
+                  {platformDecisionRows.map((item, index) => (
+                    <div key={item.id} className="rounded-[24px] border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
+                              Priority {index + 1}
+                            </div>
+                            <div className="text-xl font-bold text-white">{item.name}</div>
+                          </div>
+                          <div className="mt-3 text-sm leading-7 text-[#b9afd9]">{item.trend}</div>
+                        </div>
+                        <div className="rounded-full border border-white/10 bg-[rgba(255,255,255,0.04)] px-3 py-2 text-xs text-[#d6cdf0]">
+                          {item.lane}
                         </div>
                       </div>
-                      <div className="mt-3 text-sm leading-7 text-[#8cefff]">{item.action}</div>
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">为什么现在做</div>
+                          <div className="mt-2 text-sm leading-7 text-white">{item.whyNow}</div>
+                        </div>
+                        <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
+                          <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">建议动作</div>
+                          <div className="mt-2 text-sm leading-7 text-white">{item.nextMove}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                <div className={shellCardClasses("p-6")}>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Target className="h-4 w-4 text-[#6fffb0]" />
+                    平台适配度
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {primaryPlatforms.map((item) => (
+                      <div key={`fit-${item.platform}`}>
+                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                          <div className="font-semibold text-white">{item.displayName}</div>
+                          <div className="text-[#8cefff]">{item.audienceFitScore} / 100</div>
+                        </div>
+                        <div className="h-3 rounded-full bg-[#1a103d]">
+                          <div
+                            className="h-3 rounded-full bg-[linear-gradient(90deg,#2ef0ff,#7f67ff,#ff4fb8)]"
+                            style={{ width: `${getRelativeBar(item.audienceFitScore, maxFit)}%` }}
+                          />
+                        </div>
+                        <div className="mt-2 text-xs leading-6 text-[#b7add8]">{item.summary}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className={shellCardClasses("p-6")}>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <Rocket className="h-4 w-4 text-[#ff7fd5]" />
+                    动量与竞争
+                  </div>
+                  <div className="mt-4 space-y-4">
+                    {primaryPlatforms.map((item) => (
+                      <div key={`momentum-${item.platform}`}>
+                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                          <div className="font-semibold text-white">{item.displayName}</div>
+                          <div className="text-[#ffe27b]">动量 {item.momentumScore}</div>
+                        </div>
+                        <div className="h-3 rounded-full bg-[#1a103d]">
+                          <div
+                            className="h-3 rounded-full bg-[linear-gradient(90deg,#ffdd44,#ff9944,#ff4fb8)]"
+                            style={{ width: `${getRelativeBar(item.momentumScore, maxMomentum)}%` }}
+                          />
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#b7add8]">
+                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">竞争：{item.competitionLevel}</span>
+                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">互动率中位数：{item.last30d.engagementRateMedian}</span>
+                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">样本：{item.last30d.sampleSizeLabel}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
+                  热点赛道与内容切口
+                </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  {topTopics.map((item, index) => (
+                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                      <div className="text-sm font-semibold text-white">{item.title}</div>
+                      <div className="mt-3 text-sm leading-7 text-[#d3caef]">{item.whyHot}</div>
+                      <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#8cefff]">
+                        {item.howToUse}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <CircleDollarSign className="h-4 w-4 text-[#ffdd44]" />
+                  商业化建议先磨到可落地
+                </div>
+                <div className="mt-5 space-y-3">
+                  {monetizationCards.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                      <div className="text-sm font-semibold text-white">{item.title}</div>
+                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.summary}</div>
+                      <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
+                        {item.action}
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-sm font-semibold text-white">现在就能执行的动作清单</div>
-                <div className="mt-4 space-y-3">
+            <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Rocket className="h-4 w-4 text-[#6fffb0]" />
+                  现在就能执行的动作
+                </div>
+                <div className="mt-5 space-y-3">
                   {actionSteps.map((item) => (
-                    <div key={`step-${item.day}-${item.title}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div key={`step-${item.day}-${item.title}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="flex items-center justify-between gap-3">
                         <div className="font-semibold text-white">{item.title}</div>
-                        <div className="text-xs text-[#8cefff]">第 {item.day} 天</div>
+                        <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] text-[#8cefff]">
+                          第 {item.day} 步
+                        </div>
                       </div>
-                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.action}</div>
+                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.action}</div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="rounded-[24px] border border-[#2a1c55] bg-[#100926] p-5">
-                <div className="text-sm font-semibold text-white">判断依据提炼</div>
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">Live</div>
-                    <div className="mt-2 text-sm leading-7 text-[#d7d0ef]">{snapshot.analysisTracks.liveSummary}</div>
-                  </div>
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">Historical</div>
-                    <div className="mt-2 text-sm leading-7 text-[#d7d0ef]">{snapshot.analysisTracks.historicalSummary}</div>
-                  </div>
-                  {keyInsights.map((item) => (
-                    <div key={`insight-${item.title}`} className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                      <div className="text-sm font-semibold text-white">{item.title}</div>
-                      <div className="mt-2 text-sm leading-7 text-[#c8bfe7]">{item.detail}</div>
-                    </div>
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <ShieldCheck className="h-4 w-4 text-[#8cefff]" />
+                  你还想继续追问什么
+                </div>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
+                  这一轮追问会继续锁定在近 {selectedWindowDays} 天和你当前关注的“{personalizedSubject}”，不是重新输出一份平台基础课，而是把结论继续往“选题、形式、节奏、承接动作”推进。
+                </p>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {hotQuestionSuggestions.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => {
+                        setQuestion(item);
+                        void handleAsk(item);
+                      }}
+                      className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
+                    >
+                      {item}
+                    </button>
                   ))}
                 </div>
-              </div>
-            </div>
 
-            <div className="rounded-[28px] border border-[#2a1c55] bg-[#100926] p-6">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <MessageSquareText className="h-4 w-4 text-[#49e6ff]" />
-                    你还想了解什么？
-                  </div>
-                  <p className="mt-2 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                    这里会再调用 Gemini 2.5 Pro，基于当前 {selectedWindowDays} 天窗口和你此刻最关心的“{personalizedSubject}”继续回答。回答会保持专业判断，也会给你一句真诚的鼓励，帮你把方向走稳。
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-[#2f2260] bg-[#130b31] px-4 py-3 text-xs text-[#aa95dc]">
-                  当前时间维度：近 {selectedWindowDays} 天
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-wrap gap-2">
-                {hotQuestionSuggestions.map((item) => (
+                <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
+                  <textarea
+                    value={question}
+                    onChange={(event) => setQuestion(event.target.value)}
+                    placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                    className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                  />
                   <button
-                    key={item}
                     type="button"
-                    onClick={() => {
-                      setQuestion(item);
-                      void handleAsk(item);
-                    }}
-                    className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
+                    onClick={() => void handleAsk()}
+                    disabled={askPlatformFollowUpMutation.isPending}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {item}
+                    {askPlatformFollowUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                    继续追问
                   </button>
-                ))}
-              </div>
+                </div>
 
-              <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-                <textarea
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                  className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleAsk()}
-                  disabled={askPlatformFollowUpMutation.isPending}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {askPlatformFollowUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                  继续追问
-                </button>
-              </div>
-
-              {askResult ? (
-                <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-5">
-                    <div className="text-lg font-bold text-white">{askResult.title}</div>
-                    <div className="mt-3 text-sm leading-8 text-[#d7d0ef] whitespace-pre-wrap">{askResult.answer}</div>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-5">
-                      <div className="text-sm font-semibold text-[#8cefff]">给你的鼓励</div>
-                      <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
-                    </div>
-                    <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-5">
-                      <div className="text-sm font-semibold text-[#ffdd44]">你还可以继续问</div>
-                      <div className="mt-3 space-y-2">
-                        {askResult.nextQuestions.map((item) => (
-                          <button
-                            key={item}
-                            type="button"
-                            onClick={() => {
-                              setQuestion(item);
-                              void handleAsk(item);
-                            }}
-                            className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
-                          >
-                            {item}
-                          </button>
+                {askResult ? (
+                  <div className="mt-6 grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+                    <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                      <div className="flex items-center gap-2 text-lg font-bold text-white">
+                        <MessageSquareText className="h-5 w-5 text-[#8cefff]" />
+                        {askResult.title}
+                      </div>
+                      <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
+                        {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
+                          <p key={`${paragraph.slice(0, 24)}-${index}`}>{paragraph}</p>
                         ))}
                       </div>
                     </div>
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                        <div className="text-sm font-semibold text-[#8cefff]">顾问建议</div>
+                        <div className="mt-3 text-sm leading-7 text-[#d7d0ef]">{askResult.encouragement}</div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                        <div className="text-sm font-semibold text-[#ffdd44]">继续往下问</div>
+                        <div className="mt-3 space-y-2">
+                          {askResult.nextQuestions.map((item) => (
+                            <button
+                              key={item}
+                              type="button"
+                              onClick={() => {
+                                setQuestion(item);
+                                void handleAsk(item);
+                              }}
+                              className="block w-full rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-left text-sm text-[#d7d0ef] transition hover:bg-white/10"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <span>{item}</span>
+                                <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[#8cefff]" />
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </section>
         ) : null}

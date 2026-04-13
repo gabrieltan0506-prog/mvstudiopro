@@ -30,7 +30,7 @@ import { analyzeVideo } from "./growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./growth/extractorPipeline";
 import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/premiumRemix";
 import { collectTrendPlatforms } from "./growth/trendCollector";
-import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
+import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
@@ -398,17 +398,21 @@ async function buildPlatformDashboard(params: {
     messages: [
       {
         role: "system",
-        content: `你是一位专业的数据策略顾问和平台操盘手。
+        content: `你是一位已经帮创作者做过平台选择、内容定位和商业化承接的资深顾问。
 
 你的任务是基于当前时间窗口的平台实时数据，生成一个给客户看的互动看板。
 
 要求：
 1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
 2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
-3. 每个平台都要结合“当前热点标题 + 当前主要赛道/桶 + 当前平台适配结论”生成一句当下有效的判断。
-4. hotTopics 必须来自当前数据，不要凭空杜撰泛热点。
-5. 语气专业、清楚、有温度，但不要鸡汤。
-6. 输出严格 JSON，字段为 headline、subheadline、topSignals、platformMenu、hotTopics、actionCards、conversationStarters。`,
+3. 整个看板要有“可卖”感：headline 要像成熟顾问给出的核心判断，而不是中性标题；subheadline 要说明为什么现在值得看这件事。
+4. topSignals 不是摘要列表，而是 3 到 4 个真正会影响决策的信号。badge 要像“先做”“谨慎”“热点”“承接”这种前台可读标签。
+5. platformMenu 里的每个平台都要明确回答四件事：现在值不值得做、适合切哪条赛道、为什么是这个平台、下一步先验证什么。不要只写平台介绍。
+6. hotTopics 必须来自当前数据，不要凭空杜撰泛热点；同时要把热点翻成用户可执行的切入方式，而不是只解释为什么热。
+7. actionCards 必须是能立刻执行的动作，优先写“先做什么、别做什么、怎么验证”，不要写空泛原则。
+8. conversationStarters 要像真人顾问下一步会引导用户继续问的问题，具体、可追问、能继续推进决策。
+9. 语气专业、清楚、有温度，但不要鸡汤。
+10. 输出严格 JSON，字段为 headline、subheadline、topSignals、platformMenu、hotTopics、actionCards、conversationStarters。`,
       },
       {
         role: "user",
@@ -434,6 +438,64 @@ async function buildPlatformDashboard(params: {
   return platformDashboardResponseSchema.parse(
     JSON.parse(String(response.choices[0]?.message?.content || "{}")),
   );
+}
+
+function buildFallbackPlatformDashboard(params: {
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+  context?: string;
+  windowDays: number;
+}) {
+  const topPlatform = params.snapshot.platformRecommendations[0];
+  const topTopic = params.snapshot.topicLibrary[0];
+  const contextLabel = String(params.context || "").trim() || topTopic?.title || "当前方向";
+
+  return platformDashboardResponseSchema.parse({
+    headline: topPlatform
+      ? `围绕 ${contextLabel}，先从 ${topPlatform.name} 入手更容易拿到第一轮反馈`
+      : `围绕 ${contextLabel}，先用 ${params.windowDays} 天窗口做轻量验证`,
+    subheadline: params.snapshot.dataAnalystSummary.recommendationReason
+      || params.snapshot.overview.trendNarrative
+      || `这版先基于近 ${params.windowDays} 天快照给出可执行判断，避免首轮分析长时间卡住。`,
+    topSignals: [
+      {
+        title: "优先平台",
+        detail: topPlatform?.reason || params.snapshot.overview.summary,
+        badge: "先做",
+      },
+      {
+        title: "热点切口",
+        detail: topTopic?.executionHint || params.snapshot.analysisTracks.liveSummary,
+        badge: "热点",
+      },
+      {
+        title: "承接方式",
+        detail: params.snapshot.businessInsights[0]?.detail || params.snapshot.dataAnalystSummary.recommendation,
+        badge: "承接",
+      },
+    ].filter((item) => item.detail),
+    platformMenu: params.snapshot.platformSnapshots.slice(0, 4).map((item, index) => ({
+      platform: item.platform,
+      label: item.displayName,
+      trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
+      lane: item.sampleTopics[0] || item.summary,
+      whyNow: item.summary,
+      nextMove: params.snapshot.platformRecommendations[index]?.action || params.snapshot.growthPlan[index]?.action || "先用一个轻量主题验证反馈。",
+    })),
+    hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item) => ({
+      title: item.title,
+      whyHot: item.rationale,
+      howToUse: item.executionHint,
+    })),
+    actionCards: params.snapshot.growthPlan.slice(0, 4).map((item) => ({
+      title: item.title,
+      detail: item.action,
+    })),
+    conversationStarters: [
+      `如果我先做 ${topPlatform?.name || "当前优先平台"}，第一批内容应该先发图文还是视频？`,
+      `围绕“${topTopic?.title || contextLabel}”，最值得先验证的商业化承接是什么？`,
+      `在近 ${params.windowDays} 天窗口里，哪些方向应该先不做？`,
+    ],
+  });
 }
 
 async function personalizeGrowthSnapshot(params: {
@@ -1355,9 +1417,11 @@ export const appRouter = router({
       .query(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
-        const store = await readTrendStore({ preferDerivedFiles: true });
-        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const interactivePlatform = Boolean(input.interactivePlatform);
+        const store = interactivePlatform
+          ? await readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true })
+          : await readTrendStore({ preferDerivedFiles: true });
+        const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const historicalPlatformTotals = Object.fromEntries(
           requestedPlatforms.map((platform) => [
             platform,
@@ -1459,18 +1523,32 @@ export const appRouter = router({
               },
             });
 
-        const platformDashboard = interactivePlatform
-          ? null
-          : await buildPlatformDashboard({
-              snapshot,
-              context: input.context,
-              requestedPlatforms,
-              store: effectiveStore,
-              windowDays: selectedWindowDays,
-            }).catch((error) => {
-              console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
-              return null;
-            });
+        const platformDashboardSource = interactivePlatform ? baseSnapshot : snapshot;
+        const platformDashboard = await Promise.race([
+          buildPlatformDashboard({
+            snapshot: platformDashboardSource,
+            context: input.context,
+            requestedPlatforms,
+            store: effectiveStore,
+            windowDays: selectedWindowDays,
+          }),
+          new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
+            setTimeout(() => {
+              resolve(buildFallbackPlatformDashboard({
+                snapshot: platformDashboardSource,
+                context: input.context,
+                windowDays: selectedWindowDays,
+              }));
+            }, interactivePlatform ? 9000 : 12000);
+          }),
+        ]).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+          return buildFallbackPlatformDashboard({
+            snapshot: platformDashboardSource,
+            context: input.context,
+            windowDays: selectedWindowDays,
+          });
+        });
 
         return {
           success: true,
@@ -1488,7 +1566,7 @@ export const appRouter = router({
             selectedWindowDays,
             interactivePlatform,
             skippedPersonalization: interactivePlatform,
-            skippedPlatformDashboard: interactivePlatform,
+            skippedPlatformDashboard: false,
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
             windowDays: snapshot.status.windowDays,
@@ -1521,20 +1599,23 @@ export const appRouter = router({
           messages: [
             {
               role: "system",
-              content: `你是一位专业、克制、温暖的平台策略顾问。
+              content: `你是一位专业、克制、会直接给判断的平台策略顾问。
 
 你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
 
 要求：
 1. 回答必须专业，但语气要有温度，像一个成熟顾问在帮用户梳理方向。
-2. 先给出明确判断，再解释原因，再给动作建议。
-3. 鼓励语只能简短真诚，不要鸡汤，不要夸张。
-4. 不要泄露后台工程逻辑，不要说“数据库里显示”这类话，只把证据转成商业判断。
-5. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
-6. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
-7. 如果 snapshot 里已经有 topicLibrary、businessInsights、growthPlan，请把它们优先翻译成“这个用户现在该怎么做”的表达。
-8. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
-9. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+2. 第一段必须先给出明确判断，不要先铺垫，不要两边都说。
+3. answer 必须明显分成三个部分：结论、为什么、下一步怎么做。可以用自然段，不要写成模板编号。
+4. 如果用户问“从哪些平台入手”“怎么实现商业价值”这类问题，必须明确给出优先顺序、适合承接的商业方向，以及短期不建议投入的方向。
+5. 鼓励语只能简短真诚，不要鸡汤，不要夸张，不要像客服安慰。
+6. 不要泄露后台工程逻辑，不要说“数据库里显示”这类话，只把证据转成商业判断。
+7. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
+8. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
+9. 如果 snapshot 里已经有 topicLibrary、businessInsights、growthPlan，请把它们优先翻译成“这个用户现在该怎么做”的表达。
+10. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
+11. nextQuestions 要像一个真人顾问会继续往下问的具体问题，最多 4 个。
+12. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
             },
             {
               role: "user",
