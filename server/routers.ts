@@ -344,6 +344,7 @@ const platformFollowUpResponseSchema = z.object({
 const platformDashboardResponseSchema = z.object({
   headline: z.string(),
   subheadline: z.string(),
+  personaSummary: z.string().default(""),
   topSignals: z.array(z.object({
     title: z.string(),
     detail: z.string(),
@@ -355,12 +356,32 @@ const platformDashboardResponseSchema = z.object({
     trend: z.string(),
     lane: z.string(),
     whyNow: z.string(),
+    recommendedFormat: z.string().default(""),
+    titleExample: z.string().default(""),
+    contentHook: z.string().default(""),
     nextMove: z.string(),
+    monetizationPath: z.string().default(""),
   })).default([]),
   hotTopics: z.array(z.object({
     title: z.string(),
     whyHot: z.string(),
     howToUse: z.string(),
+  })).default([]),
+  contentBlueprints: z.array(z.object({
+    title: z.string(),
+    format: z.string(),
+    hook: z.string(),
+    copywriting: z.string(),
+    graphicPlan: z.string().default(""),
+    videoPlan: z.string().default(""),
+    suitablePlatforms: z.array(z.string()).default([]),
+  })).default([]),
+  monetizationLanes: z.array(z.object({
+    title: z.string(),
+    fitReason: z.string(),
+    offerShape: z.string(),
+    revenueModes: z.array(z.string()).default([]),
+    firstValidation: z.string(),
   })).default([]),
   actionCards: z.array(z.object({
     title: z.string(),
@@ -406,13 +427,17 @@ async function buildPlatformDashboard(params: {
 1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
 2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
 3. 整个看板要有“可卖”感：headline 要像成熟顾问给出的核心判断，而不是中性标题；subheadline 要说明为什么现在值得看这件事。
-4. topSignals 不是摘要列表，而是 3 到 4 个真正会影响决策的信号。badge 要像“先做”“谨慎”“热点”“承接”这种前台可读标签。
-5. platformMenu 里的每个平台都要明确回答四件事：现在值不值得做、适合切哪条赛道、为什么是这个平台、下一步先验证什么。不要只写平台介绍。
-6. hotTopics 必须来自当前数据，不要凭空杜撰泛热点；同时要把热点翻成用户可执行的切入方式，而不是只解释为什么热。
-7. actionCards 必须是能立刻执行的动作，优先写“先做什么、别做什么、怎么验证”，不要写空泛原则。
-8. conversationStarters 要像真人顾问下一步会引导用户继续问的问题，具体、可追问、能继续推进决策。
-9. 语气专业、清楚、有温度，但不要鸡汤。
-10. 输出严格 JSON，字段为 headline、subheadline、topSignals、platformMenu、hotTopics、actionCards、conversationStarters。`,
+4. personaSummary 必须先用一句话讲清这个用户的身份、可建立的IP心智、以及为什么这个身份有商业价值。
+5. platformMenu 不是平台介绍。每个平台至少要回答：适合切什么赛道、用什么形式更好、首发内容标题示例、开头一句怎么说、先验证什么、商业承接走哪条线。
+6. contentBlueprints 必须给出至少 3 个具体内容方案，每个都要写：标题、形式、开头文案、主体文案方向、图文怎么写、视频怎么拍。不能只写原则。
+7. monetizationLanes 不能只写电商带货，也不能把一堆通用变现方式全部列上来。只保留 1 到 3 条和这个用户身份、题材、平台表达强相关的路径。每条都必须明确回答：为什么这个人适合做、适合卖什么或接什么、先怎么验证。没有强证据就不要写。
+8. 如果用户背景是“专业人士 + 文化/历史/艺术兴趣”这类复合身份，优先考虑与身份信任、审美内容、知识解释力相关的变现，而不是默认带货。
+9. 如果你给出的变现路径可以直接套在任何人身上，那就是错的，必须重写。
+10. hotTopics 必须来自当前数据，但要翻译成这个用户能做的切入，不是解释平台热点本身。
+11. actionCards 必须是能立刻执行的动作，优先写“先做什么、别做什么、怎么验证”。
+12. conversationStarters 要像真人顾问继续推进选题、形式、承接和验证的问题。
+13. 绝对不要出现“可能都可以”“先试试”“做个人IP”这种空话。
+14. 输出严格 JSON，字段为 headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。`,
       },
       {
         role: "user",
@@ -462,6 +487,7 @@ function buildFallbackPlatformDashboard(params: {
     subheadline: mainPath.summary
       || params.snapshot.overview.trendNarrative
       || `这版先基于近 ${params.windowDays} 天快照给出可执行判断，避免首轮分析长时间卡住。`,
+    personaSummary: `把“${contextLabel}”收成一个兼具专业可信度和文化审美记忆点的内容身份，再决定放大到哪个平台。`,
     topSignals: [
       {
         title: "优先平台",
@@ -485,12 +511,32 @@ function buildFallbackPlatformDashboard(params: {
       trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
       lane: item.sampleTopics[0] || item.summary,
       whyNow: item.summary,
+      recommendedFormat: params.snapshot.platformActivities[index]?.recommendedFormat || params.snapshot.titleExecutions[index]?.presentationMode || "图文 + 短视频双测",
+      titleExample: params.snapshot.titleExecutions[index]?.title || item.sampleTopics[0] || "",
+      contentHook: params.snapshot.titleExecutions[index]?.openingHook || params.snapshot.creationAssist.brief || "",
       nextMove: params.snapshot.platformRecommendations[index]?.action || params.snapshot.growthPlan[index]?.action || "先用一个轻量主题验证反馈。",
+      monetizationPath: params.snapshot.monetizationStrategies[index]?.primaryTrack || params.snapshot.businessInsights[index]?.title || "",
     })),
     hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item, index) => ({
       title: item.title,
       whyHot: item.rationale,
       howToUse: params.snapshot.titleExecutions[index]?.copywriting || item.executionHint,
+    })),
+    contentBlueprints: params.snapshot.titleExecutions.slice(0, 4).map((item) => ({
+      title: item.title,
+      format: item.presentationMode,
+      hook: item.openingHook || item.copywriting,
+      copywriting: item.copywriting,
+      graphicPlan: item.graphicPlan,
+      videoPlan: item.videoPlan,
+      suitablePlatforms: item.suitablePlatforms,
+    })),
+    monetizationLanes: params.snapshot.monetizationStrategies.slice(0, 2).map((item) => ({
+      title: item.primaryTrack,
+      fitReason: item.reason,
+      offerShape: item.offerType,
+      revenueModes: [item.strategy, item.callToAction].filter(Boolean),
+      firstValidation: params.snapshot.decisionFramework.validationPlan[0]?.nextMove || item.callToAction,
     })),
     actionCards: [
       {
@@ -515,6 +561,35 @@ function buildFallbackPlatformDashboard(params: {
       `围绕“${topTopic?.title || contextLabel}”，最值得先验证的商业化承接是什么？`,
       `在近 ${params.windowDays} 天窗口里，哪些方向应该先不做？`,
     ],
+  });
+}
+
+function buildPlatformFollowUpFallback(params: {
+  question: string;
+  context?: string;
+  windowDays: number;
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+}) {
+  const subject = String(params.context || "").trim() || "这条内容方向";
+  const topPlatform = params.snapshot.platformRecommendations[0];
+  const topExecution = params.snapshot.titleExecutions[0];
+  const topMonetization = params.snapshot.monetizationStrategies[0];
+  const secondMonetization = params.snapshot.monetizationStrategies[1];
+  const nextQuestions = [
+    `如果先做 ${topPlatform?.name || "当前优先平台"}，第一条内容我该发图文还是视频？`,
+    `围绕“${subject}”，第一批标题我该先测哪 3 个？`,
+    `现在最适合先验证哪一条商业承接，而不是同时铺很多条线？`,
+  ].slice(0, 3);
+
+  return platformFollowUpResponseSchema.parse({
+    title: "继续往下拆成可执行动作",
+    answer: [
+      `先给判断：围绕“${subject}”，这一轮不要把平台、内容形式和商业路径一起铺开，优先从 ${topPlatform?.name || "当前优先平台"} 做一条能建立信任感的内容验证。`,
+      `为什么：你当前更需要先验证“什么表达最容易让用户记住你”，而不是一上来堆很多泛变现路线。优先内容可以直接用“${topExecution?.title || "把专业身份和文化内容收成一个明确切口"}”，开头先说“${topExecution?.openingHook || "我先给你一个明确判断"}”，主体按“判断 -> 解释 -> 例子 -> 给行动”展开。${topExecution?.presentationMode === "图文" ? `图文写法先用 ${topExecution?.graphicPlan || "封面一句结论，正文三段展开"}。` : `视频拍法先用 ${topExecution?.videoPlan || "先给判断，再讲例子，最后给行动"}。`}`,
+      `下一步怎么做：商业承接只先保留 ${topMonetization?.primaryTrack || "一条最贴近你身份的路径"}${secondMonetization ? `，备选是 ${secondMonetization.primaryTrack}` : ""}。先不要把所有变现方式一起上。第一轮只验证“${topMonetization?.callToAction || "用户会不会愿意继续咨询、收藏或私信"}”，看反馈后再决定是否放大。`,
+    ].join("\n\n"),
+    encouragement: "这轮先把第一条内容和第一条承接验证出来，不要同时铺四条线。",
+    nextQuestions,
   });
 }
 
@@ -1557,7 +1632,7 @@ export const appRouter = router({
                 context: input.context,
                 windowDays: selectedWindowDays,
               }));
-            }, interactivePlatform ? 9000 : 12000);
+            }, interactivePlatform ? 35_000 : 18_000);
           }),
         ]).catch((error) => {
           console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
@@ -1612,14 +1687,15 @@ export const appRouter = router({
         if (ctx.user?.id) {
           await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
         }
-        const response = await invokeLLM({
-          model: "pro",
-          provider: "vertex",
-          modelName: "gemini-2.5-pro",
-          messages: [
-            {
-              role: "system",
-              content: `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
+        try {
+          const response = await invokeLLM({
+            model: "pro",
+            provider: "vertex",
+            modelName: "gemini-2.5-pro",
+            messages: [
+              {
+                role: "system",
+                content: `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
 
 你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
 
@@ -1630,51 +1706,65 @@ export const appRouter = router({
 4. 如果用户问“从哪些平台入手”“怎么实现商业价值”这类问题，必须明确给出优先顺序、适合承接的商业方向，以及短期不建议投入的方向。
 5. 如果问题涉及选题、文案、图文、视频、脚本、拍法，你必须写出具体方案，至少覆盖：题目方向、开头怎么说、结构怎么排、视频怎么拍或图文怎么写。
 6. 如果 snapshot 里已经有 titleExecutions、creationAssist、monetizationStrategies、decisionFramework，要优先把这些证据翻译成“这个用户现在就能执行”的动作，而不是继续抽象分析。
-7. 不要泄露后台工程逻辑，不要出现 fallback、live sample、historical、verify、数据库、覆盖率、补位、主链、样本裂缝 这类内部词。
-8. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
-9. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
-10. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
-11. encouragement 必须是一句短的执行提醒，不要像客服安慰。
-12. nextQuestions 要像真人顾问会继续往下问的具体问题，最多 4 个。
-13. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+7. 变现路径只能保留和这个用户身份、内容方向、平台表达直接相关的 1 到 3 条。不要把带货、课程、咨询、社群、品牌合作全部列一遍。
+8. 如果用户背景是专业身份和文化审美内容的结合，就优先写与信任、解释力、审美内容承接有关的路径，而不是默认带货。
+9. 不要泄露后台工程逻辑，不要出现 fallback、live sample、historical、verify、数据库、覆盖率、补位、主链、样本裂缝 这类内部词。
+10. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
+11. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
+12. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
+13. encouragement 必须是一句短的执行提醒，不要像客服安慰。
+14. nextQuestions 要像真人顾问会继续往下问的具体问题，最多 4 个。
+15. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+              },
+              {
+                role: "user",
+                content: JSON.stringify({
+                  windowDays: input.windowDays,
+                  context: input.context || "",
+                  question: input.question,
+                  snapshot: {
+                    overview: input.snapshot.overview,
+                    platformSnapshots: input.snapshot.platformSnapshots,
+                    platformRecommendations: input.snapshot.platformRecommendations,
+                    topicLibrary: input.snapshot.topicLibrary.slice(0, 12),
+                    businessInsights: input.snapshot.businessInsights,
+                    growthPlan: input.snapshot.growthPlan,
+                    titleExecutions: input.snapshot.titleExecutions.slice(0, 6),
+                    monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 4),
+                    decisionFramework: input.snapshot.decisionFramework,
+                    creationAssist: input.snapshot.creationAssist,
+                  },
+                }),
+              },
+            ],
+          });
+          const parsed = platformFollowUpResponseSchema.parse(
+            JSON.parse(String(response.choices[0]?.message?.content || "{}")),
+          );
+          return {
+            success: true,
+            result: parsed,
+            debug: {
+              route: "mvAnalysis.askPlatformFollowUp",
+              modelName: "gemini-2.5-pro",
+              windowDays: input.windowDays,
+              fallbackUsed: false,
             },
-            {
-              role: "user",
-              content: JSON.stringify({
-                windowDays: input.windowDays,
-                context: input.context || "",
-                question: input.question,
-                snapshot: {
-                  status: input.snapshot.status,
-                  overview: input.snapshot.overview,
-                  analysisTracks: input.snapshot.analysisTracks,
-                  dataAnalystSummary: input.snapshot.dataAnalystSummary,
-                  platformSnapshots: input.snapshot.platformSnapshots,
-                  platformRecommendations: input.snapshot.platformRecommendations,
-                  topicLibrary: input.snapshot.topicLibrary.slice(0, 12),
-                  businessInsights: input.snapshot.businessInsights,
-                  growthPlan: input.snapshot.growthPlan,
-                  titleExecutions: input.snapshot.titleExecutions.slice(0, 6),
-                  monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 6),
-                  decisionFramework: input.snapshot.decisionFramework,
-                  creationAssist: input.snapshot.creationAssist,
-                },
-              }),
+          };
+        } catch (error) {
+          console.warn("[growth.askPlatformFollowUp] fallback:", error);
+          return {
+            success: true,
+            result: buildPlatformFollowUpFallback(input),
+            debug: {
+              route: "mvAnalysis.askPlatformFollowUp",
+              modelName: "gemini-2.5-pro",
+              windowDays: input.windowDays,
+              fallbackUsed: true,
+              error: error instanceof Error ? error.message : String(error),
             },
-          ],
-        });
-        const parsed = platformFollowUpResponseSchema.parse(
-          JSON.parse(String(response.choices[0]?.message?.content || "{}")),
-        );
-        return {
-          success: true,
-          result: parsed,
-          debug: {
-            route: "mvAnalysis.askPlatformFollowUp",
-            modelName: "gemini-2.5-pro",
-            windowDays: input.windowDays,
-          },
-        };
+          };
+        }
       }),
 
     getGrowthSystemStatus: publicProcedure

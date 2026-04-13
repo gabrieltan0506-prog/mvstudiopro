@@ -131,6 +131,13 @@ type LlmTarget = {
   apiKey: string;
 };
 
+const DEFAULT_LLM_TIMEOUT_MS = 60_000;
+
+function getLlmTimeoutMs() {
+  const raw = Number(process.env.LLM_TIMEOUT_MS || "");
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LLM_TIMEOUT_MS;
+}
+
 type GeminiPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } }
@@ -257,6 +264,7 @@ async function getVertexAccessToken() {
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    signal: AbortSignal.timeout(getLlmTimeoutMs()),
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
       assertion,
@@ -565,6 +573,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
+    signal: AbortSignal.timeout(getLlmTimeoutMs()),
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
@@ -626,6 +635,7 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
       "content-type": "application/json",
       authorization: `Bearer ${target.apiKey}`,
     },
+    signal: AbortSignal.timeout(getLlmTimeoutMs()),
     body: JSON.stringify(payload),
   });
 
