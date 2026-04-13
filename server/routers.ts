@@ -1515,9 +1515,20 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const interactivePlatform = Boolean(input.interactivePlatform);
-        const store = interactivePlatform
-          ? await readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true })
-          : await readTrendStore({ preferDerivedFiles: true });
+        // Cap store read at 5s for platform fast-path to prevent it blocking the whole response
+        const STORE_TIMEOUT_MS = interactivePlatform ? 5_000 : 30_000;
+        const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+        const store = await Promise.race([
+          interactivePlatform
+            ? readTrendStoreForPlatforms(requestedPlatforms, { preferDerivedFiles: true })
+            : readTrendStore({ preferDerivedFiles: true }),
+          new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
+            setTimeout(() => {
+              console.warn(`[platform.getGrowthSnapshot] store read timed out after ${STORE_TIMEOUT_MS}ms, using empty store`);
+              resolve(storeNull);
+            }, STORE_TIMEOUT_MS);
+          }),
+        ]);
         timing.storeMs = Date.now() - t0;
         console.log(`[platform.getGrowthSnapshot] store read done in ${timing.storeMs}ms`);
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
@@ -1561,30 +1572,33 @@ export const appRouter = router({
               windowDaysOverride: selectedWindowDays,
             });
         const t1 = Date.now();
-        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 18_000 : 30_000;
-        const personalized = await Promise.race([
-          personalizeGrowthSnapshot({
-            snapshot: baseSnapshot,
-            analysis: input.analysis,
-            context: input.context,
-            requestedPlatforms,
-            modelName: input.modelName,
-            store: effectiveStore,
-            userEvidence,
-            windowDays: selectedWindowDays,
-          }),
-          new Promise<null>((resolve) => {
-            setTimeout(() => {
-              console.warn(`[platform.getGrowthSnapshot] personalization timed out after ${PERSONALIZATION_TIMEOUT_MS}ms`);
-              resolve(null);
-            }, PERSONALIZATION_TIMEOUT_MS);
-          }),
-        ]).catch((error) => {
-          console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
-          return null;
-        });
+        // For platform fast-path: skip personalization to save ~18-30s, return base snapshot immediately
+        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 0 : 30_000;
+        const personalized = interactivePlatform
+          ? null
+          : await Promise.race([
+              personalizeGrowthSnapshot({
+                snapshot: baseSnapshot,
+                analysis: input.analysis,
+                context: input.context,
+                requestedPlatforms,
+                modelName: input.modelName,
+                store: effectiveStore,
+                userEvidence,
+                windowDays: selectedWindowDays,
+              }),
+              new Promise<null>((resolve) => {
+                setTimeout(() => {
+                  console.warn(`[platform.getGrowthSnapshot] personalization timed out after ${PERSONALIZATION_TIMEOUT_MS}ms`);
+                  resolve(null);
+                }, PERSONALIZATION_TIMEOUT_MS);
+              }),
+            ]).catch((error) => {
+              console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
+              return null;
+            });
         timing.personalizationMs = Date.now() - t1;
-        console.log(`[platform.getGrowthSnapshot] personalization done in ${timing.personalizationMs}ms (result=${Boolean(personalized)})`);
+        console.log(`[platform.getGrowthSnapshot] personalization done in ${timing.personalizationMs}ms (skipped=${interactivePlatform})`);
         const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
           requestedPlatforms,
           store: effectiveStore,
@@ -1635,7 +1649,7 @@ export const appRouter = router({
 
         const platformDashboardSource = snapshot;
         const t2 = Date.now();
-        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 20_000 : 18_000;
+        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 15_000 : 18_000;
         const platformDashboard = await Promise.race([
           buildPlatformDashboard({
             snapshot: platformDashboardSource,
