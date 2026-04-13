@@ -334,6 +334,108 @@ const growthSnapshotPersonalizationSchema = z.object({
   authorAnalysis: z.any().optional(),
 });
 
+const platformFollowUpResponseSchema = z.object({
+  title: z.string(),
+  answer: z.string(),
+  encouragement: z.string(),
+  nextQuestions: z.array(z.string()).default([]),
+});
+
+const platformDashboardResponseSchema = z.object({
+  headline: z.string(),
+  subheadline: z.string(),
+  topSignals: z.array(z.object({
+    title: z.string(),
+    detail: z.string(),
+    badge: z.string().default(""),
+  })).default([]),
+  platformMenu: z.array(z.object({
+    platform: z.string(),
+    label: z.string(),
+    trend: z.string(),
+    lane: z.string(),
+    whyNow: z.string(),
+    nextMove: z.string(),
+  })).default([]),
+  hotTopics: z.array(z.object({
+    title: z.string(),
+    whyHot: z.string(),
+    howToUse: z.string(),
+  })).default([]),
+  actionCards: z.array(z.object({
+    title: z.string(),
+    detail: z.string(),
+  })).default([]),
+  conversationStarters: z.array(z.string()).default([]),
+});
+
+async function buildPlatformDashboard(params: {
+  snapshot: z.infer<typeof growthSnapshotSchema>;
+  context?: string;
+  requestedPlatforms: string[];
+  store: Awaited<ReturnType<typeof readTrendStore>>;
+  windowDays: number;
+}) {
+  const collectionEvidence = params.requestedPlatforms.map((platform) => {
+    const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
+    const bucketCounts = collection?.stats?.bucketCounts || getCollectionBucketCounts(collection?.items || []);
+    return {
+      platform,
+      collectedAt: collection?.collectedAt || null,
+      itemCount: collection?.items?.length || 0,
+      hotTitles: (collection?.items || []).slice(0, 10).map((item) => item.title).filter(Boolean),
+      topBuckets: Object.entries(bucketCounts)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 6)
+        .map(([bucket, count]) => ({ bucket, count })),
+    };
+  });
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "vertex",
+    modelName: "gemini-2.5-pro",
+    messages: [
+      {
+        role: "system",
+        content: `你是一位专业的数据策略顾问和平台操盘手。
+
+你的任务是基于当前时间窗口的平台实时数据，生成一个给客户看的互动看板。
+
+要求：
+1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
+2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
+3. 每个平台都要结合“当前热点标题 + 当前主要赛道/桶 + 当前平台适配结论”生成一句当下有效的判断。
+4. hotTopics 必须来自当前数据，不要凭空杜撰泛热点。
+5. 语气专业、清楚、有温度，但不要鸡汤。
+6. 输出严格 JSON，字段为 headline、subheadline、topSignals、platformMenu、hotTopics、actionCards、conversationStarters。`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          context: params.context || "",
+          windowDays: params.windowDays,
+          snapshot: {
+            overview: params.snapshot.overview,
+            analysisTracks: params.snapshot.analysisTracks,
+            platformSnapshots: params.snapshot.platformSnapshots,
+            platformRecommendations: params.snapshot.platformRecommendations,
+            businessInsights: params.snapshot.businessInsights,
+            growthPlan: params.snapshot.growthPlan,
+            topicLibrary: params.snapshot.topicLibrary.slice(0, 12),
+            dataAnalystSummary: params.snapshot.dataAnalystSummary,
+          },
+          collections: collectionEvidence,
+        }),
+      },
+    ],
+  });
+
+  return platformDashboardResponseSchema.parse(
+    JSON.parse(String(response.choices[0]?.message?.content || "{}")),
+  );
+}
+
 async function personalizeGrowthSnapshot(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
   analysis: z.infer<typeof growthAnalysisScoresSchema>;
@@ -342,8 +444,9 @@ async function personalizeGrowthSnapshot(params: {
   modelName?: string;
   store: Awaited<ReturnType<typeof readTrendStore>>;
   userEvidence?: Awaited<ReturnType<typeof readGrowthUserEvidence>>;
+  windowDays?: number;
 }) {
-  const { snapshot, analysis, context, requestedPlatforms, modelName, store, userEvidence } = params;
+  const { snapshot, analysis, context, requestedPlatforms, modelName, store, userEvidence, windowDays } = params;
   const finalModel = resolveGrowthCampFinalModel(modelName);
   const is31 = /3\.1/i.test(finalModel);
   const backfillPlatforms = (store.backfill?.platforms || [])
@@ -420,6 +523,7 @@ async function personalizeGrowthSnapshot(params: {
             text: [
               `用户任务：我是${String(context || "").trim() || "一个正在寻找内容商业化方向的创作者"}，请用这条素材，分析我怎样把它转成对我有商业价值的内容。`,
               "请先判断这条素材和我原本业务的连接点，再告诉我最值得做的一条商业路径、当前不要做的路径、适合发视频还是图文、首发应该怎么改，以及我该用什么方式验证这条路径是否成立。",
+              `当前用户选择关注的时间维度：${Number(windowDays || snapshot.status.windowDays || 30)} 天。请让你的判断和建议明确对应这个时间窗口。`,
               "不要给泛泛的商业模板，也不要默认推荐社群、课程或咨询，除非这条素材和我的业务真的有直接证据支持。",
               "",
               "下面是你可以使用的证据：",
@@ -1245,9 +1349,11 @@ export const appRouter = router({
         requestedPlatforms: z.array(z.string()).optional(),
         analysis: growthAnalysisScoresSchema,
         modelName: growthCampModelSchema.optional(),
+        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
       }))
       .query(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
+        const selectedWindowDays = Number(input.windowDays || 30);
         const store = await readTrendStore({ preferDerivedFiles: true });
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
         const historicalPlatformTotals = Object.fromEntries(
@@ -1279,12 +1385,14 @@ export const appRouter = router({
               collections,
               historicalPlatformTotals,
               errors,
+              windowDaysOverride: selectedWindowDays,
             })
           : buildMockGrowthSnapshot({
               analysis: input.analysis,
               context: input.context,
               requestedPlatforms,
               historicalPlatformTotals,
+              windowDaysOverride: selectedWindowDays,
             });
         const personalized = await personalizeGrowthSnapshot({
           snapshot: baseSnapshot,
@@ -1294,6 +1402,7 @@ export const appRouter = router({
           modelName: input.modelName,
           store: effectiveStore,
           userEvidence,
+          windowDays: selectedWindowDays,
         }).catch((error) => {
           console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
           return null;
@@ -1346,10 +1455,22 @@ export const appRouter = router({
               },
             });
 
+        const platformDashboard = await buildPlatformDashboard({
+          snapshot,
+          context: input.context,
+          requestedPlatforms,
+          store: effectiveStore,
+          windowDays: selectedWindowDays,
+        }).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+          return null;
+        });
+
         return {
           success: true,
           source: snapshot.status.source,
           snapshot,
+          platformDashboard,
           debug: {
             route: "mvAnalysis.getGrowthSnapshot",
             modelName: resolveGrowthCampFinalModel(input.modelName),
@@ -1358,6 +1479,7 @@ export const appRouter = router({
             hasAnyLiveCollection,
             personalizedApplied: Boolean(personalized),
             userEvidenceApplied: Boolean(userEvidence),
+            selectedWindowDays,
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
             windowDays: snapshot.status.windowDays,
@@ -1370,6 +1492,72 @@ export const appRouter = router({
             businessInsightCount: snapshot.businessInsights.length,
             growthPlanCount: snapshot.growthPlan.length,
             creationAssetExtensionCount: snapshot.creationAssist.assetExtensions.length,
+          },
+        };
+      }),
+
+    askPlatformFollowUp: protectedProcedure
+      .input(z.object({
+        question: z.string().min(3).max(1200),
+        context: z.string().optional(),
+        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        snapshot: growthSnapshotSchema,
+      }))
+      .mutation(async ({ ctx, input }) => {
+        await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
+        const response = await invokeLLM({
+          model: "pro",
+          provider: "vertex",
+          modelName: "gemini-2.5-pro",
+          messages: [
+            {
+              role: "system",
+              content: `你是一位专业、克制、温暖的平台策略顾问。
+
+你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
+
+要求：
+1. 回答必须专业，但语气要有温度，像一个成熟顾问在帮用户梳理方向。
+2. 先给出明确判断，再解释原因，再给动作建议。
+3. 鼓励语只能简短真诚，不要鸡汤，不要夸张。
+4. 不要泄露后台工程逻辑，不要说“数据库里显示”这类话，只把证据转成商业判断。
+5. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
+6. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
+7. 如果 snapshot 里已经有 topicLibrary、businessInsights、growthPlan，请把它们优先翻译成“这个用户现在该怎么做”的表达。
+8. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
+9. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                windowDays: input.windowDays,
+                context: input.context || "",
+                question: input.question,
+                snapshot: {
+                  status: input.snapshot.status,
+                  overview: input.snapshot.overview,
+                  analysisTracks: input.snapshot.analysisTracks,
+                  dataAnalystSummary: input.snapshot.dataAnalystSummary,
+                  platformSnapshots: input.snapshot.platformSnapshots,
+                  platformRecommendations: input.snapshot.platformRecommendations,
+                  topicLibrary: input.snapshot.topicLibrary.slice(0, 12),
+                  businessInsights: input.snapshot.businessInsights,
+                  growthPlan: input.snapshot.growthPlan,
+                },
+              }),
+            },
+          ],
+        });
+        const parsed = platformFollowUpResponseSchema.parse(
+          JSON.parse(String(response.choices[0]?.message?.content || "{}")),
+        );
+        return {
+          success: true,
+          result: parsed,
+          debug: {
+            route: "mvAnalysis.askPlatformFollowUp",
+            modelName: "gemini-2.5-pro",
+            windowDays: input.windowDays,
           },
         };
       }),
