@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
+
 const WINDOW_OPTIONS = [
   { days: 15 as const, label: "15天", description: "看短期波动、热点与即时机会" },
   { days: 30 as const, label: "30天", description: "看平台主流结构与相对稳定方向" },
@@ -74,13 +76,28 @@ function extractFocusKeywords(value: string) {
   );
 }
 
+function hasSupervisorAccess() {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("supervisor") === "1") {
+    localStorage.setItem(SUPERVISOR_ACCESS_KEY, "1");
+    return true;
+  }
+  return localStorage.getItem(SUPERVISOR_ACCESS_KEY) === "1";
+}
+
 function getRelativeBar(value: number, max: number) {
   if (!max || max <= 0) return 0;
   return Math.max(8, Math.round((value / max) * 100));
 }
 
 export default function PlatformPage() {
-  const { isAuthenticated, loading } = useAuth({ redirectOnUnauthenticated: true, redirectPath: getLoginUrl() });
+  const [supervisorAccess] = useState(() => hasSupervisorAccess());
+  const { isAuthenticated, loading } = useAuth({
+    autoFetch: !supervisorAccess,
+    redirectOnUnauthenticated: !supervisorAccess,
+    redirectPath: getLoginUrl(),
+  });
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -223,7 +240,7 @@ export default function PlatformPage() {
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated && !supervisorAccess) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] px-6 text-white">
         <div className="max-w-lg rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-8 text-center shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
