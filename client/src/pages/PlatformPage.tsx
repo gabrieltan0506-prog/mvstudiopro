@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
 import type { GrowthAnalysisScores, GrowthSnapshot } from "@shared/growth";
 import {
@@ -79,7 +80,7 @@ function getRelativeBar(value: number, max: number) {
 }
 
 export default function PlatformPage() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading } = useAuth({ redirectOnUnauthenticated: true, redirectPath: getLoginUrl() });
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -222,7 +223,25 @@ export default function PlatformPage() {
     );
   }
 
-  if (!isAuthenticated) return null;
+  if (!isAuthenticated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] px-6 text-white">
+        <div className="max-w-lg rounded-[28px] border border-[#2b1f52] bg-[#100926]/95 p-8 text-center shadow-[0_20px_80px_rgba(0,0,0,0.35)]">
+          <div className="text-sm uppercase tracking-[0.24em] text-[#8cefff]">Platform Intelligence</div>
+          <div className="mt-4 text-3xl font-black">需要先登录</div>
+          <p className="mt-4 text-sm leading-7 text-[#c8bfe7]">
+            平台分析页不会再显示黑屏。当前会自动跳转登录；如果浏览器拦截了跳转，这里也会明确提示，而不是整页空白。
+          </p>
+          <a
+            href={getLoginUrl()}
+            className="mt-6 inline-flex items-center justify-center rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff,#b25cff)] px-5 py-3 text-sm font-semibold text-white shadow-[0_12px_40px_rgba(73,230,255,0.18)] transition hover:brightness-110"
+          >
+            去登录
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(44,16,88,0.45),transparent_28%),radial-gradient(circle_at_top_right,rgba(31,67,132,0.28),transparent_22%),linear-gradient(180deg,#080618_0%,#13092e_48%,#090715_100%)] text-[#f4efff]">
