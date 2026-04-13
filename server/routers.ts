@@ -1570,8 +1570,8 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const interactivePlatform = Boolean(input.interactivePlatform);
-        // Cap store read at 5s for platform fast-path to prevent it blocking the whole response
-        const STORE_TIMEOUT_MS = interactivePlatform ? 5_000 : 30_000;
+        // Give Fly disk I/O enough time to read platform collections — 5s was too aggressive
+        const STORE_TIMEOUT_MS = interactivePlatform ? 10_000 : 30_000;
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
           interactivePlatform
@@ -1634,9 +1634,12 @@ export const appRouter = router({
               windowDaysOverride: selectedWindowDays,
             });
         const t1 = Date.now();
-        // For platform fast-path: skip personalization to save ~18-30s, return base snapshot immediately
-        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 0 : 30_000;
-        const personalized = interactivePlatform
+        // Personalize when context is provided — even for interactivePlatform, run it if the user gave a focusPrompt
+        const hasContext = Boolean(input.context && input.context.trim().length > 0);
+        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform
+          ? (hasContext ? 45_000 : 0)
+          : 30_000;
+        const personalized = (interactivePlatform && !hasContext)
           ? null
           : await Promise.race([
               personalizeGrowthSnapshot({
@@ -1711,7 +1714,8 @@ export const appRouter = router({
 
         const platformDashboardSource = snapshot;
         const t2 = Date.now();
-        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 15_000 : 18_000;
+        // Give dashboard LLM enough time — user explicitly wants real results, not fallback
+        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 55_000 : 60_000;
         const platformDashboard = await Promise.race([
           buildPlatformDashboard({
             snapshot: platformDashboardSource,
