@@ -421,13 +421,15 @@ async function buildPlatformDashboard(params: {
           windowDays: params.windowDays,
           snapshot: {
             overview: params.snapshot.overview,
-            analysisTracks: params.snapshot.analysisTracks,
             platformSnapshots: params.snapshot.platformSnapshots,
             platformRecommendations: params.snapshot.platformRecommendations,
+            titleExecutions: params.snapshot.titleExecutions.slice(0, 8),
+            monetizationStrategies: params.snapshot.monetizationStrategies.slice(0, 6),
             businessInsights: params.snapshot.businessInsights,
             growthPlan: params.snapshot.growthPlan,
             topicLibrary: params.snapshot.topicLibrary.slice(0, 12),
-            dataAnalystSummary: params.snapshot.dataAnalystSummary,
+            decisionFramework: params.snapshot.decisionFramework,
+            creationAssist: params.snapshot.creationAssist,
           },
           collections: collectionEvidence,
         }),
@@ -447,29 +449,33 @@ function buildFallbackPlatformDashboard(params: {
 }) {
   const topPlatform = params.snapshot.platformRecommendations[0];
   const topTopic = params.snapshot.topicLibrary[0];
+  const topExecution = params.snapshot.titleExecutions[0];
+  const topStrategy = params.snapshot.monetizationStrategies[0];
+  const mainPath = params.snapshot.decisionFramework.mainPath;
+  const assetAdaptation = params.snapshot.decisionFramework.assetAdaptation;
   const contextLabel = String(params.context || "").trim() || topTopic?.title || "当前方向";
 
   return platformDashboardResponseSchema.parse({
     headline: topPlatform
       ? `围绕 ${contextLabel}，先从 ${topPlatform.name} 入手更容易拿到第一轮反馈`
       : `围绕 ${contextLabel}，先用 ${params.windowDays} 天窗口做轻量验证`,
-    subheadline: params.snapshot.dataAnalystSummary.recommendationReason
+    subheadline: mainPath.summary
       || params.snapshot.overview.trendNarrative
       || `这版先基于近 ${params.windowDays} 天快照给出可执行判断，避免首轮分析长时间卡住。`,
     topSignals: [
       {
         title: "优先平台",
-        detail: topPlatform?.reason || params.snapshot.overview.summary,
+        detail: topPlatform?.reason || mainPath.whyNow || params.snapshot.overview.summary,
         badge: "先做",
       },
       {
-        title: "热点切口",
-        detail: topTopic?.executionHint || params.snapshot.analysisTracks.liveSummary,
+        title: "选题切口",
+        detail: topExecution?.copywriting || topTopic?.executionHint || assetAdaptation.structure,
         badge: "热点",
       },
       {
         title: "承接方式",
-        detail: params.snapshot.businessInsights[0]?.detail || params.snapshot.dataAnalystSummary.recommendation,
+        detail: topStrategy?.strategy || params.snapshot.businessInsights[0]?.detail || mainPath.nextAction,
         badge: "承接",
       },
     ].filter((item) => item.detail),
@@ -481,15 +487,29 @@ function buildFallbackPlatformDashboard(params: {
       whyNow: item.summary,
       nextMove: params.snapshot.platformRecommendations[index]?.action || params.snapshot.growthPlan[index]?.action || "先用一个轻量主题验证反馈。",
     })),
-    hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item) => ({
+    hotTopics: params.snapshot.topicLibrary.slice(0, 6).map((item, index) => ({
       title: item.title,
       whyHot: item.rationale,
-      howToUse: item.executionHint,
+      howToUse: params.snapshot.titleExecutions[index]?.copywriting || item.executionHint,
     })),
-    actionCards: params.snapshot.growthPlan.slice(0, 4).map((item) => ({
-      title: item.title,
-      detail: item.action,
-    })),
+    actionCards: [
+      {
+        title: "首发内容怎么开头",
+        detail: assetAdaptation.firstHook || topExecution?.openingHook || "先把用户是谁、为什么值得看、第一句结论写在开头。",
+      },
+      {
+        title: "内容结构怎么排",
+        detail: assetAdaptation.structure || topExecution?.graphicPlan || "先给判断，再给案例，再给用户可执行动作。",
+      },
+      {
+        title: "商业承接先接什么",
+        detail: topStrategy?.callToAction || topStrategy?.offerType || "先验证用户最愿意进一步咨询或收藏的那条服务承接。",
+      },
+      {
+        title: "这一轮先验证什么",
+        detail: params.snapshot.decisionFramework.validationPlan[0]?.nextMove || mainPath.nextAction || "先做一轮轻量内容验证平台反馈，再决定是否放大。",
+      },
+    ].filter((item) => item.detail),
     conversationStarters: [
       `如果我先做 ${topPlatform?.name || "当前优先平台"}，第一批内容应该先发图文还是视频？`,
       `围绕“${topTopic?.title || contextLabel}”，最值得先验证的商业化承接是什么？`,
@@ -1460,21 +1480,19 @@ export const appRouter = router({
               historicalPlatformTotals,
               windowDaysOverride: selectedWindowDays,
             });
-        const personalized = interactivePlatform
-          ? null
-          : await personalizeGrowthSnapshot({
-              snapshot: baseSnapshot,
-              analysis: input.analysis,
-              context: input.context,
-              requestedPlatforms,
-              modelName: input.modelName,
-              store: effectiveStore,
-              userEvidence,
-              windowDays: selectedWindowDays,
-            }).catch((error) => {
-              console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
-              return null;
-            });
+        const personalized = await personalizeGrowthSnapshot({
+          snapshot: baseSnapshot,
+          analysis: input.analysis,
+          context: input.context,
+          requestedPlatforms,
+          modelName: input.modelName,
+          store: effectiveStore,
+          userEvidence,
+          windowDays: selectedWindowDays,
+        }).catch((error) => {
+          console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
+          return null;
+        });
         const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
           requestedPlatforms,
           store: effectiveStore,
@@ -1523,7 +1541,7 @@ export const appRouter = router({
               },
             });
 
-        const platformDashboardSource = interactivePlatform ? baseSnapshot : snapshot;
+        const platformDashboardSource = snapshot;
         const platformDashboard = await Promise.race([
           buildPlatformDashboard({
             snapshot: platformDashboardSource,
@@ -1565,7 +1583,7 @@ export const appRouter = router({
             userEvidenceApplied: Boolean(userEvidence),
             selectedWindowDays,
             interactivePlatform,
-            skippedPersonalization: interactivePlatform,
+            skippedPersonalization: false,
             skippedPlatformDashboard: false,
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
@@ -1583,7 +1601,7 @@ export const appRouter = router({
         };
       }),
 
-    askPlatformFollowUp: protectedProcedure
+    askPlatformFollowUp: publicProcedure
       .input(z.object({
         question: z.string().min(3).max(1200),
         context: z.string().optional(),
@@ -1591,7 +1609,9 @@ export const appRouter = router({
         snapshot: growthSnapshotSchema,
       }))
       .mutation(async ({ ctx, input }) => {
-        await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
+        if (ctx.user?.id) {
+          await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
+        }
         const response = await invokeLLM({
           model: "pro",
           provider: "vertex",
@@ -1599,7 +1619,7 @@ export const appRouter = router({
           messages: [
             {
               role: "system",
-              content: `你是一位专业、克制、会直接给判断的平台策略顾问。
+              content: `你是一位专业、克制、会直接给判断的平台策略顾问，也会把策略翻成用户马上能开拍、开写、开卖的动作。
 
 你的任务是基于用户当前选中的平台趋势看板，回答后续追问。
 
@@ -1608,14 +1628,15 @@ export const appRouter = router({
 2. 第一段必须先给出明确判断，不要先铺垫，不要两边都说。
 3. answer 必须明显分成三个部分：结论、为什么、下一步怎么做。可以用自然段，不要写成模板编号。
 4. 如果用户问“从哪些平台入手”“怎么实现商业价值”这类问题，必须明确给出优先顺序、适合承接的商业方向，以及短期不建议投入的方向。
-5. 鼓励语只能简短真诚，不要鸡汤，不要夸张，不要像客服安慰。
-6. 不要泄露后台工程逻辑，不要说“数据库里显示”这类话，只把证据转成商业判断。
-7. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
-8. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
-9. 如果 snapshot 里已经有 topicLibrary、businessInsights、growthPlan，请把它们优先翻译成“这个用户现在该怎么做”的表达。
+5. 如果问题涉及选题、文案、图文、视频、脚本、拍法，你必须写出具体方案，至少覆盖：题目方向、开头怎么说、结构怎么排、视频怎么拍或图文怎么写。
+6. 如果 snapshot 里已经有 titleExecutions、creationAssist、monetizationStrategies、decisionFramework，要优先把这些证据翻译成“这个用户现在就能执行”的动作，而不是继续抽象分析。
+7. 不要泄露后台工程逻辑，不要出现 fallback、live sample、historical、verify、数据库、覆盖率、补位、主链、样本裂缝 这类内部词。
+8. 只能围绕用户当前选中的 ${input.windowDays} 天窗口来回答。
+9. 回答必须明显带入用户当前问题和关注点，不能输出放在哪个用户身上都成立的套话。
 10. 不要把平台介绍或平台画像原样搬给用户，要把后台证据翻译成前台可执行结论。
-11. nextQuestions 要像一个真人顾问会继续往下问的具体问题，最多 4 个。
-12. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
+11. encouragement 必须是一句短的执行提醒，不要像客服安慰。
+12. nextQuestions 要像真人顾问会继续往下问的具体问题，最多 4 个。
+13. 输出严格 JSON，字段为 title、answer、encouragement、nextQuestions。`,
             },
             {
               role: "user",
@@ -1633,6 +1654,10 @@ export const appRouter = router({
                   topicLibrary: input.snapshot.topicLibrary.slice(0, 12),
                   businessInsights: input.snapshot.businessInsights,
                   growthPlan: input.snapshot.growthPlan,
+                  titleExecutions: input.snapshot.titleExecutions.slice(0, 6),
+                  monetizationStrategies: input.snapshot.monetizationStrategies.slice(0, 6),
+                  decisionFramework: input.snapshot.decisionFramework,
+                  creationAssist: input.snapshot.creationAssist,
                 },
               }),
             },

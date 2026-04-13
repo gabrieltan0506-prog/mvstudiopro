@@ -2,7 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
-import type { GrowthAnalysisScores, GrowthSnapshot } from "@shared/growth";
+import type {
+  GrowthAnalysisScores,
+  GrowthMonetizationStrategy,
+  GrowthPlatformActivity,
+  GrowthPlatformRecommendation,
+  GrowthSnapshot,
+  GrowthTitleExecution,
+} from "@shared/growth";
 import {
   ArrowLeft,
   Bot,
@@ -157,6 +164,26 @@ function splitAnswerParagraphs(value: string) {
     .filter(Boolean);
 }
 
+function cleanUserCopy(value: string, fallback = "") {
+  const normalized = String(value || "").trim();
+  if (!normalized) return fallback;
+
+  const softened = normalized
+    .replace(/\bfallback\b/gi, "当前参考")
+    .replace(/\blive sample(?:-\d+d)?\b/gi, "近期样本")
+    .replace(/\bhistorical\b/gi, "中期沉淀")
+    .replace(/\bverify\b/gi, "先验证")
+    .replace(/\bcollector\b/gi, "")
+    .replace(/\bcurrentTotal\b/gi, "")
+    .replace(/\barchivedTotal\b/gi, "");
+
+  if (/(后台|工程|数据库|主链|样本裂缝|日期覆盖|补位|live sample|historical|fallback|collector|coverage)/i.test(softened)) {
+    return fallback;
+  }
+
+  return softened.trim() || fallback;
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(() => {
@@ -208,6 +235,17 @@ export default function PlatformPage() {
   const platformDashboard = growthSnapshotQuery.data?.platformDashboard as PlatformDashboard | null | undefined;
   const snapshotDebug = growthSnapshotQuery.data?.debug as Record<string, unknown> | undefined;
   const askDebug = askPlatformFollowUpMutation.data?.debug as Record<string, unknown> | undefined;
+  const mainPath = snapshot?.decisionFramework.mainPath;
+  const assetAdaptation = snapshot?.decisionFramework.assetAdaptation;
+  const topRecommendation = snapshot?.platformRecommendations[0];
+  const topMonetization = snapshot?.monetizationStrategies[0];
+  const validationPlan = snapshot?.decisionFramework.validationPlan ?? [];
+  const businessTranslation = snapshot?.decisionFramework.businessTranslation ?? [];
+  const materialFacts = snapshot?.decisionFramework.materialFacts ?? [];
+  const audienceTriggers = snapshot?.decisionFramework.audienceTriggers ?? [];
+  const titleExecutions = snapshot?.titleExecutions ?? [];
+  const platformActivities = snapshot?.platformActivities ?? [];
+  const monetizationStrategies = snapshot?.monetizationStrategies ?? [];
 
   const primaryPlatforms = useMemo(() => snapshot?.platformSnapshots.slice(0, 4) ?? [], [snapshot]);
   const maxFit = Math.max(...primaryPlatforms.map((item) => item.audienceFitScore), 100);
@@ -225,11 +263,27 @@ export default function PlatformPage() {
   );
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
   const actionSteps = useMemo(
-    () =>
-      platformDashboard?.actionCards.length
-        ? platformDashboard.actionCards.map((item, index) => ({ day: index + 1, title: item.title, action: item.detail }))
-        : (snapshot?.growthPlan.slice(0, 4) ?? []),
-    [platformDashboard, snapshot],
+    () => {
+      if (validationPlan.length) {
+        return validationPlan.slice(0, 4).map((item, index) => ({
+          day: index + 1,
+          title: cleanUserCopy(item.label, `第 ${index + 1} 步`),
+          action: cleanUserCopy(item.nextMove || item.successSignal, "先做一轮小样本验证。"),
+        }));
+      }
+      return platformDashboard?.actionCards.length
+        ? platformDashboard.actionCards.map((item, index) => ({
+            day: index + 1,
+            title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
+            action: cleanUserCopy(item.detail, "先做一个可以快速拿到反馈的动作。"),
+          }))
+        : (snapshot?.growthPlan.slice(0, 4) ?? []).map((item, index) => ({
+            day: index + 1,
+            title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
+            action: cleanUserCopy(item.action, "先做一轮小样本验证。"),
+          }));
+    },
+    [platformDashboard, snapshot, validationPlan],
   );
   const keyInsights = useMemo(
     () =>
@@ -248,13 +302,14 @@ export default function PlatformPage() {
     return topTopics[0]?.title || platformDashboard?.headline || "当前内容方向";
   }, [focusKeywords, platformDashboard, topTopics]);
   const recommendationHeadline = useMemo(() => {
+    if (mainPath?.title) return cleanUserCopy(mainPath.title, mainPath.title);
     if (platformDashboard?.headline) return platformDashboard.headline;
     const topPlatform = recommendedPlatforms[0]?.name || "当前优先平台";
     return `围绕 ${personalizedSubject}，先把 ${topPlatform} 做透`;
-  }, [personalizedSubject, platformDashboard, recommendedPlatforms]);
+  }, [mainPath, personalizedSubject, platformDashboard, recommendedPlatforms]);
   const hotQuestionSuggestions = useMemo(() => {
-    const platformLead = recommendedPlatforms[0]?.name || "小红书";
-    const topicLead = topTopics[0]?.title || personalizedSubject;
+    const platformLead = topRecommendation?.name || recommendedPlatforms[0]?.name || "小红书";
+    const topicLead = titleExecutions[0]?.title || topTopics[0]?.title || personalizedSubject;
     if (platformDashboard?.conversationStarters.length) return platformDashboard.conversationStarters.slice(0, 4);
     return [
       `如果我先发${platformLead}，围绕“${topicLead}”应该先做哪三个选题？`,
@@ -262,7 +317,7 @@ export default function PlatformPage() {
       `如果我只做图文，不做视频，围绕“${personalizedSubject}”应该怎么切入？`,
       `结合这轮趋势，${personalizedSubject} 最容易做成哪种商业承接？`,
     ];
-  }, [personalizedSubject, platformDashboard, recommendedPlatforms, selectedWindowDays, topTopics]);
+  }, [personalizedSubject, platformDashboard, recommendedPlatforms, selectedWindowDays, titleExecutions, topRecommendation, topTopics]);
 
   const heroTrustPoints = useMemo(
     () => [
@@ -283,55 +338,102 @@ export default function PlatformPage() {
       ];
     }
     return [
-      { label: "当前判断", value: snapshot.overview.summary, detail: snapshot.overview.trendNarrative },
-      { label: "优先动作", value: recommendationHeadline, detail: snapshot.dataAnalystSummary.recommendationReason },
-      { label: "实时热点", value: snapshot.analysisTracks.liveHotTopic, detail: snapshot.analysisTracks.hotTopicTimeliness },
-      { label: "下一步", value: snapshot.dataAnalystSummary.recommendation, detail: snapshot.overview.nextCollectionPlan },
+      {
+        label: "当前判断",
+        value: cleanUserCopy(mainPath?.summary || snapshot.overview.summary, "先收口成一个明确方向"),
+        detail: cleanUserCopy(mainPath?.whyNow || snapshot.overview.trendNarrative, "先把最容易拿到反馈的平台和切口做透。"),
+      },
+      {
+        label: "优先平台",
+        value: cleanUserCopy(topRecommendation?.name || recommendationHeadline, "先做当前优先平台"),
+        detail: cleanUserCopy(topRecommendation?.reason || businessTranslation[0]?.detail || "先做最容易拿到正反馈的平台版本。", "先做最容易拿到正反馈的平台版本。"),
+      },
+      {
+        label: "商业赛道",
+        value: cleanUserCopy(topMonetization?.primaryTrack || snapshot.businessInsights[0]?.title || "先收口一个可承接方向", "先收口一个可承接方向"),
+        detail: cleanUserCopy(topMonetization?.strategy || snapshot.businessInsights[0]?.detail || "把内容先做成有人愿意继续咨询或收藏的版本。", "把内容先做成有人愿意继续咨询或收藏的版本。"),
+      },
+      {
+        label: "首发动作",
+        value: cleanUserCopy(assetAdaptation?.firstHook || titleExecutions[0]?.openingHook || validationPlan[0]?.label || "先写出第一条内容", "先写出第一条内容"),
+        detail: cleanUserCopy(validationPlan[0]?.nextMove || assetAdaptation?.structure || "先做一轮小样本验证，再决定是否放大。", "先做一轮小样本验证，再决定是否放大。"),
+      },
     ];
-  }, [recommendationHeadline, snapshot]);
+  }, [assetAdaptation, businessTranslation, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan]);
 
   const platformDecisionRows = useMemo(
-    () =>
-      platformDashboard?.platformMenu.length
-        ? platformDashboard.platformMenu.slice(0, 4).map((item) => ({
-            id: `${item.platform}-${item.label}`,
-            name: item.label,
-            lane: item.lane,
-            trend: item.trend,
-            whyNow: item.whyNow,
-            nextMove: item.nextMove,
-          }))
-        : primaryPlatforms.map((item, index) => ({
-            id: `${item.platform}-${index}`,
-            name: item.displayName,
-            lane: item.summary,
-            trend: `动量 ${item.momentumScore} / 适配 ${item.audienceFitScore}`,
-            whyNow: item.summary,
-            nextMove: recommendedPlatforms[index]?.action || snapshot?.growthPlan[index]?.action || "先拿一个小样本验证。",
-          })),
-    [platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot],
+    () => {
+      if (platformDashboard?.platformMenu.length) {
+        return platformDashboard.platformMenu.slice(0, 4).map((item) => ({
+          id: `${item.platform}-${item.label}`,
+          name: item.label,
+          lane: cleanUserCopy(item.lane, item.label),
+          trend: cleanUserCopy(item.trend, "先从更顺手的表达方式切入"),
+          whyNow: cleanUserCopy(item.whyNow, "当前窗口里，这个平台更容易拿到第一轮反馈。"),
+          nextMove: cleanUserCopy(item.nextMove, "先发一版内容拿反馈。"),
+        }));
+      }
+
+      const rows = (snapshot?.platformRecommendations.length ? snapshot.platformRecommendations : recommendedPlatforms).slice(0, 4);
+      return rows.map((item: GrowthPlatformRecommendation, index) => {
+        const activity = platformActivities[index] as GrowthPlatformActivity | undefined;
+        const platformSnapshot = primaryPlatforms[index];
+        return {
+          id: `${item.name}-${index}`,
+          name: item.name,
+          lane: cleanUserCopy(activity?.contentAngle || item.topicIdeas[0]?.title || platformSnapshot?.fitLabel || "先做与你当前身份更匹配的表达方向", "先做与你当前身份更匹配的表达方向"),
+          trend: cleanUserCopy(activity?.recommendedFormat || item.playbook || `动量 ${platformSnapshot?.momentumScore || 0} / 适配 ${platformSnapshot?.audienceFitScore || 0}`, "先用更适合的平台内容形式启动"),
+          whyNow: cleanUserCopy(item.reason || activity?.summary || platformSnapshot?.summary || "这个平台更适合你当前这轮内容验证。", "这个平台更适合你当前这轮内容验证。"),
+          nextMove: cleanUserCopy(item.action || activity?.optimizationPlan || validationPlan[index]?.nextMove || "先拿一版首发内容验证反馈。", "先拿一版首发内容验证反馈。"),
+        };
+      });
+    },
+    [platformActivities, platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot, validationPlan],
   );
 
   const monetizationCards = useMemo(() => {
-    const businessInsights = snapshot?.businessInsights.slice(0, 4) ?? [];
-    if (businessInsights.length) {
-      return businessInsights.map((item, index) => ({
-        id: `${item.title}-${index}`,
-        title: item.title,
-        summary: item.detail,
-        action:
-          actionSteps[index]?.action
-          || platformDecisionRows[index]?.nextMove
-          || "先做一个最容易拿到反馈的轻量承接。",
+    if (monetizationStrategies.length) {
+      return monetizationStrategies.slice(0, 4).map((item: GrowthMonetizationStrategy, index) => ({
+        id: `${item.platform}-${index}`,
+        title: `${item.platformLabel}：${cleanUserCopy(item.primaryTrack, item.primaryTrack)}`,
+        summary: cleanUserCopy(item.reason || item.strategy, "先把内容承接到一个更容易转化的服务或产品形态。"),
+        action: cleanUserCopy(item.callToAction || item.offerType || actionSteps[index]?.action || "先用轻量服务承接第一波需求。", "先用轻量服务承接第一波需求。"),
       }));
     }
-    return platformDecisionRows.slice(0, 3).map((item, index) => ({
-      id: `${item.name}-${index}`,
-      title: `${item.name} 的商业化切口`,
-      summary: item.whyNow,
-      action: item.nextMove,
+
+    const businessInsights = snapshot?.businessInsights.slice(0, 4) ?? [];
+    return businessInsights.map((item, index) => ({
+      id: `${item.title}-${index}`,
+      title: cleanUserCopy(item.title, `商业化切口 ${index + 1}`),
+      summary: cleanUserCopy(item.detail, "先把内容方向和承接方式收成一条清晰路径。"),
+      action: cleanUserCopy(actionSteps[index]?.action || platformDecisionRows[index]?.nextMove || "先做一个最容易拿到反馈的轻量承接。", "先做一个最容易拿到反馈的轻量承接。"),
     }));
-  }, [actionSteps, platformDecisionRows, snapshot]);
+  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot]);
+
+  const contentExecutionCards = useMemo(() => {
+    if (titleExecutions.length) {
+      return titleExecutions.slice(0, 4).map((item: GrowthTitleExecution, index) => ({
+        id: `${item.title}-${index}`,
+        title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
+        hook: cleanUserCopy(item.openingHook || item.copywriting, "先用一句明确判断开头。"),
+        copywriting: cleanUserCopy(item.copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+        production: cleanUserCopy(
+          item.presentationMode === "图文" ? item.graphicPlan || item.videoPlan : item.videoPlan || item.graphicPlan,
+          item.presentationMode === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
+        ),
+        format: item.presentationMode,
+      }));
+    }
+
+    return topTopics.slice(0, 4).map((item, index) => ({
+      id: `${item.title}-${index}`,
+      title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
+      hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
+      copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
+      production: cleanUserCopy(actionSteps[index]?.action || "先做一个短平快版本看反馈。", "先做一个短平快版本看反馈。"),
+      format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
+    }));
+  }, [actionSteps, recommendedPlatforms, titleExecutions, topTopics]);
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -342,11 +444,33 @@ export default function PlatformPage() {
       ];
     }
     return [
-      snapshot.analysisTracks.liveSummary,
-      snapshot.analysisTracks.historicalSummary,
-      snapshot.dataAnalystSummary.recommendationReason,
+      ...materialFacts.slice(0, 2).map((item) => cleanUserCopy(item.detail, "")),
+      cleanUserCopy(businessTranslation[0]?.detail || audienceTriggers[0]?.reason || "", ""),
     ].filter(Boolean);
-  }, [snapshot]);
+  }, [audienceTriggers, businessTranslation, materialFacts, snapshot]);
+
+  const directConclusion = useMemo(
+    () => cleanUserCopy(platformDashboard?.subheadline || mainPath?.whyNow || snapshot?.overview.trendNarrative || "", "先把最值得验证的一条内容路线做透。"),
+    [mainPath, platformDashboard, snapshot],
+  );
+
+  const executionBlueprint = useMemo(
+    () => [
+      {
+        label: "内容开头",
+        detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
+      },
+      {
+        label: "内容结构",
+        detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
+      },
+      {
+        label: "行动引导",
+        detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
+      },
+    ].filter((item) => item.detail),
+    [assetAdaptation, contentExecutionCards, topMonetization],
+  );
 
   const isAnalyzing = growthSnapshotQuery.isFetching;
   const processingSteps = useMemo(
@@ -607,11 +731,6 @@ export default function PlatformPage() {
                     </div>
                   ) : null}
                 </div>
-                {growthSnapshotQuery.data?.debug ? (
-                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs leading-6 text-[#aa95dc]">
-                    route: {String(growthSnapshotQuery.data.debug.route || "-")} / source: {String(growthSnapshotQuery.data.source || "-")}
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>
@@ -779,7 +898,7 @@ export default function PlatformPage() {
                       {recommendationHeadline}
                     </div>
                     <div className="mt-4 max-w-3xl text-sm leading-8 text-[#d3caef]">
-                      {platformDashboard?.subheadline || snapshot.dataAnalystSummary.recommendationReason}
+                      {directConclusion}
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-4 py-3 text-right">
@@ -923,15 +1042,23 @@ export default function PlatformPage() {
               <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
-                  热点赛道与内容切口
+                  选题方向与文案内容
                 </div>
                 <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  {topTopics.map((item, index) => (
-                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="text-sm font-semibold text-white">{item.title}</div>
-                      <div className="mt-3 text-sm leading-7 text-[#d3caef]">{item.whyHot}</div>
+                  {contentExecutionCards.map((item) => (
+                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                        <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                          {item.format}
+                        </div>
+                      </div>
                       <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#8cefff]">
-                        {item.howToUse}
+                        {item.hook}
+                      </div>
+                      <div className="mt-3 text-sm leading-7 text-[#d3caef]">{item.copywriting}</div>
+                      <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
+                        {item.production}
                       </div>
                     </div>
                   ))}
@@ -951,6 +1078,38 @@ export default function PlatformPage() {
                       <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
                         {item.action}
                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Rocket className="h-4 w-4 text-[#49e6ff]" />
+                  视频怎么拍 / 图文怎么写
+                </div>
+                <div className="mt-5 space-y-3">
+                  {executionBlueprint.map((item) => (
+                    <div key={item.label} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                      <div className="text-sm font-semibold text-white">{item.label}</div>
+                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Target className="h-4 w-4 text-[#6fffb0]" />
+                  为什么这条路更适合你
+                </div>
+                <div className="mt-5 space-y-3">
+                  {[...businessTranslation.slice(0, 2), ...audienceTriggers.slice(0, 2).map((item) => ({ title: item.label, detail: item.reason }))].map((item, index) => (
+                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                      <div className="text-sm font-semibold text-white">{cleanUserCopy(item.title, `理由 ${index + 1}`)}</div>
+                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{cleanUserCopy(item.detail, "这条内容路径更容易让用户理解你是谁，以及为什么值得继续看。")}</div>
                     </div>
                   ))}
                 </div>
