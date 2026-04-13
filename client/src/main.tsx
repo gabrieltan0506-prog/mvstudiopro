@@ -50,6 +50,15 @@ import "./index.css";
 
 const queryClient = new QueryClient();
 
+const FLY_TRPC_URL = "https://mvstudiopro.fly.dev/api/trpc";
+
+function resolveGrowthSnapshotUrl() {
+  if (typeof window === "undefined") return "/api/trpc";
+  const hostname = window.location.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1") return "/api/trpc";
+  return FLY_TRPC_URL;
+}
+
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
@@ -84,13 +93,12 @@ const trpcClient = trpc.createClient({
         return op.path === "mvAnalysis.getGrowthSnapshot";
       },
       true: httpLink({
-        url: "/api/trpc",
-        methodOverride: "POST",
+        url: resolveGrowthSnapshotUrl(),
         transformer: superjson,
         fetch(input, init) {
           return globalThis.fetch(input, {
             ...(init ?? {}),
-            credentials: "include",
+            credentials: "omit",
           });
         },
       }),

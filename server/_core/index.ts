@@ -30,6 +30,42 @@ function isGrowthTrendSchedulerDisabled() {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
+function isAllowedCorsOrigin(origin: string) {
+  if (!origin) return false;
+
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase();
+
+    if (hostname === "mvstudiopro.com" || hostname === "www.mvstudiopro.com") {
+      return true;
+    }
+
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return true;
+    }
+
+    return hostname.endsWith(".vercel.app");
+  } catch {
+    return false;
+  }
+}
+
+function applyApiCors(req: express.Request, res: express.Response) {
+  const origin = String(req.headers.origin || "").trim();
+  if (!isAllowedCorsOrigin(origin)) return false;
+
+  res.header("Access-Control-Allow-Origin", origin);
+  res.header("Vary", "Origin");
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header(
+    "Access-Control-Allow-Headers",
+    String(req.headers["access-control-request-headers"] || "Content-Type, Authorization, X-Requested-With"),
+  );
+  return true;
+}
+
 function buildRoutingMap() {
   return {
     free: {
@@ -259,7 +295,16 @@ async function startServer() {
     res.status(200).type("text/plain").send("ok");
   });
 
+  app.use("/api/trpc", (req, res, next) => {
+    applyApiCors(req, res);
+    if (req.method === "OPTIONS") {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   app.get("/api/getGrowthSystemStatus", async (req, res) => {
+    applyApiCors(req, res);
     try {
       const caller = appRouter.createCaller({} as any);
       const result = await caller.mvAnalysis.getGrowthSystemStatus();
