@@ -2330,6 +2330,7 @@ export function buildMockGrowthSnapshot(params: {
   context?: string;
   requestedPlatforms?: string[];
   historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
+  windowDaysOverride?: number;
 }): GrowthSnapshot {
   const requestedPlatforms = normalizePlatforms(params.requestedPlatforms || params.analysis.platforms);
   const context = String(params.context || "").trim();
@@ -2378,7 +2379,7 @@ export function buildMockGrowthSnapshot(params: {
 
   const today = new Date();
   const generatedAt = today.toISOString();
-  const windowDays = DEFAULT_GROWTH_WINDOW_DAYS;
+  const windowDays = Math.max(15, Number(params.windowDaysOverride || DEFAULT_GROWTH_WINDOW_DAYS) || DEFAULT_GROWTH_WINDOW_DAYS);
   const dataAnalystSummary: GrowthDataAnalystSummary = buildGrowthDataAnalystSummary({
     requestedPlatforms,
     collections: {},
@@ -2497,6 +2498,7 @@ export function buildGrowthSnapshotFromCollections(params: {
   collections: Partial<Record<GrowthPlatform, PlatformTrendCollection>>;
   historicalPlatformTotals?: Partial<Record<GrowthPlatform, { currentTotal?: number; archivedTotal?: number }>>;
   errors?: Partial<Record<GrowthPlatform, string>>;
+  windowDaysOverride?: number;
 }): GrowthSnapshot {
   const collectedPlatforms = (Object.entries(params.collections) as Array<[GrowthPlatform, PlatformTrendCollection | undefined]>)
     .filter(([platform, collection]) => platform !== "weixin_channels" && Boolean(collection?.items?.length))
@@ -2544,7 +2546,8 @@ export function buildGrowthSnapshotFromCollections(params: {
 
   const livePlatforms = activeCollections.filter((item) => item.source === "live").map((item) => item.platform);
   const missingPlatforms = requestedPlatforms.filter((platform) => !params.collections[platform]?.items.length);
-  const windowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
+  const detectedWindowDays = Math.max(DEFAULT_GROWTH_WINDOW_DAYS, ...activeCollections.map((collection) => collection.windowDays || 0));
+  const windowDays = Math.max(15, Number(params.windowDaysOverride || detectedWindowDays) || detectedWindowDays);
   const industryTemplate = matchIndustryTemplate(context, [
     params.analysis.summary,
     ...params.analysis.strengths,
