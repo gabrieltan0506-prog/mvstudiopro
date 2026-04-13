@@ -1465,10 +1465,9 @@ export const appRouter = router({
               },
             });
 
-        const platformDashboard = interactivePlatform
-          ? null
-          : await buildPlatformDashboard({
-              snapshot,
+        const platformDashboardSource = interactivePlatform ? baseSnapshot : snapshot;
+        const platformDashboard = await buildPlatformDashboard({
+              snapshot: platformDashboardSource,
               context: input.context,
               requestedPlatforms,
               store: effectiveStore,
@@ -1494,7 +1493,7 @@ export const appRouter = router({
             selectedWindowDays,
             interactivePlatform,
             skippedPersonalization: interactivePlatform,
-            skippedPlatformDashboard: interactivePlatform,
+            skippedPlatformDashboard: false,
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
             windowDays: snapshot.status.windowDays,
