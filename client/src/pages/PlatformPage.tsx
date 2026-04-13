@@ -75,9 +75,37 @@ type AskResult = {
 type PlatformDashboard = {
   headline: string;
   subheadline: string;
+  personaSummary: string;
   topSignals: Array<{ title: string; detail: string; badge?: string }>;
-  platformMenu: Array<{ platform: string; label: string; trend: string; lane: string; whyNow: string; nextMove: string }>;
+  platformMenu: Array<{
+    platform: string;
+    label: string;
+    trend: string;
+    lane: string;
+    whyNow: string;
+    recommendedFormat?: string;
+    titleExample?: string;
+    contentHook?: string;
+    nextMove: string;
+    monetizationPath?: string;
+  }>;
   hotTopics: Array<{ title: string; whyHot: string; howToUse: string }>;
+  contentBlueprints: Array<{
+    title: string;
+    format: string;
+    hook: string;
+    copywriting: string;
+    graphicPlan?: string;
+    videoPlan?: string;
+    suitablePlatforms?: string[];
+  }>;
+  monetizationLanes: Array<{
+    title: string;
+    fitReason: string;
+    offerShape: string;
+    revenueModes: string[];
+    firstValidation: string;
+  }>;
   actionCards: Array<{ title: string; detail: string }>;
   conversationStarters: string[];
 };
@@ -368,9 +396,11 @@ export default function PlatformPage() {
           id: `${item.platform}-${item.label}`,
           name: item.label,
           lane: cleanUserCopy(item.lane, item.label),
-          trend: cleanUserCopy(item.trend, "先从更顺手的表达方式切入"),
+          trend: cleanUserCopy(item.recommendedFormat || item.trend, "先从更顺手的表达方式切入"),
           whyNow: cleanUserCopy(item.whyNow, "当前窗口里，这个平台更容易拿到第一轮反馈。"),
-          nextMove: cleanUserCopy(item.nextMove, "先发一版内容拿反馈。"),
+          nextMove: cleanUserCopy(item.titleExample || item.nextMove, "先发一版内容拿反馈。"),
+          hook: cleanUserCopy(item.contentHook || item.nextMove, "先把第一句判断说出来。"),
+          monetization: cleanUserCopy(item.monetizationPath || "", ""),
         }));
       }
 
@@ -385,15 +415,25 @@ export default function PlatformPage() {
           trend: cleanUserCopy(activity?.recommendedFormat || item.playbook || `动量 ${platformSnapshot?.momentumScore || 0} / 适配 ${platformSnapshot?.audienceFitScore || 0}`, "先用更适合的平台内容形式启动"),
           whyNow: cleanUserCopy(item.reason || activity?.summary || platformSnapshot?.summary || "这个平台更适合你当前这轮内容验证。", "这个平台更适合你当前这轮内容验证。"),
           nextMove: cleanUserCopy(item.action || activity?.optimizationPlan || validationPlan[index]?.nextMove || "先拿一版首发内容验证反馈。", "先拿一版首发内容验证反馈。"),
+          hook: cleanUserCopy(titleExecutions[index]?.openingHook || titleExecutions[index]?.copywriting || "", ""),
+          monetization: cleanUserCopy(monetizationStrategies[index]?.primaryTrack || "", ""),
         };
       });
     },
-    [platformActivities, platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot, validationPlan],
+    [monetizationStrategies, platformActivities, platformDashboard, primaryPlatforms, recommendedPlatforms, snapshot, titleExecutions, validationPlan],
   );
 
   const monetizationCards = useMemo(() => {
+    if (platformDashboard?.monetizationLanes?.length) {
+      return platformDashboard.monetizationLanes.slice(0, 2).map((item, index) => ({
+        id: `${item.title}-${index}`,
+        title: cleanUserCopy(item.title, `变现路径 ${index + 1}`),
+        summary: cleanUserCopy(item.fitReason, "这条变现方式更符合你当前内容和身份。"),
+        action: cleanUserCopy([item.offerShape, ...item.revenueModes, item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
+      }));
+    }
     if (monetizationStrategies.length) {
-      return monetizationStrategies.slice(0, 4).map((item: GrowthMonetizationStrategy, index) => ({
+      return monetizationStrategies.slice(0, 2).map((item: GrowthMonetizationStrategy, index) => ({
         id: `${item.platform}-${index}`,
         title: `${item.platformLabel}：${cleanUserCopy(item.primaryTrack, item.primaryTrack)}`,
         summary: cleanUserCopy(item.reason || item.strategy, "先把内容承接到一个更容易转化的服务或产品形态。"),
@@ -401,7 +441,7 @@ export default function PlatformPage() {
       }));
     }
 
-    const businessInsights = snapshot?.businessInsights.slice(0, 4) ?? [];
+    const businessInsights = snapshot?.businessInsights.slice(0, 2) ?? [];
     return businessInsights.map((item, index) => ({
       id: `${item.title}-${index}`,
       title: cleanUserCopy(item.title, `商业化切口 ${index + 1}`),
@@ -411,6 +451,19 @@ export default function PlatformPage() {
   }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot]);
 
   const contentExecutionCards = useMemo(() => {
+    if (platformDashboard?.contentBlueprints?.length) {
+      return platformDashboard.contentBlueprints.slice(0, 4).map((item, index) => ({
+        id: `${item.title}-${index}`,
+        title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
+        hook: cleanUserCopy(item.hook, "先用一句明确判断开头。"),
+        copywriting: cleanUserCopy(item.copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+        production: cleanUserCopy(
+          item.format === "图文" ? item.graphicPlan || item.videoPlan || "" : item.videoPlan || item.graphicPlan || "",
+          item.format === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
+        ),
+        format: item.format,
+      }));
+    }
     if (titleExecutions.length) {
       return titleExecutions.slice(0, 4).map((item: GrowthTitleExecution, index) => ({
         id: `${item.title}-${index}`,
@@ -433,7 +486,7 @@ export default function PlatformPage() {
       production: cleanUserCopy(actionSteps[index]?.action || "先做一个短平快版本看反馈。", "先做一个短平快版本看反馈。"),
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
     }));
-  }, [actionSteps, recommendedPlatforms, titleExecutions, topTopics]);
+  }, [actionSteps, platformDashboard, recommendedPlatforms, titleExecutions, topTopics]);
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -452,6 +505,11 @@ export default function PlatformPage() {
   const directConclusion = useMemo(
     () => cleanUserCopy(platformDashboard?.subheadline || mainPath?.whyNow || snapshot?.overview.trendNarrative || "", "先把最值得验证的一条内容路线做透。"),
     [mainPath, platformDashboard, snapshot],
+  );
+
+  const personaSummary = useMemo(
+    () => cleanUserCopy(platformDashboard?.personaSummary || "", "把专业身份和中国文化审美结合成一个更容易建立信任的IP入口。"),
+    [platformDashboard],
   );
 
   const executionBlueprint = useMemo(
@@ -656,6 +714,9 @@ export default function PlatformPage() {
                 </span>
               </h1>
               <p className="mt-5 max-w-3xl text-sm leading-8 text-[#d3caef] md:text-base">
+                {personaSummary}
+              </p>
+              <p className="mt-3 max-w-3xl text-sm leading-8 text-[#b8afd9] md:text-[15px]">
                 {platformDashboard?.subheadline
                   || "这个页面不做视频上传，不做二创，不讲空泛平台画像。它只解决三件事：当前时间窗口里，哪个平台值得优先做；热点赛道该怎么切；以及你怎样把这轮内容机会变成真实商业承接。"}
               </p>
@@ -978,6 +1039,22 @@ export default function PlatformPage() {
                           <div className="mt-2 text-sm leading-7 text-white">{item.nextMove}</div>
                         </div>
                       </div>
+                      {(item.hook || item.monetization) ? (
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          {item.hook ? (
+                            <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">开头怎么说</div>
+                              <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.hook}</div>
+                            </div>
+                          ) : null}
+                          {item.monetization ? (
+                            <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                              <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">更适合的承接</div>
+                              <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.monetization}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
