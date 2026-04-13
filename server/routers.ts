@@ -1350,12 +1350,14 @@ export const appRouter = router({
         analysis: growthAnalysisScoresSchema,
         modelName: growthCampModelSchema.optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]).optional(),
+        interactivePlatform: z.boolean().optional(),
       }))
       .query(async ({ input, ctx }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const store = await readTrendStore({ preferDerivedFiles: true });
         const userEvidence = ctx.user ? await readGrowthUserEvidence(ctx.user.id, requestedPlatforms) : null;
+        const interactivePlatform = Boolean(input.interactivePlatform);
         const historicalPlatformTotals = Object.fromEntries(
           requestedPlatforms.map((platform) => [
             platform,
@@ -1394,19 +1396,21 @@ export const appRouter = router({
               historicalPlatformTotals,
               windowDaysOverride: selectedWindowDays,
             });
-        const personalized = await personalizeGrowthSnapshot({
-          snapshot: baseSnapshot,
-          analysis: input.analysis,
-          context: input.context,
-          requestedPlatforms,
-          modelName: input.modelName,
-          store: effectiveStore,
-          userEvidence,
-          windowDays: selectedWindowDays,
-        }).catch((error) => {
-          console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
-          return null;
-        });
+        const personalized = interactivePlatform
+          ? null
+          : await personalizeGrowthSnapshot({
+              snapshot: baseSnapshot,
+              analysis: input.analysis,
+              context: input.context,
+              requestedPlatforms,
+              modelName: input.modelName,
+              store: effectiveStore,
+              userEvidence,
+              windowDays: selectedWindowDays,
+            }).catch((error) => {
+              console.warn("[growth.getGrowthSnapshot] personalization fallback:", error);
+              return null;
+            });
         const dataEvidenceNotes = buildGrowthDataEvidenceNotes({
           requestedPlatforms,
           store: effectiveStore,
@@ -1455,16 +1459,18 @@ export const appRouter = router({
               },
             });
 
-        const platformDashboard = await buildPlatformDashboard({
-          snapshot,
-          context: input.context,
-          requestedPlatforms,
-          store: effectiveStore,
-          windowDays: selectedWindowDays,
-        }).catch((error) => {
-          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
-          return null;
-        });
+        const platformDashboard = interactivePlatform
+          ? null
+          : await buildPlatformDashboard({
+              snapshot,
+              context: input.context,
+              requestedPlatforms,
+              store: effectiveStore,
+              windowDays: selectedWindowDays,
+            }).catch((error) => {
+              console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+              return null;
+            });
 
         return {
           success: true,
@@ -1480,6 +1486,9 @@ export const appRouter = router({
             personalizedApplied: Boolean(personalized),
             userEvidenceApplied: Boolean(userEvidence),
             selectedWindowDays,
+            interactivePlatform,
+            skippedPersonalization: interactivePlatform,
+            skippedPlatformDashboard: interactivePlatform,
             baseSource: baseSnapshot.status.source,
             finalSource: snapshot.status.source,
             windowDays: snapshot.status.windowDays,
