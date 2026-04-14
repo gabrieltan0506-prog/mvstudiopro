@@ -1634,13 +1634,12 @@ export const appRouter = router({
               windowDaysOverride: selectedWindowDays,
             });
         const t1 = Date.now();
-        // Personalize when context is provided — even for interactivePlatform, run it if the user gave a focusPrompt
-        // Gemini 2.5 Pro can take 40-50s, give it 90s to complete
-        const hasContext = Boolean(input.context && input.context.trim().length > 0);
-        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform
-          ? (hasContext ? 90_000 : 0)
-          : 90_000;
-        const personalized = (interactivePlatform && !hasContext)
+        // For interactivePlatform (Platform page): skip personalization entirely.
+        // buildPlatformDashboard already receives context and personalizes output there.
+        // Adding a separate personalization LLM call adds 45-90s with no visible user benefit.
+        // For Growth Camp (interactivePlatform=false): run full personalization as before.
+        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 0 : 90_000;
+        const personalized = interactivePlatform
           ? null
           : await Promise.race([
               personalizeGrowthSnapshot({
