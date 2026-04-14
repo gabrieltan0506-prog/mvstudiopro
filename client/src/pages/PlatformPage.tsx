@@ -438,14 +438,15 @@ export default function PlatformPage() {
     () => {
       if (platformDashboard?.platformMenu.length) {
         return platformDashboard.platformMenu.slice(0, 4).map((item: any, index: number) => ({
-          id: `${item.platform || item.name || index}-${item.label || index}`,
-          name: item.label || item.name || item.platform || `平台 ${index + 1}`,
-          lane: cleanUserCopy(item.lane || item.contentAngle || "", item.label || `平台 ${index + 1}`),
-          trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || "", "先从更顺手的表达方式切入"),
-          whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
-          nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || "", "先发一版内容拿反馈。"),
-          hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || "", "先把第一句判断说出来。"),
-          monetization: cleanUserCopy(item.monetizationPath || item.monetization || "", ""),
+          id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
+          // Support both English keys and Chinese keys Gemini sometimes returns
+          name: item.label || item.displayName || item.name || item.platform || item["平台"] || `平台 ${index + 1}`,
+          lane: cleanUserCopy(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || "", item.label || `平台 ${index + 1}`),
+          trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || "", "先从更顺手的表达方式切入"),
+          whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
+          nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || "", "先发一版内容拿反馈。"),
+          hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || item["开头怎么说"] || item["开头钩子"] || "", "先把第一句判断说出来。"),
+          monetization: cleanUserCopy(item.monetizationPath || item.monetization || item["商业承接路径"] || item["变现路径"] || "", ""),
         }));
       }
 
