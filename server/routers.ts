@@ -418,8 +418,9 @@ async function buildPlatformDashboard(params: {
     ? `\n\n用户背景补充（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 300)}`
     : "";
   // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
-  const hasMedicalPersona = /医生|医师|医疗|心脏|临床|doctor/i.test(params.context || "");
-  const hasCulturePersona = /文化|艺术|历史|书画|收藏|人文/i.test(params.context || "");
+  // Support both Simplified and Traditional Chinese in persona detection
+  const hasMedicalPersona = /医生|醫生|医师|醫師|医疗|醫療|心脏|心臟|临床|臨床|doctor/i.test(params.context || "");
+  const hasCulturePersona = /文化|艺术|藝術|历史|歷史|书画|書畫|收藏|人文/i.test(params.context || "");
   const personaConstraint = (hasMedicalPersona || hasCulturePersona)
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。platformMenu 中的第一顺位必须是与知识型/审美型内容适配度最高的平台（通常是小红书或B站），而非纯流量平台。`
     : "";

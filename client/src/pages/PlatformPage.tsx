@@ -927,6 +927,62 @@ export default function PlatformPage() {
           ))}
         </section>
 
+        {/* Debug panel: show as soon as snapshot is available */}
+        {snapshot && debugMode ? (
+          <section className="mt-6">
+            <div className={shellCardClasses("p-5")}>
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Bot className="h-4 w-4 text-[#49e6ff]" />
+                Debug Flow
+              </div>
+              <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">前端状态</div>
+                  <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
+                    <div>windowDays: {selectedWindowDays}</div>
+                    <div>focusPrompt: {focusPrompt || "-"}</div>
+                    <div>query.status: {growthSnapshotQuery.status}</div>
+                    <div>query.isFetching: {String(growthSnapshotQuery.isFetching)}</div>
+                    <div>hasSnapshot: {String(Boolean(snapshot))}</div>
+                    <div>hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
+                    <div>isDashboardLoading: {String(isDashboardLoading)}</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
+                  <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
+                    <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
+                    <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
+                    <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
+                    <div>4. getPlatformDashboard: {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? "已返回结果" : "返回null(LLM超时)") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
+                    <div>5. dashboardMs: {String((dashboardDebug?.totalMs as number) ?? "?")}</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
+                  <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
+                    {String(growthSnapshotQuery.error?.message || getPlatformDashboardMutation.error?.message || "-")}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                    {JSON.stringify(snapshotDebug || null, null, 2)}
+                  </pre>
+                </div>
+                <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                    {JSON.stringify(dashboardDebug || null, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {/* Show loading state while waiting for dashboard (Call 2) */}
         {snapshot && !platformDashboard && isDashboardLoading ? (
           <section className="mt-6">
