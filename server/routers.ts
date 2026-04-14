@@ -354,7 +354,7 @@ const platformDashboardResponseSchema = z.object({
   platformMenu: z.array(z.object({
     platform: z.string().optional(),
     whyNow: z.string().optional(),
-    referenceAccounts: z.array(z.string()).optional(),
+    referenceAccounts: z.array(z.any()).optional(),
     primaryTrack: z.string().optional(),
     estimatedTraffic: z.string().optional(),
     ipUniqueness: z.string().optional(),

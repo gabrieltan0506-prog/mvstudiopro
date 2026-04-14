@@ -1428,7 +1428,22 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
                       {Array.isArray((item as any).referenceAccounts) && (item as any).referenceAccounts.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div><div className="mt-2 flex flex-wrap gap-2">{(item as any).referenceAccounts.map((acc: string, ai: number) => (<span key={ai} className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1 text-[11px] text-[#c9c0e6]">{acc}</span>))}</div></div>
+                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div>
+                          <div className="mt-2 space-y-2">
+                            {(item as any).referenceAccounts.map((acc: any, ai: number) => {
+                              const accountText = typeof acc === "string" ? acc : (acc?.account || acc?.name || acc?.title || "");
+                              const reasonText = typeof acc === "object" ? (acc?.reason || acc?.description || "") : "";
+                              if (!accountText) return null;
+                              return (
+                                <div key={ai} className="rounded-lg border border-[#3a2b6a] bg-[#170d35] px-3 py-2">
+                                  <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div>
+                                  {reasonText ? <div className="mt-1 text-[11px] leading-5 text-[#9080b8]">{reasonText}</div> : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       ) : null}
                     </div>
                   ))}
