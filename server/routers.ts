@@ -425,65 +425,64 @@ async function buildPlatformDashboard(params: {
 
   const response = await invokeLLM({
     model: "pro",
-    provider: "gemini",
+    provider: "vertex",
     modelName: "gemini-2.5-pro",
     messages: [
       {
         role: "system",
-        content: `你是一位已经帮创作者做过平台选择、内容定位和商业化承接的资深顾问。
+        content: `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
 
-你的任务是基于当前时间窗口的平台实时数据，生成一个给客户看的互动看板。
+请根据用户背景和近 ${params.windowDays} 天平台数据，生成一个精简的平台决策看板。
 
-要求：
-1. 只输出用户看得懂、拿得走的结论，不要原样暴露后台平台介绍、内部数据字段名或工程逻辑。
-2. 结论必须明显绑定当前用户关注点和 ${params.windowDays} 天窗口，不能写成任何人都能套用的模板话。
-3. 整个看板要有"可卖"感：headline 要像成熟顾问给出的核心判断，而不是中性标题；subheadline 要说明为什么现在值得看这件事。
-4. personaSummary 必须先用一句话讲清这个用户的身份、可建立的IP心智、以及为什么这个身份有商业价值。
-5. platformMenu 不是平台介绍。每个平台至少要回答：适合切什么赛道、用什么形式更好、首发内容标题示例、开头一句怎么说、先验证什么、商业承接走哪条线。
-6. contentBlueprints 必须给出至少 3 个具体内容方案，每个都要写：标题、形式、开头文案、主体文案方向、图文怎么写、视频怎么拍。不能只写原则。
-7. monetizationLanes 不能只写电商带货，也不能把一堆通用变现方式全部列上来。只保留 1 到 3 条和这个用户身份、题材、平台表达强相关的路径。每条都必须明确回答：为什么这个人适合做、适合卖什么或接什么、先怎么验证。没有强证据就不要写。
-8. 如果用户背景是"专业人士 + 文化/历史/艺术兴趣"这类复合身份，优先考虑与身份信任、审美内容、知识解释力相关的变现，而不是默认带货。
-9. 如果你给出的变现路径可以直接套在任何人身上，那就是错的，必须重写。
-10. hotTopics 必须来自当前数据，但要翻译成这个用户能做的切入，不是解释平台热点本身。
-11. actionCards 必须是能立刻执行的动作，优先写"先做什么、别做什么、怎么验证"。
-12. conversationStarters 要像真人顾问继续推进选题、形式、承接和验证的问题。
-13. 绝对不要出现"可能都可以""先试试""做个人IP"这种空话。
-14. 输出严格 JSON，字段为 headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。${personaContextLine}${personaConstraint}`,
+严格要求：
+1. 所有输出必须针对这个具体用户，不得写成通用模板。
+2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
+3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接。
+4. monetizationLanes：只保留 1-2 条与此用户身份强相关的路径，禁止电商带货默认选项。
+5. conversationStarters：3 个让用户愿意继续追问的问题。
+6. topSignals：3 个关键信号，hotTopics：3 个热点方向，actionCards：3 个立刻能做的动作。
+7. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。${personaContextLine}${personaConstraint}
+
+输出严格 JSON，字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。`,
       },
       {
         role: "user",
         content: JSON.stringify({
           context: params.context || "",
           windowDays: params.windowDays,
-          snapshot: {
-            overview: params.snapshot.overview,
-            // Phase 0-D: Reduced from full arrays to smaller slices to cut token usage
-            platformSnapshots: params.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
-              platform: item.platform,
-              displayName: item.displayName,
-              audienceFitScore: item.audienceFitScore,
-              momentumScore: item.momentumScore,
-              competitionLevel: item.competitionLevel,
-              summary: item.summary,
-              fitLabel: item.fitLabel,
-              sampleTopics: item.sampleTopics.slice(0, 5),
-            })),
-            platformRecommendations: params.snapshot.platformRecommendations.slice(0, 3),
-            titleExecutions: params.snapshot.titleExecutions.slice(0, 4),
-            monetizationStrategies: params.snapshot.monetizationStrategies.slice(0, 3),
-            businessInsights: params.snapshot.businessInsights.slice(0, 4),
-            growthPlan: params.snapshot.growthPlan.slice(0, 3),
-            topicLibrary: params.snapshot.topicLibrary.slice(0, 6),
-            decisionFramework: params.snapshot.decisionFramework,
-            creationAssist: {
-              brief: params.snapshot.creationAssist.brief,
-            },
+          // Trimmed to reduce Vertex output token pressure
+          platforms: params.snapshot.platformSnapshots.slice(0, 4).map((item) => ({
+            platform: item.platform,
+            displayName: item.displayName,
+            audienceFitScore: item.audienceFitScore,
+            momentumScore: item.momentumScore,
+            summary: item.summary,
+            sampleTopics: item.sampleTopics.slice(0, 3),
+          })),
+          topRecommendations: params.snapshot.platformRecommendations.slice(0, 2).map((item) => ({
+            name: item.name,
+            reason: item.reason,
+            action: item.action,
+          })),
+          topTopics: params.snapshot.topicLibrary.slice(0, 4).map((item) => ({
+            title: item.title,
+            rationale: item.rationale,
+            executionHint: item.executionHint,
+          })),
+          monetizationHints: params.snapshot.monetizationStrategies.slice(0, 2).map((item) => ({
+            platform: item.platformLabel,
+            track: item.primaryTrack,
+            offerType: item.offerType,
+          })),
+          mainPath: {
+            title: params.snapshot.decisionFramework.mainPath.title,
+            summary: params.snapshot.decisionFramework.mainPath.summary,
+            whyNow: params.snapshot.decisionFramework.mainPath.whyNow,
           },
-          collections: collectionEvidence.map((item) => ({
+          collections: collectionEvidence.slice(0, 3).map((item) => ({
             platform: item.platform,
             itemCount: item.itemCount,
-            hotTitles: item.hotTitles.slice(0, 6),
-            topBuckets: item.topBuckets.slice(0, 4),
+            hotTitles: item.hotTitles.slice(0, 4),
           })),
         }),
       },
