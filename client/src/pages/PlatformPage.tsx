@@ -376,8 +376,9 @@ export default function PlatformPage() {
     return topTopics[0]?.title || platformDashboard?.headline || "当前内容方向";
   }, [focusKeywords, platformDashboard, topTopics]);
   const recommendationHeadline = useMemo(() => {
-    if (mainPath?.title) return cleanUserCopy(mainPath.title, mainPath.title);
+    // Prefer LLM-generated headline first to avoid snapshot "电商带货" leaking here
     if (platformDashboard?.headline) return platformDashboard.headline;
+    if (mainPath?.title) return cleanUserCopy(mainPath.title, mainPath.title);
     const topPlatform = recommendedPlatforms[0]?.name || "当前优先平台";
     return `围绕 ${personalizedSubject}，先把 ${topPlatform} 做透`;
   }, [mainPath, personalizedSubject, platformDashboard, recommendedPlatforms]);
@@ -530,12 +531,12 @@ export default function PlatformPage() {
         return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
           id: `${item.title || index}-${index}`,
           title: cleanUserCopy(item.title || item["变现方向名"] || item["标题"] || "", `变现路径 ${index + 1}`),
-          summary: cleanUserCopy(item.fitReason || item.summary || item["为什么适合此人设"] || "", "这条变现方式更符合你当前内容和身份。"),
+          summary: cleanUserCopy(item.fitReason || item.summary || item["为什么适合此人设"] || "", ""),
           action: cleanUserCopy(
             [item.offerShape || item["交付形态"], ...item.revenueModes, item.firstValidation || item["第一步如何做轻量验证"]]
               .filter(Boolean)
               .join(" / "),
-            "先做一轮轻量验证。",
+            "",
           ),
         }));
       }
@@ -599,17 +600,24 @@ export default function PlatformPage() {
           ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
           : [];
 
+        const execDetails = item.executionDetails || {};
+        const envWardrobe = execDetails.environmentAndWardrobe || execDetails["拍摄环境服装"] || execDetails["环境服装"] || "";
+        const lightCam = execDetails.lightingAndCamera || execDetails["灯光机位"] || execDetails["灯光镜头"] || "";
+        const scriptSteps: string[] = Array.isArray(execDetails.stepByStepScript)
+          ? execDetails.stepByStepScript.map(String)
+          : typeof execDetails.stepByStepScript === "string" && execDetails.stepByStepScript.trim()
+          ? [execDetails.stepByStepScript]
+          : [];
+
         return {
           id: `${title || index}-${index}`,
           title: cleanUserCopy(title, `内容方案 ${index + 1}`),
           hook: cleanUserCopy(hook, "先用一句明确判断开头。"),
           copywriting: cleanUserCopy(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
-          production: cleanUserCopy(
-            productionRaw,
-            format === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
-          ),
+          production: cleanUserCopy(productionRaw, ""),
           format: format,
           suitablePlatforms,
+          executionDetails: { environmentAndWardrobe: envWardrobe, lightingAndCamera: lightCam, stepByStepScript: scriptSteps },
         };
       });
     }
@@ -1444,9 +1452,31 @@ export default function PlatformPage() {
                         {item.hook}
                       </div>
                       <div className="mt-3 text-sm leading-7 text-[#d3caef]">{item.copywriting}</div>
-                      <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
-                        {item.production}
-                      </div>
+                      {item.production ? (
+                        <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
+                          {item.production}
+                        </div>
+                      ) : null}
+                      {(item as any).executionDetails?.environmentAndWardrobe ? (
+                        <div className="mt-3 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">拍摄环境 &amp; 服装道具</div>
+                          <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.environmentAndWardrobe}</div>
+                        </div>
+                      ) : null}
+                      {(item as any).executionDetails?.lightingAndCamera ? (
+                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">灯光 &amp; 机位</div>
+                          <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.lightingAndCamera}</div>
+                        </div>
+                      ) : null}
+                      {Array.isArray((item as any).executionDetails?.stepByStepScript) && (item as any).executionDetails.stepByStepScript.length > 0 ? (
+                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-1">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">逐步执行脚本</div>
+                          {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
+                            <div key={si} className="text-sm leading-7 text-[#d3caef]">{step}</div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>

@@ -361,8 +361,20 @@ const platformDashboardResponseSchema = z.object({
 
 // Call 3 schema — detailed content blueprints and monetization (heavy copywriting)
 // Use z.any() for all array fields to tolerate Gemini schema drift
+// executionDetails is an optional sub-object in each contentBlueprint item
 const platformContentResponseSchema = z.object({
-  contentBlueprints: z.array(z.any()).default([]),
+  contentBlueprints: z.array(z.object({
+    title: z.string().optional(),
+    format: z.string().optional(),
+    hook: z.string().optional(),
+    copywriting: z.string().optional(),
+    suitablePlatforms: z.union([z.array(z.string()), z.string()]).optional(),
+    executionDetails: z.object({
+      environmentAndWardrobe: z.string().optional(),
+      lightingAndCamera: z.string().optional(),
+      stepByStepScript: z.array(z.string()).optional(),
+    }).optional(),
+  }).passthrough()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
@@ -543,16 +555,36 @@ async function buildPlatformContent(params: {
 
 根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
 
+【绝对禁止词汇黑名单】（任何输出中出现以下词汇/句式即判定为不合格，必须重写）：
+- "电商带货" / "带货" / "橱窗"
+- "先做一轮轻量验证" / "先做轻量验证" / "轻量验证"
+- "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
+- "可能都可以" / "先试试" / "先探索一下"
+- 任何泛化建议，不针对此用户的具体身份和专长
+
 严格要求：
-1. contentBlueprints：生成至少 3 个具体可执行的内容方案。每个包含：标题、格式、开头文案钩子(hook)、核心文案方向、图文怎么排版/视频怎么拍，以及适合哪些平台。
-   【极其重要】针对“图文怎么排版/视频怎么拍”，绝对不允许输出“开头先给结果”这种废话。必须给出具体的执行脚本：
-   - 如果是视频，必须明确给出分镜：【画面1】展示什么（如：手持复古茶盏），【画面2】切换到什么（如：心电图特写），配合什么BGM风格。
-   - 如果是图文，必须明确给出排版：封面图怎么设计（字体、构图、背景），第一张写什么，第二张写什么。
-2. monetizationLanes：生成 1-2 条强相关的变现路径（比如"知识付费-心血管健康课程"）。包含：变现方向名、为什么适合此人设、交付形态、具体服务变现方式、第一步如何做轻量验证。
+1. contentBlueprints：生成至少 3 个具体可执行的内容方案。每个方案必须包含：
+   - title（选题标题，必须是具体的，不是抽象的）
+   - format（内容形式：短视频 / 图文）
+   - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
+   - copywriting（核心文案方向，具体说明内容结构）
+   - suitablePlatforms（适合发哪些平台，字符串数组）
+   - executionDetails（执行细节，必须极度具体）：
+     * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
+     * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光"）
+     * stepByStepScript（逐步脚本，数组格式，每条说明一个画面/步骤，例如：["【0-3秒】直接说出核心判断：……","【3-15秒】展示具体案例：……","【15-25秒】给出行动建议：……"]）
+
+2. monetizationLanes：生成 1-2 条强相关的变现路径（例如"知识付费-心血管健康私人咨询"）。必须包含：
+   - title（变现方向名，具体到品类）
+   - fitReason（为什么适合此用户，基于其具体身份）
+   - offerShape（交付形态，例如"90分钟1v1线上问诊+报告解读"）
+   - revenueModes（具体变现方式数组）
+   - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
+
 3. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
-字段为：contentBlueprints, monetizationLanes。`,
+字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
       },
       {
         role: "user",
