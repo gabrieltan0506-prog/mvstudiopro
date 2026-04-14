@@ -5,6 +5,7 @@ import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import * as db from "./db";
 import * as sessionDb from "./sessionDb";
 import { invokeLLM } from "./_core/llm";
@@ -1569,8 +1570,9 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const interactivePlatform = Boolean(input.interactivePlatform);
-        // Give Fly disk I/O enough time — Fly disk can take 12-15s for platform collections
-        const STORE_TIMEOUT_MS = interactivePlatform ? 20_000 : 30_000;
+        // Fly disk I/O for readTrendStoreForPlatforms can take 12-25s — give it 60s
+        // Previous values of 5s/10s/20s/45s were all cutting off the read before completion
+        const STORE_TIMEOUT_MS = 60_000;
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
           interactivePlatform
@@ -1615,6 +1617,13 @@ export const appRouter = router({
         };
 
         const hasAnyLiveCollection = requestedPlatforms.some((platform) => collections[platform]?.items.length);
+        // For interactivePlatform (Platform page): require real data — never use mock
+        if (interactivePlatform && !hasAnyLiveCollection) {
+          throw new TRPCError({
+            code: "SERVICE_UNAVAILABLE",
+            message: "平台数据尚未就绪，请稍后再试。当前窗口内没有可用的实时平台样本。",
+          });
+        }
         const baseSnapshot = hasAnyLiveCollection
           ? buildGrowthSnapshotFromCollections({
               analysis: input.analysis,
