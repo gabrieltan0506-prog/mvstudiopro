@@ -471,22 +471,56 @@ export default function PlatformPage() {
 
   const monetizationCards = useMemo(() => {
     try {
-      // Prefer Call 3 result, fall back to Call 2, then snapshot
-      const rawSource = platformContent?.monetizationLanes?.length
-        ? platformContent.monetizationLanes
-        : platformDashboard?.monetizationLanes?.length ? platformDashboard.monetizationLanes : null;
-      // Normalize each item: ensure revenueModes is always an array
-      const monetizationSource = Array.isArray(rawSource)
-        ? rawSource.map((it: any) => ({ ...it, revenueModes: Array.isArray(it?.revenueModes) ? it.revenueModes : [] }))
-        : null;
-      if (monetizationSource?.length) {
+      // Data normalizer: maps Gemini raw item → clean { revenueModes: string[] } shape
+      // Handles: missing key, Chinese key, string-instead-of-array type drift
+      function normalizeMonetizationItem(it: any) {
+        const rawRev =
+          it?.revenueModes ||
+          it?.["商业承接路径"] ||
+          it?.["商业化路径"] ||
+          it?.["变现路径"] ||
+          it?.["变现方式"] ||
+          it?.revenue_modes;
+        const normalizedRev: string[] = Array.isArray(rawRev)
+          ? rawRev.map(String)
+          : typeof rawRev === "string" && rawRev.trim()
+          ? [rawRev]
+          : [];
+        return { ...it, revenueModes: normalizedRev };
+      }
+
+      // Prefer Call 3 result, fall back to Call 2
+      const rawLanes =
+        Array.isArray(platformContent?.monetizationLanes) && platformContent!.monetizationLanes.length > 0
+          ? platformContent!.monetizationLanes
+          : Array.isArray(platformDashboard?.monetizationLanes) && platformDashboard!.monetizationLanes.length > 0
+          ? platformDashboard!.monetizationLanes
+          : null;
+
+      const monetizationSource = rawLanes ? rawLanes.map(normalizeMonetizationItem) : null;
+
+      if (monetizationSource && monetizationSource.length > 0) {
         return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
           id: `${item.title || index}-${index}`,
-          title: cleanUserCopy(item.title || "", `变现路径 ${index + 1}`),
-          summary: cleanUserCopy(item.fitReason || item.summary || "", "这条变现方式更符合你当前内容和身份。"),
-          action: cleanUserCopy([item.offerShape, ...item.revenueModes, item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
+          title: cleanUserCopy(item.title || item["变现方向名"] || item["标题"] || "", `变现路径 ${index + 1}`),
+          summary: cleanUserCopy(item.fitReason || item.summary || item["为什么适合此人设"] || "", "这条变现方式更符合你当前内容和身份。"),
+          action: cleanUserCopy(
+            [item.offerShape || item["交付形态"], ...item.revenueModes, item.firstValidation || item["第一步如何做轻量验证"]]
+              .filter(Boolean)
+              .join(" / "),
+            "先做一轮轻量验证。",
+          ),
         }));
       }
+
+      // If LLM calls are still in-flight (dashboard exists but lanes not yet returned),
+      // show nothing rather than leaking snapshot's unfiltered strategies.
+      // Only fall back to snapshot data when no LLM call has been made at all.
+      if (platformDashboard || platformContent || isDashboardLoading || isContentLoading) {
+        // LLM is present / loading — avoid showing unfiltered snapshot monetization
+        return [];
+      }
+
       if (monetizationStrategies.length) {
         return monetizationStrategies.slice(0, 2).map((item: GrowthMonetizationStrategy, index) => ({
           id: `${item.platform}-${index}`,
@@ -506,25 +540,51 @@ export default function PlatformPage() {
       console.error("[monetizationCards] render error:", err);
       return [];
     }
-  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot, platformContent, platformDashboard]);
+  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot, platformContent, platformDashboard, isDashboardLoading, isContentLoading]);
 
   const contentExecutionCards = useMemo(() => {
     // Prefer Call 3 result, fall back to Call 2, then snapshot
-    const blueprintsSource = platformContent?.contentBlueprints?.length
-      ? platformContent.contentBlueprints
-      : platformDashboard?.contentBlueprints?.length ? platformDashboard.contentBlueprints : null;
-    if (blueprintsSource?.length) {
-      return blueprintsSource.slice(0, 4).map((item: any, index: number) => ({
-        id: `${item.title || index}-${index}`,
-        title: cleanUserCopy(item.title || "", `内容方案 ${index + 1}`),
-        hook: cleanUserCopy(item.hook || item.openingHook || "", "先用一句明确判断开头。"),
-        copywriting: cleanUserCopy(item.copywriting || item.body || "", "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
-        production: cleanUserCopy(
-          (item.format || "") === "图文" ? (item.graphicPlan || item.videoPlan || "") : (item.videoPlan || item.graphicPlan || ""),
-          (item.format || "") === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
-        ),
-        format: item.format,
-      }));
+    const blueprintsSource =
+      Array.isArray(platformContent?.contentBlueprints) && platformContent!.contentBlueprints.length > 0
+        ? platformContent!.contentBlueprints
+        : Array.isArray(platformDashboard?.contentBlueprints) && platformDashboard!.contentBlueprints.length > 0
+        ? platformDashboard!.contentBlueprints
+        : null;
+    if (blueprintsSource && blueprintsSource.length > 0) {
+      return blueprintsSource.slice(0, 4).map((item: any, index: number) => {
+        const format = item.format || item["格式"] || item["内容形式"] || item["形式"] || "";
+        const title = item.title || item["标题"] || item["选题标题"] || "";
+        const hook = item.hook || item.openingHook || item["开头文案钩子"] || item["hook"] || item["开头钩子"] || "";
+        const copywriting = item.copywriting || item.body || item["核心文案方向"] || item["文案"] || item["正文"] || "";
+        const productionRaw =
+          item.graphicPlan ||
+          item.videoPlan ||
+          item["图文怎么排版/视频怎么拍"] ||
+          item["图文排版"] ||
+          item["视频拍摄"] ||
+          item["制作建议"] ||
+          "";
+        // Normalize suitablePlatforms: Gemini sometimes returns a comma-separated string instead of array
+        const rawPlatforms = item.suitablePlatforms || item["适合平台"] || item["平台"] || [];
+        const suitablePlatforms: string[] = Array.isArray(rawPlatforms)
+          ? rawPlatforms.map(String)
+          : typeof rawPlatforms === "string" && rawPlatforms.trim()
+          ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
+          : [];
+
+        return {
+          id: `${title || index}-${index}`,
+          title: cleanUserCopy(title, `内容方案 ${index + 1}`),
+          hook: cleanUserCopy(hook, "先用一句明确判断开头。"),
+          copywriting: cleanUserCopy(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+          production: cleanUserCopy(
+            productionRaw,
+            format === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
+          ),
+          format: format,
+          suitablePlatforms,
+        };
+      });
     }
     if (titleExecutions.length) {
       return titleExecutions.slice(0, 4).map((item: GrowthTitleExecution, index) => ({
