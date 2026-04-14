@@ -423,11 +423,18 @@ async function buildPlatformDashboard(params: {
 
 请根据用户背景和近 ${params.windowDays} 天平台数据，生成平台决策看板（轻量版，不包含长文案）。
 
+【绝对禁止输出泛平台画像】
+在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
+你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
+例如：如果用户是“爱好中国历史的心脏科医生”，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
+
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
-3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接路径。
+3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接路径。必须严格遵守上方【绝对禁止输出泛平台画像】的约束。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
+   【actionCards 极其重要】每个动作必须是「物理级微小行动」，禁止写「制作身份名片」、「锁定文化符号」、「设计轻量级产品」这种空泛废话。
+   必须具体到：「拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段15秒的对比短片」这类立即可执行的物理动作，越具体、越有反差感越好。
 5. conversationStarters：3 个让用户愿意继续追问的问题。
 6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。${personaContextLine}${personaConstraint}
 
@@ -560,6 +567,7 @@ async function buildPlatformContent(params: {
 - "先做一轮轻量验证" / "先做轻量验证" / "轻量验证"
 - "开头先给结果" / "视频开头先给判断，中段给例子，结尾给行动引导"
 - "可能都可以" / "先试试" / "先探索一下"
+- "制作身份名片" / "锁定文化符号" / "设计轻量级产品"
 - 任何泛化建议，不针对此用户的具体身份和专长
 
 严格要求：
@@ -567,7 +575,7 @@ async function buildPlatformContent(params: {
    - title（选题标题，必须是具体的，不是抽象的）
    - format（内容形式：短视频 / 图文）
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
-   - copywriting（核心文案方向，具体说明内容结构）
+   - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - executionDetails（执行细节，必须极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
@@ -581,7 +589,9 @@ async function buildPlatformContent(params: {
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
 
-3. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。${personaConstraint}
+3. 你给出的「现在就能执行的动作」(以及 executionDetails)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
+
+4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,

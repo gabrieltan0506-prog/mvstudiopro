@@ -427,8 +427,15 @@ export default function PlatformPage() {
 
       const sig0 = getSignal(0, platformDashboard.headline || "先收口成一个明确方向", platformDashboard.subheadline || "先把最容易拿到反馈的平台和切口做透。");
       const sig1 = getSignal(1, platformDashboard.platformMenu?.[0]?.platform || "先做当前优先平台", platformDashboard.platformMenu?.[0]?.whyNow || "先做最容易拿到正反馈的平台版本。");
-      const sig2 = getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
-      const sig3 = getSignal(3, "先写出第一条内容", "先做一轮小样本验证，再决定是否放大。");
+      
+      // If Call 3 is loading, show loading text to prevent flashing snapshot data like "电商带货"
+      const sig2 = isContentLoading
+        ? { value: "正在规划商业蓝图...", detail: "根据您的背景深度定制变现路径，请稍候。" }
+        : getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
+      
+      const sig3 = isContentLoading
+        ? { value: "正在生成执行蓝图...", detail: "拆解具体的微小行动步骤，请稍候。" }
+        : getSignal(3, "先写出第一条内容", "先做一轮小样本验证，再决定是否放大。");
 
       return [
         { label: "当前判断", value: sig0.value, detail: sig0.detail },
@@ -460,7 +467,7 @@ export default function PlatformPage() {
         detail: cleanUserCopy(validationPlan[0]?.nextMove || assetAdaptation?.structure || "先做一轮小样本验证，再决定是否放大。", "先做一轮小样本验证，再决定是否放大。"),
       },
     ];
-  }, [assetAdaptation, businessTranslation, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan, platformDashboard]);
+  }, [assetAdaptation, businessTranslation, isContentLoading, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan, platformDashboard]);
 
   const platformDecisionRows = useMemo(
     () => {
