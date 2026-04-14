@@ -427,7 +427,7 @@ async function buildPlatformDashboard(params: {
 
   const response = await invokeLLM({
     model: "pro",
-    provider: "vertex",
+    provider: "gemini",
     modelName: "gemini-2.5-pro",
     messages: [
       {
