@@ -230,6 +230,10 @@ export default function PlatformPage() {
   const [askResult, setAskResult] = useState<AskResult | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
+  // Separate state for dashboard — populated by the second call after snapshot loads
+  const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
+  const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
+  const [isDashboardLoading, setIsDashboardLoading] = useState(false);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -250,6 +254,20 @@ export default function PlatformPage() {
     },
   );
 
+  const getPlatformDashboardMutation = trpc.mvAnalysis.getPlatformDashboard.useMutation({
+    onSuccess: (result) => {
+      if (result.platformDashboard) {
+        setPlatformDashboard(result.platformDashboard as PlatformDashboard);
+      }
+      setDashboardDebug(result.debug as Record<string, unknown>);
+      setIsDashboardLoading(false);
+    },
+    onError: (error) => {
+      console.warn("[PlatformPage] dashboard mutation error:", error.message);
+      setIsDashboardLoading(false);
+    },
+  });
+
   const askPlatformFollowUpMutation = trpc.mvAnalysis.askPlatformFollowUp.useMutation({
     onSuccess: (result) => {
       setAskResult(result.result);
@@ -260,7 +278,6 @@ export default function PlatformPage() {
   });
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
-  const platformDashboard = growthSnapshotQuery.data?.platformDashboard as PlatformDashboard | null | undefined;
   const snapshotDebug = growthSnapshotQuery.data?.debug as Record<string, unknown> | undefined;
   const askDebug = askPlatformFollowUpMutation.data?.debug as Record<string, unknown> | undefined;
   const mainPath = snapshot?.decisionFramework.mainPath;
@@ -609,15 +626,29 @@ export default function PlatformPage() {
 
   const handleAnalyze = async () => {
     setAskResult(null);
+    setPlatformDashboard(null);
+    setDashboardDebug(null);
+    setIsDashboardLoading(false);
     setElapsedTime(0);
     setRotatingCardIndex(0);
+
+    // Call 1: fast snapshot (skips dashboard)
     const result = await growthSnapshotQuery.refetch();
     if (!result.data?.snapshot) {
       toast.error("平台分析暂时没有返回结果");
       return;
     }
     setHasAnalyzed(true);
-    toast.success(`已生成 ${selectedWindowDays} 天平台分析`);
+    toast.success(`快照已生成，正在进行深度分析...`);
+
+    // Call 2: dashboard LLM (separate mutation, 120s budget)
+    setIsDashboardLoading(true);
+    getPlatformDashboardMutation.mutate({
+      context: focusPrompt || undefined,
+      windowDays: selectedWindowDays,
+      requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
+      snapshot: result.data.snapshot,
+    });
   };
 
   const handleAsk = async (nextQuestion?: string) => {

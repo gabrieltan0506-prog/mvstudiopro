@@ -1570,8 +1570,8 @@ export const appRouter = router({
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || input.analysis.platforms);
         const selectedWindowDays = Number(input.windowDays || 30);
         const interactivePlatform = Boolean(input.interactivePlatform);
-        // Give Fly disk I/O enough time to read platform collections — 5s was too aggressive
-        const STORE_TIMEOUT_MS = interactivePlatform ? 10_000 : 30_000;
+        // Give Fly disk I/O enough time — Fly disk can take 12-15s for platform collections
+        const STORE_TIMEOUT_MS = interactivePlatform ? 20_000 : 30_000;
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
           interactivePlatform
@@ -1714,34 +1714,37 @@ export const appRouter = router({
 
         const platformDashboardSource = snapshot;
         const t2 = Date.now();
-        // Give dashboard LLM enough time — user explicitly wants real results, not fallback
-        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 55_000 : 60_000;
-        const platformDashboard = await Promise.race([
-          buildPlatformDashboard({
-            snapshot: platformDashboardSource,
-            context: input.context,
-            requestedPlatforms,
-            store: effectiveStore,
-            windowDays: selectedWindowDays,
-          }),
-          new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
-            setTimeout(() => {
-              console.warn(`[platform.getGrowthSnapshot] dashboard timed out after ${DASHBOARD_TIMEOUT_MS}ms, using fallback`);
-              resolve(buildFallbackPlatformDashboard({
+        // For interactivePlatform (Platform page): skip dashboard here — it is called separately
+        // via getPlatformDashboard mutation to avoid one giant 100s+ request
+        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 0 : 60_000;
+        const platformDashboard = interactivePlatform
+          ? null
+          : await Promise.race([
+              buildPlatformDashboard({
+                snapshot: platformDashboardSource,
+                context: input.context,
+                requestedPlatforms,
+                store: effectiveStore,
+                windowDays: selectedWindowDays,
+              }),
+              new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
+                setTimeout(() => {
+                  console.warn(`[platform.getGrowthSnapshot] dashboard timed out after ${DASHBOARD_TIMEOUT_MS}ms, using fallback`);
+                  resolve(buildFallbackPlatformDashboard({
+                    snapshot: platformDashboardSource,
+                    context: input.context,
+                    windowDays: selectedWindowDays,
+                  }));
+                }, DASHBOARD_TIMEOUT_MS);
+              }),
+            ]).catch((error) => {
+              console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
+              return buildFallbackPlatformDashboard({
                 snapshot: platformDashboardSource,
                 context: input.context,
                 windowDays: selectedWindowDays,
-              }));
-            }, DASHBOARD_TIMEOUT_MS);
-          }),
-        ]).catch((error) => {
-          console.warn("[growth.getGrowthSnapshot] platform dashboard fallback:", error);
-          return buildFallbackPlatformDashboard({
-            snapshot: platformDashboardSource,
-            context: input.context,
-            windowDays: selectedWindowDays,
-          });
-        });
+              });
+            });
         timing.dashboardMs = Date.now() - t2;
         const totalMs = Date.now() - t0;
         console.log(`[platform.getGrowthSnapshot] dashboard done in ${timing.dashboardMs}ms | total=${totalMs}ms | personalization=${timing.personalizationMs}ms | store=${timing.storeMs}ms`);
@@ -1895,6 +1898,58 @@ export const appRouter = router({
             },
           };
         }
+      }),
+
+    getPlatformDashboard: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        requestedPlatforms: z.array(z.string()).optional(),
+        snapshot: growthSnapshotSchema,
+      }))
+      .mutation(async ({ input }) => {
+        const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
+        const selectedWindowDays = Number(input.windowDays);
+        const t0 = Date.now();
+
+        // Read narrow store for evidence enrichment (best-effort, 20s cap)
+        const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+        const store = await Promise.race([
+          readTrendStoreForPlatforms(requestedPlatforms.length ? requestedPlatforms as any[] : ["douyin", "xiaohongshu", "bilibili", "kuaishou"], { preferDerivedFiles: true }),
+          new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 20_000)),
+        ]).catch(() => storeNull);
+
+        // Build dashboard — 120s cap, return null on timeout (no fallback)
+        const DASHBOARD_TIMEOUT_MS = 120_000;
+        let platformDashboard: z.infer<typeof platformDashboardResponseSchema> | null = null;
+        try {
+          platformDashboard = await Promise.race([
+            buildPlatformDashboard({
+              snapshot: input.snapshot,
+              context: input.context,
+              requestedPlatforms: requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
+              store,
+              windowDays: selectedWindowDays,
+            }),
+            new Promise<null>((resolve) => setTimeout(() => {
+              console.warn(`[platform.getPlatformDashboard] dashboard LLM timed out after ${DASHBOARD_TIMEOUT_MS}ms, returning null`);
+              resolve(null);
+            }, DASHBOARD_TIMEOUT_MS)),
+          ]);
+        } catch (error) {
+          console.warn("[platform.getPlatformDashboard] dashboard error:", error);
+          platformDashboard = null;
+        }
+
+        return {
+          success: true,
+          platformDashboard,
+          debug: {
+            route: "mvAnalysis.getPlatformDashboard",
+            totalMs: Date.now() - t0,
+            hasDashboard: Boolean(platformDashboard),
+          },
+        };
       }),
 
     getGrowthSystemStatus: publicProcedure
