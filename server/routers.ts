@@ -505,22 +505,13 @@ async function buildPlatformDashboard(params: {
     }
   }
 
-  // Phase 1-B: Soft-parse — merge Gemini partial output with deterministic fallback so schema parse never blocks the whole response
-  const fallback = buildFallbackPlatformDashboard({ snapshot: params.snapshot, context: params.context, windowDays: params.windowDays });
+  // Phase 1-B: Strict parse — if LLM output is bad, throw so caller (getPlatformDashboard mutation) returns null
+  // No fallback here — fallback would use missing fields from slim snapshotSummary and crash anyway
   const partial = (parsedRaw || {}) as Record<string, unknown>;
-  const merged = {
-    headline: typeof partial.headline === "string" && partial.headline ? partial.headline : fallback.headline,
-    subheadline: typeof partial.subheadline === "string" && partial.subheadline ? partial.subheadline : fallback.subheadline,
-    personaSummary: typeof partial.personaSummary === "string" && partial.personaSummary ? partial.personaSummary : fallback.personaSummary,
-    topSignals: Array.isArray(partial.topSignals) && partial.topSignals.length ? partial.topSignals : fallback.topSignals,
-    platformMenu: Array.isArray(partial.platformMenu) && partial.platformMenu.length ? partial.platformMenu : fallback.platformMenu,
-    hotTopics: Array.isArray(partial.hotTopics) && partial.hotTopics.length ? partial.hotTopics : fallback.hotTopics,
-    contentBlueprints: Array.isArray(partial.contentBlueprints) && partial.contentBlueprints.length ? partial.contentBlueprints : fallback.contentBlueprints,
-    monetizationLanes: Array.isArray(partial.monetizationLanes) && partial.monetizationLanes.length ? partial.monetizationLanes : fallback.monetizationLanes,
-    actionCards: Array.isArray(partial.actionCards) && partial.actionCards.length ? partial.actionCards : fallback.actionCards,
-    conversationStarters: Array.isArray(partial.conversationStarters) && partial.conversationStarters.length ? partial.conversationStarters : fallback.conversationStarters,
-  };
-  return platformDashboardResponseSchema.parse(merged);
+  if (!partial.headline || !partial.platformMenu) {
+    throw new Error("buildPlatformDashboard: LLM output missing required fields (headline/platformMenu)");
+  }
+  return platformDashboardResponseSchema.parse(partial);
 }
 
 function buildFallbackPlatformDashboard(params: {
