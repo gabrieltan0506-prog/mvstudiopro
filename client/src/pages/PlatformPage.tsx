@@ -1024,14 +1024,14 @@ export default function PlatformPage() {
                     <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
                     <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
                     <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div>4. getPlatformDashboard (Call 2): {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? `已返回 (${dashboardDebug?.totalMs ?? "?"}ms)` : "返回null") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
+                    <div>4. getPlatformDashboard (Call 2): {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? `已返回 (${dashboardDebug?.totalMs ?? "?"}ms)` : `返回null${dashboardDebug?.error ? ` — 错误: ${dashboardDebug.error}` : ""}`) : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
                     <div>5. getPlatformContent (Call 3): {isContentLoading ? "进行中" : getPlatformContentMutation.isSuccess ? (platformContent ? `已返回 (${contentDebug?.totalMs ?? "?"}ms)` : "返回null") : getPlatformContentMutation.isError ? `错误: ${getPlatformContentMutation.error?.message}` : "未开始"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
                   <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">错误</div>
                   <div className="mt-3 whitespace-pre-wrap text-xs leading-6 text-[#d7d0ef]">
-                    {String(growthSnapshotQuery.error?.message || getPlatformDashboardMutation.error?.message || "-")}
+                    {String(growthSnapshotQuery.error?.message || getPlatformDashboardMutation.error?.message || dashboardDebug?.error || "-")}
                   </div>
                 </div>
               </div>
