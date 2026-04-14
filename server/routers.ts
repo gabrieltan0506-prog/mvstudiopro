@@ -477,9 +477,9 @@ async function buildPlatformDashboard(params: {
             offerType: item.offerType,
           })),
           mainPath: {
-            title: params.snapshot.decisionFramework.mainPath.title,
-            summary: params.snapshot.decisionFramework.mainPath.summary,
-            whyNow: params.snapshot.decisionFramework.mainPath.whyNow,
+            title: (params.snapshot as any).mainPath?.title,
+            summary: (params.snapshot as any).mainPath?.summary,
+            whyNow: (params.snapshot as any).mainPath?.whyNow,
           },
           collections: collectionEvidence.slice(0, 3).map((item) => ({
             platform: item.platform,
