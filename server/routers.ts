@@ -351,7 +351,16 @@ const platformDashboardResponseSchema = z.object({
   personaSummary: z.string().default(""),
   // Use z.any() for all array fields — Gemini sometimes returns string[] instead of object[]
   topSignals: z.array(z.any()).default([]),
-  platformMenu: z.array(z.any()).default([]),
+  platformMenu: z.array(z.object({
+    platform: z.string().optional(),
+    whyNow: z.string().optional(),
+    referenceAccounts: z.array(z.string()).optional(),
+    primaryTrack: z.string().optional(),
+    estimatedTraffic: z.string().optional(),
+    ipUniqueness: z.string().optional(),
+    commercialConversion: z.string().optional(),
+    trafficBoosters: z.array(z.string()).optional(),
+  }).passthrough()).default([]),
   hotTopics: z.array(z.any()).default([]),
   contentBlueprints: z.array(z.any()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
@@ -369,6 +378,9 @@ const platformContentResponseSchema = z.object({
     hook: z.string().optional(),
     copywriting: z.string().optional(),
     suitablePlatforms: z.union([z.array(z.string()), z.string()]).optional(),
+    actionableSteps: z.array(z.string()).optional(),
+    detailedScript: z.string().optional(),
+    publishingAdvice: z.string().optional(),
     executionDetails: z.object({
       environmentAndWardrobe: z.string().optional(),
       lightingAndCamera: z.string().optional(),
@@ -428,15 +440,23 @@ async function buildPlatformDashboard(params: {
 你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
 例如：如果用户是“爱好中国历史的心脏科医生”，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
 
+【强制热点关联与深度四维量化】
+你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
+1. referenceAccounts：禁止给出空泛的图表套话，必须从 snapshot 数据中，明确列举 1-2 个与用户 Persona 相似的“对标账号”或“爆款案例”，并一句话分析为什么值得参考。
+2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如：“带上 #医学硬核科普 参与近期知识区流量扶持”。
+3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
+4. estimatedTraffic (预估流量)：结合平台调性给出流量预期，例如“流量极大但泛”或“曝光适中但长尾精准”。
+5. ipUniqueness (IP独特性)：评估用户身份（如心内科医生x历史文化）在该平台的稀缺程度。
+6. commercialConversion (商业转化潜力)：评估该平台对用户专业服务的付费意愿。
+
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
-3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接路径。必须严格遵守上方【绝对禁止输出泛平台画像】的约束。
+3. platformMenu：最多 3 个平台，必须包含上述所有的量化与深度字段，并严格遵守【绝对禁止输出泛平台画像】约束。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
-   【actionCards 极其重要】每个动作必须是「物理级微小行动」，禁止写「制作身份名片」、「锁定文化符号」、「设计轻量级产品」这种空泛废话。
-   必须具体到：「拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段15秒的对比短片」这类立即可执行的物理动作，越具体、越有反差感越好。
+   【actionCards 极其重要】每个动作必须是「物理级微小行动」，禁止写「制作身份名片」、「锁定文化符号」、「设计轻量级产品」这种空泛废话。必须提供“保姆级”指导：例如建议拍视频，必须写出15秒的具体分镜脚本；建议改主页，必须写出简介的具体文案。越具体、越有反差感越好。
 5. conversationStarters：3 个让用户愿意继续追问的问题。
-6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。${personaContextLine}${personaConstraint}
+6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答“为什么这条路更适合你”时必须深度剖析，禁止出现“电商带货”等泛泛而谈词汇。${personaContextLine}${personaConstraint}
 
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
@@ -577,6 +597,9 @@ async function buildPlatformContent(params: {
    - hook（开头文案钩子，必须是一句具体的、能让用户停下来的话）
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
+   - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
+   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出带上什么具体官方 Hashtag。）
+   - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - executionDetails（执行细节，必须极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
      * lightingAndCamera（灯光 + 机位，例如："自然光侧光，手机固定在支架上正面对拍，避免背光"）
@@ -589,9 +612,9 @@ async function buildPlatformContent(params: {
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
 
-3. 你给出的「现在就能执行的动作」(以及 executionDetails)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
+3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
-4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。${personaConstraint}
+4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
 
 【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,

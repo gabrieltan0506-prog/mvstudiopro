@@ -12,18 +12,23 @@ import type {
 } from "@shared/growth";
 import {
   ArrowLeft,
+  BarChart3,
   Bot,
   CalendarRange,
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  DollarSign,
+  Flame,
   Loader2,
   MessageSquareText,
   Rocket,
   ShieldCheck,
   Sparkles,
+  Star,
   Target,
   TrendingUp,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -472,17 +477,27 @@ export default function PlatformPage() {
   const platformDecisionRows = useMemo(
     () => {
       if (platformDashboard?.platformMenu.length) {
-        return platformDashboard.platformMenu.slice(0, 4).map((item: any, index: number) => ({
-          id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
-          // Support both English keys and Chinese keys Gemini sometimes returns
-          name: item.label || item.displayName || item.name || item.platform || item["平台"] || `平台 ${index + 1}`,
-          lane: cleanUserCopy(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || "", item.label || `平台 ${index + 1}`),
-          trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || "", "先从更顺手的表达方式切入"),
-          whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
-          nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || "", "先发一版内容拿反馈。"),
-          hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || item["开头怎么说"] || item["开头钩子"] || "", "先把第一句判断说出来。"),
-          monetization: cleanUserCopy(item.monetizationPath || item.monetization || item["商业承接路径"] || item["变现路径"] || "", ""),
-        }));
+        return platformDashboard.platformMenu.slice(0, 4).map((item: any, index: number) => {
+          const refs = Array.isArray(item.referenceAccounts) ? item.referenceAccounts.map(String) : [];
+          const boosters = Array.isArray(item.trafficBoosters) ? item.trafficBoosters.map(String) : [];
+          return {
+            id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
+            // Support both English keys and Chinese keys Gemini sometimes returns
+            name: item.label || item.displayName || item.name || item.platform || item["平台"] || `平台 ${index + 1}`,
+            lane: cleanUserCopy(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || "", item.label || `平台 ${index + 1}`),
+            trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || "", "先从更顺手的表达方式切入"),
+            whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
+            nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || "", "先发一版内容拿反馈。"),
+            hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || item["开头怎么说"] || item["开头钩子"] || "", "先把第一句判断说出来。"),
+            monetization: cleanUserCopy(item.monetizationPath || item.monetization || item["商业承接路径"] || item["变现路径"] || "", ""),
+            referenceAccounts: refs,
+            primaryTrack: item.primaryTrack || "",
+            estimatedTraffic: item.estimatedTraffic || "",
+            ipUniqueness: item.ipUniqueness || "",
+            commercialConversion: item.commercialConversion || "",
+            trafficBoosters: boosters,
+          };
+        });
       }
 
       const rows = (snapshot?.platformRecommendations.length ? snapshot.platformRecommendations : recommendedPlatforms).slice(0, 4);
@@ -498,6 +513,12 @@ export default function PlatformPage() {
           nextMove: cleanUserCopy(item.action || activity?.optimizationPlan || validationPlan[index]?.nextMove || "先拿一版首发内容验证反馈。", "先拿一版首发内容验证反馈。"),
           hook: cleanUserCopy(titleExecutions[index]?.openingHook || titleExecutions[index]?.copywriting || "", ""),
           monetization: cleanUserCopy(monetizationStrategies[index]?.primaryTrack || "", ""),
+          referenceAccounts: [] as string[],
+          primaryTrack: "",
+          estimatedTraffic: "",
+          ipUniqueness: "",
+          commercialConversion: "",
+          trafficBoosters: [] as string[],
         };
       });
     },
@@ -606,6 +627,8 @@ export default function PlatformPage() {
           : typeof rawPlatforms === "string" && rawPlatforms.trim()
           ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
           : [];
+          
+        const actionSteps: string[] = Array.isArray(item.actionableSteps) ? item.actionableSteps.map(String) : [];
 
         const execDetails = item.executionDetails || {};
         const envWardrobe = execDetails.environmentAndWardrobe || execDetails["拍摄环境服装"] || execDetails["环境服装"] || "";
@@ -624,6 +647,9 @@ export default function PlatformPage() {
           production: cleanUserCopy(productionRaw, ""),
           format: format,
           suitablePlatforms,
+          actionableSteps: actionSteps,
+          detailedScript: item.detailedScript || "",
+          publishingAdvice: item.publishingAdvice || "",
           executionDetails: { environmentAndWardrobe: envWardrobe, lightingAndCamera: lightCam, stepByStepScript: scriptSteps },
         };
       });
@@ -910,6 +936,7 @@ export default function PlatformPage() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
+      <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}`}</style>
       <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
@@ -1273,7 +1300,7 @@ export default function PlatformPage() {
             ) : null}
 
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-              <div className={shellCardClasses("p-6")}>
+              <div className={`${shellCardClasses("p-6")} relative`} style={{ animation: "pulseHighlight 30s ease-in-out infinite" }}>
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <div className="inline-flex items-center gap-2 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">
@@ -1293,21 +1320,23 @@ export default function PlatformPage() {
                   </div>
                 </div>
 
-                <div className="mt-6 grid gap-3 md:grid-cols-3">
-                  {keyInsights.slice(0, 3).map((item, index) => (
-                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-white">{item.title}</div>
-                        {item.badge ? (
-                          <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
-                            {item.badge}
-                          </div>
-                        ) : null}
+                {keyInsights.filter(item => item.title || item.detail).length > 0 ? (
+                  <div className="mt-6 grid gap-3 md:grid-cols-3">
+                    {keyInsights.filter(item => item.title || item.detail).slice(0, 3).map((item, index) => (
+                      <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                          {item.badge ? (
+                            <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                              {item.badge}
+                            </div>
+                          ) : null}
+                        </div>
+                        {item.detail ? <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div> : null}
                       </div>
-                      <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className={shellCardClasses("p-6")}>
@@ -1349,11 +1378,21 @@ export default function PlatformPage() {
                             <div className="text-xl font-bold text-white">{item.name}</div>
                           </div>
                           <div className="mt-3 text-sm leading-7 text-[#b9afd9]">{item.trend}</div>
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-[rgba(255,255,255,0.04)] px-3 py-2 text-xs text-[#d6cdf0]">
-                          {item.lane}
-                        </div>
-                      </div>
+                            </div>
+                            <div className="rounded-full border border-white/10 bg-[rgba(255,255,255,0.04)] px-3 py-2 text-xs text-[#d6cdf0]">
+                              {item.lane}
+                            </div>
+                          </div>
+                          {Array.isArray((item as any).trafficBoosters) && (item as any).trafficBoosters.length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {(item as any).trafficBoosters.map((b: string, bi: number) => (
+                                <span key={bi} className="inline-flex items-center gap-1 rounded-full border border-[#ff6b2b]/40 bg-[rgba(255,100,30,0.12)] px-3 py-1 text-[11px] font-medium text-[#ff9966] animate-pulse">
+                                  <Flame className="h-3 w-3" />
+                                  {b}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
                         <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">为什么现在做</div>
@@ -1379,6 +1418,17 @@ export default function PlatformPage() {
                             </div>
                           ) : null}
                         </div>
+                      ) : null}
+                      {((item as any).primaryTrack || (item as any).estimatedTraffic || (item as any).ipUniqueness || (item as any).commercialConversion) ? (
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          {(item as any).primaryTrack ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Target className="h-3 w-3" />赛道</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).primaryTrack || '分析中...'}</div></div>) : null}
+                          {(item as any).estimatedTraffic ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><BarChart3 className="h-3 w-3" />预估流量</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).estimatedTraffic || '分析中...'}</div></div>) : null}
+                          {(item as any).ipUniqueness ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Star className="h-3 w-3" />IP稀缺度</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).ipUniqueness || '分析中...'}</div></div>) : null}
+                          {(item as any).commercialConversion ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><DollarSign className="h-3 w-3" />商业转化</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).commercialConversion || '分析中...'}</div></div>) : null}
+                        </div>
+                      ) : null}
+                      {Array.isArray((item as any).referenceAccounts) && (item as any).referenceAccounts.length > 0 ? (
+                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div><div className="mt-2 flex flex-wrap gap-2">{(item as any).referenceAccounts.map((acc: string, ai: number) => (<span key={ai} className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1 text-[11px] text-[#c9c0e6]">{acc}</span>))}</div></div>
                       ) : null}
                     </div>
                   ))}
@@ -1482,6 +1532,29 @@ export default function PlatformPage() {
                           {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
                             <div key={si} className="text-sm leading-7 text-[#d3caef]">{step}</div>
                           ))}
+                        </div>
+                      ) : null}
+                      {Array.isArray((item as any).actionableSteps) && (item as any).actionableSteps.length > 0 ? (
+                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">落地三步曲</div>
+                          {(item as any).actionableSteps.map((step: string, si: number) => (
+                            <div key={si} className="flex items-start gap-2 text-sm leading-7 text-white">
+                              <span className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#3a2b6a] text-[10px] text-[#c9c0e6]">{si + 1}</span>
+                              {step}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {(item as any).detailedScript ? (
+                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">详细脚本与大纲</div>
+                          <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{(item as any).detailedScript}</div>
+                        </div>
+                      ) : null}
+                      {(item as any).publishingAdvice ? (
+                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">发布建议</div>
+                          <div className="mt-1 text-sm leading-7 text-[#d3caef]">{(item as any).publishingAdvice}</div>
                         </div>
                       ) : null}
                     </div>
