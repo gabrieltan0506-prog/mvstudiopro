@@ -517,18 +517,23 @@ async function buildPlatformDashboard(params: {
     ],
   });
 
-  // Phase 0-C: Robust JSON extraction with code-block fallback + soft-merge with fallback on schema error
+  // Phase 0-C: Robust JSON extraction — proactively strip markdown fences before JSON.parse
+  // Gemini 2.5 Pro often wraps output in ```json ... ``` even when instructed not to
   const rawContent = String(response.choices[0]?.message?.content || "{}");
+  // Step 1: unconditionally strip markdown code fences before attempting JSON.parse
+  const fenceMatch = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+  const strippedContent = fenceMatch
+    ? fenceMatch[1].trim()
+    : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
   let parsedRaw: unknown;
   try {
-    parsedRaw = JSON.parse(rawContent);
+    parsedRaw = JSON.parse(strippedContent);
   } catch {
-    // Gemini sometimes wraps output in ```json ... ``` markdown fences — strip them
-    const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+    // Last resort: try original raw content in case stripping broke something
     try {
-      parsedRaw = match ? JSON.parse(match[1].trim()) : {};
+      parsedRaw = JSON.parse(rawContent);
     } catch {
-      console.error("[buildPlatformDashboard] JSON parse failed. rawContent preview:", rawContent.slice(0, 500));
+      console.error("[buildPlatformDashboard] JSON parse failed. strippedContent preview:", strippedContent.slice(0, 500));
       parsedRaw = {};
     }
   }
@@ -544,7 +549,7 @@ async function buildPlatformDashboard(params: {
   if (parseResult.success) {
     return parseResult.data;
   }
-  console.error("[buildPlatformDashboard] schema drift detected:", parseResult.error.errors.slice(0, 5));
+  console.error("[buildPlatformDashboard] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   console.warn("[buildPlatformDashboard] attempting loose parse with defaults");
   // Loose parse — fill missing optional fields with defaults, use safeParse to never throw
   const looseResult = platformDashboardResponseSchema.safeParse({
@@ -560,8 +565,8 @@ async function buildPlatformDashboard(params: {
     conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
   });
   if (looseResult.success) return looseResult.data;
-  console.error("[buildPlatformDashboard] loose parse also failed:", looseResult.error.errors.slice(0, 5));
-  throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify(looseResult.error.errors.slice(0, 3))}`);
+  console.error("[buildPlatformDashboard] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
+  throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
 }
 
 async function buildPlatformContent(params: {
@@ -612,17 +617,20 @@ async function buildPlatformContent(params: {
     ],
   });
 
+  // Proactively strip markdown fences before JSON.parse — same as buildPlatformDashboard
   const rawContent = String(response.choices[0]?.message?.content || "{}");
+  const fenceMatch2 = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+  const strippedContent2 = fenceMatch2
+    ? fenceMatch2[1].trim()
+    : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
   let parsedRaw: unknown;
   try {
-    parsedRaw = JSON.parse(rawContent);
+    parsedRaw = JSON.parse(strippedContent2);
   } catch {
-    // Gemini sometimes wraps output in ```json ... ``` markdown fences — strip them
-    const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
     try {
-      parsedRaw = match ? JSON.parse(match[1].trim()) : {};
+      parsedRaw = JSON.parse(rawContent);
     } catch {
-      console.error("[buildPlatformContent] JSON parse failed. rawContent preview:", rawContent.slice(0, 500));
+      console.error("[buildPlatformContent] JSON parse failed. strippedContent preview:", strippedContent2.slice(0, 500));
       parsedRaw = {};
     }
   }
@@ -631,15 +639,15 @@ async function buildPlatformContent(params: {
   const parseResult = platformContentResponseSchema.safeParse(partial);
   if (parseResult.success) return parseResult.data;
 
-  console.error("[buildPlatformContent] schema drift detected:", parseResult.error.errors.slice(0, 5));
+  console.error("[buildPlatformContent] schema drift detected:", (parseResult.error as any).issues?.slice(0, 5) ?? parseResult.error.message);
   console.warn("[buildPlatformContent] attempting loose parse with defaults");
   const looseResult = platformContentResponseSchema.safeParse({
     contentBlueprints: Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [],
     monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [],
   });
   if (looseResult.success) return looseResult.data;
-  console.error("[buildPlatformContent] loose parse also failed:", looseResult.error.errors.slice(0, 5));
-  throw new Error(`buildPlatformContent: loose parse failed. errors: ${JSON.stringify(looseResult.error.errors.slice(0, 3))}`);
+  console.error("[buildPlatformContent] loose parse also failed:", (looseResult.error as any).issues?.slice(0, 5) ?? looseResult.error.message);
+  throw new Error(`buildPlatformContent: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
 }
 
 function buildFallbackPlatformDashboard(params: {
