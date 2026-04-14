@@ -343,6 +343,7 @@ const platformFollowUpResponseSchema = z.object({
 });
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
+// All nested objects use .passthrough() to tolerate extra fields Gemini may add
 const platformDashboardResponseSchema = z.object({
   headline: z.string(),
   subheadline: z.string(),
@@ -351,67 +352,68 @@ const platformDashboardResponseSchema = z.object({
     title: z.string(),
     detail: z.string(),
     badge: z.string().default(""),
-  })).default([]),
+  }).passthrough()).default([]),
   platformMenu: z.array(z.object({
     platform: z.string(),
     label: z.string(),
-    trend: z.string(),
-    lane: z.string(),
-    whyNow: z.string(),
+    trend: z.string().default(""),
+    lane: z.string().default(""),
+    whyNow: z.string().default(""),
     recommendedFormat: z.string().default(""),
     titleExample: z.string().default(""),
     contentHook: z.string().default(""),
-    nextMove: z.string(),
+    nextMove: z.string().default(""),
     monetizationPath: z.string().default(""),
-  })).default([]),
+  }).passthrough()).default([]),
   hotTopics: z.array(z.object({
     title: z.string(),
-    whyHot: z.string(),
-    howToUse: z.string(),
-  })).default([]),
+    whyHot: z.string().default(""),
+    howToUse: z.string().default(""),
+  }).passthrough()).default([]),
   // contentBlueprints and monetizationLanes moved to Call 3 (getPlatformContent)
   contentBlueprints: z.array(z.object({
     title: z.string(),
-    format: z.string(),
-    hook: z.string(),
-    copywriting: z.string(),
+    format: z.string().default(""),
+    hook: z.string().default(""),
+    copywriting: z.string().default(""),
     graphicPlan: z.string().default(""),
     videoPlan: z.string().default(""),
     suitablePlatforms: z.array(z.string()).default([]),
-  })).default([]),
+  }).passthrough()).default([]),
   monetizationLanes: z.array(z.object({
     title: z.string(),
-    fitReason: z.string(),
-    offerShape: z.string(),
+    fitReason: z.string().default(""),
+    offerShape: z.string().default(""),
     revenueModes: z.array(z.string()).default([]),
-    firstValidation: z.string(),
-  })).default([]),
+    firstValidation: z.string().default(""),
+  }).passthrough()).default([]),
   actionCards: z.array(z.object({
     title: z.string(),
-    detail: z.string(),
-  })).default([]),
+    detail: z.string().default(""),
+  }).passthrough()).default([]),
   conversationStarters: z.array(z.string()).default([]),
-});
+}).passthrough();
 
 // Call 3 schema — detailed content blueprints and monetization (heavy copywriting)
+// All nested objects use .passthrough() to tolerate extra fields Gemini may add
 const platformContentResponseSchema = z.object({
   contentBlueprints: z.array(z.object({
     title: z.string(),
-    format: z.string(),
-    hook: z.string(),
-    copywriting: z.string(),
+    format: z.string().default(""),
+    hook: z.string().default(""),
+    copywriting: z.string().default(""),
     graphicPlan: z.string().default(""),
     videoPlan: z.string().default(""),
     suitablePlatforms: z.array(z.string()).default([]),
-  })).default([]),
+  }).passthrough()).default([]),
   monetizationLanes: z.array(z.object({
     title: z.string(),
-    fitReason: z.string(),
-    offerShape: z.string(),
+    fitReason: z.string().default(""),
+    offerShape: z.string().default(""),
     revenueModes: z.array(z.string()).default([]),
-    firstValidation: z.string(),
-  })).default([]),
-});
+    firstValidation: z.string().default(""),
+  }).passthrough()).default([]),
+}).passthrough();
 
 async function buildPlatformDashboard(params: {
   snapshot: z.infer<typeof growthSnapshotSchema>;
@@ -468,7 +470,8 @@ async function buildPlatformDashboard(params: {
 
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
-输出严格 JSON，字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
+【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
+字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
       },
       {
         role: "user",
@@ -520,10 +523,12 @@ async function buildPlatformDashboard(params: {
   try {
     parsedRaw = JSON.parse(rawContent);
   } catch {
+    // Gemini sometimes wraps output in ```json ... ``` markdown fences — strip them
     const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
     try {
       parsedRaw = match ? JSON.parse(match[1].trim()) : {};
     } catch {
+      console.error("[buildPlatformDashboard] JSON parse failed. rawContent preview:", rawContent.slice(0, 500));
       parsedRaw = {};
     }
   }
@@ -531,16 +536,18 @@ async function buildPlatformDashboard(params: {
   // Use safeParse to avoid throwing on minor schema drift; log what failed
   const partial = (parsedRaw || {}) as Record<string, unknown>;
   if (!partial.headline || !partial.platformMenu) {
-    const rawPreview = JSON.stringify(parsedRaw || {}).slice(0, 300);
+    const rawPreview = JSON.stringify(parsedRaw || {}).slice(0, 500);
+    console.error("[buildPlatformDashboard] missing required fields. parsedRaw preview:", rawPreview);
     throw new Error(`buildPlatformDashboard: missing required fields. rawPreview: ${rawPreview}`);
   }
   const parseResult = platformDashboardResponseSchema.safeParse(partial);
   if (parseResult.success) {
     return parseResult.data;
   }
-  console.warn("[buildPlatformDashboard] schema drift, attempting loose parse:", parseResult.error.message.slice(0, 200));
-  // Loose parse — fill missing optional fields with defaults
-  return platformDashboardResponseSchema.parse({
+  console.error("[buildPlatformDashboard] schema drift detected:", parseResult.error.errors.slice(0, 5));
+  console.warn("[buildPlatformDashboard] attempting loose parse with defaults");
+  // Loose parse — fill missing optional fields with defaults, use safeParse to never throw
+  const looseResult = platformDashboardResponseSchema.safeParse({
     headline: partial.headline || "",
     subheadline: partial.subheadline || "",
     personaSummary: partial.personaSummary || "",
@@ -552,6 +559,9 @@ async function buildPlatformDashboard(params: {
     actionCards: Array.isArray(partial.actionCards) ? partial.actionCards : [],
     conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
   });
+  if (looseResult.success) return looseResult.data;
+  console.error("[buildPlatformDashboard] loose parse also failed:", looseResult.error.errors.slice(0, 5));
+  throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify(looseResult.error.errors.slice(0, 3))}`);
 }
 
 async function buildPlatformContent(params: {
@@ -582,7 +592,8 @@ async function buildPlatformContent(params: {
 2. monetizationLanes：生成 1-2 条强相关的变现路径（比如"知识付费-心血管健康课程"）。包含：变现方向名、为什么适合此人设、交付形态、具体服务变现方式、第一步如何做轻量验证。
 3. 必须详细、有落地感，不要泛泛而谈。文案需匹配用户人设与专长。${personaConstraint}
 
-严格按照要求输出 JSON，字段为：contentBlueprints, monetizationLanes。`,
+【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
+字段为：contentBlueprints, monetizationLanes。`,
       },
       {
         role: "user",
@@ -606,10 +617,12 @@ async function buildPlatformContent(params: {
   try {
     parsedRaw = JSON.parse(rawContent);
   } catch {
+    // Gemini sometimes wraps output in ```json ... ``` markdown fences — strip them
     const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
     try {
       parsedRaw = match ? JSON.parse(match[1].trim()) : {};
     } catch {
+      console.error("[buildPlatformContent] JSON parse failed. rawContent preview:", rawContent.slice(0, 500));
       parsedRaw = {};
     }
   }
@@ -618,11 +631,15 @@ async function buildPlatformContent(params: {
   const parseResult = platformContentResponseSchema.safeParse(partial);
   if (parseResult.success) return parseResult.data;
 
-  console.warn("[buildPlatformContent] schema drift, attempting loose parse:", parseResult.error.message.slice(0, 200));
-  return platformContentResponseSchema.parse({
+  console.error("[buildPlatformContent] schema drift detected:", parseResult.error.errors.slice(0, 5));
+  console.warn("[buildPlatformContent] attempting loose parse with defaults");
+  const looseResult = platformContentResponseSchema.safeParse({
     contentBlueprints: Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [],
     monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [],
   });
+  if (looseResult.success) return looseResult.data;
+  console.error("[buildPlatformContent] loose parse also failed:", looseResult.error.errors.slice(0, 5));
+  throw new Error(`buildPlatformContent: loose parse failed. errors: ${JSON.stringify(looseResult.error.errors.slice(0, 3))}`);
 }
 
 function buildFallbackPlatformDashboard(params: {
@@ -2081,7 +2098,14 @@ export const appRouter = router({
             }, DASHBOARD_TIMEOUT_MS)),
           ]);
         } catch (error) {
-          console.warn("[platform.getPlatformDashboard] dashboard error:", error);
+          console.error("[platform.getPlatformDashboard] dashboard error:", error);
+          if (error instanceof Error) {
+            console.error("[platform.getPlatformDashboard] error message:", error.message);
+          }
+          // @ts-ignore
+          if (error?.name === "ZodError" || (error as any)?.errors) {
+            console.error("[platform.getPlatformDashboard] ZodError details:", JSON.stringify((error as any).errors?.slice(0, 5)));
+          }
           platformDashboard = null;
         }
 
@@ -2131,7 +2155,14 @@ export const appRouter = router({
             }, 120_000)),
           ]);
         } catch (error) {
-          console.warn("[platform.getPlatformContent] error:", error);
+          console.error("[platform.getPlatformContent] error:", error);
+          if (error instanceof Error) {
+            console.error("[platform.getPlatformContent] error message:", error.message);
+          }
+          // @ts-ignore
+          if (error?.name === "ZodError" || (error as any)?.errors) {
+            console.error("[platform.getPlatformContent] ZodError details:", JSON.stringify((error as any).errors?.slice(0, 5)));
+          }
           platformContent = null;
         }
         return {
