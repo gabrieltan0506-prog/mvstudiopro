@@ -1635,10 +1635,11 @@ export const appRouter = router({
             });
         const t1 = Date.now();
         // Personalize when context is provided — even for interactivePlatform, run it if the user gave a focusPrompt
+        // Gemini 2.5 Pro can take 40-50s, give it 90s to complete
         const hasContext = Boolean(input.context && input.context.trim().length > 0);
         const PERSONALIZATION_TIMEOUT_MS = interactivePlatform
-          ? (hasContext ? 45_000 : 0)
-          : 30_000;
+          ? (hasContext ? 90_000 : 0)
+          : 90_000;
         const personalized = (interactivePlatform && !hasContext)
           ? null
           : await Promise.race([
@@ -1857,9 +1858,20 @@ export const appRouter = router({
               },
             ],
           });
-          const parsed = platformFollowUpResponseSchema.parse(
-            JSON.parse(String(response.choices[0]?.message?.content || "{}")),
-          );
+          // Gemini sometimes wraps JSON in ```json``` fences — extract robustly
+          const rawFollowUpContent = String(response.choices[0]?.message?.content || "{}");
+          let parsedFollowUpRaw: unknown;
+          try {
+            parsedFollowUpRaw = JSON.parse(rawFollowUpContent);
+          } catch {
+            const match = rawFollowUpContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+            try {
+              parsedFollowUpRaw = match ? JSON.parse(match[1].trim()) : {};
+            } catch {
+              parsedFollowUpRaw = {};
+            }
+          }
+          const parsed = platformFollowUpResponseSchema.parse(parsedFollowUpRaw);
           return {
             success: true,
             result: parsed,

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { createJob, getJob } from "@/lib/jobs";
@@ -1470,6 +1471,7 @@ export default function MVAnalysisPage() {
   const [fileMimeType, setFileMimeType] = useState("");
   const [uploadStage, setUploadStage] = useState<UploadStage>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
+  const queryClient = useQueryClient();
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -1865,7 +1867,9 @@ export default function MVAnalysisPage() {
     setFileName("");
     setFileSize(0);
     clearPremiumRemixDraft();
-  }, []);
+    // Invalidate stale growth snapshot cache so next analysis always fetches fresh data
+    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+  }, [queryClient]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
