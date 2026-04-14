@@ -2110,11 +2110,20 @@ export const appRouter = router({
           if (error instanceof Error) {
             console.error("[platform.getPlatformDashboard] error message:", error.message);
           }
-          // @ts-ignore
-          if (error?.name === "ZodError" || (error as any)?.errors) {
-            console.error("[platform.getPlatformDashboard] ZodError details:", JSON.stringify((error as any).errors?.slice(0, 5)));
+          if ((error as any)?.name === "ZodError" || (error as any)?.issues) {
+            console.error("[platform.getPlatformDashboard] ZodError issues:", JSON.stringify((error as any).issues?.slice(0, 5)));
           }
-          platformDashboard = null;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            success: false,
+            platformDashboard: null,
+            debug: {
+              route: "mvAnalysis.getPlatformDashboard",
+              totalMs: Date.now() - t0,
+              hasDashboard: false,
+              error: errorMessage,
+            },
+          };
         }
 
         return {
@@ -2124,6 +2133,7 @@ export const appRouter = router({
             route: "mvAnalysis.getPlatformDashboard",
             totalMs: Date.now() - t0,
             hasDashboard: Boolean(platformDashboard),
+            error: null as string | null,
           },
         };
       }),
