@@ -642,12 +642,45 @@ export default function PlatformPage() {
     toast.success(`快照已生成，正在进行深度分析...`);
 
     // Call 2: dashboard LLM (separate mutation, 120s budget)
+    // Send slim snapshotSummary to avoid 503 on large POST body
+    const snap = result.data.snapshot;
     setIsDashboardLoading(true);
     getPlatformDashboardMutation.mutate({
       context: focusPrompt || undefined,
       windowDays: selectedWindowDays,
       requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
-      snapshot: result.data.snapshot,
+      snapshotSummary: {
+        overview: snap.overview,
+        platformSnapshots: snap.platformSnapshots.slice(0, 4).map((item) => ({
+          platform: item.platform,
+          displayName: item.displayName,
+          audienceFitScore: item.audienceFitScore,
+          momentumScore: item.momentumScore,
+          summary: item.summary,
+          fitLabel: item.fitLabel,
+          sampleTopics: item.sampleTopics?.slice(0, 4),
+        })),
+        platformRecommendations: snap.platformRecommendations.slice(0, 3).map((item) => ({
+          name: item.name,
+          reason: item.reason,
+          action: item.action,
+        })),
+        topicLibrary: snap.topicLibrary.slice(0, 5).map((item) => ({
+          title: item.title,
+          rationale: item.rationale,
+          executionHint: item.executionHint,
+        })),
+        monetizationStrategies: snap.monetizationStrategies.slice(0, 2).map((item) => ({
+          platformLabel: item.platformLabel,
+          primaryTrack: item.primaryTrack,
+          offerType: item.offerType,
+        })),
+        mainPath: {
+          title: snap.decisionFramework.mainPath.title,
+          summary: snap.decisionFramework.mainPath.summary,
+          whyNow: snap.decisionFramework.mainPath.whyNow,
+        },
+      },
     });
   };
 

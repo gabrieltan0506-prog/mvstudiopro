@@ -1914,7 +1914,39 @@ export const appRouter = router({
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         requestedPlatforms: z.array(z.string()).optional(),
-        snapshot: growthSnapshotSchema,
+        // Slim snapshot — only what buildPlatformDashboard needs, avoids 503 on large POST body
+        snapshotSummary: z.object({
+          overview: z.object({ summary: z.string(), trendNarrative: z.string() }).passthrough(),
+          platformSnapshots: z.array(z.object({
+            platform: z.string(),
+            displayName: z.string(),
+            audienceFitScore: z.number(),
+            momentumScore: z.number(),
+            summary: z.string().optional(),
+            fitLabel: z.string().optional(),
+            sampleTopics: z.array(z.string()).optional(),
+          })).optional(),
+          platformRecommendations: z.array(z.object({
+            name: z.string(),
+            reason: z.string(),
+            action: z.string().optional(),
+          })).optional(),
+          topicLibrary: z.array(z.object({
+            title: z.string(),
+            rationale: z.string().optional(),
+            executionHint: z.string().optional(),
+          })).optional(),
+          monetizationStrategies: z.array(z.object({
+            platformLabel: z.string().optional(),
+            primaryTrack: z.string().optional(),
+            offerType: z.string().optional(),
+          })).optional(),
+          mainPath: z.object({
+            title: z.string().optional(),
+            summary: z.string().optional(),
+            whyNow: z.string().optional(),
+          }).optional(),
+        }),
       }))
       .mutation(async ({ input }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
@@ -1934,7 +1966,8 @@ export const appRouter = router({
         try {
           platformDashboard = await Promise.race([
             buildPlatformDashboard({
-              snapshot: input.snapshot,
+              // Cast to any since snapshotSummary is a slim version — buildPlatformDashboard only reads the fields we provide
+              snapshot: input.snapshotSummary as any,
               context: input.context,
               requestedPlatforms: requestedPlatforms.length ? requestedPlatforms : ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
               store,
