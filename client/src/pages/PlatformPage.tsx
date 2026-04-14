@@ -335,6 +335,13 @@ export default function PlatformPage() {
   const recommendedPlatforms = useMemo(() => snapshot?.platformRecommendations.slice(0, 4) ?? [], [snapshot]);
   const actionSteps = useMemo(
     () => {
+      if (platformDashboard?.actionCards && platformDashboard.actionCards.length > 0) {
+        return platformDashboard.actionCards.map((item: any, index: number) => ({
+          day: index + 1,
+          title: cleanUserCopy(item.title || item["动作"] || item["标题"] || "", `第 ${index + 1} 步`),
+          action: cleanUserCopy(item.detail || item.action || item["详情"] || item["建议"] || "", "先做一个可以快速拿到反馈的动作。"),
+        }));
+      }
       if (validationPlan.length) {
         return validationPlan.slice(0, 4).map((item, index) => ({
           day: index + 1,
@@ -342,26 +349,20 @@ export default function PlatformPage() {
           action: cleanUserCopy(item.nextMove || item.successSignal, "先做一轮小样本验证。"),
         }));
       }
-      return platformDashboard?.actionCards.length
-        ? platformDashboard.actionCards.map((item, index) => ({
-            day: index + 1,
-            title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
-            action: cleanUserCopy(item.detail, "先做一个可以快速拿到反馈的动作。"),
-          }))
-        : (snapshot?.growthPlan.slice(0, 4) ?? []).map((item, index) => ({
-            day: index + 1,
-            title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
-            action: cleanUserCopy(item.action, "先做一轮小样本验证。"),
-          }));
+      return (snapshot?.growthPlan.slice(0, 4) ?? []).map((item, index) => ({
+        day: index + 1,
+        title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
+        action: cleanUserCopy(item.action, "先做一轮小样本验证。"),
+      }));
     },
     [platformDashboard, snapshot, validationPlan],
   );
   const keyInsights = useMemo(
     () =>
-      platformDashboard?.topSignals.length
+      platformDashboard?.topSignals && platformDashboard.topSignals.length > 0
         ? platformDashboard.topSignals.map((item: any) => typeof item === "string"
             ? { title: item, detail: "", badge: "" }
-            : { title: item.title || "", detail: item.detail || item.desc || item.description || "", badge: item.badge || "" })
+            : { title: item.title || item["标题"] || item["核心判断"] || "", detail: item.detail || item.desc || item.description || item["详情"] || "", badge: item.badge || item["标签"] || "" })
         : (snapshot?.businessInsights.slice(0, 4).map((item) => ({
             title: item.title,
             detail: item.detail,
@@ -410,6 +411,32 @@ export default function PlatformPage() {
         { label: "你会拿到", value: "顾问式追问", detail: "继续问到形式、节奏、承接动作这一级" },
       ];
     }
+
+    if (platformDashboard) {
+      // If we have LLM analysis, prefer topSignals over snapshot
+      const getSignal = (idx: number, fallbackValue: string, fallbackDetail: string) => {
+        const signal: any = platformDashboard.topSignals[idx];
+        if (!signal) return { value: fallbackValue, detail: fallbackDetail };
+        if (typeof signal === "string") return { value: signal, detail: fallbackDetail };
+        return {
+          value: cleanUserCopy(signal.title || signal["标题"] || fallbackValue, fallbackValue),
+          detail: cleanUserCopy(signal.detail || signal.desc || signal.description || signal["详情"] || fallbackDetail, fallbackDetail)
+        };
+      };
+
+      const sig0 = getSignal(0, platformDashboard.headline || "先收口成一个明确方向", platformDashboard.subheadline || "先把最容易拿到反馈的平台和切口做透。");
+      const sig1 = getSignal(1, platformDashboard.platformMenu?.[0]?.platform || "先做当前优先平台", platformDashboard.platformMenu?.[0]?.whyNow || "先做最容易拿到正反馈的平台版本。");
+      const sig2 = getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
+      const sig3 = getSignal(3, "先写出第一条内容", "先做一轮小样本验证，再决定是否放大。");
+
+      return [
+        { label: "当前判断", value: sig0.value, detail: sig0.detail },
+        { label: "优先平台", value: sig1.value, detail: sig1.detail },
+        { label: "商业赛道", value: sig2.value, detail: sig2.detail },
+        { label: "首发动作", value: sig3.value, detail: sig3.detail },
+      ];
+    }
+
     return [
       {
         label: "当前判断",
@@ -432,7 +459,7 @@ export default function PlatformPage() {
         detail: cleanUserCopy(validationPlan[0]?.nextMove || assetAdaptation?.structure || "先做一轮小样本验证，再决定是否放大。", "先做一轮小样本验证，再决定是否放大。"),
       },
     ];
-  }, [assetAdaptation, businessTranslation, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan]);
+  }, [assetAdaptation, businessTranslation, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan, platformDashboard]);
 
   const platformDecisionRows = useMemo(
     () => {
@@ -635,21 +662,48 @@ export default function PlatformPage() {
   );
 
   const executionBlueprint = useMemo(
-    () => [
-      {
-        label: "内容开头",
-        detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
-      },
-      {
-        label: "内容结构",
-        detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
-      },
-      {
-        label: "行动引导",
-        detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
-      },
-    ].filter((item) => item.detail),
-    [assetAdaptation, contentExecutionCards, topMonetization],
+    () => {
+      // Prioritize platformContent.contentBlueprints[0] over snapshot assetAdaptation
+      const bestBlueprint: any =
+        Array.isArray(platformContent?.contentBlueprints) && platformContent!.contentBlueprints.length > 0
+          ? platformContent!.contentBlueprints[0]
+          : Array.isArray(platformDashboard?.contentBlueprints) && platformDashboard!.contentBlueprints.length > 0
+          ? platformDashboard!.contentBlueprints[0]
+          : null;
+
+      if (bestBlueprint) {
+        return [
+          {
+            label: "内容开头",
+            detail: cleanUserCopy(bestBlueprint.hook || bestBlueprint.openingHook || bestBlueprint["开头文案钩子"] || bestBlueprint["hook"] || bestBlueprint["开头钩子"] || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
+          },
+          {
+            label: "内容结构",
+            detail: cleanUserCopy(bestBlueprint.copywriting || bestBlueprint.body || bestBlueprint["核心文案方向"] || bestBlueprint["文案"] || bestBlueprint["正文"] || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
+          },
+          {
+            label: "行动引导",
+            detail: cleanUserCopy(bestBlueprint.graphicPlan || bestBlueprint.videoPlan || bestBlueprint["图文怎么排版/视频怎么拍"] || bestBlueprint["图文排版"] || bestBlueprint["视频拍摄"] || bestBlueprint["制作建议"] || contentExecutionCards[0]?.production || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
+          },
+        ].filter((item) => item.detail);
+      }
+
+      return [
+        {
+          label: "内容开头",
+          detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
+        },
+        {
+          label: "内容结构",
+          detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
+        },
+        {
+          label: "行动引导",
+          detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
+        },
+      ].filter((item) => item.detail);
+    },
+    [assetAdaptation, contentExecutionCards, topMonetization, platformContent, platformDashboard],
   );
 
   const isAnalyzing = growthSnapshotQuery.isFetching;
