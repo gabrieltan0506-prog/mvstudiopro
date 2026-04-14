@@ -954,10 +954,11 @@ export default function PlatformPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
                     <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
                       <div>1. getGrowthSnapshot 请求: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
-                      <div>2. snapshot 构建: {snapshotDebug?.baseSource ? "已完成" : "未知"}</div>
+                      <div>2. snapshot 构建: {snapshotDebug?.baseSource ? `已完成 (${snapshotDebug.baseSource})` : "未知"}</div>
                       <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
-                      <div>4. platformDashboard: {String(Boolean(platformDashboard))}</div>
-                      <div>5. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
+                      <div>4. getPlatformDashboard: {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? "已返回结果" : "返回null(LLM超时)") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
+                      <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
+                      <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
                     </div>
                   </div>
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
@@ -972,6 +973,12 @@ export default function PlatformPage() {
                     <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">getGrowthSnapshot.debug</div>
                     <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
                       {JSON.stringify(snapshotDebug || null, null, 2)}
+                    </pre>
+                  </div>
+                  <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                    <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">getPlatformDashboard.debug</div>
+                    <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-[11px] leading-6 text-[#d7d0ef]">
+                      {JSON.stringify(dashboardDebug || null, null, 2)}
                     </pre>
                   </div>
                   <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
