@@ -437,15 +437,15 @@ export default function PlatformPage() {
   const platformDecisionRows = useMemo(
     () => {
       if (platformDashboard?.platformMenu.length) {
-        return platformDashboard.platformMenu.slice(0, 4).map((item) => ({
-          id: `${item.platform}-${item.label}`,
-          name: item.label,
-          lane: cleanUserCopy(item.lane, item.label),
-          trend: cleanUserCopy(item.recommendedFormat || item.trend, "先从更顺手的表达方式切入"),
-          whyNow: cleanUserCopy(item.whyNow, "当前窗口里，这个平台更容易拿到第一轮反馈。"),
-          nextMove: cleanUserCopy(item.titleExample || item.nextMove, "先发一版内容拿反馈。"),
-          hook: cleanUserCopy(item.contentHook || item.nextMove, "先把第一句判断说出来。"),
-          monetization: cleanUserCopy(item.monetizationPath || "", ""),
+        return platformDashboard.platformMenu.slice(0, 4).map((item: any, index: number) => ({
+          id: `${item.platform || item.name || index}-${item.label || index}`,
+          name: item.label || item.name || item.platform || `平台 ${index + 1}`,
+          lane: cleanUserCopy(item.lane || item.contentAngle || "", item.label || `平台 ${index + 1}`),
+          trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || "", "先从更顺手的表达方式切入"),
+          whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
+          nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || "", "先发一版内容拿反馈。"),
+          hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || "", "先把第一句判断说出来。"),
+          monetization: cleanUserCopy(item.monetizationPath || item.monetization || "", ""),
         }));
       }
 
@@ -474,11 +474,12 @@ export default function PlatformPage() {
       ? platformContent.monetizationLanes
       : platformDashboard?.monetizationLanes?.length ? platformDashboard.monetizationLanes : null;
     if (monetizationSource?.length) {
-      return monetizationSource.slice(0, 2).map((item, index) => ({
-        id: `${item.title}-${index}`,
-        title: cleanUserCopy(item.title, `变现路径 ${index + 1}`),
-        summary: cleanUserCopy(item.fitReason, "这条变现方式更符合你当前内容和身份。"),
-        action: cleanUserCopy([item.offerShape, ...item.revenueModes, item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
+      return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
+        id: `${item.title || index}-${index}`,
+        title: cleanUserCopy(item.title || "", `变现路径 ${index + 1}`),
+        summary: cleanUserCopy(item.fitReason || item.summary || "", "这条变现方式更符合你当前内容和身份。"),
+        // revenueModes may be undefined if Gemini omits it — use || [] to prevent crash
+        action: cleanUserCopy([item.offerShape, ...(Array.isArray(item.revenueModes) ? item.revenueModes : []), item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
       }));
     }
     if (monetizationStrategies.length) {
@@ -505,14 +506,14 @@ export default function PlatformPage() {
       ? platformContent.contentBlueprints
       : platformDashboard?.contentBlueprints?.length ? platformDashboard.contentBlueprints : null;
     if (blueprintsSource?.length) {
-      return blueprintsSource.slice(0, 4).map((item, index) => ({
-        id: `${item.title}-${index}`,
-        title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
-        hook: cleanUserCopy(item.hook, "先用一句明确判断开头。"),
-        copywriting: cleanUserCopy(item.copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+      return blueprintsSource.slice(0, 4).map((item: any, index: number) => ({
+        id: `${item.title || index}-${index}`,
+        title: cleanUserCopy(item.title || "", `内容方案 ${index + 1}`),
+        hook: cleanUserCopy(item.hook || item.openingHook || "", "先用一句明确判断开头。"),
+        copywriting: cleanUserCopy(item.copywriting || item.body || "", "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
         production: cleanUserCopy(
-          item.format === "图文" ? item.graphicPlan || item.videoPlan || "" : item.videoPlan || item.graphicPlan || "",
-          item.format === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
+          (item.format || "") === "图文" ? (item.graphicPlan || item.videoPlan || "") : (item.videoPlan || item.graphicPlan || ""),
+          (item.format || "") === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
         ),
         format: item.format,
       }));
