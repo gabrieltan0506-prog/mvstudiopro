@@ -469,35 +469,42 @@ export default function PlatformPage() {
   );
 
   const monetizationCards = useMemo(() => {
-    // Prefer Call 3 result, fall back to Call 2, then snapshot
-    const monetizationSource = platformContent?.monetizationLanes?.length
-      ? platformContent.monetizationLanes
-      : platformDashboard?.monetizationLanes?.length ? platformDashboard.monetizationLanes : null;
-    if (monetizationSource?.length) {
-      return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
-        id: `${item.title || index}-${index}`,
-        title: cleanUserCopy(item.title || "", `变现路径 ${index + 1}`),
-        summary: cleanUserCopy(item.fitReason || item.summary || "", "这条变现方式更符合你当前内容和身份。"),
-        // revenueModes may be undefined if Gemini omits it — use || [] to prevent crash
-        action: cleanUserCopy([item.offerShape, ...(Array.isArray(item.revenueModes) ? item.revenueModes : []), item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
+    try {
+      // Prefer Call 3 result, fall back to Call 2, then snapshot
+      const rawSource = platformContent?.monetizationLanes?.length
+        ? platformContent.monetizationLanes
+        : platformDashboard?.monetizationLanes?.length ? platformDashboard.monetizationLanes : null;
+      // Normalize each item: ensure revenueModes is always an array
+      const monetizationSource = Array.isArray(rawSource)
+        ? rawSource.map((it: any) => ({ ...it, revenueModes: Array.isArray(it?.revenueModes) ? it.revenueModes : [] }))
+        : null;
+      if (monetizationSource?.length) {
+        return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
+          id: `${item.title || index}-${index}`,
+          title: cleanUserCopy(item.title || "", `变现路径 ${index + 1}`),
+          summary: cleanUserCopy(item.fitReason || item.summary || "", "这条变现方式更符合你当前内容和身份。"),
+          action: cleanUserCopy([item.offerShape, ...item.revenueModes, item.firstValidation].filter(Boolean).join(" / "), "先做一轮轻量验证。"),
+        }));
+      }
+      if (monetizationStrategies.length) {
+        return monetizationStrategies.slice(0, 2).map((item: GrowthMonetizationStrategy, index) => ({
+          id: `${item.platform}-${index}`,
+          title: `${item.platformLabel}：${cleanUserCopy(item.primaryTrack, item.primaryTrack)}`,
+          summary: cleanUserCopy(item.reason || item.strategy, "先把内容承接到一个更容易转化的服务或产品形态。"),
+          action: cleanUserCopy(item.callToAction || item.offerType || actionSteps[index]?.action || "先用轻量服务承接第一波需求。", "先用轻量服务承接第一波需求。"),
+        }));
+      }
+      const businessInsights = snapshot?.businessInsights.slice(0, 2) ?? [];
+      return businessInsights.map((item, index) => ({
+        id: `${item.title}-${index}`,
+        title: cleanUserCopy(item.title, `商业化切口 ${index + 1}`),
+        summary: cleanUserCopy(item.detail, "先把内容方向和承接方式收成一条清晰路径。"),
+        action: cleanUserCopy(actionSteps[index]?.action || platformDecisionRows[index]?.nextMove || "先做一个最容易拿到反馈的轻量承接。", "先做一个最容易拿到反馈的轻量承接。"),
       }));
+    } catch (err) {
+      console.error("[monetizationCards] render error:", err);
+      return [];
     }
-    if (monetizationStrategies.length) {
-      return monetizationStrategies.slice(0, 2).map((item: GrowthMonetizationStrategy, index) => ({
-        id: `${item.platform}-${index}`,
-        title: `${item.platformLabel}：${cleanUserCopy(item.primaryTrack, item.primaryTrack)}`,
-        summary: cleanUserCopy(item.reason || item.strategy, "先把内容承接到一个更容易转化的服务或产品形态。"),
-        action: cleanUserCopy(item.callToAction || item.offerType || actionSteps[index]?.action || "先用轻量服务承接第一波需求。", "先用轻量服务承接第一波需求。"),
-      }));
-    }
-
-    const businessInsights = snapshot?.businessInsights.slice(0, 2) ?? [];
-    return businessInsights.map((item, index) => ({
-      id: `${item.title}-${index}`,
-      title: cleanUserCopy(item.title, `商业化切口 ${index + 1}`),
-      summary: cleanUserCopy(item.detail, "先把内容方向和承接方式收成一条清晰路径。"),
-      action: cleanUserCopy(actionSteps[index]?.action || platformDecisionRows[index]?.nextMove || "先做一个最容易拿到反馈的轻量承接。", "先做一个最容易拿到反馈的轻量承接。"),
-    }));
   }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot, platformContent, platformDashboard]);
 
   const contentExecutionCards = useMemo(() => {
