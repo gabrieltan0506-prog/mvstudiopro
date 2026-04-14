@@ -234,6 +234,10 @@ export default function PlatformPage() {
   const [platformDashboard, setPlatformDashboard] = useState<PlatformDashboard | null>(null);
   const [dashboardDebug, setDashboardDebug] = useState<Record<string, unknown> | null>(null);
   const [isDashboardLoading, setIsDashboardLoading] = useState(false);
+  // Call 3 state — content blueprints and monetization
+  const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
+  const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
+  const [isContentLoading, setIsContentLoading] = useState(false);
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -258,6 +262,14 @@ export default function PlatformPage() {
     onSuccess: (result) => {
       if (result.platformDashboard) {
         setPlatformDashboard(result.platformDashboard as PlatformDashboard);
+        // Chain Call 3 immediately after Call 2 succeeds
+        setIsContentLoading(true);
+        getPlatformContentMutation.mutate({
+          context: focusPrompt || undefined,
+          windowDays: selectedWindowDays,
+          platformMenu: (result.platformDashboard as PlatformDashboard).platformMenu,
+          snapshotSummary: (getPlatformDashboardMutation.variables as any)?.snapshotSummary || {},
+        });
       }
       setDashboardDebug(result.debug as Record<string, unknown>);
       setIsDashboardLoading(false);
@@ -265,6 +277,20 @@ export default function PlatformPage() {
     onError: (error) => {
       console.warn("[PlatformPage] dashboard mutation error:", error.message);
       setIsDashboardLoading(false);
+    },
+  });
+
+  const getPlatformContentMutation = trpc.mvAnalysis.getPlatformContent.useMutation({
+    onSuccess: (result) => {
+      if (result.platformContent) {
+        setPlatformContent(result.platformContent as any);
+      }
+      setContentDebug(result.debug as Record<string, unknown>);
+      setIsContentLoading(false);
+    },
+    onError: (error) => {
+      console.warn("[PlatformPage] content mutation error:", error.message);
+      setIsContentLoading(false);
     },
   });
 
@@ -441,8 +467,12 @@ export default function PlatformPage() {
   );
 
   const monetizationCards = useMemo(() => {
-    if (platformDashboard?.monetizationLanes?.length) {
-      return platformDashboard.monetizationLanes.slice(0, 2).map((item, index) => ({
+    // Prefer Call 3 result, fall back to Call 2, then snapshot
+    const monetizationSource = platformContent?.monetizationLanes?.length
+      ? platformContent.monetizationLanes
+      : platformDashboard?.monetizationLanes?.length ? platformDashboard.monetizationLanes : null;
+    if (monetizationSource?.length) {
+      return monetizationSource.slice(0, 2).map((item, index) => ({
         id: `${item.title}-${index}`,
         title: cleanUserCopy(item.title, `变现路径 ${index + 1}`),
         summary: cleanUserCopy(item.fitReason, "这条变现方式更符合你当前内容和身份。"),
@@ -465,11 +495,15 @@ export default function PlatformPage() {
       summary: cleanUserCopy(item.detail, "先把内容方向和承接方式收成一条清晰路径。"),
       action: cleanUserCopy(actionSteps[index]?.action || platformDecisionRows[index]?.nextMove || "先做一个最容易拿到反馈的轻量承接。", "先做一个最容易拿到反馈的轻量承接。"),
     }));
-  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot]);
+  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot, platformContent, platformDashboard]);
 
   const contentExecutionCards = useMemo(() => {
-    if (platformDashboard?.contentBlueprints?.length) {
-      return platformDashboard.contentBlueprints.slice(0, 4).map((item, index) => ({
+    // Prefer Call 3 result, fall back to Call 2, then snapshot
+    const blueprintsSource = platformContent?.contentBlueprints?.length
+      ? platformContent.contentBlueprints
+      : platformDashboard?.contentBlueprints?.length ? platformDashboard.contentBlueprints : null;
+    if (blueprintsSource?.length) {
+      return blueprintsSource.slice(0, 4).map((item, index) => ({
         id: `${item.title}-${index}`,
         title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
         hook: cleanUserCopy(item.hook, "先用一句明确判断开头。"),
@@ -503,7 +537,7 @@ export default function PlatformPage() {
       production: cleanUserCopy(actionSteps[index]?.action || "先做一个短平快版本看反馈。", "先做一个短平快版本看反馈。"),
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
     }));
-  }, [actionSteps, platformDashboard, recommendedPlatforms, titleExecutions, topTopics]);
+  }, [actionSteps, platformDashboard, platformContent, recommendedPlatforms, titleExecutions, topTopics]);
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -629,6 +663,9 @@ export default function PlatformPage() {
     setPlatformDashboard(null);
     setDashboardDebug(null);
     setIsDashboardLoading(false);
+    setPlatformContent(null);
+    setContentDebug(null);
+    setIsContentLoading(false);
     setElapsedTime(0);
     setRotatingCardIndex(0);
 
@@ -987,8 +1024,8 @@ export default function PlatformPage() {
                     <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
                     <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
                     <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div>4. getPlatformDashboard: {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? "已返回结果" : "返回null(LLM超时)") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
-                    <div>5. dashboardMs: {String((dashboardDebug?.totalMs as number) ?? "?")}</div>
+                    <div>4. getPlatformDashboard (Call 2): {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? `已返回 (${dashboardDebug?.totalMs ?? "?"}ms)` : "返回null") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
+                    <div>5. getPlatformContent (Call 3): {isContentLoading ? "进行中" : getPlatformContentMutation.isSuccess ? (platformContent ? `已返回 (${contentDebug?.totalMs ?? "?"}ms)` : "返回null") : getPlatformContentMutation.isError ? `错误: ${getPlatformContentMutation.error?.message}` : "未开始"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">

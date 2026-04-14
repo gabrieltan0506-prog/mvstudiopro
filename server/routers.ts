@@ -342,6 +342,7 @@ const platformFollowUpResponseSchema = z.object({
   nextQuestions: z.array(z.string()).default([]),
 });
 
+// Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
 const platformDashboardResponseSchema = z.object({
   headline: z.string(),
   subheadline: z.string(),
@@ -368,6 +369,7 @@ const platformDashboardResponseSchema = z.object({
     whyHot: z.string(),
     howToUse: z.string(),
   })).default([]),
+  // contentBlueprints and monetizationLanes moved to Call 3 (getPlatformContent)
   contentBlueprints: z.array(z.object({
     title: z.string(),
     format: z.string(),
@@ -389,6 +391,26 @@ const platformDashboardResponseSchema = z.object({
     detail: z.string(),
   })).default([]),
   conversationStarters: z.array(z.string()).default([]),
+});
+
+// Call 3 schema — detailed content blueprints and monetization (heavy copywriting)
+const platformContentResponseSchema = z.object({
+  contentBlueprints: z.array(z.object({
+    title: z.string(),
+    format: z.string(),
+    hook: z.string(),
+    copywriting: z.string(),
+    graphicPlan: z.string().default(""),
+    videoPlan: z.string().default(""),
+    suitablePlatforms: z.array(z.string()).default([]),
+  })).default([]),
+  monetizationLanes: z.array(z.object({
+    title: z.string(),
+    fitReason: z.string(),
+    offerShape: z.string(),
+    revenueModes: z.array(z.string()).default([]),
+    firstValidation: z.string(),
+  })).default([]),
 });
 
 async function buildPlatformDashboard(params: {
@@ -434,18 +456,19 @@ async function buildPlatformDashboard(params: {
         role: "system",
         content: `你是一位资深内容商业顾问，帮创作者判断平台优先级和商业化切入点。
 
-请根据用户背景和近 ${params.windowDays} 天平台数据，生成一个精简的平台决策看板。
+请根据用户背景和近 ${params.windowDays} 天平台数据，生成平台决策看板（轻量版，不包含长文案）。
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
-3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接。
-4. monetizationLanes：只保留 1-2 条与此用户身份强相关的路径，禁止电商带货默认选项。
+3. platformMenu：最多 3 个平台，每个给出赛道、内容形式、标题示例、开头怎么说、商业承接路径。
+4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
 5. conversationStarters：3 个让用户愿意继续追问的问题。
-6. topSignals：3 个关键信号，hotTopics：3 个热点方向，actionCards：3 个立刻能做的动作。
-7. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。${personaContextLine}${personaConstraint}
+6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。${personaContextLine}${personaConstraint}
 
-输出严格 JSON，字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints、monetizationLanes、actionCards、conversationStarters。`,
+注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
+
+输出严格 JSON，字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
       },
       {
         role: "user",
@@ -512,6 +535,75 @@ async function buildPlatformDashboard(params: {
     throw new Error("buildPlatformDashboard: LLM output missing required fields (headline/platformMenu)");
   }
   return platformDashboardResponseSchema.parse(partial);
+}
+
+async function buildPlatformContent(params: {
+  snapshot: any;
+  platformMenu: any;
+  context?: string;
+  windowDays: number;
+}) {
+  const hasMedicalPersona = /医生|醫生|医师|醫師|医疗|醫療|心脏|心臟|临床|臨床|doctor/i.test(params.context || "");
+  const hasCulturePersona = /文化|艺术|藝術|历史|歷史|书画|書畫|收藏|人文/i.test(params.context || "");
+  const personaConstraint = (hasMedicalPersona || hasCulturePersona)
+    ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。`
+    : "";
+
+  const response = await invokeLLM({
+    model: "pro",
+    provider: "gemini",
+    modelName: "gemini-2.5-pro",
+    messages: [
+      {
+        role: "system",
+        content: `你是一个顶级的个人IP商业文案顾问。
+
+根据已生成的平台方向与用户背景数据，请为这位创作者制定深度内容的执行蓝图与商业变现路径。
+
+严格要求：
+1. contentBlueprints：生成至少 3 个具体可执行的内容方案。每个包含：标题、格式、开头文案钩子(hook)、核心文案方向、图文怎么排版/视频怎么拍，以及适合哪些平台。
+2. monetizationLanes：生成 1-2 条强相关的变现路径（比如"知识付费-心血管健康课程"）。包含：变现方向名、为什么适合此人设、交付形态、具体服务变现方式、第一步如何做轻量验证。
+3. 必须详细、有落地感，不要泛泛而谈。文案需匹配用户人设与专长。${personaConstraint}
+
+严格按照要求输出 JSON，字段为：contentBlueprints, monetizationLanes。`,
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          context: params.context || "",
+          windowDays: params.windowDays,
+          platformMenu: params.platformMenu,
+          snapshotData: {
+            titleExecutions: params.snapshot.titleExecutions || [],
+            monetizationStrategies: params.snapshot.monetizationStrategies || [],
+            growthPlan: params.snapshot.growthPlan || [],
+            creationAssist: params.snapshot.creationAssist || {},
+          },
+        }),
+      },
+    ],
+  });
+
+  const rawContent = String(response.choices[0]?.message?.content || "{}");
+  let parsedRaw: unknown;
+  try {
+    parsedRaw = JSON.parse(rawContent);
+  } catch {
+    const match = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+    try {
+      parsedRaw = match ? JSON.parse(match[1].trim()) : {};
+    } catch {
+      parsedRaw = {};
+    }
+  }
+
+  const partial = (parsedRaw || {}) as Record<string, unknown>;
+  const merged = {
+    contentBlueprints: Array.isArray(partial.contentBlueprints) && partial.contentBlueprints.length ? partial.contentBlueprints : [],
+    monetizationLanes: Array.isArray(partial.monetizationLanes) && partial.monetizationLanes.length ? partial.monetizationLanes : [],
+  };
+  
+  return platformContentResponseSchema.parse(merged);
 }
 
 function buildFallbackPlatformDashboard(params: {
@@ -1981,6 +2073,55 @@ export const appRouter = router({
             route: "mvAnalysis.getPlatformDashboard",
             totalMs: Date.now() - t0,
             hasDashboard: Boolean(platformDashboard),
+          },
+        };
+      }),
+
+    getPlatformContent: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
+        platformMenu: z.array(z.any()).optional(),
+        snapshotSummary: z.object({
+          overview: z.any().optional(),
+          platformSnapshots: z.array(z.any()).optional(),
+          platformRecommendations: z.array(z.any()).optional(),
+          topicLibrary: z.array(z.any()).optional(),
+          monetizationStrategies: z.array(z.any()).optional(),
+          mainPath: z.any().optional(),
+          // Call 3 also receives the full snapshot fields needed for content
+          titleExecutions: z.array(z.any()).optional(),
+          growthPlan: z.array(z.any()).optional(),
+          creationAssist: z.any().optional(),
+        }),
+      }))
+      .mutation(async ({ input }) => {
+        const t0 = Date.now();
+        let platformContent: z.infer<typeof platformContentResponseSchema> | null = null;
+        try {
+          platformContent = await Promise.race([
+            buildPlatformContent({
+              snapshot: input.snapshotSummary,
+              platformMenu: input.platformMenu || [],
+              context: input.context,
+              windowDays: Number(input.windowDays),
+            }),
+            new Promise<null>((resolve) => setTimeout(() => {
+              console.warn("[platform.getPlatformContent] LLM timed out after 120s, returning null");
+              resolve(null);
+            }, 120_000)),
+          ]);
+        } catch (error) {
+          console.warn("[platform.getPlatformContent] error:", error);
+          platformContent = null;
+        }
+        return {
+          success: true,
+          platformContent,
+          debug: {
+            route: "mvAnalysis.getPlatformContent",
+            totalMs: Date.now() - t0,
+            hasContent: Boolean(platformContent),
           },
         };
       }),
