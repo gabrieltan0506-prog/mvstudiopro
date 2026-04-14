@@ -473,7 +473,7 @@ export default function PlatformPage() {
     try {
       // Data normalizer: maps Gemini raw item → clean { revenueModes: string[] } shape
       // Handles: missing key, Chinese key, string-instead-of-array type drift
-      function normalizeMonetizationItem(it: any) {
+      const normalizeMonetizationItem = (it: any) => {
         const rawRev =
           it?.revenueModes ||
           it?.["商业承接路径"] ||
