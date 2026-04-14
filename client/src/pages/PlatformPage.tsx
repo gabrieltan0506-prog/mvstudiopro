@@ -359,7 +359,9 @@ export default function PlatformPage() {
   const keyInsights = useMemo(
     () =>
       platformDashboard?.topSignals.length
-        ? platformDashboard.topSignals.map((item) => ({ title: item.title, detail: item.detail, badge: item.badge || "" }))
+        ? platformDashboard.topSignals.map((item: any) => typeof item === "string"
+            ? { title: item, detail: "", badge: "" }
+            : { title: item.title || "", detail: item.detail || item.desc || item.description || "", badge: item.badge || "" })
         : (snapshot?.businessInsights.slice(0, 4).map((item) => ({
             title: item.title,
             detail: item.detail,
