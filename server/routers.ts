@@ -343,76 +343,27 @@ const platformFollowUpResponseSchema = z.object({
 });
 
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
-// All nested objects use .passthrough() to tolerate extra fields Gemini may add
+// All array fields use z.any() to tolerate Gemini returning strings instead of objects
+// (confirmed bug: topSignals returned as string[] instead of object[])
 const platformDashboardResponseSchema = z.object({
   headline: z.string(),
-  subheadline: z.string(),
+  subheadline: z.string().default(""),
   personaSummary: z.string().default(""),
-  topSignals: z.array(z.object({
-    title: z.string(),
-    detail: z.string(),
-    badge: z.string().default(""),
-  }).passthrough()).default([]),
-  platformMenu: z.array(z.object({
-    platform: z.string(),
-    label: z.string(),
-    trend: z.string().default(""),
-    lane: z.string().default(""),
-    whyNow: z.string().default(""),
-    recommendedFormat: z.string().default(""),
-    titleExample: z.string().default(""),
-    contentHook: z.string().default(""),
-    nextMove: z.string().default(""),
-    monetizationPath: z.string().default(""),
-  }).passthrough()).default([]),
-  hotTopics: z.array(z.object({
-    title: z.string(),
-    whyHot: z.string().default(""),
-    howToUse: z.string().default(""),
-  }).passthrough()).default([]),
-  // contentBlueprints and monetizationLanes moved to Call 3 (getPlatformContent)
-  contentBlueprints: z.array(z.object({
-    title: z.string(),
-    format: z.string().default(""),
-    hook: z.string().default(""),
-    copywriting: z.string().default(""),
-    graphicPlan: z.string().default(""),
-    videoPlan: z.string().default(""),
-    suitablePlatforms: z.array(z.string()).default([]),
-  }).passthrough()).default([]),
-  monetizationLanes: z.array(z.object({
-    title: z.string(),
-    fitReason: z.string().default(""),
-    offerShape: z.string().default(""),
-    revenueModes: z.array(z.string()).default([]),
-    firstValidation: z.string().default(""),
-  }).passthrough()).default([]),
-  actionCards: z.array(z.object({
-    title: z.string(),
-    detail: z.string().default(""),
-  }).passthrough()).default([]),
-  conversationStarters: z.array(z.string()).default([]),
+  // Use z.any() for all array fields — Gemini sometimes returns string[] instead of object[]
+  topSignals: z.array(z.any()).default([]),
+  platformMenu: z.array(z.any()).default([]),
+  hotTopics: z.array(z.any()).default([]),
+  contentBlueprints: z.array(z.any()).default([]),
+  monetizationLanes: z.array(z.any()).default([]),
+  actionCards: z.array(z.any()).default([]),
+  conversationStarters: z.array(z.any()).default([]),
 }).passthrough();
 
 // Call 3 schema — detailed content blueprints and monetization (heavy copywriting)
-// All nested objects use .passthrough() to tolerate extra fields Gemini may add
+// Use z.any() for all array fields to tolerate Gemini schema drift
 const platformContentResponseSchema = z.object({
-  contentBlueprints: z.array(z.object({
-    title: z.string(),
-    format: z.string().default(""),
-    hook: z.string().default(""),
-    copywriting: z.string().default(""),
-    graphicPlan: z.string().default(""),
-    videoPlan: z.string().default(""),
-    suitablePlatforms: z.array(z.string()).default([]),
-  }).passthrough()).default([]),
-  monetizationLanes: z.array(z.object({
-    title: z.string(),
-    fitReason: z.string().default(""),
-    offerShape: z.string().default(""),
-    revenueModes: z.array(z.string()).default([]),
-    firstValidation: z.string().default(""),
-  }).passthrough()).default([]),
+  contentBlueprints: z.array(z.any()).default([]),
+  monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
 
 async function buildPlatformDashboard(params: {
