@@ -528,13 +528,30 @@ async function buildPlatformDashboard(params: {
     }
   }
 
-  // Phase 1-B: Strict parse — if LLM output is bad, throw so caller (getPlatformDashboard mutation) returns null
-  // No fallback here — fallback would use missing fields from slim snapshotSummary and crash anyway
+  // Use safeParse to avoid throwing on minor schema drift; log what failed
   const partial = (parsedRaw || {}) as Record<string, unknown>;
   if (!partial.headline || !partial.platformMenu) {
-    throw new Error("buildPlatformDashboard: LLM output missing required fields (headline/platformMenu)");
+    const rawPreview = JSON.stringify(parsedRaw || {}).slice(0, 300);
+    throw new Error(`buildPlatformDashboard: missing required fields. rawPreview: ${rawPreview}`);
   }
-  return platformDashboardResponseSchema.parse(partial);
+  const parseResult = platformDashboardResponseSchema.safeParse(partial);
+  if (parseResult.success) {
+    return parseResult.data;
+  }
+  console.warn("[buildPlatformDashboard] schema drift, attempting loose parse:", parseResult.error.message.slice(0, 200));
+  // Loose parse — fill missing optional fields with defaults
+  return platformDashboardResponseSchema.parse({
+    headline: partial.headline || "",
+    subheadline: partial.subheadline || "",
+    personaSummary: partial.personaSummary || "",
+    topSignals: Array.isArray(partial.topSignals) ? partial.topSignals : [],
+    platformMenu: Array.isArray(partial.platformMenu) ? partial.platformMenu : [],
+    hotTopics: Array.isArray(partial.hotTopics) ? partial.hotTopics : [],
+    contentBlueprints: [],
+    monetizationLanes: [],
+    actionCards: Array.isArray(partial.actionCards) ? partial.actionCards : [],
+    conversationStarters: Array.isArray(partial.conversationStarters) ? partial.conversationStarters : [],
+  });
 }
 
 async function buildPlatformContent(params: {
@@ -598,12 +615,14 @@ async function buildPlatformContent(params: {
   }
 
   const partial = (parsedRaw || {}) as Record<string, unknown>;
-  const merged = {
-    contentBlueprints: Array.isArray(partial.contentBlueprints) && partial.contentBlueprints.length ? partial.contentBlueprints : [],
-    monetizationLanes: Array.isArray(partial.monetizationLanes) && partial.monetizationLanes.length ? partial.monetizationLanes : [],
-  };
-  
-  return platformContentResponseSchema.parse(merged);
+  const parseResult = platformContentResponseSchema.safeParse(partial);
+  if (parseResult.success) return parseResult.data;
+
+  console.warn("[buildPlatformContent] schema drift, attempting loose parse:", parseResult.error.message.slice(0, 200));
+  return platformContentResponseSchema.parse({
+    contentBlueprints: Array.isArray(partial.contentBlueprints) ? partial.contentBlueprints : [],
+    monetizationLanes: Array.isArray(partial.monetizationLanes) ? partial.monetizationLanes : [],
+  });
 }
 
 function buildFallbackPlatformDashboard(params: {
