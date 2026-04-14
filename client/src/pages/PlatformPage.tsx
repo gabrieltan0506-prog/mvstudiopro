@@ -927,7 +927,22 @@ export default function PlatformPage() {
           ))}
         </section>
 
-        {snapshot ? (
+        {/* Show loading state while waiting for dashboard (Call 2) */}
+        {snapshot && !platformDashboard && isDashboardLoading ? (
+          <section className="mt-6">
+            <div className={shellCardClasses("p-6")}>
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-[#49e6ff]" />
+                <div>
+                  <div className="text-sm font-semibold text-white">平台数据已就绪，正在生成个性化分析...</div>
+                  <div className="mt-1 text-xs text-[#b7add8]">Gemini 2.5 Pro 正在根据你的背景生成专属平台策略与选题文案，通常需要 30–90 秒。</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {snapshot && platformDashboard ? (
           <section className="mt-8 space-y-6">
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
