@@ -681,7 +681,7 @@ export default function PlatformPage() {
   }, [platformContent, platformDashboard]);
 
   const contentExecutionCards = useMemo(() => {
-    // Prefer Call 3 result, fall back to Call 2, then snapshot
+    // Prefer Call 3 result, fall back to Call 2
     const blueprintsSource =
       Array.isArray(platformContent?.contentBlueprints) && platformContent!.contentBlueprints.length > 0
         ? platformContent!.contentBlueprints
@@ -736,29 +736,23 @@ export default function PlatformPage() {
         };
       });
     }
-    if (titleExecutions.length) {
-      return titleExecutions.slice(0, 4).map((item: GrowthTitleExecution, index) => ({
-        id: `${item.title}-${index}`,
-        title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
-        hook: cleanUserCopy(item.openingHook || item.copywriting, "先用一句明确判断开头。"),
-        copywriting: cleanUserCopy(item.copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
-        production: cleanUserCopy(
-          item.presentationMode === "图文" ? item.graphicPlan || item.videoPlan : item.videoPlan || item.graphicPlan,
-          item.presentationMode === "图文" ? "图文先给判断，再补案例和行动。" : "视频开头先给判断，中段给例子，结尾给行动引导。",
-        ),
-        format: item.presentationMode,
-      }));
+
+    // Once LLM analysis is in flight or complete, refuse snapshot fallbacks to prevent generic text leaking.
+    // Show loading state via empty array — the JSX layer handles the spinner.
+    if (isContentLoading || isDashboardLoading || platformDashboard || platformContent) {
+      return [];
     }
 
+    // Pre-analysis state only: show snapshot topics as preview placeholders
     return topTopics.slice(0, 4).map((item, index) => ({
       id: `${item.title}-${index}`,
       title: cleanUserCopy(item.title, `内容方案 ${index + 1}`),
       hook: cleanUserCopy(item.howToUse, "先把用户最关心的问题直接说出来。"),
       copywriting: cleanUserCopy(item.whyHot, "围绕这个切口写成用户能立刻代入的内容。"),
-      production: cleanUserCopy(actionSteps[index]?.action || "先做一个短平快版本看反馈。", "先做一个短平快版本看反馈。"),
+      production: "",
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
     }));
-  }, [actionSteps, platformDashboard, platformContent, recommendedPlatforms, titleExecutions, topTopics]);
+  }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -1608,9 +1602,19 @@ export default function PlatformPage() {
                 </div>
                 {/* Fix #2: Vertical stacked rows (single-column), not side-by-side grid */}
                 <div className="mt-5 space-y-4">
-                  {contentExecutionCards.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                      <div className="flex items-center justify-between gap-3">
+                  {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
+                    <div className="flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
+                      <Loader2 className="mb-2 h-6 w-6 animate-spin" />
+                      正在生成专属选题与配套文案...
+                    </div>
+                  ) : contentExecutionCards.length === 0 && platformDashboard ? (
+                    <div className="flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/70">
+                      无对应的选题方向数据
+                    </div>
+                  ) : (
+                    contentExecutionCards.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
+                        <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           {item.format === "图文" ? <Image className="h-4 w-4 text-[#ff7fd5] shrink-0" /> : <Video className="h-4 w-4 text-[#49e6ff] shrink-0" />}
                           <div className="text-base font-bold text-white">{item.title}</div>
@@ -1672,14 +1676,15 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
                       
-                      <TopicImageGenerator
-                        title={item.title}
-                        format={item.format as any}
-                        hook={item.hook}
-                        supervisorAccess={supervisorAccess}
-                      />
-                    </div>
-                  ))}
+                        <TopicImageGenerator
+                          title={item.title}
+                          format={item.format as any}
+                          hook={item.hook}
+                          supervisorAccess={supervisorAccess}
+                        />
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 

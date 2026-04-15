@@ -688,6 +688,37 @@ async function buildPlatformContent(params: {
    - revenueModes（具体变现方式数组）
    - firstValidation（**禁止写"先做一轮轻量验证"**，必须写具体的第一步：例如"在小红书发一条免费答疑视频，评论区收集付费意向用户"）
 
+【强制 JSON Key 名称锁定 — 一字不差！】
+你的输出 JSON 必须且只能使用以下 Key 名称，不得发明新字段名（如不能用 businessPaths、lanes、blueprints 等）：
+{
+  "contentBlueprints": [
+    {
+      "title": "具体的选题标题",
+      "format": "短视频 或 图文",
+      "hook": "开头钩子文案",
+      "copywriting": "完整正文（≥200字）",
+      "suitablePlatforms": ["平台1", "平台2"],
+      "actionableSteps": ["第一步具体动作", "第二步具体动作", "第三步具体动作"],
+      "detailedScript": "完整分镜脚本（视频用时间轴，图文用封面+内页格式）",
+      "publishingAdvice": "发布时机与平台设置建议",
+      "executionDetails": {
+        "environmentAndWardrobe": "拍摄环境与服装道具",
+        "lightingAndCamera": "灯光与机位建议",
+        "stepByStepScript": ["【0-3秒】...", "【3-15秒】..."]
+      }
+    }
+  ],
+  "monetizationLanes": [
+    {
+      "title": "变现方向名",
+      "fitReason": "为什么适合此人设",
+      "offerShape": "交付形态",
+      "revenueModes": ["具体变现方式1", "具体变现方式2"],
+      "firstValidation": "第一步的具体行动"
+    }
+  ]
+}
+
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
 4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
@@ -2142,17 +2173,65 @@ export const appRouter = router({
           douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", toutiao: "今日头条",
         };
         const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
-        const systemPrompt = `你是一个资深新媒体增长黑客和平台趋势分析师。请根据用户选择的 ${input.windowDays} 天时间窗口，针对 ${platformListStr} 平台，生成一份高质量的趋势报告。
+
+        // Build date anchor — always report on the PAST, never the future
+        const nowDate = new Date();
+        const todayStr = nowDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+        const pastDate = new Date(nowDate.getTime() - Number(input.windowDays) * 24 * 60 * 60 * 1000);
+        const pastStr = pastDate.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
+
+        // Read store data for selected platforms (best-effort, 15s cap)
+        const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+        const store = await Promise.race([
+          readTrendStoreForPlatforms(input.platforms as any[], { preferDerivedFiles: true }),
+          new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 15_000)),
+        ]).catch(() => storeNull);
+
+        // Build concise evidence from real store data for each platform
+        const platformEvidence = input.platforms.map((platform) => {
+          const col = (store.collections as any)?.[platform];
+          const items: any[] = col?.items || [];
+          const windowCutoff = Date.now() - Number(input.windowDays) * 24 * 60 * 60 * 1000;
+          const windowItems = items.filter((item: any) => {
+            const ts = item?.collectedAt || item?.publishedAt || item?.date || null;
+            if (!ts) return true;
+            const ms = new Date(String(ts)).getTime();
+            return Number.isFinite(ms) && ms >= windowCutoff;
+          });
+          const evidenceItems = windowItems.length > 0 ? windowItems : items.slice(0, 30);
+          const hotTitles = evidenceItems.slice(0, 15).map((i: any) => i.title || i.keyword || "").filter(Boolean);
+          const playCounts = evidenceItems.map((i: any) => Number(i.playCount || i.play_count || 0)).filter((v) => v > 0).sort((a, b) => b - a);
+          return {
+            platform,
+            displayName: PLATFORM_NAMES[platform] || platform,
+            itemCount: evidenceItems.length,
+            topTitles: hotTitles,
+            medianPlayCount: playCounts.length > 0 ? playCounts[Math.floor(playCounts.length / 2)] : 0,
+            topPlayCount: playCounts[0] || 0,
+          };
+        });
+
+        const systemPrompt = `你是一个资深新媒体增长黑客和平台趋势分析师。
+
+【关键时间约束 — 绝对禁止预测未来！】
+当前日期是 ${todayStr}。本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${input.windowDays} 天）。
+你必须严格基于这段历史时期内已发生的数据进行总结和回顾。
+绝对禁止使用"将会"、"预计"、"即将"、"未来"等预测性语言。
+所有描述必须是已发生的历史事实陈述，例如"在此期间，XX平台出现了……"。
+
+【数据来源约束】
+以下是从数据库提取的各平台真实近 ${input.windowDays} 天数据快照，你必须从中提取洞察，不可凭空捏造：
+${JSON.stringify(platformEvidence, null, 2)}
 
 【核心要求】你必须针对每个选定的平台，给出：
-1. trafficBoosters：当下最新的官方流量扶持活动（如：小红书新生代大赛、抖音中视频计划、B站知识区扶持）具体且时效性强，每个平台至少 2-3 条。
+1. trafficBoosters：在 ${pastStr}–${todayStr} 期间，各平台进行中的官方流量扶持活动（如：小红书新生代大赛、抖音中视频计划、B站知识区扶持）每个平台至少 2-3 条，必须是时间窗口内已有的活动。
 2. cashRewards：现金奖励任务（如：快手光合计划、头条青雲计划、抖音创作者激励）每个平台至少 2 条，必须包含大致的激励金额或门槛。
-3. hotTopics：当下热门赛道或话题（如：#AI工具 #职场健康 #文化解读），每个平台至少 3 个。
+3. hotTopics：在 ${pastStr}–${todayStr} 期间热门赛道或话题，结合上方数据库中的 topTitles 提取，每个平台至少 3 个。
 
 报告结构要求：
-- reportTitle：精准的标题，包含时间窗口
-- insightSummary：3-5 条核心洞察，每条一句话
-- platformDetails：每个平台的详细数据（platform 字段用英文原key）
+- reportTitle：精准的标题，包含时间段（${pastStr} – ${todayStr}）
+- insightSummary：3-5 条核心洞察，每条一句话，必须基于上方数据库数据
+- platformDetails：每个平台的详细数据（platform 字段用英文原key，值必须是字符串数组）
 
 【重要】直接输出原始 JSON，不要用 markdown 代码块包裹，第一个字符必须是 {，最后一个字符必须是 }。`;
 
@@ -2163,7 +2242,7 @@ export const appRouter = router({
             modelName: "gemini-2.5-pro",
             messages: [
               { role: "system", content: systemPrompt },
-              { role: "user", content: JSON.stringify({ windowDays: input.windowDays, platforms: input.platforms, generatedAt: new Date().toISOString() }) },
+              { role: "user", content: JSON.stringify({ windowDays: input.windowDays, platforms: input.platforms, today: todayStr, pastDate: pastStr, platformEvidence }) },
             ],
           });
 
