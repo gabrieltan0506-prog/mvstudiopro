@@ -43,7 +43,7 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
   const [isDownloading, setIsDownloading] = useState(false);
 
   const generateMutation = trpc.mvAnalysis.generateVisualReport.useMutation({
-    onSuccess: (result: { success: boolean; report: { reportTitle: string; insightSummary: string[]; platformDetails: Array<{ platform: string; trafficBoosters: string[]; cashRewards: string[]; hotTopics: string[] }> } }) => {
+    onSuccess: (result: any) => {
       if (!result.report) {
         toast.error("报表生成失败，请重试");
         return;
@@ -59,7 +59,10 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
         dateRange: `${start} – ${end}`,
         theme,
         insightSummary: result.report.insightSummary || [],
-        platformDetails: (result.report.platformDetails || []).map((p) => ({
+        trackGrowth: result.report.trackGrowth || [],
+        audiencesAndBiz: result.report.audiencesAndBiz || [],
+        topicExamples: result.report.topicExamples || [],
+        platformDetails: (result.report.platformDetails || []).map((p: any) => ({
           platform: p.platform,
           displayName: PLATFORM_NAMES[p.platform as PlatformKey] || p.platform,
           trafficBoosters: p.trafficBoosters || [],
