@@ -138,12 +138,15 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     <div style={{ fontSize: "11px", fontWeight: 700, color: "#ff9944", marginBottom: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
                       🚀 流量扶持活动
                     </div>
-                    {platform.trafficBoosters.map((booster, bi) => (
-                      <div key={bi} style={{ display: "flex", gap: "8px", marginBottom: "6px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
-                        <span style={{ color: "#ff9944", fontWeight: 700, minWidth: "18px" }}>{bi + 1}</span>
-                        {booster}
-                      </div>
-                    ))}
+                    {platform.trafficBoosters.map((booster, bi) => {
+                      const boosterText = typeof booster === "string" ? booster : (typeof booster === "object" && booster !== null ? (booster as any).text || (booster as any).title || (booster as any).content || (booster as any).name || Object.values(booster as any)[0] || JSON.stringify(booster) : String(booster));
+                      return (
+                        <div key={bi} style={{ display: "flex", gap: "8px", marginBottom: "6px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                          <span style={{ color: "#ff9944", fontWeight: 700, minWidth: "18px" }}>{bi + 1}</span>
+                          {String(boosterText)}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -153,12 +156,15 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     <div style={{ fontSize: "11px", fontWeight: 700, color: "#44f0a0", marginBottom: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
                       💰 现金奖励任务
                     </div>
-                    {platform.cashRewards.map((reward, ri) => (
-                      <div key={ri} style={{ display: "flex", gap: "8px", marginBottom: "6px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
-                        <span style={{ color: "#44f0a0", fontWeight: 700, minWidth: "18px" }}>💎</span>
-                        {reward}
-                      </div>
-                    ))}
+                    {platform.cashRewards.map((reward, ri) => {
+                      const rewardText = typeof reward === "string" ? reward : (typeof reward === "object" && reward !== null ? (reward as any).text || (reward as any).title || (reward as any).content || (reward as any).name || Object.values(reward as any)[0] || JSON.stringify(reward) : String(reward));
+                      return (
+                        <div key={ri} style={{ display: "flex", gap: "8px", marginBottom: "6px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                          <span style={{ color: "#44f0a0", fontWeight: 700, minWidth: "18px" }}>💎</span>
+                          {String(rewardText)}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -169,11 +175,14 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                       🔥 当下热门赛道
                     </div>
                     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                      {platform.hotTopics.map((topic, ti) => (
-                        <span key={ti} style={{ fontSize: "11px", background: isDark ? "#1e0d40" : "#fff5e0", color: "#ffdd44", border: "1px solid rgba(255,221,68,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
-                          {topic}
-                        </span>
-                      ))}
+                      {platform.hotTopics.map((topic, ti) => {
+                        const topicText = typeof topic === "string" ? topic : (typeof topic === "object" && topic !== null ? (topic as any).text || (topic as any).title || (topic as any).content || (topic as any).name || Object.values(topic as any)[0] || JSON.stringify(topic) : String(topic));
+                        return (
+                          <span key={ti} style={{ fontSize: "11px", background: isDark ? "#1e0d40" : "#fff5e0", color: "#ffdd44", border: "1px solid rgba(255,221,68,0.3)", borderRadius: "20px", padding: "2px 10px" }}>
+                            {String(topicText)}
+                          </span>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

@@ -1725,12 +1725,24 @@ export default function PlatformPage() {
                   视频怎么拍 / 图文怎么写
                 </div>
                 <div className="mt-5 space-y-3">
-                  {executionBlueprint.map((item) => (
-                    <div key={item.label} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="text-sm font-semibold text-white">{item.label}</div>
-                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.detail}</div>
+                  {/* Show loading skeleton while Call 3 is running */}
+                  {isContentLoading && executionBlueprint.length === 0 ? (
+                    <div className="flex h-24 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#8cefff]/60">
+                      <Loader2 className="mb-2 h-5 w-5 animate-spin" />
+                      <span className="text-sm">正在重构开场三秒钩子、搭建高留存内容骨架...</span>
                     </div>
-                  ))}
+                  ) : executionBlueprint.length === 0 ? (
+                    <div className="flex h-24 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/60 text-sm">
+                      完成平台分析后将显示专属执行细节
+                    </div>
+                  ) : (
+                    executionBlueprint.map((item) => (
+                      <div key={item.label} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                        <div className="text-sm font-semibold text-white">{item.label}</div>
+                        <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.detail}</div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -1740,12 +1752,30 @@ export default function PlatformPage() {
                   个性化分析
                 </div>
                 <div className="mt-5 space-y-3">
-                  {[...businessTranslation.slice(0, 2), ...audienceTriggers.slice(0, 2).map((item) => ({ title: item.label, detail: item.reason }))].map((item, index) => (
-                    <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="text-sm font-semibold text-white">{cleanUserCopy(item.title, `理由 ${index + 1}`)}</div>
-                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{cleanUserCopy(item.detail, "这条内容路径更容易让用户理解你是谁，以及为什么值得继续看。")}</div>
+                  {/* Prefer LLM topSignals (Call 2) — never fall back to snapshot generic text */}
+                  {isDashboardLoading ? (
+                    <div className="flex h-16 w-full animate-pulse items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-sm text-[#8cefff]/60">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      正在生成个性化判断...
                     </div>
-                  ))}
+                  ) : platformDashboard?.topSignals && platformDashboard.topSignals.length > 0 ? (
+                    platformDashboard.topSignals.slice(0, 4).map((signal: any, idx: number) => {
+                      const sigTitle = typeof signal === "string" ? signal : cleanUserCopy(signal?.title || signal?.["标题"] || signal?.["核心判断"] || "", "");
+                      const sigDetail = typeof signal === "object" ? cleanUserCopy(signal?.detail || signal?.desc || signal?.description || signal?.["详情"] || "", "") : "";
+                      if (!sigTitle && !sigDetail) return null;
+                      return (
+                        <div key={`sig-${idx}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                          {sigTitle ? <div className="text-sm font-semibold text-white">{sigTitle}</div> : null}
+                          {sigDetail ? <div className="mt-2 text-sm leading-7 text-[#d3caef]">{sigDetail}</div> : null}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    // No LLM data — show empty state rather than stale snapshot text
+                    <div className="flex h-16 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-sm text-[#c9c0e6]/60">
+                      暂无个性化判断数据
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
