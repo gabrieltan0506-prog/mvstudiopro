@@ -1513,18 +1513,18 @@ export default function PlatformPage() {
                             </div>
                             <div className="text-xl font-bold text-white">{item.name}</div>
                           </div>
-                          <div className="mt-3 text-sm leading-7 text-[#b9afd9]">{item.trend}</div>
+                          <div className="mt-3 text-sm leading-7 text-[#b9afd9]">{renderSafeText(item.trend)}</div>
                             </div>
                             <div className="rounded-full border border-white/10 bg-[rgba(255,255,255,0.04)] px-3 py-2 text-xs text-[#d6cdf0]">
-                              {item.lane}
+                              {renderSafeText(item.lane)}
                             </div>
                           </div>
                           {Array.isArray((item as any).trafficBoosters) && (item as any).trafficBoosters.length > 0 ? (
                             <div className="mt-3 flex flex-wrap gap-2">
-                              {(item as any).trafficBoosters.map((b: string, bi: number) => (
+                              {(item as any).trafficBoosters.map((b: any, bi: number) => (
                                 <span key={bi} className="inline-flex items-center gap-1 rounded-full border border-[#ff6b2b]/40 bg-[rgba(255,100,30,0.12)] px-3 py-1 text-[11px] font-medium text-[#ff9966] animate-pulse">
                                   <Flame className="h-3 w-3" />
-                                  {b}
+                                  {renderSafeText(b)}
                                 </span>
                               ))}
                             </div>
@@ -1532,11 +1532,11 @@ export default function PlatformPage() {
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
                         <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">为什么现在做</div>
-                          <div className="mt-2 text-sm leading-7 text-white">{item.whyNow}</div>
+                          <div className="mt-2 text-sm leading-7 text-white whitespace-pre-wrap">{renderSafeText(item.whyNow)}</div>
                         </div>
                         <div className="rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-4">
                           <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">建议动作</div>
-                          <div className="mt-2 text-sm leading-7 text-white">{item.nextMove}</div>
+                          <div className="mt-2 text-sm leading-7 text-white whitespace-pre-wrap">{renderSafeText(item.nextMove)}</div>
                         </div>
                       </div>
                       {(item.hook || item.monetization) ? (
@@ -1544,23 +1544,23 @@ export default function PlatformPage() {
                           {item.hook ? (
                             <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                               <div className="text-[11px] uppercase tracking-[0.18em] text-[#8cefff]">开头怎么说</div>
-                              <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.hook}</div>
+                              <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderSafeText(item.hook)}</div>
                             </div>
                           ) : null}
                           {item.monetization ? (
                             <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                               <div className="text-[11px] uppercase tracking-[0.18em] text-[#ffdd44]">更适合的承接</div>
-                              <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.monetization}</div>
+                              <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderSafeText(item.monetization)}</div>
                             </div>
                           ) : null}
                         </div>
                       ) : null}
                       {((item as any).primaryTrack || (item as any).estimatedTraffic || (item as any).ipUniqueness || (item as any).commercialConversion) ? (
                         <div className="mt-3 grid grid-cols-2 gap-2">
-                          {(item as any).primaryTrack ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Target className="h-3 w-3" />赛道</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).primaryTrack || '分析中...'}</div></div>) : null}
-                          {(item as any).estimatedTraffic ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><BarChart3 className="h-3 w-3" />预估流量</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).estimatedTraffic || '分析中...'}</div></div>) : null}
-                          {(item as any).ipUniqueness ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Star className="h-3 w-3" />IP稀缺度</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).ipUniqueness || '分析中...'}</div></div>) : null}
-                          {(item as any).commercialConversion ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><DollarSign className="h-3 w-3" />商业转化</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).commercialConversion || '分析中...'}</div></div>) : null}
+                          {(item as any).primaryTrack ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Target className="h-3 w-3" />赛道</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).primaryTrack, '分析中...')}</div></div>) : null}
+                          {(item as any).estimatedTraffic ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><BarChart3 className="h-3 w-3" />预估流量</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).estimatedTraffic, '分析中...')}</div></div>) : null}
+                          {(item as any).ipUniqueness ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Star className="h-3 w-3" />IP稀缺度</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).ipUniqueness, '分析中...')}</div></div>) : null}
+                          {(item as any).commercialConversion ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><DollarSign className="h-3 w-3" />商业转化</div><div className="mt-1 text-xs leading-6 text-white">{renderSafeText((item as any).commercialConversion, '分析中...')}</div></div>) : null}
                         </div>
                       ) : null}
                       {/* Fix #3: 对标账号 — show 用户画像 when accounts are objects or absent */}
