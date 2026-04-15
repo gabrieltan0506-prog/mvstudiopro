@@ -11,24 +11,46 @@ import type {
   GrowthTitleExecution,
 } from "@shared/growth";
 import {
+  Activity,
   ArrowLeft,
+  ArrowRight,
+  Award,
   BarChart3,
+  BookOpen,
   Bot,
+  Briefcase,
   CalendarRange,
+  Camera,
   ChevronRight,
   CircleDollarSign,
   Clock3,
   DollarSign,
+  FileText,
+  Film,
   Flame,
+  Globe,
+  Heart,
+  Image,
+  Landmark,
+  Layers,
   Loader2,
   MessageSquareText,
+  Mic,
+  Palette,
+  PenLine,
+  PlayCircle,
   Rocket,
+  Share2,
   ShieldCheck,
   Sparkles,
   Star,
+  Stethoscope,
   Target,
   TrendingUp,
+  Trophy,
   Users,
+  Video,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -121,6 +143,39 @@ type ProcessingStepCard = {
   detail: string;
   status: "done" | "active" | "pending";
 };
+
+// Smart icon picker — matches persona keywords or signal content to an appropriate Lucide icon
+// Returns a JSX element (LucideIcon rendered at given size/color)
+function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React.ReactElement {
+  const t = String(text || "").toLowerCase();
+  if (/医生|醫生|医师|醫師|心脏|心臟|临床|心血管|stethoscope|doctor|cardio/.test(t)) return <Stethoscope className={className} />;
+  if (/心电图|心電圖|ekg|ecg|脉搏|动脉|血管/.test(t)) return <Activity className={className} />;
+  if (/文化|艺术|藝術|书画|書畫|人文|古代|历史|歷史|文物|古建|收藏/.test(t)) return <Landmark className={className} />;
+  if (/美学|審美|palette|设计|設計|色彩|风格|风格/.test(t)) return <Palette className={className} />;
+  if (/视频|視頻|短视频|短片|拍摄|分镜|film|video/.test(t)) return <Video className={className} />;
+  if (/图文|圖文|图片|封面|排版|image|photo|graphic/.test(t)) return <Image className={className} />;
+  if (/播客|直播|podcast|音频|音頻|声音|聲音|mic/.test(t)) return <Mic className={className} />;
+  if (/变现|變現|收入|付费|付費|课程|課程|knowledge|monetize|商业化/.test(t)) return <DollarSign className={className} />;
+  if (/品牌|合作|赞助|贊助|brand|sponsor/.test(t)) return <Briefcase className={className} />;
+  if (/赛道|賽道|方向|策略|lane|track|strategy/.test(t)) return <Target className={className} />;
+  if (/热点|熱點|趋势|趨勢|话题|話題|trending|booster/.test(t)) return <Flame className={className} />;
+  if (/平台|platform|分发|分發/.test(t)) return <Globe className={className} />;
+  if (/文案|copy|写作|寫作|script|脚本|内容/.test(t)) return <PenLine className={className} />;
+  if (/书|書|阅读|閱讀|knowledge|知识|知識/.test(t)) return <BookOpen className={className} />;
+  if (/奖|獎|top|第一|冠军|冠軍|award|trophy/.test(t)) return <Trophy className={className} />;
+  if (/步骤|步驟|行动|行動|action|execute|step/.test(t)) return <Zap className={className} />;
+  if (/粉丝|粉絲|用户|用戶|audience|followers/.test(t)) return <Users className={className} />;
+  if (/分享|share|传播|傳播/.test(t)) return <Share2 className={className} />;
+  if (/数据|數據|analytics|stat|metric/.test(t)) return <BarChart3 className={className} />;
+  if (/layer|level|层|層|structure|结构|結構/.test(t)) return <Layers className={className} />;
+  if (/情感|情緒|emotion|心理|心靈/.test(t)) return <Heart className={className} />;
+  if (/article|文章|报告|報告|文档|文檔/.test(t)) return <FileText className={className} />;
+  // Rotating fallback based on hash of text (ensures different cards get different icons)
+  const fallbacks = [<Sparkles className={className} />, <Star className={className} />, <Award className={className} />, <PlayCircle className={className} />, <ArrowRight className={className} />];
+  let hash = 0;
+  for (let i = 0; i < t.length; i++) hash = (hash * 31 + t.charCodeAt(i)) & 0xffff;
+  return fallbacks[hash % fallbacks.length];
+}
 
 function extractFocusKeywords(value: string) {
   return Array.from(
@@ -1325,7 +1380,10 @@ export default function PlatformPage() {
                     {keyInsights.filter(item => item.title || item.detail).slice(0, 3).map((item, index) => (
                       <div key={`${item.title}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                          <div className="flex items-center gap-2">
+                            {getSmartIcon((item.title || "") + " " + (item.detail || ""), "h-4 w-4 text-[#8cefff] shrink-0")}
+                            <div className="text-sm font-semibold text-white">{item.title}</div>
+                          </div>
                           {item.badge ? (
                             <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                               {item.badge}
@@ -1498,7 +1556,10 @@ export default function PlatformPage() {
                   {contentExecutionCards.map((item) => (
                     <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                        <div className="flex items-center gap-2">
+                          {item.format === "图文" ? <Image className="h-4 w-4 text-[#ff7fd5] shrink-0" /> : <Video className="h-4 w-4 text-[#49e6ff] shrink-0" />}
+                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                        </div>
                         <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                           {item.format}
                         </div>
@@ -1568,7 +1629,10 @@ export default function PlatformPage() {
                 <div className="mt-5 grid gap-3 md:grid-cols-2">
                   {monetizationCards.map((item) => (
                     <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="text-sm font-semibold text-white">{item.title}</div>
+                      <div className="flex items-center gap-2">
+                        {getSmartIcon(item.title + " 变现 付费", "h-4 w-4 text-[#ffdd44] shrink-0")}
+                        <div className="text-sm font-semibold text-white">{item.title}</div>
+                      </div>
                       <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.summary}</div>
                       {item.action ? (
                         <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
@@ -1623,7 +1687,10 @@ export default function PlatformPage() {
                   {actionSteps.map((item) => (
                     <div key={`step-${item.day}-${item.title}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="font-semibold text-white">{item.title}</div>
+                        <div className="flex items-center gap-2">
+                          {getSmartIcon(item.title + " " + item.action, "h-4 w-4 text-[#6fffb0] shrink-0")}
+                          <div className="font-semibold text-white">{item.title}</div>
+                        </div>
                         <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-3 py-1 text-[11px] text-[#8cefff]">
                           第 {item.day} 步
                         </div>
