@@ -178,6 +178,23 @@ function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React
   return fallbacks[hash % fallbacks.length];
 }
 
+// Universal safe-text extractor — handles string | object | null from LLM outputs
+// Prevents [object Object] from rendering in JSX by extracting the most likely text field
+function renderSafeText(item: any, fallback = ""): string {
+  if (!item && item !== 0) return fallback;
+  if (typeof item === "string") return item;
+  if (typeof item === "number") return String(item);
+  if (typeof item === "object") {
+    return String(
+      item.title || item.text || item.content || item.name || item.desc ||
+      item.laneName || item.label || item.value || item.detail ||
+      Object.values(item).find((v) => typeof v === "string") ||
+      JSON.stringify(item)
+    );
+  }
+  return String(item);
+}
+
 function extractFocusKeywords(value: string) {
   return Array.from(
     new Set((String(value || "").match(/[\u4e00-\u9fa5A-Za-z]{2,}/g) || []).slice(0, 6)),
@@ -636,7 +653,7 @@ export default function PlatformPage() {
           it?.["变现方式"] ||
           it?.revenue_modes;
         const normalizedRev: string[] = Array.isArray(rawRev)
-          ? rawRev.map(String)
+          ? rawRev.map((r) => renderSafeText(r))
           : typeof rawRev === "string" && rawRev.trim()
           ? [rawRev]
           : [];
@@ -654,17 +671,25 @@ export default function PlatformPage() {
       const monetizationSource = rawLanes ? rawLanes.map(normalizeMonetizationItem) : null;
 
       if (monetizationSource && monetizationSource.length > 0) {
-        return monetizationSource.slice(0, 2).map((item: any, index: number) => ({
-          id: `${item.title || index}-${index}`,
-          title: cleanUserCopy(item.title || item["变现方向名"] || item["标题"] || "", `变现路径 ${index + 1}`),
-          summary: cleanUserCopy(item.fitReason || item.summary || item["为什么适合此人设"] || "", ""),
-          action: cleanUserCopy(
-            [item.offerShape || item["交付形态"], ...item.revenueModes, item.firstValidation || item["第一步如何做轻量验证"]]
-              .filter(Boolean)
-              .join(" / "),
-            "",
-          ),
-        }));
+        return monetizationSource.slice(0, 2).map((item: any, index: number) => {
+          // Task II: Support laneName / feasibility / actionItem keys from strict JSON template
+          const title = item.title || item.laneName || item["变现方向名"] || item["标题"] || "";
+          const summary = item.fitReason || item.feasibility || item.summary || item["为什么适合此人设"] || "";
+          const actionPieces = [
+            item.offerShape || item["交付形态"],
+            ...item.revenueModes,
+            item.firstValidation || item.actionItem || item["第一步如何做轻量验证"]
+          ];
+          return {
+            id: `${title || index}-${index}`,
+            title: cleanUserCopy(renderSafeText(title, `变现路径 ${index + 1}`), `变现路径 ${index + 1}`),
+            summary: cleanUserCopy(renderSafeText(summary), ""),
+            action: cleanUserCopy(
+              actionPieces.map((p) => renderSafeText(p)).filter(Boolean).join(" / "),
+              ""
+            ),
+          };
+        });
       }
 
       if (isDashboardLoading || isContentLoading || platformDashboard || platformContent) {
@@ -705,34 +730,43 @@ export default function PlatformPage() {
         // Normalize suitablePlatforms: Gemini sometimes returns a comma-separated string instead of array
         const rawPlatforms = item.suitablePlatforms || item["适合平台"] || item["平台"] || [];
         const suitablePlatforms: string[] = Array.isArray(rawPlatforms)
-          ? rawPlatforms.map(String)
+          ? rawPlatforms.map((r) => renderSafeText(r))
           : typeof rawPlatforms === "string" && rawPlatforms.trim()
           ? rawPlatforms.split(/[,，、/]+/).map((s: string) => s.trim()).filter(Boolean)
           : [];
           
-        const actionSteps: string[] = Array.isArray(item.actionableSteps) ? item.actionableSteps.map(String) : [];
+        const actionSteps: string[] = Array.isArray(item.actionableSteps) ? item.actionableSteps.map((a: any) => renderSafeText(a)) : [];
 
-        const execDetails = item.executionDetails || {};
+        const execDetails = typeof item.executionDetails === "object" && item.executionDetails !== null ? item.executionDetails : {};
         const envWardrobe = execDetails.environmentAndWardrobe || execDetails["拍摄环境服装"] || execDetails["环境服装"] || "";
         const lightCam = execDetails.lightingAndCamera || execDetails["灯光机位"] || execDetails["灯光镜头"] || "";
-        const scriptSteps: string[] = Array.isArray(execDetails.stepByStepScript)
-          ? execDetails.stepByStepScript.map(String)
-          : typeof execDetails.stepByStepScript === "string" && execDetails.stepByStepScript.trim()
-          ? [execDetails.stepByStepScript]
-          : [];
+        
+        let scriptSteps: string[] = [];
+        if (Array.isArray(execDetails.stepByStepScript)) {
+          scriptSteps = execDetails.stepByStepScript.map((s: any) => renderSafeText(s));
+        } else if (typeof execDetails.stepByStepScript === "string" && execDetails.stepByStepScript.trim()) {
+          scriptSteps = [execDetails.stepByStepScript];
+        } else if (typeof execDetails.stepByStepScript === "object" && execDetails.stepByStepScript !== null) {
+          scriptSteps = [renderSafeText(execDetails.stepByStepScript)];
+        }
 
         return {
           id: `${title || index}-${index}`,
-          title: cleanUserCopy(title, `内容方案 ${index + 1}`),
-          hook: cleanUserCopy(hook, "先用一句明确判断开头。"),
-          copywriting: cleanUserCopy(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
-          production: cleanUserCopy(productionRaw, ""),
-          format: format,
+          // Task II: Support theme / titleExample / contentHook keys from strict JSON template
+          title: cleanUserCopy(renderSafeText(title || item.theme || item.titleExample, `内容方案 ${index + 1}`), `内容方案 ${index + 1}`),
+          hook: cleanUserCopy(renderSafeText(hook || item.contentHook, "先用一句明确判断开头。"), "先用一句明确判断开头。"),
+          copywriting: cleanUserCopy(renderSafeText(copywriting, "把这条内容写成用户一看就知道你在解决什么问题的版本。"), "把这条内容写成用户一看就知道你在解决什么问题的版本。"),
+          production: cleanUserCopy(renderSafeText(productionRaw), ""),
+          format: renderSafeText(format),
           suitablePlatforms,
           actionableSteps: actionSteps,
-          detailedScript: item.detailedScript || "",
-          publishingAdvice: item.publishingAdvice || "",
-          executionDetails: { environmentAndWardrobe: envWardrobe, lightingAndCamera: lightCam, stepByStepScript: scriptSteps },
+          detailedScript: renderSafeText(item.detailedScript || ""),
+          publishingAdvice: renderSafeText(item.publishingAdvice || ""),
+          executionDetails: {
+            environmentAndWardrobe: renderSafeText(envWardrobe),
+            lightingAndCamera: renderSafeText(lightCam),
+            stepByStepScript: scriptSteps
+          },
         };
       });
     }

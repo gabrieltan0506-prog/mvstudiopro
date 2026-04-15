@@ -484,6 +484,7 @@ async function buildPlatformDashboard(params: {
     model: "pro",
     provider: "gemini",
     modelName: "gemini-2.5-pro",
+    maxTokens: 8192,
     messages: [
       {
         role: "system",
@@ -524,7 +525,9 @@ async function buildPlatformDashboard(params: {
 
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
-【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
+【绝对警告 — JSON 输出规范】：
+请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
+输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
 字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
       },
       {
@@ -573,24 +576,37 @@ async function buildPlatformDashboard(params: {
     ],
   });
 
-  // Phase 0-C: Robust JSON extraction — proactively strip markdown fences before JSON.parse
-  // Gemini 2.5 Pro often wraps output in ```json ... ``` even when instructed not to
-  const rawContent = String(response.choices[0]?.message?.content || "{}");
-  // Step 1: unconditionally strip markdown code fences before attempting JSON.parse
+  // Phase 0-C: Robust JSON extraction — greedy bracket extraction, then fence strip fallback
+  const rawContent = String(response.choices[0]?.message?.content || "");
+  // Step 1: greedy bracket extraction — find the outermost { … } block in the raw output
+  // This is the most reliable method when Gemini adds preamble/postamble text
+  const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
+  const bracketExtracted = bracketMatch ? bracketMatch[0].trim() : "";
+  // Step 2: fence strip fallback (original method, kept as secondary)
   const fenceMatch = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
   const strippedContent = fenceMatch
     ? fenceMatch[1].trim()
     : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
   let parsedRaw: unknown;
   try {
-    parsedRaw = JSON.parse(strippedContent);
+    // Prefer greedy bracket extraction — handles preamble/postamble text
+    parsedRaw = JSON.parse(bracketExtracted || strippedContent);
   } catch {
-    // Last resort: try original raw content in case stripping broke something
+    // Fallback 1: fence-stripped content
     try {
-      parsedRaw = JSON.parse(rawContent);
+      parsedRaw = JSON.parse(strippedContent);
     } catch {
-      console.error("[buildPlatformDashboard] JSON parse failed. strippedContent preview:", strippedContent.slice(0, 500));
-      parsedRaw = {};
+      // Fallback 2: raw content (last resort)
+      try {
+        parsedRaw = JSON.parse(rawContent);
+      } catch {
+        // Crime scene logging — print the raw output so we can diagnose truncation
+        console.error("[buildPlatformDashboard] JSON parse FAILED on all attempts.");
+        console.error("[buildPlatformDashboard] rawContent length:", rawContent.length);
+        console.error("[buildPlatformDashboard] rawContent preview (first 600 chars):", rawContent.slice(0, 600));
+        console.error("[buildPlatformDashboard] rawContent tail (last 200 chars):", rawContent.slice(-200));
+        parsedRaw = {};
+      }
     }
   }
 
@@ -641,6 +657,7 @@ async function buildPlatformContent(params: {
     model: "pro",
     provider: "gemini",
     modelName: "gemini-2.5-pro",
+    maxTokens: 8192,
     messages: [
       {
         role: "system",
@@ -719,6 +736,10 @@ async function buildPlatformContent(params: {
   ]
 }
 
+【绝对警告 — JSON 输出规范】：
+请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
+输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
+
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
 4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
@@ -743,21 +764,31 @@ async function buildPlatformContent(params: {
     ],
   });
 
-  // Proactively strip markdown fences before JSON.parse — same as buildPlatformDashboard
-  const rawContent = String(response.choices[0]?.message?.content || "{}");
+  // Robust JSON extraction — greedy bracket extraction, then fence strip fallback
+  const rawContent = String(response.choices[0]?.message?.content || "");
+  const bracketMatch = rawContent.match(/\{[\s\S]*\}/);
+  const bracketExtracted = bracketMatch ? bracketMatch[0].trim() : "";
+  
   const fenceMatch2 = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
   const strippedContent2 = fenceMatch2
     ? fenceMatch2[1].trim()
     : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
+  
   let parsedRaw: unknown;
   try {
-    parsedRaw = JSON.parse(strippedContent2);
+    parsedRaw = JSON.parse(bracketExtracted || strippedContent2);
   } catch {
     try {
-      parsedRaw = JSON.parse(rawContent);
+      parsedRaw = JSON.parse(strippedContent2);
     } catch {
-      console.error("[buildPlatformContent] JSON parse failed. strippedContent preview:", strippedContent2.slice(0, 500));
-      parsedRaw = {};
+      try {
+        parsedRaw = JSON.parse(rawContent);
+      } catch {
+        console.error("[buildPlatformContent] JSON parse FAILED on all attempts.");
+        console.error("[buildPlatformContent] rawContent length:", rawContent.length);
+        console.error("[buildPlatformContent] rawContent tail (last 200 chars):", rawContent.slice(-200));
+        parsedRaw = {};
+      }
     }
   }
 
