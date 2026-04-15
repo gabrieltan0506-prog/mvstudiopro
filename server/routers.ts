@@ -2264,7 +2264,12 @@ ${JSON.stringify(platformEvidence, null, 2)}
 - insightSummary：3-5 条核心洞察，每条一句话，必须基于上方数据库数据
 - platformDetails：每个平台的详细数据（platform 字段用英文原key，值必须是字符串数组）
 
-【重要】直接输出原始 JSON，不要用 markdown 代码块包裹，第一个字符必须是 {，最后一个字符必须是 }。`;
+此外，必须在全局层级（不在 platformDetails 内）输出以下**跨平台综合维度**，不得省略：
+- trackGrowth：近期爆款赛道增长排行（3-6条），每条格式如：{"name": "探索世界", "growth": "+153%", "isHot": true}
+- audiencesAndBiz：目标人群与商业方向（2-3条），每条格式如：{"audience": "城市生活方式消费人群，关注旅行、美食", "bizDirection": "美甲、美妆、穿搭配饰、收纳用品"}
+- topicExamples：近期高效选题结构实例（3-5条），每条格式如：{"structure": "城市名 + 攻略 / 打卡结果", "concept": "探索世界类内容，城市名+数字结果持续有效", "realCase": "清明去西安3天，人均400吃透了当地"}。realCase 必须是**具体接地气的真实感文章标题**，不可以是泛泛描述。
+
+【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
         try {
           const response = await invokeLLM({
@@ -2283,17 +2288,27 @@ ${JSON.stringify(platformEvidence, null, 2)}
           let parsed: any = {};
           try { parsed = JSON.parse(stripped); } catch { try { parsed = JSON.parse(rawContent); } catch { parsed = {}; } }
 
+          const safeStr = (v: any) => String(v ?? "");
           return {
             success: true,
             report: {
-              reportTitle: String(parsed.reportTitle || `平台趋势看板 · 近${input.windowDays}天`),
-              insightSummary: Array.isArray(parsed.insightSummary) ? parsed.insightSummary.map(String) : [],
+              reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
+              insightSummary: Array.isArray(parsed.insightSummary) ? parsed.insightSummary.map(safeStr) : [],
+              trackGrowth: Array.isArray(parsed.trackGrowth)
+                ? parsed.trackGrowth.map((t: any) => ({ name: safeStr(t?.name || t), growth: safeStr(t?.growth || ""), isHot: Boolean(t?.isHot) }))
+                : [],
+              audiencesAndBiz: Array.isArray(parsed.audiencesAndBiz)
+                ? parsed.audiencesAndBiz.map((a: any) => ({ audience: safeStr(a?.audience || a), bizDirection: safeStr(a?.bizDirection || "") }))
+                : [],
+              topicExamples: Array.isArray(parsed.topicExamples)
+                ? parsed.topicExamples.map((e: any) => ({ structure: safeStr(e?.structure || e), concept: safeStr(e?.concept || ""), realCase: safeStr(e?.realCase || "") }))
+                : [],
               platformDetails: Array.isArray(parsed.platformDetails)
                 ? parsed.platformDetails.map((p: any) => ({
-                    platform: String(p.platform || ""),
-                    trafficBoosters: Array.isArray(p.trafficBoosters) ? p.trafficBoosters.map(String) : [],
-                    cashRewards: Array.isArray(p.cashRewards) ? p.cashRewards.map(String) : [],
-                    hotTopics: Array.isArray(p.hotTopics) ? p.hotTopics.map(String) : [],
+                    platform: safeStr(p?.platform || ""),
+                    trafficBoosters: Array.isArray(p?.trafficBoosters) ? p.trafficBoosters.map(safeStr) : [],
+                    cashRewards: Array.isArray(p?.cashRewards) ? p.cashRewards.map(safeStr) : [],
+                    hotTopics: Array.isArray(p?.hotTopics) ? p.hotTopics.map(safeStr) : [],
                   }))
                 : [],
             },
