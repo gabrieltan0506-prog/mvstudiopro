@@ -976,9 +976,9 @@ export default function PlatformPage() {
                 平台顾问台
               </div>
               <h1 className="mt-5 max-w-5xl text-[40px] font-black leading-[0.92] text-white md:text-[64px] xl:text-[76px]">
-                不是告诉你“平台都能做”
+                不是告诉你"平台都能做"
                 <span className="mt-2 block bg-[linear-gradient(135deg,#5af2ff,#7d73ff_45%,#ff75bd_85%)] bg-clip-text text-transparent">
-                  而是告诉你 {personalizedSubject} 现在该先打哪里
+                  而是告诉你现在该先打哪里
                 </span>
               </h1>
               <p className="mt-5 max-w-3xl text-sm leading-8 text-[#d3caef] md:text-base">
@@ -1339,25 +1339,6 @@ export default function PlatformPage() {
                 ) : null}
               </div>
 
-              <div className={shellCardClasses("p-6")}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Clock3 className="h-4 w-4 text-[#ffdd44]" />
-                  这页会帮你直接判断
-                </div>
-                <div className="mt-4 space-y-3">
-                  {evidenceNotes.map((item, index) => (
-                    <div key={`${item}-${index}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4 text-sm leading-7 text-[#d3caef]">
-                      {item}
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 rounded-2xl border border-[#2f2558] bg-[linear-gradient(135deg,rgba(73,230,255,0.08),rgba(255,117,189,0.06))] p-4">
-                  <div className="text-xs uppercase tracking-[0.18em] text-[#8cefff]">顾问结论风格</div>
-                  <div className="mt-2 text-sm leading-7 text-white">
-                    先给判断，再给原因，再给动作建议；不讲“可能都可以”，而是明确告诉你先从哪里试，哪里暂时别浪费时间。
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -1428,75 +1409,92 @@ export default function PlatformPage() {
                         </div>
                       ) : null}
                       {Array.isArray((item as any).referenceAccounts) && (item as any).referenceAccounts.length > 0 ? (
-                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div><div className="mt-2 flex flex-wrap gap-2">{(item as any).referenceAccounts.map((acc: string, ai: number) => (<span key={ai} className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1 text-[11px] text-[#c9c0e6]">{acc}</span>))}</div></div>
+                        <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div>
+                          <div className="mt-2 space-y-2">
+                            {(item as any).referenceAccounts.map((acc: any, ai: number) => {
+                              const accountText = typeof acc === "string" ? acc : (acc?.account || acc?.name || acc?.title || "");
+                              const reasonText = typeof acc === "object" ? (acc?.reason || acc?.description || "") : "";
+                              if (!accountText) return null;
+                              return (
+                                <div key={ai} className="rounded-lg border border-[#3a2b6a] bg-[#170d35] px-3 py-2">
+                                  <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div>
+                                  {reasonText ? <div className="mt-1 text-[11px] leading-5 text-[#9080b8]">{reasonText}</div> : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       ) : null}
                     </div>
                   ))}
                 </div>
               </div>
 
-              <div className="grid gap-4">
-                <div className={shellCardClasses("p-6")}>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Target className="h-4 w-4 text-[#6fffb0]" />
-                    平台适配度
-                  </div>
-                  <div className="mt-4 space-y-4">
-                    {primaryPlatforms.map((item) => (
-                      <div key={`fit-${item.platform}`}>
-                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                          <div className="font-semibold text-white">{item.displayName}</div>
-                          <div className="text-[#8cefff]">{item.audienceFitScore} / 100</div>
-                        </div>
-                        <div className="h-3 rounded-full bg-[#1a103d]">
-                          <div
-                            className="h-3 rounded-full bg-[linear-gradient(90deg,#2ef0ff,#7f67ff,#ff4fb8)]"
-                            style={{ width: `${getRelativeBar(item.audienceFitScore, maxFit)}%` }}
-                          />
-                        </div>
-                        <div className="mt-2 text-xs leading-6 text-[#b7add8]">{item.summary}</div>
-                      </div>
-                    ))}
-                  </div>
+              <div className={shellCardClasses("p-6")}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <BarChart3 className="h-4 w-4 text-[#6fffb0]" />
+                  平台商业价值评估
                 </div>
-
-                <div className={shellCardClasses("p-6")}>
-                  <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                    <Rocket className="h-4 w-4 text-[#ff7fd5]" />
-                    动量与竞争
-                  </div>
-                  <div className="mt-4 space-y-4">
-                    {primaryPlatforms.map((item) => (
-                      <div key={`momentum-${item.platform}`}>
-                        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                          <div className="font-semibold text-white">{item.displayName}</div>
-                          <div className="text-[#ffe27b]">动量 {item.momentumScore}</div>
-                        </div>
-                        <div className="h-3 rounded-full bg-[#1a103d]">
-                          <div
-                            className="h-3 rounded-full bg-[linear-gradient(90deg,#ffdd44,#ff9944,#ff4fb8)]"
-                            style={{ width: `${getRelativeBar(item.momentumScore, maxMomentum)}%` }}
-                          />
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#b7add8]">
-                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">竞争：{item.competitionLevel}</span>
-                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">互动率中位数：{item.last30d.engagementRateMedian}</span>
-                          <span className="rounded-full border border-[#3a2b6a] bg-[#170d35] px-2 py-1">样本：{item.last30d.sampleSizeLabel}</span>
-                        </div>
+                <div className="mt-4 space-y-5">
+                  {platformDecisionRows.map((item) => {
+                    const hasFourD = (item as any).primaryTrack || (item as any).estimatedTraffic || (item as any).ipUniqueness || (item as any).commercialConversion;
+                    return (
+                      <div key={`biz-${item.id}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                        <div className="mb-3 font-semibold text-white">{item.name}</div>
+                        {hasFourD ? (
+                          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+                            {(item as any).estimatedTraffic ? (
+                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
+                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">预估流量</div>
+                                <div className="mt-1 text-base font-bold text-white">{(item as any).estimatedTraffic}</div>
+                              </div>
+                            ) : null}
+                            {(item as any).ipUniqueness ? (
+                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
+                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">IP 独特性</div>
+                                <div className="mt-1 text-base font-bold text-white">{(item as any).ipUniqueness}</div>
+                              </div>
+                            ) : null}
+                            {(item as any).commercialConversion ? (
+                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
+                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">商业转化率</div>
+                                <div className="mt-1 text-base font-bold text-[#6fffb0]">{(item as any).commercialConversion}</div>
+                              </div>
+                            ) : null}
+                            {(item as any).primaryTrack ? (
+                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
+                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">核心赛道</div>
+                                <div className="mt-1 text-sm font-semibold text-[#ffdd44]">{(item as any).primaryTrack}</div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2">
+                              <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">适配度</div>
+                              <div className="mt-1 text-sm font-semibold text-white">{(primaryPlatforms.find(p => p.displayName === item.name || p.platform === item.name) as any)?.audienceFitScore ?? '-'} / 100</div>
+                            </div>
+                            <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2">
+                              <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">动量分</div>
+                              <div className="mt-1 text-sm font-semibold text-white">{(primaryPlatforms.find(p => p.displayName === item.name || p.platform === item.name) as any)?.momentumScore ?? '-'}</div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+            <div className="grid gap-4">
               <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
                   选题方向与文案内容
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   {contentExecutionCards.map((item) => (
                     <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="flex items-center justify-between gap-3">
@@ -1567,14 +1565,16 @@ export default function PlatformPage() {
                   <CircleDollarSign className="h-4 w-4 text-[#ffdd44]" />
                   商业化建议先磨到可落地
                 </div>
-                <div className="mt-5 space-y-3">
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
                   {monetizationCards.map((item) => (
                     <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
                       <div className="text-sm font-semibold text-white">{item.title}</div>
                       <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.summary}</div>
-                      <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
-                        {item.action}
-                      </div>
+                      {item.action ? (
+                        <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
+                          {item.action}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1600,7 +1600,7 @@ export default function PlatformPage() {
               <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Target className="h-4 w-4 text-[#6fffb0]" />
-                  为什么这条路更适合你
+                  个性化分析
                 </div>
                 <div className="mt-5 space-y-3">
                   {[...businessTranslation.slice(0, 2), ...audienceTriggers.slice(0, 2).map((item) => ({ title: item.label, detail: item.reason }))].map((item, index) => (
@@ -1636,11 +1636,11 @@ export default function PlatformPage() {
 
               <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <ShieldCheck className="h-4 w-4 text-[#8cefff]" />
-                  你还想继续追问什么
+                  <MessageSquareText className="h-4 w-4 text-[#8cefff]" />
+                  深度追问
                 </div>
                 <p className="mt-3 max-w-3xl text-sm leading-7 text-[#c8bfe7]">
-                  这一轮追问会继续锁定在近 {selectedWindowDays} 天和你当前关注的“{personalizedSubject}”，不是重新输出一份平台基础课，而是把结论继续往“选题、形式、节奏、承接动作”推进。
+                  这一轮追问会继续锁定在近 {selectedWindowDays} 天的数据，把结论继续往"选题、形式、节奏、承接动作"推进。点击问题加载到输入框后可以补充或修改，再点击发送。
                 </p>
 
                 <div className="mt-5 flex flex-wrap gap-2">
@@ -1648,10 +1648,7 @@ export default function PlatformPage() {
                     <button
                       key={item}
                       type="button"
-                      onClick={() => {
-                        setQuestion(item);
-                        void handleAsk(item);
-                      }}
+                      onClick={() => setQuestion(item)}
                       className="rounded-full border border-[#3a2b6a] bg-[#140b31] px-3 py-2 text-sm text-[#d7d0ef] transition hover:border-[#49e6ff]/25 hover:bg-[rgba(73,230,255,0.08)]"
                     >
                       {item}

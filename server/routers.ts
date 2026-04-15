@@ -354,7 +354,7 @@ const platformDashboardResponseSchema = z.object({
   platformMenu: z.array(z.object({
     platform: z.string().optional(),
     whyNow: z.string().optional(),
-    referenceAccounts: z.array(z.string()).optional(),
+    referenceAccounts: z.array(z.any()).optional(),
     primaryTrack: z.string().optional(),
     estimatedTraffic: z.string().optional(),
     ipUniqueness: z.string().optional(),
@@ -412,6 +412,32 @@ async function buildPlatformDashboard(params: {
     };
   });
 
+  // Compute platform baseline stats from the ALWAYS-45-day store data
+  // These numbers ground the LLM's metric calculation regardless of the user's window selection
+  const platformBaselineStats = params.requestedPlatforms.map((platform) => {
+    const allCollections = params.store.collections || {};
+    const col = allCollections[platform as keyof typeof allCollections];
+    const items: any[] = col?.items || [];
+    const totalItems = items.length;
+    // Median play count from items that have playCount
+    const playCounts = items.map((i: any) => Number(i.playCount || i.play_count || 0)).filter(v => v > 0).sort((a, b) => a - b);
+    const medianTraffic45d = playCounts.length > 0 ? playCounts[Math.floor(playCounts.length / 2)] : 0;
+    // Competitor density: ratio of items from competitors (not our own) out of total (proxy: items with high play count are popular creators)
+    const highCompetition = playCounts.length > 0 ? Math.min(0.85, playCounts.filter(v => v > 100000).length / Math.max(1, playCounts.length)) : 0.3;
+    // Benchmark conversion rate by platform (industry knowledge)
+    const benchmarkConversionMap: Record<string, number> = {
+      xiaohongshu: 0.025, douyin: 0.012, bilibili: 0.018, kuaishou: 0.010, toutiao: 0.008, weixin_channels: 0.020,
+    };
+    const benchmarkConversionRate = benchmarkConversionMap[platform] ?? 0.015;
+    return {
+      platform,
+      totalItems45d: totalItems,
+      medianTraffic45d,
+      competitorDensity: highCompetition,
+      benchmarkConversionRate,
+    };
+  });
+
   // Phase 1-A: Persona-bound context hint injected into system prompt
   const personaContextLine = params.context
     ? `\n\n用户背景补充（所有输出必须明显针对此背景，不得输出通用模板）：${params.context.slice(0, 300)}`
@@ -445,9 +471,9 @@ async function buildPlatformDashboard(params: {
 1. referenceAccounts：禁止给出空泛的图表套话，必须从 snapshot 数据中，明确列举 1-2 个与用户 Persona 相似的“对标账号”或“爆款案例”，并一句话分析为什么值得参考。
 2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如：“带上 #医学硬核科普 参与近期知识区流量扶持”。
 3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
-4. estimatedTraffic (预估流量)：结合平台调性给出流量预期，例如“流量极大但泛”或“曝光适中但长尾精准”。
-5. ipUniqueness (IP独特性)：评估用户身份（如心内科医生x历史文化）在该平台的稀缺程度。
-6. commercialConversion (商业转化潜力)：评估该平台对用户专业服务的付费意愿。
+4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。输出格式：如果中位数 >1M 输出"X.XM+"，>100K 输出"XXXK+"，否则输出"XX万+"。禁止输出文字描述（如"流量极大"），只输出量化数字字符串。
+5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
+6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
@@ -497,6 +523,8 @@ async function buildPlatformDashboard(params: {
             summary: (params.snapshot as any).mainPath?.summary,
             whyNow: (params.snapshot as any).mainPath?.whyNow,
           },
+          // Always-45-day database baseline for metric calculation
+          platformBaselineStats,
           collections: collectionEvidence.slice(0, 3).map((item) => ({
             platform: item.platform,
             itemCount: item.itemCount,
