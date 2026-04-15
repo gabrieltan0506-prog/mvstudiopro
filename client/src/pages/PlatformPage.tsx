@@ -290,12 +290,36 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
-function TopicImageGenerator({ title, hook, format, supervisorAccess }: { title: string; hook: string; format: "图文" | "短视频"; supervisorAccess: boolean }) {
+function TopicImageGenerator({
+  title,
+  hook,
+  format,
+  supervisorAccess,
+  executionDetails,
+}: {
+  title: string;
+  hook: string;
+  format: "图文" | "短视频";
+  supervisorAccess: boolean;
+  executionDetails?: any;
+}) {
   const [imageUrl, setImageUrl] = useState("");
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
     onSuccess: (res) => setImageUrl(res.imageUrl),
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
   });
+
+  const handleGenerateImage = () => {
+    let promptText = title + " " + hook;
+    if (executionDetails) {
+      const env = renderSafeText(executionDetails.environmentAndWardrobe);
+      const light = renderSafeText(executionDetails.lightingAndCamera);
+      if (env || light) {
+        promptText = `场景与服装：${env}，灯光与镜头：${light}。主题：${title} ${hook}`;
+      }
+    }
+    generateMutation.mutate({ topicHook: promptText, format });
+  };
 
   return (
     <div className="mt-4 border-t border-white/10 pt-4">
@@ -303,7 +327,7 @@ function TopicImageGenerator({ title, hook, format, supervisorAccess }: { title:
         <button
           type="button"
           disabled={generateMutation.isPending}
-          onClick={() => generateMutation.mutate({ topicHook: title + " " + hook, format })}
+          onClick={handleGenerateImage}
           className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-50"
         >
           {generateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-[#ffdd44]" /> : <Palette className="h-4 w-4 text-[#ffdd44]" />}
@@ -1715,6 +1739,7 @@ export default function PlatformPage() {
                           format={item.format as any}
                           hook={item.hook}
                           supervisorAccess={supervisorAccess}
+                          executionDetails={(item as any).executionDetails}
                         />
                       </div>
                     ))
