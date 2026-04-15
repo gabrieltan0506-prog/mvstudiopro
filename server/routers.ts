@@ -397,14 +397,40 @@ async function buildPlatformDashboard(params: {
   store: Awaited<ReturnType<typeof readTrendStore>>;
   windowDays: number;
 }) {
+  // Filter items to the user's selected windowDays window (15 / 30 / 45 days back from now)
+  // so that collectionEvidence reflects exactly what the user asked to analyze.
+  // Note: platformBaselineStats always uses full 45-day data (separate section below).
+  const windowCutoffMs = Date.now() - params.windowDays * 24 * 60 * 60 * 1000;
+  const filterItemsByWindow = (items: any[]): any[] =>
+    items.filter((item) => {
+      const ts =
+        item?.collectedAt ||
+        item?.collected_at ||
+        item?.publishedAt ||
+        item?.published_at ||
+        item?.createdAt ||
+        item?.created_at ||
+        item?.date ||
+        null;
+      if (!ts) return true; // No date info — include to avoid dropping valid data
+      const ms = new Date(String(ts)).getTime();
+      return Number.isFinite(ms) && ms >= windowCutoffMs;
+    });
+
   const collectionEvidence = params.requestedPlatforms.map((platform) => {
     const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
-    const bucketCounts = collection?.stats?.bucketCounts || getCollectionBucketCounts(collection?.items || []);
+    const allItems: any[] = collection?.items || [];
+    // Use window-filtered items for evidence sent to LLM (reflects user's selected time range)
+    const windowItems = filterItemsByWindow(allItems);
+    // Fall back to allItems if filtering removed everything (sparse data scenario)
+    const evidenceItems = windowItems.length > 0 ? windowItems : allItems;
+    const bucketCounts = getCollectionBucketCounts(evidenceItems);
     return {
       platform,
       collectedAt: collection?.collectedAt || null,
-      itemCount: collection?.items?.length || 0,
-      hotTitles: (collection?.items || []).slice(0, 10).map((item) => item.title).filter(Boolean),
+      itemCount: evidenceItems.length,
+      windowDays: params.windowDays,
+      hotTitles: evidenceItems.slice(0, 10).map((item: any) => item.title).filter(Boolean),
       topBuckets: Object.entries(bucketCounts)
         .sort((left, right) => right[1] - left[1])
         .slice(0, 6)
@@ -471,7 +497,14 @@ async function buildPlatformDashboard(params: {
 1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。格式：{account: "目标用户画像", reason: "具体描述"}。禁止输出 "[object Object]" 或空值。
 2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如："带上 #医学硬核科普 参与近期知识区流量扶持"。
 3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
-4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。输出格式：如果中位数 >1M 输出"X.XM+"，>100K 输出"XXXK+"，否则输出"XX万+"。禁止输出文字描述（如"流量极大"），只输出量化数字字符串。
+4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。
+   【严格禁止输出"XX万"、"X万+"等占位符！必须计算真实数字！】
+   计算公式：真实值 = medianTraffic45d × 1.2~1.5。然后格式化：
+   - 如果结果 >1,000,000 → 输出 "X.XM+"（例如 1,200,000 → "1.2M+"）
+   - 如果结果 >100,000 → 输出 "XXXK+"（例如 850,000 → "850K+"）
+   - 如果结果 >10,000 → 输出 具体数字+"万+"（例如 52,000 → "5.2万+"）
+   - 如果 medianTraffic45d === 0（无样本）→ 使用 audienceFitScore × 8000 × 1.3 作为代理估算，再格式化
+   禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
 7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
@@ -627,7 +660,17 @@ async function buildPlatformContent(params: {
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出带上什么具体官方 Hashtag。）
+   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出带上什么具体官方 Hashtag。
+     【强制脚本排版规则 — 必须严格遵守，不得简化】：
+     ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
+       "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
+       "[00:05-00:20] 视觉：切换古籍《黄帝内经》特写页。文案：两千年前的古人早就告诉你..."
+       "[00:20-00:45] 视觉：心脏神经示意图动画。文案：心脏里有一个「第二大脑」..."
+     ▸ 如果 format 为「图文」（小红书）：必须分封面+内页格式，例如：
+       "[封面设计] 大标题：古代治心病就靠这3件事。视觉：高质感茶席+心电图拼接图。"
+       "[图2-图4 痛点引入] 文案：你总是睡不好、心悸？其实古人早就有答案..."
+       "[图5-图6 核心内容] 分步列出3个要点..."
+       "[正文区] 完整文案+Hashtag（如 #中医养生 #心脏健康）。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - executionDetails（执行细节，必须极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
@@ -2143,6 +2186,57 @@ export const appRouter = router({
           };
         } catch (error) {
           throw new Error(`generateVisualReport failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }),
+
+    generateTopicImage: publicProcedure
+      .input(z.object({
+        topicHook: z.string().min(1).max(500),
+        format: z.enum(["短视频", "图文"]).optional(),
+        context: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        // Proxy to Vercel /api/google?op=nanoImage — all Vertex env vars live on Vercel, not Fly
+        // Single image only (numberOfImages: 1) to avoid rate limit
+        const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+        const aspectRatio = input.format === "图文" ? "3:4" : "16:9";
+        const styleHint = input.format === "图文"
+          ? "high-quality social media graphic for Xiaohongshu, elegant minimalist aesthetic, warm pastel tones, no text overlays"
+          : "professional short video thumbnail for Douyin/Bilibili, dynamic and engaging, high contrast, cinematic";
+        const imagePrompt = `Professional social media cover image: ${input.topicHook}. ${styleHint}. Clean composition, visually striking, no watermarks, no text overlays.`;
+
+        // Read Vercel token from env — set VERCEL_ACCESS_TOKEN on Fly.io
+        const SAFE_TOKEN = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
+
+        try {
+          const res = await fetch(
+            `${vercelBaseUrl}/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview&imageSize=1K&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=1&guidanceScale=4.0`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${SAFE_TOKEN}`
+              },
+              body: JSON.stringify({
+                prompt: imagePrompt,
+                tier: "flash",
+                model: "gemini-3.1-flash-image-preview",
+                imageSize: "1K",
+                aspectRatio,
+                numberOfImages: 1,
+                guidanceScale: 4.0,
+              }),
+              signal: AbortSignal.timeout(90_000),
+            }
+          );
+          const json: any = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(`Vercel nanoImage error ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
+          const imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
+          if (!imageUrl) throw new Error(`generateTopicImage: no imageUrl in Vercel response. raw: ${JSON.stringify(json).slice(0, 300)}`);
+          return { success: true, imageUrl };
+        } catch (error) {
+          console.warn("[generateTopicImage] error:", error instanceof Error ? error.message : String(error));
+          throw new Error(`generateTopicImage failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }),
 
