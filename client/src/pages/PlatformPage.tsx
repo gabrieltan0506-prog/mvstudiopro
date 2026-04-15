@@ -273,6 +273,38 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
+function TopicImageGenerator({ title, hook, format, supervisorAccess }: { title: string; hook: string; format: "图文" | "短视频"; supervisorAccess: boolean }) {
+  const [imageUrl, setImageUrl] = useState("");
+  const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
+    onSuccess: (res) => setImageUrl(res.imageUrl),
+    onError: (err) => toast.error(err.message || "生成失败，请重试"),
+  });
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      {!imageUrl ? (
+        <button
+          type="button"
+          disabled={generateMutation.isPending}
+          onClick={() => generateMutation.mutate({ topicHook: title + " " + hook, format })}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-50"
+        >
+          {generateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-[#ffdd44]" /> : <Palette className="h-4 w-4 text-[#ffdd44]" />}
+          {generateMutation.isPending ? "正在绘制高质感参考图..." : `🎨 生成视觉参考图 ${supervisorAccess ? "" : "(扣除 3 积分)"}`}
+        </button>
+      ) : (
+        <div className="rounded-2xl border border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+          <div className="mb-2 flex items-center justify-between px-2 pt-2 text-[11px] font-semibold text-[#b7add8]">
+            <span>参考视觉风格 (Gemini 3.1 Flash)</span>
+            <button onClick={() => setImageUrl("")} className="hover:text-white">重置</button>
+          </div>
+          <img src={imageUrl} alt="Generated visual reference" className="w-full rounded-xl" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
   const [debugMode, setDebugMode] = useState(() => {
@@ -490,20 +522,20 @@ export default function PlatformPage() {
       const sig0 = getSignal(0, platformDashboard.headline || "先收口成一个明确方向", platformDashboard.subheadline || "先把最容易拿到反馈的平台和切口做透。");
       const sig1 = getSignal(1, platformDashboard.platformMenu?.[0]?.platform || "先做当前优先平台", platformDashboard.platformMenu?.[0]?.whyNow || "先做最容易拿到正反馈的平台版本。");
       
-      // If Call 3 is loading, show loading text to prevent flashing snapshot data like "电商带货"
+      // Task 1: 彻底物理消灭"电商带货"幽灵 — 严格的 Skeleton 状态，不显示任何兜底文字
       const sig2 = isContentLoading
-        ? { value: "正在规划商业蓝图...", detail: "根据您的背景深度定制变现路径，请稍候。" }
+        ? { isLoadingSkeleton: true, value: "正在推演专属商业变现路径...", detail: "深度定制，请稍候。" }
         : getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
       
       const sig3 = isContentLoading
-        ? { value: "正在生成执行蓝图...", detail: "拆解具体的微小行动步骤，请稍候。" }
-        : getSignal(3, "先写出第一条内容", "先做一轮小样本验证，再决定是否放大。");
+        ? { isLoadingSkeleton: true, value: "正在生成首发微小行动指令...", detail: "保姆级拆解，请稍候。" }
+        : getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
 
       return [
         { label: "当前判断", value: sig0.value, detail: sig0.detail },
         { label: "优先平台", value: sig1.value, detail: sig1.detail },
-        { label: "商业赛道", value: sig2.value, detail: sig2.detail },
-        { label: "首发动作", value: sig3.value, detail: sig3.detail },
+        { label: "商业赛道", value: sig2.value, detail: sig2.detail, isLoadingSkeleton: (sig2 as any).isLoadingSkeleton },
+        { label: "首发动作", value: sig3.value, detail: sig3.detail, isLoadingSkeleton: (sig3 as any).isLoadingSkeleton },
       ];
     }
 
@@ -520,16 +552,18 @@ export default function PlatformPage() {
       },
       {
         label: "商业赛道",
-        value: cleanUserCopy(topMonetization?.primaryTrack || snapshot.businessInsights[0]?.title || "先收口一个可承接方向", "先收口一个可承接方向"),
-        detail: cleanUserCopy(topMonetization?.strategy || snapshot.businessInsights[0]?.detail || "把内容先做成有人愿意继续咨询或收藏的版本。", "把内容先做成有人愿意继续咨询或收藏的版本。"),
+        value: "专属变现路径分析中...",
+        detail: "基于当前窗口热点重新推演，不使用往期模板...",
+        isLoadingSkeleton: true,
       },
       {
         label: "首发动作",
-        value: cleanUserCopy(assetAdaptation?.firstHook || titleExecutions[0]?.openingHook || validationPlan[0]?.label || "先写出第一条内容", "先写出第一条内容"),
-        detail: cleanUserCopy(validationPlan[0]?.nextMove || assetAdaptation?.structure || "先做一轮小样本验证，再决定是否放大。", "先做一轮小样本验证，再决定是否放大。"),
+        value: "首发具体动作推演中...",
+        detail: "正在提取近期验证过的内容格式...",
+        isLoadingSkeleton: true,
       },
     ];
-  }, [assetAdaptation, businessTranslation, isContentLoading, mainPath, recommendationHeadline, snapshot, titleExecutions, topMonetization, topRecommendation, validationPlan, platformDashboard]);
+  }, [businessTranslation, isContentLoading, mainPath, recommendationHeadline, snapshot, topRecommendation, platformDashboard]);
 
   const platformDecisionRows = useMemo(
     () => {
@@ -626,34 +660,14 @@ export default function PlatformPage() {
         }));
       }
 
-      // If LLM calls are still in-flight (dashboard exists but lanes not yet returned),
-      // show nothing rather than leaking snapshot's unfiltered strategies.
-      // Only fall back to snapshot data when no LLM call has been made at all.
-      if (platformDashboard || platformContent || isDashboardLoading || isContentLoading) {
-        // LLM is present / loading — avoid showing unfiltered snapshot monetization
-        return [];
-      }
-
-      if (monetizationStrategies.length) {
-        return monetizationStrategies.slice(0, 2).map((item: GrowthMonetizationStrategy, index) => ({
-          id: `${item.platform}-${index}`,
-          title: `${item.platformLabel}：${cleanUserCopy(item.primaryTrack, item.primaryTrack)}`,
-          summary: cleanUserCopy(item.reason || item.strategy, "先把内容承接到一个更容易转化的服务或产品形态。"),
-          action: cleanUserCopy(item.callToAction || item.offerType || actionSteps[index]?.action || "先用轻量服务承接第一波需求。", "先用轻量服务承接第一波需求。"),
-        }));
-      }
-      const businessInsights = snapshot?.businessInsights.slice(0, 2) ?? [];
-      return businessInsights.map((item, index) => ({
-        id: `${item.title}-${index}`,
-        title: cleanUserCopy(item.title, `商业化切口 ${index + 1}`),
-        summary: cleanUserCopy(item.detail, "先把内容方向和承接方式收成一条清晰路径。"),
-        action: cleanUserCopy(actionSteps[index]?.action || platformDecisionRows[index]?.nextMove || "先做一个最容易拿到反馈的轻量承接。", "先做一个最容易拿到反馈的轻量承接。"),
-      }));
+      // If Call 3 is loading or completed, only show real LLM data.
+      // 绝对禁止 fallback 到 snapshot 里的写死内容，避免泄漏"电商带货"
+      return [];
     } catch (err) {
       console.error("[monetizationCards] render error:", err);
       return [];
     }
-  }, [actionSteps, monetizationStrategies, platformDecisionRows, snapshot, platformContent, platformDashboard, isDashboardLoading, isContentLoading]);
+  }, [platformContent, platformDashboard]);
 
   const contentExecutionCards = useMemo(() => {
     // Prefer Call 3 result, fall back to Call 2, then snapshot
@@ -1221,10 +1235,20 @@ export default function PlatformPage() {
 
         <section className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {resultSummaryCards.map((item, index) => (
-            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5")}>
-              <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
-              <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
-              <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+            <div key={`${item.label}-${index}`} className={shellCardClasses("p-5 flex flex-col justify-center")}>
+              {item.isLoadingSkeleton ? (
+                <div className="flex h-full w-full animate-pulse flex-col justify-center rounded-lg border border-white/5 bg-[rgba(255,255,255,0.02)] p-4 text-center">
+                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin text-[#49e6ff]/50" />
+                  <div className="text-[13px] font-semibold text-[#8cefff]/70">{item.value}</div>
+                  <div className="mt-1 text-[11px] text-[#c9c0e6]/50">{item.detail}</div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff]">{item.label}</div>
+                  <div className="mt-3 text-xl font-bold leading-8 text-white">{item.value}</div>
+                  <div className="mt-3 text-sm leading-7 text-[#c9c0e6]">{item.detail}</div>
+                </>
+              )}
             </div>
           ))}
         </section>
@@ -1587,7 +1611,7 @@ export default function PlatformPage() {
                       <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#8cefff]">
                         {item.hook}
                       </div>
-                      <div className="mt-3 text-sm leading-7 text-[#d3caef]">{item.copywriting}</div>
+                      <div className="mt-3 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{item.copywriting}</div>
                       {item.production ? (
                         <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
                           {item.production}
@@ -1636,6 +1660,13 @@ export default function PlatformPage() {
                           <div className="mt-1 text-sm leading-7 text-[#d3caef]">{(item as any).publishingAdvice}</div>
                         </div>
                       ) : null}
+                      
+                      <TopicImageGenerator
+                        title={item.title}
+                        format={item.format as any}
+                        hook={item.hook}
+                        supervisorAccess={supervisorAccess}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1647,20 +1678,31 @@ export default function PlatformPage() {
                   商业化建议先磨到可落地
                 </div>
                 <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  {monetizationCards.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                      <div className="flex items-center gap-2">
-                        {getSmartIcon(item.title + " 变现 付费", "h-4 w-4 text-[#ffdd44] shrink-0")}
-                        <div className="text-sm font-semibold text-white">{item.title}</div>
-                      </div>
-                      <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.summary}</div>
-                      {item.action ? (
-                        <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
-                          {item.action}
-                        </div>
-                      ) : null}
+                  {monetizationCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
+                    <div className="col-span-2 flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#8cefff]/70">
+                      <Loader2 className="mb-2 h-6 w-6 animate-spin" />
+                      正在推演专属商业变现路径...
                     </div>
-                  ))}
+                  ) : monetizationCards.length === 0 ? (
+                    <div className="col-span-2 flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]">
+                      没有生成相关变现路径
+                    </div>
+                  ) : (
+                    monetizationCards.map((item) => (
+                      <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                        <div className="flex items-center gap-2">
+                          {getSmartIcon(item.title + " 变现 付费", "h-4 w-4 text-[#ffdd44] shrink-0")}
+                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                        </div>
+                        <div className="mt-2 text-sm leading-7 text-[#d3caef]">{item.summary}</div>
+                        {item.action ? (
+                          <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#ffdd44]">
+                            {item.action}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
