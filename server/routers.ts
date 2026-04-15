@@ -2179,9 +2179,8 @@ export const appRouter = router({
           : "professional short video thumbnail for Douyin/Bilibili, dynamic and engaging, high contrast, cinematic";
         const imagePrompt = `Professional social media cover image: ${input.topicHook}. ${styleHint}. Clean composition, visually striking, no watermarks, no text overlays.`;
 
-        // The user provided the specific Vercel token for the backend proxy
-        const VERCEL_TOKEN = process.env.VERCEL_TOKEN || "vcp_6zqVP2sXB7VKpZckvd1cjtzM45O7ScySvpn8FLbUSF7eKpVNpJ4b2wvg";
-        const SAFE_TOKEN = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || VERCEL_TOKEN).trim();
+        // Read Vercel token from env — set VERCEL_ACCESS_TOKEN on Fly.io
+        const SAFE_TOKEN = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
 
         try {
           const res = await fetch(
