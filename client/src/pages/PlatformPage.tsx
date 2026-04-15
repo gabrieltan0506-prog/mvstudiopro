@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
@@ -399,20 +400,21 @@ export default function PlatformPage() {
         return platformDashboard.actionCards.map((item: any, index: number) => ({
           day: index + 1,
           title: cleanUserCopy(item.title || item["动作"] || item["标题"] || "", `第 ${index + 1} 步`),
-          action: cleanUserCopy(item.detail || item.action || item["详情"] || item["建议"] || "", "先做一个可以快速拿到反馈的动作。"),
+          // Fix #5: pass "" as fallback — never show generic "先做一个可以快速拿到反馈的动作"
+          action: cleanUserCopy(item.detail || item.action || item["详情"] || item["建议"] || "", ""),
         }));
       }
       if (validationPlan.length) {
         return validationPlan.slice(0, 4).map((item, index) => ({
           day: index + 1,
           title: cleanUserCopy(item.label, `第 ${index + 1} 步`),
-          action: cleanUserCopy(item.nextMove || item.successSignal, "先做一轮小样本验证。"),
+          action: cleanUserCopy(item.nextMove || item.successSignal, ""),
         }));
       }
       return (snapshot?.growthPlan.slice(0, 4) ?? []).map((item, index) => ({
         day: index + 1,
         title: cleanUserCopy(item.title, `第 ${index + 1} 步`),
-        action: cleanUserCopy(item.action, "先做一轮小样本验证。"),
+        action: cleanUserCopy(item.action, ""),
       }));
     },
     [platformDashboard, snapshot, validationPlan],
@@ -771,15 +773,23 @@ export default function PlatformPage() {
         return [
           {
             label: "内容开头",
-            detail: cleanUserCopy(bestBlueprint.hook || bestBlueprint.openingHook || bestBlueprint["开头文案钩子"] || bestBlueprint["hook"] || bestBlueprint["开头钩子"] || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
+            // Fix #4: prefer hook field; never use generic fallback
+            detail: cleanUserCopy(bestBlueprint.hook || bestBlueprint.openingHook || bestBlueprint["开头文案钩子"] || bestBlueprint["hook"] || bestBlueprint["开头钩子"] || contentExecutionCards[0]?.hook || "", ""),
           },
           {
             label: "内容结构",
-            detail: cleanUserCopy(bestBlueprint.copywriting || bestBlueprint.body || bestBlueprint["核心文案方向"] || bestBlueprint["文案"] || bestBlueprint["正文"] || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
+            detail: cleanUserCopy(bestBlueprint.copywriting || bestBlueprint.body || bestBlueprint["核心文案方向"] || bestBlueprint["文案"] || bestBlueprint["正文"] || contentExecutionCards[0]?.copywriting || "", ""),
           },
           {
             label: "行动引导",
-            detail: cleanUserCopy(bestBlueprint.graphicPlan || bestBlueprint.videoPlan || bestBlueprint["图文怎么排版/视频怎么拍"] || bestBlueprint["图文排版"] || bestBlueprint["视频拍摄"] || bestBlueprint["制作建议"] || contentExecutionCards[0]?.production || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
+            // Fix #4: pull from actionableSteps first, then production/graphicPlan — never generic template
+            detail: cleanUserCopy(
+              (Array.isArray(bestBlueprint.actionableSteps) && bestBlueprint.actionableSteps.length > 0
+                ? bestBlueprint.actionableSteps.join(" → ")
+                : "") ||
+              bestBlueprint.graphicPlan || bestBlueprint.videoPlan || bestBlueprint["图文怎么排版/视频怎么拍"] || bestBlueprint["图文排版"] || bestBlueprint["视频拍摄"] || bestBlueprint["制作建议"] || contentExecutionCards[0]?.production || "",
+              ""
+            ),
           },
         ].filter((item) => item.detail);
       }
@@ -787,15 +797,15 @@ export default function PlatformPage() {
       return [
         {
           label: "内容开头",
-          detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", "开头 3 秒先讲你适合谁、解决什么、为什么值得看。"),
+          detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", ""),
         },
         {
           label: "内容结构",
-          detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", "先给判断，再给案例，再给用户可执行动作。"),
+          detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", ""),
         },
         {
           label: "行动引导",
-          detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", "结尾只留一个最直接的动作，让用户愿意继续问或收藏。"),
+          detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", ""),
         },
       ].filter((item) => item.detail);
     },
@@ -1466,17 +1476,26 @@ export default function PlatformPage() {
                           {(item as any).commercialConversion ? (<div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3"><div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><DollarSign className="h-3 w-3" />商业转化</div><div className="mt-1 text-xs leading-6 text-white">{(item as any).commercialConversion || '分析中...'}</div></div>) : null}
                         </div>
                       ) : null}
+                      {/* Fix #3: 对标账号 — show 用户画像 when accounts are objects or absent */}
                       {Array.isArray((item as any).referenceAccounts) && (item as any).referenceAccounts.length > 0 ? (
                         <div className="mt-3 rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />对标账号</div>
+                          <div className="flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#9ddcff]"><Users className="h-3 w-3" />目标受众 &amp; 对标账号</div>
                           <div className="mt-2 space-y-2">
                             {(item as any).referenceAccounts.map((acc: any, ai: number) => {
-                              const accountText = typeof acc === "string" ? acc : (acc?.account || acc?.name || acc?.title || "");
-                              const reasonText = typeof acc === "object" ? (acc?.reason || acc?.description || "") : "";
-                              if (!accountText) return null;
+                              // Support: string | {account, reason} | {name, reason} — never show [object Object]
+                              const accountText = typeof acc === "string"
+                                ? acc
+                                : typeof acc === "object" && acc !== null
+                                  ? String(acc?.account || acc?.name || acc?.title || acc?.用户画像 || acc?.portrait || "")
+                                  : "";
+                              const reasonText = typeof acc === "object" && acc !== null
+                                ? String(acc?.reason || acc?.description || acc?.desc || acc?.为什么 || "")
+                                : "";
+                              // Skip entirely if both are empty (malformed entry)
+                              if (!accountText && !reasonText) return null;
                               return (
                                 <div key={ai} className="rounded-lg border border-[#3a2b6a] bg-[#170d35] px-3 py-2">
-                                  <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div>
+                                  {accountText ? <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div> : null}
                                   {reasonText ? <div className="mt-1 text-[11px] leading-5 text-[#9080b8]">{reasonText}</div> : null}
                                 </div>
                               );
@@ -1552,13 +1571,14 @@ export default function PlatformPage() {
                   <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
                   选题方向与文案内容
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {/* Fix #2: Vertical stacked rows (single-column), not side-by-side grid */}
+                <div className="mt-5 space-y-4">
                   {contentExecutionCards.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
+                    <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                           {item.format === "图文" ? <Image className="h-4 w-4 text-[#ff7fd5] shrink-0" /> : <Video className="h-4 w-4 text-[#49e6ff] shrink-0" />}
-                          <div className="text-sm font-semibold text-white">{item.title}</div>
+                          <div className="text-base font-bold text-white">{item.title}</div>
                         </div>
                         <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
                           {item.format}
@@ -1784,6 +1804,10 @@ export default function PlatformPage() {
                   </div>
                 ) : null}
               </div>
+            </div>
+            {/* Feature #6c: Trend Report Generator — supervisor bypass credits */}
+            <div className="grid gap-4">
+              <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
             </div>
           </section>
         ) : null}

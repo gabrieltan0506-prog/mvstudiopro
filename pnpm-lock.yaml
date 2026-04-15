@@ -169,6 +169,9 @@ importers:
       framer-motion:
         specifier: ^12.23.22
         version: 12.23.22(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+      html-to-image:
+        specifier: ^1.11.13
+        version: 1.11.13
       input-otp:
         specifier: ^1.4.2
         version: 1.4.2(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
@@ -4242,6 +4245,9 @@ packages:
     engines: {node: '>=4.0.0'}
     deprecated: Please migrate your projects to a newer library like puppeteer
     hasBin: true
+
+  html-to-image@1.11.13:
+    resolution: {integrity: sha512-cuOPoI7WApyhBElTTb9oqsawRvZ0rHhaHwghRLlTuffoD1B2aDemlCruLeZrUIIdvG7gs9xeELEPm6PhuASqrg==}
 
   html-url-attributes@3.0.1:
     resolution: {integrity: sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ==}
@@ -10409,6 +10415,8 @@ snapshots:
       phantomjs-prebuilt: 2.1.16
     transitivePeerDependencies:
       - supports-color
+
+  html-to-image@1.11.13: {}
 
   html-url-attributes@3.0.1: {}
 

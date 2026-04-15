@@ -464,25 +464,26 @@ async function buildPlatformDashboard(params: {
 【绝对禁止输出泛平台画像】
 在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
 你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
-例如：如果用户是“爱好中国历史的心脏科医生”，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
+例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
 
 【强制热点关联与深度四维量化】
 你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
-1. referenceAccounts：禁止给出空泛的图表套话，必须从 snapshot 数据中，明确列举 1-2 个与用户 Persona 相似的“对标账号”或“爆款案例”，并一句话分析为什么值得参考。
-2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如：“带上 #医学硬核科普 参与近期知识区流量扶持”。
+1. referenceAccounts：若找不到具体账号，改为输出针对该平台的「目标用户画像」：描述在此平台上，谁最有可能成为这位创作者的忠实粉丝（年龄、职业、阅读偏好、消费能力）。格式：{account: "目标用户画像", reason: "具体描述"}。禁止输出 "[object Object]" 或空值。
+2. trafficBoosters：强制从 \`snapshot\` 近期热点与趋势数据中提取。给出 1-3 个该平台目前正在进行的流量扶持活动（如官方打卡、赛道扶持）或即将到来的节日热点。例如："带上 #医学硬核科普 参与近期知识区流量扶持"。
 3. primaryTrack (赛道)：结合 snapshot 选出最适合该用户的主攻赛道。
 4. estimatedTraffic (预估流量)：从 platformBaselineStats 提取该平台的 medianTraffic45d（45天中位数流量），结合该用户的专业反差感给予 1.2x-1.5x 的溢价。输出格式：如果中位数 >1M 输出"X.XM+"，>100K 输出"XXXK+"，否则输出"XX万+"。禁止输出文字描述（如"流量极大"），只输出量化数字字符串。
 5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
 6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
+7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
 
 严格要求：
 1. 所有输出必须针对这个具体用户，不得写成通用模板。
 2. headline 要是成熟顾问的核心判断，personaSummary 一句话说清身份与商业价值。
-3. platformMenu：最多 3 个平台，必须包含上述所有的量化与深度字段，并严格遵守【绝对禁止输出泛平台画像】约束。
+3. platformMenu：最多 3 个平台，每个平台必须包含 nextMove（含具体标题+开头第一句），并严格遵守【绝对禁止输出泛平台画像】约束。
 4. topSignals：3 个关键信号；hotTopics：3 个热点方向；actionCards：3 个立刻能做的动作。
-   【actionCards 极其重要】每个动作必须是「物理级微小行动」，禁止写「制作身份名片」、「锁定文化符号」、「设计轻量级产品」这种空泛废话。必须提供“保姆级”指导：例如建议拍视频，必须写出15秒的具体分镜脚本；建议改主页，必须写出简介的具体文案。越具体、越有反差感越好。
+   【actionCards 极其重要】title 字段写「做什么动作」，detail 字段必须写出**完整的执行细节**：要发什么（具体标题）、第一句怎么说（完整的开头文案）、在哪个平台发、什么时间发。禁止 detail 写「先做一个可以快速拿到反馈的动作」这种废话。例如 detail："在B站发布《古代『养心』秘方 vs 现代心脏科学》，第一句：『你吃的那些养心安神的食物，到底有没有用？心脏科医生来告诉你真相。』工作日晚上 8 点发布，带 #医学硬核科普 标签。"
 5. conversationStarters：3 个让用户愿意继续追问的问题。
-6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答“为什么这条路更适合你”时必须深度剖析，禁止出现“电商带货”等泛泛而谈词汇。${personaContextLine}${personaConstraint}
+6. 不要出现后台工程术语，不要出现"可能都可以""先试试"等空话。在回答"为什么这条路更适合你"时必须深度剖析，禁止出现"电商带货"等泛泛而谈词汇。${personaContextLine}${personaConstraint}
 
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
@@ -2080,6 +2081,68 @@ export const appRouter = router({
               error: error instanceof Error ? error.message : String(error),
             },
           };
+        }
+      }),
+
+    generateVisualReport: publicProcedure
+      .input(z.object({
+        windowDays: z.enum(["15", "30"]),
+        theme: z.enum(["light", "dark"]),
+        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "toutiao"])),
+      }))
+      .mutation(async ({ input }) => {
+        const PLATFORM_NAMES: Record<string, string> = {
+          douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", toutiao: "今日头条",
+        };
+        const platformListStr = input.platforms.map((p) => PLATFORM_NAMES[p] || p).join("、");
+        const systemPrompt = `你是一个资深新媒体增长黑客和平台趋势分析师。请根据用户选择的 ${input.windowDays} 天时间窗口，针对 ${platformListStr} 平台，生成一份高质量的趋势报告。
+
+【核心要求】你必须针对每个选定的平台，给出：
+1. trafficBoosters：当下最新的官方流量扶持活动（如：小红书新生代大赛、抖音中视频计划、B站知识区扶持）具体且时效性强，每个平台至少 2-3 条。
+2. cashRewards：现金奖励任务（如：快手光合计划、头条青雲计划、抖音创作者激励）每个平台至少 2 条，必须包含大致的激励金额或门槛。
+3. hotTopics：当下热门赛道或话题（如：#AI工具 #职场健康 #文化解读），每个平台至少 3 个。
+
+报告结构要求：
+- reportTitle：精准的标题，包含时间窗口
+- insightSummary：3-5 条核心洞察，每条一句话
+- platformDetails：每个平台的详细数据（platform 字段用英文原key）
+
+【重要】直接输出原始 JSON，不要用 markdown 代码块包裹，第一个字符必须是 {，最后一个字符必须是 }。`;
+
+        try {
+          const response = await invokeLLM({
+            model: "pro",
+            provider: "gemini",
+            modelName: "gemini-2.5-pro",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: JSON.stringify({ windowDays: input.windowDays, platforms: input.platforms, generatedAt: new Date().toISOString() }) },
+            ],
+          });
+
+          const rawContent = String(response.choices[0]?.message?.content || "{}");
+          const fenceMatch = rawContent.match(/```(?:json)?\s*([\s\S]+?)```/);
+          const stripped = fenceMatch ? fenceMatch[1].trim() : rawContent.replace(/^```(?:json)?[\r\n]*/i, "").replace(/[\r\n]*```\s*$/i, "").trim();
+          let parsed: any = {};
+          try { parsed = JSON.parse(stripped); } catch { try { parsed = JSON.parse(rawContent); } catch { parsed = {}; } }
+
+          return {
+            success: true,
+            report: {
+              reportTitle: String(parsed.reportTitle || `平台趋势看板 · 近${input.windowDays}天`),
+              insightSummary: Array.isArray(parsed.insightSummary) ? parsed.insightSummary.map(String) : [],
+              platformDetails: Array.isArray(parsed.platformDetails)
+                ? parsed.platformDetails.map((p: any) => ({
+                    platform: String(p.platform || ""),
+                    trafficBoosters: Array.isArray(p.trafficBoosters) ? p.trafficBoosters.map(String) : [],
+                    cashRewards: Array.isArray(p.cashRewards) ? p.cashRewards.map(String) : [],
+                    hotTopics: Array.isArray(p.hotTopics) ? p.hotTopics.map(String) : [],
+                  }))
+                : [],
+            },
+          };
+        } catch (error) {
+          throw new Error(`generateVisualReport failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }),
 
