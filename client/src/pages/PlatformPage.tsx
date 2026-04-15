@@ -569,7 +569,9 @@ export default function PlatformPage() {
     () => {
       if (platformDashboard?.platformMenu.length) {
         return platformDashboard.platformMenu.slice(0, 4).map((item: any, index: number) => {
-          const refs = Array.isArray(item.referenceAccounts) ? item.referenceAccounts.map(String) : [];
+          // Keep raw objects — rendering code at referenceAccounts.map handles both string | {account,reason} polymorphically
+          // DO NOT call .map(String) here — that converts {account,reason} objects to "[object Object]"
+          const refs: any[] = Array.isArray(item.referenceAccounts) ? item.referenceAccounts : [];
           const boosters = Array.isArray(item.trafficBoosters) ? item.trafficBoosters.map(String) : [];
           return {
             id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
@@ -591,6 +593,11 @@ export default function PlatformPage() {
         });
       }
 
+      // If we are loading the dashboard, return empty placeholders to avoid flashing generic snapshot data
+      if (isDashboardLoading) {
+        return [];
+      }
+
       const rows = (snapshot?.platformRecommendations.length ? snapshot.platformRecommendations : recommendedPlatforms).slice(0, 4);
       return rows.map((item: GrowthPlatformRecommendation, index) => {
         const activity = platformActivities[index] as GrowthPlatformActivity | undefined;
@@ -601,7 +608,7 @@ export default function PlatformPage() {
           lane: cleanUserCopy(activity?.contentAngle || item.topicIdeas[0]?.title || platformSnapshot?.fitLabel || "先做与你当前身份更匹配的表达方向", "先做与你当前身份更匹配的表达方向"),
           trend: cleanUserCopy(activity?.recommendedFormat || item.playbook || `动量 ${platformSnapshot?.momentumScore || 0} / 适配 ${platformSnapshot?.audienceFitScore || 0}`, "先用更适合的平台内容形式启动"),
           whyNow: cleanUserCopy(item.reason || activity?.summary || platformSnapshot?.summary || "这个平台更适合你当前这轮内容验证。", "这个平台更适合你当前这轮内容验证。"),
-          nextMove: cleanUserCopy(item.action || activity?.optimizationPlan || validationPlan[index]?.nextMove || "先拿一版首发内容验证反馈。", "先拿一版首发内容验证反馈。"),
+          nextMove: cleanUserCopy(item.action || activity?.optimizationPlan || validationPlan[index]?.nextMove || "正在推演专属于你的行动建议...", "正在推演专属于你的行动建议..."),
           hook: cleanUserCopy(titleExecutions[index]?.openingHook || titleExecutions[index]?.copywriting || "", ""),
           monetization: cleanUserCopy(monetizationStrategies[index]?.primaryTrack || "", ""),
           referenceAccounts: [] as string[],
@@ -658,6 +665,10 @@ export default function PlatformPage() {
             "",
           ),
         }));
+      }
+
+      if (isDashboardLoading || isContentLoading || platformDashboard || platformContent) {
+        return [];
       }
 
       // If Call 3 is loading or completed, only show real LLM data.
@@ -811,19 +822,19 @@ export default function PlatformPage() {
       return [
         {
           label: "内容开头",
-          detail: cleanUserCopy(assetAdaptation?.firstHook || contentExecutionCards[0]?.hook || "", ""),
+          detail: isContentLoading ? "正在重构开场三秒钩子..." : "",
         },
         {
           label: "内容结构",
-          detail: cleanUserCopy(assetAdaptation?.structure || contentExecutionCards[0]?.copywriting || "", ""),
+          detail: isContentLoading ? "正在搭建高留存内容骨架..." : "",
         },
         {
           label: "行动引导",
-          detail: cleanUserCopy(assetAdaptation?.callToAction || topMonetization?.callToAction || "", ""),
+          detail: isContentLoading ? "正在规划商业承接卡点..." : "",
         },
       ].filter((item) => item.detail);
     },
-    [assetAdaptation, contentExecutionCards, topMonetization, platformContent, platformDashboard],
+    [isContentLoading, assetAdaptation, contentExecutionCards, topMonetization, platformContent, platformDashboard],
   );
 
   const isAnalyzing = growthSnapshotQuery.isFetching;
@@ -1510,13 +1521,13 @@ export default function PlatformPage() {
                               const accountText = typeof acc === "string"
                                 ? acc
                                 : typeof acc === "object" && acc !== null
-                                  ? String(acc?.account || acc?.name || acc?.title || acc?.用户画像 || acc?.portrait || "")
+                                  ? String(acc?.account || acc?.name || acc?.title || acc?.用户画像 || acc?.portrait || JSON.stringify(acc) || "")
                                   : "";
                               const reasonText = typeof acc === "object" && acc !== null
                                 ? String(acc?.reason || acc?.description || acc?.desc || acc?.为什么 || "")
                                 : "";
                               // Skip entirely if both are empty (malformed entry)
-                              if (!accountText && !reasonText) return null;
+                              if (!accountText && !reasonText && accountText !== "{}") return null;
                               return (
                                 <div key={ai} className="rounded-lg border border-[#3a2b6a] bg-[#170d35] px-3 py-2">
                                   {accountText ? <div className="text-[11px] font-semibold text-[#c9c0e6]">{accountText}</div> : null}

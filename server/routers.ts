@@ -397,14 +397,40 @@ async function buildPlatformDashboard(params: {
   store: Awaited<ReturnType<typeof readTrendStore>>;
   windowDays: number;
 }) {
+  // Filter items to the user's selected windowDays window (15 / 30 / 45 days back from now)
+  // so that collectionEvidence reflects exactly what the user asked to analyze.
+  // Note: platformBaselineStats always uses full 45-day data (separate section below).
+  const windowCutoffMs = Date.now() - params.windowDays * 24 * 60 * 60 * 1000;
+  const filterItemsByWindow = (items: any[]): any[] =>
+    items.filter((item) => {
+      const ts =
+        item?.collectedAt ||
+        item?.collected_at ||
+        item?.publishedAt ||
+        item?.published_at ||
+        item?.createdAt ||
+        item?.created_at ||
+        item?.date ||
+        null;
+      if (!ts) return true; // No date info — include to avoid dropping valid data
+      const ms = new Date(String(ts)).getTime();
+      return Number.isFinite(ms) && ms >= windowCutoffMs;
+    });
+
   const collectionEvidence = params.requestedPlatforms.map((platform) => {
     const collection = params.store.collections?.[platform as keyof typeof params.store.collections];
-    const bucketCounts = collection?.stats?.bucketCounts || getCollectionBucketCounts(collection?.items || []);
+    const allItems: any[] = collection?.items || [];
+    // Use window-filtered items for evidence sent to LLM (reflects user's selected time range)
+    const windowItems = filterItemsByWindow(allItems);
+    // Fall back to allItems if filtering removed everything (sparse data scenario)
+    const evidenceItems = windowItems.length > 0 ? windowItems : allItems;
+    const bucketCounts = getCollectionBucketCounts(evidenceItems);
     return {
       platform,
       collectedAt: collection?.collectedAt || null,
-      itemCount: collection?.items?.length || 0,
-      hotTitles: (collection?.items || []).slice(0, 10).map((item) => item.title).filter(Boolean),
+      itemCount: evidenceItems.length,
+      windowDays: params.windowDays,
+      hotTitles: evidenceItems.slice(0, 10).map((item: any) => item.title).filter(Boolean),
       topBuckets: Object.entries(bucketCounts)
         .sort((left, right) => right[1] - left[1])
         .slice(0, 6)
