@@ -377,15 +377,19 @@ const platformContentResponseSchema = z.object({
     format: z.string().optional(),
     hook: z.string().optional(),
     copywriting: z.string().optional(),
-    suitablePlatforms: z.union([z.array(z.string()), z.string()]).optional(),
-    actionableSteps: z.array(z.string()).optional(),
+    // z.any() — Gemini sometimes returns comma-string instead of array, or adds extra fields
+    suitablePlatforms: z.any().optional(),
+    // z.any() — Gemini sometimes returns mixed types in actionableSteps
+    actionableSteps: z.any().optional(),
     detailedScript: z.string().optional(),
     publishingAdvice: z.string().optional(),
+    // .passthrough() — allow any extra fields Gemini adds to executionDetails without crashing schema
     executionDetails: z.object({
       environmentAndWardrobe: z.string().optional(),
       lightingAndCamera: z.string().optional(),
-      stepByStepScript: z.array(z.string()).optional(),
-    }).optional(),
+      // z.any() — can be string or string[] depending on model version
+      stepByStepScript: z.any().optional(),
+    }).passthrough().optional(),
   }).passthrough()).default([]),
   monetizationLanes: z.array(z.any()).default([]),
 }).passthrough();
