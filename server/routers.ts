@@ -2257,7 +2257,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 【核心要求】你必须针对每个选定的平台，给出：
 1. trafficBoosters：在 ${pastStr}–${todayStr} 期间，各平台进行中的官方流量扶持活动（如：小红书新生代大赛、抖音中视频计划、B站知识区扶持）每个平台至少 2-3 条，必须是时间窗口内已有的活动。
 2. cashRewards：现金奖励任务（如：快手光合计划、头条青雲计划、抖音创作者激励）每个平台至少 2 条，必须包含大致的激励金额或门槛。
-3. hotTopics：在 ${pastStr}–${todayStr} 期间热门赛道或话题，结合上方数据库中的 topTitles 提取，每个平台至少 3 个。
+3. hotTopics：在 ${pastStr}–${todayStr} 期间热门赛道或话题，结合上方数据库中的 topTitles 提取。**【强制数量】每个平台必须输出 5 到 8 个热门赛道，绝对不能少于 5 个！每条必须是具体的细分赛道名称（如"城市日常 vlog"，不是"短视频"），并在名称中附带简短的内容说明。**
 
 报告结构要求：
 - reportTitle：精准的标题，包含时间段（${pastStr} – ${todayStr}）
@@ -2265,7 +2265,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 - platformDetails：每个平台的详细数据（platform 字段用英文原key，值必须是字符串数组）
 
 此外，必须在全局层级（不在 platformDetails 内）输出以下**跨平台综合维度**，不得省略：
-- trackGrowth：近期爆款赛道增长排行（3-6条），每条格式如：{"name": "探索世界", "growth": "+153%", "isHot": true}
+- trackGrowth：近期爆款赛道增长排行。**【强制数量】必须输出 5 到 8 条赛道，绝对不能少于 5 条！**每条格式如：{"name": "探索世界", "growth": "+153%", "isHot": true}
 - audiencesAndBiz：目标人群与商业方向（2-3条），每条格式如：{"audience": "城市生活方式消费人群，关注旅行、美食", "bizDirection": "美甲、美妆、穿搭配饰、收纳用品"}
 - topicExamples：近期高效选题结构实例（3-5条），每条格式如：{"structure": "城市名 + 攻略 / 打卡结果", "concept": "探索世界类内容，城市名+数字结果持续有效", "realCase": "清明去西安3天，人均400吃透了当地"}。realCase 必须是**具体接地气的真实感文章标题**，不可以是泛泛描述。
 

@@ -234,7 +234,20 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                     <div style={{ fontSize: "11px", fontWeight: 700, color: "#ffdd44", marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
                     {pl.hotTopics.map((tp, ti) => {
                       const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
-                      return barRow(safeTxt(tp), Math.max(100 - ti * 15, 20), C[ti % C.length], `${Math.max(100 - ti * 15, 20)}%`, st.label, { bg: st.bg, color: st.color });
+                      const barW = Math.max(100 - ti * 8, 40);
+                      const color = C[ti % C.length];
+                      return (
+                        <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
+                          <div style={{ fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                            <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
+                              <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
+                            </div>
+                            <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>{barW}%</span>
+                            <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
+                          </div>
+                        </div>
+                      );
                     })}
                   </>
                 )}
@@ -295,7 +308,20 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                         <div style={{ fontSize: "11px", fontWeight: 700, color: "#ffdd44", marginTop: "10px", marginBottom: "8px" }}>🔥 热门赛道</div>
                         {pl.hotTopics.map((tp, ti) => {
                           const st = STATUS_CYCLE[ti % STATUS_CYCLE.length];
-                          return barRow(safeTxt(tp), Math.max(100 - ti * 15, 20), C[ti % C.length], `${Math.max(100 - ti * 15, 20)}%`, st.label, { bg: st.bg, color: st.color });
+                          const barW = Math.max(100 - ti * 8, 40);
+                          const color = C[ti % C.length];
+                          return (
+                            <div key={ti} style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "10px" }}>
+                              <div style={{ fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.5", wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(tp)}</div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <div style={{ flex: 1, height: "8px", background: trackBg, borderRadius: "99px", overflow: "hidden" }}>
+                                  <div style={{ height: "100%", borderRadius: "99px", background: color, width: `${barW}%` }} />
+                                </div>
+                                <span style={{ fontSize: "11px", fontWeight: 700, color, minWidth: "36px", textAlign: "right" }}>{barW}%</span>
+                                <span style={{ fontSize: "10px", padding: "1px 6px", borderRadius: "99px", background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
+                              </div>
+                            </div>
+                          );
                         })}
                       </>
                     )}
