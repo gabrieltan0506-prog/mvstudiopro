@@ -2302,7 +2302,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
             success: true,
             report: {
               reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
-              insightSummary: Array.isArray(parsed.insightSummary) ? parsed.insightSummary.map(safeStr) : [],
+              // insightSummary: support both {title, description} objects and legacy string arrays
+              insightSummary: Array.isArray(parsed.insightSummary)
+                ? parsed.insightSummary.map((item: any) => {
+                    if (typeof item === "string") return { title: item.slice(0, 20), description: item };
+                    return { title: safeStr(item?.title || item?.name || ""), description: safeStr(item?.description || item?.desc || item?.content || "") };
+                  })
+                : [],
               trackGrowth: Array.isArray(parsed.trackGrowth)
                 ? parsed.trackGrowth.map((t: any) => ({ name: safeStr(t?.name || t), growth: safeStr(t?.growth || ""), isHot: Boolean(t?.isHot) }))
                 : [],
