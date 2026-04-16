@@ -2195,7 +2195,8 @@ export const appRouter = router({
 
     generateVisualReport: publicProcedure
       .input(z.object({
-        windowDays: z.enum(["15", "30"]),
+        // Extended to support short-form trend radar: 3d and 7d windows
+        windowDays: z.enum(["3", "7", "15", "30"]),
         theme: z.enum(["light", "dark"]),
         platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "toutiao"])),
       }))
@@ -2242,32 +2243,34 @@ export const appRouter = router({
           };
         });
 
-        const systemPrompt = `你是一个资深新媒体增长黑客和平台趋势分析师。
+        // Fully dynamic prompt — windowDays drives all time references, no hardcoded day counts
+        const wd = Number(input.windowDays);
+        const totalDays = wd * 2;
+        const currentDateStr = todayStr; // ISO-style date already computed above
+        const systemPrompt = `你是一位顶级的新媒体数据分析师，专注于发现平台算法逻辑与赛道流量趋势。今天是 ${currentDateStr}。
 
 【关键时间约束 — 绝对禁止预测未来！】
-当前日期是 ${todayStr}。本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${input.windowDays} 天）。
-你必须严格基于这段历史时期内已发生的数据进行总结和回顾。
-绝对禁止使用"将会"、"预计"、"即将"、"未来"等预测性语言。
-所有描述必须是已发生的历史事实陈述，例如"在此期间，XX平台出现了……"。
+本报告分析的时间段是：${pastStr} 至 ${todayStr}（过去 ${wd} 天）。
+你将对比「近 ${wd} 天」与「前 ${wd} 天」（共 ${totalDays} 天数据）来识别赛道加速或减速信号。
+绝对禁止使用"将会"、"预计"等预测性语言。所有描述必须是已发生的历史事实。
 
-【数据来源约束】
-以下是从数据库提取的各平台真实近 ${input.windowDays} 天数据快照，你必须从中提取洞察，不可凭空捏造：
+【真实数据矩阵】
+以下是从数据库提取的各平台真实近 ${wd} 天数据快照，你必须从中提取洞察，不可凭空捏造：
 ${JSON.stringify(platformEvidence, null, 2)}
 
-【核心要求】你必须针对每个选定的平台，给出：
-1. trafficBoosters：在 ${pastStr}–${todayStr} 期间，各平台进行中的官方流量扶持活动（如：小红书新生代大赛、抖音中视频计划、B站知识区扶持）每个平台至少 2-3 条，必须是时间窗口内已有的活动。
-2. cashRewards：现金奖励任务（如：快手光合计划、头条青雲计划、抖音创作者激励）每个平台至少 2 条，必须包含大致的激励金额或门槛。
-3. hotTopics：在 ${pastStr}–${todayStr} 期间热门赛道或话题，结合上方数据库中的 topTitles 提取。**【强制数量】每个平台必须输出 5 到 8 个热门赛道，绝对不能少于 5 个！每条必须是具体的细分赛道名称（如"城市日常 vlog"，不是"短视频"），并在名称中附带简短的内容说明。**
+【核心要求】针对每个选定的平台给出（在 platformDetails 内）：
+1. trafficBoosters：官方流量扶持活动，每个平台至少 2-3 条。${wd <= 7 ? " 【极速窗口：" + wd + " 天】重点关注短期爆发信号（当日热点、突发推流、节假日驱动）。" : ""}
+2. cashRewards：现金奖励任务，每个平台至少 2 条，必须包含激励金额或门槛。
+3. hotTopics：**【强制数量：5-8个】** 具体细分赛道名称（如"城市日常 vlog"），附带简短内容说明。
 
-报告结构要求：
-- reportTitle：精准的标题，包含时间段（${pastStr} – ${todayStr}）
-- insightSummary：3-5 条核心洞察，每条一句话，必须基于上方数据库数据
-- platformDetails：每个平台的详细数据（platform 字段用英文原key，值必须是字符串数组）
-
-此外，必须在全局层级（不在 platformDetails 内）输出以下**跨平台综合维度**，不得省略：
-- trackGrowth：近期爆款赛道增长排行。**【强制数量】必须输出 5 到 8 条赛道，绝对不能少于 5 条！**每条格式如：{"name": "探索世界", "growth": "+153%", "isHot": true}
-- audiencesAndBiz：目标人群与商业方向（2-3条），每条格式如：{"audience": "城市生活方式消费人群，关注旅行、美食", "bizDirection": "美甲、美妆、穿搭配饰、收纳用品"}
-- topicExamples：近期高效选题结构实例（3-5条），每条格式如：{"structure": "城市名 + 攻略 / 打卡结果", "concept": "探索世界类内容，城市名+数字结果持续有效", "realCase": "清明去西安3天，人均400吃透了当地"}。realCase 必须是**具体接地气的真实感文章标题**，不可以是泛泛描述。
+报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
+- reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
+- insightSummary：3-5 条核心洞察，引用具体数据，说明算法目前扶持什么特征的内容
+- trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行，基于真实数据矩阵，绝对禁止捏造。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
+- audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
+- topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
+- trafficSupport：掃描當前平台正在進行的官方流量扶持活動（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
+- hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
@@ -2303,6 +2306,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
               topicExamples: Array.isArray(parsed.topicExamples)
                 ? parsed.topicExamples.map((e: any) => ({ structure: safeStr(e?.structure || e), concept: safeStr(e?.concept || ""), realCase: safeStr(e?.realCase || "") }))
                 : [],
+              // New global fields: trafficSupport, hotFestivals
+              trafficSupport: Array.isArray(parsed.trafficSupport) ? parsed.trafficSupport.map(safeStr) : [],
+              hotFestivals: Array.isArray(parsed.hotFestivals) ? parsed.hotFestivals.map(safeStr) : [],
               platformDetails: Array.isArray(parsed.platformDetails)
                 ? parsed.platformDetails.map((p: any) => ({
                     platform: safeStr(p?.platform || ""),

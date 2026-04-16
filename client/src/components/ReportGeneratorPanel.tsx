@@ -12,7 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { VisualReportTemplate, type VisualReportData } from "./VisualReportTemplate";
 
-type WindowDays = "15" | "30";
+type WindowDays = "3" | "7" | "15" | "30";
 type Theme = "dark" | "light";
 type PlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "toutiao";
 
@@ -62,6 +62,8 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
         trackGrowth: result.report.trackGrowth || [],
         audiencesAndBiz: result.report.audiencesAndBiz || [],
         topicExamples: result.report.topicExamples || [],
+        trafficSupport: result.report.trafficSupport || [],
+        hotFestivals: result.report.hotFestivals || [],
         platformDetails: (result.report.platformDetails || []).map((p: any) => ({
           platform: p.platform,
           displayName: PLATFORM_NAMES[p.platform as PlatformKey] || p.platform,
@@ -141,15 +143,15 @@ export default function ReportGeneratorPanel({ supervisorAccess }: Props) {
         {/* Window */}
         <div className="rounded-2xl border border-[#2a1c55] bg-[rgba(11,7,26,0.94)] p-4">
           <div className="text-[11px] uppercase tracking-[0.18em] text-[#9ddcff] mb-3">时间窗口</div>
-          <div className="flex gap-2">
-            {(["15", "30"] as WindowDays[]).map((d) => (
+          <div className="flex flex-wrap gap-2">
+            {(["3", "7", "15", "30"] as WindowDays[]).map((d) => (
               <button
                 key={d}
                 type="button"
                 onClick={() => setWindowDays(d)}
-                className={`flex-1 rounded-xl border py-2 text-sm font-semibold transition ${
+                className={`flex-1 min-w-[44px] rounded-xl border py-2 text-sm font-semibold transition ${
                   windowDays === d
-                    ? "border-[#49e6ff]/40 bg-[rgba(73,230,255,0.12)] text-[#8cefff]"
+                    ? "border-[#3eedff]/40 bg-[rgba(62,237,255,0.12)] text-[#3eedff] shadow-[0_0_12px_rgba(62,237,255,0.25)]"
                     : "border-white/10 bg-white/5 text-[#b7add8] hover:bg-white/10"
                 }`}
               >

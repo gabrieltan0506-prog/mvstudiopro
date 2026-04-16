@@ -8,6 +8,9 @@ export type VisualReportData = {
   trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean }>;
   audiencesAndBiz?: Array<{ audience: string; bizDirection: string }>;
   topicExamples?: Array<{ structure: string; concept: string; realCase: string }>;
+  // New global fields from upgraded prompt
+  trafficSupport?: string[];
+  hotFestivals?: string[];
   platformDetails: Array<{
     platform: string;
     displayName: string;
@@ -116,6 +119,41 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
                   </div>
                 </div>
               ))}
+            </div>
+          </>
+        )}
+
+        {/* ── trafficSupport + hotFestivals (g2) ── */}
+        {((data.trafficSupport?.length || 0) > 0 || (data.hotFestivals?.length || 0) > 0) && (
+          <>
+            <div style={sec}>流量扶持活动 + 节日与社会热点</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px", marginBottom: "16px" }}>
+              {(data.trafficSupport?.length || 0) > 0 && (
+                <div style={card()}>
+                  <div style={ct(C[5])}><div style={dot(C[5])} />🚀 当前官方流量扶持活动</div>
+                  {(data.trafficSupport || []).length === 0 ? (
+                    <div style={{ fontSize: "12px", color: muted }}>当前无重大官方活动</div>
+                  ) : (data.trafficSupport || []).map((item, i) => (
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                      <span style={{ color: C[5], fontWeight: 700, minWidth: "18px" }}>{i + 1}</span>
+                      <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(data.hotFestivals?.length || 0) > 0 && (
+                <div style={card()}>
+                  <div style={ct(C[2])}><div style={dot(C[2])} />🔥 当期节日与社会热点</div>
+                  {(data.hotFestivals || []).length === 0 ? (
+                    <div style={{ fontSize: "12px", color: muted }}>当前无显著节日热点</div>
+                  ) : (data.hotFestivals || []).map((item, i) => (
+                    <div key={i} style={{ display: "flex", gap: "8px", marginBottom: "9px", fontSize: "12px", color: isDark ? "#d0c8f0" : "#2a1040", lineHeight: "1.6" }}>
+                      <span style={{ color: C[2], fontWeight: 700 }}>•</span>
+                      <span style={{ wordBreak: "break-word", whiteSpace: "normal" }}>{safeTxt(item)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </>
         )}

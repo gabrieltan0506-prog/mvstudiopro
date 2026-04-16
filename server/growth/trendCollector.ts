@@ -72,10 +72,12 @@ const PLATFORM_BUCKET_DEFAULTS: Partial<Record<GrowthPlatform, string>> = {
 
 const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; max: number }>> = {
   douyin: { min: 12, max: 30 },
-  kuaishou: { min: 12, max: 36 },
+  // Kuaishou crawl intensity increased: reference range widened
+  kuaishou: { min: 20, max: 80 },
   bilibili: { min: 40, max: 80 },
   xiaohongshu: { min: 20, max: 60 },
-  toutiao: { min: 20, max: 60 },
+  // Toutiao crawl intensity increased: reference range widened
+  toutiao: { min: 40, max: 120 },
 };
 
 const DEFAULT_WINDOW_DAYS = 365;
@@ -2240,16 +2242,17 @@ async function collectKuaishou(): Promise<PlatformTrendCollection> {
   const primaryKuaishouCookie = cookies[0] || "";
   const discoveredPrincipalIds = new Set(parseCsvEnv("KUAISHOU_TREND_PRINCIPALS").slice(0, 5));
   const endpoint = String(process.env.KUAISHOU_GRAPHQL_URL || "https://live.kuaishou.com/m_graphql").trim();
-  const count = Math.max(6, Math.min(24, Number(process.env.KUAISHOU_TREND_COUNT || 24) || 24));
-  const defaultPrivatePages = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_PRIVATE_PAGES || 2) || 2));
+  // Kuaishou crawl intensity increased: count, pages, keyword limit
+  const count = Math.max(6, Math.min(40, Number(process.env.KUAISHOU_TREND_COUNT || 36) || 36));
+  const defaultPrivatePages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_PAGES || 3) || 3));
   const privateConcurrency = Math.max(1, Math.min(1, Number(process.env.KUAISHOU_PRIVATE_CONCURRENCY || 1) || 1));
   const privateRetryLimit = Math.max(0, Math.min(4, Number(process.env.KUAISHOU_PRIVATE_RETRY_LIMIT || 2) || 2));
   const privateRetryDelayMs = Math.max(500, Math.min(8000, Number(process.env.KUAISHOU_PRIVATE_RETRY_DELAY_MS || 1500) || 1500));
-  const publicPages = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_TREND_PAGES || 8) || 8));
+  const publicPages = Math.max(1, Math.min(16, Number(process.env.KUAISHOU_TREND_PAGES || 12) || 12));
   const discoveryKeywords = getKuaishouDiscoveryKeywords();
-  const defaultSearchKeywordLimit = Math.max(8, Math.min(16, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 16) || 16));
+  const defaultSearchKeywordLimit = Math.max(8, Math.min(24, Number(process.env.KUAISHOU_TREND_KEYWORD_LIMIT || 20) || 20));
   const creatorSeeds = getKuaishouCreatorSeeds();
-  const defaultSearchPages = Math.max(1, Math.min(4, Number(process.env.KUAISHOU_SEARCH_PAGES || 4) || 4));
+  const defaultSearchPages = Math.max(1, Math.min(8, Number(process.env.KUAISHOU_SEARCH_PAGES || 6) || 6));
   const searchConcurrency = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_SEARCH_CONCURRENCY || 2) || 2));
   const searchUserPages = Math.max(1, Math.min(2, Number(process.env.KUAISHOU_SEARCH_USER_PAGES || 2) || 2));
   const searchUserLimit = Math.max(5, Math.min(10, Number(process.env.KUAISHOU_SEARCH_USER_LIMIT || 10) || 10));
@@ -2804,12 +2807,13 @@ async function collectToutiao(): Promise<PlatformTrendCollection> {
     String(process.env.TOUTIAO_MEDIA_ID || "").trim(),
     ...parseCsvEnv("TOUTIAO_MEDIA_ID_POOL"),
   ].filter(Boolean);
-  const defaultToutiaoKeywordLimit = Math.max(4, Math.min(48, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_KEYWORD_LIMIT", "TOUTIAO_SEARCH_KEYWORD_LIMIT", 24)));
-  const defaultToutiaoSearchPages = Math.max(1, Math.min(12, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_PAGES", "TOUTIAO_SEARCH_PAGES", 4)));
-  const searchPageSize = Math.max(10, Math.min(30, Number(process.env.TOUTIAO_SEARCH_PAGE_SIZE || 20) || 20));
-  const searchConcurrency = Math.max(1, Math.min(6, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_CONCURRENCY", "TOUTIAO_SEARCH_CONCURRENCY", 3)));
-  const authorLimit = Math.max(1, Math.min(16, parsePreferredNumberEnv("GROWTH_TOUTIAO_AUTHOR_LIMIT", "TOUTIAO_AUTHOR_LIMIT", 12)));
-  const profilePages = Math.max(1, Math.min(20, parsePreferredNumberEnv("GROWTH_TOUTIAO_PROFILE_PAGES", "TOUTIAO_PROFILE_PAGES", 10)));
+  // Toutiao crawl intensity increased: keyword limit, search pages, page size, author limit, profile pages
+  const defaultToutiaoKeywordLimit = Math.max(4, Math.min(64, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_KEYWORD_LIMIT", "TOUTIAO_SEARCH_KEYWORD_LIMIT", 36)));
+  const defaultToutiaoSearchPages = Math.max(1, Math.min(20, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_PAGES", "TOUTIAO_SEARCH_PAGES", 6)));
+  const searchPageSize = Math.max(10, Math.min(40, Number(process.env.TOUTIAO_SEARCH_PAGE_SIZE || 25) || 25));
+  const searchConcurrency = Math.max(1, Math.min(8, parsePreferredNumberEnv("GROWTH_TOUTIAO_SEARCH_CONCURRENCY", "TOUTIAO_SEARCH_CONCURRENCY", 4)));
+  const authorLimit = Math.max(1, Math.min(24, parsePreferredNumberEnv("GROWTH_TOUTIAO_AUTHOR_LIMIT", "TOUTIAO_AUTHOR_LIMIT", 16)));
+  const profilePages = Math.max(1, Math.min(30, parsePreferredNumberEnv("GROWTH_TOUTIAO_PROFILE_PAGES", "TOUTIAO_PROFILE_PAGES", 14)));
   const authorPairPool = parsePairPoolEnv("TOUTIAO_AUTHOR_POOL");
 
   if (!userTokenPool.length) {
