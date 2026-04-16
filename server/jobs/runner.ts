@@ -545,6 +545,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
   const mode = params.mode === "bgm" ? "bgm" : "theme_song";
   const producerModel = mapAudioModel(params.model);
   const title = String(params.title ?? "AI Generated Song");
+  const directPrompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
   const lyrics = typeof params.lyrics === "string" ? params.lyrics : undefined;
   const customStyle = typeof params.customStyle === "string" ? params.customStyle : undefined;
   const mood = typeof params.mood === "string" ? params.mood : undefined;
@@ -588,7 +589,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
     }
     prompt = lyrics;
   } else {
-    prompt = customStyle || mood || "Cinematic, Emotional, Instrumental";
+    prompt = directPrompt || customStyle || mood || "Cinematic, Emotional, Instrumental";
   }
 
   const created = await createProducerTask({

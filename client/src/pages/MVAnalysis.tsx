@@ -2225,15 +2225,17 @@ export default function MVAnalysisPage() {
     setPlayingMusicUrl(null);
     setMusicProgressMessage("正在提交音乐任务...");
     try {
+      const resolvedJobUserId = user?.id ? String(user.id) : "";
       const { jobId } = await createJob({
         type: "audio",
-        userId: String((user as any)?.id || 0),
+        userId: resolvedJobUserId,
         input: {
           action: "suno_music",
           params: {
             mode: "bgm",
             model: musicProvider,
             title: `${fileName || "creator-growth-camp"}-bgm`,
+            prompt,
             customStyle: prompt,
             mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || undefined,
           },
