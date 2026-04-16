@@ -2279,7 +2279,10 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
-- insightSummary：3-5 条核心洞察，引用具体数据，说明算法目前扶持什么特征的内容
+- insightSummary：输出 4 个核心洞察，必须严格遵循 [{"title":"短标题","description":"详细分析"}] 的 JSON 对象数组格式。
+  - title：必须是极度简短的结论，绝对不要超过 12 个字，例如“情绪价值成流量密码”。
+  - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
+  - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
 - trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行，基于真实数据矩阵，绝对禁止捏造。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
@@ -2312,16 +2315,27 @@ ${JSON.stringify(platformEvidence, null, 2)}
             if (typeof v === "object") return String(v.text || v.title || v.name || v.content || v.desc || v.trackName || v.label || v.value || Object.values(v)[0] || "");
             return String(v);
           };
+          const normalizeInsightItem = (item: any) => {
+            if (typeof item === "string") {
+              return { title: item.slice(0, 20), description: item };
+            }
+            const title = safeStr(item?.title || item?.name || "");
+            const fallbackDescription = safeStr(item?.content || item?.detail || item?.analysis || item?.reason || "");
+            const rawDescription = safeStr(item?.description || item?.desc || fallbackDescription);
+            const description = rawDescription && rawDescription.trim() !== title.trim()
+              ? rawDescription
+              : fallbackDescription && fallbackDescription.trim() !== title.trim()
+                ? fallbackDescription
+                : rawDescription;
+            return { title, description };
+          };
           return {
             success: true,
             report: {
               reportTitle: safeStr(parsed.reportTitle || `平台趋势看板 · ${pastStr}–${todayStr}`),
               // insightSummary: support both {title, description} objects and legacy string arrays
               insightSummary: Array.isArray(parsed.insightSummary)
-                ? parsed.insightSummary.map((item: any) => {
-                    if (typeof item === "string") return { title: item.slice(0, 20), description: item };
-                    return { title: safeStr(item?.title || item?.name || ""), description: safeStr(item?.description || item?.desc || item?.content || "") };
-                  })
+                ? parsed.insightSummary.map(normalizeInsightItem)
                 : [],
               trackGrowth: Array.isArray(parsed.trackGrowth)
                 ? parsed.trackGrowth.map((t: any) => ({ name: safeStr(t?.name || t), growth: safeStr(t?.growth || ""), isHot: Boolean(t?.isHot) }))
