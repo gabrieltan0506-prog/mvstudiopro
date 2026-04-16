@@ -51,7 +51,7 @@ import {
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
-  audio: 20_000,
+  audio: 8 * 60_000,
   video: 30_000,
 };
 
