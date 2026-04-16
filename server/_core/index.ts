@@ -117,9 +117,9 @@ async function startServer() {
   const server = createServer(app);
   // Stripe webhook MUST be registered BEFORE express.json() for signature verification
   registerStripeWebhook(app);
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
+  app.use(express.json({ limit: "650mb" }));
+  app.use(express.urlencoded({ limit: "650mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // File upload

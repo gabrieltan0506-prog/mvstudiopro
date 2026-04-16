@@ -3,7 +3,9 @@ import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 
 const uploadRouter = Router();
-const MAX_UPLOAD_BYTES = Math.max(10 * 1024 * 1024, Number(process.env.UPLOAD_MAX_BYTES || 80 * 1024 * 1024) || 80 * 1024 * 1024);
+const MB = 1024 * 1024;
+const DEFAULT_UPLOAD_MAX_BYTES = 600 * MB;
+const MAX_UPLOAD_BYTES = Math.max(10 * MB, Number(process.env.UPLOAD_MAX_BYTES || DEFAULT_UPLOAD_MAX_BYTES) || DEFAULT_UPLOAD_MAX_BYTES);
 
 async function parseMultipartFile(req: any) {
   const request = new Request("http://local/upload", {
