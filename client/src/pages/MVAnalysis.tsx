@@ -130,6 +130,9 @@ type VideoPipelineDebug = {
     progress?: number;
     url?: string;
     key?: string;
+    gcsUri?: string;
+    strategy?: "signed-url" | "legacy-upload";
+    signedUrlError?: string;
     error?: string;
   };
   dispatch?: {
@@ -441,6 +444,41 @@ async function uploadFileWithProgress(file: File, onProgress: (percent: number) 
     };
 
     xhr.send(formData);
+  });
+}
+
+async function uploadFileToSignedUrl(params: {
+  file: File;
+  uploadUrl: string;
+  headers?: Record<string, string>;
+  onProgress: (percent: number) => void;
+}) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", params.uploadUrl, true);
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.max(1, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      params.onProgress(percent);
+    };
+
+    xhr.onerror = () => reject(new Error("GCS 直传失败，请检查网络后重试"));
+    xhr.onabort = () => reject(new Error("GCS 直传已中断"));
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(xhr.responseText || `GCS 直传失败 (${xhr.status})`));
+        return;
+      }
+      resolve();
+    };
+
+    xhr.setRequestHeader("Content-Type", params.file.type || "application/octet-stream");
+    for (const [key, value] of Object.entries(params.headers || {})) {
+      if (!value) continue;
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.send(params.file);
   });
 }
 
@@ -1547,6 +1585,7 @@ export default function MVAnalysisPage() {
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
   const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
+  const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const buildPremiumRemixMutation = trpc.mvAnalysis.buildPremiumRemix.useMutation();
   const generatePremiumRemixAssetsMutation = trpc.mvAnalysis.generatePremiumRemixAssets.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -1796,22 +1835,69 @@ export default function MVAnalysisPage() {
               if (!selectedFile) {
                 throw new Error("请先选择视频文件");
               }
-              const uploaded = await uploadFileWithProgress(selectedFile, (percent) => {
-                const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
-                setUploadProgress(mappedPercent);
+              let signed;
+              try {
+                signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+                  fileName: selectedFile.name || fileName || "video.mp4",
+                  mimeType: fileMimeType || selectedFile.type || "video/mp4",
+                });
+              } catch (signedUrlError: any) {
                 setDebugInfo((prev) => ({
                   ...(prev || {}),
                   videoPipeline: {
                     ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
                     upload: {
                       ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-                      status: "started",
-                      progress: mappedPercent,
+                      status: "failed",
+                      strategy: "signed-url",
+                      signedUrlError: String(signedUrlError?.message || signedUrlError || "signed_url_request_failed"),
                     },
                   },
                 }));
-              });
-              if (!uploaded?.url) {
+                throw signedUrlError;
+              }
+              try {
+                await uploadFileToSignedUrl({
+                  file: selectedFile,
+                  uploadUrl: signed.uploadUrl,
+                  headers: signed.requiredHeaders,
+                  onProgress: (percent) => {
+                    const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
+                    setUploadProgress(mappedPercent);
+                    setDebugInfo((prev) => ({
+                      ...(prev || {}),
+                      videoPipeline: {
+                        ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                        upload: {
+                          ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+                          status: "started",
+                          progress: mappedPercent,
+                          strategy: "signed-url",
+                        },
+                      },
+                    }));
+                  },
+                });
+              } catch (uploadError: any) {
+                setDebugInfo((prev) => ({
+                  ...(prev || {}),
+                  videoPipeline: {
+                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                    upload: {
+                      ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+                      status: "failed",
+                      strategy: "signed-url",
+                      error: String(uploadError?.message || uploadError || "signed_url_upload_failed"),
+                    },
+                  },
+                }));
+                throw uploadError;
+              }
+              const uploaded: { url?: string; key?: string; gcsUri?: string; strategy: "signed-url" | "legacy-upload" } = {
+                gcsUri: signed.gcsUri,
+                strategy: "signed-url" as const,
+              };
+              if (!uploaded?.gcsUri) {
                 throw new Error("视频上传完成但未返回地址");
               }
               setDebugInfo((prev) => ({
@@ -1823,6 +1909,8 @@ export default function MVAnalysisPage() {
                     progress: 100,
                     url: uploaded.url,
                     key: uploaded.key,
+                    gcsUri: uploaded.gcsUri,
+                    strategy: uploaded.strategy,
                   },
                 },
               }));
@@ -1848,6 +1936,7 @@ export default function MVAnalysisPage() {
                 input: {
                   action: "growth_analyze_video",
                   params: {
+                    gcsUri: uploaded.gcsUri,
                     fileUrl: uploaded.url,
                     fileKey: uploaded.key,
                     mimeType: fileMimeType || "video/mp4",
@@ -1975,7 +2064,7 @@ export default function MVAnalysisPage() {
     } finally {
       setIsPremiumRemixPipelineRunning(false);
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, usageStatsQuery]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -3424,12 +3513,14 @@ export default function MVAnalysisPage() {
                     <div className="mt-3 space-y-2 leading-6">
                       <div>1. 选择文件：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
-                      <div>3. 上传结果：URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
+                      <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
                       <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模型 {String((debugInfo as any)?.videoPipeline?.dispatch?.modelName || "-")}</div>
                       <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")}</div>
                       <div>6. Job：ID {String((debugInfo as any)?.videoPipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.videoPipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.videoPipeline?.job?.pollCount ?? "-")} 次</div>
                       <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.videoPipeline?.analysis?.model || debugInfo?.model || "-")}</div>
-                      <div>8. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>
+                      <div>8. Signed URL 申请失败：{String((debugInfo as any)?.videoPipeline?.upload?.signedUrlError || "-")}</div>
+                      <div>9. 上传失败：{String((debugInfo as any)?.videoPipeline?.upload?.error || "-")}</div>
+                      <div>10. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>
                     </div>
                   </div>
                 ) : null}
@@ -3854,229 +3945,6 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 </div>
-                <div className="grid gap-6 xl:grid-cols-2">
-                  {analysisTracks ? (
-                    <div className="xl:col-span-2 rounded-[28px] border border-[#7ee7ff]/20 bg-[#0f1a2c] p-6">
-                      <div className="flex items-center gap-3 text-[#7ee7ff]">
-                        <Orbit className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">历史与即时双主链分析</h2>
-                      </div>
-                      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_1fr_0.9fr]">
-                        <div className="rounded-2xl border border-[#7ee7ff]/20 bg-[#10233a] px-4 py-4">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#7ee7ff]">即时主链</div>
-                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.liveSummary)}</div>
-                        </div>
-                        <div className="rounded-2xl border border-[#f5b7ff]/20 bg-[rgba(245,183,255,0.08)] px-4 py-4">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">历史主链</div>
-                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.historicalSummary)}</div>
-                        </div>
-                        <div className="rounded-2xl border border-[#ffd08f]/20 bg-[rgba(255,208,143,0.08)] px-4 py-4">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">即时热题</div>
-                          <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysisTracks.liveHotTopic)}</div>
-                          <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(analysisTracks.hotTopicTimeliness)}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#0f1a2c] p-6">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">图文与视频首发打法</div>
-                    <div className="mt-4 grid gap-4">
-                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                          <PanelsTopLeft className="h-4 w-4 text-[#f5b7ff]" />
-                          <span>图文笔记怎么写</span>
-                        </div>
-                        <div className="mt-2 text-sm leading-7 text-[#f6d6ff]">优先类型：{replaceTerms(firstScreenGraphicPlan.noteType)}</div>
-                        <div className="mt-2 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.reason)}</div>
-                        <div className="mt-3 text-sm leading-7 text-white/82">
-                          {replaceTerms(firstScreenGraphicPlan.structure)}
-                        </div>
-                        <div className="mt-3 space-y-2 rounded-xl border border-white/10 bg-[#111b2c] px-3 py-3 text-sm leading-7 text-white/76">
-                          {firstScreenGraphicPlan.pages.map((item) => (
-                            <div key={item}>{replaceTerms(item)}</div>
-                          ))}
-                        </div>
-                        <div className="mt-3 text-sm leading-7 text-white/68">{replaceTerms(firstScreenGraphicPlan.footer)}</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                          <Film className="h-4 w-4 text-[#ffd08f]" />
-                          <span>视频怎么拍</span>
-                        </div>
-                        <div className="mt-2 text-sm leading-7 text-white/68">{inferVideoGoal(recommendedPlatformNames)}</div>
-                        <div className="mt-3 text-sm leading-7 text-white/82">
-                          {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，结尾只留一个行动引导。")}
-                        </div>
-                        <div className="mt-3 rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,208,143,0.06)] px-3 py-3 text-sm leading-7 text-white/78">
-                          <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffcf92]">
-                            <Workflow className="h-4 w-4" />
-                            <span>可直接用的分镜文案</span>
-                          </div>
-                          <div className="mt-2 space-y-2">
-                            {firstScreenStoryboard.map((item) => (
-                              <div key={`${item.time}-${item.title}`}>
-                                <span className="font-semibold text-[#ffd08f]">{item.time} {item.title}</span>
-                                <span className="text-white/78">：{replaceTerms(item.detail)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
-                    <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">平台数据分析</div>
-                    <div className="mt-4 grid gap-4">
-                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                          <Send className="h-4 w-4 text-[#90c4ff]" />
-                          <span>推荐发布平台</span>
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {topPlatformReferenceCards.slice(0, 4).map((item) => {
-                            return (
-                              <div key={`top-${item.name}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
-                                <div className="text-sm font-semibold text-white">{item.name}</div>
-                                <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.reason)}</div>
-                                <div className="mt-2 text-sm leading-7 text-white/68">相关赛道：{replaceTerms(item.potentialTrack)}</div>
-                                <div className="mt-2 text-sm leading-7 text-white/68">
-                                  当前有效扶持活动：{item.supportActivities.length ? item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ") : "当前未核验到稳定公开扶持活动，建议优先吃自然分发、搜索流量和细分赛道势能。"}
-                                </div>
-                                {item.relatedExamples.length ? (
-                                  <div className="mt-2 text-sm leading-7 text-white/68">
-                                    相关案例参考：{item.relatedExamples.join("；")}
-                                  </div>
-                                ) : null}
-                                {item.supportSignal ? (
-                                  <div className="mt-2 text-sm leading-7 text-[#9df6c0]">扶持判断：{replaceTerms(item.supportSignal)}</div>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                          <ScanSearch className="h-4 w-4 text-[#90c4ff]" />
-                          <span>平台数据分析</span>
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {topPlatformDataReferences.map((item) => (
-                            <div key={`snapshot-${item.title}`} className="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="font-semibold text-white">{item.title}</div>
-                                <div className="text-xs text-[#90c4ff]">平台数据参考</div>
-                              </div>
-                              <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.summary)}</div>
-                              {item.topics.length ? (
-                                <div className="mt-1 text-sm leading-7 text-white/65">数据库相关赛道：{item.topics.slice(0, 3).map((topic) => replaceTerms(topic)).join(" / ")}</div>
-                              ) : null}
-                              <div className="mt-1 text-sm leading-7 text-white/65">
-                                流量扶持活动：{item.supportActivities.length ? item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ") : "当前未核验到适合长期写入报告的公开扶持活动。"}
-                              </div>
-                            </div>
-                          ))}
-                          {dataEvidenceNotes.length ? (
-                            <div className="rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.06)] px-3 py-3 text-sm leading-7 text-white/72">
-                              {dataEvidenceNotes.slice(0, 3).map((item, index) => (
-                                <div key={`evidence-${index}`}>{replaceTerms(item)}</div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {shouldHideGraphicBoard ? (
-                  <div className="mt-6 rounded-[28px] border border-[#ffcf92]/20 bg-[#0f1a2c] p-6">
-                    <div className="flex flex-wrap items-center justify-between gap-4">
-                      <div>
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">图文分析已暂时隐藏</div>
-                        <div className="mt-2 text-lg font-bold text-white">视频分析进行中，若需保留平台图文分析，请先下载</div>
-                        <div className="mt-2 text-sm leading-7 text-white/68">为了让用户专注等待视频结果，细化图文面板会在视频分析过程中临时隐藏。你可以先下载保存当前版本。</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleDownloadGraphicBoard}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-[#ffcf92]/30 bg-[rgba(255,208,143,0.08)] px-5 py-3 text-sm font-semibold text-[#ffcf92] transition hover:bg-[rgba(255,208,143,0.14)]"
-                      >
-                        <FileUp className="h-4 w-4" />
-                        下载图文分析
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-6 rounded-[28px] border border-[#ffb37f]/20 bg-[#0f1a2c] p-6">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3 text-[#ffb37f]">
-                        <PanelsTopLeft className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">平台图文分析</h2>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleDownloadGraphicBoard}
-                        className="inline-flex items-center gap-2 rounded-2xl border border-[#ffb37f]/25 bg-[rgba(255,179,127,0.08)] px-4 py-2 text-sm font-semibold text-[#ffcf92] transition hover:bg-[rgba(255,179,127,0.14)]"
-                      >
-                        <FileUp className="h-4 w-4" />
-                        下载图文分析
-                      </button>
-                    </div>
-                    <div className="mt-2 text-sm leading-7 text-white/62">这一块单独讲图文笔记、搜索/收藏/转化承接和平台图文风格，不跟视频镜头分析混在一起。</div>
-                    <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                      {platformGraphicAnalysisCards.map((item) => (
-                        <div key={`graphic-board-${item.label}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-xl font-black text-white">{item.label}</div>
-                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white/60">图文承接</div>
-                          </div>
-                          <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(item.summary)}</div>
-                          <div className="mt-4 rounded-2xl border border-[#f5b7ff]/18 bg-[rgba(245,183,255,0.08)] px-4 py-3 text-sm leading-7 text-white/80">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">平台适合形式与商业价值</div>
-                            <div className="mt-2">平台适合形式：{replaceTerms(item.profile.contentForm)}</div>
-                            <div className="mt-2">图文类型：{replaceTerms(item.profile.noteType)}</div>
-                            <div className="mt-2">商业价值：{replaceTerms(item.profile.valueMode)}</div>
-                            <div className="mt-2 text-white/68">{replaceTerms(item.profile.why)}</div>
-                          </div>
-                          <div className="mt-4 rounded-2xl border border-[#8ab8ff]/18 bg-[#11233a] px-4 py-3 text-sm leading-7 text-white/80">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">图文怎么写</div>
-                            <div className="mt-2 space-y-2">
-                              {item.profile.structure.map((row) => (
-                                <div key={`${item.label}-${row}`}>{replaceTerms(row)}</div>
-                              ))}
-                            </div>
-                          </div>
-                          {item.topics.length ? (
-                            <div className="mt-4 text-sm leading-7 text-white/72">相关赛道：{item.topics.map((entry) => replaceTerms(entry)).join(" / ")}</div>
-                          ) : null}
-                          {item.supportActivities.length ? (
-                            <div className="mt-2 text-sm leading-7 text-white/72">当前有效扶持活动：{item.supportActivities.map((entry) => replaceTerms(entry)).join(" / ")}</div>
-                          ) : null}
-                          <div className="mt-2 text-sm leading-7 text-[#9df6c0]">扶持判断：{replaceTerms(item.supportSignal)}</div>
-                          {item.examples.length ? (
-                            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">参考案例</div>
-                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
-                                {item.examples.map((example) => (
-                                  <div key={`${item.label}-${example.id}`}>
-                                    <span className="font-semibold text-white">{replaceTerms(example.account)}</span>
-                                    <span className="text-white/62">：{replaceTerms(example.title)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                          {item.recommendation ? (
-                            <div className="mt-4 rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] px-4 py-3 text-sm leading-7 text-white/80">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">发布建议</div>
-                              <div className="mt-2">{replaceTerms(item.recommendation)}</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">

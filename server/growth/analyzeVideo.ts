@@ -6,7 +6,7 @@ import { promisify } from "util";
 import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
-import { deleteGcsObject, uploadBufferToGcs } from "../services/gcs";
+import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
 import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./extractorPipeline";
 
@@ -855,6 +855,7 @@ async function runStrategistRefinementPass(params: {
 }
 
 export async function analyzeVideo(params: {
+  gcsUri?: string;
   fileBase64?: string;
   fileUrl?: string;
   fileKey?: string;
@@ -868,7 +869,12 @@ export async function analyzeVideo(params: {
     const extractorModel = resolveGrowthCampExtractorModel();
     const uploadedObjects: string[] = [];
     let buffer: Buffer;
-    if (typeof params.fileKey === "string" && params.fileKey.trim()) {
+    let videoGcsUri = "";
+    if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
+      const storedObject = await downloadGcsObject({ gcsUri: params.gcsUri });
+      buffer = storedObject.buffer;
+      videoGcsUri = params.gcsUri;
+    } else if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
       if (storedBuffer?.length) {
         buffer = storedBuffer;
@@ -894,12 +900,15 @@ export async function analyzeVideo(params: {
     }
 
     const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
-    const storedVideo = await uploadBufferToGcs({
-      objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
-      buffer,
-      contentType: params.mimeType || "video/mp4",
-    });
-    uploadedObjects.push(storedVideo.objectName);
+    if (!videoGcsUri) {
+      const storedVideo = await uploadBufferToGcs({
+        objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
+        buffer,
+        contentType: params.mimeType || "video/mp4",
+      });
+      uploadedObjects.push(storedVideo.objectName);
+      videoGcsUri = storedVideo.gcsUri;
+    }
 
     const result = await withTempVideo(buffer, async (videoPath) => {
       const duration = await getVideoDurationFromPath(videoPath);
@@ -989,7 +998,7 @@ export async function analyzeVideo(params: {
         duration,
         context: params.context,
         fileName: params.fileName,
-        videoGcsUri: storedVideo.gcsUri,
+        videoGcsUri,
       }));
 
       const strategistRefinement = isDeepStrategistModel(finalModel)
@@ -1026,11 +1035,11 @@ export async function analyzeVideo(params: {
       const costProfile = estimateTokenProfile(duration, allFrames.length);
 
       return {
-        analysis: parsed,
-        videoMeta: {
-          videoUrl: storedVideo.gcsUri,
-          audioUrl: "",
-          transcript,
+          analysis: parsed,
+          videoMeta: {
+            videoUrl: videoGcsUri,
+            audioUrl: "",
+            transcript,
           videoDuration: duration,
           provider: "vertex",
           model: finalModel,

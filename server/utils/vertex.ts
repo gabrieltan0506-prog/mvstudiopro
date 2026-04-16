@@ -1,13 +1,34 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+
+function readGoogleServiceAccount() {
+  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return JSON.parse(
+        raw.replace(
+          /"private_key"\s*:\s*"([\s\S]*?)"/m,
+          (_match, privateKey) => `"private_key": ${JSON.stringify(String(privateKey || ""))}`,
+        ),
+      );
+    }
+  }
+
+  const credentialsPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || "").trim();
+  if (credentialsPath) {
+    return JSON.parse(fs.readFileSync(credentialsPath, "utf8"));
+  }
+
+  throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON or GOOGLE_APPLICATION_CREDENTIALS");
+}
 
 /**
- * 取得 Vertex AI OAuth2 Access Token（使用 GOOGLE_APPLICATION_CREDENTIALS_JSON）
+ * 取得 Vertex AI OAuth2 Access Token（使用 GOOGLE_APPLICATION_CREDENTIALS_JSON 或 GOOGLE_APPLICATION_CREDENTIALS）
  */
 export async function getVertexAccessToken() {
-  const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-  if (!raw) throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON");
-
-  const sa = JSON.parse(raw);
+  const sa = readGoogleServiceAccount();
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
   const payload = Buffer.from(JSON.stringify({

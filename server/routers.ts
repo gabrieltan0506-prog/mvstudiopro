@@ -41,6 +41,7 @@ import { CREDIT_COSTS } from "./plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
+import { createGcsSignedUploadUrl } from "./services/gcs";
 import { getTierProviderChain, resolveUserTier, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
 import { getOrCreateBalance } from "./credits";
@@ -1586,8 +1587,21 @@ export const appRouter = router({
         };
       }),
 
+    getVideoUploadSignedUrl: publicProcedure
+      .input(z.object({
+        fileName: z.string().min(1),
+        mimeType: z.string().min(1),
+      }))
+      .mutation(async ({ input }) => {
+        return createGcsSignedUploadUrl({
+          fileName: input.fileName,
+          contentType: input.mimeType,
+        });
+      }),
+
     analyzeVideo: publicProcedure
       .input(z.object({
+        gcsUri: z.string().optional(),
         fileBase64: z.string().optional(),
         fileUrl: z.string().optional(),
         fileKey: z.string().optional(),

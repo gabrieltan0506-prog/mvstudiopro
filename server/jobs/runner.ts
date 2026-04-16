@@ -181,6 +181,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
 
   if (input.action === "growth_analyze_video") {
     const result = await analyzeGrowthCampVideo({
+      gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
       fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
       fileKey: typeof params.fileKey === "string" ? params.fileKey : undefined,
       mimeType: String(params.mimeType ?? "video/mp4"),
