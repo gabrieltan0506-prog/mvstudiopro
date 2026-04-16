@@ -108,20 +108,20 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
         {data.insightSummary.length > 0 && (
           <>
             <div style={sec}>核心洞察</div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(data.insightSummary.length, 4)}, 1fr)`, gap: "14px", marginBottom: "16px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(data.insightSummary.length, 4)}, 1fr)`, gap: "14px", marginBottom: "16px", alignItems: "start" }}>
               {data.insightSummary.slice(0, 4).map((insight: any, i) => {
                 const isObj = typeof insight === "object" && insight !== null;
                 const title = isObj ? safeTxt(insight.title || insight.name || "") : safeTxt(insight).slice(0, 20);
                 const desc = isObj ? safeTxt(insight.description || insight.desc || insight.content || "") : safeTxt(insight);
                 return (
-                  <div key={i} style={card()}>
+                  <div key={i} style={card({ height: "auto", minHeight: 0, overflow: "visible", alignSelf: "start" })}>
                     <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{["判断","热点","结构","建议"][i] || "洞察"}{i + 1}</div>
-                    {/* Short title — no truncation, break words */}
-                    <div style={{ fontSize: "13px", fontWeight: 800, color: C[i % C.length], lineHeight: "1.4", marginBottom: "6px", wordBreak: "break-word", whiteSpace: "normal" }}>
+                    {/* Short title — fully expanded, no truncation */}
+                    <div style={{ fontSize: "16px", fontWeight: 800, color: C[i % C.length], lineHeight: "1.35", marginBottom: "12px", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal" }}>
                       {title}
                     </div>
-                    {/* Detailed description — full content, no line clamp */}
-                    <div style={{ fontSize: "11px", color: muted, lineHeight: "1.6", wordBreak: "break-word", whiteSpace: "normal" }}>
+                    {/* Detailed description — full height unlocked */}
+                    <div style={{ fontSize: "11px", color: muted, lineHeight: "1.75", wordBreak: "break-word", overflowWrap: "anywhere", whiteSpace: "normal", height: "auto", minHeight: 0, paddingBottom: "8px" }}>
                       {desc}
                     </div>
                   </div>
