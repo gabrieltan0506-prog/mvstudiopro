@@ -2209,6 +2209,10 @@ export default function MVAnalysisPage() {
     setMusicProgressMessage("正在提交音乐任务...");
     let attempts = 0;
     const maxAttempts = 120;
+    let transientFetchFailures = 0;
+    let consecutiveFetchFailures = 0;
+    const maxTransientFetchFailures = 24;
+    const maxConsecutiveFetchFailures = 6;
     musicPollingRef.current = setInterval(async () => {
       attempts += 1;
       if (attempts > maxAttempts) {
@@ -2222,6 +2226,8 @@ export default function MVAnalysisPage() {
       }
       try {
         const data = await getJob(jobId);
+        transientFetchFailures = 0;
+        consecutiveFetchFailures = 0;
         const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
         setMusicProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
         if (data.status === "succeeded") {
@@ -2242,8 +2248,22 @@ export default function MVAnalysisPage() {
           setMusicStatus("error");
           setMusicError(String(data.error || "音乐生成失败"));
         }
-      } catch {
-        // ignore transient polling errors
+      } catch (pollError: any) {
+        transientFetchFailures += 1;
+        consecutiveFetchFailures += 1;
+        const pollMessage = String(pollError?.message || pollError || "music_job_poll_failed");
+        setMusicProgressMessage(`任务轮询重试中：${pollMessage}`);
+        if (
+          consecutiveFetchFailures >= maxConsecutiveFetchFailures ||
+          transientFetchFailures >= maxTransientFetchFailures
+        ) {
+          if (musicPollingRef.current) {
+            clearInterval(musicPollingRef.current);
+            musicPollingRef.current = null;
+          }
+          setMusicStatus("error");
+          setMusicError(`音乐任务轮询失败：${pollMessage}`);
+        }
       }
     }, 1800);
   }, []);
