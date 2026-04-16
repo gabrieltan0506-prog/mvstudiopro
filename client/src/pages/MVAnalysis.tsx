@@ -2193,6 +2193,27 @@ export default function MVAnalysisPage() {
     });
   }, [playingMusicUrl]);
 
+  const handleDownloadGeneratedMusic = useCallback(async (url: string, title?: string) => {
+    if (!url) return;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`下载失败 (${resp.status})`);
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = blobUrl;
+      anchor.download = `${(title || "bgm").trim() || "bgm"}.mp3`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (downloadError: any) {
+      toast.error(downloadError?.message || "音频下载失败");
+    }
+  }, []);
+
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
     musicPollingRunRef.current += 1;
     const runId = musicPollingRunRef.current;
@@ -2287,7 +2308,7 @@ export default function MVAnalysisPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           musicProvider === "suno"
-            ? { task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }
+            ? { task_type: "create_music", custom_mode: false, mv: "chirp-v4-5", gpt_description_prompt: prompt }
             : { prompt, task_type: "create_music", make_instrumental: true, mv: "FUZZ-2.0" }
         ),
       });
@@ -4107,14 +4128,14 @@ export default function MVAnalysisPage() {
                                             </button>
                                           ) : null}
                                           {song.audioUrl ? (
-                                            <a
-                                              href={song.audioUrl}
-                                              download={`${song.title || "bgm"}.mp3`}
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
                                               className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
                                             >
                                               <Download className="h-3.5 w-3.5" />
                                               下载
-                                            </a>
+                                            </button>
                                           ) : null}
                                         </div>
                                       </div>
