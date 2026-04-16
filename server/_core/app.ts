@@ -10,8 +10,8 @@ export function createApp() {
   const app = express();
 
   app.use(cookieParser());
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  app.use(express.json({ limit: "650mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "650mb" }));
   registerAuthApiRoutes(app);
 
   // health check

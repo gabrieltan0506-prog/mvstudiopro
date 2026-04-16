@@ -118,6 +118,45 @@ type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "er
 type InputKind = "document" | "video";
 type DebugInfo = Record<string, unknown> | null;
 
+type VideoPipelineDebug = {
+  mode?: "direct" | "job";
+  selectedFile?: {
+    name?: string;
+    size?: number;
+    mimeType?: string;
+  };
+  upload?: {
+    status?: "idle" | "started" | "done" | "failed";
+    progress?: number;
+    url?: string;
+    key?: string;
+    error?: string;
+  };
+  dispatch?: {
+    status?: "idle" | "started" | "done" | "failed";
+    modelName?: string;
+    route?: "mvAnalysis.analyzeVideo" | "growth_analyze_video";
+    error?: string;
+  };
+  job?: {
+    jobId?: string;
+    status?: string;
+    pollCount?: number;
+    error?: string;
+  };
+  analysis?: {
+    status?: "idle" | "started" | "done" | "failed";
+    provider?: string;
+    model?: string;
+    fallback?: boolean;
+    failureStage?: string;
+    failureReason?: string;
+    transcriptChars?: number;
+    videoDuration?: number;
+    error?: string;
+  };
+};
+
 type CommercialTrack = {
   name: string;
   fit: number;
@@ -1726,6 +1765,23 @@ export default function MVAnalysisPage() {
     setError(null);
     setElapsedTime(0);
     setEstimatedTime(Math.max(12, Math.round(fileSize / (1024 * 1024) * 1.5 + 12)));
+    setDebugInfo((prev) => ({
+      ...(prev || {}),
+      inputKind,
+      fileName,
+      mimeType: fileMimeType || null,
+      fileSize,
+      videoPipeline: inputKind === "video" ? {
+        selectedFile: {
+          name: selectedFile?.name || fileName || "",
+          size: selectedFile?.size || fileSize || 0,
+          mimeType: fileMimeType || selectedFile?.type || "",
+        },
+        upload: { status: "started", progress: 0 },
+        dispatch: { status: "idle" },
+        analysis: { status: "idle" },
+      } satisfies VideoPipelineDebug : undefined,
+    }));
 
     try {
       const result = inputKind === "document"
@@ -1741,34 +1797,51 @@ export default function MVAnalysisPage() {
                 throw new Error("请先选择视频文件");
               }
               const uploaded = await uploadFileWithProgress(selectedFile, (percent) => {
-                setUploadProgress(Math.min(55, Math.max(3, Math.round(percent * 0.55))));
+                const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
+                setUploadProgress(mappedPercent);
+                setDebugInfo((prev) => ({
+                  ...(prev || {}),
+                  videoPipeline: {
+                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                    upload: {
+                      ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+                      status: "started",
+                      progress: mappedPercent,
+                    },
+                  },
+                }));
               });
               if (!uploaded?.url) {
                 throw new Error("视频上传完成但未返回地址");
               }
+              setDebugInfo((prev) => ({
+                ...(prev || {}),
+                videoPipeline: {
+                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                  upload: {
+                    status: "done",
+                    progress: 100,
+                    url: uploaded.url,
+                    key: uploaded.key,
+                  },
+                },
+              }));
 
               setUploadStage("analyzing");
               setUploadProgress(60);
 
-              if (isPremiumRemixPage) {
-                const directResult = await analyzeVideoMutation.mutateAsync({
-                  fileUrl: uploaded.url,
-                  fileKey: uploaded.key,
-                  mimeType: fileMimeType || "video/mp4",
-                  fileName,
-                  context: context || undefined,
-                  modelName: "gemini-3.1-pro-preview",
-                } as any);
-                return {
-                  success: true,
-                  analysis: directResult.analysis,
-                  videoUrl: directResult.videoUrl,
-                  transcript: directResult.transcript,
-                  videoDuration: directResult.videoDuration,
-                  debug: directResult.debug,
-                };
-              }
-
+              setDebugInfo((prev) => ({
+                ...(prev || {}),
+                videoPipeline: {
+                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                  mode: "job",
+                  dispatch: {
+                    status: "started",
+                    modelName: "gemini-2.5-pro",
+                    route: "growth_analyze_video",
+                  },
+                },
+              }));
               const { jobId } = await createJob({
                 type: "video",
                 userId: "",
@@ -1784,10 +1857,43 @@ export default function MVAnalysisPage() {
                   },
                 },
               });
+              setDebugInfo((prev) => ({
+                ...(prev || {}),
+                videoPipeline: {
+                  ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                  dispatch: {
+                    status: "done",
+                    modelName: "gemini-2.5-pro",
+                    route: "growth_analyze_video",
+                  },
+                  job: {
+                    jobId,
+                    status: "queued",
+                    pollCount: 0,
+                  },
+                  analysis: {
+                    status: "started",
+                  },
+                },
+              }));
 
               const startedAt = Date.now();
+              let pollCount = 0;
               while (Date.now() - startedAt < 12 * 60_000) {
                 const job = await getJob(jobId);
+                pollCount += 1;
+                setDebugInfo((prev) => ({
+                  ...(prev || {}),
+                  videoPipeline: {
+                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                    job: {
+                      jobId,
+                      status: String(job.status || "unknown"),
+                      pollCount,
+                      error: job.status === "failed" ? String(job.error || "") : undefined,
+                    },
+                  },
+                }));
                 if (job.status === "succeeded") {
                   return {
                     success: true,
@@ -1818,30 +1924,58 @@ export default function MVAnalysisPage() {
         fileName,
         mimeType: fileMimeType || null,
         fileSize,
+        videoPipeline: inputKind === "video" ? {
+          ...((((debugInfo as any)?.videoPipeline || {}) as VideoPipelineDebug)),
+          analysis: {
+            status: "done",
+            provider: String((result as any).debug?.provider || ""),
+            model: String((result as any).debug?.model || ""),
+            fallback: Boolean((result as any).debug?.fallback),
+            failureStage: String((result as any).debug?.failureStage || ""),
+            failureReason: String((result as any).debug?.failureReason || ""),
+            transcriptChars: Number((result as any).debug?.transcriptChars || 0),
+            videoDuration: Number((result as any).debug?.videoDuration || 0),
+          },
+        } satisfies VideoPipelineDebug : undefined,
         ...((result as any).debug || {}),
       });
-      if (isPremiumRemixPage) {
-        setIsPremiumRemixPipelineRunning(true);
-        const remixResult = await runPremiumRemixUpgrade(normalizedAnalysis, nextTranscript);
-        setPremiumRemix(remixResult.remix);
-        setPremiumRemixAssets(null);
-        setPremiumRemixDebug(remixResult.debug || null);
-        setPremiumRemixAssetsDebug(null);
-      }
       setUploadProgress(100);
       setUploadStage("done");
       if (!supervisorAccess) {
         usageStatsQuery.refetch();
       }
     } catch (analysisError: any) {
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
+        inputKind,
+        fileName,
+        mimeType: fileMimeType || null,
+        fileSize,
+        videoPipeline: inputKind === "video" ? {
+          ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+          upload: {
+            ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+            status: (((prev as any)?.videoPipeline?.upload?.status as string) || "started") === "done" ? "done" : "failed",
+            error: (((prev as any)?.videoPipeline?.upload?.status as string) || "idle") === "done" ? undefined : String(analysisError?.message || analysisError || ""),
+          },
+          dispatch: {
+            ...((((prev as any)?.videoPipeline?.dispatch || {}) as VideoPipelineDebug["dispatch"])),
+            status: (((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "done" ? "done" : ((((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "started" ? "failed" : ((prev as any)?.videoPipeline?.dispatch?.status as any) || "idle"),
+            error: (((prev as any)?.videoPipeline?.dispatch?.status as string) || "idle") === "started" ? String(analysisError?.message || analysisError || "") : (((prev as any)?.videoPipeline?.dispatch?.error as string) || undefined),
+          },
+          analysis: {
+            ...((((prev as any)?.videoPipeline?.analysis || {}) as VideoPipelineDebug["analysis"])),
+            status: "failed",
+            error: String(analysisError?.message || analysisError || ""),
+          },
+        } satisfies VideoPipelineDebug : undefined,
+      }));
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
     } finally {
-      if (isPremiumRemixPage) {
-        setIsPremiumRemixPipelineRunning(false);
-      }
+      setIsPremiumRemixPipelineRunning(false);
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, analyzeVideoMutation, fileMimeType, fileName, context, "gemini-2.5-pro", usageStatsQuery, isPremiumRemixPage]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
@@ -2424,14 +2558,14 @@ export default function MVAnalysisPage() {
   }, [generatePremiumRemixAssetsMutation, persistPremiumRemixDraft, premiumRemix]);
 
   useEffect(() => {
-    if (!isPremiumRemixPage) return;
+    return;
     clearPremiumRemixDraft();
     setPremiumRemixDraftMeta(null);
     setPremiumRemix(null);
     setPremiumRemixAssets(null);
     setPremiumRemixDebug(null);
     setPremiumRemixAssetsDebug(null);
-  }, [isPremiumRemixPage]);
+  }, []);
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
@@ -3284,6 +3418,21 @@ export default function MVAnalysisPage() {
                   {debugInfo?.failureStage ? <div>失败阶段：{String(debugInfo.failureStage)}</div> : null}
                   {debugInfo?.failureReason ? <div>失败原因：{String(debugInfo.failureReason)}</div> : null}
                 </div>
+                {(debugInfo?.videoPipeline || inputKind === "video") ? (
+                  <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/75">
+                    <div className="text-xs uppercase tracking-[0.16em] text-cyan-100">视频链路 Debug</div>
+                    <div className="mt-3 space-y-2 leading-6">
+                      <div>1. 选择文件：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
+                      <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
+                      <div>3. 上传结果：URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
+                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模型 {String((debugInfo as any)?.videoPipeline?.dispatch?.modelName || "-")}</div>
+                      <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")}</div>
+                      <div>6. Job：ID {String((debugInfo as any)?.videoPipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.videoPipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.videoPipeline?.job?.pollCount ?? "-")} 次</div>
+                      <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.videoPipeline?.analysis?.model || debugInfo?.model || "-")}</div>
+                      <div>8. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-4 rounded-2xl border border-fuchsia-200/15 bg-black/15 p-4 text-xs text-white/75">
                   <div className="font-semibold text-fuchsia-100">运行控制</div>
                   <div className="mt-3 flex flex-wrap gap-2">
