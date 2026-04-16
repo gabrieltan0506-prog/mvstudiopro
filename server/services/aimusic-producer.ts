@@ -56,7 +56,7 @@ function parseTaskId(payload: Record<string, any>): string {
   return "";
 }
 
-function normalizeSongs(statusPayload: Record<string, any>): ProducerSong[] {
+function getClipList(statusPayload: Record<string, any>): any[] {
   const root = asObject(statusPayload.raw ?? statusPayload);
   const list =
     root.songs ||
@@ -66,14 +66,33 @@ function normalizeSongs(statusPayload: Record<string, any>): ProducerSong[] {
     root?.data?.tracks ||
     root?.result?.songs ||
     root?.result?.tracks ||
+    root?.data ||
+    root?.result?.data ||
     [];
 
-  if (!Array.isArray(list)) return [];
+  return Array.isArray(list) ? list : [];
+}
+
+function deriveStatusFromClips(clips: any[]): string | undefined {
+  const states = clips
+    .map((clip) => String(asObject(clip).state || asObject(clip).status || "").trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!states.length) return undefined;
+  if (states.some((state) => state === "failed" || state === "error")) return "FAILED";
+  if (states.some((state) => state === "succeeded" || state === "success" || state === "completed")) return "SUCCESS";
+  if (states.some((state) => state === "running" || state === "pending" || state === "queued" || state === "processing")) return "PENDING";
+  return undefined;
+}
+
+function normalizeSongs(statusPayload: Record<string, any>): ProducerSong[] {
+  const list = getClipList(statusPayload);
+  if (!list.length) return [];
 
   return list.map((song: any, idx: number) => {
     const s = asObject(song);
     return {
-      id: String(s.id ?? s.trackId ?? s.track_id ?? idx),
+      id: String(s.id ?? s.clip_id ?? s.trackId ?? s.track_id ?? idx),
       audioUrl:
         typeof s.audioUrl === "string"
           ? s.audioUrl
@@ -171,6 +190,8 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
 
     const payload = asObject(await response.json());
     const root = asObject(payload.raw ?? payload);
+    const clips = getClipList(payload);
+    const clipDerivedStatus = deriveStatusFromClips(clips);
     const statusRaw =
       root.status ??
       root.state ??
@@ -179,6 +200,7 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
       root?.data?.status ??
       root?.data?.state ??
       root?.result?.status ??
+      clipDerivedStatus ??
       "PENDING";
 
     const errorMessage =
