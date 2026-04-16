@@ -4,7 +4,8 @@ export type VisualReportData = {
   reportTitle: string;
   dateRange: string;
   theme: "dark" | "light";
-  insightSummary: string[];
+  // insightSummary: supports both {title, description} objects and legacy string values
+  insightSummary: Array<string | { title: string; description: string }>;
   trackGrowth?: Array<{ name: string; growth: string; isHot?: boolean }>;
   audiencesAndBiz?: Array<{ audience: string; bizDirection: string }>;
   topicExamples?: Array<{ structure: string; concept: string; realCase: string }>;
@@ -103,22 +104,29 @@ export const VisualReportTemplate = React.forwardRef<HTMLDivElement, Props>(
           ))}
         </div>
 
-        {/* ── 顶部四宫格 (g4) ── */}
+        {/* ── 顶部四宫格 (g4) — supports {title, description} objects and legacy strings ── */}
         {data.insightSummary.length > 0 && (
           <>
             <div style={sec}>核心洞察</div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(data.insightSummary.length, 4)}, 1fr)`, gap: "14px", marginBottom: "16px" }}>
-              {data.insightSummary.slice(0, 4).map((insight, i) => (
-                <div key={i} style={card()}>
-                  <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{["判断","热点","结构","建议"][i] || "洞察"}{i + 1}</div>
-                  <div style={{ fontSize: "13px", fontWeight: 700, color: C[i % C.length], lineHeight: "1.5", marginBottom: "6px" }}>
-                    {safeTxt(insight).slice(0, 30)}
+              {data.insightSummary.slice(0, 4).map((insight: any, i) => {
+                const isObj = typeof insight === "object" && insight !== null;
+                const title = isObj ? safeTxt(insight.title || insight.name || "") : safeTxt(insight).slice(0, 20);
+                const desc = isObj ? safeTxt(insight.description || insight.desc || insight.content || "") : safeTxt(insight);
+                return (
+                  <div key={i} style={card()}>
+                    <div style={ct(C[i % C.length])}><div style={dot(C[i % C.length])} />{["判断","热点","结构","建议"][i] || "洞察"}{i + 1}</div>
+                    {/* Short title — no truncation, break words */}
+                    <div style={{ fontSize: "13px", fontWeight: 800, color: C[i % C.length], lineHeight: "1.4", marginBottom: "6px", wordBreak: "break-word", whiteSpace: "normal" }}>
+                      {title}
+                    </div>
+                    {/* Detailed description — full content, no line clamp */}
+                    <div style={{ fontSize: "11px", color: muted, lineHeight: "1.6", wordBreak: "break-word", whiteSpace: "normal" }}>
+                      {desc}
+                    </div>
                   </div>
-                  <div style={{ fontSize: "11px", color: muted, lineHeight: "1.6" }}>
-                    {safeTxt(insight)}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
