@@ -613,17 +613,18 @@ export default function PlatformPage() {
           // Keep raw objects — rendering code at referenceAccounts.map handles both string | {account,reason} polymorphically
           // DO NOT call .map(String) here — that converts {account,reason} objects to "[object Object]"
           const refs: any[] = Array.isArray(item.referenceAccounts) ? item.referenceAccounts : [];
-          const boosters = Array.isArray(item.trafficBoosters) ? item.trafficBoosters.map(String) : [];
+          // Use renderSafeText to prevent [object Object] when Gemini returns nested objects
+          const boosters = Array.isArray(item.trafficBoosters) ? item.trafficBoosters.map((b: any) => renderSafeText(b)) : [];
+          const rSafe = (v: any) => renderSafeText(v);
           return {
             id: `${item.platform || item.name || item["平台"] || index}-${item.label || item.displayName || index}`,
-            // Support both English keys and Chinese keys Gemini sometimes returns
             name: item.label || item.displayName || item.name || item.platform || item["平台"] || `平台 ${index + 1}`,
-            lane: cleanUserCopy(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || "", item.label || `平台 ${index + 1}`),
-            trend: cleanUserCopy(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || "", "先从更顺手的表达方式切入"),
-            whyNow: cleanUserCopy(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || "", "当前窗口里，这个平台更容易拿到第一轮反馈。"),
-            nextMove: cleanUserCopy(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || "", "先发一版内容拿反馈。"),
-            hook: cleanUserCopy(item.contentHook || item.hook || item.nextMove || item["开头怎么说"] || item["开头钩子"] || "", "先把第一句判断说出来。"),
-            monetization: cleanUserCopy(item.monetizationPath || item.monetization || item["商业承接路径"] || item["变现路径"] || "", ""),
+            lane: cleanUserCopy(rSafe(item.lane || item.contentAngle || item["赛道"] || item["内容赛道"] || ""), item.label || `平台 ${index + 1}`),
+            trend: cleanUserCopy(rSafe(item.recommendedFormat || item.trend || item.format || item["内容形式"] || item["推荐形式"] || ""), "先从更顺手的表达方式切入"),
+            whyNow: cleanUserCopy(rSafe(item.whyNow || item.reason || item.summary || item["为什么"] || item["推荐理由"] || ""), "当前窗口里，这个平台更容易拿到第一轮反馈。"),
+            nextMove: cleanUserCopy(rSafe(item.titleExample || item.nextMove || item.action || item["标题示例"] || item["下一步"] || ""), "先发一版内容拿反馈。"),
+            hook: cleanUserCopy(rSafe(item.contentHook || item.hook || item.nextMove || item["开头怎么说"] || item["开头钩子"] || ""), "先把第一句判断说出来。"),
+            monetization: cleanUserCopy(rSafe(item.monetizationPath || item.monetization || item["商业承接路径"] || item["变现路径"] || ""), ""),
             referenceAccounts: refs,
             primaryTrack: item.primaryTrack || "",
             estimatedTraffic: item.estimatedTraffic || "",
@@ -1496,7 +1497,7 @@ export default function PlatformPage() {
 
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+            <div className="grid gap-4">
               <div className={shellCardClasses("p-6")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <TrendingUp className="h-4 w-4 text-[#49e6ff]" />
@@ -1592,62 +1593,6 @@ export default function PlatformPage() {
                       ) : null}
                     </div>
                   ))}
-                </div>
-              </div>
-
-              <div className={shellCardClasses("p-6")}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <BarChart3 className="h-4 w-4 text-[#6fffb0]" />
-                  平台商业价值评估
-                </div>
-                <div className="mt-4 space-y-5">
-                  {platformDecisionRows.map((item) => {
-                    const hasFourD = (item as any).primaryTrack || (item as any).estimatedTraffic || (item as any).ipUniqueness || (item as any).commercialConversion;
-                    return (
-                      <div key={`biz-${item.id}`} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-4">
-                        <div className="mb-3 font-semibold text-white">{item.name}</div>
-                        {hasFourD ? (
-                          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-                            {(item as any).estimatedTraffic ? (
-                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
-                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">预估流量</div>
-                                <div className="mt-1 text-base font-bold text-white">{(item as any).estimatedTraffic}</div>
-                              </div>
-                            ) : null}
-                            {(item as any).ipUniqueness ? (
-                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
-                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">IP 独特性</div>
-                                <div className="mt-1 text-base font-bold text-white">{(item as any).ipUniqueness}</div>
-                              </div>
-                            ) : null}
-                            {(item as any).commercialConversion ? (
-                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
-                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">商业转化率</div>
-                                <div className="mt-1 text-base font-bold text-[#6fffb0]">{(item as any).commercialConversion}</div>
-                              </div>
-                            ) : null}
-                            {(item as any).primaryTrack ? (
-                              <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2 text-center">
-                                <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">核心赛道</div>
-                                <div className="mt-1 text-sm font-semibold text-[#ffdd44]">{(item as any).primaryTrack}</div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2">
-                              <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">适配度</div>
-                              <div className="mt-1 text-sm font-semibold text-white">{(primaryPlatforms.find(p => p.displayName === item.name || p.platform === item.name) as any)?.audienceFitScore ?? '-'} / 100</div>
-                            </div>
-                            <div className="rounded-xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] px-3 py-2">
-                              <div className="text-[10px] uppercase tracking-[0.12em] text-[#9ddcff]">动量分</div>
-                              <div className="mt-1 text-sm font-semibold text-white">{(primaryPlatforms.find(p => p.displayName === item.name || p.platform === item.name) as any)?.momentumScore ?? '-'}</div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
                 </div>
               </div>
             </div>

@@ -75,7 +75,8 @@ const PLATFORM_REFERENCE_RANGES: Partial<Record<GrowthPlatform, { min: number; m
   // Kuaishou crawl intensity increased: reference range widened
   kuaishou: { min: 20, max: 80 },
   bilibili: { min: 40, max: 80 },
-  xiaohongshu: { min: 20, max: 60 },
+  // Xiaohongshu crawl intensity increased
+  xiaohongshu: { min: 40, max: 100 },
   // Toutiao crawl intensity increased: reference range widened
   toutiao: { min: 40, max: 120 },
 };
@@ -2067,12 +2068,13 @@ async function collectXiaohongshu(): Promise<PlatformTrendCollection> {
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.career_v3",
       "https://www.xiaohongshu.com/explore?channel_id=homefeed.movie_and_tv_v3",
     ];
-  const pageLimit = Math.max(1, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_TREND_PAGES", "XHS_TREND_PAGES", 4)));
-  const defaultXhsKeywordLimit = Math.max(3, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_KEYWORD_LIMIT", "XHS_SEARCH_KEYWORD_LIMIT", 6));
-  const defaultXhsSearchPages = Math.max(1, Math.min(4, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_PAGES", "XHS_SEARCH_PAGES", 2)));
-  const xhsCommentItemLimit = Math.max(0, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_ITEMS", "XHS_COMMENT_SAMPLE_ITEMS", 4)));
-  const xhsCommentSampleLimit = Math.max(0, Math.min(5, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_LIMIT", "XHS_COMMENT_SAMPLE_LIMIT", 3)));
-  const xhsConcurrency = Math.max(2, Math.min(4, parsePreferredNumberEnv("GROWTH_XHS_CONCURRENCY", "XHS_CONCURRENCY", 3)));
+  // Xiaohongshu crawl intensity increased: pages, keyword limit, search pages, concurrency
+  const pageLimit = Math.max(1, Math.min(16, parsePreferredNumberEnv("GROWTH_XHS_TREND_PAGES", "XHS_TREND_PAGES", 8)));
+  const defaultXhsKeywordLimit = Math.max(3, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_KEYWORD_LIMIT", "XHS_SEARCH_KEYWORD_LIMIT", 12));
+  const defaultXhsSearchPages = Math.max(1, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_SEARCH_PAGES", "XHS_SEARCH_PAGES", 4)));
+  const xhsCommentItemLimit = Math.max(0, Math.min(12, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_ITEMS", "XHS_COMMENT_SAMPLE_ITEMS", 6)));
+  const xhsCommentSampleLimit = Math.max(0, Math.min(8, parsePreferredNumberEnv("GROWTH_XHS_COMMENT_SAMPLE_LIMIT", "XHS_COMMENT_SAMPLE_LIMIT", 4)));
+  const xhsConcurrency = Math.max(2, Math.min(6, parsePreferredNumberEnv("GROWTH_XHS_CONCURRENCY", "XHS_CONCURRENCY", 4)));
   const xhsSearchRoute = await getAdaptiveRouteDecision("xiaohongshu", "search_feed", {
     pageCount: defaultXhsSearchPages,
     keywordLimit: defaultXhsKeywordLimit,
