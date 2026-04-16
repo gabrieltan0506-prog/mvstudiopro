@@ -202,7 +202,10 @@ async function startServer() {
       return res.status(200).json({ jobId, status: "queued" });
     } catch (error) {
       console.error("[Jobs] POST /api/jobs failed:", error);
-      return res.status(500).json({ error: "Failed to create job" });
+      return res.status(500).json({
+        error: "Failed to create job",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
@@ -251,7 +254,10 @@ async function startServer() {
       });
     } catch (error) {
       console.error("[Jobs] GET /api/jobs/:id failed:", error);
-      return res.status(500).json({ error: "Failed to fetch job" });
+      return res.status(500).json({
+        error: "Failed to fetch job",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
