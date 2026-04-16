@@ -2291,7 +2291,13 @@ ${JSON.stringify(platformEvidence, null, 2)}
           let parsed: any = {};
           try { parsed = JSON.parse(stripped); } catch { try { parsed = JSON.parse(rawContent); } catch { parsed = {}; } }
 
-          const safeStr = (v: any) => String(v ?? "");
+          // safeStr: smart object-aware extractor — prevents [object Object] strings in arrays
+          const safeStr = (v: any): string => {
+            if (v === null || v === undefined) return "";
+            if (typeof v === "string") return v;
+            if (typeof v === "object") return String(v.text || v.title || v.name || v.content || v.desc || v.trackName || v.label || v.value || Object.values(v)[0] || "");
+            return String(v);
+          };
           return {
             success: true,
             report: {
