@@ -239,7 +239,17 @@ async function getVertexAccessToken() {
   const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
   if (!raw) throw new Error("missing_env_GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
-  const serviceAccount = JSON.parse(raw);
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(raw);
+  } catch {
+    serviceAccount = JSON.parse(
+      raw.replace(
+        /"private_key"\s*:\s*"([\s\S]*?)"/m,
+        (_match, privateKey) => `"private_key": ${JSON.stringify(String(privateKey || ""))}`,
+      ),
+    );
+  }
   if (!serviceAccount?.client_email || !serviceAccount?.private_key) {
     throw new Error("invalid_GOOGLE_APPLICATION_CREDENTIALS_JSON");
   }

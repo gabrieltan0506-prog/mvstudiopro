@@ -130,6 +130,8 @@ type VideoPipelineDebug = {
     progress?: number;
     url?: string;
     key?: string;
+    gcsUri?: string;
+    strategy?: "signed-url" | "legacy-upload";
     error?: string;
   };
   dispatch?: {
@@ -441,6 +443,41 @@ async function uploadFileWithProgress(file: File, onProgress: (percent: number) 
     };
 
     xhr.send(formData);
+  });
+}
+
+async function uploadFileToSignedUrl(params: {
+  file: File;
+  uploadUrl: string;
+  headers?: Record<string, string>;
+  onProgress: (percent: number) => void;
+}) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", params.uploadUrl, true);
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const percent = Math.max(1, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      params.onProgress(percent);
+    };
+
+    xhr.onerror = () => reject(new Error("GCS 直传失败，请检查网络后重试"));
+    xhr.onabort = () => reject(new Error("GCS 直传已中断"));
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(xhr.responseText || `GCS 直传失败 (${xhr.status})`));
+        return;
+      }
+      resolve();
+    };
+
+    xhr.setRequestHeader("Content-Type", params.file.type || "application/octet-stream");
+    for (const [key, value] of Object.entries(params.headers || {})) {
+      if (!value) continue;
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.send(params.file);
   });
 }
 
@@ -1547,6 +1584,7 @@ export default function MVAnalysisPage() {
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
   const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
+  const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
   const buildPremiumRemixMutation = trpc.mvAnalysis.buildPremiumRemix.useMutation();
   const generatePremiumRemixAssetsMutation = trpc.mvAnalysis.generatePremiumRemixAssets.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
@@ -1796,22 +1834,64 @@ export default function MVAnalysisPage() {
               if (!selectedFile) {
                 throw new Error("请先选择视频文件");
               }
-              const uploaded = await uploadFileWithProgress(selectedFile, (percent) => {
-                const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
-                setUploadProgress(mappedPercent);
-                setDebugInfo((prev) => ({
-                  ...(prev || {}),
-                  videoPipeline: {
-                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                    upload: {
-                      ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
-                      status: "started",
-                      progress: mappedPercent,
-                    },
+              let uploaded: { url?: string; key?: string; gcsUri?: string; strategy: "signed-url" | "legacy-upload" };
+              try {
+                const signed = await getVideoUploadSignedUrlMutation.mutateAsync({
+                  fileName: selectedFile.name || fileName || "video.mp4",
+                  mimeType: fileMimeType || selectedFile.type || "video/mp4",
+                });
+                await uploadFileToSignedUrl({
+                  file: selectedFile,
+                  uploadUrl: signed.uploadUrl,
+                  headers: signed.requiredHeaders,
+                  onProgress: (percent) => {
+                    const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
+                    setUploadProgress(mappedPercent);
+                    setDebugInfo((prev) => ({
+                      ...(prev || {}),
+                      videoPipeline: {
+                        ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                        upload: {
+                          ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+                          status: "started",
+                          progress: mappedPercent,
+                          strategy: "signed-url",
+                        },
+                      },
+                    }));
                   },
-                }));
-              });
-              if (!uploaded?.url) {
+                });
+                uploaded = {
+                  gcsUri: signed.gcsUri,
+                  strategy: "signed-url",
+                };
+              } catch (signedUploadError: any) {
+                const fallbackUploaded = await uploadFileWithProgress(selectedFile, (percent) => {
+                  const mappedPercent = Math.min(55, Math.max(3, Math.round(percent * 0.55)));
+                  setUploadProgress(mappedPercent);
+                  setDebugInfo((prev) => ({
+                    ...(prev || {}),
+                    videoPipeline: {
+                      ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                      upload: {
+                        ...((((prev as any)?.videoPipeline?.upload || {}) as VideoPipelineDebug["upload"])),
+                        status: "started",
+                        progress: mappedPercent,
+                        strategy: "legacy-upload",
+                        error: signedUploadError?.message || "signed_url_upload_failed",
+                      },
+                    },
+                  }));
+                });
+                if (!fallbackUploaded?.url) {
+                  throw signedUploadError instanceof Error ? signedUploadError : new Error("视频上传完成但未返回地址");
+                }
+                uploaded = {
+                  ...fallbackUploaded,
+                  strategy: "legacy-upload",
+                };
+              }
+              if (!uploaded?.gcsUri && !uploaded?.url) {
                 throw new Error("视频上传完成但未返回地址");
               }
               setDebugInfo((prev) => ({
@@ -1823,6 +1903,8 @@ export default function MVAnalysisPage() {
                     progress: 100,
                     url: uploaded.url,
                     key: uploaded.key,
+                    gcsUri: uploaded.gcsUri,
+                    strategy: uploaded.strategy,
                   },
                 },
               }));
@@ -1848,6 +1930,7 @@ export default function MVAnalysisPage() {
                 input: {
                   action: "growth_analyze_video",
                   params: {
+                    gcsUri: uploaded.gcsUri,
                     fileUrl: uploaded.url,
                     fileKey: uploaded.key,
                     mimeType: fileMimeType || "video/mp4",
@@ -1975,7 +2058,7 @@ export default function MVAnalysisPage() {
     } finally {
       setIsPremiumRemixPipelineRunning(false);
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, fileMimeType, fileName, context, usageStatsQuery]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
   const handleReset = useCallback(() => {
     setPreviewUrl(null);
