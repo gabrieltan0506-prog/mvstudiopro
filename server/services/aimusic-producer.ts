@@ -17,6 +17,14 @@ function getJobsApiBase(): string {
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
 
+function getCreateOp(model: ProducerModel) {
+  return model === "udio" ? "aimusicUdioCreate" : "aimusicSunoCreate";
+}
+
+function getTaskOp(model: ProducerModel) {
+  return model === "udio" ? "aimusicUdioTask" : "aimusicSunoTask";
+}
+
 function asObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" ? (value as Record<string, any>) : {};
 }
@@ -98,12 +106,10 @@ export async function createProducerTask(input: {
   duration: number;
   quality: ProducerQuality;
 }): Promise<{ taskId: string; raw: Record<string, any> }> {
-  const response = await fetch(`${getJobsApiBase()}/api/jobs`, {
+  const response = await fetch(`${getJobsApiBase()}/api/jobs?op=${getCreateOp(input.model)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      type: "audio",
-      provider: input.model,
       prompt: input.prompt,
       duration: input.duration,
       quality: input.quality,
@@ -133,41 +139,48 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
   errorMessage?: string;
   raw: Record<string, any>;
 }> {
-  const response = await fetch(
-    `${getJobsApiBase()}/api/jobs?type=audio&taskId=${encodeURIComponent(taskId)}`,
-    { method: "GET" }
-  );
+  const tryModels: ProducerModel[] = ["suno", "udio"];
+  let lastError = "";
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Audio proxy status failed (${response.status})${detail ? `: ${detail}` : ""}`);
+  for (const model of tryModels) {
+    const response = await fetch(
+      `${getJobsApiBase()}/api/jobs?op=${getTaskOp(model)}&taskId=${encodeURIComponent(taskId)}`,
+      { method: "GET" }
+    );
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      lastError = `Audio proxy status failed (${response.status})${detail ? `: ${detail}` : ""}`;
+      continue;
+    }
+
+    const payload = asObject(await response.json());
+    const root = asObject(payload.raw ?? payload);
+    const statusRaw =
+      root.status ??
+      root.state ??
+      root.taskStatus ??
+      root.task_status ??
+      root?.data?.status ??
+      root?.data?.state ??
+      root?.result?.status ??
+      "PENDING";
+
+    const errorMessage =
+      typeof root.errorMessage === "string"
+        ? root.errorMessage
+        : typeof root.error === "string"
+        ? root.error
+        : typeof root?.data?.errorMessage === "string"
+        ? root.data.errorMessage
+        : undefined;
+
+    return {
+      status: String(statusRaw).toUpperCase(),
+      songs: normalizeSongs(payload),
+      errorMessage,
+      raw: payload,
+    };
   }
-
-  const payload = asObject(await response.json());
-  const root = asObject(payload.raw ?? payload);
-  const statusRaw =
-    root.status ??
-    root.state ??
-    root.taskStatus ??
-    root.task_status ??
-    root?.data?.status ??
-    root?.data?.state ??
-    root?.result?.status ??
-    "PENDING";
-
-  const errorMessage =
-    typeof root.errorMessage === "string"
-      ? root.errorMessage
-      : typeof root.error === "string"
-      ? root.error
-      : typeof root?.data?.errorMessage === "string"
-      ? root.data.errorMessage
-      : undefined;
-
-  return {
-    status: String(statusRaw).toUpperCase(),
-    songs: normalizeSongs(payload),
-    errorMessage,
-    raw: payload,
-  };
+  throw new Error(lastError || "Audio proxy status failed");
 }
