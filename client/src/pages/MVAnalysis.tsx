@@ -2008,13 +2008,14 @@ export default function MVAnalysisPage() {
       setAnalysis(normalizedAnalysis);
       setAnalysisTranscript(nextTranscript);
       setAnalyzedVideoUrl(nextVideoUrl);
-      setDebugInfo({
+      setDebugInfo((prev) => ({
+        ...(prev || {}),
         inputKind,
         fileName,
         mimeType: fileMimeType || null,
         fileSize,
         videoPipeline: inputKind === "video" ? {
-          ...((((debugInfo as any)?.videoPipeline || {}) as VideoPipelineDebug)),
+          ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
           analysis: {
             status: "done",
             provider: String((result as any).debug?.provider || ""),
@@ -2027,7 +2028,7 @@ export default function MVAnalysisPage() {
           },
         } satisfies VideoPipelineDebug : undefined,
         ...((result as any).debug || {}),
-      });
+      }));
       setUploadProgress(100);
       setUploadStage("done");
       if (!supervisorAccess) {
