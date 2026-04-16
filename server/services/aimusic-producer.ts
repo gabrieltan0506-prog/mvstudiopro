@@ -25,6 +25,11 @@ function getTaskOp(model: ProducerModel) {
   return model === "udio" ? "aimusicUdioTask" : "aimusicSunoTask";
 }
 
+function isTaskNotReadyMessage(value: string) {
+  const text = String(value || "").toLowerCase();
+  return text.includes("task not ready") || text.includes("please wait few seconds");
+}
+
 function asObject(value: unknown): Record<string, any> {
   return value && typeof value === "object" ? (value as Record<string, any>) : {};
 }
@@ -150,6 +155,16 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
+      if (isTaskNotReadyMessage(detail)) {
+        return {
+          status: "PENDING",
+          songs: [],
+          raw: {
+            status: "PENDING",
+            detail,
+          },
+        };
+      }
       lastError = `Audio proxy status failed (${response.status})${detail ? `: ${detail}` : ""}`;
       continue;
     }
@@ -174,6 +189,15 @@ export async function getProducerTaskStatus(taskId: string): Promise<{
         : typeof root?.data?.errorMessage === "string"
         ? root.data.errorMessage
         : undefined;
+
+    if (errorMessage && isTaskNotReadyMessage(errorMessage)) {
+      return {
+        status: "PENDING",
+        songs: [],
+        errorMessage: undefined,
+        raw: payload,
+      };
+    }
 
     return {
       status: String(statusRaw).toUpperCase(),
