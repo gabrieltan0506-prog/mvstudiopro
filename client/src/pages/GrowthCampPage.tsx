@@ -2294,8 +2294,9 @@ export default function MVAnalysisPage() {
             mode: "bgm",
             model: musicProvider,
             title: `${fileName || "creator-growth-camp"}-bgm`,
+            prompt,
             customStyle: prompt,
-            mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || undefined,
+            mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || prompt || undefined,
           },
         },
       });
