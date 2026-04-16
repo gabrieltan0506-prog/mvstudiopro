@@ -2280,7 +2280,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 报告全局层级（不在 platformDetails 内）必须输出以下维度（不得省略）：
 - reportTitle：精准标题，包含时间段（${pastStr} – ${todayStr}）
 - insightSummary：输出 4 个核心洞察，必须严格遵循 [{"title":"短标题","description":"详细分析"}] 的 JSON 对象数组格式。
-  - title：必须是极度简短的结论，绝对不要超过 12 个字，例如“情绪价值成流量密码”。
+  - title：必须是明确的结论型标题，可以完整表达重点，不要故意压缩到不自然。
   - description：必须是具体的详细分析与案例，必须引用真实数据、真实平台现象或真实热点活动，至少 30-50 个字。
   - 【强制约束】：description 的内容绝对不能与 title 重复，不能只是改写 title，必须是一段有起承转合、包含现象或数据支撑的完整论述；如果输出重复内容，视为严重错误。
 - trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行，基于真实数据矩阵，绝对禁止捏造。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
@@ -2317,7 +2317,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           };
           const normalizeInsightItem = (item: any) => {
             if (typeof item === "string") {
-              return { title: item.slice(0, 20), description: item };
+              return { title: item, description: item };
             }
             const title = safeStr(item?.title || item?.name || "");
             const fallbackDescription = safeStr(item?.content || item?.detail || item?.analysis || item?.reason || "");
