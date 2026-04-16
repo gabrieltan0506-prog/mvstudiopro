@@ -2,14 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { createJob, getJob } from "@/lib/jobs";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
-import { clearPremiumRemixDraft, savePremiumRemixDraft, type PersistedPremiumRemixDraft } from "@/lib/premiumRemixDraft";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -18,8 +17,6 @@ import type {
   GrowthHotWordMatch,
   GrowthPlanStep,
   GrowthPlatformRecommendation,
-  GrowthPremiumRemix,
-  GrowthPremiumRemixAssets,
   GrowthPushActivity,
   GrowthReferenceExample,
   GrowthSnapshot,
@@ -29,14 +26,15 @@ import {
   BriefcaseBusiness,
   CircleDollarSign,
   Compass,
+  Download,
   FileUp,
   Film,
   LayoutDashboard,
   LineChart as LineChartIcon,
   Loader2,
+  Music2,
   Orbit,
-  PanelsTopLeft,
-  RefreshCw,
+  Play,
   Rocket,
   ScanSearch,
   Send,
@@ -117,6 +115,17 @@ type AnalysisResult = {
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
 type InputKind = "document" | "video";
 type DebugInfo = Record<string, unknown> | null;
+type MusicProvider = "suno" | "udio";
+type MusicGenerationStatus = "idle" | "generating" | "polling" | "success" | "error";
+type GeneratedMusicSong = {
+  id: string;
+  title: string;
+  audioUrl?: string;
+  streamUrl?: string;
+  imageUrl?: string;
+  duration?: number;
+  tags?: string;
+};
 
 type VideoPipelineDebug = {
   mode?: "direct" | "job";
@@ -1536,10 +1545,9 @@ export default function MVAnalysisPage() {
     .trim();
 
   const [, navigate] = useLocation();
-  const isPremiumRemixPage = false;
   const isPlatformPage = false;
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
-  const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
+  const { isAuthenticated, loading, user } = useAuth({ autoFetch: !supervisorAccess });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
@@ -1570,24 +1578,26 @@ export default function MVAnalysisPage() {
   const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
-  const [isPremiumRemixPipelineRunning, setIsPremiumRemixPipelineRunning] = useState(false);
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
-  const [premiumRemix, setPremiumRemix] = useState<GrowthPremiumRemix | null>(null);
-  const [premiumRemixAssets, setPremiumRemixAssets] = useState<GrowthPremiumRemixAssets | null>(null);
-  const [premiumRemixDraftMeta, setPremiumRemixDraftMeta] = useState<PersistedPremiumRemixDraft | null>(null);
-  const [premiumRemixDebug, setPremiumRemixDebug] = useState<Record<string, any> | null>(null);
-  const [premiumRemixAssetsDebug, setPremiumRemixAssetsDebug] = useState<Record<string, any> | null>(null);
+  const [musicPromptDraft, setMusicPromptDraft] = useState("");
+  const [musicProvider, setMusicProvider] = useState<MusicProvider>("suno");
+  const [musicStatus, setMusicStatus] = useState<MusicGenerationStatus>("idle");
+  const [musicTaskId, setMusicTaskId] = useState("");
+  const [musicProgressMessage, setMusicProgressMessage] = useState("");
+  const [musicError, setMusicError] = useState("");
+  const [musicSongs, setMusicSongs] = useState<GeneratedMusicSong[]>([]);
+  const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const musicPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
   const analyzeDocumentMutation = trpc.mvAnalysis.analyzeDocument.useMutation();
   const analyzeVideoMutation = trpc.mvAnalysis.analyzeVideo.useMutation();
   const getVideoUploadSignedUrlMutation = trpc.mvAnalysis.getVideoUploadSignedUrl.useMutation();
-  const buildPremiumRemixMutation = trpc.mvAnalysis.buildPremiumRemix.useMutation();
-  const generatePremiumRemixAssetsMutation = trpc.mvAnalysis.generatePremiumRemixAssets.useMutation();
   const checkAccessMutation = trpc.usage.checkFeatureAccess.useMutation();
   const refreshGrowthMutation = trpc.mvAnalysis.refreshGrowthTrends.useMutation();
   const usageStatsQuery = trpc.usage.getUsageStats.useQuery(undefined, {
@@ -1720,6 +1730,24 @@ export default function MVAnalysisPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [uploadStage]);
+
+  useEffect(() => {
+    if (!analysis?.sunoPrompt?.trim()) return;
+    setMusicPromptDraft((prev) => (prev.trim() ? prev : analysis.sunoPrompt || ""));
+  }, [analysis?.sunoPrompt]);
+
+  useEffect(() => {
+    return () => {
+      if (musicPollingRef.current) {
+        clearInterval(musicPollingRef.current);
+        musicPollingRef.current = null;
+      }
+      if (musicAudioRef.current) {
+        musicAudioRef.current.pause();
+        musicAudioRef.current.src = "";
+      }
+    };
+  }, []);
 
   const handleSelectFile = useCallback(() => {
     fileInputRef.current?.click();
@@ -2063,7 +2091,7 @@ export default function MVAnalysisPage() {
       setError(mapAnalysisError(analysisError));
       setUploadStage("error");
     } finally {
-      setIsPremiumRemixPipelineRunning(false);
+      // no-op
     }
   }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery]);
 
@@ -2079,18 +2107,26 @@ export default function MVAnalysisPage() {
     setAnalysisTranscript("");
     setAnalyzedVideoUrl("");
     setDebugInfo(null);
-    setPremiumRemix(null);
-    setPremiumRemixAssets(null);
-    setPremiumRemixDraftMeta(null);
-    setPremiumRemixDebug(null);
-    setPremiumRemixAssetsDebug(null);
-    setIsPremiumRemixPipelineRunning(false);
     setUploadStage("idle");
     setUploadProgress(0);
     setElapsedTime(0);
     setFileName("");
     setFileSize(0);
-    clearPremiumRemixDraft();
+    setMusicPromptDraft("");
+    setMusicStatus("idle");
+    setMusicTaskId("");
+    setMusicProgressMessage("");
+    setMusicError("");
+    setMusicSongs([]);
+    setPlayingMusicUrl(null);
+    if (musicPollingRef.current) {
+      clearInterval(musicPollingRef.current);
+      musicPollingRef.current = null;
+    }
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      musicAudioRef.current.src = "";
+    }
     // Invalidate stale growth snapshot cache so next analysis always fetches fresh data
     queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
   }, [queryClient]);
@@ -2106,6 +2142,111 @@ export default function MVAnalysisPage() {
       toast.error(refreshError.message || "趋势数据刷新失败");
     }
   }, [refreshGrowthMutation, growthSnapshotQuery]);
+
+  const handlePlayGeneratedMusic = useCallback((url: string) => {
+    const audio = musicAudioRef.current;
+    if (!audio || !url) return;
+    if (playingMusicUrl === url) {
+      audio.pause();
+      setPlayingMusicUrl(null);
+      return;
+    }
+    audio.src = url;
+    void audio.play().then(() => {
+      setPlayingMusicUrl(url);
+      audio.onended = () => setPlayingMusicUrl(null);
+    }).catch(() => {
+      setPlayingMusicUrl(null);
+      toast.error("音频播放失败");
+    });
+  }, [playingMusicUrl]);
+
+  const startMusicPolling = useCallback((jobId: string) => {
+    if (musicPollingRef.current) {
+      clearInterval(musicPollingRef.current);
+      musicPollingRef.current = null;
+    }
+    setMusicStatus("polling");
+    setMusicProgressMessage("正在提交音乐任务...");
+    let attempts = 0;
+    const maxAttempts = 120;
+    musicPollingRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > maxAttempts) {
+        if (musicPollingRef.current) {
+          clearInterval(musicPollingRef.current);
+          musicPollingRef.current = null;
+        }
+        setMusicStatus("error");
+        setMusicError("音乐生成超时，请稍后重试。");
+        return;
+      }
+      try {
+        const data = await getJob(jobId);
+        const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
+        setMusicProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
+        if (data.status === "succeeded") {
+          if (musicPollingRef.current) {
+            clearInterval(musicPollingRef.current);
+            musicPollingRef.current = null;
+          }
+          const output = (data.output || {}) as any;
+          setMusicSongs(Array.isArray(output.songs) ? output.songs : []);
+          setMusicStatus("success");
+          setMusicError("");
+          toast.success("BGM 生成成功");
+        } else if (data.status === "failed") {
+          if (musicPollingRef.current) {
+            clearInterval(musicPollingRef.current);
+            musicPollingRef.current = null;
+          }
+          setMusicStatus("error");
+          setMusicError(String(data.error || "音乐生成失败"));
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 1800);
+  }, []);
+
+  const handleGenerateMusic = useCallback(async () => {
+    const prompt = String(musicPromptDraft || analysis?.sunoPrompt || "").trim();
+    if (!prompt) {
+      toast.error("当前没有可用的 Music Prompt");
+      return;
+    }
+    if (!user?.id && !supervisorAccess) {
+      toast.error("登录状态已失效，请重新登录后再试。");
+      return;
+    }
+    setMusicStatus("generating");
+    setMusicError("");
+    setMusicSongs([]);
+    setPlayingMusicUrl(null);
+    setMusicProgressMessage("正在提交音乐任务...");
+    try {
+      const { jobId } = await createJob({
+        type: "audio",
+        userId: String((user as any)?.id || 0),
+        input: {
+          action: "suno_music",
+          params: {
+            mode: "bgm",
+            model: musicProvider,
+            title: `${fileName || "creator-growth-camp"}-bgm`,
+            customStyle: prompt,
+            mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || undefined,
+          },
+        },
+      });
+      setMusicTaskId(jobId);
+      startMusicPolling(jobId);
+    } catch (musicJobError: any) {
+      setMusicStatus("error");
+      setMusicError(musicJobError?.message || "音乐任务提交失败");
+      toast.error(musicJobError?.message || "音乐任务提交失败");
+    }
+  }, [analysis?.bgmAnalysis, analysis?.musicRecommendation, analysis?.sunoPrompt, fileName, musicPromptDraft, musicProvider, startMusicPolling, supervisorAccess, user]);
 
   const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "分析结果已同步到创作画布") => {
     if (!handoff) return;
@@ -2518,144 +2659,7 @@ export default function MVAnalysisPage() {
       .slice(0, 5);
   }, [referenceExamples]);
   const authorAnalysis: GrowthAuthorAnalysis | null = (growthSnapshot as any)?.authorAnalysis ?? null;
-  const hasPremiumRemix = Boolean(premiumRemix);
-
-  const normalizedPremiumRemixAnalysis = useMemo(() => (
-    analysis ? {
-      ...analysis,
-      visualSummary: analysis.visualSummary || "",
-      openingFrameAssessment: analysis.openingFrameAssessment || "",
-      sceneConsistency: analysis.sceneConsistency || "",
-      languageExpression: analysis.languageExpression || "",
-      emotionalExpression: analysis.emotionalExpression || "",
-      cameraEmotionTension: analysis.cameraEmotionTension || "",
-      bgmAnalysis: analysis.bgmAnalysis || "",
-      musicRecommendation: analysis.musicRecommendation || "",
-      sunoPrompt: analysis.sunoPrompt || "",
-      trustSignals: analysis.trustSignals || [],
-      visualRisks: analysis.visualRisks || [],
-      keyFrames: analysis.keyFrames || [],
-      strengths: analysis.strengths || [],
-      improvements: analysis.improvements || [],
-      platforms: analysis.platforms || [],
-      summary: analysis.summary || "",
-      titleSuggestions: analysis.titleSuggestions || [],
-      creatorCenterSignals: analysis.creatorCenterSignals || [],
-      timestampSuggestions: (analysis.timestampSuggestions || []).map((item) => ({
-        ...item,
-        opportunity: item.opportunity || "",
-      })),
-      weakFrameReferences: analysis.weakFrameReferences || [],
-      commercialAngles: (analysis.commercialAngles || []).map((item) => ({
-        ...item,
-        brands: item.brands || [],
-        veoPrompt: item.veoPrompt || "",
-      })),
-      followUpPrompt: analysis.followUpPrompt || "",
-    } : null
-  ), [analysis]);
-
-  const persistPremiumRemixDraft = useCallback((nextRemix?: GrowthPremiumRemix | null, nextAssets?: GrowthPremiumRemixAssets | null) => {
-    const payload = savePremiumRemixDraft({
-      context,
-      transcript: analysisTranscript,
-      analyzedVideoUrl,
-      analysis: normalizedPremiumRemixAnalysis,
-      titleExecutions: titleExecutionCards,
-      assetAdaptation,
-      growthHandoff,
-      creationStoryboardPrompt: creationAssist?.storyboardPrompt || "",
-      premiumRemix: nextRemix === undefined ? premiumRemix : nextRemix,
-      premiumRemixAssets: nextAssets === undefined ? premiumRemixAssets : nextAssets,
-    });
-    if (payload) setPremiumRemixDraftMeta(payload);
-  }, [analysisTranscript, analyzedVideoUrl, assetAdaptation, creationAssist?.storyboardPrompt, growthHandoff, normalizedPremiumRemixAnalysis, premiumRemix, premiumRemixAssets, titleExecutionCards, context]);
-
-  const handleOpenPremiumRemixPage = useCallback(() => {
-    persistPremiumRemixDraft();
-    navigate("/creator-growth-camp/premium-remix");
-  }, [navigate, persistPremiumRemixDraft]);
-
-  const handleBuildPremiumRemix = useCallback(async () => {
-    try {
-      setPremiumRemixDebug(null);
-      await runPremiumRemixUpgrade(analysis || {
-        composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-        visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
-        languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
-        bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
-        trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [],
-        platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [],
-        timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: "",
-      }, analysisTranscript || "");
-      toast.success("优质视频二创方案已生成");
-    } catch (error: any) {
-      toast.error(error.message || "优质视频二创生成失败");
-    }
-  }, [analysis, analysisTranscript, runPremiumRemixUpgrade]);
-
   const showPremiumReport = hasPaidGrowthAccess;
-
-  
-
-  async function runPremiumRemixUpgrade(
-    nextAnalysis: AnalysisResult,
-    nextTranscript: string,
-    snapshotOverride?: GrowthSnapshot | null,
-  ) {
-    const snapshot = snapshotOverride || growthSnapshot;
-    const result = await buildPremiumRemixMutation.mutateAsync({
-      context: context || undefined,
-      transcript: nextTranscript || undefined,
-      analysis: nextAnalysis || {
-        composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
-        visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
-        languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
-        bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",
-        trustSignals: [], visualRisks: [], keyFrames: [], strengths: [], improvements: [],
-        platforms: [], summary: "", titleSuggestions: [], creatorCenterSignals: [],
-        timestampSuggestions: [], weakFrameReferences: [], commercialAngles: [], followUpPrompt: "",
-      },
-      modelName: "gemini-3.1-pro-preview",
-      titleExecutions: snapshot?.titleExecutions?.length ? snapshot.titleExecutions : premiumRemixDraftMeta?.titleExecutions || [],
-      assetAdaptation: snapshot?.decisionFramework?.assetAdaptation || premiumRemixDraftMeta?.assetAdaptation || undefined,
-      growthHandoff: snapshot?.growthHandoff || premiumRemixDraftMeta?.growthHandoff || undefined,
-      creationStoryboardPrompt: snapshot?.creationAssist?.storyboardPrompt || premiumRemixDraftMeta?.creationStoryboardPrompt || undefined,
-    });
-    setPremiumRemix(result.remix);
-    setPremiumRemixAssets(null);
-    setPremiumRemixDebug(result.debug || null);
-    setPremiumRemixAssetsDebug(null);
-    persistPremiumRemixDraft(result.remix, null);
-    return result;
-  }
-
-  const handleGeneratePremiumRemixAssets = useCallback(async (mode: "loop" | "interpolation") => {
-    if (!premiumRemix) return;
-    try {
-      setPremiumRemixAssetsDebug(null);
-      const result = await generatePremiumRemixAssetsMutation.mutateAsync({
-        remix: premiumRemix,
-        mode,
-      });
-      setPremiumRemixAssets(result.assets);
-      setPremiumRemixAssetsDebug(result.debug || null);
-      persistPremiumRemixDraft(undefined, result.assets);
-      toast.success(mode === "loop" ? "32秒延展素材已生成" : "32秒插值素材已生成");
-    } catch (error: any) {
-      toast.error(error.message || "二创素材生成失败");
-    }
-  }, [generatePremiumRemixAssetsMutation, persistPremiumRemixDraft, premiumRemix]);
-
-  useEffect(() => {
-    return;
-    clearPremiumRemixDraft();
-    setPremiumRemixDraftMeta(null);
-    setPremiumRemix(null);
-    setPremiumRemixAssets(null);
-    setPremiumRemixDebug(null);
-    setPremiumRemixAssetsDebug(null);
-  }, []);
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
@@ -2822,18 +2826,10 @@ export default function MVAnalysisPage() {
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-white/55">
                 <Sparkles className="h-3.5 w-3.5" />
-                {isPremiumRemixPage ? "优质视频二创" : isPlatformPage ? "平台数据分析" : "创作商业成长营"}
+                {isPlatformPage ? "平台数据分析" : "创作商业成长营"}
               </div>
               <h1 className="mt-4 max-w-5xl text-4xl font-black leading-[0.96] text-white md:text-[86px]">
-                {isPremiumRemixPage ? (
-                  <>
-                    <span className="block whitespace-nowrap">把高完成度视频拆成你的</span>
-                    <span className="mt-3 inline-block rounded-[24px] border border-[#ffcf92]/45 bg-[#ffcf92]/8 px-5 py-2 text-[#fff6e7] shadow-[0_0_0_1px_rgba(255,207,146,0.12)]">
-                      32 秒二创版本
-                    </span>
-                    <span className="ml-2 inline-block text-white/90">。</span>
-                  </>
-                ) : isPlatformPage ? (
+                {isPlatformPage ? (
                   <>
                     <span className="block whitespace-nowrap">把平台趋势、数据库证据与</span>
                     <span className="mt-3 inline-block rounded-[24px] border border-[#90c4ff]/45 bg-[#90c4ff]/8 px-5 py-2 text-[#e9f5ff] shadow-[0_0_0_1px_rgba(144,196,255,0.12)]">
@@ -2852,22 +2848,12 @@ export default function MVAnalysisPage() {
                 )}
               </h1>
               <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
-                {isPremiumRemixPage
-                  ? "上传参考视频或补充业务背景，系统会先做逆向拆解，再输出角色锚定、32 秒分镜和 Veo 可执行提示词。"
-                  : isPlatformPage
-                    ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二创流程混进来。"
-                    : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
+                {isPlatformPage
+                  ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二创流程混进来。"
+                  : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
-                {isPremiumRemixPage ? (
-                  <>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">逆向拆解</div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">角色锚定</div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">32 秒分镜</div>
-                    <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">延展素材</div>
-                    <a href="/creator-growth-camp" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">返回成长营全页</a>
-                  </>
-                ) : isPlatformPage ? (
+                {isPlatformPage ? (
                   <>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">平台推荐</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">数据库证据</div>
@@ -2900,14 +2886,12 @@ export default function MVAnalysisPage() {
                     <Upload className="h-7 w-7" />
                   </div>
                   <div className="mt-5 text-2xl font-bold">
-                    {isPremiumRemixPage ? "上传参考视频或脚本背景" : isPlatformPage ? "上传图文档案或视频素材，专看平台判断" : "上传图文档案或视频素材"}
+                    {isPlatformPage ? "上传图文档案或视频素材，专看平台判断" : "上传图文档案或视频素材"}
                   </div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
-                    {isPremiumRemixPage
-                      ? "支持 Word、PDF、MP4。优先推荐上传视频参考素材；没有视频时，也可以只靠背景信息先生成二创方案。"
-                      : isPlatformPage
-                        ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二创模块一起展开。"
-                        : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
+                    {isPlatformPage
+                      ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二创模块一起展开。"
+                      : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
                   </p>
                 </button>
               ) : (
@@ -3068,10 +3052,10 @@ export default function MVAnalysisPage() {
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleAnalyze}
-                  disabled={(!selectedFile && !fileBase64) || isProcessing || isPremiumRemixPipelineRunning}
+                  disabled={(!selectedFile && !fileBase64) || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isProcessing || isPremiumRemixPipelineRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                  {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
                   开始进行商业分析
                 </button>
                 <button
@@ -3087,351 +3071,6 @@ export default function MVAnalysisPage() {
           </div>
             </section>
 
-        {isPremiumRemixPage ? (
-          <section className="mt-8 space-y-6">
-            <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3 text-[#ffb37f]">
-                  <Film className="h-5 w-5" />
-                  <h2 className="text-2xl font-bold">优质视频二创</h2>
-                </div>
-                {showPremiumReport ? (
-                  <div className="flex flex-wrap gap-2">
-                    {!hasPremiumRemix ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleBuildPremiumRemix()}
-                        disabled={buildPremiumRemixMutation.isPending}
-                        className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                        生成二创方案
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void handleBuildPremiumRemix()}
-                        disabled={buildPremiumRemixMutation.isPending}
-                        className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/78 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {buildPremiumRemixMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                        重新生成
-                      </button>
-                    )}
-                    {hasPremiumRemix ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void handleGeneratePremiumRemixAssets("loop")}
-                          disabled={generatePremiumRemixAssetsMutation.isPending}
-                          className="inline-flex items-center gap-2 rounded-full border border-[#ffd08f]/25 bg-[rgba(255,208,143,0.12)] px-4 py-2 text-sm font-semibold text-[#ffe2af] transition hover:bg-[rgba(255,208,143,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                          生成 32 秒延展版
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleGeneratePremiumRemixAssets("interpolation")}
-                          disabled={generatePremiumRemixAssetsMutation.isPending}
-                          className="inline-flex items-center gap-2 rounded-full border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.12)] px-4 py-2 text-sm font-semibold text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.18)] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {generatePremiumRemixAssetsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PanelsTopLeft className="h-4 w-4" />}
-                          生成 32 秒插值版
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-              <p className="mt-3 text-sm leading-7 text-white/60">
-                这条链会先抽离参考视频的景别、运镜、灯光和节奏，再重写成你的商业脚本、分镜和 Veo 生成提示词。
-              </p>
-
-              {!showPremiumReport ? (
-                <div className="mt-5 rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
-                  <div className="text-sm font-semibold text-[#ffd4b7]">当前账号还没有解锁二创页面权限</div>
-                  <div className="mt-2 text-sm leading-7 text-white/72">
-                    这个独立页已经拆出来了，但生成二创方案、32 秒延展版和插值版仍然需要付费权限或 supervisor 权限。
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {analyzedVideoUrl ? (
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                      已锁定当前分析视频为二创参考素材，可直接用于逆向工程与 32 秒生成。
-                    </div>
-                  ) : (
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                      当前没有绑定视频分析结果时，也可以直接生成二创方案；系统会优先使用上下文、转写和已有分析字段做逆向重构。
-                    </div>
-                  )}
-                  {(premiumRemixDebug || premiumRemixAssetsDebug) ? (
-                    <details open className="mt-4 rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-4">
-                      <summary className="cursor-pointer list-none text-sm font-semibold text-[#c7e3ff]">
-                        Debug 模式（每个步骤）
-                      </summary>
-                      <div className="mt-4 space-y-4 text-sm leading-7 text-white/74">
-                        {premiumRemixDebug ? (
-                          <div className="rounded-xl border border-white/10 bg-black/15 p-4">
-                            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#90c4ff]">
-                              <ScanSearch className="h-4 w-4" />
-                              <span>二创方案生成</span>
-                            </div>
-                            <div className="mt-2">模型：{String(premiumRemixDebug.strategistModel || "-")}</div>
-                            <div>来源：{String(premiumRemixDebug.source || "-")}</div>
-                            {premiumRemixDebug.inputSummary ? (
-                              <div className="text-white/62">
-                                输入长度：context {premiumRemixDebug.inputSummary.contextChars || 0} 字，transcript {premiumRemixDebug.inputSummary.transcriptChars || 0} 字，关键帧 {premiumRemixDebug.inputSummary.keyFrameCount || 0}，标题执行 {premiumRemixDebug.inputSummary.titleExecutionCount || 0}
-                              </div>
-                            ) : null}
-                            {Array.isArray(premiumRemixDebug.qualityIssues) && premiumRemixDebug.qualityIssues.length ? (
-                              <div className="mt-3 rounded-xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.08)] p-3 text-[#ffd4b7]">
-                                质量闸门：{premiumRemixDebug.qualityIssues.join("；")}
-                              </div>
-                            ) : null}
-                            {premiumRemixDebug.promptPreview ? (
-                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-white/64">
-                                Prompt 预览：{String(premiumRemixDebug.promptPreview)}
-                              </div>
-                            ) : null}
-                            {premiumRemixDebug.rawPreview ? (
-                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-white/58">
-                                模型输出预览：{String(premiumRemixDebug.rawPreview)}
-                              </div>
-                            ) : null}
-                            {Array.isArray(premiumRemixDebug.hydrationSteps) && premiumRemixDebug.hydrationSteps.length ? (
-                              <div className="mt-3 space-y-2">
-                                {premiumRemixDebug.hydrationSteps.map((step: any, index: number) => (
-                                  <div key={`premium-remix-debug-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
-                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
-                                    <div className="text-white/62">状态：{String(step.status || "-")}{step.model ? ` | model: ${step.model}` : ""}{step.location ? ` | region: ${step.location}` : ""}</div>
-                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
-                                    {step.imageUrl ? <div className="mt-1 break-all text-[#9df6c0]">image: {String(step.imageUrl)}</div> : null}
-                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {premiumRemixAssetsDebug ? (
-                          <div className="rounded-xl border border-white/10 bg-black/15 p-4">
-                            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
-                              <ScanSearch className="h-4 w-4" />
-                              <span>素材生成</span>
-                            </div>
-                            <div className="mt-2">模式：{String(premiumRemixAssetsDebug.mode || "-")}</div>
-                            {Array.isArray(premiumRemixAssetsDebug.referenceSteps) && premiumRemixAssetsDebug.referenceSteps.length ? (
-                              <div className="mt-3 space-y-2">
-                                {premiumRemixAssetsDebug.referenceSteps.map((step: any, index: number) => (
-                                  <div key={`premium-remix-asset-ref-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
-                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
-                                    <div className="text-white/62">状态：{String(step.status || "-")}{step.model ? ` | model: ${step.model}` : ""}{step.location ? ` | region: ${step.location}` : ""}</div>
-                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
-                                    {step.imageUrl ? <div className="mt-1 break-all text-[#9df6c0]">image: {String(step.imageUrl)}</div> : null}
-                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                            {Array.isArray(premiumRemixAssetsDebug.clipSteps) && premiumRemixAssetsDebug.clipSteps.length ? (
-                              <div className="mt-3 space-y-2">
-                                {premiumRemixAssetsDebug.clipSteps.map((step: any, index: number) => (
-                                  <div key={`premium-remix-asset-clip-${index}`} className="rounded-xl border border-white/10 bg-black/20 p-3">
-                                    <div className="font-semibold text-white">{String(step.step || "step")} / {String(step.label || "-")}</div>
-                                    <div className="text-white/62">状态：{String(step.status || "-")}</div>
-                                    {step.promptPreview ? <div className="mt-1 text-white/58">prompt: {String(step.promptPreview)}</div> : null}
-                                    {step.videoUrl ? <div className="mt-1 break-all text-[#9df6c0]">video: {String(step.videoUrl)}</div> : null}
-                                    {step.error ? <div className="mt-1 text-[#ffb7b7]">error: {String(step.error)}</div> : null}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </details>
-                  ) : null}
-
-                  {premiumRemix ? (
-                    <div className="mt-5 space-y-4">
-                      <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                        <div className="rounded-2xl border border-[#ff8a3d]/18 bg-[rgba(255,138,61,0.08)] p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">逆向核心</div>
-                          <div className="mt-3 text-xl font-black text-white">{premiumRemix.title}</div>
-                          <div className="mt-3 text-sm leading-7 text-white/76">{replaceTerms(premiumRemix.sourceSummary)}</div>
-                          <div className="mt-3 text-sm leading-7 text-white/72">视觉 DNA：{replaceTerms(premiumRemix.visualDnaSummary)}</div>
-                          <div className="mt-2 text-sm leading-7 text-white/72">内容重构：{replaceTerms(premiumRemix.contentRebuildSummary)}</div>
-                          <div className="mt-2 text-sm leading-7 text-white/72">人设贴合：{replaceTerms(premiumRemix.personaFit)}</div>
-                          <div className="mt-2 text-sm leading-7 text-white/72">演绎方向：{replaceTerms(premiumRemix.performanceDirection)}</div>
-                        </div>
-                        <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.07)] p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">角色锚定与防污染</div>
-                          <div className="mt-3 space-y-3">
-                            {premiumRemix.characterAnchors.map((item) => (
-                              <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 px-4 py-3">
-                                <div className="text-base font-semibold text-white">{replaceTerms(item.label)}</div>
-                                <div className="mt-1 text-sm leading-7 text-white/72">{replaceTerms(item.role)}</div>
-                                <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(item.visualPrompt)}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {(premiumRemix.languageExpression || premiumRemix.emotionalExpression || premiumRemix.cameraEmotionTension || premiumRemix.bgmAnalysis || premiumRemix.musicRecommendation || premiumRemix.sunoPrompt) ? (
-                        <div className="grid gap-4 xl:grid-cols-2">
-                          {premiumRemix.languageExpression ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.languageExpression)}</div>
-                            </div>
-                          ) : null}
-                          {premiumRemix.emotionalExpression ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">情感表达方式</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.emotionalExpression)}</div>
-                            </div>
-                          ) : null}
-                          {premiumRemix.cameraEmotionTension ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">镜头表现与情绪张力</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.cameraEmotionTension)}</div>
-                            </div>
-                          ) : null}
-                          {premiumRemix.bgmAnalysis ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">BGM 分析</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(premiumRemix.bgmAnalysis)}</div>
-                            </div>
-                          ) : null}
-                          {premiumRemix.musicRecommendation ? (
-                            <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">适合的配乐</div>
-                              <div className="mt-3 text-sm leading-7 text-white/82">{replaceTerms(premiumRemix.musicRecommendation)}</div>
-                            </div>
-                          ) : null}
-                          {premiumRemix.sunoPrompt ? (
-                            <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Suno Prompt</div>
-                              <div className="mt-3 break-words text-sm leading-7 text-white/82">{premiumRemix.sunoPrompt}</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                        <div className="text-sm font-semibold text-white">可直接拍摄的 32 秒分镜</div>
-                        <div className="mt-4 space-y-3">
-                          {premiumRemix.storyboard.map((shot) => (
-                            <div key={shot.shotId} className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-semibold text-[#ffd08f]">镜头 {shot.shotId}</span>
-                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{shot.durationSeconds} 秒</span>
-                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.framing)}</span>
-                                <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] text-white/55">{replaceTerms(shot.cameraMovement)}</span>
-                              </div>
-                              {shot.referenceImageUrl ? (
-                                <div className="mt-3 overflow-hidden rounded-xl border border-white/10 bg-black/20">
-                                  <img src={shot.referenceImageUrl} alt={`镜头 ${shot.shotId} 参考图`} className="h-56 w-full object-cover" />
-                                </div>
-                              ) : null}
-                              <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(shot.sceneDescription)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/70">作用：{replaceTerms(shot.purpose)} / 节奏：{replaceTerms(shot.pacingRole)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/70">画外音：{replaceTerms(shot.voiceover)}</div>
-                              <div className="mt-2 text-sm leading-7 text-white/70">字幕：{replaceTerms(shot.onScreenText)}</div>
-                              {shot.referencePrompt ? (
-                                <div className="mt-2 rounded-xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] px-3 py-3 text-sm leading-7 text-white/72">
-                                  分镜参考图提示词：{replaceTerms(shot.referencePrompt)}
-                                </div>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="grid gap-4 xl:grid-cols-2">
-                        <div className="rounded-2xl border border-[#ffd08f]/18 bg-[rgba(255,208,143,0.08)] p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">32 秒自动延展轨</div>
-                          <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.loopTrack.plan.title)}</div>
-                          <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.loopTrack.plan.summary)}</div>
-                          <div className="mt-4 space-y-2">
-                            {premiumRemix.loopTrack.segments.map((segment) => (
-                              <div key={segment.segmentIndex} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
-                                <div className="font-semibold text-white">{segment.startSecond}-{segment.endSecond} 秒</div>
-                                <div className="mt-1">{replaceTerms(segment.prompt)}</div>
-                                <div className="mt-1 text-[#ffd08f]">{replaceTerms(segment.stabilityPrompt)}</div>
-                                {segment.referenceHint ? <div className="mt-1 text-white/55">参考图：{replaceTerms(segment.referenceHint)}</div> : null}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="rounded-2xl border border-[#90c4ff]/18 bg-[rgba(144,196,255,0.08)] p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">32 秒关键帧插值轨</div>
-                          <div className="mt-3 text-base font-bold text-white">{replaceTerms(premiumRemix.interpolationTrack.plan.title)}</div>
-                          <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(premiumRemix.interpolationTrack.plan.summary)}</div>
-                          <div className="mt-4 space-y-2">
-                            {premiumRemix.interpolationTrack.nodes.map((node) => (
-                              <div key={node.nodeId} className="rounded-xl border border-white/10 bg-black/15 px-3 py-3 text-sm leading-7 text-white/72">
-                                <div className="font-semibold text-white">{replaceTerms(node.label)}</div>
-                                <div className="mt-1">{replaceTerms(node.prompt)}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {premiumRemixAssets ? (
-                        <div className="rounded-2xl border border-[#9df6c0]/18 bg-[rgba(157,246,192,0.08)] p-5">
-                          <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">已生成素材</div>
-                          <div className="mt-3 text-base font-bold text-white">
-                            {premiumRemixAssets.mode === "loop" ? "32 秒自动延展素材" : "32 秒关键帧插值素材"}
-                          </div>
-                          {premiumRemixAssets.referenceImages.length ? (
-                            <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                              {premiumRemixAssets.referenceImages.map((item) => (
-                                <div key={item.id} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                                  <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
-                                  <img src={item.imageUrl} alt={item.label} className="mt-3 h-32 w-full rounded-lg object-cover" />
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {premiumRemixAssets.clips.length ? (
-                            <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                              {premiumRemixAssets.clips.map((item) => (
-                                <div key={`${item.label}-${item.videoUrl}`} className="rounded-xl border border-white/10 bg-black/15 p-3">
-                                  <div className="text-sm font-semibold text-white">{replaceTerms(item.label)}</div>
-                                  <video src={item.videoUrl} controls className="mt-3 w-full rounded-lg" />
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <div className="mt-5 grid gap-4 md:grid-cols-3">
-                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffb37f]">先做什么</div>
-                        <div className="mt-2">先上传参考视频，或者补充业务背景与目标，然后直接生成二创方案。</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">会产出什么</div>
-                        <div className="mt-2">角色锚定、32 秒分镜、延展轨、插值轨，以及 Veo 可执行提示词。</div>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/72">
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">适合什么时候用</div>
-                        <div className="mt-2">当你已经找到一条完成度高的视频，想快速拆成自己的商业版本时。</div>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </section>
-        ) : (
-          <>
         {!analysis ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -4142,29 +3781,6 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-[28px] border border-[#ff8a3d]/20 bg-[#0f1a2c] p-6">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 text-[#ffb37f]">
-                        <Film className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">优质视频二创</h2>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleOpenPremiumRemixPage}
-                        className="inline-flex items-center gap-2 rounded-full border border-[#ff8a3d]/30 bg-[rgba(255,138,61,0.16)] px-4 py-2 text-sm font-semibold text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.22)]"
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        进入视频二创页
-                      </button>
-                    </div>
-                    <p className="mt-3 text-sm leading-7 text-white/60">
-                      二创逆向工程已单独拆页，并固定使用 Gemini 3.1 Pro Preview。成长营主页面只保留入口，不再在这里展开详细分镜、参考图和 32 秒轨道。
-                    </p>
-                    <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm leading-7 text-white/72">
-                      点击后会自动带上当前成长营报告里的上下文、转写、标题执行、改编建议和商业交接信息。
-                    </div>
-                  </div>
-
                   {personalizedDirectionCards.length ? (
                     <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">
                       <div className="flex items-center justify-between gap-3">
@@ -4372,9 +3988,86 @@ export default function MVAnalysisPage() {
                           </div>
                         ) : null}
                         {analysis.sunoPrompt ? (
-                          <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Suno Prompt</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82 break-words">{analysis.sunoPrompt}</div>
+                          <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4 xl:col-span-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                  value={musicProvider}
+                                  onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                  className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white"
+                                >
+                                  <option value="suno">Suno</option>
+                                  <option value="udio">Udio</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleGenerateMusic()}
+                                  disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                  className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                  生成 BGM
+                                </button>
+                              </div>
+                            </div>
+                            <textarea
+                              value={musicPromptDraft}
+                              onChange={(e) => setMusicPromptDraft(e.target.value)}
+                              rows={4}
+                              className="mt-3 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/82"
+                            />
+                            {musicStatus === "generating" || musicStatus === "polling" ? (
+                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white/72">
+                                {musicProgressMessage || "正在生成音乐..."}
+                                {musicTaskId ? <span className="ml-2 text-white/45">Task ID: {musicTaskId}</span> : null}
+                              </div>
+                            ) : null}
+                            {musicError ? (
+                              <div className="mt-3 rounded-xl border border-rose-300/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
+                                {musicError}
+                              </div>
+                            ) : null}
+                            {musicSongs.length ? (
+                              <div className="mt-4 space-y-3">
+                                {musicSongs.map((song) => {
+                                  const playableUrl = song.audioUrl || song.streamUrl || "";
+                                  return (
+                                    <div key={song.id} className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
+                                      <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                          <div className="text-sm font-semibold text-white">{song.title || "生成结果"}</div>
+                                          {song.tags ? <div className="mt-1 text-xs text-white/45">{song.tags}</div> : null}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {playableUrl ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => handlePlayGeneratedMusic(playableUrl)}
+                                              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
+                                            >
+                                              <Play className="h-3.5 w-3.5" />
+                                              {playingMusicUrl === playableUrl ? "暂停" : "播放"}
+                                            </button>
+                                          ) : null}
+                                          {song.audioUrl ? (
+                                            <a
+                                              href={song.audioUrl}
+                                              download={`${song.title || "bgm"}.mp3`}
+                                              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
+                                            >
+                                              <Download className="h-3.5 w-3.5" />
+                                              下载
+                                            </a>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                      {playableUrl ? <audio key={playableUrl} className="mt-3 w-full" controls src={playableUrl} /> : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
@@ -4627,8 +4320,6 @@ export default function MVAnalysisPage() {
             </div>
           </section>
         ) : null}
-          </>
-        )}
       </div>
 
       <QuotaExhaustedModal
