@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { createJob, getJob } from "@/lib/jobs";
+import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import { UsageQuotaBanner } from "@/components/UsageQuotaBanner";
 import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
@@ -26,12 +26,15 @@ import {
   BriefcaseBusiness,
   CircleDollarSign,
   Compass,
+  Download,
   FileUp,
   Film,
   LayoutDashboard,
   LineChart as LineChartIcon,
   Loader2,
+  Music2,
   Orbit,
+  Play,
   Rocket,
   ScanSearch,
   Send,
@@ -112,6 +115,17 @@ type AnalysisResult = {
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
 type InputKind = "document" | "video";
 type DebugInfo = Record<string, unknown> | null;
+type MusicProvider = "suno" | "udio";
+type MusicGenerationStatus = "idle" | "generating" | "polling" | "success" | "error";
+type GeneratedMusicSong = {
+  id: string;
+  title: string;
+  audioUrl?: string;
+  streamUrl?: string;
+  imageUrl?: string;
+  duration?: number;
+  tags?: string;
+};
 
 type VideoPipelineDebug = {
   mode?: "direct" | "job";
@@ -1533,7 +1547,7 @@ export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
   const isPlatformPage = false;
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
-  const { isAuthenticated, loading } = useAuth({ autoFetch: !supervisorAccess });
+  const { isAuthenticated, loading, user } = useAuth({ autoFetch: !supervisorAccess });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
@@ -1565,9 +1579,19 @@ export default function MVAnalysisPage() {
   const [selectedBusinessTrack, setSelectedBusinessTrack] = useState("");
   const [selectedFunnelSegment, setSelectedFunnelSegment] = useState("");
   const [activityCarouselIndex, setActivityCarouselIndex] = useState(0);
+  const [musicPromptDraft, setMusicPromptDraft] = useState("");
+  const [musicProvider, setMusicProvider] = useState<MusicProvider>("suno");
+  const [musicStatus, setMusicStatus] = useState<MusicGenerationStatus>("idle");
+  const [musicTaskId, setMusicTaskId] = useState("");
+  const [musicProgressMessage, setMusicProgressMessage] = useState("");
+  const [musicError, setMusicError] = useState("");
+  const [musicSongs, setMusicSongs] = useState<GeneratedMusicSong[]>([]);
+  const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const musicPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
@@ -1706,6 +1730,24 @@ export default function MVAnalysisPage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [uploadStage]);
+
+  useEffect(() => {
+    if (!analysis?.sunoPrompt?.trim()) return;
+    setMusicPromptDraft((prev) => (prev.trim() ? prev : analysis.sunoPrompt || ""));
+  }, [analysis?.sunoPrompt]);
+
+  useEffect(() => {
+    return () => {
+      if (musicPollingRef.current) {
+        clearInterval(musicPollingRef.current);
+        musicPollingRef.current = null;
+      }
+      if (musicAudioRef.current) {
+        musicAudioRef.current.pause();
+        musicAudioRef.current.src = "";
+      }
+    };
+  }, []);
 
   const handleSelectFile = useCallback(() => {
     fileInputRef.current?.click();
@@ -2070,6 +2112,21 @@ export default function MVAnalysisPage() {
     setElapsedTime(0);
     setFileName("");
     setFileSize(0);
+    setMusicPromptDraft("");
+    setMusicStatus("idle");
+    setMusicTaskId("");
+    setMusicProgressMessage("");
+    setMusicError("");
+    setMusicSongs([]);
+    setPlayingMusicUrl(null);
+    if (musicPollingRef.current) {
+      clearInterval(musicPollingRef.current);
+      musicPollingRef.current = null;
+    }
+    if (musicAudioRef.current) {
+      musicAudioRef.current.pause();
+      musicAudioRef.current.src = "";
+    }
     // Invalidate stale growth snapshot cache so next analysis always fetches fresh data
     queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
   }, [queryClient]);
@@ -2085,6 +2142,111 @@ export default function MVAnalysisPage() {
       toast.error(refreshError.message || "趋势数据刷新失败");
     }
   }, [refreshGrowthMutation, growthSnapshotQuery]);
+
+  const handlePlayGeneratedMusic = useCallback((url: string) => {
+    const audio = musicAudioRef.current;
+    if (!audio || !url) return;
+    if (playingMusicUrl === url) {
+      audio.pause();
+      setPlayingMusicUrl(null);
+      return;
+    }
+    audio.src = url;
+    void audio.play().then(() => {
+      setPlayingMusicUrl(url);
+      audio.onended = () => setPlayingMusicUrl(null);
+    }).catch(() => {
+      setPlayingMusicUrl(null);
+      toast.error("音频播放失败");
+    });
+  }, [playingMusicUrl]);
+
+  const startMusicPolling = useCallback((jobId: string) => {
+    if (musicPollingRef.current) {
+      clearInterval(musicPollingRef.current);
+      musicPollingRef.current = null;
+    }
+    setMusicStatus("polling");
+    setMusicProgressMessage("正在提交音乐任务...");
+    let attempts = 0;
+    const maxAttempts = 120;
+    musicPollingRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > maxAttempts) {
+        if (musicPollingRef.current) {
+          clearInterval(musicPollingRef.current);
+          musicPollingRef.current = null;
+        }
+        setMusicStatus("error");
+        setMusicError("音乐生成超时，请稍后重试。");
+        return;
+      }
+      try {
+        const data = await getJob(jobId);
+        const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
+        setMusicProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
+        if (data.status === "succeeded") {
+          if (musicPollingRef.current) {
+            clearInterval(musicPollingRef.current);
+            musicPollingRef.current = null;
+          }
+          const output = (data.output || {}) as any;
+          setMusicSongs(Array.isArray(output.songs) ? output.songs : []);
+          setMusicStatus("success");
+          setMusicError("");
+          toast.success("BGM 生成成功");
+        } else if (data.status === "failed") {
+          if (musicPollingRef.current) {
+            clearInterval(musicPollingRef.current);
+            musicPollingRef.current = null;
+          }
+          setMusicStatus("error");
+          setMusicError(String(data.error || "音乐生成失败"));
+        }
+      } catch {
+        // ignore transient polling errors
+      }
+    }, 1800);
+  }, []);
+
+  const handleGenerateMusic = useCallback(async () => {
+    const prompt = String(musicPromptDraft || analysis?.sunoPrompt || "").trim();
+    if (!prompt) {
+      toast.error("当前没有可用的 Music Prompt");
+      return;
+    }
+    if (!user?.id && !supervisorAccess) {
+      toast.error("登录状态已失效，请重新登录后再试。");
+      return;
+    }
+    setMusicStatus("generating");
+    setMusicError("");
+    setMusicSongs([]);
+    setPlayingMusicUrl(null);
+    setMusicProgressMessage("正在提交音乐任务...");
+    try {
+      const { jobId } = await createJob({
+        type: "audio",
+        userId: String((user as any)?.id || 0),
+        input: {
+          action: "suno_music",
+          params: {
+            mode: "bgm",
+            model: musicProvider,
+            title: `${fileName || "creator-growth-camp"}-bgm`,
+            customStyle: prompt,
+            mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || undefined,
+          },
+        },
+      });
+      setMusicTaskId(jobId);
+      startMusicPolling(jobId);
+    } catch (musicJobError: any) {
+      setMusicStatus("error");
+      setMusicError(musicJobError?.message || "音乐任务提交失败");
+      toast.error(musicJobError?.message || "音乐任务提交失败");
+    }
+  }, [analysis?.bgmAnalysis, analysis?.musicRecommendation, analysis?.sunoPrompt, fileName, musicPromptDraft, musicProvider, startMusicPolling, supervisorAccess, user]);
 
   const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "分析结果已同步到创作画布") => {
     if (!handoff) return;
@@ -3826,9 +3988,86 @@ export default function MVAnalysisPage() {
                           </div>
                         ) : null}
                         {analysis.sunoPrompt ? (
-                          <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Suno Prompt</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82 break-words">{analysis.sunoPrompt}</div>
+                          <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4 xl:col-span-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <select
+                                  value={musicProvider}
+                                  onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                  className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white"
+                                >
+                                  <option value="suno">Suno</option>
+                                  <option value="udio">Udio</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleGenerateMusic()}
+                                  disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                  className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                  生成 BGM
+                                </button>
+                              </div>
+                            </div>
+                            <textarea
+                              value={musicPromptDraft}
+                              onChange={(e) => setMusicPromptDraft(e.target.value)}
+                              rows={4}
+                              className="mt-3 w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/82"
+                            />
+                            {musicStatus === "generating" || musicStatus === "polling" ? (
+                              <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white/72">
+                                {musicProgressMessage || "正在生成音乐..."}
+                                {musicTaskId ? <span className="ml-2 text-white/45">Task ID: {musicTaskId}</span> : null}
+                              </div>
+                            ) : null}
+                            {musicError ? (
+                              <div className="mt-3 rounded-xl border border-rose-300/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">
+                                {musicError}
+                              </div>
+                            ) : null}
+                            {musicSongs.length ? (
+                              <div className="mt-4 space-y-3">
+                                {musicSongs.map((song) => {
+                                  const playableUrl = song.audioUrl || song.streamUrl || "";
+                                  return (
+                                    <div key={song.id} className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
+                                      <div className="flex flex-wrap items-center justify-between gap-3">
+                                        <div>
+                                          <div className="text-sm font-semibold text-white">{song.title || "生成结果"}</div>
+                                          {song.tags ? <div className="mt-1 text-xs text-white/45">{song.tags}</div> : null}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          {playableUrl ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => handlePlayGeneratedMusic(playableUrl)}
+                                              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
+                                            >
+                                              <Play className="h-3.5 w-3.5" />
+                                              {playingMusicUrl === playableUrl ? "暂停" : "播放"}
+                                            </button>
+                                          ) : null}
+                                          {song.audioUrl ? (
+                                            <a
+                                              href={song.audioUrl}
+                                              download={`${song.title || "bgm"}.mp3`}
+                                              className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
+                                            >
+                                              <Download className="h-3.5 w-3.5" />
+                                              下载
+                                            </a>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                      {playableUrl ? <audio key={playableUrl} className="mt-3 w-full" controls src={playableUrl} /> : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
