@@ -127,6 +127,44 @@ type GeneratedMusicSong = {
   tags?: string;
 };
 
+async function fetchJsonish(url: string, init?: RequestInit) {
+  const resp = await fetch(url, init);
+  const text = await resp.text();
+  const contentType = resp.headers.get("content-type") || "";
+  let json: any = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  return {
+    ok: resp.ok,
+    status: resp.status,
+    url,
+    contentType,
+    json,
+    rawText: text,
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getMusicTaskId(j: any): string {
+  return String(
+    j?.raw?.task_id ||
+    j?.raw?.data?.task_id ||
+    j?.json?.raw?.task_id ||
+    j?.json?.raw?.data?.task_id ||
+    ""
+  );
+}
+
+function getMusicClips(j: any): any[] {
+  const raw = j?.raw || j?.json?.raw || j?.json || {};
+  const data = raw?.data;
+  return Array.isArray(data) ? data : [];
+}
+
 type VideoPipelineDebug = {
   mode?: "direct" | "job";
   selectedFile?: {
@@ -1590,7 +1628,7 @@ export default function MVAnalysisPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const musicPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const musicPollingRunRef = useRef(0);
   const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
@@ -1738,10 +1776,7 @@ export default function MVAnalysisPage() {
 
   useEffect(() => {
     return () => {
-      if (musicPollingRef.current) {
-        clearInterval(musicPollingRef.current);
-        musicPollingRef.current = null;
-      }
+      musicPollingRunRef.current += 1;
       if (musicAudioRef.current) {
         musicAudioRef.current.pause();
         musicAudioRef.current.src = "";
@@ -2119,10 +2154,7 @@ export default function MVAnalysisPage() {
     setMusicError("");
     setMusicSongs([]);
     setPlayingMusicUrl(null);
-    if (musicPollingRef.current) {
-      clearInterval(musicPollingRef.current);
-      musicPollingRef.current = null;
-    }
+    musicPollingRunRef.current += 1;
     if (musicAudioRef.current) {
       musicAudioRef.current.pause();
       musicAudioRef.current.src = "";
@@ -2161,52 +2193,76 @@ export default function MVAnalysisPage() {
     });
   }, [playingMusicUrl]);
 
-  const startMusicPolling = useCallback((jobId: string) => {
-    if (musicPollingRef.current) {
-      clearInterval(musicPollingRef.current);
-      musicPollingRef.current = null;
-    }
+  const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
+    musicPollingRunRef.current += 1;
+    const runId = musicPollingRunRef.current;
     setMusicStatus("polling");
     setMusicProgressMessage("正在提交音乐任务...");
+    const taskOp = provider === "suno" ? "aimusicSunoTask" : "aimusicUdioTask";
+    const startedAt = Date.now();
     let attempts = 0;
-    const maxAttempts = 120;
-    musicPollingRef.current = setInterval(async () => {
-      attempts += 1;
-      if (attempts > maxAttempts) {
-        if (musicPollingRef.current) {
-          clearInterval(musicPollingRef.current);
-          musicPollingRef.current = null;
-        }
+
+    while (musicPollingRunRef.current === runId) {
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
         setMusicStatus("error");
         setMusicError("音乐生成超时，请稍后重试。");
         return;
       }
+
       try {
-        const data = await getJob(jobId);
+        const data = await fetchJsonish(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(String(taskId))}`);
+        if (musicPollingRunRef.current !== runId) return;
+
+        attempts += 1;
         const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
         setMusicProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
-        if (data.status === "succeeded") {
-          if (musicPollingRef.current) {
-            clearInterval(musicPollingRef.current);
-            musicPollingRef.current = null;
+
+        const clips = getMusicClips(data.json);
+        if (clips.length) {
+          const songs = clips.map((clip: any, idx: number) => ({
+            id: String(clip?.clip_id || clip?.id || idx),
+            title: String(clip?.title || "生成结果"),
+            audioUrl: typeof clip?.audio_url === "string" ? clip.audio_url : undefined,
+            streamUrl: typeof clip?.audio_url === "string" ? clip.audio_url : undefined,
+            imageUrl: typeof clip?.image_url === "string" ? clip.image_url : undefined,
+            duration: typeof clip?.duration === "number" ? clip.duration : undefined,
+            tags: typeof clip?.tags === "string" ? clip.tags : undefined,
+          })) as GeneratedMusicSong[];
+          setMusicSongs(songs);
+
+          const hasPlayable = clips.some((clip: any) => Boolean(clip?.audio_url || clip?.video_url));
+          if (hasPlayable) {
+            setMusicStatus("success");
+            setMusicError("");
+            toast.success("BGM 生成成功");
+            return;
           }
-          const output = (data.output || {}) as any;
-          setMusicSongs(Array.isArray(output.songs) ? output.songs : []);
+        }
+
+        const upstream = data?.json?.json ?? data?.json?.raw ?? data?.json ?? {};
+        const upstreamData = Array.isArray(upstream?.data) ? upstream.data : [];
+        const hasUpstreamPlayable = upstreamData.some((clip: any) => Boolean(clip?.audio_url || clip?.video_url));
+        if (hasUpstreamPlayable) {
           setMusicStatus("success");
           setMusicError("");
           toast.success("BGM 生成成功");
-        } else if (data.status === "failed") {
-          if (musicPollingRef.current) {
-            clearInterval(musicPollingRef.current);
-            musicPollingRef.current = null;
-          }
-          setMusicStatus("error");
-          setMusicError(String(data.error || "音乐生成失败"));
+          return;
         }
-      } catch {
-        // ignore transient polling errors
+
+        const rawStatus = String(upstream?.status || upstream?.state || upstream?.task_status || "").toLowerCase();
+        if (rawStatus === "failed") {
+          setMusicStatus("error");
+          setMusicError(String(upstream?.message || upstream?.error || "音乐生成失败"));
+          return;
+        }
+      } catch (pollError: any) {
+        setMusicStatus("error");
+        setMusicError(String(pollError?.message || "音乐任务轮询失败"));
+        return;
       }
-    }, 1800);
+
+      await sleep(2500);
+    }
   }, []);
 
   const handleGenerateMusic = useCallback(async () => {
@@ -2225,30 +2281,28 @@ export default function MVAnalysisPage() {
     setPlayingMusicUrl(null);
     setMusicProgressMessage("正在提交音乐任务...");
     try {
-      const resolvedJobUserId = user?.id ? String(user.id) : "";
-      const { jobId } = await createJob({
-        type: "audio",
-        userId: resolvedJobUserId,
-        input: {
-          action: "suno_music",
-          params: {
-            mode: "bgm",
-            model: musicProvider,
-            title: `${fileName || "creator-growth-camp"}-bgm`,
-            prompt,
-            customStyle: prompt,
-            mood: analysis?.musicRecommendation || analysis?.bgmAnalysis || undefined,
-          },
-        },
+      const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
+      const create = await fetchJsonish(`/api/jobs?op=${createOp}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          musicProvider === "suno"
+            ? { task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }
+            : { prompt, task_type: "create_music", make_instrumental: true, mv: "FUZZ-2.0" }
+        ),
       });
-      setMusicTaskId(jobId);
-      startMusicPolling(jobId);
+      const taskId = getMusicTaskId(create);
+      if (!create.ok || !taskId) {
+        throw new Error(create.rawText || "音乐任务提交失败");
+      }
+      setMusicTaskId(taskId);
+      void startMusicPolling(taskId, musicProvider);
     } catch (musicJobError: any) {
       setMusicStatus("error");
       setMusicError(musicJobError?.message || "音乐任务提交失败");
       toast.error(musicJobError?.message || "音乐任务提交失败");
     }
-  }, [analysis?.bgmAnalysis, analysis?.musicRecommendation, analysis?.sunoPrompt, fileName, musicPromptDraft, musicProvider, startMusicPolling, supervisorAccess, user]);
+  }, [analysis?.sunoPrompt, musicPromptDraft, musicProvider, startMusicPolling, supervisorAccess, user]);
 
   const handleStoreHandoff = useCallback((handoff: GrowthHandoff | null, successMessage = "分析结果已同步到创作画布") => {
     if (!handoff) return;
