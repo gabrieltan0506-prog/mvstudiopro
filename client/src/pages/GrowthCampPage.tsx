@@ -1996,33 +1996,72 @@ export default function MVAnalysisPage() {
 
               const startedAt = Date.now();
               let pollCount = 0;
+              let transientFetchFailures = 0;
+              let consecutiveFetchFailures = 0;
+              const maxTransientFetchFailures = 24;
+              const maxConsecutiveFetchFailures = 6;
               while (Date.now() - startedAt < 12 * 60_000) {
-                const job = await getJob(jobId);
-                pollCount += 1;
-                setDebugInfo((prev) => ({
-                  ...(prev || {}),
-                  videoPipeline: {
-                    ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
-                    job: {
-                      jobId,
-                      status: String(job.status || "unknown"),
-                      pollCount,
-                      error: job.status === "failed" ? String(job.error || "") : undefined,
+                try {
+                  const job = await getJob(jobId);
+                  pollCount += 1;
+                  transientFetchFailures = 0;
+                  consecutiveFetchFailures = 0;
+                  setDebugInfo((prev) => ({
+                    ...(prev || {}),
+                    videoPipeline: {
+                      ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                      job: {
+                        jobId,
+                        status: String(job.status || "unknown"),
+                        pollCount,
+                        error: job.status === "failed" ? String(job.error || "") : undefined,
+                      },
+                      analysis: {
+                        ...((((prev as any)?.videoPipeline?.analysis || {}) as VideoPipelineDebug["analysis"])),
+                        transientPollError: undefined,
+                      },
                     },
-                  },
-                }));
-                if (job.status === "succeeded") {
-                  return {
-                    success: true,
-                    analysis: job.output?.analysis,
-                    videoUrl: job.output?.videoUrl,
-                    transcript: job.output?.transcript,
-                    videoDuration: job.output?.videoDuration,
-                    debug: job.output?.debug,
-                  };
-                }
-                if (job.status === "failed") {
-                  throw new Error(String(job.error || "视频分析失败"));
+                  }));
+                  if (job.status === "succeeded") {
+                    return {
+                      success: true,
+                      analysis: job.output?.analysis,
+                      videoUrl: job.output?.videoUrl,
+                      transcript: job.output?.transcript,
+                      videoDuration: job.output?.videoDuration,
+                      debug: job.output?.debug,
+                    };
+                  }
+                  if (job.status === "failed") {
+                    throw new Error(String(job.error || "视频分析失败"));
+                  }
+                } catch (pollError: any) {
+                  transientFetchFailures += 1;
+                  consecutiveFetchFailures += 1;
+                  const pollMessage = String(pollError?.message || pollError || "job_poll_failed");
+                  setDebugInfo((prev) => ({
+                    ...(prev || {}),
+                    videoPipeline: {
+                      ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
+                      job: {
+                        ...((((prev as any)?.videoPipeline?.job || {}) as VideoPipelineDebug["job"])),
+                        jobId,
+                        status: "polling_error",
+                        pollCount,
+                        error: pollMessage,
+                      },
+                      analysis: {
+                        ...((((prev as any)?.videoPipeline?.analysis || {}) as VideoPipelineDebug["analysis"])),
+                        transientPollError: pollMessage,
+                      },
+                    },
+                  }));
+                  if (
+                    consecutiveFetchFailures >= maxConsecutiveFetchFailures ||
+                    transientFetchFailures >= maxTransientFetchFailures
+                  ) {
+                    throw new Error(`轮询任务状态失败：${pollMessage}`);
+                  }
                 }
                 await new Promise((resolve) => setTimeout(resolve, 2500));
                 setUploadProgress((value) => Math.min(95, Math.max(value + 3, 65)));
