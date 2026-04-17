@@ -45,24 +45,24 @@ app.post("/generate-pdf", async (req, res) => {
       });
     }
 
-    // Navigate to the target URL
+    // Navigate to the target URL — networkidle0 waits until ALL network activity stops
     await page.goto(url, {
-      waitUntil: "networkidle2",
+      waitUntil: "networkidle0",
       timeout: 60_000,
     });
 
     // Wait for main analysis container to appear; fall back gracefully if not present
     try {
       await page.waitForSelector(
-        ".main-chart-container, .analysis-export-container, [data-export-root]",
-        { timeout: 20_000 },
+        ".main-chart-container, .analysis-export-container, [data-export-root], [data-analysis-root]",
+        { timeout: 25_000 },
       );
     } catch {
       // Page may not have a specific container; proceed with full-page capture
     }
 
-    // Extra wait for charts/animations to settle
-    await new Promise((r) => setTimeout(r, 2000));
+    // Extra wait for React charts / animations to fully render (3.5s)
+    await new Promise((r) => setTimeout(r, 3500));
 
     const pdfBuffer = await page.pdf({
       format: "A4",

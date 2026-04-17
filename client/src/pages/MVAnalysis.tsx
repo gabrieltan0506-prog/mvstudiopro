@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toJpeg } from "html-to-image";
-import { jsPDF } from "jspdf";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
@@ -1627,13 +1625,12 @@ export default function MVAnalysisPage() {
   const [musicError, setMusicError] = useState("");
   const [musicSongs, setMusicSongs] = useState<GeneratedMusicSong[]>([]);
   const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
-  const [isExportingAnalysisPdf, setIsExportingAnalysisPdf] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const musicPollingRunRef = useRef(0);
   const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
-  const analysisExportRef = useRef<HTMLDivElement | null>(null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
@@ -2218,54 +2215,37 @@ export default function MVAnalysisPage() {
     }
   }, []);
 
-  const handleDownloadAnalysisPdf = useCallback(async () => {
-    if (!analysisExportRef.current) return;
-    setIsExportingAnalysisPdf(true);
-    try {
-      const imageDataUrl = await toJpeg(analysisExportRef.current, {
-        pixelRatio: 2,
-        backgroundColor: "#080618",
-        cacheBust: true,
-        quality: 0.96,
-      });
-      const pdf = new jsPDF({
-        orientation: "p",
-        unit: "mm",
-        format: "a4",
-        compress: true,
-      });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 8;
-      const targetWidth = pageWidth - margin * 2;
-      const props = pdf.getImageProperties(imageDataUrl);
-      const imgWidth = props.width || 1;
-      const imgHeight = props.height || 1;
-      const scaledHeight = (imgHeight * targetWidth) / imgWidth;
-
-      let remainingHeight = scaledHeight;
-      let positionY = margin;
-      let sourceOffsetY = 0;
-      const usableHeight = pageHeight - margin * 2;
-
-      while (remainingHeight > 0) {
-        pdf.addImage(imageDataUrl, "JPEG", margin, positionY - sourceOffsetY, targetWidth, scaledHeight, undefined, "FAST");
-        remainingHeight -= usableHeight;
-        sourceOffsetY += usableHeight;
-        if (remainingHeight > 0) {
-          pdf.addPage();
-          positionY = margin;
-        }
+  // Cloud Run PDF proxy — replaces old html-to-image + jsPDF local approach
+  const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
+    onSuccess: (result) => {
+      setIsDownloadingPdf(false);
+      if (!result.pdfBase64) { toast.error("PDF 生成成功但内容为空，请重试"); return; }
+      try {
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `creator-growth-camp-analysis-${Date.now()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        toast.success("分析页 PDF 已开始下载");
+      } catch (err) {
+        toast.error("PDF 下载时出错，请重试");
       }
+    },
+    onError: (err) => {
+      setIsDownloadingPdf(false);
+      toast.error(err.message || "PDF 导出失败");
+    },
+  });
 
-      pdf.save("creator-growth-camp-analysis.pdf");
-      toast.success("分析页 PDF 已开始下载");
-    } catch (pdfError: any) {
-      toast.error(pdfError?.message || "PDF 导出失败");
-    } finally {
-      setIsExportingAnalysisPdf(false);
-    }
-  }, [context]);
+  const handleDownloadAnalysisPdf = useCallback(() => {
+    setIsDownloadingPdf(true);
+    downloadPdfMutation.mutate({ pageUrl: String(window.location.href) });
+  }, [downloadPdfMutation]);
 
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
     musicPollingRunRef.current += 1;
@@ -3201,7 +3181,7 @@ export default function MVAnalysisPage() {
           </div>
             </section>
 
-        <div ref={analysis ? analysisExportRef : undefined}>
+        <div>
         {!analysis ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -3234,12 +3214,12 @@ export default function MVAnalysisPage() {
               </div>
               <button
                 type="button"
-                onClick={() => void handleDownloadAnalysisPdf()}
-                disabled={isExportingAnalysisPdf}
-                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/85 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={handleDownloadAnalysisPdf}
+                disabled={isDownloadingPdf}
+                className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isExportingAnalysisPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                生成分析页面下载
+                {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
               </button>
             </div>
           </div>
