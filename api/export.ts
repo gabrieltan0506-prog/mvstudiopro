@@ -26,7 +26,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const imageDataUrl = s(b.imageDataUrl).trim();
       if (!imageDataUrl) return res.status(400).json({ ok: false, error: "image_data_required" });
       const result = await exportSnapshotImageToPDF({ title, imageDataUrl });
-      return res.status(200).json({ ok: true, url: result.url, message: result.message });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename=\"creator-growth-camp-analysis.pdf\"`);
+      return res.status(200).send(result.buffer);
     }
 
     const scenesInput = Array.isArray(b.scenes) ? b.scenes : [];

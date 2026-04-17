@@ -396,7 +396,7 @@ export async function exportToPDF(
 export async function exportSnapshotImageToPDF(input: {
   title: string;
   imageDataUrl: string;
-}): Promise<{ url: string; message: string }> {
+}): Promise<{ url: string; message: string; buffer: Buffer }> {
   const PDFDocument = (await import("pdfkit")).default;
   const title = String(input.title || "").trim() || "MV Analysis Export";
   const imageDataUrl = String(input.imageDataUrl || "").trim();
@@ -443,11 +443,12 @@ export async function exportSnapshotImageToPDF(input: {
   try {
     const { key } = await storagePut(fileName, pdfBuffer, "application/pdf");
     const { url } = await storageGet(key);
-    return { url, message: "PDF 已生成！" };
+    return { url, message: "PDF 已生成！", buffer: pdfBuffer };
   } catch {
     return {
       url: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
       message: "PDF 已生成！",
+      buffer: pdfBuffer,
     };
   }
 }
