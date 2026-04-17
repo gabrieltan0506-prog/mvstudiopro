@@ -1360,22 +1360,6 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
     ...filteredData.flatMap((p) => p.hotTopics.map((t: any) => t.score || 0)),
   );
 
-  const handleDownloadPng = () => {
-    if (!panelRef.current) return;
-    const content = panelRef.current.outerHTML;
-    const styles = Array.from(document.styleSheets)
-      .flatMap((ss) => { try { return Array.from(ss.cssRules).map((r) => r.cssText); } catch { return []; } })
-      .join("\n");
-    const printWin = window.open("", "_blank", "width=1200,height=900");
-    if (!printWin) {
-      alert("请允许弹出窗口后再试，或直接使用系统截图工具保存热点图表。");
-      return;
-    }
-    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>热点趋势_${windowDays}天</title><style>body{background:#1a0800;margin:0;padding:24px;font-family:sans-serif}@media print{body{-webkit-print-color-adjust:exact;color-adjust:exact}}${styles}</style></head><body>${content}</body></html>`);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => { printWin.print(); }, 600);
-  };
   const fmtNum = (n: number) => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
   return (
@@ -1415,15 +1399,6 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
               </button>
             ))}
           </div>
-          {/* Download PNG */}
-          <button
-            type="button"
-            onClick={handleDownloadPng}
-            className="flex items-center gap-2 rounded-2xl border border-[#ff8a3d]/30 bg-[#ff8a3d]/15 px-5 py-2.5 text-sm font-semibold text-[#ffcf92] backdrop-blur transition-all hover:bg-[#ff8a3d]/25 hover:shadow-[0_0_16px_rgba(255,138,61,0.3)]"
-          >
-            <FileUp className="h-4 w-4" />
-            下载图片
-          </button>
         </div>
       </div>
 
@@ -2243,8 +2218,17 @@ export default function MVAnalysisPage() {
   });
 
   const handleDownloadAnalysisPdf = useCallback(() => {
+    // Capture the fully-rendered DOM as a static HTML snapshot.
+    // Strip all <script> tags so Puppeteer won't re-run React and wipe the charts.
+    // Inject <base> tag so relative CSS/image paths resolve against the live domain.
+    const clone = document.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("script").forEach((n) => n.remove());
+    const base = document.createElement("base");
+    base.href = window.location.origin + "/";
+    clone.querySelector("head")?.prepend(base);
+    const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
-    downloadPdfMutation.mutate({ pageUrl: String(window.location.href) });
+    downloadPdfMutation.mutate({ html: htmlContent });
   }, [downloadPdfMutation]);
 
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
