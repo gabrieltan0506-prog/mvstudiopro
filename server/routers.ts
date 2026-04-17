@@ -2209,8 +2209,9 @@ export const appRouter = router({
 
     downloadAnalysisPdf: publicProcedure
       .input(z.object({
-        pageUrl: z.string().url(),
-        token: z.string().optional(),
+        // html: static snapshot of the fully-rendered DOM (scripts stripped, base tag injected)
+        // Using html instead of pageUrl bypasses auth/state issues with Puppeteer fresh sessions
+        html: z.string().min(100),
       }))
       .mutation(async ({ input }) => {
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
@@ -2226,7 +2227,7 @@ export const appRouter = router({
           const res = await fetch(proxyUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: input.pageUrl, token: input.token || "" }),
+            body: JSON.stringify({ html: input.html }),
             signal: controller.signal,
           });
 

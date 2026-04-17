@@ -2,17 +2,19 @@ import express from "express";
 import puppeteer from "puppeteer";
 
 const app = express();
-app.use(express.json());
+// Increase body limit to 100mb — static HTML snapshots can be several MB
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 const PORT = process.env.PORT || 8080;
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.post("/generate-pdf", async (req, res) => {
-  const { url, token } = req.body as { url?: string; token?: string };
+  const { html } = req.body as { html?: string };
 
-  if (!url) {
-    res.status(400).json({ error: "url is required" });
+  if (!html || html.length < 100) {
+    res.status(400).json({ error: "html body is required and must be non-empty" });
     return;
   }
 
@@ -38,30 +40,15 @@ app.post("/generate-pdf", async (req, res) => {
     // Set viewport for high-quality capture
     await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 });
 
-    // Inject auth token so the page can render authenticated content
-    if (token) {
-      await page.setExtraHTTPHeaders({
-        Authorization: `Bearer ${token}`,
-      });
-    }
-
-    // Navigate to the target URL — networkidle0 waits until ALL network activity stops
-    await page.goto(url, {
+    // Load the static HTML snapshot directly via setContent.
+    // This bypasses auth/state issues entirely — the DOM was already rendered by the user's browser.
+    // Scripts were stripped by the frontend so React won't re-render and clear the charts.
+    await page.setContent(html, {
       waitUntil: "networkidle0",
       timeout: 60_000,
     });
 
-    // Wait for main analysis container to appear; fall back gracefully if not present
-    try {
-      await page.waitForSelector(
-        ".main-chart-container, .analysis-export-container, [data-export-root], [data-analysis-root]",
-        { timeout: 25_000 },
-      );
-    } catch {
-      // Page may not have a specific container; proceed with full-page capture
-    }
-
-    // Extra wait for React charts / animations to fully render (3.5s)
+    // Extra wait for CSS transitions and font loads to fully settle
     await new Promise((r) => setTimeout(r, 3500));
 
     const pdfBuffer = await page.pdf({
