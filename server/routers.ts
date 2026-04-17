@@ -2207,6 +2207,46 @@ export const appRouter = router({
         }
       }),
 
+    downloadAnalysisPdf: publicProcedure
+      .input(z.object({
+        pageUrl: z.string().url(),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
+        if (!cloudRunUrl) {
+          throw new Error("CLOUD_RUN_PDF_URL env var is not set. Deploy the pdf-worker to Cloud Run and set this variable.");
+        }
+
+        const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 90_000); // 90s cap
+
+        try {
+          const res = await fetch(proxyUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: input.pageUrl, token: input.token || "" }),
+            signal: controller.signal,
+          });
+
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => "");
+            throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
+          }
+
+          const arrayBuffer = await res.arrayBuffer();
+          const base64 = Buffer.from(arrayBuffer).toString("base64");
+          return { success: true, pdfBase64: base64 };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error("[downloadAnalysisPdf] proxy error:", msg);
+          throw new Error(`downloadAnalysisPdf failed: ${msg}`);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }),
+
     generateVisualReport: publicProcedure
       .input(z.object({
         // Extended to support short-form trend radar: 3d and 7d windows
