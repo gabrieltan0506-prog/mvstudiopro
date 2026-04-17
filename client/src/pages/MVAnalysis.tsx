@@ -2234,16 +2234,19 @@ export default function MVAnalysisPage() {
           imageDataUrl,
         }),
       });
-      const json = await resp.json().catch(() => null);
-      if (!resp.ok || !json?.url) {
-        throw new Error(String(json?.message || json?.error || "PDF 导出失败"));
+      if (!resp.ok) {
+        const raw = await resp.text().catch(() => "");
+        throw new Error(raw || "PDF 导出失败");
       }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      anchor.href = String(json.url);
+      anchor.href = blobUrl;
       anchor.download = "creator-growth-camp-analysis.pdf";
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
+      URL.revokeObjectURL(blobUrl);
       toast.success("分析页 PDF 已开始下载");
     } catch (pdfError: any) {
       toast.error(pdfError?.message || "PDF 导出失败");

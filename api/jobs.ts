@@ -2434,7 +2434,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const r = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`,{
         method:"POST",
         headers:{ "Authorization":"Bearer "+AIM_KEY, "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({ task_type:"create_music", custom_mode:false, mv:"chirp-v4-5", gpt_description_prompt: s(b.prompt || q.prompt || "") })
+        body: JSON.stringify({ task_type:"create_music", custom_mode:false, mv:"chirp-v4-5", gpt_description_prompt: s(b.gpt_description_prompt || q.gpt_description_prompt || b.prompt || q.prompt || "") })
       });
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
     }
