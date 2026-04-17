@@ -407,7 +407,11 @@ export async function exportSnapshotImageToPDF(input: {
   const base64 = imageDataUrl.split(",")[1] || "";
   if (!base64) throw new Error("missing_image_payload");
   const imageBuffer = Buffer.from(base64, "base64");
-  const metadata = await sharp(imageBuffer).metadata();
+  const normalizedImageBuffer = await sharp(imageBuffer)
+    .flatten({ background: "#0b1020" })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+  const metadata = await sharp(normalizedImageBuffer).metadata();
   const width = metadata.width || 1600;
   const height = metadata.height || 900;
 
@@ -426,7 +430,7 @@ export async function exportSnapshotImageToPDF(input: {
   const targetWidth = pageWidth;
   const targetHeight = Math.min(pageHeight, targetWidth * aspectRatio);
 
-  doc.image(imageBuffer, doc.page.margins.left, doc.y, {
+  doc.image(normalizedImageBuffer, doc.page.margins.left, doc.y, {
     fit: [pageWidth, targetHeight],
     align: "center",
   });
