@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { toPng } from "html-to-image";
+import { toJpeg } from "html-to-image";
 import { jsPDF } from "jspdf";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -2222,10 +2222,11 @@ export default function MVAnalysisPage() {
     if (!analysisExportRef.current) return;
     setIsExportingAnalysisPdf(true);
     try {
-      const imageDataUrl = await toPng(analysisExportRef.current, {
+      const imageDataUrl = await toJpeg(analysisExportRef.current, {
         pixelRatio: 2,
         backgroundColor: "#080618",
         cacheBust: true,
+        quality: 0.96,
       });
       const pdf = new jsPDF({
         orientation: "p",
@@ -2248,7 +2249,7 @@ export default function MVAnalysisPage() {
       const usableHeight = pageHeight - margin * 2;
 
       while (remainingHeight > 0) {
-        pdf.addImage(imageDataUrl, "PNG", margin, positionY - sourceOffsetY, targetWidth, scaledHeight, undefined, "FAST");
+        pdf.addImage(imageDataUrl, "JPEG", margin, positionY - sourceOffsetY, targetWidth, scaledHeight, undefined, "FAST");
         remainingHeight -= usableHeight;
         sourceOffsetY += usableHeight;
         if (remainingHeight > 0) {
