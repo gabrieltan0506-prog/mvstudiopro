@@ -393,6 +393,65 @@ export async function exportToPDF(
   }
 }
 
+export async function exportSnapshotImageToPDF(input: {
+  title: string;
+  imageDataUrl: string;
+}): Promise<{ url: string; message: string }> {
+  const PDFDocument = (await import("pdfkit")).default;
+  const title = String(input.title || "").trim() || "MV Analysis Export";
+  const imageDataUrl = String(input.imageDataUrl || "").trim();
+  if (!imageDataUrl.startsWith("data:image/")) {
+    throw new Error("invalid_image_data");
+  }
+
+  const base64 = imageDataUrl.split(",")[1] || "";
+  if (!base64) throw new Error("missing_image_payload");
+  const imageBuffer = Buffer.from(base64, "base64");
+  const metadata = await sharp(imageBuffer).metadata();
+  const width = metadata.width || 1600;
+  const height = metadata.height || 900;
+
+  const fileName = `mv_analysis_${Date.now()}.pdf`;
+  const filePath = path.join("/tmp", fileName);
+  const doc = new PDFDocument({ size: "A4", margin: 24 });
+  const writeStream = fs.createWriteStream(filePath);
+  doc.pipe(writeStream);
+
+  doc.fontSize(16).font("Helvetica-Bold").text(title, { align: "center" });
+  doc.moveDown(0.8);
+
+  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const pageHeight = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - 40;
+  const aspectRatio = height / width;
+  const targetWidth = pageWidth;
+  const targetHeight = Math.min(pageHeight, targetWidth * aspectRatio);
+
+  doc.image(imageBuffer, doc.page.margins.left, doc.y, {
+    fit: [pageWidth, targetHeight],
+    align: "center",
+  });
+
+  doc.end();
+
+  await new Promise<void>((resolve, reject) => {
+    writeStream.on("finish", () => resolve());
+    writeStream.on("error", reject);
+  });
+
+  const pdfBuffer = fs.readFileSync(filePath);
+  fs.unlinkSync(filePath);
+  try {
+    const { key } = await storagePut(fileName, pdfBuffer, "application/pdf");
+    const { url } = await storageGet(key);
+    return { url, message: "PDF 已生成！" };
+  } catch {
+    return {
+      url: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
+      message: "PDF 已生成！",
+    };
+  }
+}
+
 // ─── Word Export ────────────────────────────────────────
 export async function exportToWord(
   storyboard: StoryboardData,

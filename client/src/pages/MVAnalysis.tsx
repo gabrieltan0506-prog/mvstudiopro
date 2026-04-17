@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toPng } from "html-to-image";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
@@ -1625,11 +1626,13 @@ export default function MVAnalysisPage() {
   const [musicError, setMusicError] = useState("");
   const [musicSongs, setMusicSongs] = useState<GeneratedMusicSong[]>([]);
   const [playingMusicUrl, setPlayingMusicUrl] = useState<string | null>(null);
+  const [isExportingAnalysisPdf, setIsExportingAnalysisPdf] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const musicPollingRunRef = useRef(0);
   const musicAudioRef = useRef<HTMLAudioElement | null>(typeof Audio !== "undefined" ? new Audio() : null);
+  const analysisExportRef = useRef<HTMLDivElement | null>(null);
   const startTimeRef = useRef(0);
   const sectionRefs = useRef<Partial<Record<string, HTMLDivElement | null>>>({});
 
@@ -2193,6 +2196,62 @@ export default function MVAnalysisPage() {
     });
   }, [playingMusicUrl]);
 
+  const handleDownloadGeneratedMusic = useCallback(async (url: string, title?: string) => {
+    if (!url) return;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error(`下载失败 (${resp.status})`);
+      }
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = blobUrl;
+      anchor.download = `${(title || "bgm").trim() || "bgm"}.mp3`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (downloadError: any) {
+      toast.error(downloadError?.message || "音频下载失败");
+    }
+  }, []);
+
+  const handleDownloadAnalysisPdf = useCallback(async () => {
+    if (!analysisExportRef.current) return;
+    setIsExportingAnalysisPdf(true);
+    try {
+      const imageDataUrl = await toPng(analysisExportRef.current, {
+        pixelRatio: 2,
+        backgroundColor: "#080618",
+        cacheBust: true,
+      });
+      const resp = await fetch("/api/export?op=analysis-page-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `${context?.trim() || "creator-growth-camp"} analysis`,
+          imageDataUrl,
+        }),
+      });
+      const json = await resp.json().catch(() => null);
+      if (!resp.ok || !json?.url) {
+        throw new Error(String(json?.message || json?.error || "PDF 导出失败"));
+      }
+      const anchor = document.createElement("a");
+      anchor.href = String(json.url);
+      anchor.download = "creator-growth-camp-analysis.pdf";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      toast.success("分析页 PDF 已开始下载");
+    } catch (pdfError: any) {
+      toast.error(pdfError?.message || "PDF 导出失败");
+    } finally {
+      setIsExportingAnalysisPdf(false);
+    }
+  }, [context]);
+
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
     musicPollingRunRef.current += 1;
     const runId = musicPollingRunRef.current;
@@ -2287,7 +2346,7 @@ export default function MVAnalysisPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           musicProvider === "suno"
-            ? { task_type: "create_music", custom_mode: false, mv: "sonic-v4-5", gpt_description_prompt: prompt }
+            ? { task_type: "create_music", custom_mode: false, mv: "chirp-v4-5", gpt_description_prompt: prompt }
             : { prompt, task_type: "create_music", make_instrumental: true, mv: "FUZZ-2.0" }
         ),
       });
@@ -3127,6 +3186,7 @@ export default function MVAnalysisPage() {
           </div>
             </section>
 
+        <div ref={analysis ? analysisExportRef : undefined}>
         {!analysis ? (
           <section className="mt-8 grid gap-4 md:grid-cols-3">
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -3149,6 +3209,27 @@ export default function MVAnalysisPage() {
             </div>
           </section>
         ) : null}
+
+        {analysis ? (
+          <div className="mt-8 rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">分析页面下载</div>
+                <div className="mt-1 text-xs text-white/50">将当前分析页面导出为 PDF 文件</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleDownloadAnalysisPdf()}
+                disabled={isExportingAnalysisPdf}
+                className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/85 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isExportingAnalysisPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                生成分析页面下载
+              </button>
+            </div>
+          </div>
+        ) : null}
+        </div>
 
         {debugMode ? (
           <section className="mt-8 space-y-6">
@@ -4107,14 +4188,14 @@ export default function MVAnalysisPage() {
                                             </button>
                                           ) : null}
                                           {song.audioUrl ? (
-                                            <a
-                                              href={song.audioUrl}
-                                              download={`${song.title || "bgm"}.mp3`}
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
                                               className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
                                             >
                                               <Download className="h-3.5 w-3.5" />
                                               下载
-                                            </a>
+                                            </button>
                                           ) : null}
                                         </div>
                                       </div>
