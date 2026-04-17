@@ -2226,9 +2226,15 @@ export default function MVAnalysisPage() {
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
+    // Resolve auth token: supervisor mode uses fixed marker; authenticated users use
+    // their stored session token. Token is forwarded to server/pdf-worker for future
+    // page.goto() auth scenarios — does NOT affect current page.setContent() path.
+    const token = supervisorAccess
+      ? "supervisor"
+      : (user as any)?.token ?? (user as any)?.sessionToken ?? "";
     setIsDownloadingPdf(true);
-    downloadPdfMutation.mutate({ html: htmlContent });
-  }, [context]);
+    downloadPdfMutation.mutate({ html: htmlContent, token: token || undefined });
+  }, [context, supervisorAccess, user]);
 
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
     musicPollingRunRef.current += 1;

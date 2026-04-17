@@ -642,6 +642,103 @@ async function buildPlatformDashboard(params: {
   throw new Error(`buildPlatformDashboard: loose parse failed. errors: ${JSON.stringify((looseResult.error as any).issues?.slice(0, 3) ?? looseResult.error.message)}`);
 }
 
+/**
+ * normalizePlatformContentKeys — Key normalization layer for buildPlatformContent.
+ * Gemini 2.5 Pro occasionally renames fields despite the strict JSON key-lock prompt.
+ * This function remaps all documented alias variants to the canonical key names before
+ * the Zod schema parse, so drifted responses are recovered gracefully instead of lost.
+ *
+ * Canonical keys (from prompt template):
+ *   top-level: contentBlueprints, monetizationLanes
+ *   blueprint item: title, format, hook, copywriting, suitablePlatforms,
+ *                   actionableSteps, detailedScript, publishingAdvice, executionDetails
+ *   monetization item: title, fitReason, offerShape, revenueModes, firstValidation
+ */
+function normalizePlatformContentKeys(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw };
+
+  // ── Top-level array key aliases ──────────────────────────────────────────
+  // contentBlueprints
+  if (!Array.isArray(out.contentBlueprints)) {
+    const alias =
+      out.blueprints ?? out.contentPlans ?? out.contentPlan ??
+      out.content_blueprints ?? out.plans ?? out.videos;
+    if (Array.isArray(alias)) out.contentBlueprints = alias;
+  }
+  // monetizationLanes
+  if (!Array.isArray(out.monetizationLanes)) {
+    const alias =
+      out.businessPaths ?? out.lanes ?? out.monetization_lanes ??
+      out.monetizationPaths ?? out.bizPaths ?? out.businessLanes ??
+      out.commercializationLanes ?? out.revenueLanes;
+    if (Array.isArray(alias)) out.monetizationLanes = alias;
+  }
+
+  // ── Per-blueprint item key aliases ────────────────────────────────────────
+  if (Array.isArray(out.contentBlueprints)) {
+    out.contentBlueprints = (out.contentBlueprints as any[]).map((item: any) => {
+      if (!item || typeof item !== "object") return item;
+      const b: Record<string, unknown> = { ...item };
+      // title
+      if (!b.title) b.title = b.theme ?? b.topicTitle ?? b.videoTitle ?? b.subject ?? b.name ?? "";
+      // hook
+      if (!b.hook) b.hook = b.contentHook ?? b.openingHook ?? b.hookLine ?? b.opener ?? "";
+      // copywriting
+      if (!b.copywriting) b.copywriting = b.copy ?? b.bodyText ?? b.content ?? b.mainCopy ?? "";
+      // suitablePlatforms
+      if (!Array.isArray(b.suitablePlatforms)) {
+        const pa = b.platforms ?? b.targetPlatforms ?? b.suitable_platforms ?? b.platformList;
+        b.suitablePlatforms = Array.isArray(pa) ? pa : [];
+      }
+      // actionableSteps
+      if (!Array.isArray(b.actionableSteps)) {
+        const sa = b.steps ?? b.actionSteps ?? b.actions ?? b.nextSteps ?? b.executionSteps;
+        b.actionableSteps = Array.isArray(sa) ? sa : [];
+      }
+      // detailedScript
+      if (!b.detailedScript) b.detailedScript = b.script ?? b.storyboard ?? b.detailed_script ?? b.shooting_script ?? "";
+      // publishingAdvice
+      if (!b.publishingAdvice) b.publishingAdvice = b.publishing ?? b.publishTips ?? b.publishing_advice ?? b.releaseAdvice ?? "";
+      // executionDetails — normalize nested object if present
+      if (b.executionDetails && typeof b.executionDetails === "object") {
+        const ed = b.executionDetails as Record<string, unknown>;
+        if (!ed.environmentAndWardrobe) ed.environmentAndWardrobe = ed.environment ?? ed.wardrobe ?? ed.scene ?? "";
+        if (!ed.lightingAndCamera) ed.lightingAndCamera = ed.lighting ?? ed.camera ?? ed.lighting_camera ?? "";
+        if (!Array.isArray(ed.stepByStepScript)) {
+          const ss = ed.steps ?? ed.script ?? ed.stepByStep ?? ed.step_by_step_script;
+          ed.stepByStepScript = Array.isArray(ss) ? ss : [];
+        }
+        b.executionDetails = ed;
+      }
+      return b;
+    });
+  }
+
+  // ── Per-monetizationLane item key aliases ─────────────────────────────────
+  if (Array.isArray(out.monetizationLanes)) {
+    out.monetizationLanes = (out.monetizationLanes as any[]).map((item: any) => {
+      if (!item || typeof item !== "object") return item;
+      const m: Record<string, unknown> = { ...item };
+      // title
+      if (!m.title) m.title = m.laneName ?? m.name ?? m.direction ?? m.pathName ?? "";
+      // fitReason
+      if (!m.fitReason) m.fitReason = m.feasibility ?? m.reason ?? m.fit_reason ?? m.why ?? m.suitability ?? "";
+      // offerShape
+      if (!m.offerShape) m.offerShape = m.offer ?? m.deliverable ?? m.shape ?? m.offer_shape ?? "";
+      // revenueModes
+      if (!Array.isArray(m.revenueModes)) {
+        const rm = m.revenue ?? m.modes ?? m.revenue_modes ?? m.monetizationMethods;
+        m.revenueModes = Array.isArray(rm) ? rm : [];
+      }
+      // firstValidation
+      if (!m.firstValidation) m.firstValidation = m.actionItem ?? m.validation ?? m.firstStep ?? m.first_validation ?? m.nextStep ?? "";
+      return m;
+    });
+  }
+
+  return out;
+}
+
 async function buildPlatformContent(params: {
   snapshot: any;
   platformMenu: any;
@@ -793,7 +890,10 @@ async function buildPlatformContent(params: {
     }
   }
 
-  const partial = (parsedRaw || {}) as Record<string, unknown>;
+  // Key normalization layer — handles known Gemini key-drift patterns before Zod parse.
+  // Gemini may rename keys despite the 【强制 JSON Key 锁定】 prompt instruction.
+  // This layer remaps all observed alias variants back to the canonical key names.
+  const partial = normalizePlatformContentKeys((parsedRaw || {}) as Record<string, unknown>);
   const parseResult = platformContentResponseSchema.safeParse(partial);
   if (parseResult.success) return parseResult.data;
 
@@ -2210,6 +2310,12 @@ export const appRouter = router({
     downloadAnalysisPdf: publicProcedure
       .input(z.object({
         html: z.string().min(100),
+        // Optional token forwarded from the frontend for auditing / future auth use.
+        // In supervisor mode the frontend passes "supervisor"; authenticated users pass
+        // their session token. The pdf-worker currently uses page.setContent(html) so
+        // no auth session is required, but we preserve the token for future page.goto()
+        // scenarios or access-control logging.
+        token: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
         const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
@@ -2223,7 +2329,8 @@ export const appRouter = router({
           const res = await fetch(proxyUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ html: input.html }),
+            // Forward html + token to pdf-worker so it can use token for future page.goto() auth
+            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
             signal: controller.signal,
           });
           if (!res.ok) {

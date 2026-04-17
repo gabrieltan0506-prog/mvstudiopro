@@ -11,11 +11,17 @@ const PORT = process.env.PORT || 8080;
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.post("/generate-pdf", async (req, res) => {
-  const { html } = req.body as { html?: string };
+  const { html, token } = req.body as { html?: string; token?: string };
 
   if (!html || html.length < 100) {
     res.status(400).json({ error: "html body is required and must be non-empty" });
     return;
+  }
+
+  // Log token presence for audit trail — does not affect page.setContent() flow.
+  // When this worker is upgraded to page.goto(url), use token to inject auth cookie.
+  if (token) {
+    console.log(`[pdf-worker] token present (${token === "supervisor" ? "supervisor" : "user"}, len=${token.length})`);
   }
 
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
