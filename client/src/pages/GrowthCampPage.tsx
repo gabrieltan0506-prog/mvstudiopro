@@ -1356,22 +1356,6 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
     downloadPdfMutation.mutate({ pageUrl });
   };
 
-  const handleDownloadPng = () => {
-    if (!panelRef.current) return;
-    const content = panelRef.current.outerHTML;
-    const styles = Array.from(document.styleSheets)
-      .flatMap((ss) => { try { return Array.from(ss.cssRules).map((r) => r.cssText); } catch { return []; } })
-      .join("\n");
-    const printWin = window.open("", "_blank", "width=1200,height=900");
-    if (!printWin) {
-      alert("请允许弹出窗口后再试，或直接使用系统截图工具保存热点图表。");
-      return;
-    }
-    printWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>热点趋势_${windowDays}天</title><style>body{background:#1a0800;margin:0;padding:24px;font-family:sans-serif}@media print{body{-webkit-print-color-adjust:exact;color-adjust:exact}}${styles}</style></head><body>${content}</body></html>`);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => { printWin.print(); }, 600);
-  };
   const fmtNum = (n: number) => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 
   return (
