@@ -1400,14 +1400,6 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
             ))}
           </div>
           {/* Download PNG */}
-          <button
-            type="button"
-            onClick={handleDownloadPng}
-            className="flex items-center gap-2 rounded-2xl border border-[#ff8a3d]/30 bg-[#ff8a3d]/15 px-5 py-2.5 text-sm font-semibold text-[#ffcf92] backdrop-blur transition-all hover:bg-[#ff8a3d]/25 hover:shadow-[0_0_16px_rgba(255,138,61,0.3)]"
-          >
-            <FileUp className="h-4 w-4" />
-            下载图片
-          </button>
         </div>
       </div>
 

@@ -1351,9 +1351,13 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
   });
 
   const handleDownloadAnalysisPdf = () => {
+    const clone = document.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("script").forEach((n) => n.remove());
+    const base = document.createElement("base");
+    base.href = window.location.origin + "/";
+    clone.querySelector("head")?.prepend(base);
     setIsDownloadingPdf(true);
-    const pageUrl = String(window.location.href);
-    downloadPdfMutation.mutate({ pageUrl });
+    downloadPdfMutation.mutate({ html: "<!DOCTYPE html>" + clone.outerHTML });
   };
 
   const fmtNum = (n: number) => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
