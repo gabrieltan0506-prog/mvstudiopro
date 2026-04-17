@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { exportToPDF, exportToWord } from "../server/storyboard-export.js";
+import { exportSnapshotImageToPDF, exportToPDF, exportToWord } from "../server/storyboard-export.js";
 
 function jparse(t: string): any { try { return JSON.parse(t); } catch { return null; } }
 function getBody(req: VercelRequest): any {
@@ -17,8 +17,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const q: any = req.query || {};
     const b = getBody(req);
     const op = s(q.op || b.op).trim().toLowerCase();
-    if (op !== "storyboard-pdf" && op !== "storyboard-docx") {
+    if (op !== "storyboard-pdf" && op !== "storyboard-docx" && op !== "analysis-page-pdf") {
       return res.status(400).json({ ok: false, error: "unsupported_op" });
+    }
+
+    if (op === "analysis-page-pdf") {
+      const title = s(b.title).trim() || "MV Analysis Export";
+      const imageDataUrl = s(b.imageDataUrl).trim();
+      if (!imageDataUrl) return res.status(400).json({ ok: false, error: "image_data_required" });
+      const result = await exportSnapshotImageToPDF({ title, imageDataUrl });
+      return res.status(200).json({ ok: true, url: result.url, message: result.message });
     }
 
     const scenesInput = Array.isArray(b.scenes) ? b.scenes : [];
