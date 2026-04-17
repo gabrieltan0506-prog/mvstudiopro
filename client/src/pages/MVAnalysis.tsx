@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toPng } from "html-to-image";
+import { jsPDF } from "jspdf";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { JOB_PROGRESS_MESSAGES, createJob, getJob } from "@/lib/jobs";
@@ -2226,27 +2227,37 @@ export default function MVAnalysisPage() {
         backgroundColor: "#080618",
         cacheBust: true,
       });
-      const resp = await fetch("/api/export?op=analysis-page-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: `${context?.trim() || "creator-growth-camp"} analysis`,
-          imageDataUrl,
-        }),
+      const pdf = new jsPDF({
+        orientation: "p",
+        unit: "mm",
+        format: "a4",
+        compress: true,
       });
-      if (!resp.ok) {
-        const raw = await resp.text().catch(() => "");
-        throw new Error(raw || "PDF 导出失败");
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 8;
+      const targetWidth = pageWidth - margin * 2;
+      const props = pdf.getImageProperties(imageDataUrl);
+      const imgWidth = props.width || 1;
+      const imgHeight = props.height || 1;
+      const scaledHeight = (imgHeight * targetWidth) / imgWidth;
+
+      let remainingHeight = scaledHeight;
+      let positionY = margin;
+      let sourceOffsetY = 0;
+      const usableHeight = pageHeight - margin * 2;
+
+      while (remainingHeight > 0) {
+        pdf.addImage(imageDataUrl, "PNG", margin, positionY - sourceOffsetY, targetWidth, scaledHeight, undefined, "FAST");
+        remainingHeight -= usableHeight;
+        sourceOffsetY += usableHeight;
+        if (remainingHeight > 0) {
+          pdf.addPage();
+          positionY = margin;
+        }
       }
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = blobUrl;
-      anchor.download = "creator-growth-camp-analysis.pdf";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(blobUrl);
+
+      pdf.save("creator-growth-camp-analysis.pdf");
       toast.success("分析页 PDF 已开始下载");
     } catch (pdfError: any) {
       toast.error(pdfError?.message || "PDF 导出失败");
