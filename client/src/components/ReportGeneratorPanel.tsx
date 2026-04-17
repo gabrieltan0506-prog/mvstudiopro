@@ -14,20 +14,20 @@ import { VisualReportTemplate, type VisualReportData } from "./VisualReportTempl
 
 type WindowDays = "3" | "7" | "15" | "30";
 type Theme = "dark" | "light";
-type PlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "toutiao";
+type PlatformKey = "douyin" | "kuaishou" | "xiaohongshu" | "bilibili";
 
 const PLATFORM_OPTIONS: { key: PlatformKey; label: string; icon: string }[] = [
   { key: "douyin", label: "抖音", icon: "🎵" },
   { key: "kuaishou", label: "快手", icon: "⚡" },
   { key: "xiaohongshu", label: "小红书", icon: "📖" },
-  { key: "toutiao", label: "今日头条", icon: "📰" },
+  { key: "bilibili", label: "B站", icon: "📺" },
 ];
 
 const PLATFORM_NAMES: Record<PlatformKey, string> = {
   douyin: "抖音",
   kuaishou: "快手",
   xiaohongshu: "小红书",
-  toutiao: "今日头条",
+  bilibili: "B站",
 };
 
 type Props = {

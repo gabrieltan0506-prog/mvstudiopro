@@ -2354,7 +2354,7 @@ export const appRouter = router({
         // Extended to support short-form trend radar: 3d and 7d windows
         windowDays: z.enum(["3", "7", "15", "30"]),
         theme: z.enum(["light", "dark"]),
-        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "toutiao"])),
+        platforms: z.array(z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili"])),
       }))
       .mutation(async ({ input }) => {
         const PLATFORM_NAMES: Record<string, string> = {
