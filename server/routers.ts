@@ -2209,8 +2209,6 @@ export const appRouter = router({
 
     downloadAnalysisPdf: publicProcedure
       .input(z.object({
-        // html: static snapshot of the fully-rendered DOM (scripts stripped, base tag injected)
-        // Using html instead of pageUrl bypasses auth/state issues with Puppeteer fresh sessions
         html: z.string().min(100),
       }))
       .mutation(async ({ input }) => {
@@ -2218,11 +2216,9 @@ export const appRouter = router({
         if (!cloudRunUrl) {
           throw new Error("CLOUD_RUN_PDF_URL env var is not set. Deploy the pdf-worker to Cloud Run and set this variable.");
         }
-
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90_000); // 90s cap
-
+        const timeoutId = setTimeout(() => controller.abort(), 90_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2230,12 +2226,10 @@ export const appRouter = router({
             body: JSON.stringify({ html: input.html }),
             signal: controller.signal,
           });
-
           if (!res.ok) {
             const errBody = await res.text().catch(() => "");
             throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
           }
-
           const arrayBuffer = await res.arrayBuffer();
           const base64 = Buffer.from(arrayBuffer).toString("base64");
           return { success: true, pdfBase64: base64 };
