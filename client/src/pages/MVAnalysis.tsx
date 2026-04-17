@@ -1399,6 +1399,15 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
               </button>
             ))}
           </div>
+          {/* Download PNG */}
+          <button
+            type="button"
+            onClick={handleDownloadPng}
+            className="flex items-center gap-2 rounded-2xl border border-[#ff8a3d]/30 bg-[#ff8a3d]/15 px-5 py-2.5 text-sm font-semibold text-[#ffcf92] backdrop-blur transition-all hover:bg-[#ff8a3d]/25 hover:shadow-[0_0_16px_rgba(255,138,61,0.3)]"
+          >
+            <FileUp className="h-4 w-4" />
+            下载图片
+          </button>
         </div>
       </div>
 
@@ -2218,9 +2227,7 @@ export default function MVAnalysisPage() {
   });
 
   const handleDownloadAnalysisPdf = useCallback(() => {
-    // Capture the fully-rendered DOM as a static HTML snapshot.
-    // Strip all <script> tags so Puppeteer won't re-run React and wipe the charts.
-    // Inject <base> tag so relative CSS/image paths resolve against the live domain.
+    // Capture static DOM snapshot — strip scripts, inject base tag for relative paths
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script").forEach((n) => n.remove());
     const base = document.createElement("base");
@@ -2229,7 +2236,7 @@ export default function MVAnalysisPage() {
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
     downloadPdfMutation.mutate({ html: htmlContent });
-  }, [downloadPdfMutation]);
+  }, [context]);
 
   const startMusicPolling = useCallback(async (taskId: string, provider: MusicProvider) => {
     musicPollingRunRef.current += 1;

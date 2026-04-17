@@ -1,6 +1,21 @@
 # Cloud Run Dockerfile for PDF generation microservice
+# Multi-stage build: compiles TypeScript in builder stage, runs in slim stage
 # Requires Chromium + CJK fonts for correct Chinese rendering
 
+# ── Stage 1: Build ──────────────────────────────────────────────────────────
+FROM node:18-slim AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY tsconfig.json ./
+COPY index.ts ./
+
+RUN npm run build
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM node:18-slim
 
 # Install Chromium and required system libraries
@@ -20,7 +35,6 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     libxrender1 \
     libgbm1 \
-    # CJK fonts to prevent Chinese character garbling
     fonts-noto-cjk \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
@@ -31,14 +45,11 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-# Copy package files first for better Docker layer caching
-COPY package.json ./
-
-# Install production dependencies only
+COPY package*.json ./
 RUN npm install --production
 
-# Copy compiled JS (build before docker build: npm run build)
-COPY dist/ ./dist/
+# Copy compiled JS from builder stage
+COPY --from=builder /app/dist ./dist/
 
 EXPOSE 8080
 
