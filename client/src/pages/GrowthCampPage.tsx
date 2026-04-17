@@ -1356,14 +1356,11 @@ function HotTopicWindowPanel({ analysis }: { analysis: any }) {
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
-    // Resolve auth token: supervisor mode uses fixed marker; authenticated users use
-    // their stored session token. Token is forwarded to server/pdf-worker for future
-    // page.goto() auth scenarios — does NOT affect current page.setContent() path.
-    const token = supervisorAccess
-      ? "supervisor"
-      : (user as any)?.token ?? (user as any)?.sessionToken ?? "";
+    // HotTopicWindowPanel does not have supervisorAccess/user in scope.
+    // Use hasSupervisorAccess() module-level helper instead.
+    const token = hasSupervisorAccess() ? "supervisor" : undefined;
     setIsDownloadingPdf(true);
-    downloadPdfMutation.mutate({ html: "<!DOCTYPE html>" + clone.outerHTML, token: token || undefined });
+    downloadPdfMutation.mutate({ html: "<!DOCTYPE html>" + clone.outerHTML, token });
   };
 
   const fmtNum = (n: number) => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
