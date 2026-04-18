@@ -131,11 +131,27 @@ type LlmTarget = {
   apiKey: string;
 };
 
-const DEFAULT_LLM_TIMEOUT_MS = 60_000;
+const DEFAULT_LLM_TIMEOUT_MS = 480_000;
 
 function getLlmTimeoutMs() {
   const raw = Number(process.env.LLM_TIMEOUT_MS || "");
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_LLM_TIMEOUT_MS;
+}
+
+async function withLlmTimeout<T>(promise: Promise<T>): Promise<T> {
+  const timeoutMs = getLlmTimeoutMs();
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`LLM 请求超时，已等待 ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
 }
 
 type GeminiPart =
@@ -531,14 +547,16 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
   const maxOutputTokens = params.maxTokens || params.max_tokens;
 
-  const response = await ai.models.generateContent({
-    model: target.modelName,
-    contents,
-    config: {
-      ...(systemInstruction ? { systemInstruction } : {}),
-      ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
-    },
-  });
+  const response = await withLlmTimeout(
+    ai.models.generateContent({
+      model: target.modelName,
+      contents,
+      config: {
+        ...(systemInstruction ? { systemInstruction } : {}),
+        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
+      },
+    }),
+  );
 
   const text =
     response.candidates?.[0]?.content?.parts

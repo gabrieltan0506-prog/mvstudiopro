@@ -348,6 +348,8 @@ const platformFollowUpResponseSchema = z.object({
   nextQuestions: z.array(z.string()).default([]),
 });
 
+const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
+
 // Call 2 schema — lightweight direction (platform + signals), no heavy copywriting
 // All array fields use z.any() to tolerate Gemini returning strings instead of objects
 // (confirmed bug: topSignals returned as string[] instead of object[])
@@ -1974,7 +1976,7 @@ export const appRouter = router({
         const interactivePlatform = Boolean(input.interactivePlatform);
         // Fly disk I/O for readTrendStoreForPlatforms can take 12-25s — give it 60s
         // Previous values of 5s/10s/20s/45s were all cutting off the read before completion
-        const STORE_TIMEOUT_MS = 60_000;
+        const STORE_TIMEOUT_MS = PLATFORM_LLM_TIMEOUT_MS;
         const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
         const store = await Promise.race([
           interactivePlatform
@@ -1982,7 +1984,7 @@ export const appRouter = router({
             : readTrendStore({ preferDerivedFiles: true }),
           new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => {
             setTimeout(() => {
-              console.warn(`[platform.getGrowthSnapshot] store read timed out after ${STORE_TIMEOUT_MS}ms, using empty store`);
+                  console.warn(`[platform.getGrowthSnapshot] 趋势数据读取超时，已等待 ${STORE_TIMEOUT_MS}ms，改用空数据`);
               resolve(storeNull);
             }, STORE_TIMEOUT_MS);
           }),
@@ -2048,7 +2050,7 @@ export const appRouter = router({
         // buildPlatformDashboard already receives context and personalizes output there.
         // Adding a separate personalization LLM call adds 45-90s with no visible user benefit.
         // For Growth Camp (interactivePlatform=false): run full personalization as before.
-        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 0 : 90_000;
+        const PERSONALIZATION_TIMEOUT_MS = interactivePlatform ? 0 : PLATFORM_LLM_TIMEOUT_MS;
         const personalized = interactivePlatform
           ? null
           : await Promise.race([
@@ -2064,7 +2066,7 @@ export const appRouter = router({
               }),
               new Promise<null>((resolve) => {
                 setTimeout(() => {
-                  console.warn(`[platform.getGrowthSnapshot] personalization timed out after ${PERSONALIZATION_TIMEOUT_MS}ms`);
+                  console.warn(`[platform.getGrowthSnapshot] 个性化分析超时，已等待 ${PERSONALIZATION_TIMEOUT_MS}ms`);
                   resolve(null);
                 }, PERSONALIZATION_TIMEOUT_MS);
               }),
@@ -2126,7 +2128,7 @@ export const appRouter = router({
         const t2 = Date.now();
         // For interactivePlatform (Platform page): skip dashboard here — it is called separately
         // via getPlatformDashboard mutation to avoid one giant 100s+ request
-        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 0 : 60_000;
+        const DASHBOARD_TIMEOUT_MS = interactivePlatform ? 0 : PLATFORM_LLM_TIMEOUT_MS;
         const platformDashboard = interactivePlatform
           ? null
           : await Promise.race([
@@ -2139,7 +2141,7 @@ export const appRouter = router({
               }),
               new Promise<z.infer<typeof platformDashboardResponseSchema>>((resolve) => {
                 setTimeout(() => {
-                  console.warn(`[platform.getGrowthSnapshot] dashboard timed out after ${DASHBOARD_TIMEOUT_MS}ms, using fallback`);
+                  console.warn(`[platform.getGrowthSnapshot] 平台看板生成超时，已等待 ${DASHBOARD_TIMEOUT_MS}ms，改用兜底结果`);
                   resolve(buildFallbackPlatformDashboard({
                     snapshot: platformDashboardSource,
                     context: input.context,
@@ -2658,7 +2660,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
                 numberOfImages: 1,
                 guidanceScale: 4.0,
               }),
-              signal: AbortSignal.timeout(90_000),
+              signal: AbortSignal.timeout(PLATFORM_LLM_TIMEOUT_MS),
             }
           );
           const json: any = await res.json().catch(() => ({}));
@@ -2724,7 +2726,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         ]).catch(() => storeNull);
 
         // Build dashboard — 120s cap, return null on timeout (no fallback)
-        const DASHBOARD_TIMEOUT_MS = 120_000;
+        const DASHBOARD_TIMEOUT_MS = PLATFORM_LLM_TIMEOUT_MS;
         let platformDashboard: z.infer<typeof platformDashboardResponseSchema> | null = null;
         try {
           platformDashboard = await Promise.race([
@@ -2737,7 +2739,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               windowDays: selectedWindowDays,
             }),
             new Promise<null>((resolve) => setTimeout(() => {
-              console.warn(`[platform.getPlatformDashboard] dashboard LLM timed out after ${DASHBOARD_TIMEOUT_MS}ms, returning null`);
+              console.warn(`[platform.getPlatformDashboard] 平台看板生成超时，已等待 ${DASHBOARD_TIMEOUT_MS}ms，返回空结果`);
               resolve(null);
             }, DASHBOARD_TIMEOUT_MS)),
           ]);
@@ -2804,9 +2806,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
               windowDays: Number(input.windowDays),
             }),
             new Promise<null>((resolve) => setTimeout(() => {
-              console.warn("[platform.getPlatformContent] LLM timed out after 120s, returning null");
+              console.warn(`[platform.getPlatformContent] 平台内容生成超时，已等待 ${PLATFORM_LLM_TIMEOUT_MS}ms，返回空结果`);
               resolve(null);
-            }, 120_000)),
+            }, PLATFORM_LLM_TIMEOUT_MS)),
           ]);
         } catch (error) {
           console.error("[platform.getPlatformContent] error:", error);
