@@ -2664,6 +2664,17 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
     lighting: 74,
     impact: 79,
     viralPotential: 77,
+    explosiveIndex: 78,
+    realityCheck: "样例现实查验",
+    reverseEngineering: {
+      hookStrategy: "样例钩子策略",
+      emotionalArc: "样例情绪弧线",
+      commercialLogic: "样例商业逻辑",
+    },
+    premiumContent: {
+      summary: "样例二创摘要",
+      topics: [],
+    },
     visualSummary: "样例视觉结论",
     openingFrameAssessment: "样例开场判断",
     sceneConsistency: "样例画面统一性",

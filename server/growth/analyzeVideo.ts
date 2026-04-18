@@ -8,7 +8,7 @@ import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
 import { storageRead } from "../storage";
-import { resolveGrowthCampExtractorModel, resolveGrowthCampPipelineMode, resolveGrowthCampStrategistModel } from "./extractorPipeline";
+import { resolveGrowthCampPipelineMode } from "./extractorPipeline";
 
 const execFileAsync = promisify(execFile);
 
@@ -98,6 +98,10 @@ type VisualFirstPass = {
 };
 
 type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
+  | "explosiveIndex"
+  | "realityCheck"
+  | "reverseEngineering"
+  | "premiumContent"
   | "summary"
   | "strengths"
   | "improvements"
@@ -115,6 +119,9 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
+const GROWTH_CAMP_FIRST_PASS_MODEL = "gemini-2.5-pro";
+const GROWTH_CAMP_STRATEGIST_MODEL = "gemini-3.1-pro-preview";
+
 class VideoAnalysisFailure extends Error {
   failureStage: VideoFailureStage;
   failureReason: string;
@@ -128,7 +135,7 @@ class VideoAnalysisFailure extends Error {
 }
 
 function resolveGrowthCampFinalModel(modelName?: string): string {
-  return resolveGrowthCampStrategistModel(modelName);
+  return GROWTH_CAMP_STRATEGIST_MODEL;
 }
 
 function normalizeFailureReason(error: unknown) {
@@ -436,11 +443,10 @@ async function runAudioFirstPass(params: {
   context?: string;
   fileName?: string;
 }): Promise<AudioFirstPass> {
-  const extractorModel = resolveGrowthCampExtractorModel();
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: extractorModel,
+    modelName: GROWTH_CAMP_FIRST_PASS_MODEL,
     messages: [
       {
         role: "system",
@@ -531,11 +537,10 @@ async function runVisualFirstPass(params: {
   duration: number;
   fileName?: string;
 }): Promise<VisualFirstPass> {
-  const extractorModel = resolveGrowthCampExtractorModel();
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: extractorModel,
+    modelName: GROWTH_CAMP_FIRST_PASS_MODEL,
     messages: [
       {
         role: "system",
@@ -618,6 +623,26 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
     lighting: 72,
     impact: 82,
     viralPotential: isCommercial ? 84 : 78,
+    explosiveIndex: isCommercial ? 82 : 74,
+    realityCheck: "当前内容有基础，但还没有强到可以靠自嗨拿结果。先把钩子、证据和商业承接三件事做实，再谈放大。",
+    reverseEngineering: {
+      hookStrategy: "先把结果或最扎心的问题丢到前两秒，不要先铺背景。",
+      emotionalArc: "从不舒服或不确定切入，中段给动作和证据，结尾释放结果并给出唯一行动。",
+      commercialLogic: "内容先证明你真的解决问题，再把用户导向私信、预约或服务介绍，不要只讲理念。",
+    },
+    premiumContent: {
+      summary: "适合延展成更强情绪张力的二创脚本，让用户先停留，再被结果与人物信任带走。",
+      topics: [
+        {
+          title: "把最痛的问题前置",
+          contentBrief: "开头用近景人物状态和明确灯光反差，先拍不舒服或焦虑的状态，再切到解决后的松弛与结果。",
+        },
+        {
+          title: "把方法讲成可代入的故事",
+          contentBrief: "中段用柔和主光加侧逆光拍动作示范，镜头跟随人物完成一个动作闭环，字幕只保留最关键的一句结果解释。",
+        },
+      ],
+    },
     visualSummary: "已完成关键帧抽取，但当前只保留保守视觉结论，建议重点看开头抓力、人物信任感和结果画面是否明确。",
     openingFrameAssessment: "开头最好在 2 秒内直接出现人物状态、痛点或结果，不要只给环境铺垫。",
     sceneConsistency: "人物、场景和动作示范需要统一服务于同一个结论，避免信息分散。",
@@ -651,6 +676,65 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
   });
 }
 
+function normalizePremiumTopics(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item: any) => ({
+    title: String(item?.title || ""),
+    contentBrief: String(item?.contentBrief || ""),
+  })).filter((item) => item.title || item.contentBrief);
+}
+
+function buildLegacyFieldsFromStrategist(parsed: any) {
+  const reverseEngineering = {
+    hookStrategy: String(parsed?.reverseEngineering?.hookStrategy || ""),
+    emotionalArc: String(parsed?.reverseEngineering?.emotionalArc || ""),
+    commercialLogic: String(parsed?.reverseEngineering?.commercialLogic || ""),
+  };
+  const premiumTopics = normalizePremiumTopics(parsed?.premiumContent?.topics);
+  const premiumSummary = String(parsed?.premiumContent?.summary || "");
+
+  return {
+    explosiveIndex: Number(parsed?.explosiveIndex || 0),
+    realityCheck: String(parsed?.realityCheck || ""),
+    reverseEngineering,
+    premiumContent: {
+      summary: premiumSummary,
+      topics: premiumTopics,
+    },
+    summary: String(
+      parsed?.summary
+      || parsed?.realityCheck
+      || reverseEngineering.commercialLogic
+      || premiumSummary
+      || "",
+    ),
+    strengths: Array.isArray(parsed?.strengths) && parsed.strengths.length
+      ? parsed.strengths.map(String)
+      : [reverseEngineering.hookStrategy, reverseEngineering.emotionalArc].filter(Boolean),
+    improvements: Array.isArray(parsed?.improvements) && parsed.improvements.length
+      ? parsed.improvements.map(String)
+      : [String(parsed?.realityCheck || ""), reverseEngineering.commercialLogic].filter(Boolean),
+    titleSuggestions: Array.isArray(parsed?.titleSuggestions) && parsed.titleSuggestions.length
+      ? parsed.titleSuggestions.map(String)
+      : premiumTopics.slice(0, 3).map((item) => item.title).filter(Boolean),
+    commercialAngles: Array.isArray(parsed?.commercialAngles) && parsed.commercialAngles.length
+      ? parsed.commercialAngles
+      : premiumTopics.slice(0, 3).map((item) => ({
+          title: item.title || "二创方向",
+          scenario: premiumSummary || "把原视频改造成更有情绪张力和商业承接的版本。",
+          whyItFits: reverseEngineering.commercialLogic || "这条方向更容易建立信任并承接成交动作。",
+          brands: [],
+          execution: item.contentBrief || "把人物、灯光、场景和结果镜头重组成更能停留的脚本。",
+          hook: reverseEngineering.hookStrategy || "先抛最刺痛的问题或结果。",
+          veoPrompt: "",
+        })),
+    followUpPrompt: String(
+      parsed?.followUpPrompt
+      || `请基于以下商业拆解与二创方向，继续输出一版可直接拍摄的脚本：钩子策略：${reverseEngineering.hookStrategy}；情绪弧线：${reverseEngineering.emotionalArc}；商业逻辑：${reverseEngineering.commercialLogic}`,
+    ),
+  };
+}
+
 async function runDeepDivePass(params: {
   finalModel: string;
   sparseFrames: SparseFrame[];
@@ -662,45 +746,25 @@ async function runDeepDivePass(params: {
   fileName?: string;
   videoGcsUri: string;
 }) {
-  const strategistMode = isDeepStrategistModel(params.finalModel);
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
-    modelName: params.finalModel,
+    modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+    temperature: 0.7,
+    topP: 0.9,
     messages: [
       {
         role: "system",
-        content: `你是一位资深短视频商业策略顾问兼生成式视频导演。你现在做第二阶段“深度洞察”，输入是：
-1. 第一阶段的音频优先粗筛结论
-2. 第一阶段的关键帧视觉初判
-3. 稀疏关键帧
-4. 转写摘录
+        content: `你是【首席 IP 战略架构师】。你的唯一任务是同时完成两件事：
+1. 基于第一阶段 2.5 Pro 的音频与视觉初扫，做冷酷的商业逻辑逆向拆解。
+2. 基于同一份证据，产出可以直接进入二创执行的情绪脚本方向。
 
-规则：
-1. 必须先吸收第一阶段音频结论和视觉结论，再用关键帧纠偏，不能把第二阶段写成重复摘要。
-2. 不能假装看了完整逐帧视频；你的视觉判断只能来自提供的关键帧。
-3. summary、strengths、improvements 至少一半要直接引用“音频结论、视觉结论或关键帧证据”。
-4. 必须给出 3 到 5 个标题建议、至少 3 个具体秒点优化建议，以及 2 到 4 个 AI 资产延展方案（含 Veo prompt）。
-5. 如果素材属于户外探店、美食旅行、人物体验这类商业视频，要优先回答“如何提高转化与复用”，而不是空泛讲故事。
-6. 秒点建议必须回到 mm:ss。
-7. weakFrameReferences 必须优先使用视觉初判里已经指出的问题帧，不要空写。
-8. 必须显式返回 visualSummary、openingFrameAssessment、sceneConsistency、trustSignals、visualRisks、keyFrames，不能把抽帧视觉结论藏在 summary 里。
-10. 必须额外分析并返回：languageExpression、emotionalExpression、cameraEmotionTension、bgmAnalysis、musicRecommendation、sunoPrompt。
-11. languageExpression 必须回答口播是否啰嗦、是否有结果句、是否有钩子句、适合怎么改成更有成交力的话术。
-12. emotionalExpression 必须回答情绪是克制、紧张、安抚、煽动还是鼓舞，以及是否和内容目标一致。
-13. cameraEmotionTension 必须回答镜头景别、运动、切换和情绪推进之间是否匹配，不能只讲“画面好不好看”。
-14. bgmAnalysis 和 musicRecommendation 必须具体到节奏、乐器、氛围、情绪和适合什么业务场景，不能只说“轻快”或“高级”。
-15. sunoPrompt 必须是可直接丢给 Suno 的英文提示词，控制在 1 到 3 句，强调情绪、节奏、乐器和用途。
-9. ${strategistMode
-    ? "当前模型是 3.1 Pro，你必须拉开与 2.5 Pro 的差距：除结构判断外，还要明显强化商业定位、情绪张力、图文成文能力和分镜语言，输出不能只是把问题复述一遍。"
-    : "当前模型是 2.5 Pro，优先给执行性强、结构清楚、可立刻修改的结论，不要为了华丽语言牺牲明确度。"}
-
-评分字段语义：
-- composition: 叙事结构与段落组织
-- color: 视觉包装与风格统一
-- lighting: 信息清晰度与表达可读性
-- impact: 节奏钩子与传播冲击力
-- viralPotential: 商业放大与增长潜力
+绝对规则：
+1. 你必须先吸收第一阶段的音频结论、视觉结论、关键帧和转写，再输出最终判断。
+2. 你必须判断用户是否在自嗨。如果内容只是在表达自己、没有清晰结果、没有明确人群、没有成交路径，要直接指出。
+3. 你必须在同一次输出里，同时给出商业战略与二创内容，不允许拆成两个方向。
+4. premiumContent.topics[*].contentBrief 必须写清楚人物、镜头、灯光、场景和情绪，不要写成空话。
+5. 所有输出必须严格合法 JSON。
 
 只返回 JSON：
 {
@@ -709,6 +773,22 @@ async function runDeepDivePass(params: {
   "lighting": number,
   "impact": number,
   "viralPotential": number,
+  "explosiveIndex": number,
+  "realityCheck": "string",
+  "reverseEngineering": {
+    "hookStrategy": "string",
+    "emotionalArc": "string",
+    "commercialLogic": "string"
+  },
+  "premiumContent": {
+    "summary": "string",
+    "topics": [
+      {
+        "title": "string",
+        "contentBrief": "string"
+      }
+    ]
+  },
   "visualSummary": "string",
   "openingFrameAssessment": "string",
   "sceneConsistency": "string",
@@ -780,7 +860,11 @@ async function runDeepDivePass(params: {
     response_format: { type: "json_object" },
   });
 
-  return JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
+  return {
+    ...parsed,
+    ...buildLegacyFieldsFromStrategist(parsed),
+  };
 }
 
 async function runStrategistRefinementPass(params: {
@@ -864,10 +948,9 @@ export async function analyzeVideo(params: {
   context?: string;
   modelName?: string;
 }): Promise<VideoAnalysisResult> {
+  const uploadedObjects: string[] = [];
   try {
     const finalModel = resolveGrowthCampFinalModel(params.modelName);
-    const extractorModel = resolveGrowthCampExtractorModel();
-    const uploadedObjects: string[] = [];
     let buffer: Buffer;
     let videoGcsUri = "";
     if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
@@ -1001,20 +1084,7 @@ export async function analyzeVideo(params: {
         videoGcsUri,
       }));
 
-      const strategistRefinement = isDeepStrategistModel(finalModel)
-        ? await withGrowthAnalysisSlot(() => runStrategistRefinementPass({
-            finalModel,
-            context: params.context,
-            duration,
-            transcript,
-            audioFirstPass,
-            visualFirstPass,
-            deepDive,
-          }).catch((error) => {
-            console.warn("[growth.analyzeVideo] strategist refinement fallback:", error);
-            return null;
-          }))
-        : null;
+      const strategistRefinement = null;
 
       const parsed = growthAnalysisScoresSchema.parse({
         ...deepDive,
@@ -1045,7 +1115,7 @@ export async function analyzeVideo(params: {
           model: finalModel,
           fallback: false,
           pipeline: resolveGrowthCampPipelineMode(finalModel),
-          stageOneModel: extractorModel,
+          stageOneModel: GROWTH_CAMP_FIRST_PASS_MODEL,
           stageTwoModel: finalModel,
           sparseFrameCount: allFrames.length,
           estimatedCostProfile: costProfile,
@@ -1055,13 +1125,6 @@ export async function analyzeVideo(params: {
       };
     });
 
-    if (SHOULD_CLEAN_GCS_TEMP) {
-      await Promise.all(uploadedObjects.map((objectName) =>
-        deleteGcsObject({ objectName }).catch((error) => {
-          console.warn("[growth.analyzeVideo] gcs cleanup failed:", objectName, error);
-        })));
-    }
-
     return result;
   } catch (error) {
     if (error instanceof VideoAnalysisFailure) {
@@ -1069,5 +1132,12 @@ export async function analyzeVideo(params: {
     }
     console.warn("[growth.analyzeVideo] video analysis failed:", error);
     throw new VideoAnalysisFailure("unknown", normalizeFailureReason(error));
+  } finally {
+    if (SHOULD_CLEAN_GCS_TEMP && uploadedObjects.length) {
+      await Promise.all(uploadedObjects.map((objectName) =>
+        deleteGcsObject({ objectName }).catch((error) => {
+          console.warn("[growth.analyzeVideo] gcs cleanup failed:", objectName, error);
+        })));
+    }
   }
 }

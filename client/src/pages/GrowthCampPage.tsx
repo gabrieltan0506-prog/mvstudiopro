@@ -65,6 +65,20 @@ type AnalysisResult = {
   lighting: number;
   impact: number;
   viralPotential: number;
+  explosiveIndex?: number;
+  realityCheck?: string;
+  reverseEngineering?: {
+    hookStrategy?: string;
+    emotionalArc?: string;
+    commercialLogic?: string;
+  };
+  premiumContent?: {
+    summary?: string;
+    topics?: Array<{
+      title: string;
+      contentBrief: string;
+    }>;
+  };
   visualSummary?: string;
   openingFrameAssessment?: string;
   sceneConsistency?: string;
@@ -1659,6 +1673,17 @@ export default function MVAnalysisPage() {
         improvements: [],
         platforms: [],
         summary: "",
+        explosiveIndex: 0,
+        realityCheck: "",
+        reverseEngineering: {
+          hookStrategy: "",
+          emotionalArc: "",
+          commercialLogic: "",
+        },
+        premiumContent: {
+          summary: "",
+          topics: [],
+        },
       },
     },
     {
@@ -3474,6 +3499,65 @@ export default function MVAnalysisPage() {
                 {showPremiumReport && (
                   <HotTopicWindowPanel analysis={analysis} />
                 )}
+
+                {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length) ? (
+                  <>
+                    <div className="grid gap-6 lg:grid-cols-[0.34fr_0.66fr]">
+                      <div className="rounded-[28px] border border-[#ffb454]/25 bg-[#141d32] p-6">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">爆款指数</div>
+                        <div className="mt-3 text-5xl font-black text-[#ffd08f]">{Math.max(0, Math.min(100, Math.round(Number(analysis.explosiveIndex || 0))))}</div>
+                        <div className="mt-4 text-sm leading-7 text-white/72">这是基于第一阶段大盘判断与第二阶段战略拆解给出的综合爆发预测，不代表内容一定会赢，只代表它有没有被放大的资格。</div>
+                      </div>
+                      <div className="rounded-[28px] border border-[#ff7f7f]/20 bg-[#1a1726] p-6">
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffb3b3]">战略架构师评语</div>
+                        <div className="mt-3 text-base leading-8 text-white">{replaceTerms(analysis.realityCheck || "当前还没有足够清晰的现实查验结论。")}</div>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-6 xl:grid-cols-2">
+                      <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
+                        <div className="flex items-center gap-3 text-[#90c4ff]">
+                          <Compass className="h-5 w-5" />
+                          <h2 className="text-2xl font-bold">战略拆解</h2>
+                        </div>
+                        <div className="mt-5 space-y-4">
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">钩子策略</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.reverseEngineering?.hookStrategy || "暂无钩子策略。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪弧线</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.reverseEngineering?.emotionalArc || "暂无情绪弧线。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">商业逻辑</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.reverseEngineering?.commercialLogic || "暂无商业逻辑拆解。")}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
+                        <div className="flex items-center gap-3 text-[#f5b7ff]">
+                          <Sparkles className="h-5 w-5" />
+                          <h2 className="text-2xl font-bold">实战二创</h2>
+                        </div>
+                        {analysis.premiumContent?.summary ? (
+                          <div className="mt-5 rounded-2xl border border-[#f5b7ff]/15 bg-[rgba(245,183,255,0.06)] p-4 text-sm leading-7 text-white/82">
+                            {replaceTerms(analysis.premiumContent.summary)}
+                          </div>
+                        ) : null}
+                        <div className="mt-5 space-y-4">
+                          {(analysis.premiumContent?.topics || []).map((topic, index) => (
+                            <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                              <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
+                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
 
                 {/* === AUTHOR ANALYSIS: IDENTITY + COMMERCIAL VALUE === */}
                 {authorAnalysis && (
