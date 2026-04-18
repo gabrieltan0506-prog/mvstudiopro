@@ -2343,81 +2343,8 @@ export const appRouter = router({
           },
         });
 
-        // Fire-and-forget background execution — does NOT block the HTTP response
-        setImmediate(async () => {
-          try {
-            // ── Stage 1: Vertex 3.1 Pro Preview — deep original content generation ──
-            // Does NOT look at trend data yet. Takes user's focusPrompt/context and performs
-            // deep structural analysis: emotional arc, hook strategy, commercial logic.
-            // Outputs a high-quality "script blueprint JSON" for Stage 2 to calibrate.
-            const stage1SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是根據用戶的業務背景和提示，進行深度原創內容結構分析：拆解情緒弧線、設計開場鉤子、挖掘商業邏輯，輸出一份極具穿透力的「原創腳本藍圖」。輸出必須精確，不允許任何廢話。";
-
-            const stage1Response = await invokeLLM({
-              provider: "vertex",
-              modelName: "gemini-3.1-pro-preview",
-              response_format: { type: "json_object" },
-              messages: [
-                { role: "system", content: stage1SystemInstruction },
-                {
-                  role: "user",
-                  content: JSON.stringify({
-                    context: input.context || "",
-                    windowDays: input.windowDays,
-                    snapshotData: {
-                      platformRecommendations: (input.snapshotSummary as any)?.platformRecommendations?.slice(0, 3) || [],
-                      topicLibrary: (input.snapshotSummary as any)?.topicLibrary?.slice(0, 5) || [],
-                      titleExecutions: (input.snapshotSummary as any)?.titleExecutions?.slice(0, 3) || [],
-                      monetizationStrategies: (input.snapshotSummary as any)?.monetizationStrategies?.slice(0, 2) || [],
-                    },
-                    task: "請輸出嚴格合法 JSON，包含：contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。第一個字符必須是 {，最後必須是 }。",
-                  }),
-                },
-              ],
-            });
-
-            const stage1Raw = String(stage1Response.choices[0]?.message?.content || "");
-            const stage1BracketMatch = stage1Raw.match(/\{[\s\S]*\}/);
-            let contentResult: unknown = null;
-            try {
-              const stage1Parsed = JSON.parse(stage1BracketMatch?.[0]?.trim() || stage1Raw);
-              contentResult = normalizePlatformContentKeys(stage1Parsed as Record<string, unknown>);
-            } catch {
-              contentResult = {};
-            }
-
-            // ── Stage 2: Vertex 2.5 Pro — trend calibration & dashboard ──
-            // Takes the Stage 1 blueprint and calibrates it against real platform trend data.
-            // Reads store with 15s cap, outputs final dashboard with hotTopics/headline/signals.
-            const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
-            const store = await Promise.race([
-              readTrendStoreForPlatforms(
-                (input.requestedPlatforms ?? ["douyin", "xiaohongshu", "bilibili", "kuaishou"]) as any[],
-                { preferDerivedFiles: true }
-              ),
-              new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 15_000)),
-            ]).catch(() => storeNull);
-
-            const dashboardResult = await buildPlatformDashboard({
-              snapshot: (input.snapshotSummary ?? {}) as any,
-              context: input.context,
-              windowDays: input.windowDays,
-              requestedPlatforms: input.requestedPlatforms ?? ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
-              store,
-            });
-
-            await markJobSucceeded(jobId, {
-              platformDashboard: dashboardResult,
-              platformContent: contentResult,
-              completedAt: new Date().toISOString(),
-              engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
-            }, "vertex");
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error("[createPlatformAnalysisJob] background task failed:", msg);
-            try { await markJobFailed(jobId, msg); } catch { /* best-effort */ }
-          }
-        });
-
+        // Job is now processed by the Worker (processPlatformJob in runner.ts).
+        // No setImmediate here — worker picks up the queued job within seconds.
         return { jobId, status: "queued" };
       }),
 
@@ -2452,91 +2379,8 @@ export const appRouter = router({
           },
         });
 
-        setImmediate(async () => {
-          const fileUriToDelete = input.fileUri;
-          try {
-            const systemPrompt = "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據（以及上傳的參考文件，若有），給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。";
-            const contextPayload = JSON.stringify({
-              windowDays: input.windowDays,
-              context: input.context || "",
-              question: input.question,
-              snapshot: {
-                overview: (input.snapshot as any)?.overview,
-                platformSnapshots: ((input.snapshot as any)?.platformSnapshots || []).slice(0, 4).map((item: any) => ({
-                  platform: item.platform,
-                  displayName: item.displayName,
-                  audienceFitScore: item.audienceFitScore,
-                  momentumScore: item.momentumScore,
-                  summary: item.summary,
-                })),
-                platformRecommendations: ((input.snapshot as any)?.platformRecommendations || []).slice(0, 3),
-                topicLibrary: ((input.snapshot as any)?.topicLibrary || []).slice(0, 5),
-              },
-            });
-
-            let rawQA: string;
-
-            if (input.fileUri && input.fileMimeType) {
-              // Multimodal path — use @google-cloud/vertexai SDK for fileData support
-              const { VertexAI } = await import("@google-cloud/vertexai");
-              const gcpProject = String(process.env.VERTEX_PROJECT_ID || process.env.GCP_PROJECT_ID || "").trim();
-              const gcpLocation = String(process.env.VERTEX_GEMINI_LOCATION || "us-central1").trim();
-              const vertex = new VertexAI({ project: gcpProject, location: gcpLocation });
-              const model = vertex.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
-              const result = await model.generateContent({
-                // VertexAI SDK: systemInstruction can be a plain string
-                systemInstruction: systemPrompt,
-                contents: [{
-                  role: "user",
-                  parts: [
-                    { text: contextPayload },
-                    { fileData: { fileUri: input.fileUri, mimeType: input.fileMimeType } },
-                  ],
-                }],
-              });
-              rawQA = result.response.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "{}";
-            } else {
-              // Text-only path — use existing invokeLLM
-              const qaResponse = await invokeLLM({
-                provider: "vertex",
-                modelName: "gemini-3.1-pro-preview",
-                messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: contextPayload },
-                ],
-              });
-              rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
-            }
-
-            let parsedQA: unknown;
-            try {
-              const bracketMatch = rawQA.match(/\{[\s\S]*\}/);
-              parsedQA = JSON.parse(bracketMatch?.[0]?.trim() || rawQA);
-            } catch {
-              parsedQA = { title: "回答", answer: rawQA, encouragement: "", nextQuestions: [] };
-            }
-            await markJobSucceeded(jobId, { result: parsedQA, completedAt: new Date().toISOString() }, "vertex");
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            console.error("[createPlatformQAJob] background task failed:", msg);
-            try { await markJobFailed(jobId, msg); } catch { /* best-effort */ }
-          } finally {
-            // Always clean up the temporary GCS file after QA completes (success or failure)
-            if (fileUriToDelete) {
-              try {
-                const { deleteGcsObject } = await import("./services/gcs");
-                const match = fileUriToDelete.match(/^gs:\/\/([^/]+)\/(.+)$/);
-                if (match) {
-                  await deleteGcsObject({ bucket: match[1], objectName: match[2] });
-                  console.log(`[createPlatformQAJob] deleted temp GCS file: ${fileUriToDelete}`);
-                }
-              } catch (delErr) {
-                console.warn(`[createPlatformQAJob] failed to delete GCS file ${fileUriToDelete}:`, delErr);
-              }
-            }
-          }
-        });
-
+        // Job is now processed by the Worker (processPlatformJob in runner.ts).
+        // No setImmediate here — worker handles platform_qa including fileUri multimodal + GCS cleanup.
         return { jobId, status: "queued" };
       }),
 
