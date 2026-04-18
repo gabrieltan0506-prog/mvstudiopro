@@ -670,8 +670,21 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
     const windowDays = Number(params.windowDays || 15);
     const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
 
-    // Stage 1: 3.1 Pro — deep original content blueprint, no trend data
-    const stage1SystemInstruction = "你是一位顶尖的内容结构分析师与文案大师。你对文本的「弦外之音」与「呼吸节奏」极度敏感。你的任务是根据用户的业务背景和提示，进行深度原创内容结构分析：拆解情绪弧线、设计开场钩子、挖掘商业逻辑，输出一份极具穿透力的「原创脚本蓝图」。输出必须精确，不允许任何废话。";
+    // Stage 1: 3.1 Pro — deep original content blueprint (director mode, no trend data)
+    // Strict: no outlines. Must output verbatim copy, precise shooting scripts, emotional direction.
+    const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师，你的产出标准绝对不接受大纲、空洞建议或模糊描述。
+
+【铁律】——违反任何一条即视为失败，必须重写：
+1. detailedScript 必须使用精确时间轴格式，视频方案每段格式：「[00:00-00:05] 画面：镜头景别+运镜+道具+演员动作。口播：逐字文案。情绪：氛围描述。」图文方案每页格式：「[封面] 设计说明+大标题文案。[图2] 图片内容+正文段落。」总字数不得少于400字。
+2. copywriting 必须是可直接使用的完整正文，包含开头段落全文（≥60字）+中段内容展开（≥100字）+结尾引导行动（≥40字），总字数不得少于200字。
+3. executionDetails.environmentAndWardrobe 必须说明：拍摄地点+背景布置+创作者服装要求+必备道具（≥50字）。
+4. executionDetails.lightingAndCamera 必须说明：使用哪种光源+布光方式+机位角度+焦距建议+是否手持（≥50字）。
+5. executionDetails.stepByStepScript 必须是至少5个步骤的数组，每步格式「[第X步 时间段] 具体动作描述」。
+6. hook 必须是能让陌生用户在0.5秒内停下来的具体一句话，不得是泛泛描述，不得超过40字。
+7. highlightKeywords 必须指出应借势的当前热点关键词，格式「[高亮:关键词]」。
+
+你的产出是创作者的「施工图纸」，拿到就能立刻开拍，没有任何理解成本。`;
+
     const stage1Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-3.1-pro-preview",
@@ -689,7 +702,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
               titleExecutions: (snapshotSummary.titleExecutions as any[])?.slice(0, 3) || [],
               monetizationStrategies: (snapshotSummary.monetizationStrategies as any[])?.slice(0, 2) || [],
             },
-            task: "請輸出嚴格合法 JSON，包含：contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。第一個字符必須是 {，最後必須是 }。",
+            task: "输出严格合法 JSON，必须包含以下字段：contentBlueprints（至少3个内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」格式；图文格式用「[封面] 设计：... [图2] 文案：...」格式，≥400字）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
       ],
@@ -702,8 +715,8 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
       contentResult = {};
     }
 
-    // Stage 2: 2.5 Pro — trend calibration + dashboard signals
-    const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，输出最终平台看板 JSON。";
+    // Stage 2: 2.5 Pro — trend calibration + dashboard signals + 3 key metrics
+    const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
     const stage2Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-2.5-pro",
@@ -722,7 +735,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
               platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
               topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
             },
-            task: "请根据以上蓝图与快照数据，输出严格合法 JSON，包含：headline（平台策略标题）、topSignals（4条核心信号，每项含 title/detail/badge）、hotTopics（每个平台5-8个热门赛道，每项含 title/whyHot/howToUse）、actionCards（3-5张可执行动作卡，每项含 title/detail）、platformMenu（每个平台的 platform/displayName/signal）、trafficBoosters（2-3条流量扶持，字符串数组）、conversationStarters（4个追问建议，字符串数组）。第一个字符必须是 {，最后必须是 }。",
+            task: "请根据以上蓝图与快照数据，输出严格合法 JSON，必须包含以下所有字段：headline（平台策略标题）、subheadline（副标题，一句话说明当前时间窗口最值得做的事）、topSignals（4条核心信号，每项含 title/detail/badge）、hotTopics（每个平台5-8个热门赛道，每项含 title/whyHot/howToUse）、actionCards（3-5张可执行动作卡，每项含 title/detail）、platformMenu（数组，每项必须包含：platform/displayName/whyNow/signal/primaryTrack（当前最推荐赛道名称）/estimatedTraffic（流量预估区间，如「月播放 10-30万」）/ipUniqueness（IP稀缺度说明，50字以内）/commercialConversion（商业转化预期，如「私信转化 2-4%」）/trafficBoosters（字符串数组，2-3条流量扶持活动）/referenceAccounts（字符串数组，1-2个可参考的对标账号）/whyNowDetail（为什么现在值得做，100字以内）/nextMove（首发动作，50字以内）/hook（内容开场钩子示例）/monetization（变现切入方向）））、conversationStarters（4个追问建议，字符串数组）、ipScarcity（整体赛道稀缺度，100字以内）、trafficForecast（整体流量预估，如「月播放 15-40万」）、conversionRate（整体预期转化率，如「私信咨询转化 2-5%」）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
       ],

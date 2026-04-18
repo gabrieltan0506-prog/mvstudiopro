@@ -150,28 +150,28 @@ type ProcessingStepCard = {
 // Returns a JSX element (LucideIcon rendered at given size/color)
 function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React.ReactElement {
   const t = String(text || "").toLowerCase();
-  if (/医生|醫生|医师|醫師|心脏|心臟|临床|心血管|stethoscope|doctor|cardio/.test(t)) return <Stethoscope className={className} />;
-  if (/心电图|心電圖|ekg|ecg|脉搏|动脉|血管/.test(t)) return <Activity className={className} />;
-  if (/文化|艺术|藝術|书画|書畫|人文|古代|历史|歷史|文物|古建|收藏/.test(t)) return <Landmark className={className} />;
-  if (/美学|審美|palette|设计|設計|色彩|风格|风格/.test(t)) return <Palette className={className} />;
-  if (/视频|視頻|短视频|短片|拍摄|分镜|film|video/.test(t)) return <Video className={className} />;
-  if (/图文|圖文|图片|封面|排版|image|photo|graphic/.test(t)) return <Image className={className} />;
-  if (/播客|直播|podcast|音频|音頻|声音|聲音|mic/.test(t)) return <Mic className={className} />;
-  if (/变现|變現|收入|付费|付費|课程|課程|knowledge|monetize|商业化/.test(t)) return <DollarSign className={className} />;
-  if (/品牌|合作|赞助|贊助|brand|sponsor/.test(t)) return <Briefcase className={className} />;
-  if (/赛道|賽道|方向|策略|lane|track|strategy/.test(t)) return <Target className={className} />;
-  if (/热点|熱點|趋势|趨勢|话题|話題|trending|booster/.test(t)) return <Flame className={className} />;
-  if (/平台|platform|分发|分發/.test(t)) return <Globe className={className} />;
-  if (/文案|copy|写作|寫作|script|脚本|内容/.test(t)) return <PenLine className={className} />;
-  if (/书|書|阅读|閱讀|knowledge|知识|知識/.test(t)) return <BookOpen className={className} />;
-  if (/奖|獎|top|第一|冠军|冠軍|award|trophy/.test(t)) return <Trophy className={className} />;
-  if (/步骤|步驟|行动|行動|action|execute|step/.test(t)) return <Zap className={className} />;
-  if (/粉丝|粉絲|用户|用戶|audience|followers/.test(t)) return <Users className={className} />;
-  if (/分享|share|传播|傳播/.test(t)) return <Share2 className={className} />;
-  if (/数据|數據|analytics|stat|metric/.test(t)) return <BarChart3 className={className} />;
-  if (/layer|level|层|層|structure|结构|結構/.test(t)) return <Layers className={className} />;
-  if (/情感|情緒|emotion|心理|心靈/.test(t)) return <Heart className={className} />;
-  if (/article|文章|报告|報告|文档|文檔/.test(t)) return <FileText className={className} />;
+  if (/医生|医师|心脏|临床|心血管|stethoscope|doctor|cardio/.test(t)) return <Stethoscope className={className} />;
+  if (/心电图|ekg|ecg|脉搏|动脉|血管/.test(t)) return <Activity className={className} />;
+  if (/文化|艺术|书画|人文|古代|历史|文物|古建|收藏/.test(t)) return <Landmark className={className} />;
+  if (/美学|审美|palette|设计|色彩|风格/.test(t)) return <Palette className={className} />;
+  if (/视频|短视频|短片|拍摄|分镜|film|video/.test(t)) return <Video className={className} />;
+  if (/图文|图片|封面|排版|image|photo|graphic/.test(t)) return <Image className={className} />;
+  if (/播客|直播|podcast|音频|声音|mic/.test(t)) return <Mic className={className} />;
+  if (/变现|收入|付费|课程|knowledge|monetize|商业化/.test(t)) return <DollarSign className={className} />;
+  if (/品牌|合作|赞助|brand|sponsor/.test(t)) return <Briefcase className={className} />;
+  if (/赛道|方向|策略|lane|track|strategy/.test(t)) return <Target className={className} />;
+  if (/热点|趋势|话题|trending|booster/.test(t)) return <Flame className={className} />;
+  if (/平台|platform|分发/.test(t)) return <Globe className={className} />;
+  if (/文案|copy|写作|script|脚本|内容/.test(t)) return <PenLine className={className} />;
+  if (/书|阅读|knowledge|知识/.test(t)) return <BookOpen className={className} />;
+  if (/奖|top|第一|冠军|award|trophy/.test(t)) return <Trophy className={className} />;
+  if (/步骤|行动|action|execute|step/.test(t)) return <Zap className={className} />;
+  if (/粉丝|用户|audience|followers/.test(t)) return <Users className={className} />;
+  if (/分享|share|传播/.test(t)) return <Share2 className={className} />;
+  if (/数据|analytics|stat|metric/.test(t)) return <BarChart3 className={className} />;
+  if (/layer|level|层|structure|结构/.test(t)) return <Layers className={className} />;
+  if (/情感|情绪|emotion|心理/.test(t)) return <Heart className={className} />;
+  if (/article|文章|报告|文档/.test(t)) return <FileText className={className} />;
   // Rotating fallback based on hash of text (ensures different cards get different icons)
   const fallbacks = [<Sparkles className={className} />, <Star className={className} />, <Award className={className} />, <PlayCircle className={className} />, <ArrowRight className={className} />];
   let hash = 0;
@@ -713,11 +713,18 @@ export default function PlatformPage() {
         ? { isLoadingSkeleton: true, value: "正在生成首发微小行动指令...", detail: "保姆级拆解，请稍候。" }
         : getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
 
+      const ipScarcity = (platformDashboard as any)?.ipScarcity;
+      const trafficForecast = (platformDashboard as any)?.trafficForecast;
+      const conversionRate = (platformDashboard as any)?.conversionRate;
+
       return [
         { label: "当前判断", value: sig0.value, detail: sig0.detail },
         { label: "优先平台", value: sig1.value, detail: sig1.detail },
         { label: "商业赛道", value: sig2.value, detail: sig2.detail, isLoadingSkeleton: (sig2 as any).isLoadingSkeleton },
         { label: "首发动作", value: sig3.value, detail: sig3.detail, isLoadingSkeleton: (sig3 as any).isLoadingSkeleton },
+        ...(ipScarcity ? [{ label: "IP稀缺度", value: "赛道独特性", detail: String(ipScarcity) }] : []),
+        ...(trafficForecast ? [{ label: "流量预估", value: "增长预测", detail: String(trafficForecast) }] : []),
+        ...(conversionRate ? [{ label: "预期转化率", value: "转化区间", detail: String(conversionRate) }] : []),
       ];
     }
 
@@ -1564,21 +1571,21 @@ export default function PlatformPage() {
                     <div>2. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
                     <div>2a. DB 状态: <span className="font-mono">{analysisJobStatus}</span> / 轮询次数: <span className="text-[#ffdd44] font-bold">{analysisPollCount}</span></div>
                     <div>2b. 轮询: {isDashboardLoading ? `✅ 进行中，每 3 秒 GET /api/jobs/${analysisJobId || "..."}` : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 原創內容 (先執行) ──</div>
-                    <div>3. 模型: vertex/gemini-3.1-pro-preview (深度原創 — 不看趨勢數據)</div>
-                    <div>3a. system instruction: 內容結構分析師 + 情緒弧線 + 商業邏輯拆解</div>
-                    <div>3b. 狀態: {isContentLoading ? "⏳ 運行中" : platformContent ? "✅ 成功" : "⏸ 等待"}</div>
-                    <div>3c. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 條</div>
-                    <div>3d. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 條</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 趨勢校準 (後執行) ──</div>
-                    <div>4. 模型: vertex/gemini-2.5-pro (buildPlatformDashboard — 讀趨勢數據)</div>
-                    <div>4a. 狀態: {isDashboardLoading ? "⏳ 運行中" : platformDashboard ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 原创内容 (先执行) ──</div>
+                    <div>3. 模型: vertex/gemini-3.1-pro-preview (深度原创 — 不看趋势数据)</div>
+                    <div>3a. system instruction: 导演模式 — 7条铁律强制执行，禁止大纲</div>
+                    <div>3b. 状态: {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功" : "⏸ 等待"}</div>
+                    <div>3c. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
+                    <div>3d. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 趋势校准 (后执行) ──</div>
+                    <div>4. 模型: vertex/gemini-2.5-pro (趋势校准 — 包含 primaryTrack/estimatedTraffic/ipUniqueness/commercialConversion)</div>
+                    <div>4a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
                     <div>4b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
-                    <div>4c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 條</div>
+                    <div>4c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
-                    <div>5. 模型: vertex/gemini-3.1-pro-preview (支持 fileData 多模態)</div>
-                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未創建"}</span></div>
-                    <div>5b. 狀態: {askPlatformFollowUpMutation.isPending ? "⏳ fallback 同步中" : qaJobId ? "✅ job 已派發，輪詢每 3 秒" : "⏸ 等待提問"}</div>
+                    <div>5. 模型: vertex/gemini-3.1-pro-preview (纯文本对话模式，支持 fileUri 多模态)</div>
+                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
+                    <div>5b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
