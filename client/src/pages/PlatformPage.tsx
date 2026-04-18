@@ -146,6 +146,25 @@ type ProcessingStepCard = {
   status: "done" | "active" | "pending";
 };
 
+/**
+ * renderHighlightText — parses **bold** markers and [高亮:keyword] patterns
+ * from AI-generated text and renders them as highlighted spans.
+ */
+function renderHighlightText(text: string): React.ReactNode {
+  if (!text) return null;
+  const parts = text.split(/(\*\*.*?\*\*|\[高亮:[^\]]+\])/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="text-[#8cefff] font-bold">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("[高亮:") && part.endsWith("]")) {
+      const kw = part.slice(4, -1);
+      return <mark key={i} className="rounded px-1 bg-[rgba(73,230,255,0.18)] text-[#49e6ff] font-semibold not-italic">{kw}</mark>;
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 // Smart icon picker — matches persona keywords or signal content to an appropriate Lucide icon
 // Returns a JSX element (LucideIcon rendered at given size/color)
 function getSmartIcon(text: string, className = "h-4 w-4 text-[#8cefff]"): React.ReactElement {
@@ -548,7 +567,16 @@ export default function PlatformPage() {
           qaPollingRef.current = null;
           setIsQaLoading(false);
           const output = job.output as any;
-          if (output?.result) setAskResult(output.result);
+          if (output?.result) {
+            setAskResult(output.result);
+          } else if (output?.answer || typeof output === "string") {
+            setAskResult({
+              title: "深度追问解答",
+              answer: typeof output === "string" ? output : (output.answer || ""),
+              encouragement: "以上是结合最新数据的专属执行建议。",
+              nextQuestions: [],
+            });
+          }
         } else if (job.status === "failed") {
           clearInterval(qaPollingRef.current!);
           qaPollingRef.current = null;
@@ -722,9 +750,6 @@ export default function PlatformPage() {
         { label: "优先平台", value: sig1.value, detail: sig1.detail },
         { label: "商业赛道", value: sig2.value, detail: sig2.detail, isLoadingSkeleton: (sig2 as any).isLoadingSkeleton },
         { label: "首发动作", value: sig3.value, detail: sig3.detail, isLoadingSkeleton: (sig3 as any).isLoadingSkeleton },
-        ...(ipScarcity ? [{ label: "IP稀缺度", value: "赛道独特性", detail: String(ipScarcity) }] : []),
-        ...(trafficForecast ? [{ label: "流量预估", value: "增长预测", detail: String(trafficForecast) }] : []),
-        ...(conversionRate ? [{ label: "预期转化率", value: "转化区间", detail: String(conversionRate) }] : []),
       ];
     }
 
@@ -1869,7 +1894,7 @@ export default function PlatformPage() {
                       <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#8cefff]">
                         {item.hook}
                       </div>
-                      <div className="mt-3 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{item.copywriting}</div>
+                      <div className="mt-3 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderHighlightText(item.copywriting || "")}</div>
                       {item.production ? (
                         <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
                           {item.production}
@@ -2150,7 +2175,7 @@ export default function PlatformPage() {
                       </div>
                       <div className="mt-4 space-y-4 text-sm leading-8 text-[#d7d0ef]">
                         {splitAnswerParagraphs(askResult.answer).map((paragraph, index) => (
-                          <p key={`${paragraph.slice(0, 24)}-${index}`}>{paragraph}</p>
+                          <p key={`${paragraph.slice(0, 24)}-${index}`}>{renderHighlightText(paragraph)}</p>
                         ))}
                       </div>
                     </div>
