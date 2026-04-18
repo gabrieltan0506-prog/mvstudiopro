@@ -28,6 +28,8 @@ import {
 } from "../kling/fal-proxy";
 import { generateGeminiImage, isGeminiImageAvailable, type ImageQuality } from "../gemini-image";
 import { appRouter } from "../routers";
+import { invokeLLM, extractJsonString } from "../_core/llm";
+import { deleteGcsObject } from "../services/gcs";
 import { getDb } from "../db";
 import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -648,11 +650,174 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
   throw new Error("Music generation timeout");
 }
 
+/**
+ * processPlatformJob — Dual-engine platform analysis + QA job processor.
+ *
+ * platform_analysis pipeline:
+ *   Stage 1: vertex/gemini-3.1-pro-preview — deep original content blueprint (no trend data)
+ *   Stage 2: vertex/gemini-2.5-pro — trend calibration + dashboard signals
+ *
+ * platform_qa pipeline:
+ *   vertex/gemini-3.1-pro-preview — multimodal QA; if fileUri provided, passes as file_url part
+ *   finally: deletes GCS temp file
+ */
 async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown; provider?: string }> {
-  // Platform analysis jobs are dispatched by createPlatformAnalysisJob in routers.ts.
-  // The router fires the job and writes results directly via markJobSucceeded/markJobFailed —
-  // this branch handles any platform actions that reach the worker queue (future extension).
-  throw new Error(`processPlatformJob: unsupported action "${input.action}" — platform jobs should complete via router background dispatch`);
+  const params = input.params ?? {};
+
+  // ── platform_analysis ────────────────────────────────────────────────────────
+  if (input.action === "platform_analysis") {
+    const context = String(params.context || "");
+    const windowDays = Number(params.windowDays || 15);
+    const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
+
+    // Stage 1: 3.1 Pro — deep original content blueprint, no trend data
+    const stage1SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是根據用戶的業務背景和提示，進行深度原創內容結構分析：拆解情緒弧線、設計開場鉤子、挖掘商業邏輯，輸出一份極具穿透力的「原創腳本藍圖」。輸出必須精確，不允許任何廢話。";
+    const stage1Response = await invokeLLM({
+      provider: "vertex",
+      modelName: "gemini-3.1-pro-preview",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: stage1SystemInstruction },
+        {
+          role: "user",
+          content: JSON.stringify({
+            context,
+            windowDays,
+            snapshotData: {
+              platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
+              topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
+              titleExecutions: (snapshotSummary.titleExecutions as any[])?.slice(0, 3) || [],
+              monetizationStrategies: (snapshotSummary.monetizationStrategies as any[])?.slice(0, 2) || [],
+            },
+            task: "請輸出嚴格合法 JSON，包含：contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。第一個字符必須是 {，最後必須是 }。",
+          }),
+        },
+      ],
+    });
+    const stage1Raw = String(stage1Response.choices[0]?.message?.content || "");
+    let contentResult: unknown = {};
+    try {
+      contentResult = JSON.parse(extractJsonString(stage1Raw));
+    } catch {
+      contentResult = {};
+    }
+
+    // Stage 2: 2.5 Pro — trend calibration + dashboard signals
+    const stage2SystemInstruction = "你是一位頂尖的平台趨勢分析師。根據用戶的腳本藍圖與平台快照數據，進行熱點數據校準，輸出最終平台看板 JSON。";
+    const stage2Response = await invokeLLM({
+      provider: "vertex",
+      modelName: "gemini-2.5-pro",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: stage2SystemInstruction },
+        {
+          role: "user",
+          content: JSON.stringify({
+            context,
+            windowDays,
+            contentBlueprint: contentResult,
+            snapshotSummary: {
+              overview: snapshotSummary.overview,
+              platformSnapshots: (snapshotSummary.platformSnapshots as any[])?.slice(0, 4) || [],
+              platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
+              topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
+            },
+            task: "請根據以上藍圖與快照數據，輸出嚴格合法 JSON，包含：headline（平台策略標題）、topSignals（4條核心信號，每項含 title/detail/badge）、hotTopics（每個平台5-8個熱門賽道，每項含 title/whyHot/howToUse）、actionCards（3-5張可執行動作卡，每項含 title/detail）、platformMenu（每個平台的 platform/displayName/signal）、trafficBoosters（2-3條流量扶持，字符串數組）、conversationStarters（4個追問建議，字符串數組）。第一個字符必須是 {，最後必須是 }。",
+          }),
+        },
+      ],
+    });
+    const stage2Raw = String(stage2Response.choices[0]?.message?.content || "");
+    let dashboardResult: unknown = {};
+    try {
+      dashboardResult = JSON.parse(extractJsonString(stage2Raw));
+    } catch {
+      dashboardResult = {};
+    }
+
+    return {
+      provider: "vertex",
+      output: {
+        platformDashboard: dashboardResult,
+        platformContent: contentResult,
+        completedAt: new Date().toISOString(),
+        engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
+      },
+    };
+  }
+
+  // ── platform_qa ──────────────────────────────────────────────────────────────
+  if (input.action === "platform_qa") {
+    const question = String(params.question || "");
+    const context = String(params.context || "");
+    const windowDays = Number(params.windowDays || 15);
+    const snapshot = (params.snapshot || {}) as Record<string, unknown>;
+    const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
+    const fileMimeType = typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
+
+    try {
+      const systemPrompt = "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據，給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。";
+      const contextPayload = JSON.stringify({
+        windowDays,
+        context,
+        question,
+        snapshot: {
+          overview: snapshot.overview,
+          platformSnapshots: (snapshot.platformSnapshots as any[])?.slice(0, 4).map((item: any) => ({
+            platform: item.platform,
+            displayName: item.displayName,
+            audienceFitScore: item.audienceFitScore,
+            momentumScore: item.momentumScore,
+            summary: item.summary,
+          })) || [],
+          platformRecommendations: (snapshot.platformRecommendations as any[])?.slice(0, 3) || [],
+          topicLibrary: (snapshot.topicLibrary as any[])?.slice(0, 5) || [],
+        },
+      });
+
+      // Build messages — if fileUri present, add as file_url part
+      const userParts: Array<{ type: string; text?: string; file_url?: { url: string; mime_type: string } }> = [
+        { type: "text", text: contextPayload },
+      ];
+      if (fileUri) {
+        userParts.push({ type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } });
+      }
+
+      const qaResponse = await invokeLLM({
+        provider: "vertex",
+        modelName: "gemini-3.1-pro-preview",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: fileUri ? userParts as any : contextPayload },
+        ],
+      });
+
+      const rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
+      let parsedQA: unknown;
+      try {
+        parsedQA = JSON.parse(extractJsonString(rawQA));
+      } catch {
+        parsedQA = { title: "回答", answer: rawQA, encouragement: "", nextQuestions: [] };
+      }
+
+      return {
+        provider: "vertex",
+        output: { result: parsedQA, completedAt: new Date().toISOString() },
+      };
+    } finally {
+      // Always clean up GCS temp file regardless of success or failure
+      if (fileUri) {
+        const match = fileUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
+        if (match) {
+          await deleteGcsObject({ bucket: match[1], objectName: match[2] }).catch((err) => {
+            console.warn(`[processPlatformJob] failed to delete GCS temp file ${fileUri}:`, err);
+          });
+        }
+      }
+    }
+  }
+
+  throw new Error(`processPlatformJob: unsupported action "${input.action}"`);
 }
 
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {

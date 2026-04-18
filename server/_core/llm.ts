@@ -670,3 +670,25 @@ export async function invokeLLM(params: InvokeParams & { model?: ModelTier }): P
 
   return invokeCometApi(params, target);
 }
+
+/**
+ * extractJsonString — Robust JSON extraction from LLM text output.
+ * Handles Markdown code fences (```json ... ```) and extracts the first
+ * valid JSON object or array from any surrounding text.
+ * Use this before JSON.parse() on any LLM response to prevent parse crashes.
+ */
+export function extractJsonString(text: string): string {
+  // Strip Markdown code fences first
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenceMatch) return fenceMatch[1].trim();
+  // Greedy bracket extraction — find outermost { } or [ ]
+  const objStart = text.indexOf("{");
+  const arrStart = text.indexOf("[");
+  const start = objStart === -1 ? arrStart : arrStart === -1 ? objStart : Math.min(objStart, arrStart);
+  const isObj = start === objStart && objStart !== -1;
+  const end = isObj ? text.lastIndexOf("}") : text.lastIndexOf("]");
+  if (start !== -1 && end !== -1 && end > start) {
+    return text.substring(start, end + 1).trim();
+  }
+  return text.trim();
+}
