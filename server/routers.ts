@@ -2324,7 +2324,7 @@ export const appRouter = router({
         context: z.string().optional(),
         windowDays: z.number().int().min(3).max(90).default(15),
         requestedPlatforms: z.array(z.string()).default(["douyin", "xiaohongshu", "bilibili", "kuaishou"]),
-        snapshotSummary: z.record(z.any()).optional(),
+        snapshotSummary: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input }) => {
         const jobId = nanoid(16);
@@ -2349,10 +2349,23 @@ export const appRouter = router({
         setImmediate(async () => {
           try {
             // ── Stage 1: Gemini 2.5 Pro — fast data extraction & dashboard ──
+            // Read store data with 15s cap (same pattern as existing platform routes)
+            const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
+            const store = await Promise.race([
+              readTrendStoreForPlatforms(
+                (input.requestedPlatforms ?? ["douyin", "xiaohongshu", "bilibili", "kuaishou"]) as any[],
+                { preferDerivedFiles: true }
+              ),
+              new Promise<Awaited<ReturnType<typeof readTrendStore>>>((resolve) => setTimeout(() => resolve(storeNull), 15_000)),
+            ]).catch(() => storeNull);
+
             const dashboardResult = await buildPlatformDashboard({
-              snapshot: input.snapshotSummary ?? {},
+              // snapshotSummary is a slim subset — cast to any to satisfy strict GrowthSnapshot type
+              snapshot: (input.snapshotSummary ?? {}) as any,
               context: input.context,
               windowDays: input.windowDays,
+              requestedPlatforms: input.requestedPlatforms ?? ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
+              store,
             });
 
             // ── Stage 2: Gemini 3.1 Pro Preview — premium content generation ──
@@ -2419,7 +2432,7 @@ export const appRouter = router({
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("[createPlatformAnalysisJob] background task failed:", msg);
-            await markJobFailed(jobId, msg).catch(() => {});
+            try { await markJobFailed(jobId, msg); } catch { /* best-effort */ }
           }
         });
 
@@ -2431,7 +2444,7 @@ export const appRouter = router({
       .input(z.object({
         question: z.string().min(1),
         windowDays: z.number().int().min(3).max(90).default(15),
-        snapshot: z.record(z.any()),
+        snapshot: z.record(z.string(), z.any()),
         context: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
@@ -2498,7 +2511,7 @@ export const appRouter = router({
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("[createPlatformQAJob] background task failed:", msg);
-            await markJobFailed(jobId, msg).catch(() => {});
+            try { await markJobFailed(jobId, msg); } catch { /* best-effort */ }
           }
         });
 

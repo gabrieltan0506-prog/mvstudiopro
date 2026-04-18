@@ -66,7 +66,9 @@ export async function createJob(data: {
   const values: InsertJob = {
     id: data.id,
     userId: data.userId,
-    type: data.type,
+    // Cast needed because InsertJob enum only lists video/image/audio in the DB schema.
+    // Platform jobs use the in-memory fallback path and never reach the MySQL enum constraint.
+    type: data.type as "video" | "image" | "audio",
     provider: data.provider,
     status: "queued",
     input: data.input as any,
