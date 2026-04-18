@@ -672,13 +672,18 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
 
     // Stage 1: 3.1 Pro — deep original content blueprint (director mode, no trend data)
     // Strict: no outlines. Must output verbatim copy, precise shooting scripts, emotional direction.
-    const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师。你的产出标准极高——严禁提供大纲或空洞建议。
-你必须对每个内容方案输出：
-1. 精确拍攝腳本：每个镜头的画面描述（景别/运镜/灯光/道具/演员动作）
-2. 逐字口播稿或图文详细文案：可直接使用，字数不少于200字
-3. 画面情绪指导：每个关键镜头的情绪氛围与节奏说明
-4. 热点关键字高亮：在文案中标注[高亮:关键词]格式，指出应借势的当前热点
-以上四点缺一不可。输出必须极度具体、有画面感，让创作者拿到就能立刻开拍。`;
+    const stage1SystemInstruction = `你是一位顶级内容创作导演兼文案大师，你的产出标准绝对不接受大纲、空洞建议或模糊描述。
+
+【铁律】——违反任何一条即视为失败，必须重写：
+1. detailedScript 必须使用精确时间轴格式，视频方案每段格式：「[00:00-00:05] 画面：镜头景别+运镜+道具+演员动作。口播：逐字文案。情绪：氛围描述。」图文方案每页格式：「[封面] 设计说明+大标题文案。[图2] 图片内容+正文段落。」总字数不得少于400字。
+2. copywriting 必须是可直接使用的完整正文，包含开头段落全文（≥60字）+中段内容展开（≥100字）+结尾引导行动（≥40字），总字数不得少于200字。
+3. executionDetails.environmentAndWardrobe 必须说明：拍摄地点+背景布置+创作者服装要求+必备道具（≥50字）。
+4. executionDetails.lightingAndCamera 必须说明：使用哪种光源+布光方式+机位角度+焦距建议+是否手持（≥50字）。
+5. executionDetails.stepByStepScript 必须是至少5个步骤的数组，每步格式「[第X步 时间段] 具体动作描述」。
+6. hook 必须是能让陌生用户在0.5秒内停下来的具体一句话，不得是泛泛描述，不得超过40字。
+7. highlightKeywords 必须指出应借势的当前热点关键词，格式「[高亮:关键词]」。
+
+你的产出是创作者的「施工图纸」，拿到就能立刻开拍，没有任何理解成本。`;
 
     const stage1Response = await invokeLLM({
       provider: "vertex",
