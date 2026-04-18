@@ -60,6 +60,7 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
 };
 
 const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 12 * 60_000;
+const PLATFORM_LLM_TIMEOUT_MS = 8 * 60_000;
 
 const POLL_INTERVAL_MS = 2_000;
 
@@ -111,6 +112,33 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timeoutHandle) clearTimeout(timeoutHandle);
   }
+}
+
+function isPlatformTimeoutError(error: unknown): boolean {
+  const name = error instanceof Error ? error.name : "";
+  const message = error instanceof Error ? error.message : String(error || "");
+  const lower = `${name} ${message}`.toLowerCase();
+  return (
+    name === "AbortError" ||
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("abort") ||
+    lower.includes("aborted")
+  );
+}
+
+function getPlatformJobErrorMessage(error: unknown): string {
+  if (isPlatformTimeoutError(error)) {
+    return "AI 深度思考时间过长导致连接超时。请尝试缩减提示词范围，或重新提交分析。";
+  }
+  return "任务执行失败，请稍后重试。";
+}
+
+function getJobFailureMessage(jobType: JobType, error: unknown): string {
+  if (jobType === "platform") {
+    return getPlatformJobErrorMessage(error);
+  }
+  return error instanceof Error ? error.message : "未知任务错误";
 }
 
 async function pollKlingTask<T extends { task_status?: string; task_status_msg?: string }>(
@@ -651,24 +679,24 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
 }
 
 /**
- * processPlatformJob — Dual-engine platform analysis + QA job processor.
+ * 平台异步任务处理器。
  *
- * platform_analysis pipeline:
- *   Stage 1: vertex/gemini-3.1-pro-preview — deep original content blueprint (no trend data)
- *   Stage 2: vertex/gemini-2.5-pro — trend calibration + dashboard signals
+ * platform_analysis：
+ *   第 1 阶段：vertex / gemini-3.1-pro-preview，生成深度内容蓝图
+ *   第 2 阶段：vertex / gemini-2.5-pro，校准趋势信号与平台看板
  *
- * platform_qa pipeline:
- *   vertex/gemini-3.1-pro-preview — multimodal QA; if fileUri provided, passes as file_url part
- *   finally: deletes GCS temp file
+ * platform_qa：
+ *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文件
+ *   finally：始终清理 GCS 临时文件
  */
 async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
-
-  // ── platform_analysis ────────────────────────────────────────────────────────
-  if (input.action === "platform_analysis") {
-    const context = String(params.context || "");
-    const windowDays = Number(params.windowDays || 15);
-    const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
+  try {
+    // ── platform_analysis ────────────────────────────────────────────────────────
+    if (input.action === "platform_analysis") {
+      const context = String(params.context || "");
+      const windowDays = Number(params.windowDays || 15);
+      const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
 
     // Stage 1: 3.1 Pro — deep original content blueprint (director mode, no trend data)
     // Strict: no outlines. Must output verbatim copy, precise shooting scripts, emotional direction.
@@ -685,7 +713,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
 
 你的产出是创作者的「施工图纸」，拿到就能立刻开拍，没有任何理解成本。`;
 
-    const stage1Response = await invokeLLM({
+      const stage1Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-3.1-pro-preview",
       response_format: { type: "json_object" },
@@ -707,17 +735,17 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
         },
       ],
     });
-    const stage1Raw = String(stage1Response.choices[0]?.message?.content || "");
-    let contentResult: unknown = {};
-    try {
-      contentResult = JSON.parse(extractJsonString(stage1Raw));
-    } catch {
-      contentResult = {};
-    }
+      const stage1Raw = String(stage1Response.choices[0]?.message?.content || "");
+      let contentResult: unknown = {};
+      try {
+        contentResult = JSON.parse(extractJsonString(stage1Raw));
+      } catch {
+        contentResult = {};
+      }
 
     // Stage 2: 2.5 Pro — trend calibration + dashboard signals + 3 key metrics
     const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
-    const stage2Response = await invokeLLM({
+      const stage2Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-2.5-pro",
       response_format: { type: "json_object" },
@@ -740,101 +768,100 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
         },
       ],
     });
-    const stage2Raw = String(stage2Response.choices[0]?.message?.content || "");
-    let dashboardResult: unknown = {};
-    try {
-      dashboardResult = JSON.parse(extractJsonString(stage2Raw));
-    } catch {
-      dashboardResult = {};
-    }
-
-    return {
-      provider: "vertex",
-      output: {
-        platformDashboard: dashboardResult,
-        platformContent: contentResult,
-        completedAt: new Date().toISOString(),
-        engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
-      },
-    };
-  }
-
-  // ── platform_qa ──────────────────────────────────────────────────────────────
-  if (input.action === "platform_qa") {
-    const question = String(params.question || "");
-    const context = String(params.context || "");
-    const windowDays = Number(params.windowDays || 15);
-    const snapshot = (params.snapshot || {}) as Record<string, unknown>;
-    const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
-    const fileMimeType = typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
-
-    try {
-      // QA returns plain-text Markdown — do NOT force JSON, do NOT JSON.parse
-      const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
-      const contextPayload = JSON.stringify({
-        windowDays,
-        context,
-        question,
-        snapshot: {
-          overview: snapshot.overview,
-          platformSnapshots: (snapshot.platformSnapshots as any[])?.slice(0, 4).map((item: any) => ({
-            platform: item.platform,
-            displayName: item.displayName,
-            audienceFitScore: item.audienceFitScore,
-            momentumScore: item.momentumScore,
-            summary: item.summary,
-          })) || [],
-          platformRecommendations: (snapshot.platformRecommendations as any[])?.slice(0, 3) || [],
-          topicLibrary: (snapshot.topicLibrary as any[])?.slice(0, 5) || [],
-        },
-      });
-
-      // Build messages — fileUri is optional; if present, add as file_url part
-      const userContent: any = fileUri
-        ? [
-            { type: "text", text: contextPayload },
-            { type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } },
-          ]
-        : contextPayload;
-
-      const qaResponse = await invokeLLM({
-        provider: "vertex",
-        modelName: "gemini-3.1-pro-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-      });
-
-      // Return raw plain-text answer — no JSON.parse
-      const answerText = String(qaResponse.choices[0]?.message?.content || "");
+      const stage2Raw = String(stage2Response.choices[0]?.message?.content || "");
+      let dashboardResult: unknown = {};
+      try {
+        dashboardResult = JSON.parse(extractJsonString(stage2Raw));
+      } catch {
+        dashboardResult = {};
+      }
 
       return {
         provider: "vertex",
         output: {
-          result: {
-            title: question.slice(0, 40) || "追问回答",
-            answer: answerText,
-            encouragement: "",
-            nextQuestions: [],
-          },
+          platformDashboard: dashboardResult,
+          platformContent: contentResult,
           completedAt: new Date().toISOString(),
+          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
         },
       };
-    } finally {
-      // Always clean up GCS temp file regardless of success or failure
-      if (fileUri) {
-        const match = fileUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
-        if (match) {
-          await deleteGcsObject({ bucket: match[1], objectName: match[2] }).catch((err) => {
-            console.warn(`[processPlatformJob] failed to delete GCS temp file ${fileUri}:`, err);
-          });
+    }
+
+    // ── platform_qa ──────────────────────────────────────────────────────────────
+    if (input.action === "platform_qa") {
+      const question = String(params.question || "");
+      const context = String(params.context || "");
+      const windowDays = Number(params.windowDays || 15);
+      const snapshot = (params.snapshot || {}) as Record<string, unknown>;
+      const fileUri = typeof params.fileUri === "string" ? params.fileUri : undefined;
+      const fileMimeType = typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
+
+      try {
+        const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
+        const contextPayload = JSON.stringify({
+          windowDays,
+          context,
+          question,
+          snapshot: {
+            overview: snapshot.overview,
+            platformSnapshots: (snapshot.platformSnapshots as any[])?.slice(0, 4).map((item: any) => ({
+              platform: item.platform,
+              displayName: item.displayName,
+              audienceFitScore: item.audienceFitScore,
+              momentumScore: item.momentumScore,
+              summary: item.summary,
+            })) || [],
+            platformRecommendations: (snapshot.platformRecommendations as any[])?.slice(0, 3) || [],
+            topicLibrary: (snapshot.topicLibrary as any[])?.slice(0, 5) || [],
+          },
+        });
+
+        const userContent: any = fileUri
+          ? [
+              { type: "text", text: contextPayload },
+              { type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } },
+            ]
+          : contextPayload;
+
+        const qaResponse = await invokeLLM({
+          provider: "vertex",
+          modelName: "gemini-3.1-pro-preview",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+        });
+
+        const answerText = String(qaResponse.choices[0]?.message?.content || "");
+
+        return {
+          provider: "vertex",
+          output: {
+            result: {
+              title: question.slice(0, 40) || "追问回答",
+              answer: answerText,
+              encouragement: "",
+              nextQuestions: [],
+            },
+            completedAt: new Date().toISOString(),
+          },
+        };
+      } finally {
+        if (fileUri) {
+          const match = fileUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
+          if (match) {
+            await deleteGcsObject({ bucket: match[1], objectName: match[2] }).catch((err) => {
+              console.warn(`[processPlatformJob] 删除 GCS 临时文件失败 ${fileUri}:`, err);
+            });
+          }
         }
       }
     }
-  }
 
-  throw new Error(`processPlatformJob: unsupported action "${input.action}"`);
+    throw new Error(`不支持的平台任务动作：${input.action}`);
+  } catch (error) {
+    throw new Error(getPlatformJobErrorMessage(error));
+  }
 }
 
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
@@ -858,7 +885,7 @@ async function processOneJob() {
     );
     await markJobSucceeded(job.id, output, provider);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown job error";
+    const message = getJobFailureMessage(job.type, error);
     if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {
