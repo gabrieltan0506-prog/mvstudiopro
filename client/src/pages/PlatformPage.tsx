@@ -713,11 +713,18 @@ export default function PlatformPage() {
         ? { isLoadingSkeleton: true, value: "正在生成首发微小行动指令...", detail: "保姆级拆解，请稍候。" }
         : getSignal(3, "先写出第一条内容", "先做一轮验证，再决定是否放大。");
 
+      const ipScarcity = (platformDashboard as any)?.ipScarcity;
+      const trafficForecast = (platformDashboard as any)?.trafficForecast;
+      const conversionRate = (platformDashboard as any)?.conversionRate;
+
       return [
         { label: "当前判断", value: sig0.value, detail: sig0.detail },
         { label: "优先平台", value: sig1.value, detail: sig1.detail },
         { label: "商业赛道", value: sig2.value, detail: sig2.detail, isLoadingSkeleton: (sig2 as any).isLoadingSkeleton },
         { label: "首发动作", value: sig3.value, detail: sig3.detail, isLoadingSkeleton: (sig3 as any).isLoadingSkeleton },
+        ...(ipScarcity ? [{ label: "IP稀缺度", value: "赛道独特性", detail: String(ipScarcity) }] : []),
+        ...(trafficForecast ? [{ label: "流量预估", value: "增长预测", detail: String(trafficForecast) }] : []),
+        ...(conversionRate ? [{ label: "预期转化率", value: "转化区间", detail: String(conversionRate) }] : []),
       ];
     }
 
