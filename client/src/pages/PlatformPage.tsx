@@ -363,6 +363,12 @@ export default function PlatformPage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
+  // QA file attachment state — uploads to GCS via /api/platform/upload before job dispatch
+  const [qaFileUri, setQaFileUri] = useState<string | null>(null);
+  const [qaFileMimeType, setQaFileMimeType] = useState<string>("");
+  const [qaFileName, setQaFileName] = useState<string>("");
+  const [isUploadingQaFile, setIsUploadingQaFile] = useState(false);
+  const qaFileInputRef = useRef<HTMLInputElement>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
   // Separate state for dashboard — populated by the second call after snapshot loads
@@ -1159,6 +1165,35 @@ export default function PlatformPage() {
     }
   };
 
+  const handleUploadQaFile = useCallback(async (file: File) => {
+    setIsUploadingQaFile(true);
+    setQaFileUri(null);
+    setQaFileMimeType("");
+    setQaFileName("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      const response = await fetch("/api/platform/upload", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Upload failed (${response.status})`);
+      }
+      const data = await response.json();
+      setQaFileUri(data.fileUri);
+      setQaFileMimeType(data.mimeType);
+      setQaFileName(file.name);
+      toast.success(`已上传 ${file.name}`);
+    } catch (err: any) {
+      toast.error(err.message || "文件上传失败");
+    } finally {
+      setIsUploadingQaFile(false);
+    }
+  }, []);
+
   const handleAsk = async (nextQuestion?: string) => {
     const finalQuestion = String(nextQuestion || question).trim();
     if (!snapshot) {
@@ -1171,14 +1206,21 @@ export default function PlatformPage() {
     }
     setQuestion(finalQuestion);
     // Dispatch async QA Job — Vertex 3.1 Pro Preview answers in background
+    // If a file was uploaded, pass fileUri + fileMimeType for multimodal analysis
     try {
       const { jobId } = await createPlatformQAJobMutation.mutateAsync({
         question: finalQuestion,
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshot: snapshot as any,
+        fileUri: qaFileUri || undefined,
+        fileMimeType: qaFileMimeType || undefined,
       });
       setQaJobId(jobId);
+      // Clear file after dispatch — GCS cleanup handled by server finally block
+      setQaFileUri(null);
+      setQaFileMimeType("");
+      setQaFileName("");
       startQAPolling(jobId);
     } catch {
       // Fallback to synchronous askPlatformFollowUp if job creation fails
@@ -2008,20 +2050,56 @@ export default function PlatformPage() {
                 </div>
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-                  <textarea
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                    className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                  />
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      value={question}
+                      onChange={(event) => setQuestion(event.target.value)}
+                      placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                      className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                    />
+                    {/* File attachment for multimodal QA */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={qaFileInputRef}
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void handleUploadQaFile(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => qaFileInputRef.current?.click()}
+                        disabled={isUploadingQaFile}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[#c8bfe7] transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        {isUploadingQaFile ? <Loader2 className="h-3 w-3 animate-spin" /> : <Image className="h-3 w-3" />}
+                        上传参考图片/PDF
+                      </button>
+                      {qaFileName && (
+                        <span className="flex items-center gap-1 text-xs text-[#8cefff]">
+                          <FileText className="h-3 w-3" />
+                          {qaFileName}
+                          <button
+                            type="button"
+                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); }}
+                            className="ml-1 text-white/40 hover:text-white/70"
+                          >×</button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => void handleAsk()}
-                    disabled={askPlatformFollowUpMutation.isPending}
+                    disabled={askPlatformFollowUpMutation.isPending || isUploadingQaFile}
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {askPlatformFollowUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    继续追问
+                    {qaFileUri ? "多模态追问" : "继续追问"}
                   </button>
                 </div>
 

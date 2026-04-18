@@ -2443,6 +2443,9 @@ export const appRouter = router({
         windowDays: z.number().int().min(3).max(90).default(15),
         snapshot: z.record(z.string(), z.any()),
         context: z.string().optional(),
+        // Optional: gs:// URI of a file uploaded via /api/platform/upload for multimodal QA
+        fileUri: z.string().optional(),
+        fileMimeType: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
         const jobId = nanoid(16);
@@ -2450,7 +2453,7 @@ export const appRouter = router({
           id: jobId,
           userId: "public",
           type: "platform",
-          provider: "gemini",
+          provider: "vertex",
           input: {
             action: "platform_qa",
             params: {
@@ -2458,45 +2461,68 @@ export const appRouter = router({
               windowDays: input.windowDays,
               snapshot: input.snapshot,
               context: input.context,
+              fileUri: input.fileUri,
+              fileMimeType: input.fileMimeType,
             },
           },
         });
 
         setImmediate(async () => {
+          const fileUriToDelete = input.fileUri;
           try {
-            // Use Vertex gemini-3.1-pro-preview for QA — same provider as premium remix
-            // No maxTokens limit — allow SDK default to prevent truncation
-            const qaResponse = await invokeLLM({
-              provider: "vertex",
-              modelName: "gemini-3.1-pro-preview",
-              messages: [
-                {
-                  role: "system",
-                  content: "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據，給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。",
-                },
-                {
-                  role: "user",
-                  content: JSON.stringify({
-                    windowDays: input.windowDays,
-                    context: input.context || "",
-                    question: input.question,
-                    snapshot: {
-                      overview: (input.snapshot as any)?.overview,
-                      platformSnapshots: ((input.snapshot as any)?.platformSnapshots || []).slice(0, 4).map((item: any) => ({
-                        platform: item.platform,
-                        displayName: item.displayName,
-                        audienceFitScore: item.audienceFitScore,
-                        momentumScore: item.momentumScore,
-                        summary: item.summary,
-                      })),
-                      platformRecommendations: ((input.snapshot as any)?.platformRecommendations || []).slice(0, 3),
-                      topicLibrary: ((input.snapshot as any)?.topicLibrary || []).slice(0, 5),
-                    },
-                  }),
-                },
-              ],
+            const systemPrompt = "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據（以及上傳的參考文件，若有），給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。";
+            const contextPayload = JSON.stringify({
+              windowDays: input.windowDays,
+              context: input.context || "",
+              question: input.question,
+              snapshot: {
+                overview: (input.snapshot as any)?.overview,
+                platformSnapshots: ((input.snapshot as any)?.platformSnapshots || []).slice(0, 4).map((item: any) => ({
+                  platform: item.platform,
+                  displayName: item.displayName,
+                  audienceFitScore: item.audienceFitScore,
+                  momentumScore: item.momentumScore,
+                  summary: item.summary,
+                })),
+                platformRecommendations: ((input.snapshot as any)?.platformRecommendations || []).slice(0, 3),
+                topicLibrary: ((input.snapshot as any)?.topicLibrary || []).slice(0, 5),
+              },
             });
-            const rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
+
+            let rawQA: string;
+
+            if (input.fileUri && input.fileMimeType) {
+              // Multimodal path — use @google-cloud/vertexai SDK for fileData support
+              const { VertexAI } = await import("@google-cloud/vertexai");
+              const gcpProject = String(process.env.VERTEX_PROJECT_ID || process.env.GCP_PROJECT_ID || "").trim();
+              const gcpLocation = String(process.env.VERTEX_GEMINI_LOCATION || "us-central1").trim();
+              const vertex = new VertexAI({ project: gcpProject, location: gcpLocation });
+              const model = vertex.getGenerativeModel({ model: "gemini-3.1-pro-preview" });
+              const result = await model.generateContent({
+                // VertexAI SDK: systemInstruction can be a plain string
+                systemInstruction: systemPrompt,
+                contents: [{
+                  role: "user",
+                  parts: [
+                    { text: contextPayload },
+                    { fileData: { fileUri: input.fileUri, mimeType: input.fileMimeType } },
+                  ],
+                }],
+              });
+              rawQA = result.response.candidates?.[0]?.content?.parts?.map((p: any) => p.text || "").join("") || "{}";
+            } else {
+              // Text-only path — use existing invokeLLM
+              const qaResponse = await invokeLLM({
+                provider: "vertex",
+                modelName: "gemini-3.1-pro-preview",
+                messages: [
+                  { role: "system", content: systemPrompt },
+                  { role: "user", content: contextPayload },
+                ],
+              });
+              rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
+            }
+
             let parsedQA: unknown;
             try {
               const bracketMatch = rawQA.match(/\{[\s\S]*\}/);
@@ -2509,6 +2535,20 @@ export const appRouter = router({
             const msg = err instanceof Error ? err.message : String(err);
             console.error("[createPlatformQAJob] background task failed:", msg);
             try { await markJobFailed(jobId, msg); } catch { /* best-effort */ }
+          } finally {
+            // Always clean up the temporary GCS file after QA completes (success or failure)
+            if (fileUriToDelete) {
+              try {
+                const { deleteGcsObject } = await import("./services/gcs");
+                const match = fileUriToDelete.match(/^gs:\/\/([^/]+)\/(.+)$/);
+                if (match) {
+                  await deleteGcsObject({ bucket: match[1], objectName: match[2] });
+                  console.log(`[createPlatformQAJob] deleted temp GCS file: ${fileUriToDelete}`);
+                }
+              } catch (delErr) {
+                console.warn(`[createPlatformQAJob] failed to delete GCS file ${fileUriToDelete}:`, delErr);
+              }
+            }
           }
         });
 
