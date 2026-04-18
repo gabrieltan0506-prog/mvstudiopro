@@ -66,6 +66,20 @@ type AnalysisResult = {
   lighting: number;
   impact: number;
   viralPotential: number;
+  explosiveIndex?: number;
+  realityCheck?: string;
+  reverseEngineering?: {
+    hookStrategy?: string;
+    emotionalArc?: string;
+    commercialLogic?: string;
+  };
+  premiumContent?: {
+    summary?: string;
+    topics?: Array<{
+      title: string;
+      contentBrief: string;
+    }>;
+  };
   visualSummary?: string;
   openingFrameAssessment?: string;
   sceneConsistency?: string;
@@ -2295,6 +2309,20 @@ export default function PremiumRemixPage() {
   const normalizedPremiumRemixAnalysis = useMemo(() => (
     analysis ? {
       ...analysis,
+      explosiveIndex: analysis.explosiveIndex || 0,
+      realityCheck: analysis.realityCheck || "",
+      reverseEngineering: {
+        hookStrategy: analysis.reverseEngineering?.hookStrategy || "",
+        emotionalArc: analysis.reverseEngineering?.emotionalArc || "",
+        commercialLogic: analysis.reverseEngineering?.commercialLogic || "",
+      },
+      premiumContent: {
+        summary: analysis.premiumContent?.summary || "",
+        topics: (analysis.premiumContent?.topics || []).map((item: { title?: string; contentBrief?: string }) => ({
+          title: item.title || "",
+          contentBrief: item.contentBrief || "",
+        })),
+      },
       visualSummary: analysis.visualSummary || "",
       openingFrameAssessment: analysis.openingFrameAssessment || "",
       sceneConsistency: analysis.sceneConsistency || "",

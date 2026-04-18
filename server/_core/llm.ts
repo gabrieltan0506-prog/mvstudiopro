@@ -70,6 +70,8 @@ export type InvokeParams = {
   tool_choice?: ToolChoice;
   maxTokens?: number;
   max_tokens?: number;
+  temperature?: number;
+  topP?: number;
   outputSchema?: OutputSchema;
   output_schema?: OutputSchema;
   responseFormat?: ResponseFormat;
@@ -512,16 +514,16 @@ function readStringEnv(name: string): string | undefined {
 function buildGeminiGenerationConfig(
   modelName: string,
   format: ReturnType<typeof normalizeResponseFormat>,
-  maxOutputTokens?: number,
+  temperature?: number,
+  topP?: number,
 ) {
   const config: Record<string, unknown> = {
     ...getGeminiConfig(format),
-    ...(maxOutputTokens ? { maxOutputTokens } : {}),
   };
 
   if (isGemini31Model(modelName)) {
-    config.temperature = readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.2;
-    config.topP = readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
+    config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_31_TEMPERATURE") ?? 0.2;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_31_TOP_P") ?? 0.95;
     config.thinkingConfig = {
       includeThoughts: false,
       thinkingLevel: readStringEnv("VERTEX_GEMINI_31_THINKING_LEVEL") ?? "MEDIUM",
@@ -530,8 +532,8 @@ function buildGeminiGenerationConfig(
   }
 
   if (isGemini25Model(modelName)) {
-    config.temperature = readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.5;
-    config.topP = readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
+    config.temperature = temperature ?? readNumberEnv("VERTEX_GEMINI_25_TEMPERATURE") ?? 0.5;
+    config.topP = topP ?? readNumberEnv("VERTEX_GEMINI_25_TOP_P") ?? 0.95;
     config.thinkingConfig = {
       thinkingBudget: readNumberEnv("VERTEX_GEMINI_25_THINKING_BUDGET") ?? 1024,
     };
@@ -545,7 +547,6 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
   const ai = new GoogleGenAI({ apiKey: target.apiKey });
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
-  const maxOutputTokens = params.maxTokens || params.max_tokens;
 
   const response = await withLlmTimeout(
     ai.models.generateContent({
@@ -553,7 +554,7 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
       contents,
       config: {
         ...(systemInstruction ? { systemInstruction } : {}),
-        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
+        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, params.temperature, params.topP),
       },
     }),
   );
@@ -593,7 +594,6 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
   const normalizedResponseFormat = normalizeResponseFormat(params);
   const { systemInstruction, contents } = await toGeminiContents(params.messages);
   const accessToken = await getVertexAccessToken();
-  const maxOutputTokens = params.maxTokens || params.max_tokens;
 
   const response = await fetch(String(target.apiUrl), {
     method: "POST",
@@ -605,7 +605,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
-      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, maxOutputTokens),
+      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, params.temperature, params.topP),
     }),
   });
 
@@ -650,8 +650,15 @@ async function invokeCometApi(params: InvokeParams, target: LlmTarget): Promise<
   const payload: Record<string, unknown> = {
     model: target.modelName,
     messages: params.messages.map(normalizeMessage),
-    max_tokens: params.maxTokens || params.max_tokens || 32768,
   };
+
+  if (typeof params.temperature === "number") {
+    payload.temperature = params.temperature;
+  }
+
+  if (typeof params.topP === "number") {
+    payload.top_p = params.topP;
+  }
 
   if (normalizedResponseFormat) {
     payload.response_format = normalizedResponseFormat;

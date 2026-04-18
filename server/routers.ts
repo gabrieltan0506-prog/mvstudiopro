@@ -1768,6 +1768,9 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         const fallbackAnalysis = input.analysis || {
           composition: 0, color: 0, lighting: 0, impact: 0, viralPotential: 0,
+          explosiveIndex: 0, realityCheck: "",
+          reverseEngineering: { hookStrategy: "", emotionalArc: "", commercialLogic: "" },
+          premiumContent: { summary: "", topics: [] },
           visualSummary: "", openingFrameAssessment: "", sceneConsistency: "",
           languageExpression: "", emotionalExpression: "", cameraEmotionTension: "",
           bgmAnalysis: "", musicRecommendation: "", sunoPrompt: "",

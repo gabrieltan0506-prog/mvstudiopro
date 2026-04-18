@@ -19,12 +19,39 @@ export const growthCampModelValues = [
 export const growthCampModelSchema = z.enum(growthCampModelValues);
 export type GrowthCampModel = z.infer<typeof growthCampModelSchema>;
 
+export const growthReverseEngineeringSchema = z.object({
+  hookStrategy: z.string().default(""),
+  emotionalArc: z.string().default(""),
+  commercialLogic: z.string().default(""),
+});
+
+export const growthPremiumContentTopicSchema = z.object({
+  title: z.string().default(""),
+  contentBrief: z.string().default(""),
+});
+
+export const growthPremiumContentSchema = z.object({
+  summary: z.string().default(""),
+  topics: z.array(growthPremiumContentTopicSchema).default([]),
+});
+
 export const growthAnalysisScoresSchema = z.object({
   composition: z.number(),
   color: z.number(),
   lighting: z.number(),
   impact: z.number(),
   viralPotential: z.number(),
+  explosiveIndex: z.number().default(0),
+  realityCheck: z.string().default(""),
+  reverseEngineering: growthReverseEngineeringSchema.default({
+    hookStrategy: "",
+    emotionalArc: "",
+    commercialLogic: "",
+  }),
+  premiumContent: growthPremiumContentSchema.default({
+    summary: "",
+    topics: [],
+  }),
   visualSummary: z.string().default(""),
   openingFrameAssessment: z.string().default(""),
   sceneConsistency: z.string().default(""),

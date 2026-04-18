@@ -70,6 +70,17 @@ const EMPTY_ANALYSIS: GrowthAnalysisScores = {
   lighting: 0,
   impact: 0,
   viralPotential: 0,
+  explosiveIndex: 0,
+  realityCheck: "",
+  reverseEngineering: {
+    hookStrategy: "",
+    emotionalArc: "",
+    commercialLogic: "",
+  },
+  premiumContent: {
+    summary: "",
+    topics: [],
+  },
   visualSummary: "",
   openingFrameAssessment: "",
   sceneConsistency: "",
