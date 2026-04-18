@@ -474,6 +474,8 @@ export default function PlatformPage() {
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const analysisPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [analysisPollCount, setAnalysisPollCount] = useState(0);
+  const [analysisJobStatus, setAnalysisJobStatus] = useState<string>("idle");
 
   // Cleanup polling intervals on unmount
   useEffect(() => {
@@ -486,10 +488,16 @@ export default function PlatformPage() {
   const startAnalysisPolling = useCallback((jobId: string) => {
     if (analysisPollingRef.current) clearInterval(analysisPollingRef.current);
     let transientFailures = 0;
+    let pollCount = 0;
+    setAnalysisPollCount(0);
+    setAnalysisJobStatus("queued");
     analysisPollingRef.current = setInterval(async () => {
       try {
         const job = await getJob(jobId);
         transientFailures = 0;
+        pollCount += 1;
+        setAnalysisPollCount(pollCount);
+        setAnalysisJobStatus(job.status || "unknown");
         if (job.status === "succeeded") {
           clearInterval(analysisPollingRef.current!);
           analysisPollingRef.current = null;
@@ -517,6 +525,7 @@ export default function PlatformPage() {
           analysisPollingRef.current = null;
           setIsDashboardLoading(false);
           setIsContentLoading(false);
+          setAnalysisJobStatus("polling_error");
           toast.error("轮询分析任务时出错，请重试");
         }
       }
@@ -1541,25 +1550,24 @@ export default function PlatformPage() {
                     <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
                     <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Job Queue 派发 ──</div>
-                    <div>2. 派发时间: {analysisJobId ? (dashboardDebug as any)?.dispatchedAt || "已派发" : "未派发"}</div>
-                    <div>2a. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
-                    <div>2b. 轮询: {isDashboardLoading ? "✅ 每 3 秒 GET /api/jobs/:id" : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: Dashboard ──</div>
-                    <div>3. 模型: gemini-2.5-pro (buildPlatformDashboard, provider: gemini)</div>
-                    <div>3a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : dashboardDebug?.error ? `❌ ${dashboardDebug.error}` : "⏸ 等待"}</div>
-                    <div>3b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
-                    <div>3c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
-                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: Premium Content ──</div>
-                    <div>4. 模型: gemini-3.1-pro-preview (invokeLLM, provider: vertex)</div>
-                    <div>4a. system instruction: 内容结构分析师 + 情绪弧线 + 商业逻辑拆解</div>
-                    <div>4b. maxTokens: 无限制 (SDK 默认)</div>
-                    <div>4c. 状态: {isContentLoading ? "⏳ 运行中 (依赖Stage1输出)" : platformContent ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
-                    <div>4d. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
-                    <div>4e. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                    <div>2. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
+                    <div>2a. DB 状态: <span className="font-mono">{analysisJobStatus}</span> / 轮询次数: <span className="text-[#ffdd44] font-bold">{analysisPollCount}</span></div>
+                    <div>2b. 轮询: {isDashboardLoading ? `✅ 进行中，每 3 秒 GET /api/jobs/${analysisJobId || "..."}` : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 原創內容 (先執行) ──</div>
+                    <div>3. 模型: vertex/gemini-3.1-pro-preview (深度原創 — 不看趨勢數據)</div>
+                    <div>3a. system instruction: 內容結構分析師 + 情緒弧線 + 商業邏輯拆解</div>
+                    <div>3b. 狀態: {isContentLoading ? "⏳ 運行中" : platformContent ? "✅ 成功" : "⏸ 等待"}</div>
+                    <div>3c. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 條</div>
+                    <div>3d. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 條</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 趨勢校準 (後執行) ──</div>
+                    <div>4. 模型: vertex/gemini-2.5-pro (buildPlatformDashboard — 讀趨勢數據)</div>
+                    <div>4a. 狀態: {isDashboardLoading ? "⏳ 運行中" : platformDashboard ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
+                    <div>4b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
+                    <div>4c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 條</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
-                    <div>5. 模型: gemini-3.1-pro-preview (provider: vertex, 同 Stage 2)</div>
-                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
-                    <div>5b. 状态: {askPlatformFollowUpMutation.isPending ? "⏳ fallback 同步中" : qaJobId ? "✅ job 已派发，轮询每 3 秒" : "⏸ 等待提问"}</div>
+                    <div>5. 模型: vertex/gemini-3.1-pro-preview (支持 fileData 多模態)</div>
+                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未創建"}</span></div>
+                    <div>5b. 狀態: {askPlatformFollowUpMutation.isPending ? "⏳ fallback 同步中" : qaJobId ? "✅ job 已派發，輪詢每 3 秒" : "⏸ 等待提問"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
