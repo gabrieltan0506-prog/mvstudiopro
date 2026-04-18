@@ -192,8 +192,10 @@ export async function uploadBufferToGcs(params: {
   objectName: string;
   buffer: Buffer;
   contentType: string;
+  /** Override the default GCS bucket — use for non-video uploads */
+  bucket?: string;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string }> {
-  const bucket = getGcsBucketName();
+  const bucket = params.bucket || getGcsBucketName();
   if (!bucket) {
     throw new Error("GCS bucket is not configured");
   }

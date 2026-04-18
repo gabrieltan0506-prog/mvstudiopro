@@ -363,6 +363,12 @@ export default function PlatformPage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
+  // QA file attachment state — uploads to GCS via /api/platform/upload before job dispatch
+  const [qaFileUri, setQaFileUri] = useState<string | null>(null);
+  const [qaFileMimeType, setQaFileMimeType] = useState<string>("");
+  const [qaFileName, setQaFileName] = useState<string>("");
+  const [isUploadingQaFile, setIsUploadingQaFile] = useState(false);
+  const qaFileInputRef = useRef<HTMLInputElement>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
   // Separate state for dashboard — populated by the second call after snapshot loads
@@ -1159,6 +1165,35 @@ export default function PlatformPage() {
     }
   };
 
+  const handleUploadQaFile = useCallback(async (file: File) => {
+    setIsUploadingQaFile(true);
+    setQaFileUri(null);
+    setQaFileMimeType("");
+    setQaFileName("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      const response = await fetch("/api/platform/upload", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Upload failed (${response.status})`);
+      }
+      const data = await response.json();
+      setQaFileUri(data.fileUri);
+      setQaFileMimeType(data.mimeType);
+      setQaFileName(file.name);
+      toast.success(`已上传 ${file.name}`);
+    } catch (err: any) {
+      toast.error(err.message || "文件上传失败");
+    } finally {
+      setIsUploadingQaFile(false);
+    }
+  }, []);
+
   const handleAsk = async (nextQuestion?: string) => {
     const finalQuestion = String(nextQuestion || question).trim();
     if (!snapshot) {
@@ -1171,14 +1206,21 @@ export default function PlatformPage() {
     }
     setQuestion(finalQuestion);
     // Dispatch async QA Job — Vertex 3.1 Pro Preview answers in background
+    // If a file was uploaded, pass fileUri + fileMimeType for multimodal analysis
     try {
       const { jobId } = await createPlatformQAJobMutation.mutateAsync({
         question: finalQuestion,
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshot: snapshot as any,
+        fileUri: qaFileUri || undefined,
+        fileMimeType: qaFileMimeType || undefined,
       });
       setQaJobId(jobId);
+      // Clear file after dispatch — GCS cleanup handled by server finally block
+      setQaFileUri(null);
+      setQaFileMimeType("");
+      setQaFileName("");
       startQAPolling(jobId);
     } catch {
       // Fallback to synchronous askPlatformFollowUp if job creation fails
@@ -1337,13 +1379,23 @@ export default function PlatformPage() {
                     开始平台分析
                   </button>
                   <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-[#c8bfe7]">
-                    分析模型：Gemini 2.5 Pro
+                    分析模型：Gemini 3.1 Pro Preview
                   </div>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
                       当前窗口：近 {selectedWindowDays} 天
                     </div>
                   ) : null}
+                  {hasAnalyzed && !isDashboardLoading && !isContentLoading && (
+                    <button
+                      type="button"
+                      onClick={handleDownloadPlatformPdf}
+                      disabled={isDownloadingPdf}
+                      className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[rgba(73,230,255,0.15)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isDownloadingPdf ? <><Loader2 className="h-3 w-3 animate-spin" />生成中...</> : <><FileText className="h-3 w-3" />下载 PDF</>}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1481,15 +1533,33 @@ export default function PlatformPage() {
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
-                  <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
-                    <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
-                    <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
-                    <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div>4. [Job Queue] 分析 Job ID: {analysisJobId || "未创建"} / 轮询状态: {isDashboardLoading ? "✅ 轮询中 (每3秒)" : platformDashboard ? "✅ 已完成" : "⏸ 等待"}</div>
-                    <div>4a. Stage 1 (Gemini 2.5 Pro — Dashboard): {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? `✅ 成功 — ${(dashboardDebug as any)?.jobId ? "job:" + (dashboardDebug as any).jobId : "已渲染"}` : dashboardDebug?.error ? `❌ 失败: ${dashboardDebug.error}` : "⏸ 等待"}</div>
-                    <div>4b. Stage 2 (Vertex 3.1 Pro Preview — Content): {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功 — contentBlueprints已渲染" : "⏸ 等待Stage1"}</div>
-                    <div>5. [Job Queue] QA Job ID: {qaJobId || "未创建"} / {askPlatformFollowUpMutation.isPending ? "⏳ fallback同步中" : qaJobId ? "✅ job已派发" : "⏸ 等待"}</div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤 · 模型使用明细</div>
+                  <div className="mt-3 space-y-1 text-xs leading-6 text-[#d7d0ef]">
+                    <div className="text-[#8cefff] font-semibold">── Call 1: 快照 ──</div>
+                    <div>1. 模型: gemini-2.5-pro (getGrowthSnapshot — 同步 tRPC query)</div>
+                    <div>1a. 状态: {growthSnapshotQuery.isFetched ? `✅ 已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "⏳ 进行中" : "⏸ 未开始"}</div>
+                    <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
+                    <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Job Queue 派发 ──</div>
+                    <div>2. 派发时间: {analysisJobId ? (dashboardDebug as any)?.dispatchedAt || "已派发" : "未派发"}</div>
+                    <div>2a. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
+                    <div>2b. 轮询: {isDashboardLoading ? "✅ 每 3 秒 GET /api/jobs/:id" : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: Dashboard ──</div>
+                    <div>3. 模型: gemini-2.5-pro (buildPlatformDashboard, provider: gemini)</div>
+                    <div>3a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : dashboardDebug?.error ? `❌ ${dashboardDebug.error}` : "⏸ 等待"}</div>
+                    <div>3b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
+                    <div>3c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: Premium Content ──</div>
+                    <div>4. 模型: gemini-3.1-pro-preview (invokeLLM, provider: vertex)</div>
+                    <div>4a. system instruction: 内容结构分析师 + 情绪弧线 + 商业逻辑拆解</div>
+                    <div>4b. maxTokens: 无限制 (SDK 默认)</div>
+                    <div>4c. 状态: {isContentLoading ? "⏳ 运行中 (依赖Stage1输出)" : platformContent ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
+                    <div>4d. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
+                    <div>4e. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
+                    <div>5. 模型: gemini-3.1-pro-preview (provider: vertex, 同 Stage 2)</div>
+                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
+                    <div>5b. 状态: {askPlatformFollowUpMutation.isPending ? "⏳ fallback 同步中" : qaJobId ? "✅ job 已派发，轮询每 3 秒" : "⏸ 等待提问"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
@@ -1980,20 +2050,56 @@ export default function PlatformPage() {
                 </div>
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
-                  <textarea
-                    value={question}
-                    onChange={(event) => setQuestion(event.target.value)}
-                    placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                    className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                  />
+                  <div className="flex flex-col gap-2">
+                    <textarea
+                      value={question}
+                      onChange={(event) => setQuestion(event.target.value)}
+                      placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                      className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                    />
+                    {/* File attachment for multimodal QA */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        ref={qaFileInputRef}
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void handleUploadQaFile(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => qaFileInputRef.current?.click()}
+                        disabled={isUploadingQaFile}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[#c8bfe7] transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        {isUploadingQaFile ? <Loader2 className="h-3 w-3 animate-spin" /> : <Image className="h-3 w-3" />}
+                        上传参考图片/PDF
+                      </button>
+                      {qaFileName && (
+                        <span className="flex items-center gap-1 text-xs text-[#8cefff]">
+                          <FileText className="h-3 w-3" />
+                          {qaFileName}
+                          <button
+                            type="button"
+                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); }}
+                            className="ml-1 text-white/40 hover:text-white/70"
+                          >×</button>
+                        </span>
+                      )}
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => void handleAsk()}
-                    disabled={askPlatformFollowUpMutation.isPending}
+                    disabled={askPlatformFollowUpMutation.isPending || isUploadingQaFile}
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {askPlatformFollowUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    继续追问
+                    {qaFileUri ? "多模态追问" : "继续追问"}
                   </button>
                 </div>
 
