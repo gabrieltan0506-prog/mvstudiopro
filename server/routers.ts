@@ -2331,7 +2331,7 @@ export const appRouter = router({
           id: jobId,
           userId: "public",
           type: "platform",
-          provider: "gemini",
+          provider: "vertex",
           input: {
             action: "platform_analysis",
             params: {
@@ -2346,8 +2346,47 @@ export const appRouter = router({
         // Fire-and-forget background execution — does NOT block the HTTP response
         setImmediate(async () => {
           try {
-            // ── Stage 1: Gemini 2.5 Pro — fast data extraction & dashboard ──
-            // Read store data with 15s cap (same pattern as existing platform routes)
+            // ── Stage 1: Vertex 3.1 Pro Preview — deep original content generation ──
+            // Does NOT look at trend data yet. Takes user's focusPrompt/context and performs
+            // deep structural analysis: emotional arc, hook strategy, commercial logic.
+            // Outputs a high-quality "script blueprint JSON" for Stage 2 to calibrate.
+            const stage1SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是根據用戶的業務背景和提示，進行深度原創內容結構分析：拆解情緒弧線、設計開場鉤子、挖掘商業邏輯，輸出一份極具穿透力的「原創腳本藍圖」。輸出必須精確，不允許任何廢話。";
+
+            const stage1Response = await invokeLLM({
+              provider: "vertex",
+              modelName: "gemini-3.1-pro-preview",
+              messages: [
+                { role: "system", content: stage1SystemInstruction },
+                {
+                  role: "user",
+                  content: JSON.stringify({
+                    context: input.context || "",
+                    windowDays: input.windowDays,
+                    snapshotData: {
+                      platformRecommendations: (input.snapshotSummary as any)?.platformRecommendations?.slice(0, 3) || [],
+                      topicLibrary: (input.snapshotSummary as any)?.topicLibrary?.slice(0, 5) || [],
+                      titleExecutions: (input.snapshotSummary as any)?.titleExecutions?.slice(0, 3) || [],
+                      monetizationStrategies: (input.snapshotSummary as any)?.monetizationStrategies?.slice(0, 2) || [],
+                    },
+                    task: "請輸出嚴格合法 JSON，包含：contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。第一個字符必須是 {，最後必須是 }。",
+                  }),
+                },
+              ],
+            });
+
+            const stage1Raw = String(stage1Response.choices[0]?.message?.content || "");
+            const stage1BracketMatch = stage1Raw.match(/\{[\s\S]*\}/);
+            let contentResult: unknown = null;
+            try {
+              const stage1Parsed = JSON.parse(stage1BracketMatch?.[0]?.trim() || stage1Raw);
+              contentResult = normalizePlatformContentKeys(stage1Parsed as Record<string, unknown>);
+            } catch {
+              contentResult = {};
+            }
+
+            // ── Stage 2: Vertex 2.5 Pro — trend calibration & dashboard ──
+            // Takes the Stage 1 blueprint and calibrates it against real platform trend data.
+            // Reads store with 15s cap, outputs final dashboard with hotTopics/headline/signals.
             const storeNull = { collections: {}, history: null, backfill: null } as unknown as Awaited<ReturnType<typeof readTrendStore>>;
             const store = await Promise.race([
               readTrendStoreForPlatforms(
@@ -2358,7 +2397,6 @@ export const appRouter = router({
             ]).catch(() => storeNull);
 
             const dashboardResult = await buildPlatformDashboard({
-              // snapshotSummary is a slim subset — cast to any to satisfy strict GrowthSnapshot type
               snapshot: (input.snapshotSummary ?? {}) as any,
               context: input.context,
               windowDays: input.windowDays,
@@ -2366,66 +2404,12 @@ export const appRouter = router({
               store,
             });
 
-            // ── Stage 2: Gemini 3.1 Pro Preview — premium content generation ──
-            // Uses advanced system instruction, temperature 0.7, topP 0.9 for
-            // nuanced content that captures emotional arc and hook strategy.
-            let contentResult = null;
-            if (dashboardResult?.platformMenu) {
-              // Build a structured prompt that leverages Stage 1 dashboard output
-              const stage2SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是精準拆解用戶提供的數據、截圖或對標案例，並根據其底層邏輯（包含鉤子、情緒轉折、痛點引爆）重塑為極具商業價值的內容執行藍圖與變現路徑。輸出必須精確，不允許任何廢話。";
-
-              // Invoke 3.1 Pro for premium content with system instruction injected
-              // via the messages[0] system role — invokeLLM extracts system role text
-              // into Vertex systemInstruction automatically.
-              // Temperature/topP are controlled by VERTEX_GEMINI_31_TEMPERATURE env
-              // (default 0.2); we pass a synthetic system message to enrich context.
-              const stage2Response = await invokeLLM({
-                provider: "vertex",
-                modelName: "gemini-3.1-pro-preview",
-                messages: [
-                  {
-                    role: "system",
-                    content: stage2SystemInstruction,
-                  },
-                  {
-                    role: "user",
-                    content: JSON.stringify({
-                      context: input.context || "",
-                      windowDays: input.windowDays,
-                      platformMenu: dashboardResult.platformMenu,
-                      dashboardSignals: {
-                        headline: (dashboardResult as any).headline || "",
-                        topSignals: (dashboardResult as any).topSignals?.slice(0, 5) || [],
-                        hotTopics: (dashboardResult as any).hotTopics?.slice(0, 8) || [],
-                        trafficBoosters: (dashboardResult as any).trafficBoosters?.slice(0, 4) || [],
-                      },
-                      snapshotData: {
-                        titleExecutions: (input.snapshotSummary as any)?.titleExecutions?.slice(0, 3) || [],
-                        monetizationStrategies: (input.snapshotSummary as any)?.monetizationStrategies?.slice(0, 2) || [],
-                      },
-                      outputRequirements: "請輸出嚴格合法 JSON，包含 contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。輸出第一個字符必須是 {，最後一個字符必須是 }。",
-                    }),
-                  },
-                ],
-              });
-
-              const stage2Raw = String(stage2Response.choices[0]?.message?.content || "");
-              const stage2BracketMatch = stage2Raw.match(/\{[\s\S]*\}/);
-              let stage2Parsed: unknown;
-              try {
-                stage2Parsed = JSON.parse(stage2BracketMatch?.[0]?.trim() || stage2Raw);
-              } catch {
-                stage2Parsed = {};
-              }
-              contentResult = normalizePlatformContentKeys(stage2Parsed as Record<string, unknown>);
-            }
-
             await markJobSucceeded(jobId, {
               platformDashboard: dashboardResult,
               platformContent: contentResult,
               completedAt: new Date().toISOString(),
-              engines: { stage1: "gemini-2.5-pro", stage2: "gemini-3.1-pro-preview" },
-            }, "gemini");
+              engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
+            }, "vertex");
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error("[createPlatformAnalysisJob] background task failed:", msg);
