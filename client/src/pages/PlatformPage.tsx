@@ -516,6 +516,8 @@ export default function PlatformPage() {
           analysisPollingRef.current = null;
           setIsDashboardLoading(false);
           setIsContentLoading(false);
+          // Write job.error to dashboardDebug so it shows in the debug panel error section
+          setDashboardDebug((prev) => ({ ...(prev || {}), error: job.error || "unknown error" }));
           toast.error(`分析任务失败: ${job.error || "未知错误"}`);
         }
       } catch {
