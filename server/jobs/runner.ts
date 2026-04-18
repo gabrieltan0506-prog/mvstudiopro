@@ -671,7 +671,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
     const snapshotSummary = (params.snapshotSummary || {}) as Record<string, unknown>;
 
     // Stage 1: 3.1 Pro — deep original content blueprint, no trend data
-    const stage1SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是根據用戶的業務背景和提示，進行深度原創內容結構分析：拆解情緒弧線、設計開場鉤子、挖掘商業邏輯，輸出一份極具穿透力的「原創腳本藍圖」。輸出必須精確，不允許任何廢話。";
+    const stage1SystemInstruction = "你是一位顶尖的内容结构分析师与文案大师。你对文本的「弦外之音」与「呼吸节奏」极度敏感。你的任务是根据用户的业务背景和提示，进行深度原创内容结构分析：拆解情绪弧线、设计开场钩子、挖掘商业逻辑，输出一份极具穿透力的「原创脚本蓝图」。输出必须精确，不允许任何废话。";
     const stage1Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-3.1-pro-preview",
@@ -703,7 +703,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
     }
 
     // Stage 2: 2.5 Pro — trend calibration + dashboard signals
-    const stage2SystemInstruction = "你是一位頂尖的平台趨勢分析師。根據用戶的腳本藍圖與平台快照數據，進行熱點數據校準，輸出最終平台看板 JSON。";
+    const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，输出最终平台看板 JSON。";
     const stage2Response = await invokeLLM({
       provider: "vertex",
       modelName: "gemini-2.5-pro",
@@ -722,7 +722,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
               platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
               topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
             },
-            task: "請根據以上藍圖與快照數據，輸出嚴格合法 JSON，包含：headline（平台策略標題）、topSignals（4條核心信號，每項含 title/detail/badge）、hotTopics（每個平台5-8個熱門賽道，每項含 title/whyHot/howToUse）、actionCards（3-5張可執行動作卡，每項含 title/detail）、platformMenu（每個平台的 platform/displayName/signal）、trafficBoosters（2-3條流量扶持，字符串數組）、conversationStarters（4個追問建議，字符串數組）。第一個字符必須是 {，最後必須是 }。",
+            task: "请根据以上蓝图与快照数据，输出严格合法 JSON，包含：headline（平台策略标题）、topSignals（4条核心信号，每项含 title/detail/badge）、hotTopics（每个平台5-8个热门赛道，每项含 title/whyHot/howToUse）、actionCards（3-5张可执行动作卡，每项含 title/detail）、platformMenu（每个平台的 platform/displayName/signal）、trafficBoosters（2-3条流量扶持，字符串数组）、conversationStarters（4个追问建议，字符串数组）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
       ],
@@ -756,7 +756,8 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
     const fileMimeType = typeof params.fileMimeType === "string" ? params.fileMimeType : "application/octet-stream";
 
     try {
-      const systemPrompt = "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據，給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。";
+      // QA returns plain-text Markdown — do NOT force JSON, do NOT JSON.parse
+      const systemPrompt = "你是一位顶尖的平台增长顾问。请根据用户提问和平台快照数据，给出具体、可执行的专业建议。回答要精准、有结构，使用 Markdown 格式。";
       const contextPayload = JSON.stringify({
         windowDays,
         context,
@@ -775,34 +776,37 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
         },
       });
 
-      // Build messages — if fileUri present, add as file_url part
-      const userParts: Array<{ type: string; text?: string; file_url?: { url: string; mime_type: string } }> = [
-        { type: "text", text: contextPayload },
-      ];
-      if (fileUri) {
-        userParts.push({ type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } });
-      }
+      // Build messages — fileUri is optional; if present, add as file_url part
+      const userContent: any = fileUri
+        ? [
+            { type: "text", text: contextPayload },
+            { type: "file_url", file_url: { url: fileUri, mime_type: fileMimeType } },
+          ]
+        : contextPayload;
 
       const qaResponse = await invokeLLM({
         provider: "vertex",
         modelName: "gemini-3.1-pro-preview",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: fileUri ? userParts as any : contextPayload },
+          { role: "user", content: userContent },
         ],
       });
 
-      const rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
-      let parsedQA: unknown;
-      try {
-        parsedQA = JSON.parse(extractJsonString(rawQA));
-      } catch {
-        parsedQA = { title: "回答", answer: rawQA, encouragement: "", nextQuestions: [] };
-      }
+      // Return raw plain-text answer — no JSON.parse
+      const answerText = String(qaResponse.choices[0]?.message?.content || "");
 
       return {
         provider: "vertex",
-        output: { result: parsedQA, completedAt: new Date().toISOString() },
+        output: {
+          result: {
+            title: question.slice(0, 40) || "追问回答",
+            answer: answerText,
+            encouragement: "",
+            nextQuestions: [],
+          },
+          completedAt: new Date().toISOString(),
+        },
       };
     } finally {
       // Always clean up GCS temp file regardless of success or failure
