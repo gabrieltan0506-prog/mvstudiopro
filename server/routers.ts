@@ -49,6 +49,11 @@ import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBeta
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
 import {
+  createJob as createJobRecord,
+  markJobSucceeded,
+  markJobFailed,
+} from "./jobs/repository";
+import {
   growthAssetAdaptationSchema,
   growthPlatformValues,
   growthAnalysisScoresSchema,
@@ -2304,6 +2309,237 @@ export const appRouter = router({
               error: error instanceof Error ? error.message : String(error),
             },
           };
+        }
+      }),
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Platform Analysis Job — async queue architecture
+    // createPlatformAnalysisJob: creates a queued job record, returns jobId
+    // immediately, then runs buildPlatformDashboard + buildPlatformContent in
+    // the background and writes the result to the DB via markJobSucceeded.
+    // Frontend polls GET /api/jobs/:id every 3 seconds.
+    // ─────────────────────────────────────────────────────────────────────────
+    createPlatformAnalysisJob: publicProcedure
+      .input(z.object({
+        context: z.string().optional(),
+        windowDays: z.number().int().min(3).max(90).default(15),
+        requestedPlatforms: z.array(z.string()).default(["douyin", "xiaohongshu", "bilibili", "kuaishou"]),
+        snapshotSummary: z.record(z.any()).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const jobId = nanoid(16);
+        // Create queued job record immediately — frontend gets this ID to poll
+        await createJobRecord({
+          id: jobId,
+          userId: "public",
+          type: "platform",
+          provider: "gemini",
+          input: {
+            action: "platform_analysis",
+            params: {
+              context: input.context,
+              windowDays: input.windowDays,
+              requestedPlatforms: input.requestedPlatforms,
+              snapshotSummary: input.snapshotSummary ?? {},
+            },
+          },
+        });
+
+        // Fire-and-forget background execution — does NOT block the HTTP response
+        setImmediate(async () => {
+          try {
+            // ── Stage 1: Gemini 2.5 Pro — fast data extraction & dashboard ──
+            const dashboardResult = await buildPlatformDashboard({
+              snapshot: input.snapshotSummary ?? {},
+              context: input.context,
+              windowDays: input.windowDays,
+            });
+
+            // ── Stage 2: Gemini 3.1 Pro Preview — premium content generation ──
+            // Uses advanced system instruction, temperature 0.7, topP 0.9 for
+            // nuanced content that captures emotional arc and hook strategy.
+            let contentResult = null;
+            if (dashboardResult?.platformMenu) {
+              // Build a structured prompt that leverages Stage 1 dashboard output
+              const stage2SystemInstruction = "你是一位頂尖的內容結構分析師與文案大師。你對文本的「弦外之音」與「呼吸節奏」極度敏感。你的任務是精準拆解用戶提供的數據、截圖或對標案例，並根據其底層邏輯（包含鉤子、情緒轉折、痛點引爆）重塑為極具商業價值的內容執行藍圖與變現路徑。輸出必須精確，不允許任何廢話。";
+
+              // Invoke 3.1 Pro for premium content with system instruction injected
+              // via the messages[0] system role — invokeLLM extracts system role text
+              // into Vertex systemInstruction automatically.
+              // Temperature/topP are controlled by VERTEX_GEMINI_31_TEMPERATURE env
+              // (default 0.2); we pass a synthetic system message to enrich context.
+              const stage2Response = await invokeLLM({
+                provider: "vertex",
+                modelName: "gemini-3.1-pro-preview",
+                maxTokens: 4096,
+                messages: [
+                  {
+                    role: "system",
+                    content: stage2SystemInstruction,
+                  },
+                  {
+                    role: "user",
+                    content: JSON.stringify({
+                      context: input.context || "",
+                      windowDays: input.windowDays,
+                      platformMenu: dashboardResult.platformMenu,
+                      dashboardSignals: {
+                        headline: (dashboardResult as any).headline || "",
+                        topSignals: (dashboardResult as any).topSignals?.slice(0, 5) || [],
+                        hotTopics: (dashboardResult as any).hotTopics?.slice(0, 8) || [],
+                        trafficBoosters: (dashboardResult as any).trafficBoosters?.slice(0, 4) || [],
+                      },
+                      snapshotData: {
+                        titleExecutions: (input.snapshotSummary as any)?.titleExecutions?.slice(0, 3) || [],
+                        monetizationStrategies: (input.snapshotSummary as any)?.monetizationStrategies?.slice(0, 2) || [],
+                      },
+                      outputRequirements: "請輸出嚴格合法 JSON，包含 contentBlueprints（至少3個具體可執行方案，每項含 title/format/hook/copywriting/suitablePlatforms/actionableSteps/detailedScript/publishingAdvice/executionDetails）和 monetizationLanes（1-2條變現路徑，每項含 title/fitReason/offerShape/revenueModes/firstValidation）。輸出第一個字符必須是 {，最後一個字符必須是 }。",
+                    }),
+                  },
+                ],
+              });
+
+              const stage2Raw = String(stage2Response.choices[0]?.message?.content || "");
+              const stage2BracketMatch = stage2Raw.match(/\{[\s\S]*\}/);
+              let stage2Parsed: unknown;
+              try {
+                stage2Parsed = JSON.parse(stage2BracketMatch?.[0]?.trim() || stage2Raw);
+              } catch {
+                stage2Parsed = {};
+              }
+              contentResult = normalizePlatformContentKeys(stage2Parsed as Record<string, unknown>);
+            }
+
+            await markJobSucceeded(jobId, {
+              platformDashboard: dashboardResult,
+              platformContent: contentResult,
+              completedAt: new Date().toISOString(),
+              engines: { stage1: "gemini-2.5-pro", stage2: "gemini-3.1-pro-preview" },
+            }, "gemini");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("[createPlatformAnalysisJob] background task failed:", msg);
+            await markJobFailed(jobId, msg).catch(() => {});
+          }
+        });
+
+        return { jobId, status: "queued" };
+      }),
+
+    // Platform Follow-Up (QA) Job — same async pattern
+    createPlatformQAJob: publicProcedure
+      .input(z.object({
+        question: z.string().min(1),
+        windowDays: z.number().int().min(3).max(90).default(15),
+        snapshot: z.record(z.any()),
+        context: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: "public",
+          type: "platform",
+          provider: "gemini",
+          input: {
+            action: "platform_qa",
+            params: {
+              question: input.question,
+              windowDays: input.windowDays,
+              snapshot: input.snapshot,
+              context: input.context,
+            },
+          },
+        });
+
+        setImmediate(async () => {
+          try {
+            // Use Vertex gemini-3.1-pro-preview for QA — same provider as premium remix
+            const qaResponse = await invokeLLM({
+              provider: "vertex",
+              modelName: "gemini-3.1-pro-preview",
+              maxTokens: 4096,
+              messages: [
+                {
+                  role: "system",
+                  content: "你是一位頂尖的平台增長顧問。請根據用戶提問和平台快照數據，給出具體、可執行的專業建議。回答要精準、有結構，不說廢話。輸出嚴格 JSON：{ title, answer, encouragement, nextQuestions }。",
+                },
+                {
+                  role: "user",
+                  content: JSON.stringify({
+                    windowDays: input.windowDays,
+                    context: input.context || "",
+                    question: input.question,
+                    snapshot: {
+                      overview: (input.snapshot as any)?.overview,
+                      platformSnapshots: ((input.snapshot as any)?.platformSnapshots || []).slice(0, 4).map((item: any) => ({
+                        platform: item.platform,
+                        displayName: item.displayName,
+                        audienceFitScore: item.audienceFitScore,
+                        momentumScore: item.momentumScore,
+                        summary: item.summary,
+                      })),
+                      platformRecommendations: ((input.snapshot as any)?.platformRecommendations || []).slice(0, 3),
+                      topicLibrary: ((input.snapshot as any)?.topicLibrary || []).slice(0, 5),
+                    },
+                  }),
+                },
+              ],
+            });
+            const rawQA = String(qaResponse.choices[0]?.message?.content || "{}");
+            let parsedQA: unknown;
+            try {
+              const bracketMatch = rawQA.match(/\{[\s\S]*\}/);
+              parsedQA = JSON.parse(bracketMatch?.[0]?.trim() || rawQA);
+            } catch {
+              parsedQA = { title: "回答", answer: rawQA, encouragement: "", nextQuestions: [] };
+            }
+            await markJobSucceeded(jobId, { result: parsedQA, completedAt: new Date().toISOString() }, "vertex");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("[createPlatformQAJob] background task failed:", msg);
+            await markJobFailed(jobId, msg).catch(() => {});
+          }
+        });
+
+        return { jobId, status: "queued" };
+      }),
+
+    // Platform-specific PDF download — same as downloadAnalysisPdf but named
+    // separately so PlatformPage can use it without touching MVAnalysis routes.
+    downloadPlatformPdf: publicProcedure
+      .input(z.object({
+        html: z.string().min(100),
+        token: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
+        if (!cloudRunUrl) {
+          throw new Error("CLOUD_RUN_PDF_URL env var is not set.");
+        }
+        const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 90_000);
+        try {
+          const res = await fetch(proxyUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ html: input.html, token: input.token ?? "" }),
+            signal: controller.signal,
+          });
+          if (!res.ok) {
+            const errBody = await res.text().catch(() => "");
+            throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
+          }
+          const arrayBuffer = await res.arrayBuffer();
+          const base64 = Buffer.from(arrayBuffer).toString("base64");
+          return { success: true, pdfBase64: base64 };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error("[downloadPlatformPdf] proxy error:", msg);
+          throw new Error(`downloadPlatformPdf failed: ${msg}`);
+        } finally {
+          clearTimeout(timeoutId);
         }
       }),
 

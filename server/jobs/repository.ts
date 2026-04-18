@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { jobs, type Job, type InsertJob } from "../../drizzle/schema";
 import { getDb } from "../db";
 
-export type JobType = "video" | "image" | "audio";
+export type JobType = "video" | "image" | "audio" | "platform";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 
 type InMemoryJob = Job & {
