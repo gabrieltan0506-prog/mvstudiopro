@@ -53,6 +53,8 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
   audio: 8 * 60_000,
   video: 30_000,
+  // platform jobs run buildPlatformDashboard + buildPlatformContent — budget 12 min
+  platform: 12 * 60_000,
 };
 
 const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 12 * 60_000;
@@ -646,10 +648,18 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
   throw new Error("Music generation timeout");
 }
 
+async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown; provider?: string }> {
+  // Platform analysis jobs are dispatched by createPlatformAnalysisJob in routers.ts.
+  // The router fires the job and writes results directly via markJobSucceeded/markJobFailed —
+  // this branch handles any platform actions that reach the worker queue (future extension).
+  throw new Error(`processPlatformJob: unsupported action "${input.action}" — platform jobs should complete via router background dispatch`);
+}
+
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
+  if (type === "platform") return processPlatformJob(input);
   return processAudioJob(input, timeoutMs, userId);
 }
 

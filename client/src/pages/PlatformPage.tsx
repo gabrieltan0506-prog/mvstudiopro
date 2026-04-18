@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
+import { createJob, getJob } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
 import type {
   GrowthAnalysisScores,
@@ -436,6 +437,124 @@ export default function PlatformPage() {
       toast.error(error.message || "平台追问失败");
     },
   });
+
+  // ── Async Job Queue mutations ──────────────────────────────────────────────
+  const createPlatformAnalysisJobMutation = trpc.mvAnalysis.createPlatformAnalysisJob.useMutation();
+  const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
+  const downloadPlatformPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
+    onSuccess: (result) => {
+      setIsDownloadingPdf(false);
+      if (!result.pdfBase64) { toast.error("PDF 生成成功但内容为空，请重试"); return; }
+      try {
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `platform-analysis-${Date.now()}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        toast.success("平台分析 PDF 已开始下载");
+      } catch { toast.error("PDF 下载时出错，请重试"); }
+    },
+    onError: (err) => { setIsDownloadingPdf(false); toast.error(err.message || "PDF 导出失败"); },
+  });
+
+  // ── Job polling state ──────────────────────────────────────────────────────
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
+  const [qaJobId, setQaJobId] = useState<string | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const analysisPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Cleanup polling intervals on unmount
+  useEffect(() => {
+    return () => {
+      if (analysisPollingRef.current) clearInterval(analysisPollingRef.current);
+      if (qaPollingRef.current) clearInterval(qaPollingRef.current);
+    };
+  }, []);
+
+  const startAnalysisPolling = useCallback((jobId: string) => {
+    if (analysisPollingRef.current) clearInterval(analysisPollingRef.current);
+    let transientFailures = 0;
+    analysisPollingRef.current = setInterval(async () => {
+      try {
+        const job = await getJob(jobId);
+        transientFailures = 0;
+        if (job.status === "succeeded") {
+          clearInterval(analysisPollingRef.current!);
+          analysisPollingRef.current = null;
+          const output = job.output as any;
+          if (output?.platformDashboard) {
+            setPlatformDashboard(output.platformDashboard);
+          }
+          setIsDashboardLoading(false);
+          if (output?.platformContent) {
+            setPlatformContent(output.platformContent);
+          }
+          setIsContentLoading(false);
+          toast.success("深度分析已完成");
+        } else if (job.status === "failed") {
+          clearInterval(analysisPollingRef.current!);
+          analysisPollingRef.current = null;
+          setIsDashboardLoading(false);
+          setIsContentLoading(false);
+          toast.error(`分析任务失败: ${job.error || "未知错误"}`);
+        }
+      } catch {
+        transientFailures += 1;
+        if (transientFailures >= 5) {
+          clearInterval(analysisPollingRef.current!);
+          analysisPollingRef.current = null;
+          setIsDashboardLoading(false);
+          setIsContentLoading(false);
+          toast.error("轮询分析任务时出错，请重试");
+        }
+      }
+    }, 3000);
+  }, []);
+
+  const startQAPolling = useCallback((jobId: string) => {
+    if (qaPollingRef.current) clearInterval(qaPollingRef.current);
+    let transientFailures = 0;
+    qaPollingRef.current = setInterval(async () => {
+      try {
+        const job = await getJob(jobId);
+        transientFailures = 0;
+        if (job.status === "succeeded") {
+          clearInterval(qaPollingRef.current!);
+          qaPollingRef.current = null;
+          const output = job.output as any;
+          if (output?.result) setAskResult(output.result);
+        } else if (job.status === "failed") {
+          clearInterval(qaPollingRef.current!);
+          qaPollingRef.current = null;
+          toast.error(`追问任务失败: ${job.error || "未知错误"}`);
+        }
+      } catch {
+        transientFailures += 1;
+        if (transientFailures >= 5) {
+          clearInterval(qaPollingRef.current!);
+          qaPollingRef.current = null;
+          toast.error("轮询追问任务时出错，请重试");
+        }
+      }
+    }, 3000);
+  }, []);
+
+  const handleDownloadPlatformPdf = useCallback(() => {
+    const clone = document.documentElement.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("script").forEach((n) => n.remove());
+    const base = document.createElement("base");
+    base.href = window.location.origin + "/";
+    clone.querySelector("head")?.prepend(base);
+    const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
+    setIsDownloadingPdf(true);
+    downloadPlatformPdfMutation.mutate({ html: htmlContent });
+  }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
   const snapshotDebug = growthSnapshotQuery.data?.debug as Record<string, unknown> | undefined;
@@ -987,47 +1106,57 @@ export default function PlatformPage() {
     setHasAnalyzed(true);
     toast.success(`快照已生成，正在进行深度分析...`);
 
-    // Call 2: dashboard LLM (separate mutation, 120s budget)
-    // Send slim snapshotSummary to avoid 503 on large POST body
+    // Dispatch async Job — returns jobId immediately, polls every 3s for result
+    // Stage 1: Gemini 2.5 Pro (dashboard) → Stage 2: Vertex 3.1 Pro Preview (content)
     const snap = result.data.snapshot;
     setIsDashboardLoading(true);
-    getPlatformDashboardMutation.mutate({
-      context: focusPrompt || undefined,
-      windowDays: selectedWindowDays,
-      requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
-      snapshotSummary: {
-        overview: snap.overview,
-        platformSnapshots: snap.platformSnapshots.slice(0, 4).map((item) => ({
-          platform: item.platform,
-          displayName: item.displayName,
-          audienceFitScore: item.audienceFitScore,
-          momentumScore: item.momentumScore,
-          summary: item.summary,
-          fitLabel: item.fitLabel,
-          sampleTopics: item.sampleTopics?.slice(0, 4),
-        })),
-        platformRecommendations: snap.platformRecommendations.slice(0, 3).map((item) => ({
-          name: item.name,
-          reason: item.reason,
-          action: item.action,
-        })),
-        topicLibrary: snap.topicLibrary.slice(0, 5).map((item) => ({
-          title: item.title,
-          rationale: item.rationale,
-          executionHint: item.executionHint,
-        })),
-        monetizationStrategies: snap.monetizationStrategies.slice(0, 2).map((item) => ({
-          platformLabel: item.platformLabel,
-          primaryTrack: item.primaryTrack,
-          offerType: item.offerType,
-        })),
-        mainPath: {
-          title: snap.decisionFramework.mainPath.title,
-          summary: snap.decisionFramework.mainPath.summary,
-          whyNow: snap.decisionFramework.mainPath.whyNow,
+    setIsContentLoading(true);
+    try {
+      const { jobId } = await createPlatformAnalysisJobMutation.mutateAsync({
+        context: focusPrompt || undefined,
+        windowDays: selectedWindowDays,
+        snapshotSummary: {
+          overview: snap.overview,
+          platformSnapshots: snap.platformSnapshots.slice(0, 4).map((item) => ({
+            platform: item.platform,
+            displayName: item.displayName,
+            audienceFitScore: item.audienceFitScore,
+            momentumScore: item.momentumScore,
+            summary: item.summary,
+            fitLabel: item.fitLabel,
+            sampleTopics: (item as any).sampleTopics?.slice(0, 4),
+          })),
+          platformRecommendations: snap.platformRecommendations.slice(0, 3).map((item) => ({
+            name: item.name,
+            reason: item.reason,
+            action: item.action,
+          })),
+          topicLibrary: snap.topicLibrary.slice(0, 5).map((item) => ({
+            title: item.title,
+            rationale: item.rationale,
+            executionHint: item.executionHint,
+          })),
+          monetizationStrategies: snap.monetizationStrategies.slice(0, 2).map((item) => ({
+            platformLabel: item.platformLabel,
+            primaryTrack: item.primaryTrack,
+            offerType: item.offerType,
+          })),
+          titleExecutions: snap.titleExecutions?.slice(0, 3),
+          mainPath: {
+            title: snap.decisionFramework.mainPath.title,
+            summary: snap.decisionFramework.mainPath.summary,
+            whyNow: snap.decisionFramework.mainPath.whyNow,
+          },
         },
-      },
-    });
+      });
+      setAnalysisJobId(jobId);
+      setDashboardDebug((prev) => ({ ...(prev || {}), jobId, jobStatus: "queued", stage1: "dispatched", stage2: "pending" }));
+      startAnalysisPolling(jobId);
+    } catch (err: any) {
+      setIsDashboardLoading(false);
+      setIsContentLoading(false);
+      toast.error(err.message || "深度分析任务创建失败");
+    }
   };
 
   const handleAsk = async (nextQuestion?: string) => {
@@ -1041,12 +1170,25 @@ export default function PlatformPage() {
       return;
     }
     setQuestion(finalQuestion);
-    await askPlatformFollowUpMutation.mutateAsync({
-      question: finalQuestion,
-      context: focusPrompt || undefined,
-      windowDays: selectedWindowDays,
-      snapshot,
-    });
+    // Dispatch async QA Job — Vertex 3.1 Pro Preview answers in background
+    try {
+      const { jobId } = await createPlatformQAJobMutation.mutateAsync({
+        question: finalQuestion,
+        context: focusPrompt || undefined,
+        windowDays: selectedWindowDays,
+        snapshot: snapshot as any,
+      });
+      setQaJobId(jobId);
+      startQAPolling(jobId);
+    } catch {
+      // Fallback to synchronous askPlatformFollowUp if job creation fails
+      await askPlatformFollowUpMutation.mutateAsync({
+        question: finalQuestion,
+        context: focusPrompt || undefined,
+        windowDays: selectedWindowDays,
+        snapshot,
+      });
+    }
   };
 
   if (loading) {
@@ -1344,8 +1486,10 @@ export default function PlatformPage() {
                     <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
                     <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
                     <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div>4. getPlatformDashboard (Call 2): {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? `已返回 (${dashboardDebug?.totalMs ?? "?"}ms)` : `返回null${dashboardDebug?.error ? ` — 错误: ${dashboardDebug.error}` : ""}`) : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
-                    <div>5. getPlatformContent (Call 3): {isContentLoading ? "进行中" : getPlatformContentMutation.isSuccess ? (platformContent ? `已返回 (${contentDebug?.totalMs ?? "?"}ms)` : "返回null") : getPlatformContentMutation.isError ? `错误: ${getPlatformContentMutation.error?.message}` : "未开始"}</div>
+                    <div>4. [Job Queue] 分析 Job ID: {analysisJobId || "未创建"} / 轮询状态: {isDashboardLoading ? "✅ 轮询中 (每3秒)" : platformDashboard ? "✅ 已完成" : "⏸ 等待"}</div>
+                    <div>4a. Stage 1 (Gemini 2.5 Pro — Dashboard): {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? `✅ 成功 — ${(dashboardDebug as any)?.jobId ? "job:" + (dashboardDebug as any).jobId : "已渲染"}` : dashboardDebug?.error ? `❌ 失败: ${dashboardDebug.error}` : "⏸ 等待"}</div>
+                    <div>4b. Stage 2 (Vertex 3.1 Pro Preview — Content): {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功 — contentBlueprints已渲染" : "⏸ 等待Stage1"}</div>
+                    <div>5. [Job Queue] QA Job ID: {qaJobId || "未创建"} / {askPlatformFollowUpMutation.isPending ? "⏳ fallback同步中" : qaJobId ? "✅ job已派发" : "⏸ 等待"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
@@ -1417,8 +1561,8 @@ export default function PlatformPage() {
                       <div>1. getGrowthSnapshot 请求: {growthSnapshotQuery.isFetched ? "已返回" : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
                       <div>2. snapshot 构建: {snapshotDebug?.baseSource ? `已完成 (${snapshotDebug.baseSource})` : "未知"}</div>
                       <div>3. personalization: {String(snapshotDebug?.personalizedApplied ?? false)}</div>
-                      <div>4. getPlatformDashboard: {isDashboardLoading ? "进行中" : getPlatformDashboardMutation.isSuccess ? (platformDashboard ? "已返回结果" : "返回null(LLM超时)") : getPlatformDashboardMutation.isError ? `错误: ${getPlatformDashboardMutation.error?.message}` : "未开始"}</div>
-                      <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))}</div>
+                      <div>4. [Job] analysisJobId: {analysisJobId || "-"} / Stage1(2.5Pro dashboard): {isDashboardLoading ? "⏳" : platformDashboard ? "✅" : "⏸"} / Stage2(3.1Pro content): {isContentLoading ? "⏳" : platformContent ? "✅" : "⏸"}</div>
+                      <div>5. hasPlatformDashboard: {String(Boolean(platformDashboard))} / hasPlatformContent: {String(Boolean(platformContent))}</div>
                       <div>6. 继续追问: {askPlatformFollowUpMutation.isSuccess ? "已返回" : askPlatformFollowUpMutation.isPending ? "进行中" : "未开始"}</div>
                     </div>
                   </div>
@@ -1901,6 +2045,23 @@ export default function PlatformPage() {
             <div className="grid gap-4">
               <ReportGeneratorPanel supervisorAccess={supervisorAccess} />
             </div>
+            {/* PDF Download — captures current rendered page via Cloud Run Puppeteer */}
+            {hasAnalyzed && (
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleDownloadPlatformPdf}
+                  disabled={isDownloadingPdf || isDashboardLoading || isContentLoading}
+                  className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isDownloadingPdf ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />生成 PDF 中...</>
+                  ) : (
+                    <><FileText className="h-4 w-4" />下载平台分析 PDF</>
+                  )}
+                </button>
+              </div>
+            )}
           </section>
         ) : null}
       </div>
