@@ -363,12 +363,6 @@ export default function PlatformPage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
-  // QA file attachment state — uploads to GCS via /api/platform/upload before job dispatch
-  const [qaFileUri, setQaFileUri] = useState<string | null>(null);
-  const [qaFileMimeType, setQaFileMimeType] = useState<string>("");
-  const [qaFileName, setQaFileName] = useState<string>("");
-  const [isUploadingQaFile, setIsUploadingQaFile] = useState(false);
-  const qaFileInputRef = useRef<HTMLInputElement>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rotatingCardIndex, setRotatingCardIndex] = useState(0);
   // Separate state for dashboard — populated by the second call after snapshot loads
