@@ -2355,6 +2355,7 @@ export const appRouter = router({
             const stage1Response = await invokeLLM({
               provider: "vertex",
               modelName: "gemini-3.1-pro-preview",
+              response_format: { type: "json_object" },
               messages: [
                 { role: "system", content: stage1SystemInstruction },
                 {
