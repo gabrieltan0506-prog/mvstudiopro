@@ -1337,13 +1337,23 @@ export default function PlatformPage() {
                     开始平台分析
                   </button>
                   <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-[#c8bfe7]">
-                    分析模型：Gemini 2.5 Pro
+                    分析模型：Gemini 3.1 Pro Preview
                   </div>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
                       当前窗口：近 {selectedWindowDays} 天
                     </div>
                   ) : null}
+                  {hasAnalyzed && !isDashboardLoading && !isContentLoading && (
+                    <button
+                      type="button"
+                      onClick={handleDownloadPlatformPdf}
+                      disabled={isDownloadingPdf}
+                      className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/30 bg-[rgba(73,230,255,0.08)] px-4 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[rgba(73,230,255,0.15)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isDownloadingPdf ? <><Loader2 className="h-3 w-3 animate-spin" />生成中...</> : <><FileText className="h-3 w-3" />下载 PDF</>}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1481,15 +1491,33 @@ export default function PlatformPage() {
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤</div>
-                  <div className="mt-3 space-y-2 text-xs leading-6 text-[#d7d0ef]">
-                    <div>1. getGrowthSnapshot: {growthSnapshotQuery.isFetched ? `已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "进行中" : "未开始"}</div>
-                    <div>2. hasAnyLiveCollection: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")}</div>
-                    <div>3. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
-                    <div>4. [Job Queue] 分析 Job ID: {analysisJobId || "未创建"} / 轮询状态: {isDashboardLoading ? "✅ 轮询中 (每3秒)" : platformDashboard ? "✅ 已完成" : "⏸ 等待"}</div>
-                    <div>4a. Stage 1 (Gemini 2.5 Pro — Dashboard): {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? `✅ 成功 — ${(dashboardDebug as any)?.jobId ? "job:" + (dashboardDebug as any).jobId : "已渲染"}` : dashboardDebug?.error ? `❌ 失败: ${dashboardDebug.error}` : "⏸ 等待"}</div>
-                    <div>4b. Stage 2 (Vertex 3.1 Pro Preview — Content): {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功 — contentBlueprints已渲染" : "⏸ 等待Stage1"}</div>
-                    <div>5. [Job Queue] QA Job ID: {qaJobId || "未创建"} / {askPlatformFollowUpMutation.isPending ? "⏳ fallback同步中" : qaJobId ? "✅ job已派发" : "⏸ 等待"}</div>
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤 · 模型使用明细</div>
+                  <div className="mt-3 space-y-1 text-xs leading-6 text-[#d7d0ef]">
+                    <div className="text-[#8cefff] font-semibold">── Call 1: 快照 ──</div>
+                    <div>1. 模型: gemini-2.5-pro (getGrowthSnapshot — 同步 tRPC query)</div>
+                    <div>1a. 状态: {growthSnapshotQuery.isFetched ? `✅ 已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "⏳ 进行中" : "⏸ 未开始"}</div>
+                    <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
+                    <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Job Queue 派发 ──</div>
+                    <div>2. 派发时间: {analysisJobId ? (dashboardDebug as any)?.dispatchedAt || "已派发" : "未派发"}</div>
+                    <div>2a. Job ID: <span className="font-mono text-[#ffdd44]">{analysisJobId || "未创建"}</span></div>
+                    <div>2b. 轮询: {isDashboardLoading ? "✅ 每 3 秒 GET /api/jobs/:id" : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: Dashboard ──</div>
+                    <div>3. 模型: gemini-2.5-pro (buildPlatformDashboard, provider: gemini)</div>
+                    <div>3a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : dashboardDebug?.error ? `❌ ${dashboardDebug.error}` : "⏸ 等待"}</div>
+                    <div>3b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
+                    <div>3c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: Premium Content ──</div>
+                    <div>4. 模型: gemini-3.1-pro-preview (invokeLLM, provider: vertex)</div>
+                    <div>4a. system instruction: 内容结构分析师 + 情绪弧线 + 商业逻辑拆解</div>
+                    <div>4b. maxTokens: 无限制 (SDK 默认)</div>
+                    <div>4c. 状态: {isContentLoading ? "⏳ 运行中 (依赖Stage1输出)" : platformContent ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
+                    <div>4d. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
+                    <div>4e. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
+                    <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
+                    <div>5. 模型: gemini-3.1-pro-preview (provider: vertex, 同 Stage 2)</div>
+                    <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
+                    <div>5b. 状态: {askPlatformFollowUpMutation.isPending ? "⏳ fallback 同步中" : qaJobId ? "✅ job 已派发，轮询每 3 秒" : "⏸ 等待提问"}</div>
                   </div>
                 </div>
                 <div className="rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">

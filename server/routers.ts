@@ -487,10 +487,9 @@ async function buildPlatformDashboard(params: {
     : "";
 
   const response = await invokeLLM({
-    model: "pro",
-    provider: "gemini",
-    modelName: "gemini-2.5-pro",
-    maxTokens: 8192,
+    // Upgraded to Vertex 3.1 Pro Preview for richer dashboard analysis
+    provider: "vertex",
+    modelName: "gemini-3.1-pro-preview",
     messages: [
       {
         role: "system",
@@ -757,10 +756,9 @@ async function buildPlatformContent(params: {
     : "";
 
   const response = await invokeLLM({
-    model: "pro",
-    provider: "gemini",
-    modelName: "gemini-2.5-pro",
-    maxTokens: 8192,
+    // Upgraded to Vertex 3.1 Pro Preview for premium content generation
+    provider: "vertex",
+    modelName: "gemini-3.1-pro-preview",
     messages: [
       {
         role: "system",
@@ -2209,9 +2207,9 @@ export const appRouter = router({
         }
         try {
           const response = await invokeLLM({
-            model: "pro",
-            provider: "gemini",
-            modelName: "gemini-2.5-pro",
+            // Vertex 3.1 Pro Preview for platform follow-up QA
+            provider: "vertex",
+            modelName: "gemini-3.1-pro-preview",
             messages: [
               {
                 role: "system",
@@ -2384,7 +2382,6 @@ export const appRouter = router({
               const stage2Response = await invokeLLM({
                 provider: "vertex",
                 modelName: "gemini-3.1-pro-preview",
-                maxTokens: 4096,
                 messages: [
                   {
                     role: "system",
@@ -2468,10 +2465,10 @@ export const appRouter = router({
         setImmediate(async () => {
           try {
             // Use Vertex gemini-3.1-pro-preview for QA — same provider as premium remix
+            // No maxTokens limit — allow SDK default to prevent truncation
             const qaResponse = await invokeLLM({
               provider: "vertex",
               modelName: "gemini-3.1-pro-preview",
-              maxTokens: 4096,
               messages: [
                 {
                   role: "system",
