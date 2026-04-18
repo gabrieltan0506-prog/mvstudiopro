@@ -4308,7 +4308,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
               messages: [
                 {
                   role: "system",
-                  content: `你是一位專業的視頻導演。用戶對之前生成的分鏡腳本不滿意，提供了修改意見。請根據用戶的反饋，重新改寫整個分鏡腳本。
+                  content: `你是一位专业的视频导演。用户对之前生成的分镜脚本不满意，提供了修改意见。请根据用户的反馈，重新改写整个分镜脚本。
 
 要求：
 1. 保持原有的場景數量（${input.originalStoryboard.scenes.length} 個場景）

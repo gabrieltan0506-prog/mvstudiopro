@@ -476,6 +476,14 @@ export default function PlatformPage() {
   const qaPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [analysisPollCount, setAnalysisPollCount] = useState(0);
   const [analysisJobStatus, setAnalysisJobStatus] = useState<string>("idle");
+  // QA file attachment state
+  const [qaFileUri, setQaFileUri] = useState<string | null>(null);
+  const [qaFileMimeType, setQaFileMimeType] = useState<string>("");
+  const [qaFileName, setQaFileName] = useState<string>("");
+  const [isUploadingQaFile, setIsUploadingQaFile] = useState(false);
+  const [qaUploadStatus, setQaUploadStatus] = useState<"idle" | "success" | "error">("idle");
+  const [isQaLoading, setIsQaLoading] = useState(false);
+  const qaFileInputRef = useRef<HTMLInputElement>(null);
 
   // Cleanup polling intervals on unmount
   useEffect(() => {
@@ -544,11 +552,13 @@ export default function PlatformPage() {
         if (job.status === "succeeded") {
           clearInterval(qaPollingRef.current!);
           qaPollingRef.current = null;
+          setIsQaLoading(false);
           const output = job.output as any;
           if (output?.result) setAskResult(output.result);
         } else if (job.status === "failed") {
           clearInterval(qaPollingRef.current!);
           qaPollingRef.current = null;
+          setIsQaLoading(false);
           toast.error(`追问任务失败: ${job.error || "未知错误"}`);
         }
       } catch {
@@ -556,6 +566,7 @@ export default function PlatformPage() {
         if (transientFailures >= 5) {
           clearInterval(qaPollingRef.current!);
           qaPollingRef.current = null;
+          setIsQaLoading(false);
           toast.error("轮询追问任务时出错，请重试");
         }
       }
@@ -1178,6 +1189,7 @@ export default function PlatformPage() {
 
   const handleUploadQaFile = useCallback(async (file: File) => {
     setIsUploadingQaFile(true);
+    setQaUploadStatus("idle");
     setQaFileUri(null);
     setQaFileMimeType("");
     setQaFileName("");
@@ -1197,8 +1209,10 @@ export default function PlatformPage() {
       setQaFileUri(data.fileUri);
       setQaFileMimeType(data.mimeType);
       setQaFileName(file.name);
-      toast.success(`已上传 ${file.name}`);
+      setQaUploadStatus("success");
+      toast.success(`✅ 已上传 ${file.name}`);
     } catch (err: any) {
+      setQaUploadStatus("error");
       toast.error(err.message || "文件上传失败");
     } finally {
       setIsUploadingQaFile(false);
@@ -1216,6 +1230,7 @@ export default function PlatformPage() {
       return;
     }
     setQuestion(finalQuestion);
+    setIsQaLoading(true);
     // Dispatch async QA Job — Vertex 3.1 Pro Preview answers in background
     // If a file was uploaded, pass fileUri + fileMimeType for multimodal analysis
     try {
@@ -2084,18 +2099,30 @@ export default function PlatformPage() {
                         type="button"
                         onClick={() => qaFileInputRef.current?.click()}
                         disabled={isUploadingQaFile}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-[#c8bfe7] transition hover:bg-white/10 disabled:opacity-50"
+                        className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs transition disabled:opacity-50 ${
+                          qaUploadStatus === "success"
+                            ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
+                            : qaUploadStatus === "error"
+                              ? "border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
+                              : "border-white/10 bg-white/5 text-[#c8bfe7] hover:bg-white/10"
+                        }`}
                       >
-                        {isUploadingQaFile ? <Loader2 className="h-3 w-3 animate-spin" /> : <Image className="h-3 w-3" />}
-                        上传参考图片/PDF
+                        {isUploadingQaFile
+                          ? <><Loader2 className="h-3 w-3 animate-spin" />上传中...</>
+                          : qaUploadStatus === "success"
+                            ? <><FileText className="h-3 w-3" />✅ 已上传</>
+                            : qaUploadStatus === "error"
+                              ? <><Image className="h-3 w-3" />❌ 上传失败，重试</>
+                              : <><Image className="h-3 w-3" />上传参考图片/PDF（可选）</>
+                        }
                       </button>
-                      {qaFileName && (
-                        <span className="flex items-center gap-1 text-xs text-[#8cefff]">
+                      {qaFileName && qaUploadStatus === "success" && (
+                        <span className="flex items-center gap-1 text-xs text-emerald-300">
                           <FileText className="h-3 w-3" />
                           {qaFileName}
                           <button
                             type="button"
-                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); }}
+                            onClick={() => { setQaFileUri(null); setQaFileMimeType(""); setQaFileName(""); setQaUploadStatus("idle"); }}
                             className="ml-1 text-white/40 hover:text-white/70"
                           >×</button>
                         </span>
@@ -2105,11 +2132,11 @@ export default function PlatformPage() {
                   <button
                     type="button"
                     onClick={() => void handleAsk()}
-                    disabled={askPlatformFollowUpMutation.isPending || isUploadingQaFile}
+                    disabled={isQaLoading || isUploadingQaFile}
                     className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#14d6ff,#5f6bff)] px-5 py-4 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {askPlatformFollowUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    {qaFileUri ? "多模态追问" : "继续追问"}
+                    {isQaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                    {isQaLoading ? "AI 思考中..." : qaFileUri ? "多模态追问" : "继续追问"}
                   </button>
                 </div>
 
