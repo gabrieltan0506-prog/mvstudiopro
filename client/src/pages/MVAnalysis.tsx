@@ -66,6 +66,12 @@ type AnalysisResult = {
   impact: number;
   viralPotential: number;
   explosiveIndex?: number;
+  platformScores?: {
+    xiaohongshu?: number;
+    douyin?: number;
+    bilibili?: number;
+    kuaishou?: number;
+  };
   realityCheck?: string;
   reverseEngineering?: {
     hookStrategy?: string;
@@ -78,6 +84,18 @@ type AnalysisResult = {
       title: string;
       contentBrief: string;
     }>;
+  };
+  growthStrategy?: {
+    gapAnalysis?: string;
+    commercialMatrix?: string;
+  };
+  remixExecution?: {
+    hookLibrary?: string[];
+    emotionalPacing?: string;
+    visualPaletteAndScript?: string;
+    productMatrix?: string;
+    shootingGuidance?: string;
+    xiaohongshuLayout?: string;
   };
   visualSummary?: string;
   openingFrameAssessment?: string;
@@ -1588,6 +1606,7 @@ export default function MVAnalysisPage() {
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
   const [fileName, setFileName] = useState("");
@@ -1654,6 +1673,7 @@ export default function MVAnalysisPage() {
         platforms: [],
         summary: "",
         explosiveIndex: 0,
+        platformScores: { xiaohongshu: 0, douyin: 0, bilibili: 0, kuaishou: 0 },
         realityCheck: "",
         reverseEngineering: {
           hookStrategy: "",
@@ -1663,6 +1683,15 @@ export default function MVAnalysisPage() {
         premiumContent: {
           summary: "",
           topics: [],
+        },
+        growthStrategy: { gapAnalysis: "", commercialMatrix: "" },
+        remixExecution: {
+          hookLibrary: [],
+          emotionalPacing: "",
+          visualPaletteAndScript: "",
+          productMatrix: "",
+          shootingGuidance: "",
+          xiaohongshuLayout: "",
         },
       },
     },
@@ -2008,6 +2037,7 @@ export default function MVAnalysisPage() {
                     fileName,
                     context: context || undefined,
                     modelName: "gemini-2.5-pro",
+                    mode: analysisMode,
                   },
                 },
               });
@@ -3001,6 +3031,28 @@ export default function MVAnalysisPage() {
             </div>
 
             <div className="rounded-[28px] border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
+              <div className="mb-5 rounded-[22px] border border-white/10 bg-white/[0.04] p-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[
+                    { value: "GROWTH" as const, label: "商业成长营", desc: "保留全局分析，强化商业路径与增长判断" },
+                    { value: "REMIX" as const, label: "爆款拆解二创", desc: "聚焦钩子、情绪曲线、分镜和复刻执行" },
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => setAnalysisMode(item.value)}
+                      className={`rounded-[18px] px-4 py-3 text-left transition ${
+                        analysisMode === item.value
+                          ? "border border-[#ffcf92]/30 bg-[#ff8a3d]/18 text-white shadow-[0_0_28px_rgba(255,138,61,0.12)]"
+                          : "border border-transparent bg-black/10 text-white/58 hover:bg-white/6"
+                      }`}
+                    >
+                      <div className="text-sm font-bold">{item.label}</div>
+                      <div className="mt-1 text-xs leading-5 text-white/55">{item.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
               {!selectedFile ? (
                 <button
                   onClick={handleSelectFile}
@@ -3527,34 +3579,50 @@ export default function MVAnalysisPage() {
                   <HotTopicWindowPanel analysis={analysis} />
                 )}
 
-                {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length) ? (
+                {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length || analysis.growthStrategy || analysis.remixExecution) ? (
                   <>
                     <div className="grid gap-6 lg:grid-cols-[0.34fr_0.66fr]">
                       <div className="rounded-[28px] border border-[#ffb454]/25 bg-[#141d32] p-6">
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">爆款指数</div>
-                        <div className="mt-3 text-5xl font-black text-[#ffd08f]">{Math.max(0, Math.min(100, Math.round(Number(analysis.explosiveIndex || 0))))}</div>
-                        <div className="mt-4 text-sm leading-7 text-white/72">这是基于第一阶段大盘判断与第二阶段战略拆解给出的综合爆发预测，不代表内容一定会赢，只代表它有没有被放大的资格。</div>
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffcf92]">1-10分爆款指数</div>
+                        <div className="mt-3 text-5xl font-black text-[#ffd08f]">{Math.max(0, Math.min(10, Math.round(Number(analysis.explosiveIndex || 0))))}</div>
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-white/72">
+                          {[
+                            ["小红书", analysis.platformScores?.xiaohongshu],
+                            ["抖音", analysis.platformScores?.douyin],
+                            ["B站", analysis.platformScores?.bilibili],
+                            ["快手", analysis.platformScores?.kuaishou],
+                          ].map(([label, score]) => (
+                            <div key={String(label)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                              <div className="text-white/45">{label}</div>
+                              <div className="mt-1 text-lg font-black text-[#ffd08f]">{Math.max(0, Math.min(10, Math.round(Number(score || 0))))}</div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                       <div className="rounded-[28px] border border-[#ff7f7f]/20 bg-[#1a1726] p-6">
-                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffb3b3]">战略架构师评语</div>
+                        <div className="text-xs uppercase tracking-[0.16em] text-[#ffb3b3]">首席战略师点评</div>
                         <div className="mt-3 text-base leading-8 text-white">{replaceTerms(analysis.realityCheck || "当前还没有足够清晰的现实查验结论。")}</div>
                       </div>
                     </div>
 
-                    <div className="grid gap-6 xl:grid-cols-2">
+                    {analysisMode === "GROWTH" ? (
                       <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
                         <div className="flex items-center gap-3 text-[#90c4ff]">
                           <Compass className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">战略拆解</h2>
+                          <h2 className="text-2xl font-bold">商业战略拆解</h2>
                         </div>
-                        <div className="mt-5 space-y-4">
+                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
                           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">钩子策略</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.reverseEngineering?.hookStrategy || "暂无钩子策略。")}</div>
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">竞品漏网之鱼</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.growthStrategy?.gapAnalysis || analysis.reverseEngineering?.hookStrategy || "暂无竞品缺口分析。")}</div>
                           </div>
                           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪弧线</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.reverseEngineering?.emotionalArc || "暂无情绪弧线。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">商业转化矩阵</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.growthStrategy?.commercialMatrix || analysis.reverseEngineering?.commercialLogic || "暂无商业矩阵。")}</div>
                           </div>
                           <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">商业逻辑</div>
@@ -3562,17 +3630,45 @@ export default function MVAnalysisPage() {
                           </div>
                         </div>
                       </div>
-
+                    ) : (
                       <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                         <div className="flex items-center gap-3 text-[#f5b7ff]">
                           <Sparkles className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">实战二创</h2>
+                          <h2 className="text-2xl font-bold">实战爆款二创</h2>
                         </div>
+                        {(analysis.remixExecution?.hookLibrary || []).length ? (
+                          <div className="mt-5 grid gap-3 md:grid-cols-3">
+                            {(analysis.remixExecution?.hookLibrary || []).map((hook, index) => (
+                              <div key={`${hook}-${index}`} className="rounded-2xl border border-[#f5b7ff]/15 bg-black/20 p-4 text-sm leading-7 text-white/82">
+                                <div className="mb-2 text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">黄金钩子 {index + 1}</div>
+                                {replaceTerms(hook)}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                         {analysis.premiumContent?.summary ? (
                           <div className="mt-5 rounded-2xl border border-[#f5b7ff]/15 bg-[rgba(245,183,255,0.06)] p-4 text-sm leading-7 text-white/82">
                             {replaceTerms(analysis.premiumContent.summary)}
                           </div>
                         ) : null}
+                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪控制曲线</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.emotionalPacing || "暂无情绪控制曲线。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">视觉与分镜方案</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.visualPaletteAndScript || "暂无视觉与分镜方案。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">产品矩阵设计</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.productMatrix || "暂无产品矩阵设计。")}</div>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">小红书图文布局</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.xiaohongshuLayout || "暂无小红书图文布局。")}</div>
+                          </div>
+                        </div>
                         <div className="mt-5 space-y-4">
                           {(analysis.premiumContent?.topics || []).map((topic, index) => (
                             <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -3582,7 +3678,7 @@ export default function MVAnalysisPage() {
                           ))}
                         </div>
                       </div>
-                    </div>
+                    )}
                   </>
                 ) : null}
 

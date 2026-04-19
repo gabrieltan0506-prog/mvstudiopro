@@ -484,9 +484,13 @@ async function toGeminiContents(messages: Message[]) {
 function getGeminiConfig(format: ReturnType<typeof normalizeResponseFormat>) {
   if (!format) return {};
   if (format.type === "json_object" || format.type === "json_schema") {
-    return {
+    const config: Record<string, unknown> = {
       responseMimeType: "application/json",
     };
+    if (format.type === "json_schema") {
+      config.responseSchema = format.json_schema.schema;
+    }
+    return config;
   }
   return {};
 }
@@ -514,6 +518,7 @@ function readStringEnv(name: string): string | undefined {
 function buildGeminiGenerationConfig(
   modelName: string,
   format: ReturnType<typeof normalizeResponseFormat>,
+  maxOutputTokens?: number,
   temperature?: number,
   topP?: number,
 ) {
@@ -554,7 +559,7 @@ async function invokeGemini(params: InvokeParams & { model?: ModelTier }, target
       contents,
       config: {
         ...(systemInstruction ? { systemInstruction } : {}),
-        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, params.temperature, params.topP),
+        ...buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, undefined, params.temperature, params.topP),
       },
     }),
   );
@@ -605,7 +610,7 @@ async function invokeVertex(params: InvokeParams & { model?: ModelTier }, target
     body: JSON.stringify({
       ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
       contents,
-      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, params.temperature, params.topP),
+      generationConfig: buildGeminiGenerationConfig(target.modelName, normalizedResponseFormat, undefined, params.temperature, params.topP),
     }),
   });
 

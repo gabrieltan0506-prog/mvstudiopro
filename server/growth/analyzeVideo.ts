@@ -99,9 +99,12 @@ type VisualFirstPass = {
 
 type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "explosiveIndex"
+  | "platformScores"
   | "realityCheck"
   | "reverseEngineering"
   | "premiumContent"
+  | "growthStrategy"
+  | "remixExecution"
   | "summary"
   | "strengths"
   | "improvements"
@@ -121,6 +124,7 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
 
 const GROWTH_CAMP_FIRST_PASS_MODEL = "gemini-2.5-pro";
 const GROWTH_CAMP_STRATEGIST_MODEL = "gemini-3.1-pro-preview";
+type GrowthAnalysisMode = "GROWTH" | "REMIX";
 
 class VideoAnalysisFailure extends Error {
   failureStage: VideoFailureStage;
@@ -501,7 +505,77 @@ async function runAudioFirstPass(params: {
         ],
       },
     ],
-    response_format: { type: "json_object" },
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "growth_camp_strategist_output",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            explosiveIndex: { type: "number", description: "1-10的综合爆款指数" },
+            platformScores: {
+              type: "object",
+              description: "仅限小红书、抖音、B站、快手，给出1-10分。绝对不可包含视频号",
+              properties: {
+                xiaohongshu: { type: "number" },
+                douyin: { type: "number" },
+                bilibili: { type: "number" },
+                kuaishou: { type: "number" },
+              },
+              required: ["xiaohongshu", "douyin", "bilibili", "kuaishou"],
+            },
+            realityCheck: { type: "string", description: "犀利冷酷的现实查验点评" },
+            reverseEngineering: {
+              type: "object",
+              properties: {
+                hookStrategy: { type: "string" },
+                emotionalArc: { type: "string" },
+                commercialLogic: { type: "string" },
+              },
+              required: ["hookStrategy", "emotionalArc", "commercialLogic"],
+            },
+            premiumContent: {
+              type: "object",
+              properties: {
+                summary: { type: "string" },
+                topics: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      contentBrief: { type: "string", description: "超详细脚本，包含秒数、画面、口播与情绪" },
+                    },
+                    required: ["title", "contentBrief"],
+                  },
+                },
+              },
+              required: ["topics"],
+            },
+            growthStrategy: {
+              type: "object",
+              properties: {
+                gapAnalysis: { type: "string" },
+                commercialMatrix: { type: "string", description: "短视频/中长视频/图文笔记的转化埋点" },
+              },
+            },
+            remixExecution: {
+              type: "object",
+              properties: {
+                hookLibrary: { type: "array", items: { type: "string" } },
+                emotionalPacing: { type: "string" },
+                visualPaletteAndScript: { type: "string" },
+                productMatrix: { type: "string" },
+                shootingGuidance: { type: "string" },
+                xiaohongshuLayout: { type: "string" },
+              },
+            },
+          },
+          required: ["explosiveIndex", "platformScores", "realityCheck", "reverseEngineering", "premiumContent"],
+        },
+      },
+    },
   });
 
   const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
@@ -623,7 +697,13 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
     lighting: 72,
     impact: 82,
     viralPotential: isCommercial ? 84 : 78,
-    explosiveIndex: isCommercial ? 82 : 74,
+    explosiveIndex: isCommercial ? 8 : 7,
+    platformScores: {
+      xiaohongshu: isCommercial ? 8 : 7,
+      douyin: isCommercial ? 7 : 6,
+      bilibili: isCommercial ? 8 : 7,
+      kuaishou: isCommercial ? 6 : 6,
+    },
     realityCheck: "当前内容有基础，但还没有强到可以靠自嗨拿结果。先把钩子、证据和商业承接三件事做实，再谈放大。",
     reverseEngineering: {
       hookStrategy: "先把结果或最扎心的问题丢到前两秒，不要先铺背景。",
@@ -642,6 +722,22 @@ function buildFallbackVideoAnalysis(summary: string, context: string) {
           contentBrief: "中段用柔和主光加侧逆光拍动作示范，镜头跟随人物完成一个动作闭环，字幕只保留最关键的一句结果解释。",
         },
       ],
+    },
+    growthStrategy: {
+      gapAnalysis: "竞品常见问题是只讲观点不讲证据、只做情绪不做承接。你的机会在于把结果证据和用户场景讲清楚。",
+      commercialMatrix: "短视频负责首发钩子，中长视频承接完整案例，图文笔记沉淀清单与购买理由，最后导向私信、预约或服务页。",
+    },
+    remixExecution: {
+      hookLibrary: [
+        "你以为你缺的是努力，其实你缺的是一个能被看懂的开头。",
+        "这条视频如果前 3 秒不改，后面讲得再好也没人等。",
+        "真正能成交的内容，第一句话就让用户知道和自己有关。",
+      ],
+      emotionalPacing: "前 3 秒制造问题感，10 秒内给出反差，中段补证据和动作，结尾给一个明确的行动出口。",
+      visualPaletteAndScript: "用低饱和背景、干净主光和近景人物开场；每 5-8 秒切一次证据或动作画面；口播围绕问题、证据、结果推进。",
+      productMatrix: "把内容拆成免费认知、低门槛资料、深度服务三层，不要一上来直接卖高价方案。",
+      shootingGuidance: "短视频先拍一个强钩子和结果镜头；中长视频补完整故事、案例、方法；图文笔记用封面、清单和对比图承接搜索流量。",
+      xiaohongshuLayout: "封面写结果和人群，正文先给痛点，再给三条方法，最后用评论区关键词或私信动作承接。",
     },
     visualSummary: "已完成关键帧抽取，但当前只保留保守视觉结论，建议重点看开头抓力、人物信任感和结果画面是否明确。",
     openingFrameAssessment: "开头最好在 2 秒内直接出现人物状态、痛点或结果，不要只给环境铺垫。",
@@ -685,6 +781,12 @@ function normalizePremiumTopics(value: unknown) {
 }
 
 function buildLegacyFieldsFromStrategist(parsed: any) {
+  const platformScores = {
+    xiaohongshu: Number(parsed?.platformScores?.xiaohongshu || 0),
+    douyin: Number(parsed?.platformScores?.douyin || 0),
+    bilibili: Number(parsed?.platformScores?.bilibili || 0),
+    kuaishou: Number(parsed?.platformScores?.kuaishou || 0),
+  };
   const reverseEngineering = {
     hookStrategy: String(parsed?.reverseEngineering?.hookStrategy || ""),
     emotionalArc: String(parsed?.reverseEngineering?.emotionalArc || ""),
@@ -692,18 +794,36 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
   };
   const premiumTopics = normalizePremiumTopics(parsed?.premiumContent?.topics);
   const premiumSummary = String(parsed?.premiumContent?.summary || "");
+  const growthStrategy = {
+    gapAnalysis: String(parsed?.growthStrategy?.gapAnalysis || ""),
+    commercialMatrix: String(parsed?.growthStrategy?.commercialMatrix || ""),
+  };
+  const remixExecution = {
+    hookLibrary: Array.isArray(parsed?.remixExecution?.hookLibrary)
+      ? parsed.remixExecution.hookLibrary.map(String)
+      : [],
+    emotionalPacing: String(parsed?.remixExecution?.emotionalPacing || ""),
+    visualPaletteAndScript: String(parsed?.remixExecution?.visualPaletteAndScript || ""),
+    productMatrix: String(parsed?.remixExecution?.productMatrix || ""),
+    shootingGuidance: String(parsed?.remixExecution?.shootingGuidance || ""),
+    xiaohongshuLayout: String(parsed?.remixExecution?.xiaohongshuLayout || ""),
+  };
 
   return {
     explosiveIndex: Number(parsed?.explosiveIndex || 0),
+    platformScores,
     realityCheck: String(parsed?.realityCheck || ""),
     reverseEngineering,
     premiumContent: {
       summary: premiumSummary,
       topics: premiumTopics,
     },
+    growthStrategy,
+    remixExecution,
     summary: String(
       parsed?.summary
       || parsed?.realityCheck
+      || growthStrategy.gapAnalysis
       || reverseEngineering.commercialLogic
       || premiumSummary
       || "",
@@ -745,6 +865,7 @@ async function runDeepDivePass(params: {
   context?: string;
   fileName?: string;
   videoGcsUri: string;
+  mode: GrowthAnalysisMode;
 }) {
   const response = await invokeLLM({
     model: "pro",
@@ -755,79 +876,20 @@ async function runDeepDivePass(params: {
     messages: [
       {
         role: "system",
-        content: `你是【首席 IP 战略架构师】。你的唯一任务是同时完成两件事：
-1. 基于第一阶段 2.5 Pro 的音频与视觉初扫，做冷酷的商业逻辑逆向拆解。
-2. 基于同一份证据，产出可以直接进入二创执行的情绪脚本方向。
+        content: `你是一位隐身于顶级网红与商业巨头背后的首席 IP 战略架构师。你精通行为经济学与传播心理学，眼中没有『内容』，只有『流量路径』与『转化效率』。
 
-绝对规则：
-1. 你必须先吸收第一阶段的音频结论、视觉结论、关键帧和转写，再输出最终判断。
-2. 你必须判断用户是否在自嗨。如果内容只是在表达自己、没有清晰结果、没有明确人群、没有成交路径，要直接指出。
-3. 你必须在同一次输出里，同时给出商业战略与二创内容，不允许拆成两个方向。
-4. premiumContent.topics[*].contentBrief 必须写清楚人物、镜头、灯光、场景和情绪，不要写成空话。
-5. 所有输出必须严格合法 JSON。
+当前分析模式：${params.mode === "REMIX" ? "爆款拆解二创" : "商业成长营"}。
 
-只返回 JSON：
-{
-  "composition": number,
-  "color": number,
-  "lighting": number,
-  "impact": number,
-  "viralPotential": number,
-  "explosiveIndex": number,
-  "realityCheck": "string",
-  "reverseEngineering": {
-    "hookStrategy": "string",
-    "emotionalArc": "string",
-    "commercialLogic": "string"
-  },
-  "premiumContent": {
-    "summary": "string",
-    "topics": [
-      {
-        "title": "string",
-        "contentBrief": "string"
-      }
-    ]
-  },
-  "visualSummary": "string",
-  "openingFrameAssessment": "string",
-  "sceneConsistency": "string",
-  "languageExpression": "string",
-  "emotionalExpression": "string",
-  "cameraEmotionTension": "string",
-  "bgmAnalysis": "string",
-  "musicRecommendation": "string",
-  "sunoPrompt": "string",
-  "trustSignals": ["string"],
-  "visualRisks": ["string"],
-  "keyFrames": [
-    { "timestamp": "00:08", "whatShows": "string", "commercialUse": "string", "issue": "string", "fix": "string" }
-  ],
-  "strengths": ["string"],
-  "improvements": ["string"],
-  "platforms": ["string"],
-  "summary": "string",
-  "titleSuggestions": ["string"],
-  "creatorCenterSignals": ["string"],
-  "timestampSuggestions": [
-    { "timestamp": "00:19", "issue": "string", "fix": "string", "opportunity": "string" }
-  ],
-  "weakFrameReferences": [
-    { "timestamp": "00:08", "reason": "string", "fix": "string" }
-  ],
-  "commercialAngles": [
-    {
-      "title": "string",
-      "scenario": "string",
-      "whyItFits": "string",
-      "brands": ["string"],
-      "execution": "string",
-      "hook": "string",
-      "veoPrompt": "string"
-    }
-  ],
-  "followUpPrompt": "string"
-}`,
+请执行以下核心任务并严格输出 JSON：
+1. 爆款预判：结合 2.5 Pro 第一阶段音频与视觉数据、15 天大盘趋势和平台活动推流加成，冷酷评估视频是否在自嗨，给出 1-10 的综合爆款指数 explosiveIndex 与犀利现实查验 realityCheck。
+2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出视频号、头条、微信或其他平台。
+3. 战略拆解：拆解视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering。
+4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
+5. 若为 REMIX 模式：重点输出黄金三秒钩子库、情绪控制曲线、视觉调色盘与分镜复刻、产品矩阵设计、短/中长视频拍摄指导、小红书图文布局。
+6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题，contentBrief 必须包含秒数、画面、口播、灯光、场景与情绪，不要写空话。
+7. 同时保留原有成长营报告字段，避免前端旧板块缺数据。
+
+拒绝废话，给予极具商业杀伤力的干货。所有文字使用简体中文。`,
       },
       {
         role: "user",
@@ -947,6 +1009,7 @@ export async function analyzeVideo(params: {
   fileName?: string;
   context?: string;
   modelName?: string;
+  mode?: GrowthAnalysisMode;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
@@ -1082,6 +1145,7 @@ export async function analyzeVideo(params: {
         context: params.context,
         fileName: params.fileName,
         videoGcsUri,
+        mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
       }));
 
       const strategistRefinement = null;

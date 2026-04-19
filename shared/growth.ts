@@ -19,6 +19,17 @@ export const growthCampModelValues = [
 export const growthCampModelSchema = z.enum(growthCampModelValues);
 export type GrowthCampModel = z.infer<typeof growthCampModelSchema>;
 
+export const growthAnalysisModeValues = ["GROWTH", "REMIX"] as const;
+export const growthAnalysisModeSchema = z.enum(growthAnalysisModeValues);
+export type GrowthAnalysisMode = z.infer<typeof growthAnalysisModeSchema>;
+
+export const growthPlatformScoresSchema = z.object({
+  xiaohongshu: z.number().default(0),
+  douyin: z.number().default(0),
+  bilibili: z.number().default(0),
+  kuaishou: z.number().default(0),
+});
+
 export const growthReverseEngineeringSchema = z.object({
   hookStrategy: z.string().default(""),
   emotionalArc: z.string().default(""),
@@ -35,6 +46,20 @@ export const growthPremiumContentSchema = z.object({
   topics: z.array(growthPremiumContentTopicSchema).default([]),
 });
 
+export const growthStrategySchema = z.object({
+  gapAnalysis: z.string().default(""),
+  commercialMatrix: z.string().default(""),
+});
+
+export const growthRemixExecutionSchema = z.object({
+  hookLibrary: z.array(z.string()).default([]),
+  emotionalPacing: z.string().default(""),
+  visualPaletteAndScript: z.string().default(""),
+  productMatrix: z.string().default(""),
+  shootingGuidance: z.string().default(""),
+  xiaohongshuLayout: z.string().default(""),
+});
+
 export const growthAnalysisScoresSchema = z.object({
   composition: z.number(),
   color: z.number(),
@@ -42,6 +67,7 @@ export const growthAnalysisScoresSchema = z.object({
   impact: z.number(),
   viralPotential: z.number(),
   explosiveIndex: z.number().default(0),
+  platformScores: growthPlatformScoresSchema.optional(),
   realityCheck: z.string().default(""),
   reverseEngineering: growthReverseEngineeringSchema.default({
     hookStrategy: "",
@@ -52,6 +78,8 @@ export const growthAnalysisScoresSchema = z.object({
     summary: "",
     topics: [],
   }),
+  growthStrategy: growthStrategySchema.optional(),
+  remixExecution: growthRemixExecutionSchema.optional(),
   visualSummary: z.string().default(""),
   openingFrameAssessment: z.string().default(""),
   sceneConsistency: z.string().default(""),
