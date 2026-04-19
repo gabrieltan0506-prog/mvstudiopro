@@ -516,7 +516,7 @@ async function runAudioFirstPass(params: {
             explosiveIndex: { type: "number", description: "1-10的综合爆款指数" },
             platformScores: {
               type: "object",
-              description: "仅限小红书、抖音、B站、快手，给出1-10分。绝对不可包含视频号",
+              description: "仅限小红书、抖音、B站、快手，给出1-10分。绝对不可包含任何其他未授权平台",
               properties: {
                 xiaohongshu: { type: "number" },
                 douyin: { type: "number" },
@@ -806,6 +806,14 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     visualPaletteAndScript: String(parsed?.remixExecution?.visualPaletteAndScript || ""),
     productMatrix: String(parsed?.remixExecution?.productMatrix || ""),
     shootingGuidance: String(parsed?.remixExecution?.shootingGuidance || ""),
+    shootingBlueprint: String(parsed?.remixExecution?.shootingBlueprint || parsed?.remixExecution?.shootingGuidance || ""),
+    imageTextNoteGuide: {
+      coverSetup: String(parsed?.remixExecution?.imageTextNoteGuide?.coverSetup || ""),
+      titleOptions: Array.isArray(parsed?.remixExecution?.imageTextNoteGuide?.titleOptions)
+        ? parsed.remixExecution.imageTextNoteGuide.titleOptions.map(String)
+        : [],
+      structuredBody: String(parsed?.remixExecution?.imageTextNoteGuide?.structuredBody || ""),
+    },
     xiaohongshuLayout: String(parsed?.remixExecution?.xiaohongshuLayout || ""),
   };
 
@@ -882,11 +890,13 @@ async function runDeepDivePass(params: {
 
 请执行以下核心任务并严格输出 JSON：
 1. 爆款预判：结合 2.5 Pro 第一阶段音频与视觉数据、15 天大盘趋势和平台活动推流加成，冷酷评估视频是否在自嗨，给出 1-10 的综合爆款指数 explosiveIndex 与犀利现实查验 realityCheck。
-2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出视频号、头条、微信或其他平台。
+2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出头条、微信或任何其他未授权平台。
 3. 战略拆解：拆解视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering。
 4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
 5. 若为 REMIX 模式：重点输出黄金三秒钩子库、情绪控制曲线、视觉调色盘与分镜复刻、产品矩阵设计、短/中长视频拍摄指导、小红书图文布局。
-6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题，contentBrief 必须包含秒数、画面、口播、灯光、场景与情绪，不要写空话。
+   在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
+   同时输出小红书图文笔记攻略，必须包含封面拍摄布置、3组爆款标题、带 Emoji 的结构化正文，以及图文笔记每一页该拍什么、怎么构图、文字压在哪里。商业矩阵要写清短视频与中长视频的拍摄差异化指导。
+6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题，contentBrief 必须包含详细文案、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播、灯光、场景与情绪，不要写空话。
 7. 同时保留原有成长营报告字段，避免前端旧板块缺数据。
 
 拒绝废话，给予极具商业杀伤力的干货。所有文字使用简体中文。`,
@@ -935,7 +945,7 @@ async function runDeepDivePass(params: {
             explosiveIndex: { type: "number", description: "综合爆款指数 1-10" },
             platformScores: {
               type: "object",
-              description: "仅限小红书、抖音、B站、快手，给出 1-10 分。绝对不可包含视频号",
+              description: "仅限小红书、抖音、B站、快手，给出 1-10 分。绝对不可包含任何其他未授权平台",
               properties: {
                 xiaohongshu: { type: "number" },
                 douyin: { type: "number" },
@@ -964,7 +974,7 @@ async function runDeepDivePass(params: {
                     type: "object",
                     properties: {
                       title: { type: "string" },
-                      contentBrief: { type: "string", description: "超详细脚本，包含秒数、画面、口播与情绪" },
+                      contentBrief: { type: "string", description: "超详细脚本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
                     },
                     required: ["title", "contentBrief"],
                   },
@@ -987,8 +997,36 @@ async function runDeepDivePass(params: {
                 visualPaletteAndScript: { type: "string" },
                 productMatrix: { type: "string" },
                 shootingGuidance: { type: "string" },
+                shootingBlueprint: {
+                  type: "string",
+                  description: "导演级拍摄落地指南，必须包含具体的机位景别、灯光色温、收音设备与剪辑节奏建议",
+                },
+                imageTextNoteGuide: {
+                  type: "object",
+                  description: "小红书图文笔记攻略",
+                  properties: {
+                    coverSetup: { type: "string", description: "封面拍摄布置，包含视觉焦点、构图和关键词遮罩位置" },
+                    titleOptions: {
+                      type: "array",
+                      description: "3组爆款标题，必须使用简体中文",
+                      items: { type: "string" },
+                    },
+                    structuredBody: { type: "string", description: "带 Emoji 的结构化正文，包含分段节奏、每页图文笔记拍摄方法、配图顺序和行动引导" },
+                  },
+                  required: ["coverSetup", "titleOptions", "structuredBody"],
+                },
                 xiaohongshuLayout: { type: "string" },
               },
+              required: [
+                "hookLibrary",
+                "emotionalPacing",
+                "visualPaletteAndScript",
+                "productMatrix",
+                "shootingGuidance",
+                "shootingBlueprint",
+                "imageTextNoteGuide",
+                "xiaohongshuLayout",
+              ],
             },
             summary: { type: "string" },
             strengths: { type: "array", items: { type: "string" } },
