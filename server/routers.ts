@@ -55,6 +55,7 @@ import {
 } from "./jobs/repository";
 import {
   growthAssetAdaptationSchema,
+  growthAnalysisModeSchema,
   growthPlatformValues,
   growthAnalysisScoresSchema,
   growthBusinessInsightSchema,
@@ -1673,6 +1674,7 @@ export const appRouter = router({
         fileName: z.string().optional(),
         context: z.string().optional(),
         modelName: growthCampModelSchema.optional(),
+        mode: growthAnalysisModeSchema.default("GROWTH"),
       }))
       .mutation(async ({ input }) => {
         const result = await analyzeDocument(input);

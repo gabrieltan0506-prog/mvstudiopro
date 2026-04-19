@@ -220,6 +220,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
       fileName: typeof params.fileName === "string" ? params.fileName : undefined,
       context: typeof params.context === "string" ? params.context : undefined,
       modelName: typeof params.modelName === "string" ? params.modelName : undefined,
+      mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
     });
 
     return {
