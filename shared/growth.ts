@@ -57,6 +57,16 @@ export const growthRemixExecutionSchema = z.object({
   visualPaletteAndScript: z.string().default(""),
   productMatrix: z.string().default(""),
   shootingGuidance: z.string().default(""),
+  shootingBlueprint: z.string().default(""),
+  imageTextNoteGuide: z.object({
+    coverSetup: z.string().default(""),
+    titleOptions: z.array(z.string()).default([]),
+    structuredBody: z.string().default(""),
+  }).default({
+    coverSetup: "",
+    titleOptions: [],
+    structuredBody: "",
+  }),
   xiaohongshuLayout: z.string().default(""),
 });
 

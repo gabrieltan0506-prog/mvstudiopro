@@ -59,6 +59,7 @@ function Router() {
         <Route path={"/analysis"} component={GrowthCampPage} />
         <Route path={"/viral"} component={GrowthCampPage} />
         <Route path={"/creator-growth-camp"} component={GrowthCampPage} />
+        <Route path={"/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/premium-remix"} component={PremiumRemixPage} />
         <Route path={"/idol"} component={VirtualIdol} />

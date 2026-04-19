@@ -95,6 +95,12 @@ type AnalysisResult = {
     visualPaletteAndScript?: string;
     productMatrix?: string;
     shootingGuidance?: string;
+    shootingBlueprint?: string;
+    imageTextNoteGuide?: {
+      coverSetup?: string;
+      titleOptions?: string[];
+      structuredBody?: string;
+    };
     xiaohongshuLayout?: string;
   };
   visualSummary?: string;
@@ -1319,275 +1325,19 @@ const PANEL_SECTION_LINKS: Record<string, string[]> = {
   execution: ["execution", "content"],
 };
 
-function HotTopicWindowPanel({ analysis }: { analysis: any }) {
-  const PLATFORM_STYLES: Record<string, { label: string; color: string; bg: string; ring: string; bar: string; icon: string }> = {
-    douyin:      { label: "抖音", color: "#FF4466", bg: "from-[#FF4466]/20 to-[#FF4466]/5", ring: "ring-[#FF4466]/40", bar: "bg-[#FF4466]", icon: "🎵" },
-    xiaohongshu: { label: "小红书", color: "#FF6B8A", bg: "from-[#FF6B8A]/20 to-[#FF6B8A]/5", ring: "ring-[#FF6B8A]/40", bar: "bg-[#FF6B8A]", icon: "📕" },
-    bilibili:    { label: "B站", color: "#23ADE5", bg: "from-[#23ADE5]/20 to-[#23ADE5]/5", ring: "ring-[#23ADE5]/40", bar: "bg-[#23ADE5]", icon: "📺" },
-    kuaishou:    { label: "快手", color: "#FFBD00", bg: "from-[#FFBD00]/20 to-[#FFBD00]/5", ring: "ring-[#FFBD00]/40", bar: "bg-[#FFBD00]", icon: "⚡" },
-  };
-
-  const RANK_STYLES = [
-    { label: "🥇", text: "text-[#FFD700]", bg: "bg-[#FFD700]/20" },
-    { label: "🥈", text: "text-[#C0C0C0]", bg: "bg-[#C0C0C0]/20" },
-    { label: "🥉", text: "text-[#CD7F32]", bg: "bg-[#CD7F32]/20" },
-  ];
-
-  const [windowDays, setWindowDays] = React.useState(15);
-  const [activePlatform, setActivePlatform] = React.useState("all");
-  const panelRef = React.useRef<HTMLDivElement>(null);
-
-  const hotTopicsQuery = (trpc as any).mvAnalysis.getHotTopicsByWindow.useQuery(
-    { windowDays, platforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"] },
-    { staleTime: 120_000, refetchOnWindowFocus: false, retry: false },
-  );
-
-  const allPlatformData: Array<{ platform: string; platformLabel: string; hotTopics: any[]; itemCount: number }> =
-    hotTopicsQuery.data?.platforms || [];
-
-  const filteredData = activePlatform === "all"
-    ? allPlatformData
-    : allPlatformData.filter((p) => p.platform === activePlatform);
-
-  const maxScore = Math.max(
-    1,
-    ...filteredData.flatMap((p) => p.hotTopics.map((t: any) => t.score || 0)),
-  );
-
-  // Cloud Run PDF download — proxied via Fly.io → pdf-worker microservice
-  const [isDownloadingPdf, setIsDownloadingPdf] = React.useState(false);
-  const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
-    onSuccess: (result) => {
-      setIsDownloadingPdf(false);
-      if (!result.pdfBase64) return;
-      try {
-        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = `mvstudio-analysis-${Date.now()}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-      } catch (err) {
-        alert("PDF 生成成功，但下载时出错，请重试。");
-        console.error("[downloadPdf] decode error:", err);
-      }
-    },
-    onError: (err) => {
-      setIsDownloadingPdf(false);
-      alert(`PDF 下载失败：${err.message}`);
-    },
-  });
-
-  const handleDownloadAnalysisPdf = () => {
-    const clone = document.documentElement.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("script").forEach((n) => n.remove());
-    const base = document.createElement("base");
-    base.href = window.location.origin + "/";
-    clone.querySelector("head")?.prepend(base);
-    // HotTopicWindowPanel does not have supervisorAccess/user in scope.
-    // Use hasSupervisorAccess() module-level helper instead.
-    const token = hasSupervisorAccess() ? "supervisor" : undefined;
-    setIsDownloadingPdf(true);
-    downloadPdfMutation.mutate({ html: "<!DOCTYPE html>" + clone.outerHTML, token });
-  };
-
-  const fmtNum = (n: number) => n >= 10000 ? `${(n / 10000).toFixed(1)}万` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+function PlatformTrendEntryPanel() {
+  const [, setLocation] = useLocation();
 
   return (
-    <div
-      ref={panelRef}
-      className="mb-8 overflow-hidden rounded-[28px] border border-[#ff8a3d]/30 bg-gradient-to-br from-[#2d1400] via-[#1a0900] to-[#0f0500] shadow-[0_18px_56px_rgba(255,100,0,0.18)]"
-    >
-      {/* ── Header ── */}
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#ff8a3d]/20 px-8 py-6">
-        <div className="flex items-center gap-4">
-          <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#ff8a3d] to-[#ff4400] shadow-[0_0_24px_rgba(255,138,61,0.5)]">
-            <TrendingUp className="h-6 w-6 text-white" />
-            <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#ff4400] text-[9px] font-bold text-white shadow">热</span>
-          </div>
-          <div>
-            <h3 className="bg-gradient-to-r from-[#ffcf92] to-[#ff8a3d] bg-clip-text text-2xl font-extrabold text-transparent">
-              内容热点选择器
-            </h3>
-            <p className="mt-0.5 text-xs text-[#ff8a3d]/70">选择时间窗口，实时查看各平台热点话题排行与热度分布</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Window selector */}
-          <div className="flex items-center gap-1 rounded-2xl border border-[#ff8a3d]/25 bg-black/40 p-1.5 backdrop-blur">
-            {[7, 15, 30].map((days) => (
-              <button
-                key={days}
-                type="button"
-                onClick={() => setWindowDays(days)}
-                className={`rounded-xl px-4 py-2 text-sm font-bold transition-all duration-200 ${
-                  windowDays === days
-                    ? "bg-gradient-to-r from-[#ff8a3d] to-[#ff4400] text-white shadow-[0_0_12px_rgba(255,138,61,0.5)]"
-                    : "text-[#ff8a3d]/60 hover:text-[#ffcf92]"
-                }`}
-              >
-                {days}天
-              </button>
-            ))}
-          </div>
-          {/* Download PDF via Cloud Run microservice */}
-          <button
-            type="button"
-            onClick={handleDownloadAnalysisPdf}
-            disabled={isDownloadingPdf}
-            className="flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-5 py-2.5 text-sm font-semibold text-[#8cefff] backdrop-blur transition-all hover:bg-[#49e6ff]/20 hover:shadow-[0_0_16px_rgba(73,230,255,0.3)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isDownloadingPdf ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                生成 PDF 中...
-              </>
-            ) : (
-              <>
-                <Download className="h-4 w-4" />
-                下载 PDF
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Platform Tabs ── */}
-      <div className="flex items-center gap-2 overflow-x-auto border-b border-[#ff8a3d]/10 px-8 py-4">
-        <button
-          type="button"
-          onClick={() => setActivePlatform("all")}
-          className={`shrink-0 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${
-            activePlatform === "all"
-              ? "bg-white/10 text-white ring-1 ring-white/20"
-              : "text-white/40 hover:text-white/70"
-          }`}
-        >
-          🌐 全部平台
-        </button>
-        {Object.entries(PLATFORM_STYLES).map(([key, style]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setActivePlatform(key)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold transition-all ${
-              activePlatform === key
-                ? `bg-gradient-to-r ${style.bg} text-white ring-1 ${style.ring}`
-                : "text-white/40 hover:text-white/70"
-            }`}
-          >
-            <span>{style.icon}</span>
-            {style.label}
-          </button>
-        ))}
-        {hotTopicsQuery.isFetching && (
-          <Loader2 className="ml-auto h-4 w-4 animate-spin text-[#ff8a3d]/60" />
-        )}
-      </div>
-
-      {/* ── Stats Summary Bar ── */}
-      {!hotTopicsQuery.isLoading && allPlatformData.length > 0 && (
-        <div className="flex flex-wrap gap-4 border-b border-[#ff8a3d]/10 px-8 py-4">
-          {allPlatformData.map((p) => {
-            const style = PLATFORM_STYLES[p.platform] || { label: p.platformLabel, color: "#aaa", bg: "from-white/10 to-white/5", bar: "bg-white/30", icon: "📌" };
-            return (
-              <div key={p.platform} className={`flex items-center gap-3 rounded-xl bg-gradient-to-r ${style.bg} px-4 py-2.5`}>
-                <span className="text-lg">{style.icon}</span>
-                <div>
-                  <div className="text-xs text-white/50">{style.label}</div>
-                  <div className="text-sm font-bold" style={{ color: style.color }}>
-                    {p.hotTopics.length} 条热点
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Content Grid ── */}
-      <div className="p-8">
-        {hotTopicsQuery.isLoading ? (
-          <div className="flex h-48 flex-col items-center justify-center gap-4">
-            <div className="relative">
-              <div className="h-16 w-16 animate-spin rounded-full border-4 border-[#ff8a3d]/20 border-t-[#ff8a3d]" />
-              <TrendingUp className="absolute inset-0 m-auto h-6 w-6 text-[#ff8a3d]" />
-            </div>
-            <p className="text-sm text-[#ff8a3d]/70">正在加载 {windowDays} 天内热点数据…</p>
-          </div>
-        ) : filteredData.length === 0 || filteredData.every((p) => p.hotTopics.length === 0) ? (
-          <div className="flex h-48 items-center justify-center rounded-2xl border border-white/5 bg-black/20 text-sm text-white/40">
-            当前 {windowDays} 天内暂无足够的平台采集样本，请稍后重试
-          </div>
-        ) : (
-          <div className={`grid gap-6 ${filteredData.length === 1 ? "md:grid-cols-1" : filteredData.length === 2 ? "md:grid-cols-2" : "md:grid-cols-2 xl:grid-cols-4"}`}>
-            {filteredData.map((platform) => {
-              const style = PLATFORM_STYLES[platform.platform] || { label: platform.platformLabel, color: "#aaa", bg: "from-white/10 to-white/5", bar: "bg-white/30", icon: "📌", ring: "ring-white/20" };
-              const platformMax = Math.max(1, ...platform.hotTopics.map((t: any) => t.score || 1));
-              return (
-                <div
-                  key={platform.platform}
-                  className={`rounded-2xl border bg-gradient-to-b ${style.bg} p-5 ring-1 ${style.ring} shadow-[0_8px_32px_rgba(0,0,0,0.3)]`}
-                  style={{ borderColor: `${style.color}22` }}
-                >
-                  {/* Platform Header */}
-                  <div className="mb-5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl">{style.icon}</span>
-                      <span className="text-base font-extrabold" style={{ color: style.color }}>{style.label}</span>
-                    </div>
-                    <div className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ backgroundColor: `${style.color}22`, color: style.color }}>
-                      近 {windowDays} 天
-                    </div>
-                  </div>
-
-                  {/* Topics List */}
-                  <div className="space-y-3">
-                    {platform.hotTopics.length === 0 ? (
-                      <div className="py-6 text-center text-xs text-white/40">暂无采集数据</div>
-                    ) : (
-                      platform.hotTopics.map((topic: any, ti: number) => {
-                        const pct = Math.max(4, Math.round((topic.score / platformMax) * 100));
-                        const rank = RANK_STYLES[ti] || null;
-                        return (
-                          <div key={ti} className="group">
-                            <div className="mb-1.5 flex items-center gap-2">
-                              {rank ? (
-                                <span className={`${rank.bg} ${rank.text} flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-sm`}>
-                                  {rank.label}
-                                </span>
-                              ) : (
-                                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/5 text-xs font-bold text-white/40">
-                                  {ti + 1}
-                                </span>
-                              )}
-                              <span className="flex-1 truncate text-sm leading-snug text-[#f7f4ef]">{topic.title}</span>
-                              {topic.likes > 0 && (
-                                <span className="shrink-0 text-xs text-white/40">{fmtNum(topic.likes)} 赞</span>
-                              )}
-                            </div>
-                            {/* Heat bar */}
-                            <div className="ml-8 h-1.5 overflow-hidden rounded-full bg-white/5">
-                              <div
-                                className={`h-full rounded-full ${style.bar} transition-all duration-700`}
-                                style={{ width: `${pct}%`, opacity: 0.7 + (ti === 0 ? 0.3 : ti === 1 ? 0.2 : 0.1) }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+    <div className="mb-8 flex justify-end">
+      <button
+        type="button"
+        onClick={() => setLocation('/platform')}
+        className="inline-flex items-center justify-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110"
+      >
+        <TrendingUp className="h-4 w-4" />
+        平台趋势数据分析
+      </button>
     </div>
   );
 }
@@ -1711,6 +1461,12 @@ export default function MVAnalysisPage() {
           visualPaletteAndScript: "",
           productMatrix: "",
           shootingGuidance: "",
+          shootingBlueprint: "",
+          imageTextNoteGuide: {
+            coverSetup: "",
+            titleOptions: [],
+            structuredBody: "",
+          },
           xiaohongshuLayout: "",
         },
       },
@@ -3546,10 +3302,8 @@ export default function MVAnalysisPage() {
           <section className="mt-8 space-y-6">
             {showPremiumReport ? (
               <div className="space-y-6">
-        
-                {/* === 15天内热点选择器 (Standalone Panel) === */}
                 {showPremiumReport && (
-                  <HotTopicWindowPanel analysis={analysis} />
+                  <PlatformTrendEntryPanel />
                 )}
 
                 {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length || analysis.growthStrategy || analysis.remixExecution) ? (
@@ -3633,13 +3387,39 @@ export default function MVAnalysisPage() {
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">视觉与分镜方案</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.visualPaletteAndScript || "暂无视觉与分镜方案。")}</div>
                           </div>
+                          <div className="rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.06)] p-4 lg:col-span-2">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">导演级拍摄执行蓝图</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">
+                              {replaceTerms(
+                                analysis.remixExecution?.shootingBlueprint
+                                || analysis.remixExecution?.shootingGuidance
+                                || "暂无导演级拍摄执行蓝图。",
+                              )}
+                            </div>
+                          </div>
                           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">产品矩阵设计</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.productMatrix || "暂无产品矩阵设计。")}</div>
                           </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">小红书图文布局</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.xiaohongshuLayout || "暂无小红书图文布局。")}</div>
+                          <div className="rounded-2xl border border-[#ff6b8a]/15 bg-[rgba(255,107,138,0.06)] p-4">
+                            <div className="text-xs uppercase tracking-[0.16em] text-[#ffb3c2]">小红书图文创作指南</div>
+                            <div className="mt-3 space-y-3 text-sm leading-7 text-white/78">
+                              <div>{replaceTerms(analysis.remixExecution?.imageTextNoteGuide?.coverSetup || analysis.remixExecution?.xiaohongshuLayout || "暂无封面拍摄布置。")}</div>
+                              {(analysis.remixExecution?.imageTextNoteGuide?.titleOptions || []).length ? (
+                                <div className="space-y-2">
+                                  {(analysis.remixExecution?.imageTextNoteGuide?.titleOptions || []).map((title, index) => (
+                                    <div key={`${title}-${index}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/82">
+                                      {index + 1}. {replaceTerms(title)}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {analysis.remixExecution?.imageTextNoteGuide?.structuredBody ? (
+                                <div className="whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+                                  {replaceTerms(analysis.remixExecution.imageTextNoteGuide.structuredBody)}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         </div>
                         <div className="mt-5 space-y-4">
