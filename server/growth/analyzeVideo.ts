@@ -666,145 +666,7 @@ async function runVisualFirstPass(params: {
         ],
       },
     ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "growth_camp_strategist_output",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            composition: { type: "number" },
-            color: { type: "number" },
-            lighting: { type: "number" },
-            impact: { type: "number" },
-            viralPotential: { type: "number" },
-            explosiveIndex: { type: "number" },
-            platformScores: {
-              type: "object",
-              properties: {
-                xiaohongshu: { type: "number" },
-                douyin: { type: "number" },
-                bilibili: { type: "number" },
-                kuaishou: { type: "number" },
-              },
-              required: ["xiaohongshu", "douyin", "bilibili", "kuaishou"],
-            },
-            realityCheck: { type: "string" },
-            reverseEngineering: {
-              type: "object",
-              properties: {
-                hookStrategy: { type: "string" },
-                emotionalArc: { type: "string" },
-                commercialLogic: { type: "string" },
-              },
-              required: ["hookStrategy", "emotionalArc", "commercialLogic"],
-            },
-            premiumContent: {
-              type: "object",
-              properties: {
-                summary: { type: "string" },
-                topics: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      title: { type: "string" },
-                      contentBrief: { type: "string" },
-                    },
-                    required: ["title", "contentBrief"],
-                  },
-                },
-              },
-              required: ["topics"],
-            },
-            growthStrategy: {
-              type: "object",
-              properties: {
-                gapAnalysis: { type: "string" },
-                commercialMatrix: { type: "string" },
-              },
-            },
-            remixExecution: {
-              type: "object",
-              properties: {
-                hookLibrary: { type: "array", items: { type: "string" } },
-                emotionalPacing: { type: "string" },
-                visualPaletteAndScript: { type: "string" },
-                productMatrix: { type: "string" },
-                shootingGuidance: { type: "string" },
-                xiaohongshuLayout: { type: "string" },
-              },
-            },
-            summary: { type: "string" },
-            strengths: { type: "array", items: { type: "string" } },
-            improvements: { type: "array", items: { type: "string" } },
-            languageExpression: { type: "string" },
-            emotionalExpression: { type: "string" },
-            cameraEmotionTension: { type: "string" },
-            bgmAnalysis: { type: "string" },
-            musicRecommendation: { type: "string" },
-            sunoPrompt: { type: "string" },
-            titleSuggestions: { type: "array", items: { type: "string" } },
-            creatorCenterSignals: { type: "array", items: { type: "string" } },
-            timestampSuggestions: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  timestamp: { type: "string" },
-                  issue: { type: "string" },
-                  fix: { type: "string" },
-                  opportunity: { type: "string" },
-                },
-                required: ["timestamp", "issue", "fix"],
-              },
-            },
-            weakFrameReferences: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  timestamp: { type: "string" },
-                  reason: { type: "string" },
-                  fix: { type: "string" },
-                },
-                required: ["timestamp", "reason", "fix"],
-              },
-            },
-            commercialAngles: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  scenario: { type: "string" },
-                  whyItFits: { type: "string" },
-                  brands: { type: "array", items: { type: "string" } },
-                  execution: { type: "string" },
-                  hook: { type: "string" },
-                  veoPrompt: { type: "string" },
-                },
-                required: ["title", "scenario", "whyItFits", "brands", "execution", "hook"],
-              },
-            },
-            followUpPrompt: { type: "string" },
-          },
-          required: [
-            "composition",
-            "color",
-            "lighting",
-            "impact",
-            "viralPotential",
-            "explosiveIndex",
-            "platformScores",
-            "realityCheck",
-            "reverseEngineering",
-            "premiumContent",
-          ],
-        },
-      },
-    },
+    response_format: { type: "json_object" },
   });
 
   const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
@@ -1057,7 +919,146 @@ async function runDeepDivePass(params: {
         ],
       },
     ],
-    response_format: { type: "json_object" },
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "growth_camp_strategist_output",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            composition: { type: "number", description: "画面构图评分 0-100" },
+            color: { type: "number", description: "色彩搭配评分 0-100" },
+            lighting: { type: "number", description: "灯光评分 0-100" },
+            impact: { type: "number", description: "视觉冲击力评分 0-100" },
+            viralPotential: { type: "number", description: "传播潜力评分 0-100" },
+            explosiveIndex: { type: "number", description: "综合爆款指数 1-10" },
+            platformScores: {
+              type: "object",
+              description: "仅限小红书、抖音、B站、快手，给出 1-10 分。绝对不可包含视频号",
+              properties: {
+                xiaohongshu: { type: "number" },
+                douyin: { type: "number" },
+                bilibili: { type: "number" },
+                kuaishou: { type: "number" },
+              },
+              required: ["xiaohongshu", "douyin", "bilibili", "kuaishou"],
+            },
+            realityCheck: { type: "string", description: "犀利冷酷的现实查验点评" },
+            reverseEngineering: {
+              type: "object",
+              properties: {
+                hookStrategy: { type: "string" },
+                emotionalArc: { type: "string" },
+                commercialLogic: { type: "string" },
+              },
+              required: ["hookStrategy", "emotionalArc", "commercialLogic"],
+            },
+            premiumContent: {
+              type: "object",
+              properties: {
+                summary: { type: "string" },
+                topics: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      contentBrief: { type: "string", description: "超详细脚本，包含秒数、画面、口播与情绪" },
+                    },
+                    required: ["title", "contentBrief"],
+                  },
+                },
+              },
+              required: ["topics"],
+            },
+            growthStrategy: {
+              type: "object",
+              properties: {
+                gapAnalysis: { type: "string" },
+                commercialMatrix: { type: "string", description: "短视频/中长视频/图文笔记的转化埋点" },
+              },
+            },
+            remixExecution: {
+              type: "object",
+              properties: {
+                hookLibrary: { type: "array", items: { type: "string" } },
+                emotionalPacing: { type: "string" },
+                visualPaletteAndScript: { type: "string" },
+                productMatrix: { type: "string" },
+                shootingGuidance: { type: "string" },
+                xiaohongshuLayout: { type: "string" },
+              },
+            },
+            summary: { type: "string" },
+            strengths: { type: "array", items: { type: "string" } },
+            improvements: { type: "array", items: { type: "string" } },
+            languageExpression: { type: "string" },
+            emotionalExpression: { type: "string" },
+            cameraEmotionTension: { type: "string" },
+            bgmAnalysis: { type: "string" },
+            musicRecommendation: { type: "string" },
+            sunoPrompt: { type: "string" },
+            titleSuggestions: { type: "array", items: { type: "string" } },
+            creatorCenterSignals: { type: "array", items: { type: "string" } },
+            timestampSuggestions: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  timestamp: { type: "string" },
+                  issue: { type: "string" },
+                  fix: { type: "string" },
+                  opportunity: { type: "string" },
+                },
+                required: ["timestamp", "issue", "fix"],
+              },
+            },
+            weakFrameReferences: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  timestamp: { type: "string" },
+                  reason: { type: "string" },
+                  fix: { type: "string" },
+                },
+                required: ["timestamp", "reason", "fix"],
+              },
+            },
+            commercialAngles: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  scenario: { type: "string" },
+                  whyItFits: { type: "string" },
+                  brands: { type: "array", items: { type: "string" } },
+                  execution: { type: "string" },
+                  hook: { type: "string" },
+                  veoPrompt: { type: "string" },
+                },
+                required: ["title", "scenario", "whyItFits", "brands", "execution", "hook"],
+              },
+            },
+            followUpPrompt: { type: "string" },
+          },
+          required: [
+            "composition",
+            "color",
+            "lighting",
+            "impact",
+            "viralPotential",
+            "explosiveIndex",
+            "platformScores",
+            "realityCheck",
+            "reverseEngineering",
+            "premiumContent",
+          ],
+        },
+      },
+    },
   });
 
   const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
