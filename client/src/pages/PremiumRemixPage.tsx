@@ -2318,9 +2318,28 @@ export default function PremiumRemixPage() {
       },
       premiumContent: {
         summary: analysis.premiumContent?.summary || "",
-        topics: (analysis.premiumContent?.topics || []).map((item: { title?: string; contentBrief?: string }) => ({
+        topics: (analysis.premiumContent?.topics || []).map((item: {
+          title?: string;
+          formatType?: "VIDEO" | "IMAGE_TEXT";
+          businessInsight?: string;
+          contentBrief?: string;
+          directorExecution?: {
+            storyboard?: string[];
+            lighting?: string;
+            blocking?: string;
+            emotionalTension?: string;
+          };
+        }) => ({
           title: item.title || "",
+          formatType: item.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" as const : "VIDEO" as const,
+          businessInsight: item.businessInsight || "",
           contentBrief: item.contentBrief || "",
+          directorExecution: {
+            storyboard: item.directorExecution?.storyboard || [],
+            lighting: item.directorExecution?.lighting || "",
+            blocking: item.directorExecution?.blocking || "",
+            emotionalTension: item.directorExecution?.emotionalTension || "",
+          },
         })),
       },
       visualSummary: analysis.visualSummary || "",

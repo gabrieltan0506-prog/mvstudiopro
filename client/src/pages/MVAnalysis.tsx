@@ -82,7 +82,15 @@ type AnalysisResult = {
     summary?: string;
     topics?: Array<{
       title: string;
+      formatType?: "VIDEO" | "IMAGE_TEXT";
+      businessInsight?: string;
       contentBrief: string;
+      directorExecution?: {
+        storyboard?: string[];
+        lighting?: string;
+        blocking?: string;
+        emotionalTension?: string;
+      };
     }>;
   };
   growthStrategy?: {
@@ -95,7 +103,19 @@ type AnalysisResult = {
     visualPaletteAndScript?: string;
     productMatrix?: string;
     shootingGuidance?: string;
-    shootingBlueprint?: string;
+    businessInsight?: {
+      video?: string;
+      imageText?: string;
+      monetizationLogic?: string;
+    };
+    shootingBlueprint?: {
+      storyboard?: string[];
+      lighting?: string;
+      blocking?: string;
+      shotSize?: string;
+      emotionalTension?: string;
+      cameraPerformance?: string;
+    };
     imageTextNoteGuide?: {
       coverSetup?: string;
       titleOptions?: string[];
@@ -149,6 +169,41 @@ type AnalysisResult = {
   }>;
   followUpPrompt?: string;
 };
+
+type ShootingBlueprintView = {
+  storyboard: string[];
+  lighting: string;
+  blocking: string;
+  shotSize: string;
+  emotionalTension: string;
+  cameraPerformance: string;
+};
+
+function normalizeShootingBlueprint(
+  value: unknown,
+  fallback = "",
+): ShootingBlueprintView {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const blueprint = value as Partial<ShootingBlueprintView>;
+    return {
+      storyboard: Array.isArray(blueprint.storyboard) ? blueprint.storyboard.filter(Boolean) : [],
+      lighting: blueprint.lighting || "",
+      blocking: blueprint.blocking || "",
+      shotSize: blueprint.shotSize || "",
+      emotionalTension: blueprint.emotionalTension || "",
+      cameraPerformance: blueprint.cameraPerformance || "",
+    };
+  }
+  const text = typeof value === "string" ? value : fallback;
+  return {
+    storyboard: text ? [text] : [],
+    lighting: "",
+    blocking: "",
+    shotSize: "",
+    emotionalTension: "",
+    cameraPerformance: "",
+  };
+}
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
 type InputKind = "document" | "video";
@@ -1500,7 +1555,19 @@ export default function MVAnalysisPage() {
           visualPaletteAndScript: "",
           productMatrix: "",
           shootingGuidance: "",
-          shootingBlueprint: "",
+          businessInsight: {
+            video: "",
+            imageText: "",
+            monetizationLogic: "",
+          },
+          shootingBlueprint: {
+            storyboard: [],
+            lighting: "",
+            blocking: "",
+            shotSize: "",
+            emotionalTension: "",
+            cameraPerformance: "",
+          },
           imageTextNoteGuide: {
             coverSetup: "",
             titleOptions: [],
@@ -3459,12 +3526,29 @@ export default function MVAnalysisPage() {
                             ))}
                           </div>
                         ) : null}
-                        {analysis.premiumContent?.summary ? (
-                          <div className="mt-5 rounded-2xl border border-[#f5b7ff]/15 bg-[rgba(245,183,255,0.06)] p-4 text-sm leading-7 text-white/82">
-                            {replaceTerms(analysis.premiumContent.summary)}
-                          </div>
-                        ) : null}
-                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+	                        {analysis.premiumContent?.summary ? (
+	                          <div className="mt-5 rounded-2xl border border-[#f5b7ff]/15 bg-[rgba(245,183,255,0.06)] p-4 text-sm leading-7 text-white/82">
+	                            {replaceTerms(analysis.premiumContent.summary)}
+	                          </div>
+	                        ) : null}
+	                        {analysis.remixExecution?.businessInsight ? (
+	                          <div className="mt-5 rounded-2xl border border-[#d7ff7f]/15 bg-[rgba(215,255,127,0.06)] p-4">
+	                            <div className="text-xs uppercase tracking-[0.16em] text-[#d7ff7f]">商业洞察分析</div>
+	                            <div className="mt-3 grid gap-3 md:grid-cols-3">
+	                              {([
+	                                ["视频呈现", analysis.remixExecution.businessInsight.video],
+	                                ["图文笔记", analysis.remixExecution.businessInsight.imageText],
+	                                ["变现承接", analysis.remixExecution.businessInsight.monetizationLogic],
+	                              ] as Array<[string, string | undefined]>).filter((item): item is [string, string] => Boolean(item[1])).map(([label, value]) => (
+	                                <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
+	                                  <div className="text-xs font-semibold text-[#d7ff7f]">{label}</div>
+	                                  <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
+	                                </div>
+	                              ))}
+	                            </div>
+	                          </div>
+	                        ) : null}
+	                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
                           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪控制曲线</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.emotionalPacing || "暂无情绪控制曲线。")}</div>
@@ -3473,16 +3557,49 @@ export default function MVAnalysisPage() {
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">视觉与分镜方案</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.visualPaletteAndScript || "暂无视觉与分镜方案。")}</div>
                           </div>
-                          <div className="rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.06)] p-4 lg:col-span-2">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">导演级拍摄执行蓝图</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">
-                              {replaceTerms(
-                                analysis.remixExecution?.shootingBlueprint
-                                || analysis.remixExecution?.shootingGuidance
-                                || "暂无导演级拍摄执行蓝图。",
-                              )}
-                            </div>
-                          </div>
+	                          <div className="rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.06)] p-4 lg:col-span-2">
+	                            <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">导演级拍摄执行蓝图</div>
+	                            {(() => {
+	                              const blueprint = normalizeShootingBlueprint(
+	                                analysis.remixExecution?.shootingBlueprint,
+	                                analysis.remixExecution?.shootingGuidance || "",
+	                              );
+	                              const blueprintCards = ([
+	                                ["灯光布置", blueprint.lighting],
+	                                ["走位调度", blueprint.blocking],
+	                                ["景别设计", blueprint.shotSize],
+	                                ["情绪张力", blueprint.emotionalTension],
+	                                ["镜头表现", blueprint.cameraPerformance],
+	                              ] as Array<[string, string]>).filter((item): item is [string, string] => Boolean(item[1]));
+
+	                              return (
+	                                <div className="mt-3 space-y-4">
+	                                  {blueprint.storyboard.length ? (
+	                                    <ol className="space-y-2 text-sm leading-7 text-white/82">
+	                                      {blueprint.storyboard.map((shot, shotIndex) => (
+	                                        <li key={`${shot}-${shotIndex}`} className="flex gap-3 rounded-xl border border-[#49e6ff]/10 bg-black/20 px-3 py-2">
+	                                          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#49e6ff]/15 text-xs font-bold text-[#8cefff]">{shotIndex + 1}</span>
+	                                          <span>{replaceTerms(shot)}</span>
+	                                        </li>
+	                                      ))}
+	                                    </ol>
+	                                  ) : (
+	                                    <div className="text-sm leading-7 text-white/70">暂无分镜拆解。</div>
+	                                  )}
+	                                  {blueprintCards.length ? (
+	                                    <div className="grid gap-3 md:grid-cols-2">
+	                                      {blueprintCards.map(([label, value]) => (
+	                                        <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
+	                                          <div className="text-xs font-semibold text-[#8cefff]">{label}</div>
+	                                          <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
+	                                        </div>
+	                                      ))}
+	                                    </div>
+	                                  ) : null}
+	                                </div>
+	                              );
+	                            })()}
+	                          </div>
                           <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">产品矩阵设计</div>
                             <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.productMatrix || "暂无产品矩阵设计。")}</div>
@@ -3508,14 +3625,58 @@ export default function MVAnalysisPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="mt-5 space-y-4">
-                          {(analysis.premiumContent?.topics || []).map((topic, index) => (
-                            <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                              <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-                            </div>
-                          ))}
-                        </div>
+	                        <div className="mt-5 space-y-4">
+	                          {(analysis.premiumContent?.topics || []).map((topic, index) => {
+	                            const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
+	                            const directorExecution = topic.directorExecution || {};
+	                            const storyboard = Array.isArray(directorExecution.storyboard)
+	                              ? directorExecution.storyboard.filter(Boolean)
+	                              : [];
+	                            const executionCards = ([
+	                              ["灯光布置", directorExecution.lighting],
+	                              ["走位调度", directorExecution.blocking],
+	                              ["情绪张力", directorExecution.emotionalTension],
+	                            ] as Array<[string, string | undefined]>).filter((item): item is [string, string] => Boolean(item[1]));
+
+	                            return (
+	                              <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
+	                                <div className="flex flex-wrap items-start justify-between gap-3">
+	                                  <div>
+	                                    <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
+	                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+	                                  </div>
+	                                  <span className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
+	                                    {formatType === "IMAGE_TEXT" ? "📝 图文笔记" : "🎥 视频内容"}
+	                                  </span>
+	                                </div>
+	                                <div className="mt-4 rounded-xl border border-[#d7ff7f]/15 bg-[rgba(215,255,127,0.06)] p-3">
+	                                  <div className="text-xs font-semibold text-[#d7ff7f]">商业洞察分析</div>
+	                                  <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.businessInsight || "暂无商业洞察分析。")}</div>
+	                                </div>
+	                                {storyboard.length ? (
+	                                  <ol className="mt-4 space-y-2 text-sm leading-7 text-white/82">
+	                                    {storyboard.map((shot, shotIndex) => (
+	                                      <li key={`${shot}-${shotIndex}`} className="flex gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+	                                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f5b7ff]/15 text-xs font-bold text-[#f5b7ff]">{shotIndex + 1}</span>
+	                                        <span>{replaceTerms(shot)}</span>
+	                                      </li>
+	                                    ))}
+	                                  </ol>
+	                                ) : null}
+	                                {executionCards.length ? (
+	                                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+	                                    {executionCards.map(([label, value]) => (
+	                                      <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
+	                                        <div className="text-xs font-semibold text-white/55">{label}</div>
+	                                        <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
+	                                      </div>
+	                                    ))}
+	                                  </div>
+	                                ) : null}
+	                              </div>
+	                            );
+	                          })}
+	                        </div>
                       </div>
                     )}
                   </>

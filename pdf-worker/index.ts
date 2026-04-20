@@ -51,7 +51,7 @@ app.post("/generate-pdf", async (req, res) => {
     // Scripts were stripped by the frontend so React won't re-render and clear the charts.
     await page.setContent(html, {
       waitUntil: "networkidle0",
-      timeout: 60_000,
+      timeout: 240_000,
     });
 
     // Extra wait for CSS transitions and font loads to fully settle
