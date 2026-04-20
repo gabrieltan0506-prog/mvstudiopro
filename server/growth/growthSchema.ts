@@ -345,7 +345,7 @@ function buildPlatformSignalCluster(collection?: PlatformTrendCollection) {
 }
 
 function inferCarryRule(collection?: PlatformTrendCollection) {
-  if (!collection?.items.length) return "默认承接到单一行动引导，不要同时挂多个转化动作。";
+  if (!collection?.items.length) return "先用单一行动引导验证承接效果，不要同时挂多个转化动作。";
   const avgComments = collection.items.reduce((sum, item) => sum + (item.comments || 0), 0) / Math.max(collection.items.length, 1);
   const avgShares = collection.items.reduce((sum, item) => sum + (item.shares || 0), 0) / Math.max(collection.items.length, 1);
   const avgLikes = collection.items.reduce((sum, item) => sum + (item.likes || 0), 0) / Math.max(collection.items.length, 1);
@@ -2673,6 +2673,7 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
     },
     premiumContent: {
       summary: "样例二创摘要",
+      strategy: "样例二创策略",
       topics: [],
     },
     visualSummary: "样例视觉结论",

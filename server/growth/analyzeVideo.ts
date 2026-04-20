@@ -841,25 +841,25 @@ async function runDeepDivePass(params: {
   const mode = params.mode;
   const businessGoal = (params.context || "未提供").trim() || "未提供";
   const STRATEGIST_PROMPT = `
-你是顶级商业IP操盘手与大师级导演。
-用户背景与商业目标：${businessGoal}
-分析模式：${mode === "REMIX" ? "爆款拆解二创 (REMIX)" : "商业成长营 (GROWTH)"}
+你是頂級商業IP操盤手與大師級導演。
+模式：${mode === 'REMIX' ? '实战爆款二创' : '商业成长营'}
+用戶背景：${businessGoal}
 
-${mode === "REMIX" ? `
-【REMIX 模式绝对禁令与核心任务】
-1. 绝对禁止影评：严禁分析、批评原视频的画面、节奏或提出任何修改建议。原片仅为灵感，用户不关心原片死活。
-2. 强制生成 7 个完整选题：你必须且只能生成 7 个专属于用户的选题。绝不允许在 summary 中一笔带过，7 个选题必须全部在 topics 数组中详细拆解。
-3. 商业深度洞察 (businessInsight 核心要求)：
-   - 必须深入评估该选题适合该用户人设的商业可行性。
-   - 必须明确指出：如何通过该选题【引流】？对应的【变现产品】该如何设计？具体的【转化】建议是什么？
-   - 必须明确标注该选题是适合【视频拍摄】还是【精致优质图文笔记】。
-4. 导演级执行蓝图 (directorExecution)：必须为这 7 个选题分别提供详尽的分镜脚本(storyboard 数组)、灯光、走位与情绪张力指导。
-5. 在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
+【全局硬性限制】
+1. 數據與平台：僅限【抖音、快手、小红书、B站】。嚴禁提及"视频号"。基於 15 天快照數據進行趨勢比對。
+2. 深度要求：解除 Token 限制，發揮最強實力，不准只給摘要，必須給出極度詳細的實操細節。
+
+${mode === 'REMIX' ? `
+【REMIX 实战爆款二创 實作指令】
+1. 嚴格 3 選題：必須且只能生成 3 個核心選題，每個選題必須包含 directorExecution (分鏡、燈光、走位、情緒)。
+2. 商業深度洞察：不是拆解原片！針對這 3 個選題，以顧問角色給出具體的引流品、利潤品及產品轉化建議。
+3. 表达与配乐分析：必须输出 musicAndExpressionAnalysis，根据这 3 个选题生成可落地的 BGM 建议。
 ` : `
-【GROWTH 模式核心任务】
-1. 输出可执行的商业成长路径，不要空话。
-2. 结合第一阶段证据给出平台评分和商业承接建议。
-3. 保留并完整输出原有成长营字段，保证前端板块可渲染。
+【GROWTH 商业成长营 實作指令】
+1. 商业战略拆解 (strategy)：以顶级顾问身份深度分析作者人设。不要只有标题！必须具体设计出转化产品（例如：引流品是什么？利润品是什么？名字、功能与转化路径必须清晰写出）。
+2. 爆款选题分析 (explosiveTopicAnalysis)：新增此栏位，对生成的选题进行大师级综合分析。
+3. 复用二创选题逻辑：生成的 3 个 topics 必须达到视频大师导演级与专业图文编辑水准，必须包含完整分镜 (directorExecution)。
+4. 表达与配乐分析：必须输出 musicAndExpressionAnalysis 栏位。
 `}
 `;
 
@@ -941,11 +941,12 @@ ${mode === "REMIX" ? `
               type: "object",
               properties: {
                 summary: { type: "string" },
+                strategy: { type: "string", description: "顶级顾问级商业战略拆解" },
 	                topics: {
 	                  type: "array",
-	                  minItems: 7,
-	                  maxItems: 7,
-	                  description: "必须恰好输出 7 个实战选题，并逐个做商业深度拆解",
+	                  minItems: 3,
+	                  maxItems: 3,
+	                  description: "必须恰好输出 3 个实战选题，并逐个做商业深度拆解",
 	                  items: {
                     type: "object",
 	                    properties: {
@@ -957,21 +958,21 @@ ${mode === "REMIX" ? `
 	                      },
 		                      businessInsight: {
 		                        type: "string",
-			                        description: "商业深度洞察：必须是现在就能执行的具体版本与商业逻辑，绝对不能是点评原视频；必须深度拆解当前选题的具体实战方案、发布方式、呈现方法、变现逻辑、转化入口与避坑提醒，并包含“执行细节：”和“辅助避坑提醒：”两个小标题",
+			                        description: "引流、产品、转化建议",
 		                      },
 		                      contentBrief: { type: "string", description: "用户现在就能执行的具体版本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
 		                      directorExecution: {
 		                        type: "object",
-		                        description: "导演级实战执行指南，严禁写成整段作文",
+		                        description: "导演级实战执行指南",
 		                        properties: {
 		                          storyboard: {
 		                            type: "array",
 		                            items: { type: "string" },
-		                            description: "分镜拆解，逐条写清镜头顺序、画面内容、动作、时长和剪辑点",
+		                            description: "分镜拆解",
 		                          },
-		                          lighting: { type: "string", description: "灯光布置，包含主光、轮廓光、色温、角度和现场质感" },
-		                          blocking: { type: "string", description: "演员或博主走位，包含站位、动线、手部动作和与产品的关系" },
-		                          emotionalTension: { type: "string", description: "情绪控制指令，包含表情、停顿、语速、冲突推进和收束方式" },
+		                          lighting: { type: "string", description: "灯光布置" },
+		                          blocking: { type: "string", description: "走位调度" },
+		                          emotionalTension: { type: "string", description: "情绪控制" },
 	                        },
 	                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
 	                      },
@@ -979,6 +980,8 @@ ${mode === "REMIX" ? `
 	                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
 	                  },
 	                },
+                explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
+                musicAndExpressionAnalysis: { type: "string", description: "表达与配乐分析" },
               },
               required: ["topics"],
             },
@@ -1335,13 +1338,21 @@ export async function analyzeVideo(params: {
         videoGcsUri,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
       }));
-      if ((params.mode === "REMIX" ? "REMIX" : "GROWTH") === "REMIX") {
+
+      // 实作残留清洗 (Data Wiping)
+      // 如果是二創模式，強迫將所有過往可能殘留的診斷數據洗掉，設為空陣列或空字符串
+      const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+      if (analysisMode === "REMIX") {
         deepDive.keyFrames = [];
         deepDive.visualRisks = [];
         deepDive.strengths = [];
         deepDive.improvements = [];
         deepDive.timestampSuggestions = [];
         deepDive.weakFrameReferences = [];
+        deepDive.openingFrameAssessment = "";
+        deepDive.sceneConsistency = "";
+        deepDive.visualSummary = "";
+        deepDive.trustSignals = [];
       }
 
       const strategistRefinement = null;
