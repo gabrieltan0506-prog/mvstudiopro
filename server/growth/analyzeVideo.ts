@@ -857,11 +857,12 @@ async function runDeepDivePass(params: {
 3. 战略拆解：拆解参考素材可借鉴的视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering，但所有结论必须转成给用户的执行指令。
 4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
 5. 若为 REMIX 模式：进入“实战教练模式”，严禁输出“原片哪里不好”“建议原片怎么改”“原作者应该如何调整”。用户与原片作者毫无关系，你只能输出用户现在可以执行的版本。
-6. REMIX 必须生成恰好 4 个 premiumContent.topics。每个选题必须明确 formatType：VIDEO 表示“视频拍摄”，IMAGE_TEXT 表示“精致优质图文笔记”。不要输出第 5 个，也不要少于 4 个。
-7. 商业深度洞察必须逐个深度拆解这 4 个选题，不能只给标题或概述。每个选题的 businessInsight 必须写成两段，并使用固定小标题：“执行细节：...”和“辅助避坑提醒：...”。执行细节要说明如何拍、如何发、如何呈现、转化入口怎么放；辅助避坑提醒要把参考视频的亮点与缺点转译成用户执行时的操作提醒，例如“参考片此处节奏太慢，你执行时请务必在 3 秒内切换景别，以免流失率高”。
-8. 每个选题的 directorExecution 必须达到大师级导演水准，给出精确 storyboard、lighting、blocking、emotionalTension。storyboard 必须是数组，每条都是可拍摄镜头；lighting 要写清光线动机和色温；blocking 要写清人物、产品和证据物的空间关系；emotionalTension 要写清表演状态、停顿、语速和镜头节奏，不允许写成整段作文。
-9. remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，并明确机位设置、灯光布置、收音建议、剪辑节奏和 B-roll 穿插时机。
-10. 同时保留原有成长营报告字段，避免前端旧板块缺数据。所有文字使用简体中文，严禁长篇堆砌，必须使用分段、列表或小标题。`,
+6. 绝对禁止按时间戳点评原视频，例如“09:49 画面有割裂感”“06:32 镜头不好”“建议原片怎么改”。用户不关心原片死活，严禁输出任何对原视频的修改建议；所有时间点、亮点和缺点都必须转译成用户执行时的实战提醒。
+7. REMIX 必须、且只能生成刚好 4 个专属于用户的二创选题。每个选题必须明确 formatType：VIDEO 表示“视频拍摄”，IMAGE_TEXT 表示“精致优质图文笔记”。不要输出第 5 个，也不要少于 4 个。
+8. 商业深度洞察必须逐个深度拆解这 4 个选题，不能只给标题或概述。每个选题的 businessInsight 必须写成两段，并使用固定小标题：“执行细节：...”和“辅助避坑提醒：...”。执行细节要说明如何拍、如何发、如何呈现、变现逻辑是什么、转化入口怎么放；辅助避坑提醒要把参考视频的亮点与缺点转译成用户执行时的操作提醒，例如“实战避坑：参考视频背景太乱，你拍摄时请务必使用干净的书房背景。”
+9. 每个选题的 directorExecution 必须达到大师级导演水准，给出精确 storyboard、lighting、blocking、emotionalTension。storyboard 必须是数组，每条都是可拍摄镜头；lighting 要写清光线动机和色温；blocking 要写清人物、产品和证据物的空间关系；emotionalTension 要写清表演状态、停顿、语速和镜头节奏，不允许写成整段作文。
+10. remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，并明确机位设置、灯光布置、收音建议、剪辑节奏和 B-roll 穿插时机。
+11. 同时保留原有成长营报告字段，避免前端旧板块缺数据。所有文字使用简体中文，严禁长篇堆砌，必须使用分段、列表或小标题。`,
       },
       {
         role: "user",
@@ -946,7 +947,7 @@ async function runDeepDivePass(params: {
 	                      },
 		                      businessInsight: {
 		                        type: "string",
-		                        description: "商业深度洞察：必须深度拆解当前选题的具体实战方案、发布方式、呈现方法、转化入口与避坑提醒，必须包含“执行细节：”和“辅助避坑提醒：”两个小标题",
+			                        description: "商业深度洞察：必须是现在就能执行的具体版本与商业逻辑，绝对不能是点评原视频；必须深度拆解当前选题的具体实战方案、发布方式、呈现方法、变现逻辑、转化入口与避坑提醒，并包含“执行细节：”和“辅助避坑提醒：”两个小标题",
 		                      },
 		                      contentBrief: { type: "string", description: "用户现在就能执行的具体版本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
 		                      directorExecution: {

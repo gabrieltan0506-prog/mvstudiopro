@@ -24,24 +24,24 @@ import type {
 import {
   ArrowLeft,
   BriefcaseBusiness,
+  Camera,
   CircleDollarSign,
   Compass,
   Download,
   FileUp,
   Film,
-  HeartPulse,
   LayoutDashboard,
-  Lightbulb,
   LineChart as LineChartIcon,
   ListChecks,
   Loader2,
+  Move,
   Music2,
   Orbit,
   Play,
   Rocket,
-  Route,
   ScanSearch,
   Send,
+  Smile,
   Sparkles,
   Target,
   TrendingUp,
@@ -3649,9 +3649,9 @@ export default function MVAnalysisPage() {
 		                              ? directorExecution.storyboard.filter(Boolean)
 		                              : [];
 		                            const executionCards = [
-		                              { label: "灯光布置", value: directorExecution.lighting, Icon: Lightbulb },
-		                              { label: "走位调度", value: directorExecution.blocking, Icon: Route },
-		                              { label: "情绪控制", value: directorExecution.emotionalTension, Icon: HeartPulse },
+			                              { label: "灯光布置", value: directorExecution.lighting, Icon: Camera },
+			                              { label: "走位调度", value: directorExecution.blocking, Icon: Move },
+			                              { label: "情绪控制", value: directorExecution.emotionalTension, Icon: Smile },
 		                            ];
 
 		                            return (
@@ -3662,11 +3662,11 @@ export default function MVAnalysisPage() {
 		                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
 		                                  </div>
 		                                  <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
-		                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致图文" : "🎥 视频拍摄"}
+			                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
 		                                  </div>
 		                                </div>
 		                                <div className="mt-4 grid gap-3 md:grid-cols-2">
-		                                  <div className="rounded-xl border border-[#d7ff7f]/15 bg-[rgba(215,255,127,0.06)] p-3">
+			                                  <div className="rounded-xl border border-[#d7ff7f]/30 bg-[rgba(215,255,127,0.1)] p-4 shadow-[0_12px_30px_rgba(215,255,127,0.08)]">
 		                                    <div className="flex items-center gap-2 text-xs font-semibold text-[#d7ff7f]">
 		                                      <ListChecks className="h-4 w-4" />
 		                                      执行细节

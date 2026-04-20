@@ -61,7 +61,7 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().default("").describe("商业深度洞察：提供具体实战方案与避坑提醒"),
+  businessInsight: z.string().default("").describe("必须是现在就能执行的具体版本与商业逻辑，绝对不能是点评原视频"),
   contentBrief: z.string().default(""),
   directorExecution: growthDirectorExecutionSchema.default({
     storyboard: [],
