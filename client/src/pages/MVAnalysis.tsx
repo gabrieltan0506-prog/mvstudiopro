@@ -3629,66 +3629,60 @@ export default function MVAnalysisPage() {
                             </div>
                           </div>
                         </div>
-	                        <div className="mt-5 space-y-4">
-		                          {(analysis.premiumContent?.topics || []).map((topic, index) => {
-		                            const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
-		                            const directorExecution = topic.directorExecution || {};
-		                            const storyboard = Array.isArray(directorExecution.storyboard)
-		                              ? directorExecution.storyboard.filter(Boolean)
-		                              : [];
-		                            const executionCards = [
-			                              { label: "灯光布置", value: directorExecution.lighting, Icon: Camera },
-			                              { label: "走位调度", value: directorExecution.blocking, Icon: Move },
-			                              { label: "情绪控制", value: directorExecution.emotionalTension, Icon: Smile },
-		                            ];
+                        <div className="mt-5 space-y-4">
+                          {(analysis.premiumContent?.topics || []).map((topic, index) => {
+                            const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
+                            const directorExecution = topic.directorExecution || {};
+                            const storyboard = Array.isArray(directorExecution.storyboard)
+                              ? directorExecution.storyboard.filter(Boolean)
+                              : [];
+                            const executionCards = [
+                              { label: "灯光布置", value: directorExecution.lighting, Icon: Camera },
+                              { label: "走位调度", value: directorExecution.blocking, Icon: Move },
+                              { label: "情绪控制", value: directorExecution.emotionalTension, Icon: Smile },
+                            ];
 
-		                            return (
-		                              <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
-		                                <div className="flex flex-wrap items-start justify-between gap-3">
-		                                  <div>
-		                                    <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-		                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-		                                  </div>
-		                                  <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
-			                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
-		                                  </div>
-		                                </div>
-                                <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-                                  <h5 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
-                                    <Target size={16} />
-                                    商业深度洞察：引流、产品与转化规划
-                                  </h5>
+                            return (
+                              <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
+                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+                                  </div>
+                                  <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
+                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
+                                  </div>
+                                </div>
+                                
+                                {/* 商业深度洞察：使用 whitespace-pre-wrap 保留 AI 生成的引流/利润品分段 */}
+                                <div className="mt-4 rounded-xl border-l-4 border-emerald-500 bg-emerald-500/10 p-5">
+                                  <h5 className="mb-2 font-bold text-emerald-400">💎 商业深度洞察 (引流与利润矩阵)</h5>
                                   <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
                                     {topic.businessInsight || "暂无商业深度洞察。"}
                                   </p>
                                 </div>
-		                                {storyboard.length ? (
-		                                  <ol className="mt-4 space-y-2 text-sm leading-7 text-white/82">
-	                                    {storyboard.map((shot, shotIndex) => (
-	                                      <li key={`${shot}-${shotIndex}`} className="flex gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-	                                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f5b7ff]/15 text-xs font-bold text-[#f5b7ff]">{shotIndex + 1}</span>
-	                                        <span>{replaceTerms(shot)}</span>
-	                                      </li>
-	                                    ))}
-	                                  </ol>
-	                                ) : null}
-		                                {executionCards.length ? (
-		                                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-		                                    {executionCards.map(({ label, value, Icon }) => value ? (
-		                                      <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
-		                                        <div className="flex items-center gap-2 text-xs font-semibold text-white/60">
-		                                          <Icon className="h-4 w-4 text-[#8cefff]" />
-		                                          {label}
-		                                        </div>
-		                                        <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
-		                                      </div>
-		                                    ) : null)}
-		                                  </div>
-		                                ) : null}
-	                              </div>
-	                            );
-	                          })}
-	                        </div>
+                                {/* 导演级执行蓝图：分镜列表 */}
+                                <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
+                                  <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
+                                  <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300">
+                                    <div><strong>灯光:</strong> {directorExecution.lighting || "-"}</div>
+                                    <div><strong>走位:</strong> {directorExecution.blocking || "-"}</div>
+                                    <div><strong>情绪:</strong> {directorExecution.emotionalTension || "-"}</div>
+                                  </div>
+                                  {storyboard.length ? (
+                                    <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
+                                      {storyboard.map((shot, sIdx) => (
+                                        <li key={sIdx}>{replaceTerms(shot)}</li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <div className="text-sm text-gray-400">暂无分镜脚本</div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </>
@@ -4175,11 +4169,11 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length) ? (
+                  {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length || analysis.trustSignals?.length || analysis.visualRisks?.length) ? (
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
-	                        <h2 className="text-2xl font-bold">商业深度洞察</h2>
+                        <h2 className="text-2xl font-bold">视觉分析</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
                         <div className="space-y-4">
@@ -4263,7 +4257,7 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && showPremiumReport && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
