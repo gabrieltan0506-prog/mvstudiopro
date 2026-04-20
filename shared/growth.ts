@@ -37,11 +37,11 @@ export const growthReverseEngineeringSchema = z.object({
 });
 
 export const growthDirectorExecutionSchema = z.object({
-  storyboard: z.array(z.string()).default([]),
-  lighting: z.string().default(""),
-  blocking: z.string().default(""),
-  emotionalTension: z.string().default(""),
-});
+  storyboard: z.array(z.string()).default([]).describe("分镜拆解：逐条写清镜头顺序、画面内容、动作、时长和剪辑点"),
+  lighting: z.string().default("").describe("灯光布置：包含主光、轮廓光、色温、角度和现场质感"),
+  blocking: z.string().default("").describe("走位调度：包含站位、动线、手部动作和与产品/证据物的关系"),
+  emotionalTension: z.string().default("").describe("情绪控制：包含表情、停顿、语速、冲突推进和收束方式"),
+}).describe("导演级实战执行指令");
 
 export const growthShootingBlueprintSchema = z.object({
   storyboard: z.array(z.string()).default([]),
@@ -61,7 +61,7 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().default(""),
+  businessInsight: z.string().default("").describe("商业深度洞察：提供具体实战方案与避坑提醒"),
   contentBrief: z.string().default(""),
   directorExecution: growthDirectorExecutionSchema.default({
     storyboard: [],
