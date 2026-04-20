@@ -776,8 +776,44 @@ function normalizePremiumTopics(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item: any) => ({
     title: String(item?.title || ""),
+    formatType: item?.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO",
+    businessInsight: String(item?.businessInsight || ""),
     contentBrief: String(item?.contentBrief || ""),
+    directorExecution: {
+      storyboard: Array.isArray(item?.directorExecution?.storyboard)
+        ? item.directorExecution.storyboard.map(String).filter(Boolean)
+        : [],
+      lighting: String(item?.directorExecution?.lighting || ""),
+      blocking: String(item?.directorExecution?.blocking || ""),
+      emotionalTension: String(item?.directorExecution?.emotionalTension || ""),
+    },
   })).filter((item) => item.title || item.contentBrief);
+}
+
+function normalizeShootingBlueprint(value: unknown, fallback = "") {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const item = value as any;
+    return {
+      storyboard: Array.isArray(item.storyboard)
+        ? item.storyboard.map(String).filter(Boolean)
+        : [],
+      lighting: String(item.lighting || ""),
+      blocking: String(item.blocking || ""),
+      shotSize: String(item.shotSize || ""),
+      emotionalTension: String(item.emotionalTension || ""),
+      cameraPerformance: String(item.cameraPerformance || ""),
+    };
+  }
+
+  const text = String(value || fallback || "");
+  return {
+    storyboard: text ? [text] : [],
+    lighting: "",
+    blocking: "",
+    shotSize: "",
+    emotionalTension: "",
+    cameraPerformance: "",
+  };
 }
 
 function buildLegacyFieldsFromStrategist(parsed: any) {
@@ -806,7 +842,15 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     visualPaletteAndScript: String(parsed?.remixExecution?.visualPaletteAndScript || ""),
     productMatrix: String(parsed?.remixExecution?.productMatrix || ""),
     shootingGuidance: String(parsed?.remixExecution?.shootingGuidance || ""),
-    shootingBlueprint: String(parsed?.remixExecution?.shootingBlueprint || parsed?.remixExecution?.shootingGuidance || ""),
+    businessInsight: {
+      video: String(parsed?.remixExecution?.businessInsight?.video || ""),
+      imageText: String(parsed?.remixExecution?.businessInsight?.imageText || ""),
+      monetizationLogic: String(parsed?.remixExecution?.businessInsight?.monetizationLogic || ""),
+    },
+    shootingBlueprint: normalizeShootingBlueprint(
+      parsed?.remixExecution?.shootingBlueprint,
+      parsed?.remixExecution?.shootingGuidance,
+    ),
     imageTextNoteGuide: {
       coverSetup: String(parsed?.remixExecution?.imageTextNoteGuide?.coverSetup || ""),
       titleOptions: Array.isArray(parsed?.remixExecution?.imageTextNoteGuide?.titleOptions)
@@ -893,13 +937,16 @@ async function runDeepDivePass(params: {
 2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出头条、微信或任何其他未授权平台。
 3. 战略拆解：拆解视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering。
 4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
-5. 若为 REMIX 模式：重点输出黄金三秒钩子库、情绪控制曲线、视觉调色盘与分镜复刻、产品矩阵设计、短/中长视频拍摄指导、小红书图文布局。
-   在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
-   同时输出小红书图文笔记攻略，必须包含封面拍摄布置、3组爆款标题、带 Emoji 的结构化正文，以及图文笔记每一页该拍什么、怎么构图、文字压在哪里。商业矩阵要写清短视频与中长视频的拍摄差异化指导。
-6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题，contentBrief 必须包含详细文案、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播、灯光、场景与情绪，不要写空话。
-7. 同时保留原有成长营报告字段，避免前端旧板块缺数据。
+	5. 若为 REMIX 模式：重点输出黄金三秒钩子库、情绪控制曲线、视觉调色盘与分镜复刻、产品矩阵设计、短/中长视频拍摄指导、小红书图文布局。
+	   在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
+	   remixExecution.businessInsight 必须单独讲清视频、图文笔记和变现承接分别如何呈现。
+	   remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，不允许输出一整段作文。
+	   同时输出小红书图文笔记攻略，必须包含封面拍摄布置、3组爆款标题、带 Emoji 的结构化正文，以及图文笔记每一页该拍什么、怎么构图、文字压在哪里。商业矩阵要写清短视频与中长视频的拍摄差异化指导。
+	6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题。每个选题必须给出 formatType（VIDEO 或 IMAGE_TEXT）、businessInsight、contentBrief、directorExecution；contentBrief 必须包含详细文案、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播、灯光、场景与情绪，不要写空话。
+	7. 同时保留原有成长营报告字段，避免前端旧板块缺数据。
+	8. 严禁输出长篇大论，必须使用分段、列表或小标题的形式呈现；每一项建议都要具备极强的可操作性。
 
-拒绝废话，给予极具商业杀伤力的干货。所有文字使用简体中文。`,
+	拒绝废话，给予极具商业杀伤力的干货。所有文字使用简体中文。`,
       },
       {
         role: "user",
@@ -972,13 +1019,37 @@ async function runDeepDivePass(params: {
                   type: "array",
                   items: {
                     type: "object",
-                    properties: {
-                      title: { type: "string" },
-                      contentBrief: { type: "string", description: "超详细脚本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
-                    },
-                    required: ["title", "contentBrief"],
-                  },
-                },
+	                    properties: {
+	                      title: { type: "string" },
+	                      formatType: {
+	                        type: "string",
+	                        enum: ["VIDEO", "IMAGE_TEXT"],
+	                        description: "内容形式，只能是 VIDEO 或 IMAGE_TEXT",
+	                      },
+	                      businessInsight: {
+	                        type: "string",
+	                        description: "商业洞察分析，说明为什么这样拍、这样发能带来转化",
+	                      },
+	                      contentBrief: { type: "string", description: "超详细脚本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
+	                      directorExecution: {
+	                        type: "object",
+	                        description: "导演级拍摄落地指南，严禁写成整段作文",
+	                        properties: {
+	                          storyboard: {
+	                            type: "array",
+	                            items: { type: "string" },
+	                            description: "分镜拆解，逐条写清镜头顺序、画面内容和动作",
+	                          },
+	                          lighting: { type: "string", description: "灯光布置，包含主光、轮廓光、色温和现场质感" },
+	                          blocking: { type: "string", description: "演员或博主走位，包含站位、动线和与产品的关系" },
+	                          emotionalTension: { type: "string", description: "情绪张力控制，包含表情、停顿、语速和镜头推进" },
+	                        },
+	                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
+	                      },
+	                    },
+	                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
+	                  },
+	                },
               },
               required: ["topics"],
             },
@@ -995,12 +1066,35 @@ async function runDeepDivePass(params: {
                 hookLibrary: { type: "array", items: { type: "string" } },
                 emotionalPacing: { type: "string" },
                 visualPaletteAndScript: { type: "string" },
-                productMatrix: { type: "string" },
-                shootingGuidance: { type: "string" },
-                shootingBlueprint: {
-                  type: "string",
-                  description: "导演级拍摄落地指南，必须包含具体的机位景别、灯光色温、收音设备与剪辑节奏建议",
-                },
+	                productMatrix: { type: "string" },
+	                shootingGuidance: { type: "string" },
+	                businessInsight: {
+	                  type: "object",
+	                  description: "商业洞察分析，分别说明视频、图文笔记与变现承接的呈现逻辑",
+	                  properties: {
+	                    video: { type: "string", description: "视频内容如何拍、如何发、如何转化" },
+	                    imageText: { type: "string", description: "图文笔记如何拍、如何排版、如何承接搜索流量" },
+	                    monetizationLogic: { type: "string", description: "产品矩阵和成交路径的设计逻辑" },
+	                  },
+	                  required: ["video", "imageText", "monetizationLogic"],
+	                },
+	                shootingBlueprint: {
+	                  type: "object",
+	                  description: "导演级拍摄执行蓝图，必须拆成结构化字段",
+	                  properties: {
+	                    storyboard: {
+	                      type: "array",
+	                      items: { type: "string" },
+	                      description: "分镜拆解，逐条说明镜头顺序、画面、动作、收音和剪辑点",
+	                    },
+	                    lighting: { type: "string", description: "灯光布置，包含主光、轮廓光、冷暖色温和角度" },
+	                    blocking: { type: "string", description: "演员或博主走位，包含动线、站位和产品露出方式" },
+	                    shotSize: { type: "string", description: "景别设计，包含特写、中景、全景、俯拍等使用时机" },
+	                    emotionalTension: { type: "string", description: "情绪张力控制，包含表情、语速、停顿和冲突推进" },
+	                    cameraPerformance: { type: "string", description: "镜头表现力要求，包含运动、焦段、B-roll 穿插和剪辑节奏" },
+	                  },
+	                  required: ["storyboard", "lighting", "blocking", "shotSize", "emotionalTension", "cameraPerformance"],
+	                },
                 imageTextNoteGuide: {
                   type: "object",
                   description: "小红书图文笔记攻略",
@@ -1021,9 +1115,10 @@ async function runDeepDivePass(params: {
                 "hookLibrary",
                 "emotionalPacing",
                 "visualPaletteAndScript",
-                "productMatrix",
-                "shootingGuidance",
-                "shootingBlueprint",
+	                "productMatrix",
+	                "shootingGuidance",
+	                "businessInsight",
+	                "shootingBlueprint",
                 "imageTextNoteGuide",
                 "xiaohongshuLayout",
               ],

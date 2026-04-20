@@ -785,7 +785,7 @@ async function buildPlatformContent(params: {
    - copywriting（核心文案方向，必须包含完整详细的正文内容，字数不少于200字。**无论是图文还是视频，都必须给出完整可直接使用的正文文案**，包含：开头段落全文、中间内容展开全文、结尾引导行动全文）
    - suitablePlatforms（适合发哪些平台，字符串数组）
    - actionableSteps（落地三步曲：必须给出至少 3 个具体、可行、有先后顺序的落地指导。例如：1.拍摄 15 秒榫卯对比视频；2.修改主页简介；3.加入当下话题等。此字段为 string 数组。）
-   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出带上什么具体官方 Hashtag。
+	   - detailedScript（详细的拍摄脚本或大纲，必须是保姆级指导，将从前序提取出的 trafficBoosters 节日/活动热点一并融入，例如明确指出使用什么具体平台搜索关键词。
      【强制脚本排版规则 — 必须严格遵守，不得简化】：
      ▸ 如果 format 为「短视频」（抖音/B站/快手）：必须使用精确时间轴格式，每段必须包含「视觉描述」与「口播文案」，例如：
        "[00:00-00:05] 视觉：手持心脏支架特写，对准镜头。文案：你以为睡不好是脑子累？错了！"
@@ -795,7 +795,7 @@ async function buildPlatformContent(params: {
        "[封面设计] 大标题：古代治心病就靠这3件事。视觉：高质感茶席+心电图拼接图。"
        "[图2-图4 痛点引入] 文案：你总是睡不好、心悸？其实古人早就有答案..."
        "[图5-图6 核心内容] 分步列出3个要点..."
-       "[正文区] 完整文案+Hashtag（如 #中医养生 #心脏健康）。"）
+	       "[正文区] 完整文案+平台搜索关键词，不要随意堆砌无关标签。"）
    - publishingAdvice（发布时机或平台设置建议，例如“蹭小红书RED新生代大赛热点，修改小红书简介为‘用东方审美重构健康叙事’”等具体设置。）
    - executionDetails（执行细节，必须极度具体）：
      * environmentAndWardrobe（拍摄环境 + 服装道具描述，例如："白色诊室背景，穿白大褂，手持医学影像片"）
@@ -2405,7 +2405,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90_000);
+        const timeoutId = setTimeout(() => controller.abort(), 260_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2446,7 +2446,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90_000);
+        const timeoutId = setTimeout(() => controller.abort(), 260_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",

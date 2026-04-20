@@ -36,9 +36,39 @@ export const growthReverseEngineeringSchema = z.object({
   commercialLogic: z.string().default(""),
 });
 
+export const growthDirectorExecutionSchema = z.object({
+  storyboard: z.array(z.string()).default([]),
+  lighting: z.string().default(""),
+  blocking: z.string().default(""),
+  emotionalTension: z.string().default(""),
+});
+
+export const growthShootingBlueprintSchema = z.object({
+  storyboard: z.array(z.string()).default([]),
+  lighting: z.string().default(""),
+  blocking: z.string().default(""),
+  shotSize: z.string().default(""),
+  emotionalTension: z.string().default(""),
+  cameraPerformance: z.string().default(""),
+});
+
+export const growthRemixBusinessInsightSchema = z.object({
+  video: z.string().default(""),
+  imageText: z.string().default(""),
+  monetizationLogic: z.string().default(""),
+});
+
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
+  formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
+  businessInsight: z.string().default(""),
   contentBrief: z.string().default(""),
+  directorExecution: growthDirectorExecutionSchema.default({
+    storyboard: [],
+    lighting: "",
+    blocking: "",
+    emotionalTension: "",
+  }),
 });
 
 export const growthPremiumContentSchema = z.object({
@@ -57,7 +87,19 @@ export const growthRemixExecutionSchema = z.object({
   visualPaletteAndScript: z.string().default(""),
   productMatrix: z.string().default(""),
   shootingGuidance: z.string().default(""),
-  shootingBlueprint: z.string().default(""),
+  businessInsight: growthRemixBusinessInsightSchema.default({
+    video: "",
+    imageText: "",
+    monetizationLogic: "",
+  }),
+  shootingBlueprint: growthShootingBlueprintSchema.default({
+    storyboard: [],
+    lighting: "",
+    blocking: "",
+    shotSize: "",
+    emotionalTension: "",
+    cameraPerformance: "",
+  }),
   imageTextNoteGuide: z.object({
     coverSetup: z.string().default(""),
     titleOptions: z.array(z.string()).default([]),
@@ -739,3 +781,8 @@ export type GrowthPremiumRemixTransitionNode = z.infer<typeof growthPremiumRemix
 export type GrowthPremiumRemix = z.infer<typeof growthPremiumRemixSchema>;
 export type GrowthPremiumRemixAssets = z.infer<typeof growthPremiumRemixAssetsSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;
+
+// 新增導出以便其它模組引用
+export type GrowthDirectorExecution = z.infer<typeof growthDirectorExecutionSchema>;
+export type GrowthPremiumContentTopic = z.infer<typeof growthPremiumContentTopicSchema>;
+export type GrowthPremiumContent = z.infer<typeof growthPremiumContentSchema>;
