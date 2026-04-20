@@ -79,6 +79,7 @@ const EMPTY_ANALYSIS: GrowthAnalysisScores = {
   },
   premiumContent: {
     summary: "",
+    strategy: "",
     topics: [],
   },
   visualSummary: "",

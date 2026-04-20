@@ -61,24 +61,22 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().describe("深入评估人设可行性、引流策略、产品设计与转化建议。绝对不可点评原视频。").default(""),
+  businessInsight: z.string().describe("引流、产品、转化建议").default(""),
   contentBrief: z.string().default(""),
   directorExecution: z.object({
     storyboard: z.array(z.string()).default([]),
     lighting: z.string().default(""),
     blocking: z.string().default(""),
-    emotionalTension: z.string().default(""),
-  }).default({
-    storyboard: [],
-    lighting: "",
-    blocking: "",
-    emotionalTension: "",
-  }),
+    emotionalTension: z.string().default("")
+  }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
+  strategy: z.string().describe("顶级顾问级商业战略拆解").default(""),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
+  explosiveTopicAnalysis: z.string().describe("爆款选题分析").optional(),
+  musicAndExpressionAnalysis: z.string().describe("表达与配乐分析").optional(),
 });
 
 export const growthStrategySchema = z.object({
@@ -133,7 +131,10 @@ export const growthAnalysisScoresSchema = z.object({
   }),
   premiumContent: growthPremiumContentSchema.default({
     summary: "",
+    strategy: "",
     topics: [],
+    explosiveTopicAnalysis: undefined,
+    musicAndExpressionAnalysis: undefined,
   }),
   growthStrategy: growthStrategySchema.optional(),
   remixExecution: growthRemixExecutionSchema.optional(),
