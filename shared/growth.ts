@@ -61,9 +61,14 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().default("").describe("必须是现在就能执行的具体版本与商业逻辑，绝对不能是点评原视频"),
+  businessInsight: z.string().describe("深入评估人设可行性、引流策略、产品设计与转化建议。绝对不可点评原视频。").default(""),
   contentBrief: z.string().default(""),
-  directorExecution: growthDirectorExecutionSchema.default({
+  directorExecution: z.object({
+    storyboard: z.array(z.string()).default([]),
+    lighting: z.string().default(""),
+    blocking: z.string().default(""),
+    emotionalTension: z.string().default(""),
+  }).default({
     storyboard: [],
     lighting: "",
     blocking: "",

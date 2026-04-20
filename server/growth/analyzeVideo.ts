@@ -838,6 +838,31 @@ async function runDeepDivePass(params: {
   videoGcsUri: string;
   mode: GrowthAnalysisMode;
 }) {
+  const mode = params.mode;
+  const businessGoal = (params.context || "未提供").trim() || "未提供";
+  const STRATEGIST_PROMPT = `
+你是顶级商业IP操盘手与大师级导演。
+用户背景与商业目标：${businessGoal}
+分析模式：${mode === "REMIX" ? "爆款拆解二创 (REMIX)" : "商业成长营 (GROWTH)"}
+
+${mode === "REMIX" ? `
+【REMIX 模式绝对禁令与核心任务】
+1. 绝对禁止影评：严禁分析、批评原视频的画面、节奏或提出任何修改建议。原片仅为灵感，用户不关心原片死活。
+2. 强制生成 7 个完整选题：你必须且只能生成 7 个专属于用户的选题。绝不允许在 summary 中一笔带过，7 个选题必须全部在 topics 数组中详细拆解。
+3. 商业深度洞察 (businessInsight 核心要求)：
+   - 必须深入评估该选题适合该用户人设的商业可行性。
+   - 必须明确指出：如何通过该选题【引流】？对应的【变现产品】该如何设计？具体的【转化】建议是什么？
+   - 必须明确标注该选题是适合【视频拍摄】还是【精致优质图文笔记】。
+4. 导演级执行蓝图 (directorExecution)：必须为这 7 个选题分别提供详尽的分镜脚本(storyboard 数组)、灯光、走位与情绪张力指导。
+5. 在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
+` : `
+【GROWTH 模式核心任务】
+1. 输出可执行的商业成长路径，不要空话。
+2. 结合第一阶段证据给出平台评分和商业承接建议。
+3. 保留并完整输出原有成长营字段，保证前端板块可渲染。
+`}
+`;
+
   const response = await invokeLLM({
     model: "pro",
     provider: "vertex",
@@ -847,22 +872,7 @@ async function runDeepDivePass(params: {
     messages: [
       {
         role: "system",
-        content: `你是 MVStudio Pro 的实战教练型商业内容导演，必须具备大师级导演的镜头审美、现场调度和商业转化判断。你的任务不是评论参考视频作者，而是把参考素材转译成用户现在就能执行的具体版本。
-
-当前分析模式：${params.mode === "REMIX" ? "爆款拆解二创" : "商业成长营"}。
-
-请执行以下核心任务并严格输出 JSON：
-1. 爆款预判：结合 2.5 Pro 第一阶段音频与视觉数据、15 天大盘趋势和平台活动推流加成，评估用户可执行版本的机会，给出 1-10 的综合爆款指数 explosiveIndex 与现实查验 realityCheck。
-2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出头条、微信或任何其他未授权平台。
-3. 战略拆解：拆解参考素材可借鉴的视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering，但所有结论必须转成给用户的执行指令。
-4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
-5. 若为 REMIX 模式：进入“实战教练模式”，严禁输出“原片哪里不好”“建议原片怎么改”“原作者应该如何调整”。用户与原片作者毫无关系，你只能输出用户现在可以执行的版本。
-6. 绝对禁止按时间戳点评原视频，例如“09:49 画面有割裂感”“06:32 镜头不好”“建议原片怎么改”。用户不关心原片死活，严禁输出任何对原视频的修改建议；所有时间点、亮点和缺点都必须转译成用户执行时的实战提醒。
-7. REMIX 必须、且只能生成刚好 4 个专属于用户的二创选题。每个选题必须明确 formatType：VIDEO 表示“视频拍摄”，IMAGE_TEXT 表示“精致优质图文笔记”。不要输出第 5 个，也不要少于 4 个。
-8. 商业深度洞察必须逐个深度拆解这 4 个选题，不能只给标题或概述。每个选题的 businessInsight 必须写成两段，并使用固定小标题：“执行细节：...”和“辅助避坑提醒：...”。执行细节要说明如何拍、如何发、如何呈现、变现逻辑是什么、转化入口怎么放；辅助避坑提醒要把参考视频的亮点与缺点转译成用户执行时的操作提醒，例如“实战避坑：参考视频背景太乱，你拍摄时请务必使用干净的书房背景。”
-9. 每个选题的 directorExecution 必须达到大师级导演水准，给出精确 storyboard、lighting、blocking、emotionalTension。storyboard 必须是数组，每条都是可拍摄镜头；lighting 要写清光线动机和色温；blocking 要写清人物、产品和证据物的空间关系；emotionalTension 要写清表演状态、停顿、语速和镜头节奏，不允许写成整段作文。
-10. remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，并明确机位设置、灯光布置、收音建议、剪辑节奏和 B-roll 穿插时机。
-11. 同时保留原有成长营报告字段，避免前端旧板块缺数据。所有文字使用简体中文，严禁长篇堆砌，必须使用分段、列表或小标题。`,
+        content: STRATEGIST_PROMPT,
       },
       {
         role: "user",
@@ -933,9 +943,9 @@ async function runDeepDivePass(params: {
                 summary: { type: "string" },
 	                topics: {
 	                  type: "array",
-	                  minItems: 4,
-	                  maxItems: 4,
-	                  description: "必须恰好输出 4 个实战选题，并逐个做商业深度拆解",
+	                  minItems: 7,
+	                  maxItems: 7,
+	                  description: "必须恰好输出 7 个实战选题，并逐个做商业深度拆解",
 	                  items: {
                     type: "object",
 	                    properties: {
@@ -1325,6 +1335,14 @@ export async function analyzeVideo(params: {
         videoGcsUri,
         mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
       }));
+      if ((params.mode === "REMIX" ? "REMIX" : "GROWTH") === "REMIX") {
+        deepDive.keyFrames = [];
+        deepDive.visualRisks = [];
+        deepDive.strengths = [];
+        deepDive.improvements = [];
+        deepDive.timestampSuggestions = [];
+        deepDive.weakFrameReferences = [];
+      }
 
       const strategistRefinement = null;
 

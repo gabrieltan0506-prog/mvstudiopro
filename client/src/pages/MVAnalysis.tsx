@@ -32,7 +32,6 @@ import {
   Film,
   LayoutDashboard,
   LineChart as LineChartIcon,
-  ListChecks,
   Loader2,
   Move,
   Music2,
@@ -206,17 +205,6 @@ function normalizeShootingBlueprint(
     shotSize: "",
     emotionalTension: "",
     cameraPerformance: "",
-  };
-}
-
-function splitBusinessInsight(value?: string) {
-  const text = String(value || "").trim();
-  const executionMatch = text.match(/执行细节[:：]([\s\S]*?)(?=辅助避坑提醒[:：]|$)/);
-  const pitfallMatch = text.match(/辅助避坑提醒[:：]([\s\S]*)/);
-
-  return {
-    execution: (executionMatch?.[1] || (!pitfallMatch ? text : "")).trim(),
-    pitfall: (pitfallMatch?.[1] || "").trim(),
   };
 }
 
@@ -1486,6 +1474,7 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
+  const isRemixMode = analysisMode === "REMIX";
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
   const [fileName, setFileName] = useState("");
@@ -3644,7 +3633,6 @@ export default function MVAnalysisPage() {
 		                          {(analysis.premiumContent?.topics || []).map((topic, index) => {
 		                            const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
 		                            const directorExecution = topic.directorExecution || {};
-		                            const insightSections = splitBusinessInsight(topic.businessInsight);
 		                            const storyboard = Array.isArray(directorExecution.storyboard)
 		                              ? directorExecution.storyboard.filter(Boolean)
 		                              : [];
@@ -3665,22 +3653,15 @@ export default function MVAnalysisPage() {
 			                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
 		                                  </div>
 		                                </div>
-		                                <div className="mt-4 grid gap-3 md:grid-cols-2">
-			                                  <div className="rounded-xl border border-[#d7ff7f]/30 bg-[rgba(215,255,127,0.1)] p-4 shadow-[0_12px_30px_rgba(215,255,127,0.08)]">
-		                                    <div className="flex items-center gap-2 text-xs font-semibold text-[#d7ff7f]">
-		                                      <ListChecks className="h-4 w-4" />
-		                                      执行细节
-		                                    </div>
-		                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(insightSections.execution || "暂无执行细节。")}</div>
-		                                  </div>
-		                                  <div className="rounded-xl border border-[#ffcf92]/15 bg-[rgba(255,207,146,0.06)] p-3">
-		                                    <div className="flex items-center gap-2 text-xs font-semibold text-[#ffcf92]">
-		                                      <ScanSearch className="h-4 w-4" />
-		                                      辅助避坑提醒
-		                                    </div>
-		                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(insightSections.pitfall || "暂无辅助避坑提醒。")}</div>
-		                                  </div>
-		                                </div>
+                                <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
+                                  <h5 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
+                                    <Target size={16} />
+                                    商业深度洞察：引流、产品与转化规划
+                                  </h5>
+                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                                    {topic.businessInsight || "暂无商业深度洞察。"}
+                                  </p>
+                                </div>
 		                                {storyboard.length ? (
 		                                  <ol className="mt-4 space-y-2 text-sm leading-7 text-white/82">
 	                                    {storyboard.map((shot, shotIndex) => (
@@ -4194,7 +4175,7 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {analysis && (analysis.visualSummary || visualKeyFrames.length) ? (
+                  {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length) ? (
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
@@ -4282,7 +4263,7 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
