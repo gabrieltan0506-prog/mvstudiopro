@@ -539,10 +539,13 @@ async function runAudioFirstPass(params: {
               type: "object",
               properties: {
                 summary: { type: "string" },
-                topics: {
-                  type: "array",
-                  items: {
-                    type: "object",
+	                topics: {
+	                  type: "array",
+	                  minItems: 4,
+	                  maxItems: 4,
+	                  description: "必须恰好输出 4 个实战选题",
+	                  items: {
+	                    type: "object",
                     properties: {
                       title: { type: "string" },
                       contentBrief: { type: "string", description: "超详细脚本，包含秒数、画面、口播与情绪" },
@@ -688,90 +691,6 @@ async function runVisualFirstPass(params: {
   };
 }
 
-function buildFallbackVideoAnalysis(summary: string, context: string) {
-  const normalized = `${summary}\n${context}`;
-  const isCommercial = /品牌|招商|服务|转化|案例/.test(normalized);
-  return growthAnalysisScoresSchema.parse({
-    composition: 76,
-    color: 78,
-    lighting: 72,
-    impact: 82,
-    viralPotential: isCommercial ? 84 : 78,
-    explosiveIndex: isCommercial ? 8 : 7,
-    platformScores: {
-      xiaohongshu: isCommercial ? 8 : 7,
-      douyin: isCommercial ? 7 : 6,
-      bilibili: isCommercial ? 8 : 7,
-      kuaishou: isCommercial ? 6 : 6,
-    },
-    realityCheck: "当前内容有基础，但还没有强到可以靠自嗨拿结果。先把钩子、证据和商业承接三件事做实，再谈放大。",
-    reverseEngineering: {
-      hookStrategy: "先把结果或最扎心的问题丢到前两秒，不要先铺背景。",
-      emotionalArc: "从不舒服或不确定切入，中段给动作和证据，结尾释放结果并给出唯一行动。",
-      commercialLogic: "内容先证明你真的解决问题，再把用户导向私信、预约或服务介绍，不要只讲理念。",
-    },
-    premiumContent: {
-      summary: "适合延展成更强情绪张力的二创脚本，让用户先停留，再被结果与人物信任带走。",
-      topics: [
-        {
-          title: "把最痛的问题前置",
-          contentBrief: "开头用近景人物状态和明确灯光反差，先拍不舒服或焦虑的状态，再切到解决后的松弛与结果。",
-        },
-        {
-          title: "把方法讲成可代入的故事",
-          contentBrief: "中段用柔和主光加侧逆光拍动作示范，镜头跟随人物完成一个动作闭环，字幕只保留最关键的一句结果解释。",
-        },
-      ],
-    },
-    growthStrategy: {
-      gapAnalysis: "竞品常见问题是只讲观点不讲证据、只做情绪不做承接。你的机会在于把结果证据和用户场景讲清楚。",
-      commercialMatrix: "短视频负责首发钩子，中长视频承接完整案例，图文笔记沉淀清单与购买理由，最后导向私信、预约或服务页。",
-    },
-    remixExecution: {
-      hookLibrary: [
-        "你以为你缺的是努力，其实你缺的是一个能被看懂的开头。",
-        "这条视频如果前 3 秒不改，后面讲得再好也没人等。",
-        "真正能成交的内容，第一句话就让用户知道和自己有关。",
-      ],
-      emotionalPacing: "前 3 秒制造问题感，10 秒内给出反差，中段补证据和动作，结尾给一个明确的行动出口。",
-      visualPaletteAndScript: "用低饱和背景、干净主光和近景人物开场；每 5-8 秒切一次证据或动作画面；口播围绕问题、证据、结果推进。",
-      productMatrix: "把内容拆成免费认知、低门槛资料、深度服务三层，不要一上来直接卖高价方案。",
-      shootingGuidance: "短视频先拍一个强钩子和结果镜头；中长视频补完整故事、案例、方法；图文笔记用封面、清单和对比图承接搜索流量。",
-      xiaohongshuLayout: "封面写结果和人群，正文先给痛点，再给三条方法，最后用评论区关键词或私信动作承接。",
-    },
-    visualSummary: "已完成关键帧抽取，但当前只保留保守视觉结论，建议重点看开头抓力、人物信任感和结果画面是否明确。",
-    openingFrameAssessment: "开头最好在 2 秒内直接出现人物状态、痛点或结果，不要只给环境铺垫。",
-    sceneConsistency: "人物、场景和动作示范需要统一服务于同一个结论，避免信息分散。",
-    languageExpression: "当前语言表达以基础信息传达为主，但缺少更强的结果句、反差句和能直接刺中目标用户的短促表达。",
-    emotionalExpression: "情绪表达偏稳，适合专业感建立，但如果想提高停留，需要在开头和结尾加更强的担忧、期待或结果释压。",
-    cameraEmotionTension: "镜头信息足够，但情绪张力还不够集中。建议把开头镜头、动作镜头和结果镜头的情绪功能分得更明确。",
-    bgmAnalysis: "当前保守分析无法确认真实 BGM 编排，建议优先选择不会压住口播的人声下垫型配乐，用节奏和质感来承接专业感。",
-    musicRecommendation: "适合选择低频稳定、轻鼓点、带空气感钢琴或氛围 pad 的现代商业配乐；如果是健康、知识、咨询类内容，避免太热血或太戏剧化。",
-    sunoPrompt: "Warm modern ambient corporate soundtrack, gentle pulse, soft piano, subtle electronic texture, calm confidence, premium wellness brand mood, supports spoken voiceover, no aggressive drops, 95 BPM.",
-    trustSignals: [
-      "真实人物出镜能建立信任。",
-      "动作示范和前后对比比空镜头更容易承接转化。",
-    ],
-    visualRisks: [
-      "如果开头先铺环境、后讲重点，停留会掉得很快。",
-      "如果结果画面不够直接，用户会把它当成泛内容略过。",
-    ],
-    keyFrames: [],
-    strengths: [
-      "视频已经具备可拆解的节奏和视觉亮点。",
-      "适合继续拆成平台适配版和商业承接版。",
-      "可以沉淀为创作工作流的执行 brief。",
-    ],
-    improvements: [
-      "建议进一步强化前三秒钩子和口播重点。",
-      "需要更明确的平台版本策略和转化动作。",
-      "最好把高潮段与 CTA 的连接再做紧一些。",
-    ],
-    platforms: ["抖音", "小红书", "B站"],
-    summary: summary || "视频已完成基础音频优先分析，当前更适合围绕节奏、平台适配和商业承接来输出成长营报告。",
-  });
-}
-
 function normalizePremiumTopics(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item: any) => ({
@@ -888,10 +807,10 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
       : [String(parsed?.realityCheck || ""), reverseEngineering.commercialLogic].filter(Boolean),
     titleSuggestions: Array.isArray(parsed?.titleSuggestions) && parsed.titleSuggestions.length
       ? parsed.titleSuggestions.map(String)
-      : premiumTopics.slice(0, 3).map((item) => item.title).filter(Boolean),
+      : premiumTopics.slice(0, 4).map((item) => item.title).filter(Boolean),
     commercialAngles: Array.isArray(parsed?.commercialAngles) && parsed.commercialAngles.length
       ? parsed.commercialAngles
-      : premiumTopics.slice(0, 3).map((item) => ({
+      : premiumTopics.slice(0, 4).map((item) => ({
           title: item.title || "二创方向",
           scenario: premiumSummary || "把原视频改造成更有情绪张力和商业承接的版本。",
           whyItFits: reverseEngineering.commercialLogic || "这条方向更容易建立信任并承接成交动作。",
@@ -928,25 +847,21 @@ async function runDeepDivePass(params: {
     messages: [
       {
         role: "system",
-        content: `你是一位隐身于顶级网红与商业巨头背后的首席 IP 战略架构师。你精通行为经济学与传播心理学，眼中没有『内容』，只有『流量路径』与『转化效率』。
+        content: `你是 MVStudio Pro 的实战教练型商业内容导演，必须具备大师级导演的镜头审美、现场调度和商业转化判断。你的任务不是评论参考视频作者，而是把参考素材转译成用户现在就能执行的具体版本。
 
 当前分析模式：${params.mode === "REMIX" ? "爆款拆解二创" : "商业成长营"}。
 
 请执行以下核心任务并严格输出 JSON：
-1. 爆款预判：结合 2.5 Pro 第一阶段音频与视觉数据、15 天大盘趋势和平台活动推流加成，冷酷评估视频是否在自嗨，给出 1-10 的综合爆款指数 explosiveIndex 与犀利现实查验 realityCheck。
+1. 爆款预判：结合 2.5 Pro 第一阶段音频与视觉数据、15 天大盘趋势和平台活动推流加成，评估用户可执行版本的机会，给出 1-10 的综合爆款指数 explosiveIndex 与现实查验 realityCheck。
 2. 平台评分：platformScores 仅限小红书、抖音、B站、快手四个平台，必须分别给出 1-10 分。绝对不可输出头条、微信或任何其他未授权平台。
-3. 战略拆解：拆解视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering。
+3. 战略拆解：拆解参考素材可借鉴的视觉钩子、情绪起伏与底层变现逻辑 reverseEngineering，但所有结论必须转成给用户的执行指令。
 4. 若为 GROWTH 模式：重点输出竞品漏网之鱼 gapAnalysis 与商业转化产品矩阵 commercialMatrix，矩阵必须包含短视频、中长视频、图文笔记的引流与转化埋点。
-	5. 若为 REMIX 模式：重点输出黄金三秒钩子库、情绪控制曲线、视觉调色盘与分镜复刻、产品矩阵设计、短/中长视频拍摄指导、小红书图文布局。
-	   在提供拍摄指南时，必须达到导演级别的颗粒度。明确指定：机位设置（如特写、中景、俯拍）、灯光布置（如主光、轮廓光、冷暖色温）、收音建议、后期剪辑节奏、以及 B-roll（空镜头）的穿插时机。绝不要只给空泛的建议。
-	   remixExecution.businessInsight 必须单独讲清视频、图文笔记和变现承接分别如何呈现。
-	   remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，不允许输出一整段作文。
-	   同时输出小红书图文笔记攻略，必须包含封面拍摄布置、3组爆款标题、带 Emoji 的结构化正文，以及图文笔记每一页该拍什么、怎么构图、文字压在哪里。商业矩阵要写清短视频与中长视频的拍摄差异化指导。
-	6. 1:1 二创：premiumContent.topics 提供 3-5 个高价值选题。每个选题必须给出 formatType（VIDEO 或 IMAGE_TEXT）、businessInsight、contentBrief、directorExecution；contentBrief 必须包含详细文案、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播、灯光、场景与情绪，不要写空话。
-	7. 同时保留原有成长营报告字段，避免前端旧板块缺数据。
-	8. 严禁输出长篇大论，必须使用分段、列表或小标题的形式呈现；每一项建议都要具备极强的可操作性。
-
-	拒绝废话，给予极具商业杀伤力的干货。所有文字使用简体中文。`,
+5. 若为 REMIX 模式：进入“实战教练模式”，严禁输出“原片哪里不好”“建议原片怎么改”“原作者应该如何调整”。用户与原片作者毫无关系，你只能输出用户现在可以执行的版本。
+6. REMIX 必须生成恰好 4 个 premiumContent.topics。每个选题必须明确 formatType：VIDEO 表示“视频拍摄”，IMAGE_TEXT 表示“精致优质图文笔记”。不要输出第 5 个，也不要少于 4 个。
+7. 商业深度洞察必须逐个深度拆解这 4 个选题，不能只给标题或概述。每个选题的 businessInsight 必须写成两段，并使用固定小标题：“执行细节：...”和“辅助避坑提醒：...”。执行细节要说明如何拍、如何发、如何呈现、转化入口怎么放；辅助避坑提醒要把参考视频的亮点与缺点转译成用户执行时的操作提醒，例如“参考片此处节奏太慢，你执行时请务必在 3 秒内切换景别，以免流失率高”。
+8. 每个选题的 directorExecution 必须达到大师级导演水准，给出精确 storyboard、lighting、blocking、emotionalTension。storyboard 必须是数组，每条都是可拍摄镜头；lighting 要写清光线动机和色温；blocking 要写清人物、产品和证据物的空间关系；emotionalTension 要写清表演状态、停顿、语速和镜头节奏，不允许写成整段作文。
+9. remixExecution.shootingBlueprint 必须拆成 storyboard、lighting、blocking、shotSize、emotionalTension、cameraPerformance，并明确机位设置、灯光布置、收音建议、剪辑节奏和 B-roll 穿插时机。
+10. 同时保留原有成长营报告字段，避免前端旧板块缺数据。所有文字使用简体中文，严禁长篇堆砌，必须使用分段、列表或小标题。`,
       },
       {
         role: "user",
@@ -1015,9 +930,12 @@ async function runDeepDivePass(params: {
               type: "object",
               properties: {
                 summary: { type: "string" },
-                topics: {
-                  type: "array",
-                  items: {
+	                topics: {
+	                  type: "array",
+	                  minItems: 4,
+	                  maxItems: 4,
+	                  description: "必须恰好输出 4 个实战选题，并逐个做商业深度拆解",
+	                  items: {
                     type: "object",
 	                    properties: {
 	                      title: { type: "string" },
@@ -1026,23 +944,23 @@ async function runDeepDivePass(params: {
 	                        enum: ["VIDEO", "IMAGE_TEXT"],
 	                        description: "内容形式，只能是 VIDEO 或 IMAGE_TEXT",
 	                      },
-	                      businessInsight: {
-	                        type: "string",
-	                        description: "商业洞察分析，说明为什么这样拍、这样发能带来转化",
-	                      },
-	                      contentBrief: { type: "string", description: "超详细脚本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
-	                      directorExecution: {
-	                        type: "object",
-	                        description: "导演级拍摄落地指南，严禁写成整段作文",
-	                        properties: {
-	                          storyboard: {
-	                            type: "array",
-	                            items: { type: "string" },
-	                            description: "分镜拆解，逐条写清镜头顺序、画面内容和动作",
-	                          },
-	                          lighting: { type: "string", description: "灯光布置，包含主光、轮廓光、色温和现场质感" },
-	                          blocking: { type: "string", description: "演员或博主走位，包含站位、动线和与产品的关系" },
-	                          emotionalTension: { type: "string", description: "情绪张力控制，包含表情、停顿、语速和镜头推进" },
+		                      businessInsight: {
+		                        type: "string",
+		                        description: "商业深度洞察：必须深度拆解当前选题的具体实战方案、发布方式、呈现方法、转化入口与避坑提醒，必须包含“执行细节：”和“辅助避坑提醒：”两个小标题",
+		                      },
+		                      contentBrief: { type: "string", description: "用户现在就能执行的具体版本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
+		                      directorExecution: {
+		                        type: "object",
+		                        description: "导演级实战执行指南，严禁写成整段作文",
+		                        properties: {
+		                          storyboard: {
+		                            type: "array",
+		                            items: { type: "string" },
+		                            description: "分镜拆解，逐条写清镜头顺序、画面内容、动作、时长和剪辑点",
+		                          },
+		                          lighting: { type: "string", description: "灯光布置，包含主光、轮廓光、色温、角度和现场质感" },
+		                          blocking: { type: "string", description: "演员或博主走位，包含站位、动线、手部动作和与产品的关系" },
+		                          emotionalTension: { type: "string", description: "情绪控制指令，包含表情、停顿、语速、冲突推进和收束方式" },
 	                        },
 	                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
 	                      },
@@ -1070,7 +988,7 @@ async function runDeepDivePass(params: {
 	                shootingGuidance: { type: "string" },
 	                businessInsight: {
 	                  type: "object",
-	                  description: "商业洞察分析，分别说明视频、图文笔记与变现承接的呈现逻辑",
+	                  description: "商业深度洞察，分别说明视频、图文笔记与变现承接的呈现逻辑",
 	                  properties: {
 	                    video: { type: "string", description: "视频内容如何拍、如何发、如何转化" },
 	                    imageText: { type: "string", description: "图文笔记如何拍、如何排版、如何承接搜索流量" },
@@ -1377,28 +1295,15 @@ export async function analyzeVideo(params: {
         });
         allFrames.push(...sparseFrames.frames);
 
-        const visualPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
-          sparseFrames: sparseFrames.frames,
-          context: params.context,
-          duration: chunk.duration,
-          fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
-        }).catch((error) => {
-          console.warn("[growth.analyzeVideo] visual first pass fallback:", error);
-          return {
-            visualSummary: "已抽取关键帧，但视觉初判失败，转入保守视觉判断。",
-            openingFrameAssessment: "需重点复查开头是否足够直接、是否能一眼建立问题感。",
-            sceneConsistency: "优先保证人物、场景和动作示范能建立信任。",
-            trustSignals: [],
-            visualRisks: [],
-            keyFrames: sparseFrames.frames.slice(0, 4).map((item) => ({
-              timestamp: toTimestamp(item.timestamp),
-              whatShows: "关键帧已抽取，待进一步视觉判断。",
-              commercialUse: "可用来承接人物状态、动作示范或前后对比。",
-              issue: "视觉初判暂缺，需人工或下一轮模型补看。",
-              fix: "优先检查开头帧、人物主体和结果证据帧。",
-            })),
-          };
-        }));
+	        const visualPass = await withGrowthAnalysisSlot(() => runVisualFirstPass({
+	          sparseFrames: sparseFrames.frames,
+	          context: params.context,
+	          duration: chunk.duration,
+	          fileName: `${params.fileName || "video"}#${chunk.index + 1}`,
+	        }).catch((error) => {
+	          console.warn("[growth.analyzeVideo] visual first pass failed:", error);
+	          throw new VideoAnalysisFailure("llm", normalizeFailureReason(error));
+	        }));
         visualPassChunks.push(visualPass);
       }
 

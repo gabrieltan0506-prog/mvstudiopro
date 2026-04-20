@@ -1718,25 +1718,7 @@ export const appRouter = router({
         modelName: growthCampModelSchema.optional(),
       }))
       .mutation(async ({ input }) => {
-        let result;
-        try {
-          result = await analyzeVideo(input);
-        } catch (error) {
-          console.warn("[mvAnalysis.analyzeVideo] route fallback:", error);
-          result = {
-            analysis: growthAnalysisScoresSchema.parse(buildFallbackFrameAnalysis(input.context)),
-            videoMeta: {
-              videoUrl: "",
-              transcript: "",
-              videoDuration: 0,
-              provider: "fallback",
-              model: "deterministic",
-              fallback: true,
-              failureStage: "route",
-              failureReason: error instanceof Error ? error.message : String(error || "未知错误"),
-            },
-          };
-        }
+        const result = await analyzeVideo(input);
         return {
           success: true,
           analysis: result.analysis,
@@ -2405,7 +2387,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 260_000);
+        const timeoutId = setTimeout(() => controller.abort(), 720_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2446,7 +2428,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 260_000);
+        const timeoutId = setTimeout(() => controller.abort(), 720_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
