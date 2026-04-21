@@ -868,13 +868,18 @@ ${mode === 'REMIX' ? `
 `}
 `;
 
-  const response = await invokeLLM({
-    model: "pro",
-    provider: "vertex",
-    modelName: GROWTH_CAMP_STRATEGIST_MODEL,
-    temperature: 0.7,
-    topP: 0.9,
-    messages: [
+  let response: Awaited<ReturnType<typeof invokeLLM>> | undefined;
+  let _retries = 3;
+  let _delayMs = 5000;
+  while (_retries > 0) {
+    try {
+      response = await invokeLLM({
+        model: "pro",
+        provider: "vertex",
+        modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+        temperature: 0.7,
+        topP: 0.9,
+        messages: [
       {
         role: "system",
         content: STRATEGIST_PROMPT,
@@ -1154,7 +1159,27 @@ ${mode === 'REMIX' ? `
         },
       },
     },
-  });
+      });
+      break; // 成功，跳出重試迴圈
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isRateLimit =
+        (err as { status?: number })?.status === 429 ||
+        msg.includes("429") ||
+        msg.includes("Resource exhausted") ||
+        msg.includes("RESOURCE_EXHAUSTED");
+      if (isRateLimit && _retries > 1) {
+        _retries--;
+        console.warn(`[Vertex AI] 429 限制，等待 ${_delayMs / 1000}s 後重試，剩餘 ${_retries} 次`);
+        await new Promise<void>((resolve) => setTimeout(resolve, _delayMs));
+        _delayMs *= 2;
+      } else {
+        console.error("[Vertex AI] Strategist LLM 呼叫失敗:", err);
+        throw err;
+      }
+    }
+  }
+  if (!response) throw new Error("無法從 Vertex AI 獲取分析結果，請稍後再試。");
 
   const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
   return {
