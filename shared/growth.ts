@@ -61,24 +61,24 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().describe("【頂級商業顧問視角】必須深度分析人設轉化，具體設計引流品與利潤品，不少於200字，嚴禁敷衍").default(""),
+  businessInsight: z.string().describe("【核心】引流、產品、轉化路徑之商業顧問深度分析").default(""),
   contentBrief: z.string().default(""),
   directorExecution: z.object({
     storyboard: z.array(z.string()).default([]),
     lighting: z.string().default(""),
     blocking: z.string().default(""),
     emotionalTension: z.string().default("")
-  }).describe("【大師導演級/專業圖文編輯水準】必須包含完整分鏡、燈光與走位，絕對不准留空！").default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
+  }).describe("【大師導演級】分鏡、燈光、走位與情緒指導，嚴禁留空").default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().describe("顶级顾问级商业战略拆解").default(""),
+  strategy: z.string().describe("頂級商業顧問：人設拆解與具體產品矩陣規劃").default(""),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
-  explosiveTopicAnalysis: z.string().describe("爆款选题分析").optional(),
-  musicAndExpressionAnalysis: z.string().describe("【表達與配樂分析】根據選題生成具體的 BGM 與表達建議。REMIX與GROWTH模式皆必須輸出此欄位！").optional(),
-  personalizedGrowthDirection: z.string().describe("【個性化增長方向】以頂級商業顧問身份，給出具體產品設計、轉化路徑的深度幾百字長文分析，嚴禁只給標題！").optional(),
+  explosiveTopicAnalysis: z.string().describe("爆款選題分析綜述").optional(),
+  personalizedGrowthDirection: z.string().describe("個性化增長方向：具體產品設計與轉化路徑長文").default(""),
   actionableTopics: z.array(growthPremiumContentTopicSchema).describe("【現在就能執行的版本】每個選題都必須包含完整的大師級 directorExecution 與 businessInsight，絕不能只給標題").default([]),
+  musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
 });
 
 export const growthStrategySchema = z.object({
@@ -136,6 +136,8 @@ export const growthAnalysisScoresSchema = z.object({
     strategy: "",
     topics: [],
     actionableTopics: [],
+    personalizedGrowthDirection: "",
+    musicAndExpressionAnalysis: "",
   }),
   growthStrategy: growthStrategySchema.optional(),
   remixExecution: growthRemixExecutionSchema.optional(),
