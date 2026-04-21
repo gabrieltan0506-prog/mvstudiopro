@@ -983,7 +983,7 @@ ${mode === 'REMIX' ? `
 	                  },
 	                },
                 explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
-                musicAndExpressionAnalysis: { type: "string", description: "【強制輸出】REMIX與GROWTH模式皆必須輸出：根據選題生成具體可落地的BGM建議與表達指導" },
+                musicAndExpressionAnalysis: { type: "string", description: "【最高级必填项，绝不可为空字符串】必须为本次分析的所有选题生成具体的BGM建议（节奏/曲风/推荐曲目）与表达指导，长度不少于100字" },
                 personalizedGrowthDirection: { type: "string", description: "【個性化增長方向】幾百字的頂級顧問級商業規劃：具體引流品設計、利潤品設計、轉化路徑" },
                 actionableTopics: {
                   type: "array",
