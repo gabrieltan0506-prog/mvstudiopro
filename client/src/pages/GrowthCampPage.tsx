@@ -95,7 +95,7 @@ type AnalysisResult = {
     }>;
     explosiveTopicAnalysis?: string;
     musicAndExpressionAnalysis: string;
-    personalizedGrowthDirection: string;
+    personalizedGrowthDirection?: string;
     actionableTopics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3499,14 +3499,14 @@ export default function MVAnalysisPage() {
                             {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
                           </div>
                         ) : null}
-                        {analysis.premiumContent?.musicAndExpressionAnalysis ? (
+                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
                             <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                              {analysis.premiumContent.musicAndExpressionAnalysis}
+                              {analysis.premiumContent!.musicAndExpressionAnalysis}
                             </p>
                           </div>
-                        ) : null}
+                        )}
                       </div>
                     ) : (
                       <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -3545,14 +3545,14 @@ export default function MVAnalysisPage() {
                             {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
                           </div>
                         ) : null}
-                        {analysis.premiumContent?.musicAndExpressionAnalysis ? (
+                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
                             <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                              {analysis.premiumContent.musicAndExpressionAnalysis}
+                              {analysis.premiumContent!.musicAndExpressionAnalysis}
                             </p>
                           </div>
-                        ) : null}
+                        )}
                       </div>
                     )}
                   </>

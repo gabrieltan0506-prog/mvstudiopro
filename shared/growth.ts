@@ -61,24 +61,24 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().describe("【核心】引流、產品、轉化路徑之商業顧問深度分析").default(""),
+  businessInsight: z.string().describe("必须写明具体的引流品、利润品及变现路径。").default(""),
   contentBrief: z.string().default(""),
   directorExecution: z.object({
     storyboard: z.array(z.string()).default([]),
     lighting: z.string().default(""),
     blocking: z.string().default(""),
-    emotionalTension: z.string().default("")
-  }).describe("【大師導演級】分鏡、燈光、走位與情緒指導，嚴禁留空").default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
+    emotionalTension: z.string().describe("必须生成具体的导演情绪指导，绝对禁止输出「暂无」、「暂无情绪控制曲线」等废话。").default("")
+  }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().describe("頂級商業顧問：人設拆解與具體產品矩陣規劃").default(""),
+  strategy: z.string().default(""),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
-  explosiveTopicAnalysis: z.string().describe("爆款選題分析綜述").optional(),
-  personalizedGrowthDirection: z.string().describe("個性化增長方向：具體產品設計與轉化路徑長文").default(""),
-  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("【現在就能執行的版本】每個選題都必須包含完整的大師級 directorExecution 與 businessInsight，絕不能只給標題").default([]),
-  musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
+  explosiveTopicAnalysis: z.string().optional(),
+  personalizedGrowthDirection: z.string().optional(),
+  actionableTopics: z.array(growthPremiumContentTopicSchema).default([]),
+  musicAndExpressionAnalysis: z.string().describe("【最高级必填项】表达与配乐分析：必须为上述选题生成具体的 BGM 建议，不可遗漏！").default(""),
 });
 
 export const growthStrategySchema = z.object({
@@ -136,7 +136,6 @@ export const growthAnalysisScoresSchema = z.object({
     strategy: "",
     topics: [],
     actionableTopics: [],
-    personalizedGrowthDirection: "",
     musicAndExpressionAnalysis: "",
   }),
   growthStrategy: growthStrategySchema.optional(),
