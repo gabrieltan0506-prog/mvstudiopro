@@ -3946,9 +3946,9 @@ export default function MVAnalysisPage() {
                             开场钩子：{stripInternalJargon(primaryCommercialAngle.hook)}
                           </div>
                         ) : null}
-                        {growthHandoff?.workflowPrompt ? (
+                          {growthHandoff?.workflowPrompt ? (
                           <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/72">
-                            {growthHandoff.workflowPrompt}
+                            {growthHandoff?.workflowPrompt}
                           </div>
                         ) : null}
                       </div>
@@ -4112,7 +4112,9 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length) ? (
+                  {!isRemixMode && analysis && (analysis?.visualSummary || visualKeyFrames.length) ? (() => {
+                    const a = analysis!;
+                    return (
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
@@ -4120,41 +4122,41 @@ export default function MVAnalysisPage() {
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
                         <div className="space-y-4">
-                          {analysis.visualSummary ? (
+                          {a.visualSummary ? (
                             <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
                               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8af0ff]">
                                 <Sparkles className="h-4 w-4" />
                                 <span>视觉总判断</span>
                               </div>
-                              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
+                              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(a.visualSummary!)}</div>
                             </div>
                           ) : null}
-                          {analysis.openingFrameAssessment ? (
+                          {a.openingFrameAssessment ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
                               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
                                 <Target className="h-4 w-4" />
                                 <span>开头画面判断</span>
                               </div>
-                              <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
+                              <div className="mt-2">{replaceTerms(a.openingFrameAssessment!)}</div>
                             </div>
                           ) : null}
-                          {analysis.sceneConsistency ? (
+                          {a.sceneConsistency ? (
                             <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
                               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
                                 <LayoutDashboard className="h-4 w-4" />
                                 <span>画面统一性</span>
                               </div>
-                              <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
+                              <div className="mt-2">{replaceTerms(a.sceneConsistency!)}</div>
                             </div>
                           ) : null}
-                          {analysis.trustSignals?.length ? (
+                          {a.trustSignals?.length ? (
                             <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
                               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
                                 <Sparkles className="h-4 w-4" />
                                 <span>可信画面信号</span>
                               </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
-                                {analysis.trustSignals.slice(0, 3).map((item) => (
+                                {a.trustSignals!.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
                                 ))}
                               </div>
@@ -4182,14 +4184,14 @@ export default function MVAnalysisPage() {
                               </div>
                             </div>
                           ))}
-                          {analysis.visualRisks?.length ? (
+                          {a.visualRisks?.length ? (
                             <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
                               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffb87d]">
                                 <Target className="h-4 w-4" />
                                 <span>视觉风险</span>
                               </div>
                               <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
-                                {analysis.visualRisks.slice(0, 3).map((item) => (
+                                {a.visualRisks!.slice(0, 3).map((item) => (
                                   <div key={item}>{replaceTerms(item)}</div>
                                 ))}
                               </div>
@@ -4198,46 +4200,49 @@ export default function MVAnalysisPage() {
                         </div>
                       </div>
                     </div>
-                  ) : null}
+                    );
+                  })() : null}
 
-                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && analysis && (analysis?.languageExpression || analysis?.emotionalExpression || analysis?.cameraEmotionTension || analysis?.bgmAnalysis || analysis?.musicRecommendation || analysis?.sunoPrompt) ? (() => {
+                    const a = analysis!;
+                    return (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
                         <h2 className="text-2xl font-bold">表达与配乐分析</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {analysis.languageExpression ? (
+                        {a.languageExpression ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.languageExpression)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(a.languageExpression!)}</div>
                           </div>
                         ) : null}
-                        {analysis.emotionalExpression ? (
+                        {a.emotionalExpression ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">情感表达方式</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.emotionalExpression)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(a.emotionalExpression!)}</div>
                           </div>
                         ) : null}
-                        {analysis.cameraEmotionTension ? (
+                        {a.cameraEmotionTension ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">镜头表现与情绪张力</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.cameraEmotionTension)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(a.cameraEmotionTension!)}</div>
                           </div>
                         ) : null}
-                        {analysis.bgmAnalysis ? (
+                        {a.bgmAnalysis ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">BGM 分析</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.bgmAnalysis)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(a.bgmAnalysis!)}</div>
                           </div>
                         ) : null}
-                        {analysis.musicRecommendation ? (
+                        {a.musicRecommendation ? (
                           <div className="rounded-2xl border border-[#ffd08f]/20 bg-[rgba(255,208,143,0.08)] px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-[#ffd08f]">适合的配乐</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.musicRecommendation)}</div>
+                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(a.musicRecommendation!)}</div>
                           </div>
                         ) : null}
-                        {analysis.sunoPrompt ? (
+                        {a.sunoPrompt ? (
                           <div className="rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.08)] px-4 py-4 xl:col-span-2">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
@@ -4322,7 +4327,8 @@ export default function MVAnalysisPage() {
                         ) : null}
                       </div>
                     </div>
-                  ) : null}
+                    );
+                  })() : null}
 
                   {topRecommendedPlatforms.length ? (
                     <div className="rounded-[28px] border border-[#ffd08f]/20 bg-[#0f1a2c] p-6">
