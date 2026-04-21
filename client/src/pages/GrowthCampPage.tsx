@@ -3925,7 +3925,7 @@ export default function MVAnalysisPage() {
                 </div>
               )}
 
-              {!isRemixMode && showPremiumReport ? (
+              {false && !isRemixMode && showPremiumReport ? (
                 <div className="space-y-6">
                   <div ref={(node) => { sectionRefs.current.execution = node; }} className="rounded-[28px] border border-[#ffd08f]/25 bg-[#0f1a2c] p-6">
                     <div className="flex items-center gap-3 text-[#ffd08f]">
