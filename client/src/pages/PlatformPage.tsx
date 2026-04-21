@@ -81,6 +81,7 @@ const EMPTY_ANALYSIS: GrowthAnalysisScores = {
     summary: "",
     strategy: "",
     topics: [],
+    actionableTopics: [],
   },
   visualSummary: "",
   openingFrameAssessment: "",
