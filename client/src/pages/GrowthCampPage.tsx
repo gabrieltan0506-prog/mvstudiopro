@@ -3547,39 +3547,86 @@ export default function MVAnalysisPage() {
                         })()}
                       </div>
                     ) : (
-                      <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                        <div className="flex items-center gap-3 text-[#ffcf92]">
-                          <LayoutDashboard className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">商业成长营</h2>
-                        </div>
-                        {analysis.premiumContent?.strategy ? (
-                          <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
-                            <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
-                            <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
-                              {analysis.premiumContent.strategy}
+                      <>
+                        {/* ── 現在就能執行的版本（爆款指數正下方，商业成长营上方）── */}
+                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 && (
+                          <div className="rounded-[28px] border border-amber-500/25 bg-[#1a1a0f] p-6">
+                            <div className="flex items-center gap-3 text-amber-400">
+                              <Sparkles className="h-5 w-5" />
+                              <h2 className="text-2xl font-bold">🚀 现在就能执行的版本</h2>
+                            </div>
+                            <div className="mt-6">
+                              {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
                             </div>
                           </div>
-                        ) : null}
-                        {/* 2. 現在就能執行的版本（直接承接戰略）*/}
-                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
-                          <div className="mt-6">
-                            <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
-                            {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
+                        )}
+
+                        {/* ── 商业成长营（戰略 + 核心選題 + 配樂）── */}
+                        <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                          <div className="flex items-center gap-3 text-[#ffcf92]">
+                            <LayoutDashboard className="h-5 w-5" />
+                            <h2 className="text-2xl font-bold">商业成长营</h2>
                           </div>
-                        ) : null}
-                        {/* 3. 爆款選題分析綜述 */}
-                        {analysis.premiumContent?.explosiveTopicAnalysis ? (
-                          <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
-                            <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
-                            <p className="whitespace-pre-wrap text-gray-300">
-                              {analysis.premiumContent.explosiveTopicAnalysis}
-                            </p>
-                          </div>
-                        ) : null}
-                        {/* 4. 核心爆款選題 */}
-                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
-                        {/* 5. 表達與配樂分析已移至「视觉呈现效果」下方，此處不再重複 */}
-                      </div>
+                          {analysis.premiumContent?.strategy ? (
+                            <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
+                              <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
+                              <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
+                                {analysis.premiumContent.strategy}
+                              </div>
+                            </div>
+                          ) : null}
+                          {/* 爆款選題分析綜述 */}
+                          {analysis.premiumContent?.explosiveTopicAnalysis ? (
+                            <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+                              <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
+                              <p className="whitespace-pre-wrap text-gray-300">
+                                {analysis.premiumContent.explosiveTopicAnalysis}
+                              </p>
+                            </div>
+                          ) : null}
+                          {/* 核心爆款選題 */}
+                          {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                          {/* 表達與配樂分析（固定在此，不依賴遠端條件塊）*/}
+                          {(() => {
+                            const _music = (analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim();
+                            const _mp = ((analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "").trim();
+                            if (!_music && !_mp) return null;
+                            return (
+                              <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
+                                <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
+                                {_music && (
+                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">{_music}</p>
+                                )}
+                                {_mp && (
+                                  <div className="mt-5 rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.06)] px-4 py-4">
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                      <div className="flex flex-col gap-0.5">
+                                        <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
+                                        <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                          className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
+                                          <option value="suno">Suno</option>
+                                          <option value="udio">Udio</option>
+                                        </select>
+                                        <button type="button"
+                                          onClick={() => { setMusicPromptDraft(_mp); void handleGenerateMusic(); }}
+                                          disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                          className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
+                                          {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                          生成 BGM
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-xs leading-relaxed text-[#90c4ff]/80">{_mp}</div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </>
                     )}
                   </>
                 ) : null}
@@ -4153,50 +4200,13 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt || (analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0) ? (
+                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
                         <h2 className="text-2xl font-bold">表达与配乐分析</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {/* 策略配樂分析（來自 AI 深度分析）*/}
-                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (() => {
-                          const _mp = (analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "";
-                          return (
-                            <div className="rounded-2xl border border-purple-500/20 bg-purple-500/10 px-4 py-4 xl:col-span-2">
-                              <div className="mb-2 text-xs uppercase tracking-[0.16em] text-purple-300">🎵 配乐策略分析</div>
-                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                                {analysis.premiumContent!.musicAndExpressionAnalysis}
-                              </p>
-                              {_mp.trim().length > 0 && (
-                                <div className="mt-4 rounded-xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.06)] px-3 py-3">
-                                  <div className="flex flex-wrap items-center justify-between gap-3">
-                                    <div className="flex flex-col gap-0.5">
-                                      <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
-                                      <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
-                                        className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
-                                        <option value="suno">Suno</option>
-                                        <option value="udio">Udio</option>
-                                      </select>
-                                      <button type="button"
-                                        onClick={() => { setMusicPromptDraft(_mp); void handleGenerateMusic(); }}
-                                        disabled={musicStatus === "generating" || musicStatus === "polling"}
-                                        className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
-                                        {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
-                                        生成 BGM
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-relaxed text-[#90c4ff]/80">{_mp}</div>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
                         {analysis.languageExpression ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>

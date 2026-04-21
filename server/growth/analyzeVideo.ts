@@ -860,8 +860,11 @@ ${mode === 'REMIX' ? `
 ` : `
 【GROWTH 實作指令】
 - 戰略拆解 (strategy)：深度分析作者人設轉化，具體設計產品矩陣（名稱、定價、轉化路徑），嚴禁只寫標題。
-- 順序：先生成 3 個 actionableTopics（緊跟戰略下方），再生成 3 個 topics（核心爆款選題）。
-- 每個選題的 businessInsight 必須包含深度的引流品、利潤品設計，不少於 300 字。
+- 順序：先生成 3 個 actionableTopics（現在就能執行的版本），再生成 3 個 topics（核心爆款選題）。
+- 【人設增長方向必須嵌入選題】不再單獨輸出 personalizedGrowthDirection 欄位。取而代之：
+  ① 每個選題的 businessInsight 必須包含「人設轉化切入點」與「引流品/利潤品路徑設計」，不少於 300 字。
+  ② 每個選題的 directorExecution.emotionalTension 必須包含「如何用這個選題強化創作者個人品牌人設」的具體策略。
+- 以上兩點是強制要求，絕不可僅寫選題概念而缺少人設與商業轉化深度。
 `}
 `;
 
