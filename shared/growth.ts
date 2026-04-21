@@ -73,12 +73,12 @@ export const growthPremiumContentTopicSchema = z.object({
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().describe("顶级顾问级商业战略拆解").optional(),
+  strategy: z.string().describe("顶级顾问级商业战略拆解").default(""),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
   explosiveTopicAnalysis: z.string().describe("爆款选题分析").optional(),
   musicAndExpressionAnalysis: z.string().describe("【表達與配樂分析】根據選題生成具體的 BGM 與表達建議。REMIX與GROWTH模式皆必須輸出此欄位！").optional(),
   personalizedGrowthDirection: z.string().describe("【個性化增長方向】以頂級商業顧問身份，給出具體產品設計、轉化路徑的深度幾百字長文分析，嚴禁只給標題！").optional(),
-  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("【現在就能執行的版本】每個選題都必須包含完整的大師級 directorExecution 與 businessInsight，絕不能只給標題").optional(),
+  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("【現在就能執行的版本】每個選題都必須包含完整的大師級 directorExecution 與 businessInsight，絕不能只給標題").default([]),
 });
 
 export const growthStrategySchema = z.object({
@@ -133,7 +133,9 @@ export const growthAnalysisScoresSchema = z.object({
   }),
   premiumContent: growthPremiumContentSchema.default({
     summary: "",
+    strategy: "",
     topics: [],
+    actionableTopics: [],
   }),
   growthStrategy: growthStrategySchema.optional(),
   remixExecution: growthRemixExecutionSchema.optional(),
