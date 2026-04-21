@@ -98,7 +98,7 @@ type AnalysisResult = {
     }>;
     explosiveTopicAnalysis?: string;
     musicAndExpressionAnalysis: string;
-    personalizedGrowthDirection: string;
+    personalizedGrowthDirection?: string;
     actionableTopics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3873,7 +3873,7 @@ export default function MVAnalysisPage() {
                   </div>
                 )}
         {(() => {
-          // ——— 共用選題卡片渲染函式 ———
+          // ——— 共用選題卡片渲染函式（帶 slice 上限）———
           type TopicItem = {
             title: string;
             formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3889,9 +3889,11 @@ export default function MVAnalysisPage() {
           const renderTopics = (
             topics: TopicItem[] | undefined,
             sectionTitle: string,
-            tagStyle: "purple" | "amber"
+            tagStyle: "purple" | "amber",
+            limit = 3
           ) => {
-            if (!topics || topics.length === 0) return null;
+            const items = (topics ?? []).slice(0, limit);
+            if (items.length === 0) return null;
             const tagCls = tagStyle === "purple"
               ? "border-[#f5b7ff]/20 bg-[#f5b7ff]/10 text-[#f5b7ff]"
               : "border-amber-400/30 bg-amber-400/10 text-amber-300";
@@ -3901,7 +3903,7 @@ export default function MVAnalysisPage() {
                   <h3 className="mb-4 text-xl font-bold text-white/90">{sectionTitle}</h3>
                 )}
                 <div className="grid gap-6">
-                  {topics.map((topic, i) => {
+                  {items.map((topic, i) => {
                     const fmtType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
                     const de = topic.directorExecution || {};
                     const sb = Array.isArray(de.storyboard) ? de.storyboard.filter(Boolean) : [];
@@ -3957,19 +3959,21 @@ export default function MVAnalysisPage() {
           ) : null;
 
           if (isRemixMode) {
+            /* ====== 二創模式：絕對排他，只渲染選題卡片 + 配樂 ====== */
             return (
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffcf92]">
                   <LayoutDashboard className="h-5 w-5" />
                   <h2 className="text-2xl font-bold">实战爆款二创</h2>
                 </div>
+                {/* 只取 topics 前 3 個，物理隔絕 summary / strategy / actionableTopics */}
                 {renderTopics(analysis.premiumContent?.topics, "🔥 核心二创选题", "purple")}
-                {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
                 {musicBlock}
               </div>
             );
           }
 
+          /* ====== 成長營模式：顧問深度版 ====== */
           return (
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -3977,20 +3981,20 @@ export default function MVAnalysisPage() {
                 <h2 className="text-2xl font-bold">商业成长营</h2>
               </div>
 
-              {analysis.premiumContent?.personalizedGrowthDirection ? (
-                <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
-                  <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
-                  <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
-                    {analysis.premiumContent.personalizedGrowthDirection}
-                  </div>
-                </div>
-              ) : null}
-
               {analysis.premiumContent?.strategy ? (
                 <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
                   <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
                   <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
                     {analysis.premiumContent.strategy}
+                  </div>
+                </div>
+              ) : null}
+
+              {analysis.premiumContent?.personalizedGrowthDirection ? (
+                <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
+                  <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
+                  <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
+                    {analysis.premiumContent.personalizedGrowthDirection}
                   </div>
                 </div>
               ) : null}

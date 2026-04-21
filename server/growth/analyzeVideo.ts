@@ -845,24 +845,23 @@ async function runDeepDivePass(params: {
 模式：${mode === 'REMIX' ? '实战爆款二创' : '商业成长营'}
 用戶背景：${businessGoal}
 
-【最高級別硬性指令：解除字數限制，禁止敷衍】
-1. 只要生成「选题」（無論是核心 topics 還是「現在就能執行的版本」中的 actionableTopics），【每一個】都必須達到視頻大師導演級與專業圖文編輯水準！必須輸出完整的 directorExecution（分鏡腳本、燈光、走位）和 businessInsight（不少於200字的顧問級分析），絕對不允許只給一個標題！
-2. personalizedGrowthDirection（個性化增長方向）：必須以頂級商業顧問身份，深度分析作者人設如何轉化，具體設計哪些引流產品、利潤產品，轉化路徑是什麼。必須是幾百字的詳細商業規劃，嚴禁只寫一兩句廢話！
+【全局最高禁令】
+1. 嚴禁任何廢話佔位符！絕對禁止輸出「暫無數據」、「暫無情緒控制曲線」、「暫無」、「待補充」等任何敷衍字眼。必須根據人設直接生成具體指導內容。
+2. 你必須強制輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，嚴禁遺漏。
 3. 平台數據：僅限【抖音、快手、小红书、B站】。嚴禁提及「视频号」。
+4. 每個選題的 directorExecution 必須完整：分鏡腳本逐條說明、燈光佈置、走位調度、情緒控制均不可留空。
 
 ${mode === 'REMIX' ? `
-【REMIX 模式專屬執行】
-1. 嚴格生成 3 個核心選題 (topics)，徹底拆解導演級拍攝與商業變現。
-2. 去重禁令：嚴禁在 summary 欄位輸出任何內容，summary 必須保持為空 ""，所有資訊集中在 topics 中呈現。
-3. 強制復用成長營邏輯：你必須、務必輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，根據這 3 個選題生成可直接落地的 BGM 建議。不要漏掉！
-4. 生成 actionableTopics（現在就能執行的版本）：另外輸出 2-3 個即時可執行的選題，同樣必須有完整 directorExecution 與 businessInsight。
+【REMIX 實作指令 (去重警告)】
+1. 僅生成 3 個核心選題，全部放入 topics 陣列。
+2. 去重強制指令：為防止前端重複渲染，你絕對不准在 summary、strategy、personalizedGrowthDirection 欄位輸出任何內容，這三個欄位必須強制保持空字串 ""。
+3. 每個選題必須包含完整的 directorExecution（分鏡、燈光、走位、情緒）與 businessInsight（引流品、利潤品、變現路徑）。
 ` : `
-【GROWTH 模式專屬執行】
-1. 商業戰略拆解 (strategy)：以頂級顧問身份具體設計產品矩陣，明確寫出引流品與利潤品的名稱、功能、轉化路徑。
-2. personalizedGrowthDirection（個性化增長方向）：必須輸出，幾百字的具體成長規劃，包含近期與中長期路徑。
-3. 生成 3 個核心深度選題 (topics)，每個都必須有完整 directorExecution 與 businessInsight。
+【GROWTH 實作指令】
+1. strategy：具體設計引流品與利潤品的名稱、功能、定價與轉化路徑，嚴禁只寫標題。
+2. personalizedGrowthDirection：以頂級顧問身份深度分析人設轉化路徑，必須是幾百字的具體商業規劃。
+3. 生成 3 個核心選題 (topics)，每個都必須有完整 directorExecution 與 businessInsight。
 4. 生成 actionableTopics（現在就能執行的版本）：輸出 2-3 個即時可執行選題，同樣需要完整執行細節。
-5. 必須輸出 musicAndExpressionAnalysis 欄位。
 `}
 `;
 
@@ -1368,9 +1367,10 @@ export async function analyzeVideo(params: {
       }));
 
       // 实作残留清洗 (Data Wiping)
-      // 如果是二創模式，強迫將所有過往可能殘留的診斷數據洗掉，設為空陣列或空字符串
+      // 如果是二創模式，強迫將所有可能導致 UI 重複渲染的欄位物理清空
       const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       if (analysisMode === "REMIX") {
+        // 診斷陣列全部清空
         deepDive.keyFrames = [];
         deepDive.visualRisks = [];
         deepDive.strengths = [];
@@ -1381,9 +1381,18 @@ export async function analyzeVideo(params: {
         deepDive.sceneConsistency = "";
         deepDive.visualSummary = "";
         deepDive.trustSignals = [];
-        // 強制清空 summary，防止與 topics 重複渲染
+        // premiumContent 文字欄位全部清空，防止前端二次渲染
         if (deepDive.premiumContent) {
-          (deepDive.premiumContent as { summary?: string }).summary = "";
+          const pc = deepDive.premiumContent as {
+            summary?: string;
+            strategy?: string;
+            personalizedGrowthDirection?: string;
+            explosiveTopicAnalysis?: string;
+          };
+          pc.summary = "";
+          pc.strategy = "";
+          pc.personalizedGrowthDirection = undefined;
+          pc.explosiveTopicAnalysis = undefined;
         }
       }
 

@@ -2676,7 +2676,6 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
       strategy: "样例二创策略",
       topics: [],
       actionableTopics: [],
-      personalizedGrowthDirection: "",
       musicAndExpressionAnalysis: "",
     },
     visualSummary: "样例视觉结论",

@@ -95,7 +95,7 @@ type AnalysisResult = {
     }>;
     explosiveTopicAnalysis?: string;
     musicAndExpressionAnalysis: string;
-    personalizedGrowthDirection: string;
+    personalizedGrowthDirection?: string;
     actionableTopics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
