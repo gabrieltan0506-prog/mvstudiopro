@@ -853,8 +853,9 @@ async function runDeepDivePass(params: {
 ${mode === 'REMIX' ? `
 【REMIX 模式專屬執行】
 1. 嚴格生成 3 個核心選題 (topics)，徹底拆解導演級拍攝與商業變現。
-2. 強制復用成長營邏輯：你必須、務必輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，根據這 3 個選題生成可直接落地的 BGM 建議。不要漏掉！
-3. 生成 actionableTopics（現在就能執行的版本）：另外輸出 2-3 個即時可執行的選題，同樣必須有完整 directorExecution 與 businessInsight。
+2. 去重禁令：嚴禁在 summary 欄位輸出任何內容，summary 必須保持為空 ""，所有資訊集中在 topics 中呈現。
+3. 強制復用成長營邏輯：你必須、務必輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，根據這 3 個選題生成可直接落地的 BGM 建議。不要漏掉！
+4. 生成 actionableTopics（現在就能執行的版本）：另外輸出 2-3 個即時可執行的選題，同樣必須有完整 directorExecution 與 businessInsight。
 ` : `
 【GROWTH 模式專屬執行】
 1. 商業戰略拆解 (strategy)：以頂級顧問身份具體設計產品矩陣，明確寫出引流品與利潤品的名稱、功能、轉化路徑。
@@ -1380,6 +1381,10 @@ export async function analyzeVideo(params: {
         deepDive.sceneConsistency = "";
         deepDive.visualSummary = "";
         deepDive.trustSignals = [];
+        // 強制清空 summary，防止與 topics 重複渲染
+        if (deepDive.premiumContent) {
+          (deepDive.premiumContent as { summary?: string }).summary = "";
+        }
       }
 
       const strategistRefinement = null;

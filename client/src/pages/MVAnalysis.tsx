@@ -97,8 +97,8 @@ type AnalysisResult = {
       };
     }>;
     explosiveTopicAnalysis?: string;
-    musicAndExpressionAnalysis?: string;
-    personalizedGrowthDirection?: string;
+    musicAndExpressionAnalysis: string;
+    personalizedGrowthDirection: string;
     actionableTopics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3872,81 +3872,50 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 )}
-        {isRemixMode ? (
-          <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-            <div className="flex items-center gap-3 text-[#ffcf92]">
-              <LayoutDashboard className="h-5 w-5" />
-              <h2 className="text-2xl font-bold">实战爆款二创</h2>
-            </div>
-            
-            <div className="mt-5 grid gap-6">
-              {analysis.premiumContent?.topics?.map((topic, i) => {
-                const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
-                const directorExecution = topic.directorExecution || {};
-                const storyboard = Array.isArray(directorExecution.storyboard)
-                  ? directorExecution.storyboard.filter(Boolean)
-                  : [];
-
-                return (
-                  <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-                        <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-                      </div>
-                      <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
-                        呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
-                      </div>
-                    </div>
-                    
-                    {topic.businessInsight ? (
-                      <div className="mt-4 rounded-xl border-l-4 border-emerald-500 bg-emerald-500/10 p-5">
-                        <h5 className="mb-2 font-bold text-emerald-400">💎 商业深度洞察</h5>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                          {topic.businessInsight}
-                        </p>
-                      </div>
-                    ) : null}
-                    
-                    {(storyboard.length || directorExecution.lighting || directorExecution.blocking || directorExecution.emotionalTension) ? (
-                      <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
-                        <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
-                        <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300">
-                          {directorExecution.lighting ? <div><strong>灯光:</strong> {directorExecution.lighting}</div> : null}
-                          {directorExecution.blocking ? <div><strong>走位:</strong> {directorExecution.blocking}</div> : null}
-                          {directorExecution.emotionalTension ? <div><strong>情绪:</strong> {directorExecution.emotionalTension}</div> : null}
-                        </div>
-                        {storyboard.length ? (
-                          <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
-                            {storyboard.map((shot, sIdx) => (
-                              <li key={sIdx}>{replaceTerms(shot)}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            
-            {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
-              <div className="mt-8">
-                <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
+        {(() => {
+          // ——— 共用選題卡片渲染函式 ———
+          type TopicItem = {
+            title: string;
+            formatType?: "VIDEO" | "IMAGE_TEXT";
+            businessInsight?: string;
+            contentBrief?: string;
+            directorExecution?: {
+              storyboard?: string[];
+              lighting?: string;
+              blocking?: string;
+              emotionalTension?: string;
+            };
+          };
+          const renderTopics = (
+            topics: TopicItem[] | undefined,
+            sectionTitle: string,
+            tagStyle: "purple" | "amber"
+          ) => {
+            if (!topics || topics.length === 0) return null;
+            const tagCls = tagStyle === "purple"
+              ? "border-[#f5b7ff]/20 bg-[#f5b7ff]/10 text-[#f5b7ff]"
+              : "border-amber-400/30 bg-amber-400/10 text-amber-300";
+            return (
+              <div className="mt-6">
+                {sectionTitle && (
+                  <h3 className="mb-4 text-xl font-bold text-white/90">{sectionTitle}</h3>
+                )}
                 <div className="grid gap-6">
-                  {analysis.premiumContent!.actionableTopics!.map((topic, i) => {
+                  {topics.map((topic, i) => {
                     const fmtType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
                     const de = topic.directorExecution || {};
                     const sb = Array.isArray(de.storyboard) ? de.storyboard.filter(Boolean) : [];
                     return (
-                      <div key={`at-${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                      <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+                            {topic.contentBrief && (
+                              <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+                            )}
                           </div>
-                          <div className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-300">
-                            {fmtType === "IMAGE_TEXT" ? "📝 图文笔记" : "🎥 视频拍摄"}
+                          <div className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${tagCls}`}>
+                            呈现形式：{fmtType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
                           </div>
                         </div>
                         {topic.businessInsight ? (
@@ -3975,159 +3944,72 @@ export default function MVAnalysisPage() {
                   })}
                 </div>
               </div>
-            ) : null}
+            );
+          };
 
-            {analysis.premiumContent?.musicAndExpressionAnalysis ? (
-              <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
-                <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                  {analysis.premiumContent.musicAndExpressionAnalysis}
-                </p>
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-            <div className="flex items-center gap-3 text-[#ffcf92]">
-              <LayoutDashboard className="h-5 w-5" />
-              <h2 className="text-2xl font-bold">商业成长营</h2>
+          const musicBlock = analysis.premiumContent?.musicAndExpressionAnalysis ? (
+            <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
+              <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                {analysis.premiumContent.musicAndExpressionAnalysis}
+              </p>
             </div>
+          ) : null;
 
-            {analysis.premiumContent?.personalizedGrowthDirection ? (
-              <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
-                <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
-                <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
-                  {analysis.premiumContent.personalizedGrowthDirection}
+          if (isRemixMode) {
+            return (
+              <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                <div className="flex items-center gap-3 text-[#ffcf92]">
+                  <LayoutDashboard className="h-5 w-5" />
+                  <h2 className="text-2xl font-bold">实战爆款二创</h2>
                 </div>
+                {renderTopics(analysis.premiumContent?.topics, "🔥 核心二创选题", "purple")}
+                {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
+                {musicBlock}
               </div>
-            ) : null}
-            
-            {analysis.premiumContent?.strategy ? (
-              <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
-                <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
-                <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
-                  {analysis.premiumContent.strategy}
-                </div>
-              </div>
-            ) : null}
-            
-            {analysis.premiumContent?.explosiveTopicAnalysis ? (
-              <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
-                <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
-                <p className="whitespace-pre-wrap text-gray-300">
-                  {analysis.premiumContent.explosiveTopicAnalysis}
-                </p>
-              </div>
-            ) : null}
-            
-            <div className="mt-5 grid gap-6">
-              {analysis.premiumContent?.topics?.map((topic, i) => {
-                const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
-                const directorExecution = topic.directorExecution || {};
-                const storyboard = Array.isArray(directorExecution.storyboard)
-                  ? directorExecution.storyboard.filter(Boolean)
-                  : [];
+            );
+          }
 
-                return (
-                  <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-                        <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-                      </div>
-                      <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
-                        呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
-                      </div>
-                    </div>
-                    
-                    {topic.businessInsight ? (
-                      <div className="mt-4 rounded-xl border-l-4 border-emerald-500 bg-emerald-500/10 p-5">
-                        <h5 className="mb-2 font-bold text-emerald-400">💎 商业深度洞察</h5>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                          {topic.businessInsight}
-                        </p>
-                      </div>
-                    ) : null}
-                    
-                    {(storyboard.length || directorExecution.lighting || directorExecution.blocking || directorExecution.emotionalTension) ? (
-                      <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
-                        <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
-                        <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300">
-                          {directorExecution.lighting ? <div><strong>灯光:</strong> {directorExecution.lighting}</div> : null}
-                          {directorExecution.blocking ? <div><strong>走位:</strong> {directorExecution.blocking}</div> : null}
-                          {directorExecution.emotionalTension ? <div><strong>情绪:</strong> {directorExecution.emotionalTension}</div> : null}
-                        </div>
-                        {storyboard.length ? (
-                          <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
-                            {storyboard.map((shot, sIdx) => (
-                              <li key={sIdx}>{replaceTerms(shot)}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    ) : null}
+          return (
+            <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+              <div className="flex items-center gap-3 text-[#ffcf92]">
+                <LayoutDashboard className="h-5 w-5" />
+                <h2 className="text-2xl font-bold">商业成长营</h2>
+              </div>
+
+              {analysis.premiumContent?.personalizedGrowthDirection ? (
+                <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
+                  <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
+                  <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
+                    {analysis.premiumContent.personalizedGrowthDirection}
                   </div>
-                );
-              })}
-            </div>
-            
-            {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
-              <div className="mt-8">
-                <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
-                <div className="grid gap-6">
-                  {analysis.premiumContent!.actionableTopics!.map((topic, i) => {
-                    const fmtType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
-                    const de = topic.directorExecution || {};
-                    const sb = Array.isArray(de.storyboard) ? de.storyboard.filter(Boolean) : [];
-                    return (
-                      <div key={`g-at-${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-                          </div>
-                          <div className="shrink-0 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-300">
-                            {fmtType === "IMAGE_TEXT" ? "📝 图文笔记" : "🎥 视频拍摄"}
-                          </div>
-                        </div>
-                        {topic.businessInsight ? (
-                          <div className="mt-4 rounded-xl border-l-4 border-emerald-500 bg-emerald-500/10 p-5">
-                            <h5 className="mb-2 font-bold text-emerald-400">💎 商业深度洞察</h5>
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">{topic.businessInsight}</p>
-                          </div>
-                        ) : null}
-                        {(sb.length || de.lighting || de.blocking || de.emotionalTension) ? (
-                          <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
-                            <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
-                            <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300">
-                              {de.lighting ? <div><strong>灯光:</strong> {de.lighting}</div> : null}
-                              {de.blocking ? <div><strong>走位:</strong> {de.blocking}</div> : null}
-                              {de.emotionalTension ? <div><strong>情绪:</strong> {de.emotionalTension}</div> : null}
-                            </div>
-                            {sb.length ? (
-                              <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
-                                {sb.map((shot, sIdx) => <li key={sIdx}>{replaceTerms(shot)}</li>)}
-                              </ul>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
                 </div>
-              </div>
-            ) : null}
+              ) : null}
 
-            {analysis.premiumContent?.musicAndExpressionAnalysis ? (
-              <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
-                <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                  {analysis.premiumContent.musicAndExpressionAnalysis}
-                </p>
-              </div>
-            ) : null}
-          </div>
-        )}
+              {analysis.premiumContent?.strategy ? (
+                <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
+                  <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
+                  <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
+                    {analysis.premiumContent.strategy}
+                  </div>
+                </div>
+              ) : null}
+
+              {analysis.premiumContent?.explosiveTopicAnalysis ? (
+                <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+                  <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
+                  <p className="whitespace-pre-wrap text-gray-300">
+                    {analysis.premiumContent.explosiveTopicAnalysis}
+                  </p>
+                </div>
+              ) : null}
+
+              {renderTopics(analysis.premiumContent?.topics, "🎯 核心爆款选题", "purple")}
+              {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
+              {musicBlock}
+            </div>
+          );
+        })()}
               </div>
             ) : (
               <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
