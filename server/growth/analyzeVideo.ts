@@ -845,23 +845,23 @@ async function runDeepDivePass(params: {
 模式：${mode === 'REMIX' ? '实战爆款二创' : '商业成长营'}
 用戶背景：${businessGoal}
 
-【全局最高禁令】
-1. 嚴禁任何廢話佔位符！絕對禁止輸出「暫無數據」、「暫無情緒控制曲線」、「暫無」、「待補充」等任何敷衍字眼。必須根據人設直接生成具體指導內容。
-2. 你必須強制輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，嚴禁遺漏。
-3. 平台數據：僅限【抖音、快手、小红书、B站】。嚴禁提及「视频号」。
-4. 每個選題的 directorExecution 必須完整：分鏡腳本逐條說明、燈光佈置、走位調度、情緒控制均不可留空。
+【最高級別硬性指令】
+1. 解除 Token 限制，不准摘要。只要生成選題 (topics/actionableTopics)，每一個都必須達到大師導演級與專業圖文編輯水準，帶完整分鏡腳本、燈光、走位、情緒控制。
+2. 數據與平台：僅限【抖音、快手、小红书、B站】。嚴禁提及「视频号」。
+3. 嚴禁佔位符：絕對禁止輸出「暫無」、「暫無情緒控制曲線」、「待補充」等任何敷衍字眼。
+4. 必須輸出 musicAndExpressionAnalysis，嚴禁遺漏，長度不少於 100 字。
+5. 【Music Prompt 指令】必須額外輸出 musicPrompt 欄位，這是專為 Suno/Udio 等 AI 音樂生成工具設計的提示詞。格式：[Music Style], [Instruments], [Mood], [Tempo]。範例："Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm"。內容必須精準契合本次所有選題的商業氛圍。
 
 ${mode === 'REMIX' ? `
-【REMIX 實作指令 (去重警告)】
-1. 僅生成 3 個核心選題，全部放入 topics 陣列。
-2. 去重強制指令：為防止前端重複渲染，你絕對不准在 summary、strategy、personalizedGrowthDirection 欄位輸出任何內容，這三個欄位必須強制保持空字串 ""。
-3. 每個選題必須包含完整的 directorExecution（分鏡、燈光、走位、情緒）與 businessInsight（引流品、利潤品、變現路徑）。
+【REMIX 實作指令】
+- 去重：嚴禁在 summary 欄位輸出任何內容，保持空字串 ""。
+- 順序：先生成 3 個 actionableTopics（現在就能執行的版本），再生成 3 個核心 topics（實戰爆款二創）。
+- 變現：每個選題的 businessInsight 必須包含深度的引流品、利潤品設計，不少於 300 字。
 ` : `
 【GROWTH 實作指令】
-1. strategy：具體設計引流品與利潤品的名稱、功能、定價與轉化路徑，嚴禁只寫標題。
-2. personalizedGrowthDirection：以頂級顧問身份深度分析人設轉化路徑，必須是幾百字的具體商業規劃。
-3. 生成 3 個核心選題 (topics)，每個都必須有完整 directorExecution 與 businessInsight。
-4. 生成 actionableTopics（現在就能執行的版本）：輸出 2-3 個即時可執行選題，同樣需要完整執行細節。
+- 戰略拆解 (strategy)：深度分析作者人設轉化，具體設計產品矩陣（名稱、定價、轉化路徑），嚴禁只寫標題。
+- 順序：先生成 3 個 actionableTopics（緊跟戰略下方），再生成 3 個 topics（核心爆款選題）。
+- 每個選題的 businessInsight 必須包含深度的引流品、利潤品設計，不少於 300 字。
 `}
 `;
 
@@ -984,7 +984,7 @@ ${mode === 'REMIX' ? `
 	                },
                 explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
                 musicAndExpressionAnalysis: { type: "string", description: "【最高级必填项，绝不可为空字符串】必须为本次分析的所有选题生成具体的BGM建议（节奏/曲风/推荐曲目）与表达指导，长度不少于100字" },
-                personalizedGrowthDirection: { type: "string", description: "【個性化增長方向】幾百字的頂級顧問級商業規劃：具體引流品設計、利潤品設計、轉化路徑" },
+                musicPrompt: { type: "string", description: "【必填】AI音乐生成提示词，专为Suno/Udio设计。格式：[Music Style], [Instruments], [Mood], [Tempo]。示例：Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm" },
                 actionableTopics: {
                   type: "array",
                   description: "【現在就能執行的版本】2-3個即時可執行選題，每個都必須有完整directorExecution與200字以上businessInsight",
@@ -1010,7 +1010,7 @@ ${mode === 'REMIX' ? `
                   },
                 },
               },
-              required: ["topics", "musicAndExpressionAnalysis"],
+              required: ["topics", "musicAndExpressionAnalysis", "musicPrompt"],
             },
             growthStrategy: {
               type: "object",
@@ -1386,12 +1386,10 @@ export async function analyzeVideo(params: {
           const pc = deepDive.premiumContent as {
             summary?: string;
             strategy?: string;
-            personalizedGrowthDirection?: string;
             explosiveTopicAnalysis?: string;
           };
           pc.summary = "";
           pc.strategy = "";
-          pc.personalizedGrowthDirection = undefined;
           pc.explosiveTopicAnalysis = undefined;
         }
       }

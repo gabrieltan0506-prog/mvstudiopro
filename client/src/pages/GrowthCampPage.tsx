@@ -95,7 +95,6 @@ type AnalysisResult = {
     }>;
     explosiveTopicAnalysis?: string;
     musicAndExpressionAnalysis: string;
-    personalizedGrowthDirection?: string;
     actionableTopics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3492,13 +3491,16 @@ export default function MVAnalysisPage() {
                           <Sparkles className="h-5 w-5" />
                           <h2 className="text-2xl font-bold">实战爆款二创</h2>
                         </div>
-                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {/* 1. 現在就能執行的版本（直接承接爆款指數）*/}
                         {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
-                          <div className="mt-8">
+                          <div className="mt-6">
                             <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
                             {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
                           </div>
                         ) : null}
+                        {/* 2. 實戰爆款二創核心選題 */}
+                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {/* 3. 表達與配樂分析 */}
                         {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
@@ -3514,14 +3516,6 @@ export default function MVAnalysisPage() {
                           <LayoutDashboard className="h-5 w-5" />
                           <h2 className="text-2xl font-bold">商业成长营</h2>
                         </div>
-                        {analysis.premiumContent?.personalizedGrowthDirection ? (
-                          <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
-                            <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
-                            <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
-                              {analysis.premiumContent.personalizedGrowthDirection}
-                            </div>
-                          </div>
-                        ) : null}
                         {analysis.premiumContent?.strategy ? (
                           <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
                             <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
@@ -3530,6 +3524,14 @@ export default function MVAnalysisPage() {
                             </div>
                           </div>
                         ) : null}
+                        {/* 2. 現在就能執行的版本（直接承接戰略）*/}
+                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
+                          <div className="mt-6">
+                            <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
+                            {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
+                          </div>
+                        ) : null}
+                        {/* 3. 爆款選題分析綜述 */}
                         {analysis.premiumContent?.explosiveTopicAnalysis ? (
                           <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
                             <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
@@ -3538,13 +3540,8 @@ export default function MVAnalysisPage() {
                             </p>
                           </div>
                         ) : null}
+                        {/* 4. 核心爆款選題 */}
                         {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
-                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
-                          <div className="mt-8">
-                            <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
-                            {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
-                          </div>
-                        ) : null}
                         {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
