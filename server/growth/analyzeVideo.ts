@@ -842,31 +842,34 @@ async function runDeepDivePass(params: {
   const businessGoal = (params.context || "未提供").trim() || "未提供";
   const STRATEGIST_PROMPT = `
 你是頂級商業IP操盤手與大師級導演。
-模式：${mode === 'REMIX' ? '实战爆款二创' : '商业成长营'}
+模式：${mode === "REMIX" ? "实战爆款二创" : "商业成长营"}
 用戶背景：${businessGoal}
 
-【最高級別硬性指令】
-1. 解除 Token 限制，不准摘要。只要生成選題 (topics/actionableTopics)，每一個都必須達到大師導演級與專業圖文編輯水準，帶完整分鏡腳本、燈光、走位、情緒控制。
-2. 數據與平台：僅限【抖音、快手、小红书、B站】。嚴禁提及「视频号」。
-3. 嚴禁佔位符：絕對禁止輸出「暫無」、「暫無情緒控制曲線」、「待補充」等任何敷衍字眼。
-4. 必須輸出 musicAndExpressionAnalysis，嚴禁遺漏，長度不少於 100 字。
-5. 【Music Prompt 指令】必須額外輸出 musicPrompt 欄位，這是專為 Suno/Udio 等 AI 音樂生成工具設計的提示詞。格式：[Music Style], [Instruments], [Mood], [Tempo]。範例："Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm"。內容必須精準契合本次所有選題的商業氛圍。
-6. 【排版強制規定】所有長文字欄位（strategy、businessInsight、musicAndExpressionAnalysis、emotionalTension、directorNotes 等）必須使用 Markdown 條列格式輸出，以「- 」開頭分行。嚴禁輸出連續段落式「文字牆」（超過 80 字不換行即視為違規）。
-7. 【輸出欄位順序鎖定】JSON 欄位必須依照此順序輸出：strategy → topics → actionableTopics → explosiveTopicAnalysis → visualAnalysis → musicAndExpressionAnalysis → musicPrompt。嚴禁顛倒或遺漏任何欄位。
+【核心任務】（premiumContent 必須完整，禁止空欄位與佔位符）
+1. strategy：深度商業戰略；必須條列（- ）並以 **關鍵字** 加粗；嚴禁文字牆。
+2. actionableTopics：恰好 3 個「現在就能執行」改編選題，每個必須帶完整 directorExecution 分鏡。
+3. topics：恰好 3 個延伸核心爆款選題，每個必須帶完整分鏡。
+4. explosiveTopicAnalysis：對上述選題的深度綜述。
+5. musicAndExpressionAnalysis：具體 BGM 節奏/曲風與口播情緒控制，長度不少於 100 字。
+6. musicPrompt：Suno/Udio 專用，格式 [Music Style], [Instruments], [Mood], [Tempo]。
 
-${mode === 'REMIX' ? `
+【排版禁令】
+- 長文必須 Markdown 條列，段落間空行；禁止「暫無」「待補充」等敷衍字樣。
+- 平台僅限【抖音、快手、小红书、B站】，嚴禁「视频号」。
+
+【premiumContent 輸出順序鎖定】
+strategy → actionableTopics → topics → explosiveTopicAnalysis → musicAndExpressionAnalysis → musicPrompt（summary 無需時保持 ""）。
+
+${mode === "REMIX" ? `
 【REMIX 實作指令】
-- 去重：嚴禁在 summary 欄位輸出任何內容，保持空字串 ""。
-- 順序：先生成 3 個 actionableTopics（現在就能執行的版本），再生成 3 個核心 topics（實戰爆款二創）。
-- 變現：每個選題的 businessInsight 必須包含深度的引流品、利潤品設計，不少於 300 字。
+- summary 必須保持空字串 ""。
+- 順序：先 actionableTopics（3 個），再 topics（3 個）；每個 businessInsight 引流品/利潤品深度不少於 300 字。
 ` : `
 【GROWTH 實作指令】
-- 戰略拆解 (strategy)：深度分析作者人設轉化，具體設計產品矩陣（名稱、定價、轉化路徑），嚴禁只寫標題。
-- 順序：先生成 3 個 actionableTopics（現在就能執行的版本），再生成 3 個 topics（核心爆款選題）。
-- 【人設增長方向必須嵌入選題】不再單獨輸出 personalizedGrowthDirection 欄位。取而代之：
-  ① 每個選題的 businessInsight 必須包含「人設轉化切入點」與「引流品/利潤品路徑設計」，不少於 300 字。
-  ② 每個選題的 directorExecution.emotionalTension 必須包含「如何用這個選題強化創作者個人品牌人設」的具體策略。
-- 以上兩點是強制要求，絕不可僅寫選題概念而缺少人設與商業轉化深度。
+- strategy：人設轉化＋產品矩陣（名稱、定價、路徑），禁止只寫標題。
+- 順序：先 actionableTopics（3 個），再 topics（3 個）。
+- 每個選題 businessInsight 必須含人設轉化切入點與引流品/利潤品路徑，不少於 300 字。
+- directorExecution.emotionalTension 必須說明如何強化創作者個人品牌人設。
 `}
 `;
 
@@ -954,6 +957,32 @@ ${mode === 'REMIX' ? `
               properties: {
                 summary: { type: "string" },
                 strategy: { type: "string", description: "顶级顾问级商业战略拆解" },
+                actionableTopics: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  description: "【現在就能執行的版本】恰好 3 個即時可執行選題，每個都必須有完整 directorExecution 與 businessInsight",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
+                      businessInsight: { type: "string", description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字" },
+                      contentBrief: { type: "string" },
+                      directorExecution: {
+                        type: "object",
+                        properties: {
+                          storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
+                          lighting: { type: "string", description: "燈光布置" },
+                          blocking: { type: "string", description: "走位調度" },
+                          emotionalTension: { type: "string", description: "情緒控制" },
+                        },
+                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
+                      },
+                    },
+                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
+                  },
+                },
 	                topics: {
 	                  type: "array",
 	                  minItems: 3,
@@ -995,32 +1024,8 @@ ${mode === 'REMIX' ? `
                 explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
                 musicAndExpressionAnalysis: { type: "string", description: "【最高级必填项，绝不可为空字符串】必须为本次分析的所有选题生成具体的BGM建议（节奏/曲风/推荐曲目）与表达指导，长度不少于100字" },
                 musicPrompt: { type: "string", description: "【必填】AI音乐生成提示词，专为Suno/Udio设计。格式：[Music Style], [Instruments], [Mood], [Tempo]。示例：Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm" },
-                actionableTopics: {
-                  type: "array",
-                  description: "【現在就能執行的版本】2-3個即時可執行選題，每個都必須有完整directorExecution與200字以上businessInsight",
-                  items: {
-                    type: "object",
-                    properties: {
-                      title: { type: "string" },
-                      formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
-                      businessInsight: { type: "string", description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字" },
-                      contentBrief: { type: "string" },
-                      directorExecution: {
-                        type: "object",
-                        properties: {
-                          storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
-                          lighting: { type: "string", description: "燈光布置" },
-                          blocking: { type: "string", description: "走位調度" },
-                          emotionalTension: { type: "string", description: "情緒控制" },
-                        },
-                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
-                      },
-                    },
-                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
-                  },
-                },
               },
-              required: ["topics", "musicAndExpressionAnalysis", "musicPrompt"],
+              required: ["summary", "strategy", "actionableTopics", "topics", "explosiveTopicAnalysis", "musicAndExpressionAnalysis", "musicPrompt"],
             },
             growthStrategy: {
               type: "object",
@@ -1271,6 +1276,8 @@ export async function analyzeVideo(params: {
   context?: string;
   modelName?: string;
   mode?: GrowthAnalysisMode;
+  /** 為 true 時重新上傳至新 GCS 路徑，避免沿用同一 gs:// 物件帶來的中間層快取疑慮 */
+  forceRefresh?: boolean;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
   try {
@@ -1280,7 +1287,7 @@ export async function analyzeVideo(params: {
     if (typeof params.gcsUri === "string" && isGsUri(params.gcsUri)) {
       const storedObject = await downloadGcsObject({ gcsUri: params.gcsUri });
       buffer = storedObject.buffer;
-      videoGcsUri = params.gcsUri;
+      videoGcsUri = params.forceRefresh ? "" : params.gcsUri;
     } else if (typeof params.fileKey === "string" && params.fileKey.trim()) {
       const storedBuffer = await storageRead(params.fileKey).catch(() => null);
       if (storedBuffer?.length) {
@@ -1309,7 +1316,7 @@ export async function analyzeVideo(params: {
     const safeName = (params.fileName || "video.mp4").replace(/[^a-z0-9._-]/gi, "-");
     if (!videoGcsUri) {
       const storedVideo = await uploadBufferToGcs({
-        objectName: `growth-camp/videos/${Date.now()}-${safeName}`,
+        objectName: `growth-camp/videos/${params.forceRefresh ? "refresh-" : ""}${Date.now()}-${safeName}`,
         buffer,
         contentType: params.mimeType || "video/mp4",
       });

@@ -80,8 +80,9 @@ const EMPTY_ANALYSIS: GrowthAnalysisScores = {
   premiumContent: {
     summary: "",
     strategy: "",
-    topics: [],
     actionableTopics: [],
+    topics: [],
+    explosiveTopicAnalysis: "",
     musicAndExpressionAnalysis: "",
     musicPrompt: "",
   },

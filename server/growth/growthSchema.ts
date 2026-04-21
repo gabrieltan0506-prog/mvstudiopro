@@ -2674,8 +2674,9 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
     premiumContent: {
       summary: "样例二创摘要",
       strategy: "样例二创策略",
-      topics: [],
       actionableTopics: [],
+      topics: [],
+      explosiveTopicAnalysis: "",
       musicAndExpressionAnalysis: "",
       musicPrompt: "",
     },

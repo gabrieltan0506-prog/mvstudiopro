@@ -35,6 +35,7 @@ import {
   Music2,
   Orbit,
   Play,
+  RefreshCw,
   Rocket,
   ScanSearch,
   Send,
@@ -1593,7 +1594,12 @@ export default function MVAnalysisPage() {
         },
         premiumContent: {
           summary: "",
+          strategy: "",
+          actionableTopics: [],
           topics: [],
+          explosiveTopicAnalysis: "",
+          musicAndExpressionAnalysis: "",
+          musicPrompt: "",
         },
         growthStrategy: { gapAnalysis: "", commercialMatrix: "" },
         remixExecution: {
@@ -1808,8 +1814,9 @@ export default function MVAnalysisPage() {
     })();
   }, []);
 
-  const handleAnalyze = useCallback(async () => {
+  const handleAnalyze = useCallback(async (opts?: { forceRefresh?: boolean }) => {
     if (!inputKind) return;
+    const forceRefresh = Boolean(opts?.forceRefresh);
 
     if (!supervisorAccess) {
       try {
@@ -1973,6 +1980,7 @@ export default function MVAnalysisPage() {
                     context: context || undefined,
                     modelName: "gemini-2.5-pro",
                     mode: analysisMode,
+                    forceRefresh,
                   },
                 },
               });
@@ -2134,43 +2142,7 @@ export default function MVAnalysisPage() {
     } finally {
       // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery]);
-
-  const handleReset = useCallback(() => {
-    setPreviewUrl(null);
-    setFileBase64(null);
-    setSelectedFile(null);
-    setInputKind(null);
-    setFileMimeType("");
-    setAnalysis(null);
-    setError(null);
-    setContext("");
-    setAnalysisTranscript("");
-    setAnalyzedVideoUrl("");
-    setDebugInfo(null);
-    setUploadStage("idle");
-    setUploadProgress(0);
-    setElapsedTime(0);
-    setFileName("");
-    setFileSize(0);
-    setMusicPromptDraft("");
-    setMusicStatus("idle");
-    setMusicTaskId("");
-    setMusicProgressMessage("");
-    setMusicError("");
-    setMusicSongs([]);
-    setPlayingMusicUrl(null);
-    if (musicPollingRef.current) {
-      clearInterval(musicPollingRef.current);
-      musicPollingRef.current = null;
-    }
-    if (musicAudioRef.current) {
-      musicAudioRef.current.pause();
-      musicAudioRef.current.src = "";
-    }
-    // Invalidate stale growth snapshot cache so next analysis always fetches fresh data
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-  }, [queryClient]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -3132,9 +3104,10 @@ export default function MVAnalysisPage() {
               <div className="mt-5">
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-3">
+              <div className="mt-5 flex flex-wrap items-center gap-4">
                 <button
-                  onClick={handleAnalyze}
+                  type="button"
+                  onClick={() => void handleAnalyze({ forceRefresh: false })}
                   disabled={(!selectedFile && !fileBase64) || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -3142,10 +3115,19 @@ export default function MVAnalysisPage() {
                   开始进行商业分析
                 </button>
                 <button
-                  onClick={handleReset}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 font-semibold text-white/80 transition hover:bg-white/10"
+                  type="button"
+                  disabled={(!selectedFile && !fileBase64) || isProcessing}
+                  onClick={() => {
+                    if (window.confirm("确定要强制重新分析吗？系统将无视旧纪录，重新生成最新架构的报告。")) {
+                      setAnalysis(null);
+                      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+                      void handleAnalyze({ forceRefresh: true });
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-bold text-red-400 shadow-lg shadow-red-500/5 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  重置
+                  <RefreshCw className={`h-4 w-4 ${isProcessing ? "animate-spin" : ""}`} />
+                  强制重新分析
                 </button>
               </div>
 

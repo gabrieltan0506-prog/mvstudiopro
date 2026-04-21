@@ -221,6 +221,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{
       context: typeof params.context === "string" ? params.context : undefined,
       modelName: typeof params.modelName === "string" ? params.modelName : undefined,
       mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+      forceRefresh: params.forceRefresh === true,
     });
 
     return {

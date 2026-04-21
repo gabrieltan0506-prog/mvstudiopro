@@ -74,11 +74,11 @@ export const growthPremiumContentTopicSchema = z.object({
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
   strategy: z.string().describe("頂級商業顧問：人設拆解與產品矩陣規劃").default(""),
-  topics: z.array(growthPremiumContentTopicSchema).default([]),
-  explosiveTopicAnalysis: z.string().optional(),
   actionableTopics: z.array(growthPremiumContentTopicSchema).describe("現在就能執行的版本：必須帶有完整分鏡與腳本").default([]),
+  topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款選題").default([]),
+  explosiveTopicAnalysis: z.string().describe("選題深度綜述分析").default(""),
   musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
-  musicPrompt: z.string().describe("AI Music Prompt：專為 Suno/Udio 設計的提示詞，包含風格、樂器、情緒、BPM 關鍵字，格式：[Style], [Instruments], [Mood], [Tempo]").default(""),
+  musicPrompt: z.string().describe("AI Music Prompt：專為 Suno/Udio 設計的提示詞，格式：[Style], [Instruments], [Mood], [Tempo]").default(""),
 });
 
 export const growthStrategySchema = z.object({
@@ -134,8 +134,9 @@ export const growthAnalysisScoresSchema = z.object({
   premiumContent: growthPremiumContentSchema.default({
     summary: "",
     strategy: "",
-    topics: [],
     actionableTopics: [],
+    topics: [],
+    explosiveTopicAnalysis: "",
     musicAndExpressionAnalysis: "",
     musicPrompt: "",
   }),
@@ -795,3 +796,12 @@ export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;
 export type GrowthDirectorExecution = z.infer<typeof growthDirectorExecutionSchema>;
 export type GrowthPremiumContentTopic = z.infer<typeof growthPremiumContentTopicSchema>;
 export type GrowthPremiumContent = z.infer<typeof growthPremiumContentSchema>;
+
+/** 成長營分析請求（語意層；實際 tRPC 另含 gcsUri / fileBase64 等上傳欄位） */
+export const growthAnalyzeRequestSchema = z.object({
+  videoUrl: z.string().optional(),
+  businessGoal: z.string().optional(),
+  mode: growthAnalysisModeSchema,
+  forceRefresh: z.boolean().optional().default(false),
+});
+export type GrowthAnalyzeRequest = z.infer<typeof growthAnalyzeRequestSchema>;

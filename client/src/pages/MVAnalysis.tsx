@@ -31,13 +31,13 @@ import {
   FileUp,
   Film,
   LayoutDashboard,
-  RefreshCw,
   LineChart as LineChartIcon,
   Loader2,
   Move,
   Music2,
   Orbit,
   Play,
+  RefreshCw,
   Rocket,
   ScanSearch,
   Send,
@@ -1567,7 +1567,12 @@ export default function MVAnalysisPage() {
         },
         premiumContent: {
           summary: "",
+          strategy: "",
+          actionableTopics: [],
           topics: [],
+          explosiveTopicAnalysis: "",
+          musicAndExpressionAnalysis: "",
+          musicPrompt: "",
         },
         growthStrategy: { gapAnalysis: "", commercialMatrix: "" },
         remixExecution: {
@@ -1779,8 +1784,9 @@ export default function MVAnalysisPage() {
     })();
   }, []);
 
-  const handleAnalyze = useCallback(async () => {
+  const handleAnalyze = useCallback(async (opts?: { forceRefresh?: boolean }) => {
     if (!inputKind) return;
+    const forceRefresh = Boolean(opts?.forceRefresh);
 
     if (!supervisorAccess) {
       try {
@@ -1944,6 +1950,7 @@ export default function MVAnalysisPage() {
                     context: context || undefined,
                     modelName: "gemini-2.5-pro",
                     mode: analysisMode,
+                    forceRefresh,
                   },
                 },
               });
@@ -2066,40 +2073,7 @@ export default function MVAnalysisPage() {
     } finally {
       // no-op
     }
-  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery]);
-
-  const handleReset = useCallback(() => {
-    setPreviewUrl(null);
-    setFileBase64(null);
-    setSelectedFile(null);
-    setInputKind(null);
-    setFileMimeType("");
-    setAnalysis(null);
-    setError(null);
-    setContext("");
-    setAnalysisTranscript("");
-    setAnalyzedVideoUrl("");
-    setDebugInfo(null);
-    setUploadStage("idle");
-    setUploadProgress(0);
-    setElapsedTime(0);
-    setFileName("");
-    setFileSize(0);
-    setMusicPromptDraft("");
-    setMusicStatus("idle");
-    setMusicTaskId("");
-    setMusicProgressMessage("");
-    setMusicError("");
-    setMusicSongs([]);
-    setPlayingMusicUrl(null);
-    musicPollingRunRef.current += 1;
-    if (musicAudioRef.current) {
-      musicAudioRef.current.pause();
-      musicAudioRef.current.src = "";
-    }
-    // Invalidate stale growth snapshot cache so next analysis always fetches fresh data
-    queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
-  }, [queryClient]);
+  }, [fileBase64, selectedFile, inputKind, supervisorAccess, checkAccessMutation, fileSize, analyzeDocumentMutation, getVideoUploadSignedUrlMutation, fileMimeType, fileName, context, usageStatsQuery, analysisMode]);
 
   const handleRefreshGrowth = useCallback(async () => {
     try {
@@ -3131,9 +3105,10 @@ export default function MVAnalysisPage() {
               <div className="mt-5">
               </div>
 
-              <div className="mt-5 flex flex-wrap gap-3">
+              <div className="mt-5 flex flex-wrap items-center gap-4">
                 <button
-                  onClick={handleAnalyze}
+                  type="button"
+                  onClick={() => void handleAnalyze({ forceRefresh: false })}
                   disabled={(!selectedFile && !fileBase64) || isProcessing}
                   className="inline-flex items-center gap-2 rounded-2xl bg-[#ff8a3d] px-5 py-3 font-bold text-black transition hover:bg-[#ff9c5c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -3141,10 +3116,19 @@ export default function MVAnalysisPage() {
                   开始进行商业分析
                 </button>
                 <button
-                  onClick={handleReset}
-                  className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 font-semibold text-white/80 transition hover:bg-white/10"
+                  type="button"
+                  disabled={(!selectedFile && !fileBase64) || isProcessing}
+                  onClick={() => {
+                    if (window.confirm("确定要强制重新分析吗？系统将无视旧纪录，重新生成最新架构的报告。")) {
+                      setAnalysis(null);
+                      queryClient.removeQueries({ queryKey: [["mvAnalysis", "getGrowthSnapshot"]] });
+                      void handleAnalyze({ forceRefresh: true });
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm font-bold text-red-400 shadow-lg shadow-red-500/5 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  重置
+                  <RefreshCw className={`h-4 w-4 ${isProcessing ? "animate-spin" : ""}`} />
+                  强制重新分析
                 </button>
               </div>
 
@@ -3184,30 +3168,15 @@ export default function MVAnalysisPage() {
                 <div className="text-sm font-semibold text-white">分析页面下载</div>
                 <div className="mt-1 text-xs text-white/50">将当前分析页面导出为 PDF 文件</div>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm("確定要強制重新分析嗎？將清除目前結果並重新呼叫 AI 取得最新報告。")) {
-                      setAnalysis(null);
-                      void handleAnalyze();
-                    }
-                  }}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-400 transition hover:bg-red-500/20"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  强制重新分析
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownloadAnalysisPdf}
-                  disabled={isDownloadingPdf}
-                  className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleDownloadAnalysisPdf}
+                disabled={isDownloadingPdf}
+                className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
+              </button>
             </div>
           </div>
         ) : null}
@@ -3739,7 +3708,8 @@ export default function MVAnalysisPage() {
             topics: TopicItem[] | undefined,
             sectionTitle: string,
             tagStyle: "purple" | "amber",
-            limit = 3
+            limit = 3,
+            titleClassName = "mb-4 text-xl font-bold text-white/90",
           ) => {
             const items = (topics ?? []).slice(0, limit);
             if (items.length === 0) return null;
@@ -3749,7 +3719,7 @@ export default function MVAnalysisPage() {
             return (
               <div className="mt-6">
                 {sectionTitle && (
-                  <h3 className="mb-4 text-xl font-bold text-white/90">{sectionTitle}</h3>
+                  <h3 className={titleClassName}>{sectionTitle}</h3>
                 )}
                 <div className="grid gap-6">
                   {items.map((topic, i) => {
@@ -3800,11 +3770,14 @@ export default function MVAnalysisPage() {
 
           const _music = analysis.premiumContent?.musicAndExpressionAnalysis ?? "";
           const _musicPrompt = (analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "";
-          const musicBlock = _music.trim().length > 0 ? (
+          const showPremiumMusic = _music.trim().length > 0 || _musicPrompt.trim().length > 0;
+          const musicBlock = showPremiumMusic ? (
             <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
-              <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                {_music}
+              <h3 className="mb-4 flex items-center gap-2 text-lg font-bold text-purple-400">
+                <Music2 className="h-5 w-5 shrink-0" /> 表达与配乐分析
+              </h3>
+              <p className="whitespace-pre-wrap text-[15px] leading-loose text-gray-300">
+                {_music.trim() || "正在生成深度配乐建议..."}
               </p>
               {_musicPrompt.trim().length > 0 && (
                 <div className="mt-5 rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.06)] px-4 py-4">
@@ -3895,16 +3868,16 @@ export default function MVAnalysisPage() {
                   <h2 className="text-2xl font-bold">实战爆款二创</h2>
                 </div>
                 {/* 1. 現在就能執行的版本（直接承接爆款指數下方）*/}
-                {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
+                {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
                 {/* 2. 實戰爆款二創核心選題 */}
-                {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple")}
+                {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple", 3, "mb-6 text-xl font-bold text-white")}
                 {/* 3. 表達與配樂分析 */}
                 {musicBlock}
               </div>
             );
           }
 
-          /* ====== 成長營模式：戰略 → 選題 → 分析 → (視覺在外) → 配樂在外 ====== */
+          /* ====== 成長營：戰略 → 執行版 → 核心選題 → 綜述 → 配樂（獨立區塊互不干擾） ====== */
           return (
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -3912,31 +3885,31 @@ export default function MVAnalysisPage() {
                 <h2 className="text-2xl font-bold">商业成长营</h2>
               </div>
 
-              {/* 1. 戰略 */}
-              {analysis.premiumContent?.strategy ? (
-                <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
-                  <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
-                  <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
-                    {analysis.premiumContent.strategy}
-                  </div>
-                </div>
-              ) : null}
+              <div className="growth-content-flow space-y-12">
+                {analysis.premiumContent?.strategy ? (
+                  <section className="mt-8 rounded-r-2xl border-l-4 border-amber-500 bg-amber-500/5 p-8">
+                    <h3 className="mb-6 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
+                    <div className="whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
+                      {analysis.premiumContent.strategy}
+                    </div>
+                  </section>
+                ) : null}
 
-              {/* 2. 核心爆款選題 */}
-              {renderTopics(analysis.premiumContent?.topics, "🎯 核心爆款选题", "purple")}
+                {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
 
-              {/* 3. 現在就能執行的版本 */}
-              {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
+                {renderTopics(analysis.premiumContent?.topics, "🎯 核心爆款选题", "purple", 3, "mb-6 text-xl font-bold text-white")}
 
-              {/* 4. 分析綜述 */}
-              {analysis.premiumContent?.explosiveTopicAnalysis ? (
-                <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
-                  <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
-                  <p className="whitespace-pre-wrap text-gray-300">
-                    {analysis.premiumContent.explosiveTopicAnalysis}
-                  </p>
-                </div>
-              ) : null}
+                {(analysis.premiumContent?.explosiveTopicAnalysis ?? "").trim().length > 0 ? (
+                  <section className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+                    <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
+                    <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-gray-300">
+                      {analysis.premiumContent!.explosiveTopicAnalysis}
+                    </div>
+                  </section>
+                ) : null}
+
+                {musicBlock}
+              </div>
             </div>
           );
         })()}
