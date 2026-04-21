@@ -2675,6 +2675,7 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
       summary: "样例二创摘要",
       strategy: "样例二创策略",
       topics: [],
+      actionableTopics: [],
     },
     visualSummary: "样例视觉结论",
     openingFrameAssessment: "样例开场判断",
