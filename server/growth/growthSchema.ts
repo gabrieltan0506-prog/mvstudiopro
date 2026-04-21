@@ -2677,6 +2677,7 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
       topics: [],
       actionableTopics: [],
       musicAndExpressionAnalysis: "",
+      musicPrompt: "",
     },
     visualSummary: "样例视觉结论",
     openingFrameAssessment: "样例开场判断",

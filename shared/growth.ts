@@ -61,24 +61,24 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().describe("必须写明具体的引流品、利润品及变现路径。").default(""),
+  businessInsight: z.string().describe("【商業深度洞察】必須包含具體的：引流品設計、利潤品設計、轉化路徑。不少於 300 字。").default(""),
   contentBrief: z.string().default(""),
   directorExecution: z.object({
     storyboard: z.array(z.string()).default([]),
     lighting: z.string().default(""),
     blocking: z.string().default(""),
-    emotionalTension: z.string().describe("必须生成具体的导演情绪指导，绝对禁止输出「暂无」、「暂无情绪控制曲线」等废话。").default("")
+    emotionalTension: z.string().describe("必須生成具體的導演情緒指導，絕對禁止輸出佔位符。").default("")
   }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().default(""),
+  strategy: z.string().describe("頂級商業顧問：人設拆解與產品矩陣規劃").default(""),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
   explosiveTopicAnalysis: z.string().optional(),
-  personalizedGrowthDirection: z.string().optional(),
-  actionableTopics: z.array(growthPremiumContentTopicSchema).default([]),
-  musicAndExpressionAnalysis: z.string().describe("【最高级必填项】表达与配乐分析：必须为上述选题生成具体的 BGM 建议，不可遗漏！").default(""),
+  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("現在就能執行的版本：必須帶有完整分鏡與腳本").default([]),
+  musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
+  musicPrompt: z.string().describe("AI Music Prompt：專為 Suno/Udio 設計的提示詞，包含風格、樂器、情緒、BPM 關鍵字，格式：[Style], [Instruments], [Mood], [Tempo]").default(""),
 });
 
 export const growthStrategySchema = z.object({
@@ -137,6 +137,7 @@ export const growthAnalysisScoresSchema = z.object({
     topics: [],
     actionableTopics: [],
     musicAndExpressionAnalysis: "",
+    musicPrompt: "",
   }),
   growthStrategy: growthStrategySchema.optional(),
   remixExecution: growthRemixExecutionSchema.optional(),

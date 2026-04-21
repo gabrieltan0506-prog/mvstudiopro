@@ -83,6 +83,7 @@ const EMPTY_ANALYSIS: GrowthAnalysisScores = {
     topics: [],
     actionableTopics: [],
     musicAndExpressionAnalysis: "",
+    musicPrompt: "",
   },
   visualSummary: "",
   openingFrameAssessment: "",
