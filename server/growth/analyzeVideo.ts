@@ -1360,16 +1360,16 @@ export async function analyzeVideo(params: {
       const parsed = growthAnalysisScoresSchema.parse({
         ...deepDive,
         ...(strategistRefinement || {}),
-        visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
-        openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
-        sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
-        trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
+        visualSummary: analysisMode === "REMIX" ? "" : String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
+        openingFrameAssessment: analysisMode === "REMIX" ? "" : String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
+        sceneConsistency: analysisMode === "REMIX" ? "" : String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
+        trustSignals: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
           ? deepDive.trustSignals
           : visualFirstPass.trustSignals,
-        visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
+        visualRisks: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
           ? deepDive.visualRisks
           : visualFirstPass.visualRisks,
-        keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
+        keyFrames: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
           ? deepDive.keyFrames
           : visualFirstPass.keyFrames,
       });

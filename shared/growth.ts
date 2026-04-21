@@ -73,7 +73,7 @@ export const growthPremiumContentTopicSchema = z.object({
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().describe("顶级顾问级商业战略拆解").default(""),
+  strategy: z.string().describe("顶级顾问级商业战略拆解").optional(),
   topics: z.array(growthPremiumContentTopicSchema).default([]),
   explosiveTopicAnalysis: z.string().describe("爆款选题分析").optional(),
   musicAndExpressionAnalysis: z.string().describe("表达与配乐分析").optional(),
