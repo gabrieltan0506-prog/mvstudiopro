@@ -3881,7 +3881,7 @@ export default function MVAnalysisPage() {
                 {/* 1. 現在就能執行的版本（直接承接爆款指數下方）*/}
                 {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
                 {/* 2. 實戰爆款二創核心選題 */}
-                {renderTopics(analysis.premiumContent?.topics, "🔥 实战爆款二创", "purple")}
+                {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple")}
                 {/* 3. 表達與配樂分析 */}
                 {musicBlock}
               </div>
@@ -4208,7 +4208,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">视觉分析</h2>
+                        <h2 className="text-2xl font-bold">视觉呈现效果</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
                         <div className="space-y-4">
