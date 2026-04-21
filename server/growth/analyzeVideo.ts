@@ -845,21 +845,23 @@ async function runDeepDivePass(params: {
 模式：${mode === 'REMIX' ? '实战爆款二创' : '商业成长营'}
 用戶背景：${businessGoal}
 
-【全局硬性限制】
-1. 數據與平台：僅限【抖音、快手、小红书、B站】。嚴禁提及"视频号"。基於 15 天快照數據進行趨勢比對。
-2. 深度要求：解除 Token 限制，發揮最強實力，不准只給摘要，必須給出極度詳細的實操細節。
+【最高級別硬性指令：解除字數限制，禁止敷衍】
+1. 只要生成「选题」（無論是核心 topics 還是「現在就能執行的版本」中的 actionableTopics），【每一個】都必須達到視頻大師導演級與專業圖文編輯水準！必須輸出完整的 directorExecution（分鏡腳本、燈光、走位）和 businessInsight（不少於200字的顧問級分析），絕對不允許只給一個標題！
+2. personalizedGrowthDirection（個性化增長方向）：必須以頂級商業顧問身份，深度分析作者人設如何轉化，具體設計哪些引流產品、利潤產品，轉化路徑是什麼。必須是幾百字的詳細商業規劃，嚴禁只寫一兩句廢話！
+3. 平台數據：僅限【抖音、快手、小红书、B站】。嚴禁提及「视频号」。
 
 ${mode === 'REMIX' ? `
-【REMIX 实战爆款二创 實作指令】
-1. 嚴格 3 選題：必須且只能生成 3 個核心選題，每個選題必須包含 directorExecution (分鏡、燈光、走位、情緒)。
-2. 商業深度洞察：不是拆解原片！針對這 3 個選題，以顧問角色給出具體的引流品、利潤品及產品轉化建議。
-3. 表达与配乐分析：必须输出 musicAndExpressionAnalysis，根据这 3 个选题生成可落地的 BGM 建议。
+【REMIX 模式專屬執行】
+1. 嚴格生成 3 個核心選題 (topics)，徹底拆解導演級拍攝與商業變現。
+2. 強制復用成長營邏輯：你必須、務必輸出 musicAndExpressionAnalysis（表達與配樂分析）欄位，根據這 3 個選題生成可直接落地的 BGM 建議。不要漏掉！
+3. 生成 actionableTopics（現在就能執行的版本）：另外輸出 2-3 個即時可執行的選題，同樣必須有完整 directorExecution 與 businessInsight。
 ` : `
-【GROWTH 商业成长营 實作指令】
-1. 商业战略拆解 (strategy)：以顶级顾问身份深度分析作者人设。不要只有标题！必须具体设计出转化产品（例如：引流品是什么？利润品是什么？名字、功能与转化路径必须清晰写出）。
-2. 爆款选题分析 (explosiveTopicAnalysis)：新增此栏位，对生成的选题进行大师级综合分析。
-3. 复用二创选题逻辑：生成的 3 个 topics 必须达到视频大师导演级与专业图文编辑水准，必须包含完整分镜 (directorExecution)。
-4. 表达与配乐分析：必须输出 musicAndExpressionAnalysis 栏位。
+【GROWTH 模式專屬執行】
+1. 商業戰略拆解 (strategy)：以頂級顧問身份具體設計產品矩陣，明確寫出引流品與利潤品的名稱、功能、轉化路徑。
+2. personalizedGrowthDirection（個性化增長方向）：必須輸出，幾百字的具體成長規劃，包含近期與中長期路徑。
+3. 生成 3 個核心深度選題 (topics)，每個都必須有完整 directorExecution 與 businessInsight。
+4. 生成 actionableTopics（現在就能執行的版本）：輸出 2-3 個即時可執行選題，同樣需要完整執行細節。
+5. 必須輸出 musicAndExpressionAnalysis 欄位。
 `}
 `;
 
@@ -981,9 +983,34 @@ ${mode === 'REMIX' ? `
 	                  },
 	                },
                 explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
-                musicAndExpressionAnalysis: { type: "string", description: "表达与配乐分析" },
+                musicAndExpressionAnalysis: { type: "string", description: "【強制輸出】REMIX與GROWTH模式皆必須輸出：根據選題生成具體可落地的BGM建議與表達指導" },
+                personalizedGrowthDirection: { type: "string", description: "【個性化增長方向】幾百字的頂級顧問級商業規劃：具體引流品設計、利潤品設計、轉化路徑" },
+                actionableTopics: {
+                  type: "array",
+                  description: "【現在就能執行的版本】2-3個即時可執行選題，每個都必須有完整directorExecution與200字以上businessInsight",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
+                      businessInsight: { type: "string", description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字" },
+                      contentBrief: { type: "string" },
+                      directorExecution: {
+                        type: "object",
+                        properties: {
+                          storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
+                          lighting: { type: "string", description: "燈光布置" },
+                          blocking: { type: "string", description: "走位調度" },
+                          emotionalTension: { type: "string", description: "情緒控制" },
+                        },
+                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
+                      },
+                    },
+                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
+                  },
+                },
               },
-              required: ["topics"],
+              required: ["topics", "musicAndExpressionAnalysis"],
             },
             growthStrategy: {
               type: "object",
@@ -1360,16 +1387,16 @@ export async function analyzeVideo(params: {
       const parsed = growthAnalysisScoresSchema.parse({
         ...deepDive,
         ...(strategistRefinement || {}),
-        visualSummary: analysisMode === "REMIX" ? "" : String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
-        openingFrameAssessment: analysisMode === "REMIX" ? "" : String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
-        sceneConsistency: analysisMode === "REMIX" ? "" : String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
-        trustSignals: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
+        visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
+        openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
+        sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
+        trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
           ? deepDive.trustSignals
           : visualFirstPass.trustSignals,
-        visualRisks: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
+        visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
           ? deepDive.visualRisks
           : visualFirstPass.visualRisks,
-        keyFrames: analysisMode === "REMIX" ? [] : Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
+        keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
           ? deepDive.keyFrames
           : visualFirstPass.keyFrames,
       });
