@@ -851,6 +851,8 @@ async function runDeepDivePass(params: {
 3. 嚴禁佔位符：絕對禁止輸出「暫無」、「暫無情緒控制曲線」、「待補充」等任何敷衍字眼。
 4. 必須輸出 musicAndExpressionAnalysis，嚴禁遺漏，長度不少於 100 字。
 5. 【Music Prompt 指令】必須額外輸出 musicPrompt 欄位，這是專為 Suno/Udio 等 AI 音樂生成工具設計的提示詞。格式：[Music Style], [Instruments], [Mood], [Tempo]。範例："Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm"。內容必須精準契合本次所有選題的商業氛圍。
+6. 【排版強制規定】所有長文字欄位（strategy、businessInsight、musicAndExpressionAnalysis、emotionalTension、directorNotes 等）必須使用 Markdown 條列格式輸出，以「- 」開頭分行。嚴禁輸出連續段落式「文字牆」（超過 80 字不換行即視為違規）。
+7. 【輸出欄位順序鎖定】JSON 欄位必須依照此順序輸出：strategy → topics → actionableTopics → explosiveTopicAnalysis → visualAnalysis → musicAndExpressionAnalysis → musicPrompt。嚴禁顛倒或遺漏任何欄位。
 
 ${mode === 'REMIX' ? `
 【REMIX 實作指令】

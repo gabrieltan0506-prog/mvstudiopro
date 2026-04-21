@@ -31,6 +31,7 @@ import {
   FileUp,
   Film,
   LayoutDashboard,
+  RefreshCw,
   LineChart as LineChartIcon,
   Loader2,
   Move,
@@ -3183,15 +3184,30 @@ export default function MVAnalysisPage() {
                 <div className="text-sm font-semibold text-white">分析页面下载</div>
                 <div className="mt-1 text-xs text-white/50">将当前分析页面导出为 PDF 文件</div>
               </div>
-              <button
-                type="button"
-                onClick={handleDownloadAnalysisPdf}
-                disabled={isDownloadingPdf}
-                className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm("確定要強制重新分析嗎？將清除目前結果並重新呼叫 AI 取得最新報告。")) {
+                      setAnalysis(null);
+                      void handleAnalyze();
+                    }
+                  }}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-400 transition hover:bg-red-500/20"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  强制重新分析
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadAnalysisPdf}
+                  disabled={isDownloadingPdf}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

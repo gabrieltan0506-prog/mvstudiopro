@@ -1716,6 +1716,7 @@ export const appRouter = router({
         fileName: z.string().optional(),
         context: z.string().optional(),
         modelName: growthCampModelSchema.optional(),
+        forceRefresh: z.boolean().optional().default(false),
       }))
       .mutation(async ({ input }) => {
         const result = await analyzeVideo(input);
