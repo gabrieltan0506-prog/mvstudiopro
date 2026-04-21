@@ -29,16 +29,13 @@ import {
   Download,
   FileUp,
   Film,
-  HeartPulse,
   LayoutDashboard,
-  Lightbulb,
   LineChart as LineChartIcon,
   Loader2,
   Music2,
   Orbit,
   Play,
   Rocket,
-  Route,
   ScanSearch,
   Send,
   Sparkles,
@@ -83,6 +80,7 @@ type AnalysisResult = {
   };
   premiumContent?: {
     summary?: string;
+    strategy?: string;
     topics?: Array<{
       title: string;
       formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -95,6 +93,8 @@ type AnalysisResult = {
         emotionalTension?: string;
       };
     }>;
+    explosiveTopicAnalysis?: string;
+    musicAndExpressionAnalysis?: string;
   };
   growthStrategy?: {
     gapAnalysis?: string;
@@ -206,6 +206,76 @@ function normalizeShootingBlueprint(
     emotionalTension: "",
     cameraPerformance: "",
   };
+}
+
+type PremiumTopic = NonNullable<NonNullable<AnalysisResult["premiumContent"]>["topics"]>[number];
+
+function renderPremiumTopicCards(
+  topics: PremiumTopic[] | undefined,
+  replaceTermsFn: (s: string) => string,
+) {
+  if (!topics?.length) return null;
+  return (
+    <div className="mt-5 grid gap-6">
+      {topics.map((topic, i) => {
+        const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
+        const directorExecution = topic.directorExecution || {};
+        const storyboard = Array.isArray(directorExecution.storyboard)
+          ? directorExecution.storyboard.filter(Boolean)
+          : [];
+        return (
+          <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-bold text-white">{replaceTermsFn(topic.title)}</div>
+                <div className="mt-2 text-sm leading-7 text-white/78">{replaceTermsFn(topic.contentBrief)}</div>
+              </div>
+              <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
+                {formatType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
+              </div>
+            </div>
+            {topic.businessInsight ? (
+              <div className="mt-4 rounded-xl border-l-4 border-emerald-500 bg-emerald-500/10 p-5">
+                <h5 className="mb-2 font-bold text-emerald-400">💎 商业深度洞察</h5>
+                <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                  {topic.businessInsight}
+                </p>
+              </div>
+            ) : null}
+            {(storyboard.length || directorExecution.lighting || directorExecution.blocking || directorExecution.emotionalTension) ? (
+              <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
+                <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
+                <div className="mb-4 grid gap-4 text-sm text-gray-300 md:grid-cols-3">
+                  {directorExecution.lighting ? (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <strong>灯光：</strong>{replaceTermsFn(directorExecution.lighting)}
+                    </div>
+                  ) : null}
+                  {directorExecution.blocking ? (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <strong>走位：</strong>{replaceTermsFn(directorExecution.blocking)}
+                    </div>
+                  ) : null}
+                  {directorExecution.emotionalTension ? (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                      <strong>情绪：</strong>{replaceTermsFn(directorExecution.emotionalTension)}
+                    </div>
+                  ) : null}
+                </div>
+                {storyboard.length ? (
+                  <ol className="list-inside list-decimal space-y-2 text-sm text-gray-300">
+                    {storyboard.map((shot, sIdx) => (
+                      <li key={sIdx}>{replaceTermsFn(shot)}</li>
+                    ))}
+                  </ol>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 type UploadStage = "idle" | "reading" | "uploading" | "analyzing" | "done" | "error";
@@ -3403,206 +3473,53 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
 
-                    {analysisMode === "GROWTH" ? (
-                      <div className="rounded-[28px] border border-[#90c4ff]/20 bg-[#0f1a2c] p-6">
-                        <div className="flex items-center gap-3 text-[#90c4ff]">
-                          <Compass className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">商业战略拆解</h2>
-                        </div>
-                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">竞品漏网之鱼</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.growthStrategy?.gapAnalysis || analysis.reverseEngineering?.hookStrategy || "暂无竞品缺口分析。")}</div>
-                          </div>
-                          <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">商业转化矩阵</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.growthStrategy?.commercialMatrix || analysis.reverseEngineering?.commercialLogic || "暂无商业矩阵。")}</div>
-                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪起伏</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.reverseEngineering?.emotionalArc || "暂无情绪弧线。")}</div>
-                          </div>
-                          <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#9df6c0]">商业逻辑</div>
-                            <div className="mt-2 text-sm leading-7 text-white/82">{replaceTerms(analysis.reverseEngineering?.commercialLogic || "暂无商业逻辑拆解。")}</div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
+                    {isRemixMode ? (
                       <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                         <div className="flex items-center gap-3 text-[#f5b7ff]">
                           <Sparkles className="h-5 w-5" />
                           <h2 className="text-2xl font-bold">实战爆款二创</h2>
                         </div>
-                        {(analysis.remixExecution?.hookLibrary || []).length ? (
-                          <div className="mt-5 grid gap-3 md:grid-cols-3">
-                            {(analysis.remixExecution?.hookLibrary || []).map((hook, index) => (
-                              <div key={`${hook}-${index}`} className="rounded-2xl border border-[#f5b7ff]/15 bg-black/20 p-4 text-sm leading-7 text-white/82">
-                                <div className="mb-2 text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">黄金钩子 {index + 1}</div>
-                                {replaceTerms(hook)}
-                              </div>
-                            ))}
+                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {analysis.premiumContent?.musicAndExpressionAnalysis ? (
+                          <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
+                            <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                              {analysis.premiumContent.musicAndExpressionAnalysis}
+                            </p>
                           </div>
                         ) : null}
-	                        {analysis.premiumContent?.summary ? (
-	                          <div className="mt-5 rounded-2xl border border-[#f5b7ff]/15 bg-[rgba(245,183,255,0.06)] p-4 text-sm leading-7 text-white/82">
-	                            {replaceTerms(analysis.premiumContent.summary)}
-	                          </div>
-	                        ) : null}
-	                        {analysis.remixExecution?.businessInsight ? (
-	                          <div className="mt-5 rounded-2xl border border-[#d7ff7f]/15 bg-[rgba(215,255,127,0.06)] p-4">
-		                            <div className="text-xs uppercase tracking-[0.16em] text-[#d7ff7f]">商业深度洞察</div>
-	                            <div className="mt-3 grid gap-3 md:grid-cols-3">
-	                              {([
-	                                ["视频呈现", analysis.remixExecution.businessInsight.video],
-	                                ["图文笔记", analysis.remixExecution.businessInsight.imageText],
-	                                ["变现承接", analysis.remixExecution.businessInsight.monetizationLogic],
-	                              ] as Array<[string, string | undefined]>).filter((item): item is [string, string] => Boolean(item[1])).map(([label, value]) => (
-	                                <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
-	                                  <div className="text-xs font-semibold text-[#d7ff7f]">{label}</div>
-	                                  <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
-	                                </div>
-	                              ))}
-	                            </div>
-	                          </div>
-	                        ) : null}
-	                        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">情绪控制曲线</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.emotionalPacing || "暂无情绪控制曲线。")}</div>
-                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">视觉与分镜方案</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.visualPaletteAndScript || "暂无视觉与分镜方案。")}</div>
-                          </div>
-	                          <div className="rounded-2xl border border-[#49e6ff]/15 bg-[rgba(73,230,255,0.06)] p-4 lg:col-span-2">
-	                            <div className="text-xs uppercase tracking-[0.16em] text-[#8cefff]">导演级拍摄执行蓝图</div>
-	                            {(() => {
-	                              const blueprint = normalizeShootingBlueprint(
-	                                analysis.remixExecution?.shootingBlueprint,
-	                                analysis.remixExecution?.shootingGuidance || "",
-	                              );
-	                              const blueprintCards = ([
-	                                ["灯光布置", blueprint.lighting],
-	                                ["走位调度", blueprint.blocking],
-	                                ["景别设计", blueprint.shotSize],
-	                                ["情绪张力", blueprint.emotionalTension],
-	                                ["镜头表现", blueprint.cameraPerformance],
-	                              ] as Array<[string, string]>).filter((item): item is [string, string] => Boolean(item[1]));
-
-	                              return (
-	                                <div className="mt-3 space-y-4">
-	                                  {blueprint.storyboard.length ? (
-	                                    <ol className="space-y-2 text-sm leading-7 text-white/82">
-	                                      {blueprint.storyboard.map((shot, shotIndex) => (
-	                                        <li key={`${shot}-${shotIndex}`} className="flex gap-3 rounded-xl border border-[#49e6ff]/10 bg-black/20 px-3 py-2">
-	                                          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#49e6ff]/15 text-xs font-bold text-[#8cefff]">{shotIndex + 1}</span>
-	                                          <span>{replaceTerms(shot)}</span>
-	                                        </li>
-	                                      ))}
-	                                    </ol>
-	                                  ) : (
-	                                    <div className="text-sm leading-7 text-white/70">暂无分镜拆解。</div>
-	                                  )}
-	                                  {blueprintCards.length ? (
-	                                    <div className="grid gap-3 md:grid-cols-2">
-	                                      {blueprintCards.map(([label, value]) => (
-	                                        <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
-	                                          <div className="text-xs font-semibold text-[#8cefff]">{label}</div>
-	                                          <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
-	                                        </div>
-	                                      ))}
-	                                    </div>
-	                                  ) : null}
-	                                </div>
-	                              );
-	                            })()}
-	                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-white/45">产品矩阵设计</div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(analysis.remixExecution?.productMatrix || "暂无产品矩阵设计。")}</div>
-                          </div>
-                          <div className="rounded-2xl border border-[#ff6b8a]/15 bg-[rgba(255,107,138,0.06)] p-4">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#ffb3c2]">小红书图文创作指南</div>
-                            <div className="mt-3 space-y-3 text-sm leading-7 text-white/78">
-                              <div>{replaceTerms(analysis.remixExecution?.imageTextNoteGuide?.coverSetup || analysis.remixExecution?.xiaohongshuLayout || "暂无封面拍摄布置。")}</div>
-                              {(analysis.remixExecution?.imageTextNoteGuide?.titleOptions || []).length ? (
-                                <div className="space-y-2">
-                                  {(analysis.remixExecution?.imageTextNoteGuide?.titleOptions || []).map((title, index) => (
-                                    <div key={`${title}-${index}`} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-white/82">
-                                      {index + 1}. {replaceTerms(title)}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                              {analysis.remixExecution?.imageTextNoteGuide?.structuredBody ? (
-                                <div className="whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-                                  {replaceTerms(analysis.remixExecution.imageTextNoteGuide.structuredBody)}
-                                </div>
-                              ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+                        <div className="flex items-center gap-3 text-[#ffcf92]">
+                          <LayoutDashboard className="h-5 w-5" />
+                          <h2 className="text-2xl font-bold">商业成长营</h2>
+                        </div>
+                        {analysis.premiumContent?.strategy ? (
+                          <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
+                            <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
+                            <div className="prose prose-invert max-w-none whitespace-pre-wrap text-gray-200">
+                              {analysis.premiumContent.strategy}
                             </div>
                           </div>
-                        </div>
-	                        <div className="mt-5 space-y-4">
-		                          {(analysis.premiumContent?.topics || []).map((topic, index) => {
-		                            const formatType = topic.formatType === "IMAGE_TEXT" ? "IMAGE_TEXT" : "VIDEO";
-		                            const directorExecution = topic.directorExecution || {};
-		                            const storyboard = Array.isArray(directorExecution.storyboard)
-		                              ? directorExecution.storyboard.filter(Boolean)
-		                              : [];
-		                            const executionCards = [
-		                              { label: "灯光布置", value: directorExecution.lighting, Icon: Lightbulb },
-		                              { label: "走位调度", value: directorExecution.blocking, Icon: Route },
-		                              { label: "情绪控制", value: directorExecution.emotionalTension, Icon: HeartPulse },
-		                            ];
-
-		                            return (
-		                              <div key={`${topic.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
-		                                <div className="flex flex-wrap items-start justify-between gap-3">
-		                                  <div>
-		                                    <div className="text-lg font-bold text-white">{replaceTerms(topic.title)}</div>
-		                                    <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
-		                                  </div>
-		                                  <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
-		                                    呈现形式：{formatType === "IMAGE_TEXT" ? "📝 精致图文" : "🎥 视频拍摄"}
-		                                  </div>
-		                                </div>
-                                <div className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-                                  <h5 className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-400">
-                                    <Target size={16} />
-                                    商业深度洞察：引流、产品与转化规划
-                                  </h5>
-                                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                                    {topic.businessInsight || "暂无商业深度洞察。"}
-                                  </p>
-                                </div>
-		                                {storyboard.length ? (
-		                                  <ol className="mt-4 space-y-2 text-sm leading-7 text-white/82">
-	                                    {storyboard.map((shot, shotIndex) => (
-	                                      <li key={`${shot}-${shotIndex}`} className="flex gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
-	                                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f5b7ff]/15 text-xs font-bold text-[#f5b7ff]">{shotIndex + 1}</span>
-	                                        <span>{replaceTerms(shot)}</span>
-	                                      </li>
-	                                    ))}
-	                                  </ol>
-	                                ) : null}
-		                                {executionCards.length ? (
-		                                  <div className="mt-4 grid gap-3 md:grid-cols-3">
-		                                    {executionCards.map(({ label, value, Icon }) => value ? (
-		                                      <div key={label} className="rounded-xl border border-white/10 bg-black/20 p-3">
-		                                        <div className="flex items-center gap-2 text-xs font-semibold text-white/60">
-		                                          <Icon className="h-4 w-4 text-[#8cefff]" />
-		                                          {label}
-		                                        </div>
-		                                        <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(value)}</div>
-		                                      </div>
-		                                    ) : null)}
-		                                  </div>
-		                                ) : null}
-	                              </div>
-	                            );
-	                          })}
-	                        </div>
+                        ) : null}
+                        {analysis.premiumContent?.explosiveTopicAnalysis ? (
+                          <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
+                            <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
+                            <p className="whitespace-pre-wrap text-gray-300">
+                              {analysis.premiumContent.explosiveTopicAnalysis}
+                            </p>
+                          </div>
+                        ) : null}
+                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {analysis.premiumContent?.musicAndExpressionAnalysis ? (
+                          <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
+                            <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                              {analysis.premiumContent.musicAndExpressionAnalysis}
+                            </p>
+                          </div>
+                        ) : null}
                       </div>
                     )}
                   </>
@@ -3779,7 +3696,7 @@ export default function MVAnalysisPage() {
         <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                   <div className="flex items-center gap-3 text-[#ffcf92]">
                     <LayoutDashboard className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">本次个性化判断</h2>
+                    <h2 className="text-2xl font-bold">{isRemixMode ? "实战爆款二创" : "本次个性化判断"}</h2>
                   </div>
                   <div className="mt-5 grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
                     <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
