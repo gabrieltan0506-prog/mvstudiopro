@@ -95,6 +95,19 @@ type AnalysisResult = {
     }>;
     explosiveTopicAnalysis?: string;
     musicAndExpressionAnalysis?: string;
+    personalizedGrowthDirection?: string;
+    actionableTopics?: Array<{
+      title: string;
+      formatType?: "VIDEO" | "IMAGE_TEXT";
+      businessInsight?: string;
+      contentBrief: string;
+      directorExecution?: {
+        storyboard?: string[];
+        lighting?: string;
+        blocking?: string;
+        emotionalTension?: string;
+      };
+    }>;
   };
   growthStrategy?: {
     gapAnalysis?: string;
@@ -3480,6 +3493,12 @@ export default function MVAnalysisPage() {
                           <h2 className="text-2xl font-bold">实战爆款二创</h2>
                         </div>
                         {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
+                          <div className="mt-8">
+                            <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
+                            {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
+                          </div>
+                        ) : null}
                         {analysis.premiumContent?.musicAndExpressionAnalysis ? (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
@@ -3495,6 +3514,14 @@ export default function MVAnalysisPage() {
                           <LayoutDashboard className="h-5 w-5" />
                           <h2 className="text-2xl font-bold">商业成长营</h2>
                         </div>
+                        {analysis.premiumContent?.personalizedGrowthDirection ? (
+                          <div className="mt-5 rounded-2xl border-l-4 border-emerald-500 bg-emerald-500/10 p-6">
+                            <h3 className="mb-4 text-xl font-bold text-emerald-400">📈 个性化增长方向 (顶级顾问深度分析)</h3>
+                            <div className="whitespace-pre-wrap leading-relaxed text-gray-200">
+                              {analysis.premiumContent.personalizedGrowthDirection}
+                            </div>
+                          </div>
+                        ) : null}
                         {analysis.premiumContent?.strategy ? (
                           <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
                             <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
@@ -3512,6 +3539,12 @@ export default function MVAnalysisPage() {
                           </div>
                         ) : null}
                         {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
+                        {(analysis.premiumContent?.actionableTopics?.length ?? 0) > 0 ? (
+                          <div className="mt-8">
+                            <h3 className="mb-4 text-xl font-bold text-amber-400">🚀 现在就能执行的版本</h3>
+                            {renderPremiumTopicCards(analysis.premiumContent?.actionableTopics as PremiumTopic[], replaceTerms)}
+                          </div>
+                        ) : null}
                         {analysis.premiumContent?.musicAndExpressionAnalysis ? (
                           <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
                             <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
