@@ -239,7 +239,7 @@ function renderPremiumTopicCards(
           <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div className="text-lg font-bold text-white">{replaceTermsFn(topic.title)}</div>
+                <div className="text-lg font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent [filter:drop-shadow(0_0_10px_rgba(251,146,60,0.55))_drop-shadow(0_0_20px_rgba(192,132,252,0.35))]">{replaceTermsFn(topic.title)}</div>
                 <div className="mt-2 text-sm leading-7 text-white/78">{replaceTermsFn(topic.contentBrief)}</div>
               </div>
               <div className="shrink-0 rounded-full border border-[#f5b7ff]/20 bg-[#f5b7ff]/10 px-3 py-1 text-xs font-semibold text-[#f5b7ff]">
@@ -1730,9 +1730,12 @@ export default function MVAnalysisPage() {
   }, [uploadStage]);
 
   useEffect(() => {
-    if (!analysis?.sunoPrompt?.trim()) return;
-    setMusicPromptDraft((prev) => (prev.trim() ? prev : analysis.sunoPrompt || ""));
-  }, [analysis?.sunoPrompt]);
+    const prompt = analysis?.sunoPrompt?.trim()
+      || (analysis?.premiumContent as { musicPrompt?: string })?.musicPrompt?.trim()
+      || "";
+    if (!prompt) return;
+    setMusicPromptDraft((prev) => (prev.trim() ? prev : prompt));
+  }, [analysis?.sunoPrompt, analysis?.premiumContent]);
 
   useEffect(() => {
     return () => {
@@ -2268,7 +2271,7 @@ export default function MVAnalysisPage() {
   }, []);
 
   const handleGenerateMusic = useCallback(async () => {
-    const prompt = String(musicPromptDraft || analysis?.sunoPrompt || "").trim();
+    const prompt = String(musicPromptDraft || analysis?.sunoPrompt || (analysis?.premiumContent as { musicPrompt?: string })?.musicPrompt || "").trim();
     if (!prompt) {
       toast.error("当前没有可用的 Music Prompt");
       return;
@@ -3499,16 +3502,49 @@ export default function MVAnalysisPage() {
                           </div>
                         ) : null}
                         {/* 2. 實戰爆款二創核心選題 */}
-                        {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
-                        {/* 3. 表達與配樂分析 */}
-                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
-                          <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
-                            <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                              {analysis.premiumContent!.musicAndExpressionAnalysis}
-                            </p>
+                        {(analysis.premiumContent?.topics?.length ?? 0) > 0 && (
+                          <div className="mt-6">
+                            <h3 className="mb-4 text-xl font-bold text-[#f5b7ff]">🎯 深度二創選題</h3>
+                            {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
                           </div>
                         )}
+                        {/* 3. 表達與配樂分析 + Music Prompt 生成 */}
+                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (() => {
+                          const _mp = (analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "";
+                          return (
+                            <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
+                              <h3 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h3>
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                                {analysis.premiumContent!.musicAndExpressionAnalysis}
+                              </p>
+                              {_mp.trim().length > 0 && (
+                                <div className="mt-5 rounded-2xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.06)] px-4 py-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex flex-col gap-0.5">
+                                      <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
+                                      <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                        className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
+                                        <option value="suno">Suno</option>
+                                        <option value="udio">Udio</option>
+                                      </select>
+                                      <button type="button"
+                                        onClick={() => { setMusicPromptDraft(_mp); void handleGenerateMusic(); }}
+                                        disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                        className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
+                                        {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                        生成 BGM
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-xs leading-relaxed text-[#90c4ff]/80">{_mp}</div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
@@ -3542,14 +3578,7 @@ export default function MVAnalysisPage() {
                         ) : null}
                         {/* 4. 核心爆款選題 */}
                         {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
-                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (
-                          <div className="mt-8 rounded-2xl border border-purple-500/30 bg-purple-500/10 p-6">
-                            <h4 className="mb-4 text-lg font-bold text-purple-400">🎵 表达与配乐分析</h4>
-                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
-                              {analysis.premiumContent!.musicAndExpressionAnalysis}
-                            </p>
-                          </div>
-                        )}
+                        {/* 5. 表達與配樂分析已移至「视觉呈现效果」下方，此處不再重複 */}
                       </div>
                     )}
                   </>
@@ -3723,10 +3752,10 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
                 )}
-        <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+        <div className={`rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6${isRemixMode ? " hidden" : ""}`}>
                   <div className="flex items-center gap-3 text-[#ffcf92]">
                     <LayoutDashboard className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">{isRemixMode ? "实战爆款二创" : "本次个性化判断"}</h2>
+                    <h2 className="text-2xl font-bold">本次个性化判断</h2>
                   </div>
                   <div className="mt-5 grid gap-4 xl:grid-cols-[1.25fr_0.95fr]">
                     <div className="rounded-[24px] border border-white/10 bg-black/15 p-5">
@@ -3749,10 +3778,10 @@ export default function MVAnalysisPage() {
                       </div>
                       <div className="rounded-[24px] border border-[#f5b7ff]/20 bg-[linear-gradient(135deg,rgba(245,183,255,0.12),rgba(255,255,255,0.03))] p-5">
                         <div className="text-xs uppercase tracking-[0.18em] text-[#f5b7ff]">首发形式判断</div>
-                        <div className="mt-3 text-sm leading-7 text-white/88">
+                        <div className="mt-3 text-sm leading-7 font-semibold text-white">
                           {replaceTerms(assetAdaptation?.format || titleExecutionCards[0]?.presentationMode || "优先短视频首发，再补图文版本。")}
                         </div>
-                        <div className="mt-2 text-sm leading-7 text-white/68">
+                        <div className="mt-2 text-sm leading-7 text-[#ffd08f]">
                           {replaceTerms(assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook || "开头先抛一个最扎心的问题或最直接的结果。")}
                         </div>
                       </div>
@@ -3849,7 +3878,7 @@ export default function MVAnalysisPage() {
                 </div>
               )}
 
-              {showPremiumReport ? (
+              {!isRemixMode && showPremiumReport ? (
                 <div className="space-y-6">
                   <div ref={(node) => { sectionRefs.current.execution = node; }} className="rounded-[28px] border border-[#ffd08f]/25 bg-[#0f1a2c] p-6">
                     <div className="flex items-center gap-3 text-[#ffd08f]">
@@ -3955,7 +3984,7 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  {personalizedDirectionCards.length ? (
+                  {false && personalizedDirectionCards.length ? (
                     <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 text-[#90c4ff]">
@@ -4040,7 +4069,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
                       <div className="flex items-center gap-3 text-[#8af0ff]">
                         <Film className="h-5 w-5" />
-	                        <h2 className="text-2xl font-bold">商业深度洞察</h2>
+	                        <h2 className="text-2xl font-bold">视觉呈现效果</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
                         <div className="space-y-4">
@@ -4124,13 +4153,50 @@ export default function MVAnalysisPage() {
                     </div>
                   ) : null}
 
-                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt || (analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
                         <h2 className="text-2xl font-bold">表达与配乐分析</h2>
                       </div>
                       <div className="mt-5 grid gap-4 xl:grid-cols-2">
+                        {/* 策略配樂分析（來自 AI 深度分析）*/}
+                        {(analysis.premiumContent?.musicAndExpressionAnalysis ?? "").trim().length > 0 && (() => {
+                          const _mp = (analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "";
+                          return (
+                            <div className="rounded-2xl border border-purple-500/20 bg-purple-500/10 px-4 py-4 xl:col-span-2">
+                              <div className="mb-2 text-xs uppercase tracking-[0.16em] text-purple-300">🎵 配乐策略分析</div>
+                              <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-300">
+                                {analysis.premiumContent!.musicAndExpressionAnalysis}
+                              </p>
+                              {_mp.trim().length > 0 && (
+                                <div className="mt-4 rounded-xl border border-[#90c4ff]/20 bg-[rgba(144,196,255,0.06)] px-3 py-3">
+                                  <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div className="flex flex-col gap-0.5">
+                                      <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
+                                      <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                        className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
+                                        <option value="suno">Suno</option>
+                                        <option value="udio">Udio</option>
+                                      </select>
+                                      <button type="button"
+                                        onClick={() => { setMusicPromptDraft(_mp); void handleGenerateMusic(); }}
+                                        disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                        className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
+                                        {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                        生成 BGM
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-relaxed text-[#90c4ff]/80">{_mp}</div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         {analysis.languageExpression ? (
                           <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4">
                             <div className="text-xs uppercase tracking-[0.16em] text-white/45">语言表达力</div>
