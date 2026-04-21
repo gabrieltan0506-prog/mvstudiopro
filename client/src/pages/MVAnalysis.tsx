@@ -3888,7 +3888,7 @@ export default function MVAnalysisPage() {
             );
           }
 
-          /* ====== 成長營模式：戰略 → 執行版 → 爆款分析 → 核心選題 → 配樂 ====== */
+          /* ====== 成長營模式：戰略 → 選題 → 分析 → (視覺在外) → 配樂在外 ====== */
           return (
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -3896,7 +3896,7 @@ export default function MVAnalysisPage() {
                 <h2 className="text-2xl font-bold">商业成长营</h2>
               </div>
 
-              {/* 1. 商業戰略拆解 */}
+              {/* 1. 戰略 */}
               {analysis.premiumContent?.strategy ? (
                 <div className="mt-5 rounded-2xl border-l-4 border-amber-500 bg-amber-500/10 p-6">
                   <h3 className="mb-4 text-xl font-bold text-amber-400">💼 商业战略拆解</h3>
@@ -3906,10 +3906,13 @@ export default function MVAnalysisPage() {
                 </div>
               ) : null}
 
-              {/* 2. 現在就能執行的版本（直接承接戰略）*/}
+              {/* 2. 核心爆款選題 */}
+              {renderTopics(analysis.premiumContent?.topics, "🎯 核心爆款选题", "purple")}
+
+              {/* 3. 現在就能執行的版本 */}
               {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 现在就能执行的版本", "amber")}
 
-              {/* 3. 爆款選題分析綜述 */}
+              {/* 4. 分析綜述 */}
               {analysis.premiumContent?.explosiveTopicAnalysis ? (
                 <div className="mt-5 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-6">
                   <h3 className="mb-4 text-lg font-bold text-blue-400">🔥 爆款选题分析</h3>
@@ -3918,12 +3921,6 @@ export default function MVAnalysisPage() {
                   </p>
                 </div>
               ) : null}
-
-              {/* 4. 核心爆款選題 */}
-              {renderTopics(analysis.premiumContent?.topics, "🎯 核心爆款选题", "purple")}
-
-              {/* 5. 表達與配樂分析 */}
-              {musicBlock}
             </div>
           );
         })()}
@@ -4122,87 +4119,6 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
                   </div>
-
-                  {personalizedDirectionCards.length ? (
-                    <div ref={(node) => { sectionRefs.current.platforms = node; }} className="rounded-[28px] border border-[#90c4ff]/25 bg-[#0f1a2c] p-6">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3 text-[#90c4ff]">
-                          <Send className="h-5 w-5" />
-                          <h2 className="text-2xl font-bold">个性化增长方向</h2>
-                        </div>
-                        <div className="rounded-full border border-[#90c4ff]/20 bg-[#90c4ff]/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#b9dbff]">
-                          数据证据优先
-                        </div>
-                      </div>
-                      {(assetAdaptation || titleExecutionCards[0]) ? (
-                        <div className="mt-5 grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
-                          <div className="rounded-2xl border border-[#f5b7ff]/18 bg-[rgba(245,183,255,0.06)] p-5">
-                            <div className="text-xs uppercase tracking-[0.16em] text-[#f5b7ff]">首发形式与改法</div>
-                            <div className="mt-3 text-lg font-bold text-white">{replaceTerms(assetAdaptation?.format || titleExecutionCards[0]?.presentationMode || "优先短视频首发")}</div>
-                            <div className="mt-3 text-sm leading-7 text-white/78">
-                              开头怎么改：{replaceTerms(assetAdaptation?.firstHook || titleExecutionCards[0]?.openingHook || "先把最扎心的问题、结果或价格反差扔到前 2 秒。")}
-                            </div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">
-                              结构怎么改：{replaceTerms(assetAdaptation?.structure || titleExecutionCards[0]?.copywriting || "按痛点、动作、证据、结果四段写，不要一上来长铺垫。")}
-                            </div>
-                            <div className="mt-2 text-sm leading-7 text-white/78">
-                              结尾动作：{replaceTerms(assetAdaptation?.callToAction || "只保留一个行动引导，统一导向私信词、预约动作或评论词。")}
-                            </div>
-                          </div>
-                          <div className="grid gap-4 lg:grid-cols-2">
-                            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">图文怎么写</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">
-                                {replaceTerms(titleExecutionCards[0]?.graphicPlan || "第一页只写一个结果或痛点句，第二页写谁最需要，第三到四页给动作和前后对比，第五页给证据，第六页只留一个行动。")}
-                              </div>
-                            </div>
-                            <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">视频怎么拍</div>
-                              <div className="mt-3 text-sm leading-7 text-white/78">
-                                {replaceTerms(titleExecutionCards[0]?.videoPlan || "前 2 秒先抛问题或结果，中段只留痛点、动作、结果三个镜头，字幕同步点出人群和收益，结尾只留一个行动引导。")}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="mt-5 grid gap-4 xl:grid-cols-2">
-                        {personalizedDirectionCards.map((angle, index) => (
-                          <div key={`${angle.title}-${index}`} className="rounded-2xl border border-white/10 bg-black/15 p-5">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-xl font-black text-white">{angle.title}</div>
-                              <div className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/60">
-                                {angle.badge}
-                              </div>
-                            </div>
-                            <div className="mt-4 rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3 text-sm leading-7 text-white/78">
-                              {stripInternalJargon(angle.scenario)}
-                            </div>
-                            <div className="mt-4 rounded-2xl border border-[#90c4ff]/20 bg-[#10233e] px-4 py-3">
-                              <div className="text-xs uppercase tracking-[0.16em] text-[#b9dbff]">为什么这条方向对你成立</div>
-                              <div className="mt-2 text-sm leading-7 text-white">{stripInternalJargon(angle.why)}</div>
-                            </div>
-                            <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                              <div className="text-xs uppercase tracking-[0.16em] text-white/45">直接执行</div>
-                              <div className="mt-2 text-sm leading-7 text-white/78">{stripInternalJargon(angle.action)}</div>
-                            </div>
-                            {titleExecutionCards[index] ? (
-                              <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                                <div className="rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3">
-                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">更适合的呈现方式</div>
-                                  <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(titleExecutionCards[index].presentationMode || "短视频")}</div>
-                                  <div className="mt-2 text-sm leading-7 text-white/72">{replaceTerms(titleExecutionCards[index].formatReason || "")}</div>
-                                </div>
-                                <div className="rounded-2xl border border-white/10 bg-[#111b2c] px-4 py-3">
-                                  <div className="text-xs uppercase tracking-[0.16em] text-white/45">推荐先发平台</div>
-                                  <div className="mt-2 text-sm leading-7 text-white">{formatPlatformList(titleExecutionCards[index].suitablePlatforms)}</div>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
 
                   {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length || analysis.trustSignals?.length || analysis.visualRisks?.length) ? (
                     <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
