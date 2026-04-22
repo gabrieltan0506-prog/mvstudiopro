@@ -12,11 +12,19 @@ if (!baseUrl || !outputPath) {
 const endpoint = `${baseUrl.replace(/\/$/, "")}/api/trpc/mvAnalysis.getGrowthSystemStatus?batch=1&input=%7B%7D`;
 
 async function main() {
-  const response = await fetch(endpoint, {
-    headers: {
-      accept: "application/json",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      signal: controller.signal,
+      headers: {
+        accept: "application/json",
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch growth status: ${response.status} ${response.statusText}`);
   }
