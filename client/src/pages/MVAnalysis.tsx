@@ -3926,7 +3926,7 @@ export default function MVAnalysisPage() {
                       </button>
                     </div>
                   </div>
-                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-xs leading-relaxed text-[#90c4ff]/80">
+                  <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 font-mono text-xs leading-relaxed text-[#90c4ff]/80 break-words overflow-wrap-anywhere">
                     {_musicPrompt}
                   </div>
                   {(musicStatus === "generating" || musicStatus === "polling") && (
@@ -4035,7 +4035,7 @@ export default function MVAnalysisPage() {
                             </span>
                             <span className="text-xs text-white/50">基于您的二创选题量身生成的音乐指令，可直接复制使用</span>
                           </div>
-                          <code className="block break-all rounded-lg bg-black/40 p-4 font-mono text-sm leading-relaxed text-purple-200">
+                          <code className="block break-words rounded-lg bg-black/40 p-4 font-mono text-sm leading-relaxed text-purple-200" style={{ overflowWrap: "break-word", wordBreak: "break-word" }}>
                             {_rmp}
                           </code>
                           <div className="mt-4 flex flex-wrap items-center gap-2">

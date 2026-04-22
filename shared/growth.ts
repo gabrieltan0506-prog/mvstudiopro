@@ -98,6 +98,7 @@ export const growthLlmSchema = z.object({
 /** REMIX 模式：strategist premium 專模輸出（強制填滿二創欄位） */
 export const remixLlmSchema = z.object({
   actionableTopics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
+  topics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
   remixVisualAnalysis: z
     .string()
     .describe(

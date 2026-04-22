@@ -908,7 +908,15 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
         minItems: 3,
         maxItems: 3,
         description:
-          "針對用戶背景量身定制的 3 個改編選題；每個 businessInsight 引流品/利潤品深度不少於 300 字",
+          "針對用戶背景量身定制的 3 個即時改編選題；每個 businessInsight 引流品/利潤品深度不少於 300 字",
+        items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
+      },
+      topics: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        description:
+          "恰好 3 個深度二創選題，與 actionableTopics 遞進延伸，導演級分鏡，每個 businessInsight 不少於 200 字",
         items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
       },
       remixVisualAnalysis: {
@@ -926,7 +934,7 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
         description: "僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）",
       },
     },
-    required: ["actionableTopics", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
+    required: ["actionableTopics", "topics", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
   };
 }
 
@@ -987,7 +995,7 @@ function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: 
     summary: "",
     strategy: "",
     actionableTopics: llm.actionableTopics,
-    topics: [],
+    topics: llm.topics,
     explosiveTopicAnalysis: "",
     musicAndExpressionAnalysis: "",
     remixVisualAnalysis: llm.remixVisualAnalysis,
@@ -1041,10 +1049,11 @@ async function runDeepDivePass(params: {
 用戶業務背景（必須嚴格對齊）：${businessGoal}
 【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**。
 【輸出要求 — 禁止敷衍｜必須量身定做】
-1. actionableTopics：恰好 3 個針對用戶背景的改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
-2. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。分析原影片視覺優缺點；必須明確指導：拍攝新選題時，哪些原片元素可【借鑑】、哪些視覺缺點必【避開】；結合用戶業務與新選題方向，禁止空泛套話。
-3. remixExpressionAnalysis：**二創專屬表達指導**。必須針對用戶新選題給執導建議；內文必須含且 **加粗** 三個小標題（用字一致）：**参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力**（強調【參考語言表達力】與鏡頭情緒張力）。
-4. musicPrompt：拋棄原影片配樂思路；僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）。
+1. actionableTopics：恰好 3 個針對用戶背景的即時改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
+2. topics：恰好 3 個深度二創選題，與 actionableTopics 遞進延伸，提升到更長期的IP定位視角；導演級分鏡，每個 businessInsight 不少於 200 字。
+3. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。分析原影片視覺優缺點；必須明確指導：拍攝新選題時，哪些原片元素可【借鑑】、哪些視覺缺點必【避開】；結合用戶業務與新選題方向，禁止空泛套話。
+4. remixExpressionAnalysis：**二創專屬表達指導**。必須針對用戶新選題給執導建議；內文必須含且 **加粗** 三個小標題（用字一致）：**参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力**（強調【參考語言表達力】與鏡頭情緒張力）。
+5. musicPrompt：拋棄原影片配樂思路；僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）。
 `;
 
   const userMultimodalContent = buildStrategistMultimodalUserContent({
