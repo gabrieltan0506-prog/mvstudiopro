@@ -9,6 +9,12 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
+import {
+  clipToGeneratedSong,
+  downloadGeneratedMusicToFile,
+  getMusicClipsFromJobPayload,
+  songDownloadUrlCandidates,
+} from "@/lib/growthMusic";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -373,12 +379,6 @@ function getMusicTaskId(j: any): string {
     j?.json?.raw?.data?.task_id ||
     ""
   );
-}
-
-function getMusicClips(j: any): any[] {
-  const raw = j?.raw || j?.json?.raw || j?.json || {};
-  const data = raw?.data;
-  return Array.isArray(data) ? data : [];
 }
 
 type VideoPipelineDebug = {
@@ -2228,25 +2228,9 @@ export default function MVAnalysisPage() {
     });
   }, [playingMusicUrl]);
 
-  const handleDownloadGeneratedMusic = useCallback(async (url: string, title?: string) => {
-    if (!url) return;
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        throw new Error(`下载失败 (${resp.status})`);
-      }
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = blobUrl;
-      anchor.download = `${(title || "bgm").trim() || "bgm"}.mp3`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(blobUrl);
-    } catch (downloadError: any) {
-      toast.error(downloadError?.message || "音频下载失败");
-    }
+  const handleDownloadGeneratedMusic = useCallback(async (song: GeneratedMusicSong) => {
+    const r = await downloadGeneratedMusicToFile(songDownloadUrlCandidates(song), song.title);
+    if (!r.ok) toast.error(r.message);
   }, []);
 
   // Cloud Run PDF proxy — replaces old html-to-image + jsPDF local approach
@@ -2318,20 +2302,23 @@ export default function MVAnalysisPage() {
         const messageIndex = Math.floor(attempts / 2) % JOB_PROGRESS_MESSAGES.audio.length;
         setMusicProgressMessage(JOB_PROGRESS_MESSAGES.audio[messageIndex]);
 
-        const clips = getMusicClips(data.json);
+        const clips = getMusicClipsFromJobPayload(data.json);
         if (clips.length) {
-          const songs = clips.map((clip: any, idx: number) => ({
-            id: String(clip?.clip_id || clip?.id || idx),
-            title: String(clip?.title || "生成结果"),
-            audioUrl: typeof clip?.audio_url === "string" ? clip.audio_url : undefined,
-            streamUrl: typeof clip?.audio_url === "string" ? clip.audio_url : undefined,
-            imageUrl: typeof clip?.image_url === "string" ? clip.image_url : undefined,
-            duration: typeof clip?.duration === "number" ? clip.duration : undefined,
-            tags: typeof clip?.tags === "string" ? clip.tags : undefined,
-          })) as GeneratedMusicSong[];
+          const songs = clips.map((clip: any, idx: number) => clipToGeneratedSong(clip, idx)) as GeneratedMusicSong[];
           setMusicSongs(songs);
 
-          const hasPlayable = clips.some((clip: any) => Boolean(clip?.audio_url || clip?.video_url));
+          const hasPlayable = clips.some((clip: any) =>
+            Boolean(
+              clip?.audio_url ||
+                clip?.audioUrl ||
+                clip?.download_url ||
+                clip?.downloadUrl ||
+                clip?.stream_url ||
+                clip?.streamUrl ||
+                clip?.video_url ||
+                clip?.videoUrl,
+            ),
+          );
           if (hasPlayable) {
             setMusicStatus("success");
             setMusicError("");
@@ -2342,7 +2329,14 @@ export default function MVAnalysisPage() {
 
         const upstream = data?.json?.json ?? data?.json?.raw ?? data?.json ?? {};
         const upstreamData = Array.isArray(upstream?.data) ? upstream.data : [];
-        const hasUpstreamPlayable = upstreamData.some((clip: any) => Boolean(clip?.audio_url || clip?.video_url));
+        const hasUpstreamPlayable = upstreamData.some((clip: any) =>
+          Boolean(
+            clip?.audio_url ||
+              clip?.download_url ||
+              clip?.stream_url ||
+              clip?.video_url,
+          ),
+        );
         if (hasUpstreamPlayable) {
           setMusicStatus("success");
           setMusicError("");
@@ -3962,8 +3956,8 @@ export default function MVAnalysisPage() {
                                     {playingMusicUrl === playableUrl ? "暂停" : "播放"}
                                   </button>
                                 ) : null}
-                                {song.audioUrl ? (
-                                  <button type="button" onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
+                                {(song.audioUrl || song.streamUrl) ? (
+                                  <button type="button" onClick={() => void handleDownloadGeneratedMusic(song)}
                                     className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
                                     <Download className="h-3.5 w-3.5" />
                                     下载
@@ -4093,8 +4087,8 @@ export default function MVAnalysisPage() {
                                             {playingMusicUrl === playableUrl ? "暂停" : "播放"}
                                           </button>
                                         ) : null}
-                                        {song.audioUrl ? (
-                                          <button type="button" onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
+                                        {(song.audioUrl || song.streamUrl) ? (
+                                          <button type="button" onClick={() => void handleDownloadGeneratedMusic(song)}
                                             className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
                                             <Download className="h-3.5 w-3.5" />
                                             下载
@@ -4455,10 +4449,10 @@ export default function MVAnalysisPage() {
                                               {playingMusicUrl === playableUrl ? "暂停" : "播放"}
                                             </button>
                                           ) : null}
-                                          {song.audioUrl ? (
+                                          {(song.audioUrl || song.streamUrl) ? (
                                             <button
                                               type="button"
-                                              onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
+                                              onClick={() => void handleDownloadGeneratedMusic(song)}
                                               className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
                                             >
                                               <Download className="h-3.5 w-3.5" />

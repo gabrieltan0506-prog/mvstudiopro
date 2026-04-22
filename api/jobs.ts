@@ -871,6 +871,29 @@ function deriveMusicSeedFromStoryboard(storyboard: any[], fallbackScript: string
   return truncateText(`${style}，${mood}，${instrumentation}，${lead}，纯音乐，无人声。`, 100);
 }
 
+/** Nuro GET /task 常為扁平欄位；轉成與 Sonic `data[]` clip 相容，前端與 jobs runner 無需改動 */
+function normalizeNuroPollJson(json: any): any {
+  if (!json || typeof json !== "object") return json;
+  if (Array.isArray(json.data) && json.data.length) return json;
+  const status = json.status ?? json.state;
+  const audio = s(json.audio_url || json.audioUrl).trim();
+  const tid = s(json.task_id || json.taskId).trim();
+  if (!audio && !s(status).trim() && !tid) return json;
+  return {
+    ...json,
+    data: [
+      {
+        ...json,
+        id: tid || 0,
+        clip_id: tid || 0,
+        state: status,
+        status,
+        audio_url: audio || json.audio_url || json.audioUrl,
+      },
+    ],
+  };
+}
+
 function extractMusicUrlFromPayload(payload: any): string {
   const candidates: string[] = [];
   const seen = new Set<any>();
@@ -2149,20 +2172,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         bpm: musicBpm,
       });
 
-      const createUrl = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/producer/create` : `${AIM_BASE}/api/v1/sonic/create`;
-      const taskUrlBase = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/producer/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
+      const createUrl = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/nuro/create` : `${AIM_BASE}/api/v1/sonic/create`;
+      const taskUrlBase = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/nuro/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
+      const nuroWorkflowDuration = Math.max(30, Math.min(120, Math.floor(Number(musicDuration) || 60)));
       const createBody = requestedMusicProvider === "udio"
         ? {
-            task_type: "create_music",
-            mv: "FUZZ-2.0",
-            title: truncateText(rawPrompt, 80) || "MV Studio Pro music",
-            prompt,
-            lyrics_type: Boolean(b.hasVocal) ? "generate" : "instrumental",
+            type: "bgm",
+            version: "v2.0",
+            description: truncateText(prompt, 200),
+            duration: nuroWorkflowDuration,
           }
         : {
             task_type: "create_music",
             custom_mode: false,
-            mv: "sonic-v5",
+            mv: "sonic-v5-5",
             gpt_description_prompt: prompt,
           };
 
@@ -2172,7 +2195,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body: JSON.stringify(createBody),
       });
       if (!created.ok) return res.status(502).json(fail("music_create_failed", "Music create request failed", { provider: requestedMusicProvider, raw: created.json ?? created.rawText }));
-      const taskId = s(created.json?.data?.task_id || created.json?.task_id || created.json?.taskId || created.json?.data?.id || created.json?.id).trim();
+      const taskId = s(
+        created.json?.data?.task_id ||
+          created.json?.task_id ||
+          created.json?.taskId ||
+          created.json?.data?.id ||
+          created.json?.id,
+      ).trim();
       if (!taskId) return res.status(502).json(fail("missing_music_task_id", "Music task id is missing", { provider: requestedMusicProvider, raw: created.json ?? created.rawText }));
 
       let musicUrl = "";
@@ -2183,10 +2212,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           method: "GET",
           headers: { Authorization: `Bearer ${AIM_KEY}`, Accept: "application/json" },
         });
-        rawTask = polled.json ?? polled.rawText;
-        const data = polled.json?.data || {};
-        const status = s(data.status || data.task_status || polled.json?.status || "").toLowerCase();
-        musicUrl = extractMusicUrlFromPayload(polled.json ?? rawTask);
+        let pollJson: any = polled.json ?? polled.rawText;
+        if (requestedMusicProvider === "udio") {
+          pollJson = normalizeNuroPollJson(pollJson);
+        }
+        rawTask = pollJson;
+        const status = s(
+          pollJson?.status ||
+            pollJson?.state ||
+            pollJson?.data?.[0]?.status ||
+            pollJson?.data?.[0]?.state ||
+            "",
+        ).toLowerCase();
+        musicUrl = extractMusicUrlFromPayload(pollJson);
         if (musicUrl) break;
         if (status === "failed" || status === "error" || status === "cancelled") {
           return res.status(502).json(fail("music_task_failed", deriveMusicError(status, rawTask), { provider: requestedMusicProvider, raw: rawTask }));
@@ -2434,7 +2472,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const r = await fetchJson(`${AIM_BASE}/api/v1/sonic/create`,{
         method:"POST",
         headers:{ "Authorization":"Bearer "+AIM_KEY, "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({ task_type:"create_music", custom_mode:false, mv:"chirp-v4-5", gpt_description_prompt: s(b.gpt_description_prompt || q.gpt_description_prompt || b.prompt || q.prompt || "") })
+        body: JSON.stringify({ task_type:"create_music", custom_mode:false, mv:"sonic-v5-5", gpt_description_prompt: s(b.gpt_description_prompt || q.gpt_description_prompt || b.prompt || q.prompt || "") })
       });
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
     }
@@ -2452,10 +2490,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (op === "aimusicUdioCreate") {
       if (!AIM_KEY) return res.status(500).json({ ok:false, error:"missing_env", detail:"AIMUSIC_API_KEY" });
-      const r = await fetchJson(`${AIM_BASE}/api/v1/producer/create`,{
+      const desc = s(b.prompt || q.prompt || "").trim();
+      const durRaw = Number(b.duration ?? q.duration ?? 60);
+      const duration = Math.max(30, Math.min(120, Number.isFinite(durRaw) ? Math.floor(durRaw) : 60));
+      const r = await fetchJson(`${AIM_BASE}/api/v1/nuro/create`,{
         method:"POST",
         headers:{ "Authorization":"Bearer "+AIM_KEY, "Content-Type":"application/json", "Accept":"application/json" },
-        body: JSON.stringify({ task_type:"create_music", sound: s(b.prompt || q.prompt || ""), make_instrumental: (b.make_instrumental !== undefined) ? b.make_instrumental : true, mv: s(b.mv || "FUZZ-2.0") })
+        body: JSON.stringify({
+          type: "bgm",
+          version: "v2.0",
+          description: truncateText(desc || "instrumental background music", 200),
+          duration,
+        }),
       });
       return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
     }
@@ -2464,11 +2510,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!AIM_KEY) return res.status(500).json({ ok:false, error:"missing_env", detail:"AIMUSIC_API_KEY" });
       const taskId = s(q.taskId || q.task_id || b.taskId || b.task_id).trim();
       if (!taskId) return res.status(400).json({ ok:false, error:"missing_task_id" });
-      const r = await fetchJson(`${AIM_BASE}/api/v1/producer/task/${encodeURIComponent(taskId)}`,{
+      const r = await fetchJson(`${AIM_BASE}/api/v1/nuro/task/${encodeURIComponent(taskId)}`,{
         method:"GET",
         headers:{ "Authorization":"Bearer "+AIM_KEY, "Accept":"application/json" }
       });
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw:r.json ?? r.rawText });
+      const rawOut = normalizeNuroPollJson(r.json ?? null) ?? r.rawText;
+      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw: rawOut });
     }
 
     if (op === "klingCreate") {

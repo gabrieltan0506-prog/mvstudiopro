@@ -34,7 +34,7 @@ export async function generateMusicWithSuno(input: { script: string }) {
       body: JSON.stringify({
         task_type: "create_music",
         custom_mode: false,
-        mv: "sonic-v4-5",
+        mv: "sonic-v5-5",
         gpt_description_prompt: `根据以下视频脚本生成32秒纯音乐BGM：${script.slice(0, 1200)}`,
       }),
     });

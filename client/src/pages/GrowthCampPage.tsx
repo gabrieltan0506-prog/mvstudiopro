@@ -9,6 +9,7 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { saveGrowthHandoff } from "@/lib/growthHandoff";
+import { downloadGeneratedMusicToFile, normalizeSongsFromAudioJobOutput, songDownloadUrlCandidates } from "@/lib/growthMusic";
 import type {
   GrowthAuthorAnalysis,
   GrowthBusinessInsight,
@@ -2199,25 +2200,9 @@ export default function MVAnalysisPage() {
     });
   }, [playingMusicUrl]);
 
-  const handleDownloadGeneratedMusic = useCallback(async (url: string, title?: string) => {
-    if (!url) return;
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) {
-        throw new Error(`下载失败 (${resp.status})`);
-      }
-      const blob = await resp.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = blobUrl;
-      anchor.download = `${(title || "bgm").trim() || "bgm"}.mp3`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      toast.error("下载失败");
-    }
+  const handleDownloadGeneratedMusic = useCallback(async (song: GeneratedMusicSong) => {
+    const r = await downloadGeneratedMusicToFile(songDownloadUrlCandidates(song), song.title);
+    if (!r.ok) toast.error(r.message);
   }, []);
 
   const startMusicPolling = useCallback((jobId: string) => {
@@ -2256,7 +2241,7 @@ export default function MVAnalysisPage() {
             musicPollingRef.current = null;
           }
           const output = (data.output || {}) as any;
-          setMusicSongs(Array.isArray(output.songs) ? output.songs : []);
+          setMusicSongs(normalizeSongsFromAudioJobOutput(output.songs));
           setMusicStatus("success");
           setMusicError("");
           toast.success("BGM 生成成功");
@@ -3619,8 +3604,8 @@ export default function MVAnalysisPage() {
                                                         {playingMusicUrl === playableUrl ? "暂停" : "播放"}
                                                       </button>
                                                     ) : null}
-                                                    {song.audioUrl ? (
-                                                      <button type="button" onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
+                                                    {(song.audioUrl || song.streamUrl) ? (
+                                                      <button type="button" onClick={() => void handleDownloadGeneratedMusic(song)}
                                                         className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
                                                         <Download className="h-3.5 w-3.5" />
                                                         下载
@@ -4401,15 +4386,15 @@ export default function MVAnalysisPage() {
                                               {playingMusicUrl === playableUrl ? "暂停" : "播放"}
                                             </button>
                                           ) : null}
-                                          {song.audioUrl ? (
-                                            <a
-                                              href={song.audioUrl}
-                                              download={`${song.title || "bgm"}.mp3`}
+                                          {(song.audioUrl || song.streamUrl) ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => void handleDownloadGeneratedMusic(song)}
                                               className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10"
                                             >
                                               <Download className="h-3.5 w-3.5" />
                                               下载
-                                            </a>
+                                            </button>
                                           ) : null}
                                         </div>
                                       </div>

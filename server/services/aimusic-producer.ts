@@ -66,11 +66,20 @@ function getClipList(statusPayload: Record<string, any>): any[] {
     root?.data?.tracks ||
     root?.result?.songs ||
     root?.result?.tracks ||
-    root?.data ||
-    root?.result?.data ||
+    (Array.isArray(root?.data) ? root.data : undefined) ||
+    (Array.isArray(root?.result?.data) ? root.result.data : undefined) ||
     [];
 
-  return Array.isArray(list) ? list : [];
+  const resolved = Array.isArray(list) ? list : [];
+  if (resolved.length) return resolved;
+
+  // Nuro：扁平 task 物件（status + audio_url），無 songs/data 陣列
+  const st = String(root.status ?? root.state ?? "").trim();
+  const hasAudio = Boolean(String(root.audio_url || root.audioUrl || "").trim());
+  if (hasAudio || st || root.task_id || root.taskId) {
+    return [root];
+  }
+  return [];
 }
 
 function deriveStatusFromClips(clips: any[]): string | undefined {
