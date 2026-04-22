@@ -3834,9 +3834,9 @@ export default function MVAnalysisPage() {
               ? "border-[#f5b7ff]/20 bg-[#f5b7ff]/10 text-[#f5b7ff]"
               : "border-amber-400/30 bg-amber-400/10 text-amber-300";
             return (
-              <div className="mt-6">
+              <div className="mt-6" style={{ breakInside: "avoid" }}>
                 {sectionTitle && (
-                  <h3 className={titleClassName}>{sectionTitle}</h3>
+                  <h3 className={titleClassName} style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>{sectionTitle}</h3>
                 )}
                 <div className="grid gap-6">
                   {items.map((topic, i) => {
@@ -3844,10 +3844,10 @@ export default function MVAnalysisPage() {
                     const de = topic.directorExecution || {};
                     const sb = Array.isArray(de.storyboard) ? de.storyboard.filter(Boolean) : [];
                     return (
-                      <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5">
+                      <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <div className="text-lg font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent [filter:drop-shadow(0_0_10px_rgba(251,146,60,0.55))_drop-shadow(0_0_20px_rgba(192,132,252,0.35))]">{replaceTerms(topic.title)}</div>
+                            <div className="text-lg font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent print:text-orange-400 print:bg-none [filter:drop-shadow(0_0_10px_rgba(251,146,60,0.55))_drop-shadow(0_0_20px_rgba(192,132,252,0.35))]">{replaceTerms(topic.title)}</div>
                             {topic.contentBrief && (
                               <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
                             )}
@@ -3865,10 +3865,10 @@ export default function MVAnalysisPage() {
                         {(sb.length || de.lighting || de.blocking || de.emotionalTension) ? (
                           <div className="mt-4 rounded-xl bg-[#15c8ff]/10 p-5">
                             <h5 className="mb-4 font-bold text-[#15c8ff]">🎬 导演级执行蓝图</h5>
-                            <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300">
-                              {de.lighting ? <div><strong>灯光:</strong> {de.lighting}</div> : null}
-                              {de.blocking ? <div><strong>走位:</strong> {de.blocking}</div> : null}
-                              {de.emotionalTension ? <div><strong>情绪:</strong> {de.emotionalTension}</div> : null}
+                            <div className="mb-4 grid grid-cols-3 gap-4 text-sm text-gray-300 print:grid-cols-1 print:gap-2">
+                              {de.lighting ? <div className="print:border-l-2 print:border-blue-400/60 print:pl-3"><strong>灯光:</strong> {de.lighting}</div> : null}
+                              {de.blocking ? <div className="print:border-l-2 print:border-blue-400/60 print:pl-3"><strong>走位:</strong> {de.blocking}</div> : null}
+                              {de.emotionalTension ? <div className="print:border-l-2 print:border-blue-400/60 print:pl-3"><strong>情绪:</strong> {de.emotionalTension}</div> : null}
                             </div>
                             {sb.length ? (
                               <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
@@ -3998,8 +3998,8 @@ export default function MVAnalysisPage() {
                   {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 专为您量身定制的二创选题", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
                   {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple", 3, "mb-6 text-xl font-bold text-white")}
 
-                  <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg">
-                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400">
+                  <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
+                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400" style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>
                       <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
                     </h3>
                     {_rv ? (
@@ -4013,8 +4013,8 @@ export default function MVAnalysisPage() {
                     )}
                   </section>
 
-                  <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg">
-                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400">
+                  <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
+                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400" style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>
                       <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
                     </h3>
                     {_re ? (
@@ -4248,7 +4248,7 @@ export default function MVAnalysisPage() {
                     </p>
                     <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
                       <div className="rounded-2xl border border-[#ffd08f]/20 bg-[linear-gradient(135deg,rgba(255,208,143,0.12),rgba(255,255,255,0.03))] p-5">
-                        <div className="text-xs uppercase tracking-[0.18em] text-[#ffd08f]">首发版改法</div>
+                        <div className="text-xs uppercase tracking-[0.18em] text-[#ffd08f]">首发版改法{isRemixMode ? "（基于改编选题一）" : ""}</div>
                         <div className="mt-3 text-base font-semibold leading-8 text-white">
                           {stripInternalJargon(primaryCommercialAngle?.execution || growthHandoff?.brief || creationAssist?.brief || primaryPlatformRecommendation?.action || visibleBusinessInsights[0]?.detail || "先把这条内容改成一个用户一看就懂、且愿意继续看的版本。")}
                         </div>

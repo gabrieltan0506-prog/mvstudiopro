@@ -42,7 +42,7 @@ export function UsageQuotaBanner({
 
   if (loading) {
     return (
-      <div className="mx-4 mt-4 p-4 bg-[#1C1C1E] rounded-2xl border border-[#38383A] flex flex-row items-center">
+      <div className="mx-4 mt-4 p-4 bg-[#1C1C1E] rounded-2xl border border-[#38383A] flex flex-row items-center print:hidden">
         <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
         <p className="ml-3 text-[#8E8E93] text-sm">加载使用额度...</p>
       </div>
