@@ -842,34 +842,40 @@ async function runDeepDivePass(params: {
   const businessGoal = (params.context || "未提供").trim() || "未提供";
   const STRATEGIST_PROMPT = `
 你是頂級商業IP操盤手與大師級導演。
-模式：${mode === "REMIX" ? "实战爆款二创" : "商业成长营"}
-用戶背景：${businessGoal}
+模式：${mode === "REMIX" ? "實戰爆款二創" : "商業成長營"}
+用戶業務背景（必須嚴格對齊，禁止忽略）：${businessGoal}
 
-【核心任務】（premiumContent 必須完整，禁止空欄位與佔位符）
-1. strategy：深度商業戰略；必須條列（- ）並以 **關鍵字** 加粗；嚴禁文字牆。
-2. actionableTopics：恰好 3 個「現在就能執行」改編選題，每個必須帶完整 directorExecution 分鏡。
-3. topics：恰好 3 個延伸核心爆款選題，每個必須帶完整分鏡。
-4. explosiveTopicAnalysis：對上述選題的深度綜述。
-5. musicAndExpressionAnalysis：具體 BGM 節奏/曲風與口播情緒控制，長度不少於 100 字。
-6. musicPrompt：Suno/Udio 專用，格式 [Music Style], [Instruments], [Mood], [Tempo]。
+【排版禁令：禁止文字牆】
+所有長文必須 Markdown 條列（- ）與 **加粗**；段落間空行。禁止「暫無」「待補充」。禁止「請建議」「您可以」等軟弱語氣。
+平台僅限【抖音、快手、小红书、B站】，嚴禁「视频号」。
 
-【排版禁令】
-- 長文必須 Markdown 條列，段落間空行；禁止「暫無」「待補充」等敷衍字樣。
-- 平台僅限【抖音、快手、小红书、B站】，嚴禁「视频号」。
-
-【premiumContent 輸出順序鎖定】
-strategy → actionableTopics → topics → explosiveTopicAnalysis → musicAndExpressionAnalysis → musicPrompt（summary 無需時保持 ""）。
-
-${mode === "REMIX" ? `
-【REMIX 實作指令】
-- summary 必須保持空字串 ""。
-- 順序：先 actionableTopics（3 個），再 topics（3 個）；每個 businessInsight 引流品/利潤品深度不少於 300 字。
+${mode === "GROWTH" ? `
+【商業成長營—輸出要求】
+1. strategy：人設轉化＋產品矩陣（名稱、定價、路徑），條列加粗，禁止只寫標題。
+2. actionableTopics：恰好 3 個即時改編選題，導演級分鏡。
+3. topics：恰好 3 個核心爆款選題，導演級分鏡。
+4. explosiveTopicAnalysis：選題深度綜述。
+5. musicAndExpressionAnalysis：原視頻表達與配樂分析，不少於 100 字。
+6. musicPrompt：Suno/Udio，[Music Style], [Instruments], [Mood], [Tempo]。
+7. remixVisualAnalysis：必須為空字串 ""。
+8. remixExpressionAnalysis：必須為空字串 ""。
+9. summary：無統述需求時 ""。
 ` : `
-【GROWTH 實作指令】
-- strategy：人設轉化＋產品矩陣（名稱、定價、路徑），禁止只寫標題。
-- 順序：先 actionableTopics（3 個），再 topics（3 個）。
-- 每個選題 businessInsight 必須含人設轉化切入點與引流品/利潤品路徑，不少於 300 字。
-- directorExecution.emotionalTension 必須說明如何強化創作者個人品牌人設。
+【實戰爆款二創—輸出要求｜禁止敷衍｜必須為用戶業務背景量身定做】
+1. summary、strategy、explosiveTopicAnalysis：必須 "" 空字串。
+2. musicAndExpressionAnalysis：必須 ""（二創的表達與配樂說明只寫在 remixExpressionAnalysis 與 musicPrompt，嚴禁重複填寫本欄）。
+3. actionableTopics：恰好 3 個，針對用戶背景量身定制的改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
+4. topics：恰好 3 個「深度二創選題」，與 actionableTopics 遞進，導演級分鏡。
+5. remixVisualAnalysis：**二创视觉分析 (借鉴与避坑)**。分析原視頻視覺優缺點；必須明確指導用戶：拍攝新選題時，哪些原片元素可以【借鉴】、哪些視覺缺點必須【避开】。嚴禁只輸出泛泛而談，必須結合用戶業務背景與新選題方向。
+6. remixExpressionAnalysis：**二创专属表达指导**。嚴禁照搬原視頻分析報告套話；必須針對用戶的新選題給執導建議。內文必須包含且以 **加粗** 標出下列三個小標題（用字一致）：
+   - **参考语言表达力**
+   - **参考情感表达方式**
+   - **参考镜头表现与情绪张力**
+7. musicPrompt：拋棄原視頻配樂思路；僅針對用戶【新選題】整體調性，輸出英文 BGM 提示詞（Style, Mood, Instruments, Tempo/BPM）。
+
+【premiumContent 欄位順序】
+GROWTH：strategy → actionableTopics → topics → explosiveTopicAnalysis → musicAndExpressionAnalysis → remixVisualAnalysis("") → remixExpressionAnalysis("") → musicPrompt。
+REMIX：actionableTopics → topics → remixVisualAnalysis → remixExpressionAnalysis → musicPrompt（其餘按 schema 填空字串）。
 `}
 `;
 
@@ -1022,10 +1028,12 @@ ${mode === "REMIX" ? `
 	                  },
 	                },
                 explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
-                musicAndExpressionAnalysis: { type: "string", description: "【最高级必填项，绝不可为空字符串】必须为本次分析的所有选题生成具体的BGM建议（节奏/曲风/推荐曲目）与表达指导，长度不少于100字" },
+                musicAndExpressionAnalysis: { type: "string", description: "成長營：BGM與表達分析不少于100字；二創模式必須空字串" },
+                remixVisualAnalysis: { type: "string", description: "二創：借鉴与避坑視覺分析；成長營必空字串" },
+                remixExpressionAnalysis: { type: "string", description: "二創：专属表达指导含三个加粗小标题；成長營必空字串" },
                 musicPrompt: { type: "string", description: "【必填】AI音乐生成提示词，专为Suno/Udio设计。格式：[Music Style], [Instruments], [Mood], [Tempo]。示例：Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm" },
               },
-              required: ["summary", "strategy", "actionableTopics", "topics", "explosiveTopicAnalysis", "musicAndExpressionAnalysis", "musicPrompt"],
+              required: ["summary", "strategy", "actionableTopics", "topics", "explosiveTopicAnalysis", "musicAndExpressionAnalysis", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
             },
             growthStrategy: {
               type: "object",
@@ -1424,10 +1432,12 @@ export async function analyzeVideo(params: {
             summary?: string;
             strategy?: string;
             explosiveTopicAnalysis?: string;
+            musicAndExpressionAnalysis?: string;
           };
           pc.summary = "";
           pc.strategy = "";
           pc.explosiveTopicAnalysis = undefined;
+          pc.musicAndExpressionAnalysis = "";
         }
       }
 

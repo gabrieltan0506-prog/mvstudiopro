@@ -78,6 +78,10 @@ export const growthPremiumContentSchema = z.object({
   topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款選題").default([]),
   explosiveTopicAnalysis: z.string().describe("選題深度綜述分析").default(""),
   musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
+  /** REMIX：原片視覺優缺點 + 新選題【借鉴】與【避坑】；GROWTH 必為空字串 */
+  remixVisualAnalysis: z.string().describe("二創視覺分析：原視頻視覺優缺點，並針對用戶新選題給出【借鉴】與【避坑】").default(""),
+  /** REMIX：必含 **参考语言表达力** / **参考情感表达方式** / **参考镜头表现与情绪张力**；GROWTH 必為空字串 */
+  remixExpressionAnalysis: z.string().describe("二創專屬表達指導（含三個加粗小標題）；嚴禁照搬原視頻分析套話").default(""),
   musicPrompt: z.string().describe("AI Music Prompt：專為 Suno/Udio 設計的提示詞，格式：[Style], [Instruments], [Mood], [Tempo]").default(""),
 });
 
@@ -138,6 +142,8 @@ export const growthAnalysisScoresSchema = z.object({
     topics: [],
     explosiveTopicAnalysis: "",
     musicAndExpressionAnalysis: "",
+    remixVisualAnalysis: "",
+    remixExpressionAnalysis: "",
     musicPrompt: "",
   }),
   growthStrategy: growthStrategySchema.optional(),

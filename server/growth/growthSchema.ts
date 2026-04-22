@@ -2678,6 +2678,8 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
       topics: [],
       explosiveTopicAnalysis: "",
       musicAndExpressionAnalysis: "",
+      remixVisualAnalysis: "",
+      remixExpressionAnalysis: "",
       musicPrompt: "",
     },
     visualSummary: "样例视觉结论",
