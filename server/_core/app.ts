@@ -5,6 +5,7 @@ import { getProviderDiagnostics, getProviderDiagnosticsFallback } from "../servi
 import { getSupervisorAllowlist } from "../services/access-policy";
 import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 import { registerAuthApiRoutes } from "../routers/authApi";
+import { registerSmsAuthRoutes } from "../routers/smsAuth";
 
 export function createApp() {
   const app = express();
@@ -13,6 +14,7 @@ export function createApp() {
   app.use(express.json({ limit: "650mb" }));
   app.use(express.urlencoded({ extended: true, limit: "650mb" }));
   registerAuthApiRoutes(app);
+  registerSmsAuthRoutes(app);
 
   // health check
   app.get("/api/health", (_req, res) => {

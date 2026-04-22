@@ -1,57 +1,404 @@
-import React, { useState } from "react";
-import { login } from "../lib/auth";
+import React, { useState, useEffect, useCallback } from "react";
+
+type Step = "input" | "otp";
+type Tab = "email" | "phone";
+
+interface CaptchaState {
+  imageBase64: string;
+  captchaId: string;
+}
+
+async function fetchCaptcha(): Promise<CaptchaState> {
+  const r = await fetch("/api/auth/captcha");
+  if (!r.ok) throw new Error("獲取圖形驗證碼失敗");
+  return r.json();
+}
+
+async function requestEmailOtp(email: string, captchaId: string, captchaText: string) {
+  const r = await fetch("/api/auth/send-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, captchaId, captchaText }),
+  });
+  return r.json();
+}
+
+async function verifyEmailOtp(email: string, otp: string) {
+  const r = await fetch("/api/auth/verify-otp", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, otp }),
+  });
+  return r.json();
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "13px 14px",
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,0.12)",
+  background: "rgba(255,255,255,0.05)",
+  color: "white",
+  fontSize: 15,
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const btnPrimary: React.CSSProperties = {
+  width: "100%",
+  padding: "13px 16px",
+  borderRadius: 12,
+  border: "none",
+  background: "linear-gradient(135deg,#8b5cf6,#ff4fb3)",
+  color: "white",
+  fontWeight: 900,
+  fontSize: 15,
+  cursor: "pointer",
+};
+
+const btnSecondary: React.CSSProperties = {
+  padding: "13px 16px",
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,0.14)",
+  background: "rgba(255,255,255,0.05)",
+  color: "rgba(255,255,255,0.72)",
+  fontWeight: 700,
+  fontSize: 14,
+  cursor: "pointer",
+  whiteSpace: "nowrap" as const,
+};
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [tab, setTab] = useState<Tab>("email");
+  const [step, setStep] = useState<Step>("input");
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setMsg("");
+  // email flow
+  const [email, setEmail] = useState("");
+  const [captchaInput, setCaptchaInput] = useState("");
+  const [captcha, setCaptcha] = useState<CaptchaState | null>(null);
+  const [otp, setOtp] = useState("");
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [countdown, setCountdown] = useState(0);
+
+  const loadCaptcha = useCallback(async () => {
     try {
-      const j = await login(email, password);
-      if (!j?.ok) {
-        setMsg(j?.error || "登录失败");
-        return;
+      const c = await fetchCaptcha();
+      setCaptcha(c);
+      setCaptchaInput("");
+    } catch {
+      setErr("圖形驗證碼加載失敗，請刷新重試");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCaptcha();
+  }, [loadCaptcha]);
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCountdown((v) => v - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
+
+  async function handleSendOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) { setErr("請輸入郵箱"); return; }
+    if (!captchaInput.trim()) { setErr("請輸入圖形驗證碼"); return; }
+    if (!captcha) return;
+
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await requestEmailOtp(email.trim(), captcha.captchaId, captchaInput.trim());
+      if (res.ok) {
+        setStep("otp");
+        setCountdown(60);
+      } else {
+        setErr(res.error || "發送失敗，請重試");
+        await loadCaptcha();
       }
-      window.location.href = "/";
-    } catch (e: any) {
-      setMsg(e?.message || "登录失败");
+    } catch {
+      setErr("網絡錯誤，請重試");
+      await loadCaptcha();
     } finally {
       setBusy(false);
     }
   }
 
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{6}$/.test(otp)) { setErr("請輸入 6 位數字驗證碼"); return; }
+
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await verifyEmailOtp(email.trim(), otp.trim());
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setErr(res.error || "驗證失敗，請重試");
+      }
+    } catch {
+      setErr("網絡錯誤，請重試");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleResend() {
+    if (countdown > 0 || !captcha) return;
+    await loadCaptcha();
+    setStep("input");
+    setOtp("");
+    setErr("");
+  }
+
   return (
-    <div style={{ maxWidth: 420, margin: "60px auto", padding: 20, color: "white" }}>
-      <h1 style={{ fontSize: 28, fontWeight: 900, marginBottom: 20 }}>登录</h1>
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-        <input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="邮箱"
-          style={{ padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "#111", color: "white" }}
-        />
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="密码"
-          style={{ padding: 12, borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "#111", color: "white" }}
-        />
-        <button
-          type="submit"
-          disabled={busy}
-          style={{ padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.16)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+    <div
+      style={{
+        minHeight: "100vh",
+        background:
+          "radial-gradient(circle at top center, rgba(139,92,246,0.18), transparent 40%), linear-gradient(180deg,#0a0814 0%,#0a0d1f 100%)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          borderRadius: 24,
+          background: "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))",
+          border: "1px solid rgba(255,255,255,0.10)",
+          padding: "36px 32px 32px",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.5)",
+        }}
+      >
+        {/* Logo / Title */}
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 26, fontWeight: 900, color: "white", letterSpacing: -0.5 }}>
+            MV Studio Pro
+          </div>
+          <div style={{ marginTop: 6, color: "rgba(255,255,255,0.5)", fontSize: 14 }}>
+            登入以繼續使用
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div
+          style={{
+            display: "flex",
+            background: "rgba(255,255,255,0.05)",
+            borderRadius: 12,
+            padding: 4,
+            marginBottom: 24,
+          }}
         >
-          {busy ? "登录中…" : "登录"}
-        </button>
-      </form>
-      {msg ? <div style={{ marginTop: 12, color: "#ffb4b4" }}>{msg}</div> : null}
+          {(["email", "phone"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => {
+                if (t === "phone") return;
+                setTab(t);
+                setStep("input");
+                setErr("");
+              }}
+              style={{
+                flex: 1,
+                padding: "9px 0",
+                borderRadius: 10,
+                border: "none",
+                background: tab === t ? "rgba(255,255,255,0.12)" : "transparent",
+                color: t === "phone" ? "rgba(255,255,255,0.30)" : "white",
+                fontWeight: tab === t ? 900 : 600,
+                fontSize: 14,
+                cursor: t === "phone" ? "not-allowed" : "pointer",
+                transition: "all 0.18s",
+                position: "relative",
+              }}
+            >
+              {t === "email" ? "郵箱登入" : "手機登入"}
+              {t === "phone" && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: 10,
+                    padding: "2px 6px",
+                    borderRadius: 999,
+                    background: "rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.35)",
+                  }}
+                >
+                  即將開放
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Email Flow */}
+        {tab === "email" && (
+          <>
+            {step === "input" && (
+              <form onSubmit={handleSendOtp} style={{ display: "grid", gap: 14 }}>
+                <div>
+                  <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
+                    郵箱地址
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="your@email.com"
+                    autoComplete="email"
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
+                    圖形驗證碼
+                  </label>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <input
+                      type="text"
+                      value={captchaInput}
+                      onChange={(e) => setCaptchaInput(e.target.value.toUpperCase())}
+                      placeholder="輸入圖中字符"
+                      maxLength={5}
+                      autoComplete="off"
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    {captcha ? (
+                      <img
+                        src={captcha.imageBase64}
+                        alt="captcha"
+                        title="點擊刷新"
+                        onClick={loadCaptcha}
+                        style={{
+                          height: 44,
+                          borderRadius: 10,
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          cursor: "pointer",
+                          flexShrink: 0,
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          height: 44,
+                          width: 110,
+                          borderRadius: 10,
+                          background: "rgba(255,255,255,0.05)",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "rgba(255,255,255,0.3)",
+                          fontSize: 12,
+                        }}
+                      >
+                        加載中…
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.35)", cursor: "pointer" }}
+                    onClick={loadCaptcha}
+                  >
+                    看不清？點擊圖片刷新
+                  </div>
+                </div>
+
+                {err && (
+                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5", fontSize: 13 }}>
+                    {err}
+                  </div>
+                )}
+
+                <button type="submit" disabled={busy} style={{ ...btnPrimary, opacity: busy ? 0.7 : 1 }}>
+                  {busy ? "發送中…" : "發送驗證碼"}
+                </button>
+              </form>
+            )}
+
+            {step === "otp" && (
+              <form onSubmit={handleVerifyOtp} style={{ display: "grid", gap: 14 }}>
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: 12,
+                    background: "rgba(139,92,246,0.10)",
+                    border: "1px solid rgba(139,92,246,0.25)",
+                    color: "rgba(255,255,255,0.78)",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  驗證碼已發送到<br />
+                  <strong style={{ color: "white" }}>{email}</strong><br />
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>請查收信箱，有效時間 10 分鐘</span>
+                </div>
+
+                <div>
+                  <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
+                    6 位驗證碼
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={otp}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="000000"
+                    autoComplete="one-time-code"
+                    style={{ ...inputStyle, fontSize: 22, fontWeight: 900, letterSpacing: 6, textAlign: "center" }}
+                    autoFocus
+                  />
+                </div>
+
+                {err && (
+                  <div style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5", fontSize: 13 }}>
+                    {err}
+                  </div>
+                )}
+
+                <button type="submit" disabled={busy} style={{ ...btnPrimary, opacity: busy ? 0.7 : 1 }}>
+                  {busy ? "驗證中…" : "登入"}
+                </button>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <button type="button" onClick={handleResend} style={btnSecondary} disabled={countdown > 0}>
+                    {countdown > 0 ? `重新發送 (${countdown}s)` : "重新發送"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setStep("input"); setErr(""); setOtp(""); }}
+                    style={{ ...btnSecondary, border: "none", background: "transparent" }}
+                  >
+                    修改郵箱
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
+        )}
+
+        {/* Phone Tab placeholder */}
+        {tab === "phone" && (
+          <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.35)", fontSize: 14 }}>
+            手機簡訊登入即將開放
+          </div>
+        )}
+
+        <div style={{ marginTop: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
+          登入即代表同意服務條款與隱私政策
+        </div>
+      </div>
     </div>
   );
 }
