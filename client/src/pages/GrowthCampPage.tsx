@@ -61,6 +61,7 @@ import {
 import { toast } from "sonner";
 
 type AnalysisResult = {
+  mode?: "GROWTH" | "REMIX";
   composition: number;
   color: number;
   lighting: number;
@@ -1522,7 +1523,26 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
-  const isRemixMode = analysisMode === "REMIX";
+
+  const inferRemixLayoutFromAnalysis = useCallback((a: AnalysisResult | null | undefined) => {
+    if (!a) return false;
+    if (a.mode === "REMIX") return true;
+    const pc = a.premiumContent;
+    if (!pc) return false;
+    return Boolean(
+      (pc.remixVisualAnalysis?.trim() || pc.remixExpressionAnalysis?.trim()),
+    );
+  }, []);
+
+  const isRemixMode =
+    analysisMode === "REMIX" || inferRemixLayoutFromAnalysis(analysis);
+
+  useEffect(() => {
+    if (analysis?.mode === "GROWTH" || analysis?.mode === "REMIX") {
+      setAnalysisMode(analysis.mode);
+    }
+  }, [analysis?.mode]);
+
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
   const [fileName, setFileName] = useState("");
@@ -3515,98 +3535,109 @@ export default function MVAnalysisPage() {
                               {renderPremiumTopicCards(analysis.premiumContent?.topics, replaceTerms)}
                             </div>
                           ) : null}
-                          {((analysis.premiumContent as { remixVisualAnalysis?: string })?.remixVisualAnalysis ?? "").trim().length > 0 ? (
-                            <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg">
-                              <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400">
-                                <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
-                              </h3>
-                              <div className="whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
-                                {replaceTerms((analysis.premiumContent as { remixVisualAnalysis?: string }).remixVisualAnalysis ?? "")}
-                              </div>
-                            </section>
-                          ) : null}
                           {(() => {
+                            const _rv = ((analysis.premiumContent as { remixVisualAnalysis?: string })?.remixVisualAnalysis ?? "").trim();
                             const _re = ((analysis.premiumContent as { remixExpressionAnalysis?: string })?.remixExpressionAnalysis ?? "").trim();
                             const _rmp = ((analysis.premiumContent as { musicPrompt?: string })?.musicPrompt ?? "").trim();
-                            if (!_re && !_rmp) return null;
                             return (
-                              <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg">
-                                <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400">
-                                  <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
-                                </h3>
-                                {_re ? (
-                                  <div className="mb-8 whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
-                                    {replaceTerms(_re)}
-                                  </div>
-                                ) : null}
-                                {_rmp ? (
-                                  <div className="rounded-xl border border-purple-500/20 bg-black/60 p-5">
-                                    <div className="mb-4 flex flex-col gap-1">
-                                      <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-purple-400">
-                                        <Music2 className="h-4 w-4 shrink-0" /> 专属 BGM 提示词 (Prompt)
-                                      </span>
-                                      <span className="text-xs text-white/50">基于您的二创选题量身生成的音乐指令，可直接复制使用</span>
+                              <>
+                                <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg">
+                                  <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400">
+                                    <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
+                                  </h3>
+                                  {_rv ? (
+                                    <div className="whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
+                                      {replaceTerms(_rv)}
                                     </div>
-                                    <code className="block break-all rounded-lg bg-black/40 p-4 font-mono text-sm leading-relaxed text-purple-200">{_rmp}</code>
-                                    <div className="mt-4 flex flex-wrap items-center gap-2">
-                                      <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
-                                        className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
-                                        <option value="suno">Suno</option>
-                                        <option value="udio">Udio</option>
-                                      </select>
-                                      <button type="button"
-                                        onClick={() => { setMusicPromptDraft(_rmp); void handleGenerateMusic(); }}
-                                        disabled={musicStatus === "generating" || musicStatus === "polling"}
-                                        className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
-                                        {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
-                                        生成 BGM
-                                      </button>
+                                  ) : (
+                                    <p className="text-[15px] leading-relaxed text-white/55">
+                                      （本节本次未生成可展示正文。请确认已选择「实战爆款二创」并完成分析，或点击「强制重新分析」重试。）
+                                    </p>
+                                  )}
+                                </section>
+                                <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg">
+                                  <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400">
+                                    <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
+                                  </h3>
+                                  {_re ? (
+                                    <div className="mb-8 whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
+                                      {replaceTerms(_re)}
                                     </div>
-                                    {(musicStatus === "generating" || musicStatus === "polling") && (
-                                      <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white/72">
-                                        {musicProgressMessage || "正在生成音乐..."}
+                                  ) : null}
+                                  {!_re && !_rmp ? (
+                                    <p className="mb-6 text-[15px] leading-relaxed text-white/55">
+                                      （本节本次未生成表达指导或 BGM 提示词。可尝试「强制重新分析」或稍后重试。）
+                                    </p>
+                                  ) : null}
+                                  {_rmp ? (
+                                    <div className="rounded-xl border border-purple-500/20 bg-black/60 p-5">
+                                      <div className="mb-4 flex flex-col gap-1">
+                                        <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-purple-400">
+                                          <Music2 className="h-4 w-4 shrink-0" /> 专属 BGM 提示词 (Prompt)
+                                        </span>
+                                        <span className="text-xs text-white/50">基于您的二创选题量身生成的音乐指令，可直接复制使用</span>
                                       </div>
-                                    )}
-                                    {musicError ? (
-                                      <div className="mt-3 rounded-xl border border-rose-300/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">{musicError}</div>
-                                    ) : null}
-                                    {musicSongs.length > 0 && (
-                                      <div className="mt-4 space-y-3">
-                                        {musicSongs.map((song) => {
-                                          const playableUrl = song.audioUrl || song.streamUrl || "";
-                                          return (
-                                            <div key={song.id} className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
-                                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                                <div>
-                                                  <div className="text-sm font-semibold text-white">{song.title || "生成结果"}</div>
-                                                  {song.tags ? <div className="mt-1 text-xs text-white/45">{song.tags}</div> : null}
+                                      <code className="block break-all rounded-lg bg-black/40 p-4 font-mono text-sm leading-relaxed text-purple-200">{_rmp}</code>
+                                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                                        <select value={musicProvider} onChange={(e) => setMusicProvider((e.target.value as MusicProvider) || "suno")}
+                                          className="rounded-xl border border-white/15 bg-[#0b1020] px-3 py-2 text-xs text-white">
+                                          <option value="suno">Suno</option>
+                                          <option value="udio">Udio</option>
+                                        </select>
+                                        <button type="button"
+                                          onClick={() => { setMusicPromptDraft(_rmp); void handleGenerateMusic(); }}
+                                          disabled={musicStatus === "generating" || musicStatus === "polling"}
+                                          className="inline-flex items-center gap-2 rounded-xl bg-[#90c4ff] px-3 py-2 text-xs font-semibold text-black transition hover:bg-[#a8d2ff] disabled:cursor-not-allowed disabled:opacity-50">
+                                          {musicStatus === "generating" || musicStatus === "polling" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Music2 className="h-3.5 w-3.5" />}
+                                          生成 BGM
+                                        </button>
+                                      </div>
+                                      {(musicStatus === "generating" || musicStatus === "polling") && (
+                                        <div className="mt-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white/72">
+                                          {musicProgressMessage || "正在生成音乐..."}
+                                        </div>
+                                      )}
+                                      {musicError ? (
+                                        <div className="mt-3 rounded-xl border border-rose-300/20 bg-rose-500/10 px-3 py-3 text-sm text-rose-100">{musicError}</div>
+                                      ) : null}
+                                      {musicSongs.length > 0 && (
+                                        <div className="mt-4 space-y-3">
+                                          {musicSongs.map((song) => {
+                                            const playableUrl = song.audioUrl || song.streamUrl || "";
+                                            return (
+                                              <div key={song.id} className="rounded-xl border border-white/10 bg-black/20 px-4 py-4">
+                                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                                  <div>
+                                                    <div className="text-sm font-semibold text-white">{song.title || "生成结果"}</div>
+                                                    {song.tags ? <div className="mt-1 text-xs text-white/45">{song.tags}</div> : null}
+                                                  </div>
+                                                  <div className="flex items-center gap-2">
+                                                    {playableUrl ? (
+                                                      <button type="button" onClick={() => handlePlayGeneratedMusic(playableUrl)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
+                                                        <Play className="h-3.5 w-3.5" />
+                                                        {playingMusicUrl === playableUrl ? "暂停" : "播放"}
+                                                      </button>
+                                                    ) : null}
+                                                    {song.audioUrl ? (
+                                                      <button type="button" onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
+                                                        <Download className="h-3.5 w-3.5" />
+                                                        下载
+                                                      </button>
+                                                    ) : null}
+                                                  </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                  {playableUrl ? (
-                                                    <button type="button" onClick={() => handlePlayGeneratedMusic(playableUrl)}
-                                                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
-                                                      <Play className="h-3.5 w-3.5" />
-                                                      {playingMusicUrl === playableUrl ? "暂停" : "播放"}
-                                                    </button>
-                                                  ) : null}
-                                                  {song.audioUrl ? (
-                                                    <button type="button" onClick={() => void handleDownloadGeneratedMusic(song.audioUrl || "", song.title)}
-                                                      className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/80 transition hover:bg-white/10">
-                                                      <Download className="h-3.5 w-3.5" />
-                                                      下载
-                                                    </button>
-                                                  ) : null}
-                                                </div>
+                                                {playableUrl ? <audio key={playableUrl} className="mt-3 w-full" controls src={playableUrl} /> : null}
                                               </div>
-                                              {playableUrl ? <audio key={playableUrl} className="mt-3 w-full" controls src={playableUrl} /> : null}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : null}
-                              </section>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </section>
+                              </>
                             );
                           })()}
                         </div>

@@ -1426,6 +1426,13 @@ export async function analyzeVideo(params: {
         deepDive.sceneConsistency = "";
         deepDive.visualSummary = "";
         deepDive.trustSignals = [];
+        // 舊版「表達與配樂」直通欄位清空，避免與 remixExpressionAnalysis / musicPrompt 重複渲染
+        deepDive.languageExpression = "";
+        deepDive.emotionalExpression = "";
+        deepDive.cameraEmotionTension = "";
+        deepDive.bgmAnalysis = "";
+        deepDive.musicRecommendation = "";
+        deepDive.sunoPrompt = "";
         // premiumContent 文字欄位全部清空，防止前端二次渲染
         if (deepDive.premiumContent) {
           const pc = deepDive.premiumContent as {
@@ -1443,21 +1450,35 @@ export async function analyzeVideo(params: {
 
       const strategistRefinement = null;
 
+      const remixStripFirstPassVisual = analysisMode === "REMIX";
       const parsed = growthAnalysisScoresSchema.parse({
         ...deepDive,
+        mode: analysisMode,
         ...(strategistRefinement || {}),
-        visualSummary: String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
-        openingFrameAssessment: String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
-        sceneConsistency: String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
-        trustSignals: Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
-          ? deepDive.trustSignals
-          : visualFirstPass.trustSignals,
-        visualRisks: Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
-          ? deepDive.visualRisks
-          : visualFirstPass.visualRisks,
-        keyFrames: Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
-          ? deepDive.keyFrames
-          : visualFirstPass.keyFrames,
+        visualSummary: remixStripFirstPassVisual
+          ? ""
+          : String(deepDive?.visualSummary || visualFirstPass.visualSummary || ""),
+        openingFrameAssessment: remixStripFirstPassVisual
+          ? ""
+          : String(deepDive?.openingFrameAssessment || visualFirstPass.openingFrameAssessment || ""),
+        sceneConsistency: remixStripFirstPassVisual
+          ? ""
+          : String(deepDive?.sceneConsistency || visualFirstPass.sceneConsistency || ""),
+        trustSignals: remixStripFirstPassVisual
+          ? []
+          : Array.isArray(deepDive?.trustSignals) && deepDive.trustSignals.length
+            ? deepDive.trustSignals
+            : visualFirstPass.trustSignals,
+        visualRisks: remixStripFirstPassVisual
+          ? []
+          : Array.isArray(deepDive?.visualRisks) && deepDive.visualRisks.length
+            ? deepDive.visualRisks
+            : visualFirstPass.visualRisks,
+        keyFrames: remixStripFirstPassVisual
+          ? []
+          : Array.isArray(deepDive?.keyFrames) && deepDive.keyFrames.length
+            ? deepDive.keyFrames
+            : visualFirstPass.keyFrames,
       });
       const costProfile = estimateTokenProfile(duration, allFrames.length);
 

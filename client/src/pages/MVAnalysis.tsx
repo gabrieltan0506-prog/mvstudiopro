@@ -64,6 +64,7 @@ import {
 import { toast } from "sonner";
 
 type AnalysisResult = {
+  mode?: "GROWTH" | "REMIX";
   composition: number;
   color: number;
   lighting: number;
@@ -191,6 +192,106 @@ type AnalysisResult = {
   }>;
   followUpPrompt?: string;
 };
+
+/** 成長營專用：關鍵影格與視覺診斷（二創模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
+function VisualAnalysisSection({
+  analysis,
+  visualKeyFrames,
+}: {
+  analysis: AnalysisResult;
+  visualKeyFrames: NonNullable<AnalysisResult["keyFrames"]>;
+}) {
+  if (!(analysis.visualSummary || visualKeyFrames.length || analysis.trustSignals?.length || analysis.visualRisks?.length)) {
+    return null;
+  }
+  return (
+    <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
+      <div className="flex items-center gap-3 text-[#8af0ff]">
+        <Film className="h-5 w-5" />
+        <h2 className="text-2xl font-bold">视觉呈现效果</h2>
+      </div>
+      <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-4">
+          {analysis.visualSummary ? (
+            <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8af0ff]">
+                <Sparkles className="h-4 w-4" />
+                <span>视觉总判断</span>
+              </div>
+              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
+            </div>
+          ) : null}
+          {analysis.openingFrameAssessment ? (
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                <Target className="h-4 w-4" />
+                <span>开头画面判断</span>
+              </div>
+              <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
+            </div>
+          ) : null}
+          {analysis.sceneConsistency ? (
+            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
+                <LayoutDashboard className="h-4 w-4" />
+                <span>画面统一性</span>
+              </div>
+              <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
+            </div>
+          ) : null}
+          {analysis.trustSignals?.length ? (
+            <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
+                <Sparkles className="h-4 w-4" />
+                <span>可信画面信号</span>
+              </div>
+              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                {analysis.trustSignals.slice(0, 3).map((item) => (
+                  <div key={item}>{replaceTerms(item)}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="space-y-4">
+          {visualKeyFrames.map((frame) => (
+            <div key={`${frame.timestamp}-${frame.whatShows}`} className="rounded-2xl border border-white/10 bg-black/15 p-4">
+              <div className="flex items-center gap-3">
+                <span className="rounded-full border border-[#8af0ff]/20 bg-[#8af0ff]/10 px-2 py-1 text-[11px] font-semibold text-[#8af0ff]">{frame.timestamp}</span>
+                <div className="text-sm font-semibold text-white">{replaceTerms(frame.whatShows)}</div>
+              </div>
+              <div className="mt-3 text-sm leading-7 text-white/72">
+                <span className="mr-2 inline-flex items-center rounded-full border border-[#8af0ff]/15 bg-[#8af0ff]/10 px-2 py-0.5 text-[11px] font-semibold text-[#8af0ff]">可怎么用</span>
+                {replaceTerms(frame.commercialUse)}
+              </div>
+              <div className="mt-2 text-sm leading-7 text-white/62">
+                <span className="mr-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/55">问题</span>
+                {replaceTerms(frame.issue)}
+              </div>
+              <div className="mt-3 rounded-xl border border-[#ffb454]/25 bg-[rgba(255,180,84,0.12)] px-3 py-3 text-sm leading-7 text-[#ffd08f] shadow-[0_0_0_1px_rgba(255,180,84,0.08)]">
+                <span className="mr-2 inline-flex items-center rounded-full border border-[#ffb454]/30 bg-[rgba(255,180,84,0.18)] px-2 py-0.5 text-[11px] font-semibold text-[#ffd08f]">改法</span>
+                {replaceTerms(frame.fix)}
+              </div>
+            </div>
+          ))}
+          {analysis.visualRisks?.length ? (
+            <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffb87d]">
+                <Target className="h-4 w-4" />
+                <span>视觉风险</span>
+              </div>
+              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
+                {analysis.visualRisks.slice(0, 3).map((item) => (
+                  <div key={item}>{replaceTerms(item)}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type ShootingBlueprintView = {
   storyboard: string[];
@@ -1493,7 +1594,25 @@ export default function MVAnalysisPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
-  const isRemixMode = analysisMode === "REMIX";
+
+  const inferRemixLayoutFromAnalysis = useCallback((a: AnalysisResult | null | undefined) => {
+    if (!a) return false;
+    if (a.mode === "REMIX") return true;
+    const pc = a.premiumContent;
+    if (!pc) return false;
+    return Boolean(
+      (pc.remixVisualAnalysis?.trim() || pc.remixExpressionAnalysis?.trim()),
+    );
+  }, []);
+
+  const isRemixMode =
+    analysisMode === "REMIX" || inferRemixLayoutFromAnalysis(analysis);
+
+  useEffect(() => {
+    if (analysis?.mode === "GROWTH" || analysis?.mode === "REMIX") {
+      setAnalysisMode(analysis.mode);
+    }
+  }, [analysis?.mode]);
   const [error, setError] = useState<string | null>(null);
   const [context, setContext] = useState("");
   const [fileName, setFileName] = useState("");
@@ -3885,28 +4004,36 @@ export default function MVAnalysisPage() {
                   {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 专为您量身定制的二创选题", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
                   {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple", 3, "mb-6 text-xl font-bold text-white")}
 
-                  {_rv ? (
-                    <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg">
-                      <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400">
-                        <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
-                      </h3>
+                  <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg">
+                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400">
+                      <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
+                    </h3>
+                    {_rv ? (
                       <div className="whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
                         {replaceTerms(_rv)}
                       </div>
-                    </section>
-                  ) : null}
+                    ) : (
+                      <p className="text-[15px] leading-relaxed text-white/55">
+                        （本节本次未生成可展示正文。请确认已选择「实战爆款二创」并完成分析，或点击「强制重新分析」重试。）
+                      </p>
+                    )}
+                  </section>
 
-                  {(_re || _rmp) ? (
-                    <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg">
-                      <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400">
-                        <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
-                      </h3>
-                      {_re ? (
-                        <div className="mb-8 whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
-                          {replaceTerms(_re)}
-                        </div>
-                      ) : null}
-                      {_rmp ? (
+                  <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg">
+                    <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400">
+                      <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
+                    </h3>
+                    {_re ? (
+                      <div className="mb-8 whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
+                        {replaceTerms(_re)}
+                      </div>
+                    ) : null}
+                    {!_re && !_rmp ? (
+                      <p className="mb-6 text-[15px] leading-relaxed text-white/55">
+                        （本节本次未生成表达指导或 BGM 提示词。可尝试「强制重新分析」或稍后重试。）
+                      </p>
+                    ) : null}
+                    {_rmp ? (
                         <div className="rounded-xl border border-purple-500/20 bg-black/60 p-5">
                           <div className="mb-4 flex flex-col gap-1">
                             <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-purple-400">
@@ -3983,8 +4110,7 @@ export default function MVAnalysisPage() {
                           )}
                         </div>
                       ) : null}
-                    </section>
-                  ) : null}
+                  </section>
                 </div>
               </div>
             );
@@ -4222,92 +4348,8 @@ export default function MVAnalysisPage() {
                     </div>
                   </div>
 
-                  {!isRemixMode && analysis && (analysis.visualSummary || visualKeyFrames.length || analysis.trustSignals?.length || analysis.visualRisks?.length) ? (
-                    <div className="rounded-[28px] border border-[#8af0ff]/20 bg-[#0f1a2c] p-6">
-                      <div className="flex items-center gap-3 text-[#8af0ff]">
-                        <Film className="h-5 w-5" />
-                        <h2 className="text-2xl font-bold">视觉呈现效果</h2>
-                      </div>
-                      <div className="mt-5 grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-                        <div className="space-y-4">
-                          {analysis.visualSummary ? (
-                            <div className="rounded-2xl border border-[#8af0ff]/20 bg-[#10233a] px-4 py-4">
-                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#8af0ff]">
-                                <Sparkles className="h-4 w-4" />
-                                <span>视觉总判断</span>
-                              </div>
-                              <div className="mt-2 text-sm leading-7 text-white">{replaceTerms(analysis.visualSummary)}</div>
-                            </div>
-                          ) : null}
-                          {analysis.openingFrameAssessment ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
-                                <Target className="h-4 w-4" />
-                                <span>开头画面判断</span>
-                              </div>
-                              <div className="mt-2">{replaceTerms(analysis.openingFrameAssessment)}</div>
-                            </div>
-                          ) : null}
-                          {analysis.sceneConsistency ? (
-                            <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-4 text-sm leading-7 text-white/78">
-                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-white/45">
-                                <LayoutDashboard className="h-4 w-4" />
-                                <span>画面统一性</span>
-                              </div>
-                              <div className="mt-2">{replaceTerms(analysis.sceneConsistency)}</div>
-                            </div>
-                          ) : null}
-                          {analysis.trustSignals?.length ? (
-                            <div className="rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-4">
-                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#9df6c0]">
-                                <Sparkles className="h-4 w-4" />
-                                <span>可信画面信号</span>
-                              </div>
-                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
-                                {analysis.trustSignals.slice(0, 3).map((item) => (
-                                  <div key={item}>{replaceTerms(item)}</div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="space-y-4">
-                          {visualKeyFrames.map((frame) => (
-                            <div key={`${frame.timestamp}-${frame.whatShows}`} className="rounded-2xl border border-white/10 bg-black/15 p-4">
-                              <div className="flex items-center gap-3">
-                                <span className="rounded-full border border-[#8af0ff]/20 bg-[#8af0ff]/10 px-2 py-1 text-[11px] font-semibold text-[#8af0ff]">{frame.timestamp}</span>
-                                <div className="text-sm font-semibold text-white">{replaceTerms(frame.whatShows)}</div>
-                              </div>
-                              <div className="mt-3 text-sm leading-7 text-white/72">
-                                <span className="mr-2 inline-flex items-center rounded-full border border-[#8af0ff]/15 bg-[#8af0ff]/10 px-2 py-0.5 text-[11px] font-semibold text-[#8af0ff]">可怎么用</span>
-                                {replaceTerms(frame.commercialUse)}
-                              </div>
-                              <div className="mt-2 text-sm leading-7 text-white/62">
-                                <span className="mr-2 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/55">问题</span>
-                                {replaceTerms(frame.issue)}
-                              </div>
-                              <div className="mt-3 rounded-xl border border-[#ffb454]/25 bg-[rgba(255,180,84,0.12)] px-3 py-3 text-sm leading-7 text-[#ffd08f] shadow-[0_0_0_1px_rgba(255,180,84,0.08)]">
-                                <span className="mr-2 inline-flex items-center rounded-full border border-[#ffb454]/30 bg-[rgba(255,180,84,0.18)] px-2 py-0.5 text-[11px] font-semibold text-[#ffd08f]">改法</span>
-                                {replaceTerms(frame.fix)}
-                              </div>
-                            </div>
-                          ))}
-                          {analysis.visualRisks?.length ? (
-                            <div className="rounded-2xl border border-[#ff8a3d]/20 bg-[rgba(255,138,61,0.06)] px-4 py-4">
-                              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-[#ffb87d]">
-                                <Target className="h-4 w-4" />
-                                <span>视觉风险</span>
-                              </div>
-                              <div className="mt-2 space-y-2 text-sm leading-7 text-white/78">
-                                {analysis.visualRisks.slice(0, 3).map((item) => (
-                                  <div key={item}>{replaceTerms(item)}</div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
+                  {!isRemixMode && analysis ? (
+                    <VisualAnalysisSection analysis={analysis} visualKeyFrames={visualKeyFrames} />
                   ) : null}
 
                   {!isRemixMode && showPremiumReport && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (

@@ -78,11 +78,23 @@ export const growthPremiumContentSchema = z.object({
   topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款選題").default([]),
   explosiveTopicAnalysis: z.string().describe("選題深度綜述分析").default(""),
   musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
-  /** REMIX：原片視覺優缺點 + 新選題【借鉴】與【避坑】；GROWTH 必為空字串 */
-  remixVisualAnalysis: z.string().describe("二創視覺分析：原視頻視覺優缺點，並針對用戶新選題給出【借鉴】與【避坑】").default(""),
-  /** REMIX：必含 **参考语言表达力** / **参考情感表达方式** / **参考镜头表现与情绪张力**；GROWTH 必為空字串 */
-  remixExpressionAnalysis: z.string().describe("二創專屬表達指導（含三個加粗小標題）；嚴禁照搬原視頻分析套話").default(""),
-  musicPrompt: z.string().describe("AI Music Prompt：專為 Suno/Udio 設計的提示詞，格式：[Style], [Instruments], [Mood], [Tempo]").default(""),
+  /** REMIX 必填實質內容；GROWTH 可為 ""。勿用 .optional()，避免模型整段跳過。 */
+  remixVisualAnalysis: z
+    .string()
+    .describe(
+      "二创视觉分析 (借鉴与避坑)：分析原视频优缺点，并指导用户拍摄新选题时该借鉴什么、避开什么",
+    )
+    .default(""),
+  remixExpressionAnalysis: z
+    .string()
+    .describe(
+      "二创专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】",
+    )
+    .default(""),
+  musicPrompt: z
+    .string()
+    .describe("针对用户专属选题方向的 BGM 提示词")
+    .default(""),
 });
 
 export const growthStrategySchema = z.object({
@@ -122,6 +134,8 @@ export const growthRemixExecutionSchema = z.object({
 });
 
 export const growthAnalysisScoresSchema = z.object({
+  /** 與請求 mode 一致；供前端在刷新 / 匯出 PDF 時還原二創版面。舊資料可缺省，由前端依 remix 欄位推斷。 */
+  mode: growthAnalysisModeSchema.optional(),
   composition: z.number(),
   color: z.number(),
   lighting: z.number(),
