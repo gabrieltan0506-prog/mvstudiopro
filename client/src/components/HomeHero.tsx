@@ -328,9 +328,111 @@ export default function HomeHero() {
         </div>
       </div>
 
+      {/* 核心功能入口 */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 14,
+          marginTop: 16,
+        }}
+        className="home-feature-cards"
+      >
+        {[
+          {
+            href: "/creator-growth-camp",
+            badge: "核心功能",
+            badgeColor: "rgba(251,146,60,0.9)",
+            title: "創作者成長營",
+            desc: "上傳視頻或圖文，即時生成商業戰略、爆款選題與導演級分鏡，GROWTH / REMIX 雙模式。",
+            gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(239,68,68,0.10))",
+            border: "rgba(251,146,60,0.30)",
+            arrow: "rgba(251,146,60,1)",
+            cta: "開始分析 →",
+          },
+          {
+            href: "/creator-growth-camp/platform",
+            badge: "平台洞察",
+            badgeColor: "rgba(96,165,250,0.9)",
+            title: "平台趨勢分析",
+            desc: "小紅書、抖音、B站、快手平台數據洞察，含 7 天發布計劃與流量承接建議。",
+            gradient: "linear-gradient(135deg, rgba(96,165,250,0.18), rgba(139,92,246,0.10))",
+            border: "rgba(96,165,250,0.30)",
+            arrow: "rgba(96,165,250,1)",
+            cta: "查看趨勢 →",
+          },
+          {
+            href: "/workflow-nodes",
+            badge: "創作工作流",
+            badgeColor: "rgba(167,139,250,0.9)",
+            title: "節點式工作流",
+            desc: "可視化節點畫布，串接分鏡生成、AI 影片、BGM 與發布動作，一鍵執行完整創作流程。",
+            gradient: "linear-gradient(135deg, rgba(167,139,250,0.18), rgba(236,72,153,0.10))",
+            border: "rgba(167,139,250,0.30)",
+            arrow: "rgba(167,139,250,1)",
+            cta: "進入工作流 →",
+          },
+        ].map((card) => (
+          <a
+            key={card.href}
+            href={card.href}
+            style={{
+              display: "block",
+              padding: "20px 22px",
+              borderRadius: 20,
+              background: card.gradient,
+              border: `1px solid ${card.border}`,
+              textDecoration: "none",
+              color: "white",
+              transition: "transform 0.18s, box-shadow 0.18s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(-3px)";
+              (e.currentTarget as HTMLAnchorElement).style.boxShadow = "0 12px 36px rgba(0,0,0,0.35)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLAnchorElement).style.transform = "translateY(0)";
+              (e.currentTarget as HTMLAnchorElement).style.boxShadow = "none";
+            }}
+          >
+            <div style={{ marginBottom: 10 }}>
+              <span
+                style={{
+                  display: "inline-block",
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: card.badgeColor,
+                  background: "rgba(255,255,255,0.07)",
+                  border: `1px solid ${card.border}`,
+                }}
+              >
+                {card.badge}
+              </span>
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.3 }}>{card.title}</div>
+            <div style={{ marginTop: 8, fontSize: 13, color: "rgba(255,255,255,0.68)", lineHeight: 1.7 }}>
+              {card.desc}
+            </div>
+            <div style={{ marginTop: 14, fontSize: 13, fontWeight: 800, color: card.arrow }}>
+              {card.cta}
+            </div>
+          </a>
+        ))}
+      </div>
+
       <style>{`
         @media (max-width: 980px) {
           .home-hero-grid {
+            grid-template-columns: 1fr !important;
+          }
+          .home-feature-cards {
+            grid-template-columns: 1fr !important;
+          }
+        }
+        @media (max-width: 640px) {
+          .home-feature-cards {
             grid-template-columns: 1fr !important;
           }
         }
