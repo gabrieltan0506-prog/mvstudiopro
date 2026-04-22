@@ -1588,7 +1588,7 @@ export async function analyzeVideo(params: {
       const visualFirstPass = mergeVisualPasses(visualPassChunks);
       const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       // 长视频 REMIX 模式：缩减抽帧数量，降低 LLM 推理时间，避免触发 Fly.io 60s proxy timeout
-      const remixLongVideoFrameCap = analysisModePre === "REMIX" && duration > 480 ? 6 : undefined;
+      const remixLongVideoFrameCap = analysisModePre === "REMIX" && duration > 480 ? 8 : undefined;
       const strategistFrames = remixLongVideoFrameCap
         ? pickStrategistFrames(allFrames).slice(0, remixLongVideoFrameCap)
         : pickStrategistFrames(allFrames);
