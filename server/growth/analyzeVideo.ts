@@ -1358,7 +1358,7 @@ async function runDeepDivePass(params: {
           topics: [],
           explosiveTopicAnalysis: "",
           musicAndExpressionAnalysis: "",
-          remixVisualAnalysis: mode === "REMIX" ? "AI 深度分析超时，请尝试较短视频或稍后重试。" : "",
+          remixVisualAnalysis: "",
           remixExpressionAnalysis: "",
           musicPrompt: "",
         } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
