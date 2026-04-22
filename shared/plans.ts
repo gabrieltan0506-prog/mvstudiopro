@@ -54,9 +54,9 @@ export const PLANS: Record<PlanType, PlanConfig> = {
     ],
     featuresCn: [
       "视频 PK 评分（前 2 次免费）",
-      "虛擬偶像生成（前 3 個免費）",
+      "虚拟偶像生成（前 3 个免费）",
       "分镜脚本生成（不限字数）",
-      "分鏡圖生成（每次最多 10 張，含浮水印）",
+      "分镜图生成（每次最多 10 张，含水印）",
       "视频展厅浏览",
       "基础社区功能",
     ],
@@ -454,7 +454,7 @@ export const STUDENT_PLANS: Record<StudentPlanType, StudentPlanConfig> = {
     featuresCn: [
       "视频 PK 评分（每月 5 次）",
       "分镜脚本生成（每月 3 次）",
-      "虛擬偶像 2D 生成（無限）",
+      "虚拟偶像 2D 生成（无限）",
       "视频展厅浏览（无限）",
       "基础社区功能",
     ],
@@ -486,7 +486,7 @@ export const STUDENT_PLANS: Record<StudentPlanType, StudentPlanConfig> = {
     featuresCn: [
       "视频 PK 评分（每月 15 次）",
       "分镜脚本生成（每月 8 次）",
-      "虛擬偶像 2D 生成（無限）",
+      "虚拟偶像 2D 生成（无限）",
       "虚拟偶像 2D 转 3D（每月 3 次）",
       "口型同步（每月 5 次）",
       "视频生成（每月 2 次）",

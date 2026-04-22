@@ -61,13 +61,13 @@ export const growthRemixBusinessInsightSchema = z.object({
 export const growthPremiumContentTopicSchema = z.object({
   title: z.string().default(""),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]).default("VIDEO"),
-  businessInsight: z.string().describe("【商業深度洞察】必須包含具體的：引流品設計、利潤品設計、轉化路徑。不少於 300 字。").default(""),
+  businessInsight: z.string().describe("【商业深度洞察】必须包含具体的：引流品设计、利润品设计、转化路径。不少于 300 字。").default(""),
   contentBrief: z.string().default(""),
   directorExecution: z.object({
     storyboard: z.array(z.string()).default([]),
     lighting: z.string().default(""),
     blocking: z.string().default(""),
-    emotionalTension: z.string().describe("必須生成具體的導演情緒指導，絕對禁止輸出佔位符。").default("")
+    emotionalTension: z.string().describe("必须生成具体的导演情绪指导，绝对禁止输出占位符。").default("")
   }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
@@ -75,7 +75,7 @@ export const growthPremiumContentTopicSchema = z.object({
 export const growthPremiumContentTopicLlmSchema = z.object({
   title: z.string(),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]),
-  businessInsight: z.string().describe("深度商業洞察"),
+  businessInsight: z.string().describe("深度商业洞察"),
   contentBrief: z.string(),
   directorExecution: z.object({
     storyboard: z.array(z.string()),
@@ -102,23 +102,23 @@ export const remixLlmSchema = z.object({
   remixVisualAnalysis: z
     .string()
     .describe(
-      "二創視覺分析（借鑑與避坑）：必須分析原影片優缺點，並明確指出新選題該借鑑什麼、避開什麼。",
+      "二创视觉分析（借鉴与避坑）：必须分析原视频优缺点，并明确指出新选题该借鉴什么、避开什么。",
     ),
   remixExpressionAnalysis: z
     .string()
     .describe(
-      "二創專屬表達指導：必須包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】三個標題。",
+      "二创专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】三个标题。",
     ),
-  musicPrompt: z.string().describe("針對用戶新選題方向的 BGM 提示詞"),
+  musicPrompt: z.string().describe("针对用户新选题方向的 BGM 提示词"),
 });
 
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
-  strategy: z.string().describe("頂級商業顧問：人設拆解與產品矩陣規劃").default(""),
-  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("現在就能執行的版本：必須帶有完整分鏡與腳本").default([]),
-  topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款選題").default([]),
-  explosiveTopicAnalysis: z.string().describe("選題深度綜述分析").default(""),
-  musicAndExpressionAnalysis: z.string().describe("表達與配樂分析：BGM 建議與表達技巧").default(""),
+  strategy: z.string().describe("顶级商业顾问：人设拆解与产品矩阵规划").default(""),
+  actionableTopics: z.array(growthPremiumContentTopicSchema).describe("现在就能执行的版本：必须带有完整分镜与脚本").default([]),
+  topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款选题").default([]),
+  explosiveTopicAnalysis: z.string().describe("选题深度综述分析").default(""),
+  musicAndExpressionAnalysis: z.string().describe("表达与配乐分析：BGM 建议与表达技巧").default(""),
   /** REMIX 必填實質內容；GROWTH 可為 ""。勿用 .optional()，避免模型整段跳過。 */
   remixVisualAnalysis: z
     .string()

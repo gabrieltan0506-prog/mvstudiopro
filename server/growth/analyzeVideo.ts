@@ -1433,7 +1433,7 @@ export async function analyzeVideo(params: {
   context?: string;
   modelName?: string;
   mode?: GrowthAnalysisMode;
-  /** 為 true 時重新上傳至新 GCS 路徑，避免沿用同一 gs:// 物件帶來的中間層快取疑慮 */
+  /** 为 true 时重新上传至新 GCS 路径，避免沿用同一 gs:// 对象带来的中间层缓存疑虑 */
   forceRefresh?: boolean;
 }): Promise<VideoAnalysisResult> {
   const uploadedObjects: string[] = [];
@@ -1561,7 +1561,7 @@ export async function analyzeVideo(params: {
       }));
 
       // 实作残留清洗 (Data Wiping)
-      // 如果是二創模式，強迫將所有可能導致 UI 重複渲染的欄位物理清空
+      // 如果是二创模式，强制将所有可能导致 UI 重复渲染的字段物理清空
       const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       if (analysisMode === "REMIX") {
         // 診斷陣列全部清空
@@ -1575,7 +1575,7 @@ export async function analyzeVideo(params: {
         deepDive.sceneConsistency = "";
         deepDive.visualSummary = "";
         deepDive.trustSignals = [];
-        // 舊版「表達與配樂」直通欄位清空，避免與 remixExpressionAnalysis / musicPrompt 重複渲染
+        // 旧版「表达与配乐」直通字段清空，避免与 remixExpressionAnalysis / musicPrompt 重复渲染
         deepDive.languageExpression = "";
         deepDive.emotionalExpression = "";
         deepDive.cameraEmotionTension = "";
