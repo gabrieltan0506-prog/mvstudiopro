@@ -1034,26 +1034,57 @@ async function runDeepDivePass(params: {
   const PROMPT_PREMIUM_GROWTH = `
 你是頂級商業IP操盤手與大師級導演。模式：商業成長營
 用戶業務背景（必須嚴格對齊）：${businessGoal}
-【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**。
-【輸出要求】
-1. strategy：人設轉化＋產品矩陣（名稱、定價、路徑），條列加粗，禁止只寫標題。
-2. actionableTopics：恰好 3 個即時改編選題，導演級分鏡。
-3. topics：恰好 3 個延伸核心爆款選題，導演級分鏡。
-4. explosiveTopicAnalysis：選題深度綜述。
-5. musicAndExpressionAnalysis：原影片表達與配樂分析，不少於 100 字。
-6. musicPrompt：Suno/Udio，[Music Style], [Instruments], [Mood], [Tempo]。
+【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**；段落之間空一行。
+【輸出要求 — 禁止套話｜必須量身定做】
+
+1. strategy：人設轉化＋產品矩陣（品名、定價區間、平台、轉化路徑），條列加粗，禁止只寫標題。
+
+2. actionableTopics：恰好 3 個「本週就能拍」的即時改編選題。每個選題必須：
+   - title：10字以內、帶情緒張力的選題標題（禁止泛泛如「職場感悟」）
+   - contentBrief：必須分三段，用 **加粗** 標出段落名：
+     **【開場鈎子（前3秒口播）】**：直接寫出可說的具體文字（不是描述，是臺詞）
+     **【核心論述與拍攝思路】**：選題邏輯、拍攝手法、情緒推進
+     **【結尾行動召喚】**：引導觀眾點讚/留言/關注的收尾文字
+   - businessInsight：引流品（品名+定價+獲客方式）→ 利潤品（品名+客單價）→ 轉化路徑（3步驟），不少於 300 字
+   - directorExecution.storyboard：恰好 5-6 條，每條嚴格格式：「[景別][時長] 畫面描述 | 口播：「...」 | 情緒：...」
+
+3. topics：恰好 3 個長線IP定位選題，與 actionableTopics 角度遞進（不重複）；格式要求同上（storyboard 5-6 條），businessInsight 不少於 200 字。
+
+4. explosiveTopicAnalysis：綜合拆解 3 個 actionableTopics 的爆款邏輯與差異。
+
+5. musicAndExpressionAnalysis：原影片的語言/情緒/配樂分析，不少於 100 字。
+
+6. musicPrompt：Suno/Udio 格式：[Music Style], [Instruments], [Mood], [Tempo/BPM]。
 `;
 
   const PROMPT_PREMIUM_REMIX = `
 你是頂級商業IP操盤手與大師級導演。模式：實戰爆款二創
 用戶業務背景（必須嚴格對齊）：${businessGoal}
-【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**。
-【輸出要求 — 禁止敷衍｜必須量身定做】
-1. actionableTopics：恰好 3 個針對用戶背景的即時改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
-2. topics：恰好 3 個深度二創選題，與 actionableTopics 遞進延伸，提升到更長期的IP定位視角；導演級分鏡，每個 businessInsight 不少於 200 字。
-3. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。分析原影片視覺優缺點；必須明確指導：拍攝新選題時，哪些原片元素可【借鑑】、哪些視覺缺點必【避開】；結合用戶業務與新選題方向，禁止空泛套話。
-4. remixExpressionAnalysis：**二創專屬表達指導**。必須針對用戶新選題給執導建議；內文必須含且 **加粗** 三個小標題（用字一致）：**参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力**（強調【參考語言表達力】與鏡頭情緒張力）。
-5. musicPrompt：拋棄原影片配樂思路；僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）。
+【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**；段落之間空一行。
+【輸出要求 — 禁止敷衍｜必須量身定做｜禁止套話】
+
+1. actionableTopics：恰好 3 個「本週就能拍」的即時改編選題，角度各異。每個選題必須：
+   - title：10字以內、帶情緒張力的選題標題（直接寫，禁止泛泛如「職場感悟」）
+   - contentBrief：必須分三段，用 **加粗** 標出段落名：
+     **【開場鈎子（前3秒口播）】**：直接寫出可說的具體臺詞（不是描述鏡頭，是可直接讀出的話）
+     **【核心論述與拍攝思路】**：選題邏輯、情緒推進方式、如何借鉴原片
+     **【結尾行動召喚】**：引導觀眾留言/關注/私信的具體收尾文字
+   - businessInsight：引流品（品名+定價區間+獲客平台）→ 利潤品（品名+客單價）→ 轉化路徑（3步驟），不少於 300 字
+   - directorExecution.storyboard：恰好 5-6 條，每條嚴格格式：「[景別][時長] 畫面描述 | 口播：「...」 | 情緒：...」
+
+2. topics：恰好 3 個長線IP定位選題，與 actionableTopics 遞進（不重複角度，提升到 3 個月 IP 積累視角）；格式要求同上（storyboard 5-6 條）；businessInsight 不少於 200 字。
+
+3. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。
+   - **借鑑**：原影片哪些視覺手法值得學習（具體到鏡別/燈光/B-roll 類型）
+   - **避坑**：原影片哪些視覺缺點必須避開（具體到畫面細節）
+   - 結合用戶業務和新選題，禁止空泛套話。
+
+4. remixExpressionAnalysis：**二創專屬表達指導**（必須針對用戶新選題，禁止照搬原片套話）。內文必須含且 **加粗** 三個小標題（用字一致）：
+   **参考语言表达力**：用戶應使用哪些語氣/詞彙/表達技巧
+   **参考情感表达方式**：情緒節奏如何設計，從開場到結尾
+   **参考镜头表现与情绪张力**：具體鏡頭語言建議（景別、眼神、節奏）
+
+5. musicPrompt：拋棄原影片配樂思路，僅針對用戶新選題調性輸出英文 BGM：[Music Style], [Instruments], [Mood], [Tempo/BPM]。
 `;
 
   const userMultimodalContent = buildStrategistMultimodalUserContent({

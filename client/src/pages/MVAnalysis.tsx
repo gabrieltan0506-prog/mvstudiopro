@@ -3845,15 +3845,20 @@ export default function MVAnalysisPage() {
                     const sb = Array.isArray(de.storyboard) ? de.storyboard.filter(Boolean) : [];
                     return (
                       <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
+                        <div className="mb-3 flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold tracking-wide ${tagStyle === "purple" ? "border-purple-400/40 bg-purple-500/15 text-purple-300" : "border-orange-400/40 bg-orange-500/15 text-orange-300"}`}>
+                            選題 {i + 1}
+                          </span>
+                          <div className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${tagCls}`}>
+                            {fmtType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
+                          </div>
+                        </div>
                         <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
+                          <div className="flex-1">
                             <div className="text-lg font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent print:text-orange-400 print:bg-none [filter:drop-shadow(0_0_10px_rgba(251,146,60,0.55))_drop-shadow(0_0_20px_rgba(192,132,252,0.35))]">{replaceTerms(topic.title)}</div>
                             {topic.contentBrief && (
-                              <div className="mt-2 text-sm leading-7 text-white/78">{replaceTerms(topic.contentBrief)}</div>
+                              <div className="mt-3 whitespace-pre-wrap text-sm leading-[1.9] text-white/82">{replaceTerms(topic.contentBrief)}</div>
                             )}
-                          </div>
-                          <div className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${tagCls}`}>
-                            呈现形式：{fmtType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
                           </div>
                         </div>
                         {topic.businessInsight ? (
@@ -3871,8 +3876,13 @@ export default function MVAnalysisPage() {
                               {de.emotionalTension ? <div className="print:border-l-2 print:border-blue-400/60 print:pl-3"><strong>情绪:</strong> {de.emotionalTension}</div> : null}
                             </div>
                             {sb.length ? (
-                              <ul className="list-inside list-decimal space-y-2 text-sm text-gray-300">
-                                {sb.map((shot, sIdx) => <li key={sIdx}>{replaceTerms(shot)}</li>)}
+                              <ul className="list-none space-y-2.5 text-sm text-gray-300">
+                                {sb.map((shot, sIdx) => (
+                                  <li key={sIdx} className="flex items-start gap-2.5">
+                                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#15c8ff]/20 text-[10px] font-bold text-[#15c8ff]">{sIdx + 1}</span>
+                                    <span className="leading-[1.8]">{replaceTerms(shot)}</span>
+                                  </li>
+                                ))}
                               </ul>
                             ) : null}
                           </div>
