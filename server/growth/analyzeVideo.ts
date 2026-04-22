@@ -976,8 +976,20 @@ function buildStrategistMultimodalUserContent(params: {
 }
 
 function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: unknown) {
+  const r = raw as Record<string, unknown>;
   if (mode === "GROWTH") {
-    const llm = growthLlmSchema.parse(raw);
+    const parsed = growthLlmSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.warn("[GROWTH LLM] Zod parse failed, using partial data:", parsed.error.message.slice(0, 200));
+    }
+    const llm = parsed.success ? parsed.data : {
+      strategy: String(r?.strategy || ""),
+      actionableTopics: Array.isArray(r?.actionableTopics) ? r.actionableTopics : [],
+      topics: Array.isArray(r?.topics) ? r.topics : [],
+      explosiveTopicAnalysis: String(r?.explosiveTopicAnalysis || ""),
+      musicAndExpressionAnalysis: String(r?.musicAndExpressionAnalysis || ""),
+      musicPrompt: String(r?.musicPrompt || ""),
+    };
     return growthPremiumContentSchema.parse({
       summary: "",
       strategy: llm.strategy,
@@ -990,7 +1002,18 @@ function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: 
       musicPrompt: llm.musicPrompt,
     });
   }
-  const llm = remixLlmSchema.parse(raw);
+  // REMIX
+  const parsed = remixLlmSchema.safeParse(raw);
+  if (!parsed.success) {
+    console.warn("[REMIX LLM] Zod parse failed, using partial data:", parsed.error.message.slice(0, 200));
+  }
+  const llm = parsed.success ? parsed.data : {
+    actionableTopics: Array.isArray(r?.actionableTopics) ? r.actionableTopics : [],
+    topics: Array.isArray(r?.topics) ? r.topics : [],
+    remixVisualAnalysis: String(r?.remixVisualAnalysis || ""),
+    remixExpressionAnalysis: String(r?.remixExpressionAnalysis || ""),
+    musicPrompt: String(r?.musicPrompt || ""),
+  };
   return growthPremiumContentSchema.parse({
     summary: "",
     strategy: "",
@@ -1295,33 +1318,51 @@ async function runDeepDivePass(params: {
     },
       });
       const parsedMain = JSON.parse(String(mainResponse.choices[0]?.message?.content || "{}"));
-      const premiumResp = await invokeLLM({
-        model: "pro",
-        provider: "vertex",
-        modelName: GROWTH_CAMP_STRATEGIST_MODEL,
-        temperature: 0.7,
-        topP: 0.9,
-        messages: [
-          {
-            role: "system",
-            content: mode === "GROWTH" ? PROMPT_PREMIUM_GROWTH : PROMPT_PREMIUM_REMIX,
+      let premiumContent: ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+      try {
+        const premiumResp = await invokeLLM({
+          model: "pro",
+          provider: "vertex",
+          modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+          temperature: 0.7,
+          topP: 0.9,
+          messages: [
+            {
+              role: "system",
+              content: mode === "GROWTH" ? PROMPT_PREMIUM_GROWTH : PROMPT_PREMIUM_REMIX,
+            },
+            {
+              role: "user",
+              content: userMultimodalContent,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: mode === "GROWTH" ? "growth_camp_premium_growth" : "growth_camp_premium_remix",
+              strict: true,
+              schema: strategistPremiumVertexSchema(mode),
+            },
           },
-          {
-            role: "user",
-            content: userMultimodalContent,
-          },
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: mode === "GROWTH" ? "growth_camp_premium_growth" : "growth_camp_premium_remix",
-            strict: true,
-            schema: strategistPremiumVertexSchema(mode),
-          },
-        },
-      });
-      const premiumRaw = JSON.parse(String(premiumResp.choices[0]?.message?.content || "{}"));
-      const premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
+        });
+        const premiumRaw = JSON.parse(String(premiumResp.choices[0]?.message?.content || "{}"));
+        premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
+      } catch (premiumErr: unknown) {
+        const errMsg = premiumErr instanceof Error ? premiumErr.message : String(premiumErr);
+        console.error(`[${mode} Premium LLM] 分析失败，降级为空内容:`, errMsg);
+        // 降级：返回空 premiumContent，主分析结果仍然有效
+        premiumContent = {
+          summary: "",
+          strategy: "",
+          actionableTopics: [],
+          topics: [],
+          explosiveTopicAnalysis: "",
+          musicAndExpressionAnalysis: "",
+          remixVisualAnalysis: mode === "REMIX" ? "AI 深度分析超时，请尝试较短视频或稍后重试。" : "",
+          remixExpressionAnalysis: "",
+          musicPrompt: "",
+        } as ReturnType<typeof mapStrategistPremiumLlmToPremiumContent>;
+      }
       const withPremium = { ...parsedMain, premiumContent };
       strategistPassResult = {
         ...withPremium,
@@ -1545,7 +1586,12 @@ export async function analyzeVideo(params: {
       const transcript = transcriptChunks.join("\n\n");
       const audioFirstPass = mergeAudioPasses(audioPassChunks);
       const visualFirstPass = mergeVisualPasses(visualPassChunks);
-      const strategistFrames = pickStrategistFrames(allFrames);
+      const analysisModePre = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+      // 长视频 REMIX 模式：缩减抽帧数量，降低 LLM 推理时间，避免触发 Fly.io 60s proxy timeout
+      const remixLongVideoFrameCap = analysisModePre === "REMIX" && duration > 480 ? 6 : undefined;
+      const strategistFrames = remixLongVideoFrameCap
+        ? pickStrategistFrames(allFrames).slice(0, remixLongVideoFrameCap)
+        : pickStrategistFrames(allFrames);
 
       const deepDive = await withGrowthAnalysisSlot(() => runDeepDivePass({
         finalModel,
