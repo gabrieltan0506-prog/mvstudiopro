@@ -1139,7 +1139,7 @@ export default function WorkflowStoryboardToVideo() {
               boxShadow: "0 24px 80px rgba(0,0,0,0.45)",
             }}
           >
-            <div style={{ fontSize: 20, fontWeight: 800 }}>多人場景提示</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>多人场景提示</div>
             <div style={{ marginTop: 12, lineHeight: 1.65, opacity: 0.92 }}>
               此分镜检测为多角色或多人场景，建议不要直接生成 AI 视频。请改为上传或生成静态展示图，最终在 Render 阶段插入。
             </div>

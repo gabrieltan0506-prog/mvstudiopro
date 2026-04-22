@@ -10,7 +10,7 @@ interface CaptchaState {
 
 async function fetchCaptcha(): Promise<CaptchaState> {
   const r = await fetch("/api/auth/captcha");
-  if (!r.ok) throw new Error("獲取圖形驗證碼失敗");
+  if (!r.ok) throw new Error("获取图形验证码失败");
   return r.json();
 }
 
@@ -89,7 +89,7 @@ export default function LoginPage() {
       setCaptcha(c);
       setCaptchaInput("");
     } catch {
-      setErr("圖形驗證碼加載失敗，請刷新重試");
+      setErr("图形验证码加载失败，请刷新重试");
     }
   }, []);
 
@@ -105,8 +105,8 @@ export default function LoginPage() {
 
   async function handleSendOtp(e: React.FormEvent) {
     e.preventDefault();
-    if (!email.trim()) { setErr("請輸入郵箱"); return; }
-    if (!captchaInput.trim()) { setErr("請輸入圖形驗證碼"); return; }
+    if (!email.trim()) { setErr("请输入邮箱"); return; }
+    if (!captchaInput.trim()) { setErr("请输入图形验证码"); return; }
     if (!captcha) return;
 
     setBusy(true);
@@ -117,11 +117,11 @@ export default function LoginPage() {
         setStep("otp");
         setCountdown(60);
       } else {
-        setErr(res.error || "發送失敗，請重試");
+        setErr(res.error || "发送失败，请重试");
         await loadCaptcha();
       }
     } catch {
-      setErr("網絡錯誤，請重試");
+      setErr("网络错误，请重试");
       await loadCaptcha();
     } finally {
       setBusy(false);
@@ -130,7 +130,7 @@ export default function LoginPage() {
 
   async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
-    if (!/^\d{6}$/.test(otp)) { setErr("請輸入 6 位數字驗證碼"); return; }
+    if (!/^\d{6}$/.test(otp)) { setErr("请输入 6 位数字验证码"); return; }
 
     setBusy(true);
     setErr("");
@@ -139,10 +139,10 @@ export default function LoginPage() {
       if (res.ok) {
         window.location.href = "/";
       } else {
-        setErr(res.error || "驗證失敗，請重試");
+        setErr(res.error || "验证失败，请重试");
       }
     } catch {
-      setErr("網絡錯誤，請重試");
+      setErr("网络错误，请重试");
     } finally {
       setBusy(false);
     }
@@ -185,7 +185,7 @@ export default function LoginPage() {
             MV Studio Pro
           </div>
           <div style={{ marginTop: 6, color: "rgba(255,255,255,0.5)", fontSize: 14 }}>
-            登入以繼續使用
+            登录以繼續使用
           </div>
         </div>
 
@@ -222,7 +222,7 @@ export default function LoginPage() {
                 position: "relative",
               }}
             >
-              {t === "email" ? "郵箱登入" : "手機登入"}
+              {t === "email" ? "郵箱登录" : "手機登录"}
               {t === "phone" && (
                 <span
                   style={{
@@ -234,7 +234,7 @@ export default function LoginPage() {
                     color: "rgba(255,255,255,0.35)",
                   }}
                 >
-                  即將開放
+                  即将开放
                 </span>
               )}
             </button>
@@ -262,14 +262,14 @@ export default function LoginPage() {
 
                 <div>
                   <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
-                    圖形驗證碼
+                    图形验证码
                   </label>
                   <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                     <input
                       type="text"
                       value={captchaInput}
                       onChange={(e) => setCaptchaInput(e.target.value.toUpperCase())}
-                      placeholder="輸入圖中字符"
+                      placeholder="输入图中字符"
                       maxLength={5}
                       autoComplete="off"
                       style={{ ...inputStyle, flex: 1 }}
@@ -278,7 +278,7 @@ export default function LoginPage() {
                       <img
                         src={captcha.imageBase64}
                         alt="captcha"
-                        title="點擊刷新"
+                        title="点击刷新"
                         onClick={loadCaptcha}
                         style={{
                           height: 44,
@@ -311,7 +311,7 @@ export default function LoginPage() {
                     style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.35)", cursor: "pointer" }}
                     onClick={loadCaptcha}
                   >
-                    看不清？點擊圖片刷新
+                    看不清？点擊图片刷新
                   </div>
                 </div>
 
@@ -322,7 +322,7 @@ export default function LoginPage() {
                 )}
 
                 <button type="submit" disabled={busy} style={{ ...btnPrimary, opacity: busy ? 0.7 : 1 }}>
-                  {busy ? "發送中…" : "發送驗證碼"}
+                  {busy ? "发送中…" : "发送验证码"}
                 </button>
               </form>
             )}
@@ -340,14 +340,14 @@ export default function LoginPage() {
                     lineHeight: 1.6,
                   }}
                 >
-                  驗證碼已發送到<br />
+                  验证码已发送到<br />
                   <strong style={{ color: "white" }}>{email}</strong><br />
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>請查收信箱，有效時間 10 分鐘</span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>请查收信箱，有效时间 10 分钟</span>
                 </div>
 
                 <div>
                   <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
-                    6 位驗證碼
+                    6 位验证码
                   </label>
                   <input
                     type="text"
@@ -368,19 +368,19 @@ export default function LoginPage() {
                 )}
 
                 <button type="submit" disabled={busy} style={{ ...btnPrimary, opacity: busy ? 0.7 : 1 }}>
-                  {busy ? "驗證中…" : "登入"}
+                  {busy ? "验证中…" : "登录"}
                 </button>
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <button type="button" onClick={handleResend} style={btnSecondary} disabled={countdown > 0}>
-                    {countdown > 0 ? `重新發送 (${countdown}s)` : "重新發送"}
+                    {countdown > 0 ? `重新发送 (${countdown}s)` : "重新发送"}
                   </button>
                   <button
                     type="button"
                     onClick={() => { setStep("input"); setErr(""); setOtp(""); }}
                     style={{ ...btnSecondary, border: "none", background: "transparent" }}
                   >
-                    修改郵箱
+                    修改邮箱
                   </button>
                 </div>
               </form>
@@ -391,12 +391,12 @@ export default function LoginPage() {
         {/* Phone Tab placeholder */}
         {tab === "phone" && (
           <div style={{ textAlign: "center", padding: "40px 0", color: "rgba(255,255,255,0.35)", fontSize: 14 }}>
-            手機簡訊登入即將開放
+            手機简讯登录即将开放
           </div>
         )}
 
         <div style={{ marginTop: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-          登入即代表同意服務條款與隱私政策
+          登录即代表同意服務条款與隱私政策
         </div>
       </div>
     </div>

@@ -59,7 +59,7 @@ export default function HomePlans() {
             <ul className="text-gray-300 space-y-3 mb-8">
               <li>Veo 3.1 Pro</li>
               <li>高级工作流</li>
-              <li>創作商業成長營</li>
+              <li>创作商业成长营</li>
               <li>1000 积分</li>
             </ul>
 

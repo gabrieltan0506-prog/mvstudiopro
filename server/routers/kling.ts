@@ -506,7 +506,7 @@ export const klingRouter = router({
           const totalCredits = CREDIT_COSTS[creditKey] * input.count;
           const deduction = await deductCredits(userId, creditKey, `Kling ${input.model} ${input.resolution} x${input.count}`);
           if (!deduction.success) {
-            return { success: false, error: "Credits 不足，請充值後再試" };
+            return { success: false, error: "Credits 不足，请充值后再试" };
           }
         }
 

@@ -40,7 +40,7 @@ export interface PlanConfig {
 export const PLANS: Record<PlanType, PlanConfig> = {
   free: {
     name: "Free",
-    nameCn: "入門版",
+    nameCn: "入门版",
     monthlyPrice: 0,
     yearlyPrice: 0,
     monthlyCredits: 50,
@@ -53,8 +53,8 @@ export const PLANS: Record<PlanType, PlanConfig> = {
       "Basic Community Features",
     ],
     featuresCn: [
-      "視頻 PK 評分（前 2 次 0 Credits）",
-      "虛擬偶像生成（前 3 個 0 Credits，Forge AI）",
+      "视频 PK 评分（前 2 次 0 Credits）",
+      "虚拟偶像生成（前 3 个 0 Credits，Forge AI）",
       "分镜脚本生成（不限字数）",
       "分镜图生成（Forge AI，每次最多 10 张，含水印）",
       "视频展厅浏览",
@@ -94,7 +94,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
       "200 Credits/month",
     ],
     featuresCn: [
-      "所有入門版功能",
+      "所有入门版功能",
       "无限视频 PK 评分",
       "无限虚拟偶像生成",
       "NBP 2K 分镜图（每次最多 30 张，含水印）",
@@ -215,11 +215,11 @@ export const CREDIT_COSTS = {
   klingMotionControl: 70,     // Kling 动作迁移消耗 70 credits（API 成本高）
   klingLipSync: 60,           // Kling 口型同步消耗 60 credits
 
-  // ─── Kling 圖片生成 ────────────────────────────
-  klingImageO1_1K: 8,           // Kling O1 1K 圖片消耗 8 credits（$0.028/張）
-  klingImageO1_2K: 10,          // Kling O1 2K 圖片消耗 10 credits（$0.028/張，高解析度）
-  klingImageV2_1K: 5,           // Kling V2.1 1K 圖片消耗 5 credits（$0.014/張）
-  klingImageV2_2K: 7,           // Kling V2.1 2K 圖片消耗 7 credits（$0.014/張，高解析度）
+  // ─── Kling 图片生成 ────────────────────────────
+  klingImageO1_1K: 8,           // Kling O1 1K 图片消耗 8 credits（$0.028/張）
+  klingImageO1_2K: 10,          // Kling O1 2K 图片消耗 10 credits（$0.028/張，高分辨率）
+  klingImageV2_1K: 5,           // Kling V2.1 1K 图片消耗 5 credits（$0.014/張）
+  klingImageV2_2K: 7,           // Kling V2.1 2K 图片消耗 7 credits（$0.014/張，高分辨率）
 
   // ─── 分镜脚本 AI 改写 ────────────────────────────
   storyboardRewrite: 8,          // AI 改写分镜脚本消耗 8 credits
@@ -456,7 +456,7 @@ export const DIRECTOR_PACKS: Record<DirectorPackType, DirectorPackConfig> = {
     nameCn: "初级导演包",
     nameEn: "Junior Director Pack",
     description: "Free script generation with Forge AI, storyboard-to-video conversion, and Suno V4 background music",
-    descriptionCn: "Forge AI 腳本生成（0 Credits）+ 分鏡轉視頻 + Suno V4 配樂",
+    descriptionCn: "Forge AI 脚本生成（0 Credits）+ 分镜转视频 + Suno V4 配乐",
     totalCredits: 62,           // 0 (Forge) + 50 (视频) + 12 (V4音乐)
     savings: 0,                 // 基础包无折扣
     includes: {

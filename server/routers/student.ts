@@ -186,7 +186,7 @@ export const studentRouter = router({
 
       return {
         success: true,
-        message: "試用已開始，您有 2 天體驗期",
+        message: "试用已开始，您有 2 天体验期",
         startDate: now.toISOString(),
         endDate: endDate.toISOString(),
       };

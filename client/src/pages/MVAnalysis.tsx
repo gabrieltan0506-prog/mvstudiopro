@@ -199,7 +199,7 @@ type AnalysisResult = {
   followUpPrompt?: string;
 };
 
-/** 成長營專用：關鍵影格與視覺診斷（二創模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
+/** 成長营專用：关键影格與视覺診斷（二创模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
 function VisualAnalysisSection({
   analysis,
   visualKeyFrames,
@@ -2273,10 +2273,10 @@ export default function MVAnalysisPage() {
     // 移除 iframe
     clone.querySelectorAll("iframe").forEach((n) => n.remove());
 
-    // 移除 print:hidden 元素（不會出現在 PDF，佔空間）
+    // 移除 print:hidden 元素（不会出现在 PDF，佔空間）
     clone.querySelectorAll('[class*="print:hidden"]').forEach((n) => n.remove());
 
-    // 移除大型 base64 圖片 src（> 50KB 的 data URI 替換為空）
+    // 移除大型 base64 图片 src（> 50KB 的 data URI 替換为空）
     clone.querySelectorAll("img").forEach((img) => {
       const src = img.getAttribute("src") || "";
       if (src.startsWith("data:") && src.length > 51200) {
@@ -2284,13 +2284,13 @@ export default function MVAnalysisPage() {
       }
     });
 
-    // 移除 blob: URL（影片縮圖等）
+    // 移除 blob: URL（影片縮图等）
     clone.querySelectorAll("[src]").forEach((el) => {
       const src = el.getAttribute("src") || "";
       if (src.startsWith("blob:")) el.removeAttribute("src");
     });
 
-    // 移除互動性較強但 PDF 不需要的元件（上傳區、input、按鈕群）
+    // 移除互动性较强但 PDF 不需要的元件（上传區、input、按鈕群）
     clone.querySelectorAll('input, textarea, [data-pdf-exclude="true"]').forEach((n) => n.remove());
 
     const base = document.createElement("base");
@@ -3836,7 +3836,7 @@ export default function MVAnalysisPage() {
                   </div>
                 )}
         {(() => {
-          // ——— 共用選題卡片渲染函式（帶 slice 上限）———
+          // ——— 共用选题卡片渲染函式（带 slice 上限）———
           type TopicItem = {
             title: string;
             formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -3875,7 +3875,7 @@ export default function MVAnalysisPage() {
                       <div key={`${topic.title}-${i}`} className="rounded-2xl border border-white/10 bg-black/20 p-5" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                         <div className="mb-3 flex flex-wrap items-center gap-2">
                           <span className={`rounded-full border px-2.5 py-0.5 text-xs font-bold tracking-wide ${tagStyle === "purple" ? "border-purple-400/40 bg-purple-500/15 text-purple-300" : "border-orange-400/40 bg-orange-500/15 text-orange-300"}`}>
-                            選題 {i + 1}
+                            选题 {i + 1}
                           </span>
                           <div className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${tagCls}`}>
                             {fmtType === "IMAGE_TEXT" ? "📝 精致优质图文笔记" : "🎥 视频拍摄"}
@@ -3939,7 +3939,7 @@ export default function MVAnalysisPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-col gap-0.5">
                       <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
-                      <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
+                      <div className="text-[10px] text-white/40">可选 Suno 或 Udio 生成 BGM</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <select
@@ -4024,7 +4024,7 @@ export default function MVAnalysisPage() {
             const _re = (pcRemix?.remixExpressionAnalysis ?? "").trim();
             const _rmp = (pcRemix?.musicPrompt ?? "").trim();
 
-            /* ====== 二創：量身選題 → 借鉴避坑視覺 → 專屬表達+配樂（標題硬編碼）====== */
+            /* ====== 二创：量身选题 → 借鉴避坑视覺 → 專屬表达+配樂（标题硬編码）====== */
             return (
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -4034,7 +4034,7 @@ export default function MVAnalysisPage() {
 
                 <div className="space-y-12">
                   {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 专为您量身定制的二创选题", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
-                  {renderTopics(analysis.premiumContent?.topics, "🎯 深度二創選題", "purple", 3, "mb-6 text-xl font-bold text-white")}
+                  {renderTopics(analysis.premiumContent?.topics, "🎯 深度二创选题", "purple", 3, "mb-6 text-xl font-bold text-white")}
 
                   <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                     <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400" style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>
@@ -4148,7 +4148,7 @@ export default function MVAnalysisPage() {
             );
           }
 
-          /* ====== 成長營：戰略 → 執行版 → 核心選題 → 綜述 → 配樂（獨立區塊互不干擾） ====== */
+          /* ====== 成長营：战略 → 执行版 → 核心选题 → 綜述 → 配樂（獨立區塊互不干擾） ====== */
           return (
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -4426,7 +4426,7 @@ export default function MVAnalysisPage() {
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="flex flex-col gap-0.5">
                                 <div className="text-xs uppercase tracking-[0.16em] text-[#90c4ff]">Music Prompt</div>
-                                <div className="text-[10px] text-white/40">可選 Suno 或 Udio 生成 BGM</div>
+                                <div className="text-[10px] text-white/40">可选 Suno 或 Udio 生成 BGM</div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <select

@@ -483,8 +483,8 @@ async function buildPlatformDashboard(params: {
     : "";
   // If context mentions medical/doctor or culture/art, add hard constraint against generic monetization
   // Support both Simplified and Traditional Chinese in persona detection
-  const hasMedicalPersona = /医生|醫生|医师|醫師|医疗|醫療|心脏|心臟|临床|臨床|doctor/i.test(params.context || "");
-  const hasCulturePersona = /文化|艺术|藝術|历史|歷史|书画|書畫|收藏|人文/i.test(params.context || "");
+  const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
+  const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
   const personaConstraint = (hasMedicalPersona || hasCulturePersona)
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。platformMenu 中的第一顺位必须是与知识型/审美型内容适配度最高的平台（通常是小红书或B站），而非纯流量平台。`
     : "";
@@ -752,8 +752,8 @@ async function buildPlatformContent(params: {
   context?: string;
   windowDays: number;
 }) {
-  const hasMedicalPersona = /医生|醫生|医师|醫師|医疗|醫療|心脏|心臟|临床|臨床|doctor/i.test(params.context || "");
-  const hasCulturePersona = /文化|艺术|藝術|历史|歷史|书画|書畫|收藏|人文/i.test(params.context || "");
+  const hasMedicalPersona = /医生|医生|医师|医师|医疗|医疗|心脏|心脏|临床|临床|doctor/i.test(params.context || "");
+  const hasCulturePersona = /文化|艺术|艺术|历史|历史|书画|书画|收藏|人文/i.test(params.context || "");
   const personaConstraint = (hasMedicalPersona || hasCulturePersona)
     ? `\n\n特别约束：此用户具有专业身份与文化审美背景。monetizationLanes 中禁止出现电商带货路径。变现路径只能包含：知识付费（课程/私人咨询）、专业背书型品牌合作、机构讲座/合作、高端审美内容服务。`
     : "";
@@ -2533,7 +2533,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 - trackGrowth：**【强制数量：5-8条】** 近 ${wd} 天爆款赛道增长排行，基于真实数据矩阵，绝对禁止捏造。格式：{"name": "赛道名称", "growth": "+XX%", "isHot": true/false}
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
-- trafficSupport：掃描當前平台正在進行的官方流量扶持活動（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
+- trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
 - hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
@@ -2939,8 +2939,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (staleSchedulers.length) {
           anomalies.push({
             level: "critical",
-            title: "Live 排程逾期未前進",
-            message: `${staleSchedulers.map((item) => item.platformLabel || getGrowthPlatformMeta(item.platform).label).join("、")} 已超過 5 分鐘未按 nextRunAt 啟動。`,
+            title: "Live 排程逾期未推进",
+            message: `${staleSchedulers.map((item) => item.platformLabel || getGrowthPlatformMeta(item.platform).label).join("、")} 已超过 5 分钟未按 nextRunAt 启动。`,
           });
         }
         const schedulerErrors = scheduler.filter((item) => item.lastError);
@@ -3516,7 +3516,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             };
           }
           
-          // 免費生圖添加 MVStudioPro.com 水印（管理員跳過）
+          // 免費生图添加 MVStudioPro.com 水印（管理員跳過）
           let finalUrl = imageResult.data.imageUrl;
           if (shouldApplyWatermarkForTier(userTier)) {
             try {
@@ -3565,7 +3565,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           if (!isAdminUser) {
             const deduction = await deductCredits(userId, creditKey);
             if (!deduction.success) {
-              return { success: false, error: "Credits 不足，請充值後再試", quality: input.quality };
+              return { success: false, error: "Credits 不足，请充值后再试", quality: input.quality };
             }
           }
 
@@ -3576,7 +3576,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             if (klingKeys.length > 0) {
               configureKlingClient(klingKeys, "cn");
             } else {
-              return { success: false, error: "Kling API 未配置，請聯繫管理員設置 KLING_CN_VIDEO_ACCESS_KEY 和 KLING_CN_VIDEO_SECRET_KEY", quality: input.quality };
+              return { success: false, error: "Kling API 未配置，请联系管理员设置 KLING_CN_VIDEO_ACCESS_KEY 和 KLING_CN_VIDEO_SECRET_KEY", quality: input.quality };
             }
             const { createImageTask, getImageTask, buildImageRequest } = await import("./kling/image-generation");
             const request = buildImageRequest({
@@ -3594,7 +3594,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               if (!isAdminUser) {
                 try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
               }
-              return { success: false, error: taskResult.task_status_msg || "Kling 圖片生成失敗", quality: input.quality };
+              return { success: false, error: taskResult.task_status_msg || "Kling 图片生成失败", quality: input.quality };
             }
 
             // Poll for result (max 120 seconds)
@@ -3628,14 +3628,14 @@ ${JSON.stringify(platformEvidence, null, 2)}
               if (!isAdminUser) {
                 try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
               }
-              return { success: false, error: imageResult?.task_status_msg || "Kling 圖片生成超時", quality: input.quality };
+              return { success: false, error: imageResult?.task_status_msg || "Kling 图片生成超时", quality: input.quality };
             }
           } catch (err: any) {
             if (!isAdminUser) {
               try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("[VirtualIdol] Refund failed:", e); }
             }
             console.error("[VirtualIdol] Kling image generation failed:", err);
-            return { success: false, error: `Kling 圖片生成失敗: ${err.message || '請稍後再試'}`, quality: input.quality };
+            return { success: false, error: `Kling 图片生成失败: ${err.message || '请稍后再试'}`, quality: input.quality };
           }
         }
 
@@ -3847,9 +3847,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
           const canAfford = await hasEnoughCredits(userId, creditKey);
           if (!canAfford) {
             const modelLabel = input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash";
-            throw new Error(`Credits 不足，無法使用 ${modelLabel} 模型。請充值 Credits。`);
+            throw new Error(`Credits 不足，无法使用 ${modelLabel} 模型。请充值 Credits。`);
           }
-          await deductCredits(userId, creditKey, `分鏡腳本生成 (${input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash"})`);
+          await deductCredits(userId, creditKey, `分镜脚本生成 (${input.model === "gpt5" ? "GPT 5.1" : input.model === "pro" ? "Gemini 3.0 Pro" : "Gemini 3.0 Flash"})`);
         }
 
         // Use LLM to analyze lyrics and generate storyboard
@@ -4055,7 +4055,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         // Generate preview images for all scenes in parallel
         const sceneImagePromises = storyboardData.scenes.map(async (scene: any) => {
           // Create a detailed prompt for image generation based on scene description
-          // 人物一致性優化：提取主角外觀描述並在每個場景中重複使用
+          // 人物一致性優化：提取主角外觀描述并在每个场景中重複使用
           const characterLock = storyboardData.characterDescription || "";
           const refStyleNote = input.referenceStyleDescription ? ` Reference style: ${input.referenceStyleDescription}.` : "";
           const stylePromptMap: Record<string, string> = {
@@ -4070,7 +4070,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           
           try {
             const imageResult = await generateGeminiImage({ prompt: imagePrompt, quality: "1k" });
-            // 免費生圖添加水印（管理員跳過）
+            // 免費生图添加水印（管理員跳過）
             let finalUrl = imageResult.imageUrl;
             if (shouldApplyWatermarkForTier(userTier) && imageResult.imageUrl) {
               try {
@@ -4234,7 +4234,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         }
         return { success: true, count: input.storyboardIds.length };
       }),
-    // AI 改寫分鏡腳本 - 用戶提供 3 句話修改意見，AI 重新生成
+    // AI 改写分镜脚本 - 用戶提供 3 句話修改意見，AI 重新生成
     rewrite: protectedProcedure
       .input(z.object({
         originalStoryboard: z.object({
@@ -4273,14 +4273,14 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           if (creditsInfo.totalAvailable < CREDIT_COSTS.storyboardRewrite) {
             throw new Error(`Credits 不足，AI 改寫需要 ${CREDIT_COSTS.storyboardRewrite} Credits`);
           }
-          await deductCredits(userId, "storyboardRewrite", "AI 改寫分鏡腳本");
+          await deductCredits(userId, "storyboardRewrite", "AI 改写分镜脚本");
         }
 
         const styleLabels: Record<string, string> = {
-          cinematic: "電影感",
-          anime: "動漫風",
+          cinematic: "电影感",
+          anime: "动漫风",
           documentary: "紀錄片",
-          realistic: "寫實片",
+          realistic: "写实片",
           scifi: "科幻片",
         };
 
@@ -4301,17 +4301,17 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
                   content: `你是一位专业的视频导演。用户对之前生成的分镜脚本不满意，提供了修改意见。请根据用户的反馈，重新改写整个分镜脚本。
 
 要求：
-1. 保持原有的場景數量（${input.originalStoryboard.scenes.length} 個場景）
-2. 視覺風格：${styleLabels[input.visualStyle] || "電影感"}
-3. 根據用戶反饋大幅調整場景描述、鏡頭運動、情緒氛圍和視覺效果
+1. 保持原有的场景数量（${input.originalStoryboard.scenes.length} 个场景）
+2. 视觉风格：${styleLabels[input.visualStyle] || "电影感"}
+3. 根據用戶反饋大幅調整场景描述、镜头运动、情緒氛圍和视覺效果
 4. 保持 JSON 格式輸出，與原始格式完全一致
-5. 確保改寫後的腳本質量更高、更符合用戶期望
+5. 確保改寫后的腳本质量更高、更符合用戶期望
 
-輸出格式與原始腳本相同的 JSON 結構。`
+輸出格式與原始腳本相同的 JSON 结構。`
                 },
                 {
                   role: "user",
-                  content: `原始分鏡腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n請根據以上修改意見，重新改寫整個分鏡腳本。`
+                  content: `原始分镜腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n请根據以上修改意見，重新改寫整个分镜腳本。`
                 }
               ],
               response_format: { type: "json_object" },
@@ -4335,7 +4335,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         return {
           success: true,
           storyboard: rewrittenData,
-          message: "分鏡腳本已根據您的意見重新改寫！",
+          message: "分镜腳本已根據您的意見重新改寫！",
           providerUsed: rewriteResult.providerUsed,
           jobId: rewriteResult.jobId,
           data: { storyboard: rewrittenData },
@@ -4426,7 +4426,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         };
       }),
 
-    // AI 推荐 BGM 描述 - 使用 Gemini 3.0 Pro 分析分鏡內容生成 BGM 描述
+    // AI 推荐 BGM 描述 - 使用 Gemini 3.0 Pro 分析分镜內容生成 BGM 描述
     recommendBGM: protectedProcedure
       .input(z.object({
         storyboard: z.object({
@@ -4506,7 +4506,7 @@ ${sceneSummary}
         };
       }),
 
-    // 參考圖風格分析 - 使用 Gemini Vision 分析上傳的參考圖片
+    // 參考图風格分析 - 使用 Gemini Vision 分析上传的參考图片
     analyzeReferenceImage: protectedProcedure
       .input(z.object({
         imageUrl: z.string().url(),
@@ -4518,9 +4518,9 @@ ${sceneSummary}
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < CREDIT_COSTS.referenceImageAnalysis) {
-            throw new Error(`Credits 不足，參考圖分析需要 ${CREDIT_COSTS.referenceImageAnalysis} Credits`);
+            throw new Error(`Credits 不足，參考图分析需要 ${CREDIT_COSTS.referenceImageAnalysis} Credits`);
           }
-          await deductCredits(userId, "referenceImageAnalysis", "參考圖風格分析 (Gemini Vision)");
+          await deductCredits(userId, "referenceImageAnalysis", "參考图風格分析 (Gemini Vision)");
         }
 
         const response = await invokeLLM({
@@ -4554,7 +4554,7 @@ ${sceneSummary}
         return {
           success: true,
           styleDescription: styleDescription.trim(),
-          message: "參考圖風格分析完成！",
+          message: "參考图風格分析完成！",
         };
       }),
   }),
@@ -5051,9 +5051,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         await recordCreation({
           userId: ctx.user.id,
           type: "storyboard",
-          title: parsed.title || "分鏡腳本",
+          title: parsed.title || "分镜腳本",
           metadata: { sceneCount: input.sceneCount, overallMood: parsed.overallMood },
-          quality: `${input.sceneCount} 場景`,
+          quality: `${input.sceneCount} 场景`,
           creditsUsed: 0,
           plan,
         });

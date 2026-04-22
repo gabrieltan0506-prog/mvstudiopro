@@ -1337,7 +1337,7 @@ async function runDeepDivePass(params: {
         msg.includes("RESOURCE_EXHAUSTED");
       if (isRateLimit && _retries > 1) {
         _retries--;
-        console.warn(`[Vertex AI] 429 限制，等待 ${_delayMs / 1000}s 後重試，剩餘 ${_retries} 次`);
+        console.warn(`[Vertex AI] 429 限制，等待 ${_delayMs / 1000}s 后重试，剩余 ${_retries} 次`);
         await new Promise<void>((resolve) => setTimeout(resolve, _delayMs));
         _delayMs *= 2;
       } else {
@@ -1347,7 +1347,7 @@ async function runDeepDivePass(params: {
     }
   }
   if (!strategistPassResult) {
-    throw new Error("無法從 Vertex AI 獲取分析結果，請稍後再試。");
+    throw new Error("无法从 Vertex AI 获取分析结果，请稍后再试。");
   }
   return strategistPassResult;
 }

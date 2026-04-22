@@ -290,7 +290,7 @@ export async function exportToPDF(
     doc.moveDown();
     fontRegular(9)
       .fillColor("#FF6B35")
-      .text("本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印", { align: "center" });
+      .text("本文档由 MV Studio Pro 免费版生成，升级专业版可移除水印", { align: "center" });
     doc.fillColor("#000000");
     doc.moveDown();
   }
@@ -309,7 +309,7 @@ export async function exportToPDF(
     doc.addPage();
     addPageWatermark();
 
-    fontBold(18).text(`場景 ${scene.sceneNumber}`, { underline: true });
+    fontBold(18).text(`场景 ${scene.sceneNumber}`, { underline: true });
     fontRegular(12).text(`${scene.timestamp} (${scene.duration})`);
     doc.moveDown();
 
@@ -335,16 +335,16 @@ export async function exportToPDF(
         doc.moveDown();
       } catch (error) {
         console.error(`Failed to load image for scene ${scene.sceneNumber}:`, error);
-        fontRegular(10).text("[圖片加載失敗]", { align: "center" });
+        fontRegular(10).text("[图片加載失敗]", { align: "center" });
         doc.moveDown();
       }
     }
 
-    fontBold(14).text("場景描述:");
+    fontBold(14).text("场景描述:");
     fontRegular(11).text(scene.description);
     doc.moveDown();
 
-    fontBold(14).text("鏡頭運動:");
+    fontBold(14).text("镜头运动:");
     fontRegular(11).text(scene.cameraMovement);
     doc.moveDown();
 
@@ -352,12 +352,12 @@ export async function exportToPDF(
     fontRegular(11).text(scene.mood);
     doc.moveDown();
 
-    fontBold(14).text("視覺元素:");
+    fontBold(14).text("视觉元素:");
     fontRegular(11).text(scene.visualElements.join("、"));
     doc.moveDown();
 
     if (scene.transition) {
-      fontBold(14).text("轉場建議:");
+      fontBold(14).text("转场建议:");
       fontRegular(11).text(scene.transition);
       doc.moveDown();
     }
@@ -366,7 +366,7 @@ export async function exportToPDF(
   // Summary
   doc.addPage();
   addPageWatermark();
-  fontBold(18).text("整體建議", { underline: true });
+  fontBold(18).text("整体建议", { underline: true });
   doc.moveDown();
   fontRegular(11).text(storyboard.summary);
 
@@ -383,12 +383,12 @@ export async function exportToPDF(
     const { key: pdfKey } = await storagePut(fileName, pdfBuffer, "application/pdf");
     const { url: pdfDownloadUrl } = await storageGet(pdfKey);
     console.log("[StoryboardExport] PDF generated:", { key: pdfKey, url: pdfDownloadUrl, watermark: addWatermark });
-    return { url: pdfDownloadUrl, message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！" };
+    return { url: pdfDownloadUrl, message: addWatermark ? "PDF 已生成（含水印）！升级专业版可移除水印。" : "PDF 已生成！" };
   } catch (error) {
     console.warn("[StoryboardExport] PDF fallback to data URL:", error);
     return {
       url: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
-      message: addWatermark ? "PDF 已生成（含水印）！升級專業版可移除水印。" : "PDF 已生成！",
+      message: addWatermark ? "PDF 已生成（含水印）！升级专业版可移除水印。" : "PDF 已生成！",
     };
   }
 }
@@ -493,7 +493,7 @@ export async function exportToWord(
       new Paragraph({
         children: [
           new TextRun({
-            text: "⚠ 本文檔由 MV Studio Pro 免費版生成，升級專業版可移除水印",
+            text: "⚠ 本文档由 MV Studio Pro 免费版生成，升级专业版可移除水印",
             size: 18,
             color: WATERMARK_COLOR_HEX,
             italics: true,
@@ -538,7 +538,7 @@ export async function exportToWord(
       new Paragraph({
         children: [
           new TextRun({
-            text: `場景 ${scene.sceneNumber}`,
+            text: `场景 ${scene.sceneNumber}`,
             bold: true,
             size: 32,
             font: "Microsoft YaHei",
@@ -585,7 +585,7 @@ export async function exportToWord(
         console.error(`[Word] Failed to load image for scene ${scene.sceneNumber}:`, error);
         children.push(
           new Paragraph({
-            children: [new TextRun({ text: "[圖片加載失敗]", italics: true, color: "999999", font: "Microsoft YaHei" })],
+            children: [new TextRun({ text: "[图片加載失敗]", italics: true, color: "999999", font: "Microsoft YaHei" })],
             alignment: AlignmentType.CENTER,
             spacing: { after: 200 },
           })
@@ -595,14 +595,14 @@ export async function exportToWord(
 
     // Scene details
     const details = [
-      { label: "場景描述", value: scene.description },
-      { label: "鏡頭運動", value: scene.cameraMovement },
+      { label: "场景描述", value: scene.description },
+      { label: "镜头运动", value: scene.cameraMovement },
       { label: "情緒氛圍", value: scene.mood },
-      { label: "視覺元素", value: scene.visualElements.join("、") },
+      { label: "视觉元素", value: scene.visualElements.join("、") },
     ];
 
     if (scene.transition) {
-      details.push({ label: "轉場建議", value: scene.transition });
+      details.push({ label: "转场建议", value: scene.transition });
     }
 
     for (const detail of details) {
@@ -622,7 +622,7 @@ export async function exportToWord(
   children.push(
     new Paragraph({
       children: [
-        new TextRun({ text: "整體建議", bold: true, size: 32, font: "Microsoft YaHei" }),
+        new TextRun({ text: "整体建议", bold: true, size: 32, font: "Microsoft YaHei" }),
       ],
       spacing: { before: 400, after: 200 },
     })
@@ -640,7 +640,7 @@ export async function exportToWord(
         new Paragraph({
           children: [
             new TextRun({
-              text: `${WATERMARK_TEXT} | ${WATERMARK_URL} | 免費版 — 升級專業版移除水印`,
+              text: `${WATERMARK_TEXT} | ${WATERMARK_URL} | 免费版 — 升级专业版移除水印`,
               size: 16,
               color: WATERMARK_COLOR_HEX,
               italics: true,
@@ -657,7 +657,7 @@ export async function exportToWord(
         new Paragraph({
           children: [
             new TextRun({
-              text: `© ${WATERMARK_TEXT} — ${WATERMARK_URL} | 本文檔含水印，升級專業版可移除`,
+              text: `© ${WATERMARK_TEXT} — ${WATERMARK_URL} | 本文档含水印，升级专业版可移除`,
               size: 14,
               color: WATERMARK_COLOR_HEX,
               italics: true,
@@ -693,12 +693,12 @@ export async function exportToWord(
     const { key: wordKey } = await storagePut(wordFileName, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     const { url: wordDownloadUrl } = await storageGet(wordKey);
     console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl, watermark: addWatermark });
-    return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！" };
+    return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專业版可移除水印。" : "Word 文檔已生成！" };
   } catch (error) {
     console.warn("[StoryboardExport] Word fallback to data URL:", error);
     return {
       url: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${buffer.toString("base64")}`,
-      message: addWatermark ? "Word 文檔已生成（含水印）！升級專業版可移除水印。" : "Word 文檔已生成！",
+      message: addWatermark ? "Word 文檔已生成（含水印）！升級專业版可移除水印。" : "Word 文檔已生成！",
     };
   }
 }

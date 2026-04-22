@@ -16,7 +16,7 @@ export function buildStoryboardPrompt(input: {
     `scenes 数量必须严格等于 ${targetScenes}，sceneIndex 从 1 到 ${targetScenes} 连续递增。`,
     `每个 scene 的 duration 必须填写 ${sceneDuration}。`,
     "所有 scene 字段都必须非空：sceneTitle/environment/character/action/camera/lighting/mood/primarySubject/renderStillNeeded/renderStillPrompt。",
-    "角色一致性必须明确：同一角色在所有分鏡中必須保持同一張臉、同一套服裝、同一髮型、同一身份。",
+    "角色一致性必须明确：同一角色在所有分镜中必须保持同一张脸、同一套服装、同一发型、同一身份。",
     "重要规则：每个 scene 的 character 与 primarySubject 只能描述一名主要人物，不能把多人一起写进 character。",
     "如果原脚本是多人同框或多人互动场景，请在 scenePrompt 中保留场景描述，但必须挑出一名最主要人物写进 primarySubject 和 character。",
     "如果 scene 涉及两人或两人以上同框、互动、合照、家庭群像、多人运动、多人表演，请把 renderStillNeeded 设为 true，并在 renderStillPrompt 中描述这张多人静态展示图。",

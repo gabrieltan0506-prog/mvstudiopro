@@ -24,7 +24,7 @@ export default function HomePage() {
 
       <HomeTools />
 
-      {/* 內測階段暫時隱藏，正式版再開放 */}
+      {/* 内测阶段暂时隐藏，正式版再开放 */}
       {/* <HomeShowcase /> */}
       {/* <HomeWorkflow /> */}
       {/* <HomeCreatorEco /> */}
