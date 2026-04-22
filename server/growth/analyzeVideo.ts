@@ -846,16 +846,16 @@ const STRATEGIST_PREMIUM_TOPIC_ITEM_JSON: Record<string, unknown> = {
     formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
     businessInsight: {
       type: "string",
-      description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字",
+      description: "引流品、利润品、转化路径的顾问级深度分析，不少于200字",
     },
     contentBrief: { type: "string" },
     directorExecution: {
       type: "object",
       properties: {
-        storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
-        lighting: { type: "string", description: "燈光布置" },
-        blocking: { type: "string", description: "走位調度" },
-        emotionalTension: { type: "string", description: "情緒控制" },
+        storyboard: { type: "array", items: { type: "string" }, description: "完整分镜脚本" },
+        lighting: { type: "string", description: "灯光布置" },
+        blocking: { type: "string", description: "走位调度" },
+        emotionalTension: { type: "string", description: "情绪控制" },
       },
       required: ["storyboard", "lighting", "blocking", "emotionalTension"],
     },
@@ -868,23 +868,23 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
     return {
       type: "object",
       properties: {
-        strategy: { type: "string", description: "頂級商業顧問：人設拆解與產品矩陣規劃" },
+        strategy: { type: "string", description: "顶级商业顾问：人设拆解与产品矩阵规划" },
         actionableTopics: {
           type: "array",
           minItems: 3,
           maxItems: 3,
-          description: "恰好 3 個即時可執行選題，導演級分鏡",
+          description: "恰好 3 个即时可执行选题，导演级分镜",
           items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
         },
         topics: {
           type: "array",
           minItems: 3,
           maxItems: 3,
-          description: "恰好 3 個核心爆款選題，導演級分鏡",
+          description: "恰好 3 个核心爆款选题，导演级分镜",
           items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
         },
-        explosiveTopicAnalysis: { type: "string", description: "爆款選題深度綜述" },
-        musicAndExpressionAnalysis: { type: "string", description: "原影片表達與配樂分析，不少於 100 字" },
+        explosiveTopicAnalysis: { type: "string", description: "爆款选题深度综述" },
+        musicAndExpressionAnalysis: { type: "string", description: "原视频表达与配乐分析，不少于 100 字" },
         musicPrompt: {
           type: "string",
           description: "Suno/Udio：[Music Style], [Instruments], [Mood], [Tempo]",
@@ -908,7 +908,7 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
         minItems: 3,
         maxItems: 3,
         description:
-          "針對用戶背景量身定制的 3 個即時改編選題；每個 businessInsight 引流品/利潤品深度不少於 300 字",
+          "针对用户背景量身定制的 3 个即时改编选题；每个 businessInsight 引流品/利润品深度不少于 300 字",
         items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
       },
       topics: {
@@ -916,22 +916,22 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
         minItems: 3,
         maxItems: 3,
         description:
-          "恰好 3 個深度二創選題，與 actionableTopics 遞進延伸，導演級分鏡，每個 businessInsight 不少於 200 字",
+          "恰好 3 个深度二创选题，与 actionableTopics 递进延伸，导演级分镜，每个 businessInsight 不少于 200 字",
         items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
       },
       remixVisualAnalysis: {
         type: "string",
         description:
-          "二創視覺分析（借鑑與避坑）：分析原影片優缺點，明確指出新選題該借鑑什麼、避開什麼。",
+          "二创视觉分析（借鉴与避坑）：分析原视频优缺点，明确指出新选题该借鉴什么、避开什么。",
       },
       remixExpressionAnalysis: {
         type: "string",
         description:
-          "二創專屬表達指導：必須含 **参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力** 三個加粗小標題（用字一致）。",
+          "二创专属表达指导：必须含 **参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力** 三个加粗小标题（用字一致）。",
       },
       musicPrompt: {
         type: "string",
-        description: "僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）",
+        description: "仅针对用户【新选题】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）",
       },
     },
     required: ["actionableTopics", "topics", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
@@ -1019,72 +1019,72 @@ async function runDeepDivePass(params: {
   const mode = params.mode;
   const businessGoal = (params.context || "未提供").trim() || "未提供";
   const STRATEGIST_SYSTEM_MAIN = `
-你是頂級商業IP操盤手與大師級導演。
-模式：${mode === "REMIX" ? "實戰爆款二創" : "商業成長營"}
-用戶業務背景（必須嚴格對齊，禁止忽略）：${businessGoal}
+你是顶级商业IP操盘手与大师级导演。
+模式：${mode === "REMIX" ? "实战爆款二创" : "商业成长营"}
+用户业务背景（必须严格对齐，禁止忽略）：${businessGoal}
 
-【排版禁令：禁止文字牆】
-所有長文必須 Markdown 條列（- ）與 **加粗**；段落間空行。禁止「暫無」「待補充」。禁止「請建議」「您可以」等軟弱語氣。
-平台僅限【抖音、快手、小红书、B站】，嚴禁「视频号」。
+【排版禁令：禁止文字墙】
+所有长文必须 Markdown 条列（- ）与 **加粗**；段落间空行。禁止「暂无」「待补充」。禁止「请建议」「您可以」等软弱语气。
+平台仅限【抖音、快手、小红书、B站】，严禁「视频号」。
 
-【本輪輸出】
-請完整產出 JSON Schema 所要求的評分、reverseEngineering、remixExecution 等欄位。不要輸出 premiumContent（該區塊由下一輪專模單獨生成；禁止在 JSON 中加入 premiumContent 鍵）。
+【本轮输出】
+请完整产出 JSON Schema 所要求的评分、reverseEngineering、remixExecution 等字段。不要输出 premiumContent（该区块由下一轮专模单独生成；禁止在 JSON 中加入 premiumContent 键）。
 `;
 
   const PROMPT_PREMIUM_GROWTH = `
-你是頂級商業IP操盤手與大師級導演。模式：商業成長營
-用戶業務背景（必須嚴格對齊）：${businessGoal}
-【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**；段落之間空一行。
-【輸出要求 — 禁止套話｜必須量身定做】
+你是顶级商业IP操盘手与大师级导演。模式：商业成长营
+用户业务背景（必须严格对齐）：${businessGoal}
+【排版要求】Markdown 条列（- ）与 **加粗（关键字）**；段落之间空一行。
+【输出要求 — 禁止套话｜必须量身定做】
 
-1. strategy：人設轉化＋產品矩陣（品名、定價區間、平台、轉化路徑），條列加粗，禁止只寫標題。
+1. strategy：人设转化＋产品矩阵（品名、定价区间、平台、转化路径），条列加粗，禁止只写标题。
 
-2. actionableTopics：恰好 3 個「本週就能拍」的即時改編選題。每個選題必須：
-   - title：10字以內、帶情緒張力的選題標題（禁止泛泛如「職場感悟」）
-   - contentBrief：必須分三段，用 **加粗** 標出段落名：
-     **【開場鈎子（前3秒口播）】**：直接寫出可說的具體文字（不是描述，是臺詞）
-     **【核心論述與拍攝思路】**：選題邏輯、拍攝手法、情緒推進
-     **【結尾行動召喚】**：引導觀眾點讚/留言/關注的收尾文字
-   - businessInsight：引流品（品名+定價+獲客方式）→ 利潤品（品名+客單價）→ 轉化路徑（3步驟），不少於 300 字
-   - directorExecution.storyboard：恰好 5-6 條，每條嚴格格式：「[景別][時長] 畫面描述 | 口播：「...」 | 情緒：...」
+2. actionableTopics：恰好 3 个「本周就能拍」的即时改编选题。每个选题必须：
+   - title：10字以内、带情绪张力的选题标题（禁止泛泛如「职场感悟」）
+   - contentBrief：必须分三段，用 **加粗** 标出段落名：
+     **【开场钩子（前3秒口播）】**：直接写出可说的具体文字（不是描述，是台词）
+     **【核心论述与拍摄思路】**：选题逻辑、拍摄手法、情绪推进
+     **【结尾行动召唤】**：引导观众点赞/留言/关注的收尾文字
+   - businessInsight：引流品（品名+定价+获客方式）→ 利润品（品名+客单价）→ 转化路径（3步骤），不少于 300 字
+   - directorExecution.storyboard：恰好 5-6 条，每条严格格式：「[景别][时长] 画面描述 | 口播：「...」 | 情绪：...」
 
-3. topics：恰好 3 個長線IP定位選題，與 actionableTopics 角度遞進（不重複）；格式要求同上（storyboard 5-6 條），businessInsight 不少於 200 字。
+3. topics：恰好 3 个长线IP定位选题，与 actionableTopics 角度递进（不重复）；格式要求同上（storyboard 5-6 条），businessInsight 不少于 200 字。
 
-4. explosiveTopicAnalysis：綜合拆解 3 個 actionableTopics 的爆款邏輯與差異。
+4. explosiveTopicAnalysis：综合拆解 3 个 actionableTopics 的爆款逻辑与差异。
 
-5. musicAndExpressionAnalysis：原影片的語言/情緒/配樂分析，不少於 100 字。
+5. musicAndExpressionAnalysis：原视频的语言/情绪/配乐分析，不少于 100 字。
 
 6. musicPrompt：Suno/Udio 格式：[Music Style], [Instruments], [Mood], [Tempo/BPM]。
 `;
 
   const PROMPT_PREMIUM_REMIX = `
-你是頂級商業IP操盤手與大師級導演。模式：實戰爆款二創
-用戶業務背景（必須嚴格對齊）：${businessGoal}
-【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**；段落之間空一行。
-【輸出要求 — 禁止敷衍｜必須量身定做｜禁止套話】
+你是顶级商业IP操盘手与大师级导演。模式：实战爆款二创
+用户业务背景（必须严格对齐）：${businessGoal}
+【排版要求】Markdown 条列（- ）与 **加粗（关键字）**；段落之间空一行。
+【输出要求 — 禁止敷衍｜必须量身定做｜禁止套话】
 
-1. actionableTopics：恰好 3 個「本週就能拍」的即時改編選題，角度各異。每個選題必須：
-   - title：10字以內、帶情緒張力的選題標題（直接寫，禁止泛泛如「職場感悟」）
-   - contentBrief：必須分三段，用 **加粗** 標出段落名：
-     **【開場鈎子（前3秒口播）】**：直接寫出可說的具體臺詞（不是描述鏡頭，是可直接讀出的話）
-     **【核心論述與拍攝思路】**：選題邏輯、情緒推進方式、如何借鉴原片
-     **【結尾行動召喚】**：引導觀眾留言/關注/私信的具體收尾文字
-   - businessInsight：引流品（品名+定價區間+獲客平台）→ 利潤品（品名+客單價）→ 轉化路徑（3步驟），不少於 300 字
-   - directorExecution.storyboard：恰好 5-6 條，每條嚴格格式：「[景別][時長] 畫面描述 | 口播：「...」 | 情緒：...」
+1. actionableTopics：恰好 3 个「本周就能拍」的即时改编选题，角度各异。每个选题必须：
+   - title：10字以内、带情绪张力的选题标题（直接写，禁止泛泛如「职场感悟」）
+   - contentBrief：必须分三段，用 **加粗** 标出段落名：
+     **【开场钩子（前3秒口播）】**：直接写出可说的具体台词（不是描述镜头，是可直接读出的话）
+     **【核心论述与拍摄思路】**：选题逻辑、情绪推进方式、如何借鉴原片
+     **【结尾行动召唤】**：引导观众留言/关注/私信的具体收尾文字
+   - businessInsight：引流品（品名+定价区间+获客平台）→ 利润品（品名+客单价）→ 转化路径（3步骤），不少于 300 字
+   - directorExecution.storyboard：恰好 5-6 条，每条严格格式：「[景别][时长] 画面描述 | 口播：「...」 | 情绪：...」
 
-2. topics：恰好 3 個長線IP定位選題，與 actionableTopics 遞進（不重複角度，提升到 3 個月 IP 積累視角）；格式要求同上（storyboard 5-6 條）；businessInsight 不少於 200 字。
+2. topics：恰好 3 个长线IP定位选题，与 actionableTopics 递进（不重复角度，提升到 3 个月 IP 积累视角）；格式要求同上（storyboard 5-6 条）；businessInsight 不少于 200 字。
 
-3. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。
-   - **借鑑**：原影片哪些視覺手法值得學習（具體到鏡別/燈光/B-roll 類型）
-   - **避坑**：原影片哪些視覺缺點必須避開（具體到畫面細節）
-   - 結合用戶業務和新選題，禁止空泛套話。
+3. remixVisualAnalysis：**二创视觉分析（借鉴与避坑）**。
+   - **借鉴**：原视频哪些视觉手法值得学习（具体到景别/灯光/B-roll 类型）
+   - **避坑**：原视频哪些视觉缺点必须避开（具体到画面细节）
+   - 结合用户业务和新选题，禁止空泛套话。
 
-4. remixExpressionAnalysis：**二創專屬表達指導**（必須針對用戶新選題，禁止照搬原片套話）。內文必須含且 **加粗** 三個小標題（用字一致）：
-   **参考语言表达力**：用戶應使用哪些語氣/詞彙/表達技巧
-   **参考情感表达方式**：情緒節奏如何設計，從開場到結尾
-   **参考镜头表现与情绪张力**：具體鏡頭語言建議（景別、眼神、節奏）
+4. remixExpressionAnalysis：**二创专属表达指导**（必须针对用户新选题，禁止照搬原片套话）。内文必须含且 **加粗** 三个小标题（用字一致）：
+   **参考语言表达力**：用户应使用哪些语气/词汇/表达技巧
+   **参考情感表达方式**：情绪节奏如何设计，从开场到结尾
+   **参考镜头表现与情绪张力**：具体镜头语言建议（景别、眼神、节奏）
 
-5. musicPrompt：拋棄原影片配樂思路，僅針對用戶新選題調性輸出英文 BGM：[Music Style], [Instruments], [Mood], [Tempo/BPM]。
+5. musicPrompt：抛弃原视频配乐思路，仅针对用户新选题调性输出英文 BGM：[Music Style], [Instruments], [Mood], [Tempo/BPM]。
 `;
 
   const userMultimodalContent = buildStrategistMultimodalUserContent({
