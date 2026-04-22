@@ -71,6 +71,46 @@ export const growthPremiumContentTopicSchema = z.object({
   }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
+/** Vertex / strategist 第二輪專模：欄位全必填，禁止 optional / default 搪塞 */
+export const growthPremiumContentTopicLlmSchema = z.object({
+  title: z.string(),
+  formatType: z.enum(["VIDEO", "IMAGE_TEXT"]),
+  businessInsight: z.string().describe("深度商業洞察"),
+  contentBrief: z.string(),
+  directorExecution: z.object({
+    storyboard: z.array(z.string()),
+    lighting: z.string(),
+    blocking: z.string(),
+    emotionalTension: z.string(),
+  }),
+});
+
+/** GROWTH 模式：strategist premium 專模輸出（不含 remix 欄位） */
+export const growthLlmSchema = z.object({
+  strategy: z.string(),
+  actionableTopics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
+  topics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
+  explosiveTopicAnalysis: z.string(),
+  musicAndExpressionAnalysis: z.string(),
+  musicPrompt: z.string(),
+});
+
+/** REMIX 模式：strategist premium 專模輸出（強制填滿二創欄位） */
+export const remixLlmSchema = z.object({
+  actionableTopics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
+  remixVisualAnalysis: z
+    .string()
+    .describe(
+      "二創視覺分析（借鑑與避坑）：必須分析原影片優缺點，並明確指出新選題該借鑑什麼、避開什麼。",
+    ),
+  remixExpressionAnalysis: z
+    .string()
+    .describe(
+      "二創專屬表達指導：必須包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】三個標題。",
+    ),
+  musicPrompt: z.string().describe("針對用戶新選題方向的 BGM 提示詞"),
+});
+
 export const growthPremiumContentSchema = z.object({
   summary: z.string().default(""),
   strategy: z.string().describe("頂級商業顧問：人設拆解與產品矩陣規劃").default(""),

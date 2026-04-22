@@ -3,7 +3,13 @@ import os from "os";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { type GrowthAnalysisScores, growthAnalysisScoresSchema } from "@shared/growth";
+import {
+  type GrowthAnalysisScores,
+  growthAnalysisScoresSchema,
+  growthLlmSchema,
+  remixLlmSchema,
+  growthPremiumContentSchema,
+} from "@shared/growth";
 import { transcribeAudio } from "../_core/voiceTranscription";
 import { invokeLLM } from "../_core/llm";
 import { deleteGcsObject, downloadGcsObject, isGsUri, uploadBufferToGcs } from "../services/gcs";
@@ -747,8 +753,14 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     emotionalArc: String(parsed?.reverseEngineering?.emotionalArc || ""),
     commercialLogic: String(parsed?.reverseEngineering?.commercialLogic || ""),
   };
-  const premiumTopics = normalizePremiumTopics(parsed?.premiumContent?.topics);
-  const premiumSummary = String(parsed?.premiumContent?.summary || "");
+  const basePremium =
+    parsed?.premiumContent && typeof parsed.premiumContent === "object" && !Array.isArray(parsed.premiumContent)
+      ? (parsed.premiumContent as Record<string, unknown>)
+      : {};
+  const fromParsedTopics = normalizePremiumTopics(parsed?.premiumContent?.topics);
+  const premiumTopics =
+    fromParsedTopics.length > 0 ? fromParsedTopics : normalizePremiumTopics(basePremium.topics);
+  const premiumSummary = String(parsed?.premiumContent?.summary || basePremium.summary || "");
   const growthStrategy = {
     gapAnalysis: String(parsed?.growthStrategy?.gapAnalysis || ""),
     commercialMatrix: String(parsed?.growthStrategy?.commercialMatrix || ""),
@@ -786,6 +798,7 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     realityCheck: String(parsed?.realityCheck || ""),
     reverseEngineering,
     premiumContent: {
+      ...basePremium,
       summary: premiumSummary,
       topics: premiumTopics,
     },
@@ -826,6 +839,163 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
   };
 }
 
+const STRATEGIST_PREMIUM_TOPIC_ITEM_JSON: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
+    businessInsight: {
+      type: "string",
+      description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字",
+    },
+    contentBrief: { type: "string" },
+    directorExecution: {
+      type: "object",
+      properties: {
+        storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
+        lighting: { type: "string", description: "燈光布置" },
+        blocking: { type: "string", description: "走位調度" },
+        emotionalTension: { type: "string", description: "情緒控制" },
+      },
+      required: ["storyboard", "lighting", "blocking", "emotionalTension"],
+    },
+  },
+  required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
+};
+
+function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string, unknown> {
+  if (mode === "GROWTH") {
+    return {
+      type: "object",
+      properties: {
+        strategy: { type: "string", description: "頂級商業顧問：人設拆解與產品矩陣規劃" },
+        actionableTopics: {
+          type: "array",
+          minItems: 3,
+          maxItems: 3,
+          description: "恰好 3 個即時可執行選題，導演級分鏡",
+          items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
+        },
+        topics: {
+          type: "array",
+          minItems: 3,
+          maxItems: 3,
+          description: "恰好 3 個核心爆款選題，導演級分鏡",
+          items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
+        },
+        explosiveTopicAnalysis: { type: "string", description: "爆款選題深度綜述" },
+        musicAndExpressionAnalysis: { type: "string", description: "原影片表達與配樂分析，不少於 100 字" },
+        musicPrompt: {
+          type: "string",
+          description: "Suno/Udio：[Music Style], [Instruments], [Mood], [Tempo]",
+        },
+      },
+      required: [
+        "strategy",
+        "actionableTopics",
+        "topics",
+        "explosiveTopicAnalysis",
+        "musicAndExpressionAnalysis",
+        "musicPrompt",
+      ],
+    };
+  }
+  return {
+    type: "object",
+    properties: {
+      actionableTopics: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        description:
+          "針對用戶背景量身定制的 3 個改編選題；每個 businessInsight 引流品/利潤品深度不少於 300 字",
+        items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
+      },
+      remixVisualAnalysis: {
+        type: "string",
+        description:
+          "二創視覺分析（借鑑與避坑）：分析原影片優缺點，明確指出新選題該借鑑什麼、避開什麼。",
+      },
+      remixExpressionAnalysis: {
+        type: "string",
+        description:
+          "二創專屬表達指導：必須含 **参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力** 三個加粗小標題（用字一致）。",
+      },
+      musicPrompt: {
+        type: "string",
+        description: "僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）",
+      },
+    },
+    required: ["actionableTopics", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
+  };
+}
+
+function buildStrategistMultimodalUserContent(params: {
+  fileName?: string;
+  context?: string;
+  videoGcsUri: string;
+  duration: number;
+  sparseFrameCount: number;
+  audioFirstPass: AudioFirstPass;
+  visualFirstPass: VisualFirstPass;
+  transcript: string;
+  sparseFrames: SparseFrame[];
+}) {
+  return [
+    {
+      type: "text" as const,
+      text: [
+        `文件名：${params.fileName || "未命名视频"}`,
+        `业务背景：${params.context?.trim() || "未提供"}`,
+        `视频 GCS 地址：${params.videoGcsUri}`,
+        `视频时长：${params.duration.toFixed(1)} 秒`,
+        `稀疏关键帧数量：${params.sparseFrameCount}`,
+        `第一阶段音频粗筛结论：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
+        `第一阶段关键帧视觉初判：\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
+        params.transcript
+          ? `转写摘录：\n${truncate(params.transcript, 5000)}`
+          : "转写摘录：暂无或转写失败，请依第一阶段音频结论和关键帧判断。",
+      ].join("\n\n"),
+    },
+    ...params.sparseFrames.map((item, index) => ({
+      type: "image_url" as const,
+      image_url: {
+        url: item.dataUrl,
+        detail: index < 2 ? ("high" as const) : ("auto" as const),
+      },
+    })),
+  ];
+}
+
+function mapStrategistPremiumLlmToPremiumContent(mode: GrowthAnalysisMode, raw: unknown) {
+  if (mode === "GROWTH") {
+    const llm = growthLlmSchema.parse(raw);
+    return growthPremiumContentSchema.parse({
+      summary: "",
+      strategy: llm.strategy,
+      actionableTopics: llm.actionableTopics,
+      topics: llm.topics,
+      explosiveTopicAnalysis: llm.explosiveTopicAnalysis,
+      musicAndExpressionAnalysis: llm.musicAndExpressionAnalysis,
+      remixVisualAnalysis: "",
+      remixExpressionAnalysis: "",
+      musicPrompt: llm.musicPrompt,
+    });
+  }
+  const llm = remixLlmSchema.parse(raw);
+  return growthPremiumContentSchema.parse({
+    summary: "",
+    strategy: "",
+    actionableTopics: llm.actionableTopics,
+    topics: [],
+    explosiveTopicAnalysis: "",
+    musicAndExpressionAnalysis: "",
+    remixVisualAnalysis: llm.remixVisualAnalysis,
+    remixExpressionAnalysis: llm.remixExpressionAnalysis,
+    musicPrompt: llm.musicPrompt,
+  });
+}
+
 async function runDeepDivePass(params: {
   finalModel: string;
   sparseFrames: SparseFrame[];
@@ -840,7 +1010,7 @@ async function runDeepDivePass(params: {
 }) {
   const mode = params.mode;
   const businessGoal = (params.context || "未提供").trim() || "未提供";
-  const STRATEGIST_PROMPT = `
+  const STRATEGIST_SYSTEM_MAIN = `
 你是頂級商業IP操盤手與大師級導演。
 模式：${mode === "REMIX" ? "實戰爆款二創" : "商業成長營"}
 用戶業務背景（必須嚴格對齊，禁止忽略）：${businessGoal}
@@ -849,80 +1019,67 @@ async function runDeepDivePass(params: {
 所有長文必須 Markdown 條列（- ）與 **加粗**；段落間空行。禁止「暫無」「待補充」。禁止「請建議」「您可以」等軟弱語氣。
 平台僅限【抖音、快手、小红书、B站】，嚴禁「视频号」。
 
-${mode === "GROWTH" ? `
-【商業成長營—輸出要求】
-1. strategy：人設轉化＋產品矩陣（名稱、定價、路徑），條列加粗，禁止只寫標題。
-2. actionableTopics：恰好 3 個即時改編選題，導演級分鏡。
-3. topics：恰好 3 個核心爆款選題，導演級分鏡。
-4. explosiveTopicAnalysis：選題深度綜述。
-5. musicAndExpressionAnalysis：原視頻表達與配樂分析，不少於 100 字。
-6. musicPrompt：Suno/Udio，[Music Style], [Instruments], [Mood], [Tempo]。
-7. remixVisualAnalysis：必須為空字串 ""。
-8. remixExpressionAnalysis：必須為空字串 ""。
-9. summary：無統述需求時 ""。
-` : `
-【實戰爆款二創—輸出要求｜禁止敷衍｜必須為用戶業務背景量身定做】
-1. summary、strategy、explosiveTopicAnalysis：必須 "" 空字串。
-2. musicAndExpressionAnalysis：必須 ""（二創的表達與配樂說明只寫在 remixExpressionAnalysis 與 musicPrompt，嚴禁重複填寫本欄）。
-3. actionableTopics：恰好 3 個，針對用戶背景量身定制的改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
-4. topics：恰好 3 個「深度二創選題」，與 actionableTopics 遞進，導演級分鏡。
-5. remixVisualAnalysis：**二创视觉分析 (借鉴与避坑)**。分析原視頻視覺優缺點；必須明確指導用戶：拍攝新選題時，哪些原片元素可以【借鉴】、哪些視覺缺點必須【避开】。嚴禁只輸出泛泛而談，必須結合用戶業務背景與新選題方向。
-6. remixExpressionAnalysis：**二创专属表达指导**。嚴禁照搬原視頻分析報告套話；必須針對用戶的新選題給執導建議。內文必須包含且以 **加粗** 標出下列三個小標題（用字一致）：
-   - **参考语言表达力**
-   - **参考情感表达方式**
-   - **参考镜头表现与情绪张力**
-7. musicPrompt：拋棄原視頻配樂思路；僅針對用戶【新選題】整體調性，輸出英文 BGM 提示詞（Style, Mood, Instruments, Tempo/BPM）。
-
-【premiumContent 欄位順序】
-GROWTH：strategy → actionableTopics → topics → explosiveTopicAnalysis → musicAndExpressionAnalysis → remixVisualAnalysis("") → remixExpressionAnalysis("") → musicPrompt。
-REMIX：actionableTopics → topics → remixVisualAnalysis → remixExpressionAnalysis → musicPrompt（其餘按 schema 填空字串）。
-`}
+【本輪輸出】
+請完整產出 JSON Schema 所要求的評分、reverseEngineering、remixExecution 等欄位。不要輸出 premiumContent（該區塊由下一輪專模單獨生成；禁止在 JSON 中加入 premiumContent 鍵）。
 `;
 
-  let response: Awaited<ReturnType<typeof invokeLLM>> | undefined;
+  const PROMPT_PREMIUM_GROWTH = `
+你是頂級商業IP操盤手與大師級導演。模式：商業成長營
+用戶業務背景（必須嚴格對齊）：${businessGoal}
+【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**。
+【輸出要求】
+1. strategy：人設轉化＋產品矩陣（名稱、定價、路徑），條列加粗，禁止只寫標題。
+2. actionableTopics：恰好 3 個即時改編選題，導演級分鏡。
+3. topics：恰好 3 個延伸核心爆款選題，導演級分鏡。
+4. explosiveTopicAnalysis：選題深度綜述。
+5. musicAndExpressionAnalysis：原影片表達與配樂分析，不少於 100 字。
+6. musicPrompt：Suno/Udio，[Music Style], [Instruments], [Mood], [Tempo]。
+`;
+
+  const PROMPT_PREMIUM_REMIX = `
+你是頂級商業IP操盤手與大師級導演。模式：實戰爆款二創
+用戶業務背景（必須嚴格對齊）：${businessGoal}
+【排版要求】Markdown 條列（- ）與 **加粗（關鍵字）**。
+【輸出要求 — 禁止敷衍｜必須量身定做】
+1. actionableTopics：恰好 3 個針對用戶背景的改編選題，導演級分鏡；每個 businessInsight 引流品/利潤品深度不少於 300 字。
+2. remixVisualAnalysis：**二創視覺分析（借鑑與避坑）**。分析原影片視覺優缺點；必須明確指導：拍攝新選題時，哪些原片元素可【借鑑】、哪些視覺缺點必【避開】；結合用戶業務與新選題方向，禁止空泛套話。
+3. remixExpressionAnalysis：**二創專屬表達指導**。必須針對用戶新選題給執導建議；內文必須含且 **加粗** 三個小標題（用字一致）：**参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力**（強調【參考語言表達力】與鏡頭情緒張力）。
+4. musicPrompt：拋棄原影片配樂思路；僅針對用戶【新選題】的英文 BGM（Style, Mood, Instruments, Tempo/BPM）。
+`;
+
+  const userMultimodalContent = buildStrategistMultimodalUserContent({
+    fileName: params.fileName,
+    context: params.context,
+    videoGcsUri: params.videoGcsUri,
+    duration: params.duration,
+    sparseFrameCount: params.sparseFrames.length,
+    audioFirstPass: params.audioFirstPass,
+    visualFirstPass: params.visualFirstPass,
+    transcript: params.transcript,
+    sparseFrames: params.sparseFrames,
+  });
+
+  let strategistPassResult: Record<string, unknown> | undefined;
   let _retries = 3;
   let _delayMs = 5000;
   while (_retries > 0) {
     try {
-      response = await invokeLLM({
+      const mainResponse = await invokeLLM({
         model: "pro",
         provider: "vertex",
         modelName: GROWTH_CAMP_STRATEGIST_MODEL,
         temperature: 0.7,
         topP: 0.9,
         messages: [
-      {
-        role: "system",
-        content: STRATEGIST_PROMPT,
-      },
-      {
-        role: "user",
-        content: [
           {
-            type: "text",
-            text: [
-              `文件名：${params.fileName || "未命名视频"}`,
-              `业务背景：${params.context?.trim() || "未提供"}`,
-              `视频 GCS 地址：${params.videoGcsUri}`,
-              `视频时长：${params.duration.toFixed(1)} 秒`,
-              `稀疏关键帧数量：${params.sparseFrames.length}`,
-              `第一阶段音频粗筛结论：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
-              `第一阶段关键帧视觉初判：\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
-              params.transcript
-                ? `转写摘录：\n${truncate(params.transcript, 5000)}`
-                : "转写摘录：暂无或转写失败，请依第一阶段音频结论和关键帧判断。",
-            ].join("\n\n"),
+            role: "system",
+            content: STRATEGIST_SYSTEM_MAIN,
           },
-          ...params.sparseFrames.map((item, index) => ({
-            type: "image_url" as const,
-            image_url: {
-              url: item.dataUrl,
-              detail: index < 2 ? "high" as const : "auto" as const,
-            },
-          })),
+          {
+            role: "user",
+            content: userMultimodalContent,
+          },
         ],
-      },
-    ],
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -957,83 +1114,6 @@ REMIX：actionableTopics → topics → remixVisualAnalysis → remixExpressionA
                 commercialLogic: { type: "string" },
               },
               required: ["hookStrategy", "emotionalArc", "commercialLogic"],
-            },
-            premiumContent: {
-              type: "object",
-              properties: {
-                summary: { type: "string" },
-                strategy: { type: "string", description: "顶级顾问级商业战略拆解" },
-                actionableTopics: {
-                  type: "array",
-                  minItems: 3,
-                  maxItems: 3,
-                  description: "【現在就能執行的版本】恰好 3 個即時可執行選題，每個都必須有完整 directorExecution 與 businessInsight",
-                  items: {
-                    type: "object",
-                    properties: {
-                      title: { type: "string" },
-                      formatType: { type: "string", enum: ["VIDEO", "IMAGE_TEXT"] },
-                      businessInsight: { type: "string", description: "引流品、利潤品、轉化路徑的顧問級深度分析，不少於200字" },
-                      contentBrief: { type: "string" },
-                      directorExecution: {
-                        type: "object",
-                        properties: {
-                          storyboard: { type: "array", items: { type: "string" }, description: "完整分鏡腳本" },
-                          lighting: { type: "string", description: "燈光布置" },
-                          blocking: { type: "string", description: "走位調度" },
-                          emotionalTension: { type: "string", description: "情緒控制" },
-                        },
-                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
-                      },
-                    },
-                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
-                  },
-                },
-	                topics: {
-	                  type: "array",
-	                  minItems: 3,
-	                  maxItems: 3,
-	                  description: "必须恰好输出 3 个实战选题，并逐个做商业深度拆解",
-	                  items: {
-                    type: "object",
-	                    properties: {
-	                      title: { type: "string" },
-	                      formatType: {
-	                        type: "string",
-	                        enum: ["VIDEO", "IMAGE_TEXT"],
-	                        description: "内容形式，只能是 VIDEO 或 IMAGE_TEXT",
-	                      },
-		                      businessInsight: {
-		                        type: "string",
-			                        description: "引流、产品、转化建议",
-		                      },
-		                      contentBrief: { type: "string", description: "用户现在就能执行的具体版本，包含详细文案、选题内容、视频拍摄方法、图文笔记拍摄方法、秒数、画面、口播与情绪" },
-		                      directorExecution: {
-		                        type: "object",
-		                        description: "导演级实战执行指南",
-		                        properties: {
-		                          storyboard: {
-		                            type: "array",
-		                            items: { type: "string" },
-		                            description: "分镜拆解",
-		                          },
-		                          lighting: { type: "string", description: "灯光布置" },
-		                          blocking: { type: "string", description: "走位调度" },
-		                          emotionalTension: { type: "string", description: "情绪控制" },
-	                        },
-	                        required: ["storyboard", "lighting", "blocking", "emotionalTension"],
-	                      },
-	                    },
-	                    required: ["title", "formatType", "businessInsight", "contentBrief", "directorExecution"],
-	                  },
-	                },
-                explosiveTopicAnalysis: { type: "string", description: "爆款选题分析" },
-                musicAndExpressionAnalysis: { type: "string", description: "成長營：BGM與表達分析不少于100字；二創模式必須空字串" },
-                remixVisualAnalysis: { type: "string", description: "二創：借鉴与避坑視覺分析；成長營必空字串" },
-                remixExpressionAnalysis: { type: "string", description: "二創：专属表达指导含三个加粗小标题；成長營必空字串" },
-                musicPrompt: { type: "string", description: "【必填】AI音乐生成提示词，专为Suno/Udio设计。格式：[Music Style], [Instruments], [Mood], [Tempo]。示例：Modern cinematic lo-fi, soft piano and ambient synth, warm and focused, 85bpm" },
-              },
-              required: ["summary", "strategy", "actionableTopics", "topics", "explosiveTopicAnalysis", "musicAndExpressionAnalysis", "remixVisualAnalysis", "remixExpressionAnalysis", "musicPrompt"],
             },
             growthStrategy: {
               type: "object",
@@ -1169,12 +1249,44 @@ REMIX：actionableTopics → topics → remixVisualAnalysis → remixExpressionA
             "platformScores",
             "realityCheck",
             "reverseEngineering",
-            "premiumContent",
           ],
         },
       },
     },
       });
+      const parsedMain = JSON.parse(String(mainResponse.choices[0]?.message?.content || "{}"));
+      const premiumResp = await invokeLLM({
+        model: "pro",
+        provider: "vertex",
+        modelName: GROWTH_CAMP_STRATEGIST_MODEL,
+        temperature: 0.7,
+        topP: 0.9,
+        messages: [
+          {
+            role: "system",
+            content: mode === "GROWTH" ? PROMPT_PREMIUM_GROWTH : PROMPT_PREMIUM_REMIX,
+          },
+          {
+            role: "user",
+            content: userMultimodalContent,
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: mode === "GROWTH" ? "growth_camp_premium_growth" : "growth_camp_premium_remix",
+            strict: true,
+            schema: strategistPremiumVertexSchema(mode),
+          },
+        },
+      });
+      const premiumRaw = JSON.parse(String(premiumResp.choices[0]?.message?.content || "{}"));
+      const premiumContent = mapStrategistPremiumLlmToPremiumContent(mode, premiumRaw);
+      const withPremium = { ...parsedMain, premiumContent };
+      strategistPassResult = {
+        ...withPremium,
+        ...buildLegacyFieldsFromStrategist(withPremium),
+      };
       break; // 成功，跳出重試迴圈
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1194,13 +1306,10 @@ REMIX：actionableTopics → topics → remixVisualAnalysis → remixExpressionA
       }
     }
   }
-  if (!response) throw new Error("無法從 Vertex AI 獲取分析結果，請稍後再試。");
-
-  const parsed = JSON.parse(String(response.choices[0]?.message?.content || "{}"));
-  return {
-    ...parsed,
-    ...buildLegacyFieldsFromStrategist(parsed),
-  };
+  if (!strategistPassResult) {
+    throw new Error("無法從 Vertex AI 獲取分析結果，請稍後再試。");
+  }
+  return strategistPassResult;
 }
 
 async function runStrategistRefinementPass(params: {
