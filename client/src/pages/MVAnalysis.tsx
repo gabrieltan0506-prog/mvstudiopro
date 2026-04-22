@@ -2261,16 +2261,44 @@ export default function MVAnalysisPage() {
   });
 
   const handleDownloadAnalysisPdf = useCallback(() => {
-    // Capture static DOM snapshot — strip scripts, inject base tag for relative paths
+    // Capture static DOM snapshot — strip heavy/non-print elements to slim payload
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
+
+    // 移除腳本
     clone.querySelectorAll("script").forEach((n) => n.remove());
+
+    // 移除影片元素（src 可能非常大）
+    clone.querySelectorAll("video, audio").forEach((n) => n.remove());
+
+    // 移除 iframe
+    clone.querySelectorAll("iframe").forEach((n) => n.remove());
+
+    // 移除 print:hidden 元素（不會出現在 PDF，佔空間）
+    clone.querySelectorAll('[class*="print:hidden"]').forEach((n) => n.remove());
+
+    // 移除大型 base64 圖片 src（> 50KB 的 data URI 替換為空）
+    clone.querySelectorAll("img").forEach((img) => {
+      const src = img.getAttribute("src") || "";
+      if (src.startsWith("data:") && src.length > 51200) {
+        img.removeAttribute("src");
+      }
+    });
+
+    // 移除 blob: URL（影片縮圖等）
+    clone.querySelectorAll("[src]").forEach((el) => {
+      const src = el.getAttribute("src") || "";
+      if (src.startsWith("blob:")) el.removeAttribute("src");
+    });
+
+    // 移除互動性較強但 PDF 不需要的元件（上傳區、input、按鈕群）
+    clone.querySelectorAll('input, textarea, [data-pdf-exclude="true"]').forEach((n) => n.remove());
+
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
+
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
-    // Resolve auth token: supervisor mode uses fixed marker; authenticated users use
-    // their stored session token. Token is forwarded to server/pdf-worker for future
-    // page.goto() auth scenarios — does NOT affect current page.setContent() path.
+
     const token = supervisorAccess
       ? "supervisor"
       : (user as any)?.token ?? (user as any)?.sessionToken ?? "";

@@ -116,6 +116,11 @@ async function startServer() {
 
   const app = express();
   const server = createServer(app);
+  // PDF generation via Cloud Run can take several minutes for large pages;
+  // increase socket timeout well beyond Cloud Run's max 3600s to avoid premature drops.
+  server.setTimeout(900_000); // 15 minutes
+  server.keepAliveTimeout = 905_000;
+  server.headersTimeout = 910_000;
   // Stripe webhook MUST be registered BEFORE express.json() for signature verification
   registerStripeWebhook(app);
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.

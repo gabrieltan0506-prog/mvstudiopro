@@ -80,6 +80,12 @@ app.post("/generate-pdf", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[pdf-worker] listening on port ${PORT}`);
 });
+
+// Cloud Run timeout is set to 600s in deploy.sh;
+// keep server socket timeout slightly above that to avoid premature drops.
+server.setTimeout(620_000);
+server.keepAliveTimeout = 625_000;
+server.headersTimeout = 630_000;
