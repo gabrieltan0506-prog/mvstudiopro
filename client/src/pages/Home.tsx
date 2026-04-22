@@ -2,10 +2,12 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
 import HomeTools from "../components/HomeTools";
-import HomeShowcase from "../components/HomeShowcase";
-import HomeWorkflow from "../components/HomeWorkflow";
-import HomeCreatorEco from "../components/HomeCreatorEco";
-import HomePlans from "../components/HomePlans";
+
+// 以下 section 在正式版開放前暫時隱藏
+// import HomeShowcase from "../components/HomeShowcase";
+// import HomeWorkflow from "../components/HomeWorkflow";
+// import HomeCreatorEco from "../components/HomeCreatorEco";
+// import HomePlans from "../components/HomePlans";
 
 export default function HomePage() {
   return (
@@ -22,13 +24,13 @@ export default function HomePage() {
 
       <HomeTools />
 
-      <HomeShowcase />
+      {/* 內測階段暫時隱藏，正式版再開放 */}
+      {/* <HomeShowcase /> */}
+      {/* <HomeWorkflow /> */}
+      {/* <HomeCreatorEco /> */}
+      {/* <HomePlans /> */}
 
-      <HomeWorkflow />
-
-      <HomeCreatorEco />
-
-      <HomePlans />
+      <div style={{ height: 60 }} />
     </div>
   );
 }

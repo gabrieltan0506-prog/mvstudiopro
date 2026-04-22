@@ -10,12 +10,9 @@ type ToolCard = {
 };
 
 const cards: ToolCard[] = [
-  { zh: "可灵工作室", en: "Kling Studio", desc: "图像 / 视频 / Motion Control / Lip Sync", price: "10 积分起", pro: false, href: "/kling-studio" },
-  { zh: "虚拟艺人工坊", en: "Actor Studio", desc: "上传人物图，生成场景与视频", price: "15 积分起", pro: false, href: "/idol" },
-  { zh: "分镜工作流", en: "Storyboard Workflow", desc: "脚本 → 分镜 → 图像 → 视频", price: "20 积分起", pro: false, href: "/workflow" },
-  { zh: "AI 音乐工坊", en: "AI Music Studio", desc: "Suno / Udio 配乐生成", price: "5 积分起", pro: false, href: "/kling-studio" },
-  { zh: "创作商业成长营", en: "Creator Growth Camp", desc: "上传素材，直接生成增长诊断、商业路径与发布动作", price: "Pro 功能", pro: true, href: "/creator-growth-camp" },
-  { zh: "我的创作", en: "My Creations", desc: "作品、任务、历史记录统一管理", price: "免费", pro: false, href: "/workspace" },
+  { zh: "创作者成长营", en: "Creator Growth Camp", desc: "上传视频或图文，生成商业战略、爆款选题与导演级分镜，GROWTH / REMIX 双模式", price: "内测功能", pro: true, href: "/creator-growth-camp" },
+  { zh: "平台趋势分析", en: "Platform Trend Analysis", desc: "小红书、抖音、B站、快手平台数据洞察，含 7 天发布计划与流量承接建议", price: "内测功能", pro: true, href: "/creator-growth-camp/platform" },
+  { zh: "节点式工作流", en: "Workflow Nodes", desc: "可视化节点画布，串接分镜生成、AI 影片、BGM 与发布动作，一键执行完整创作流程", price: "内测功能", pro: true, href: "/workflow-nodes" },
 ];
 
 export default function HomeTools() {

@@ -251,17 +251,18 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                围绕创作者工作流设计：可灵工作室、虚拟艺人工坊、分镜工作流、创作商业成长营。
+                内测阶段开放三大核心功能，帮助创作者快速完成内容策略、平台洞察与工作流落地。
               </div>
 
               <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
                 {[
-                  "可灵工作室：图像 / 视频 / Motion Control / Lip Sync",
-                  "虚拟艺人工坊：人物上传 → 场景 → 视频",
-                  "创作商业成长营：上传内容，生成增长策略、商业洞察与发布建议",
-                ].map((line) => (
-                  <div
-                    key={line}
+                  { label: "创作者成长营", desc: "上传内容 → 商业战略 + 爆款选题 + 导演分镜", href: "/creator-growth-camp" },
+                  { label: "平台趋势分析", desc: "平台数据洞察 + 7 天发布计划", href: "/creator-growth-camp/platform" },
+                  { label: "节点式工作流", desc: "可视化节点画布，一键执行完整创作流程", href: "/workflow-nodes" },
+                ].map((item) => (
+                  <a
+                    key={item.label}
+                    href={item.href}
                     style={{
                       padding: "12px 14px",
                       borderRadius: 14,
@@ -269,10 +270,13 @@ export default function HomeHero() {
                       border: "1px solid rgba(255,255,255,0.06)",
                       color: "rgba(255,255,255,0.86)",
                       fontSize: 14,
+                      textDecoration: "none",
+                      display: "block",
                     }}
                   >
-                    {line}
-                  </div>
+                    <span style={{ fontWeight: 800, color: "white" }}>{item.label}</span>
+                    <span style={{ color: "rgba(255,255,255,0.5)", marginLeft: 8, fontSize: 13 }}>{item.desc}</span>
+                  </a>
                 ))}
               </div>
 
@@ -281,20 +285,20 @@ export default function HomeHero() {
                   marginTop: 16,
                   padding: "12px 14px",
                   borderRadius: 14,
-                  background: "rgba(255,79,179,0.08)",
-                  border: "1px solid rgba(255,79,179,0.16)",
-                  color: "rgba(255,255,255,0.86)",
+                  background: "rgba(139,92,246,0.10)",
+                  border: "1px solid rgba(139,92,246,0.22)",
+                  color: "rgba(255,255,255,0.75)",
                   fontSize: 13,
                   lineHeight: 1.7,
                 }}
               >
-                免费试用内容默认带水印。付费用户可去水印，并解锁完整优化方案与更多高级能力。
+                内测阶段限量开放，持有内测码的用户可解锁完整功能。
               </div>
             </div>
 
             <div style={{ display: "flex", gap: 12, marginTop: 22, flexWrap: "wrap" }}>
               <a
-                href="/kling-studio"
+                href="/creator-growth-camp"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -306,10 +310,10 @@ export default function HomeHero() {
                   textDecoration: "none",
                 }}
               >
-                开始创作
+                进入成长营
               </a>
               <a
-                href="/creator-growth-camp"
+                href="/login"
                 style={{
                   padding: "14px 20px",
                   borderRadius: 14,
@@ -321,7 +325,7 @@ export default function HomeHero() {
                   textDecoration: "none",
                 }}
               >
-                进入成长营
+                登录 / 注册
               </a>
             </div>
           </div>

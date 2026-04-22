@@ -2,11 +2,9 @@ import React from "react";
 
 const nav = [
   ["首页", "Home", "/"],
-  ["创作", "Create", "/kling-studio"],
-  ["工作流", "Workflow", "/workflow"],
-  ["爆款案例", "Showcase", "/showcase"],
-  ["创作者", "Creators", "/actor"],
-  ["套餐", "Plans", "/pricing"],
+  ["成长营", "Growth Camp", "/creator-growth-camp"],
+  ["平台趋势", "Platform", "/creator-growth-camp/platform"],
+  ["节点工作流", "Workflow", "/workflow-nodes"],
 ];
 
 export default function HomeNavbar() {
