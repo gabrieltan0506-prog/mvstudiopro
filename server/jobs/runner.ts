@@ -522,7 +522,7 @@ async function processImageJob(input: JobEnvelope, timeoutMs: number, jobUserId:
       };
     }
 
-    throw new Error("Nano image generation unavailable: GEMINI_API_KEY is not configured");
+    throw new Error("Nano image generation unavailable: Vertex AI credentials not configured");
   }
 
   if (input.action === "virtual_idol") {

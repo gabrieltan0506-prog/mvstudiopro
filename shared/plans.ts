@@ -249,6 +249,9 @@ export const CREDIT_COSTS = {
   klingImageO1_2K: 10,
   klingImageV2_1K: 5,
   klingImageV2_2K: 7,
+
+  // ─── 平台趋势·参考图生成 ─────────────────────
+  platformRefImage: 12,
 } as const;
 
 /** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */
@@ -263,6 +266,7 @@ export const IMAGE_UPSCALE_BASE_CREDIT_KEYS = [
   "klingImageO1_2K",
   "klingImageV2_1K",
   "klingImageV2_2K",
+  "platformRefImage",
 ] as const;
 
 export type ImageUpscaleBaseCreditKey = (typeof IMAGE_UPSCALE_BASE_CREDIT_KEYS)[number];
@@ -270,10 +274,19 @@ export type ImageUpscaleBaseCreditKey = (typeof IMAGE_UPSCALE_BASE_CREDIT_KEYS)[
 /** 相对原图单价：2× = 3 倍积分，4× = 5 倍积分 */
 export const IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS = { x2: 3, x4: 5 } as const;
 
+/** 固定 upscale 成本覆盖（优先于乘数公式） */
+export const UPSCALE_COST_OVERRIDES: Partial<
+  Record<ImageUpscaleBaseCreditKey, Record<keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS, number>>
+> = {
+  platformRefImage: { x2: 36, x4: 48 },
+};
+
 export function imageUpscaleTotalCredits(
   baseKey: ImageUpscaleBaseCreditKey,
   factor: keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS,
 ): number {
+  const override = UPSCALE_COST_OVERRIDES[baseKey];
+  if (override) return override[factor];
   const base = CREDIT_COSTS[baseKey];
   const mult = IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS[factor];
   return base * mult;

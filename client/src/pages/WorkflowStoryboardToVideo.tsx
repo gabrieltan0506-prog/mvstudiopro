@@ -229,6 +229,11 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function isSupervisorSession() {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem("mvs-supervisor-access") === "1";
+}
+
 export default function WorkflowStoryboardToVideo() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<any>(null);
@@ -265,6 +270,7 @@ export default function WorkflowStoryboardToVideo() {
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
   const [renderStillWarningScene, setRenderStillWarningScene] = useState<number | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const supervisorAccess = isSupervisorSession();
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
 
@@ -704,13 +710,15 @@ export default function WorkflowStoryboardToVideo() {
         Step 1 Generate Script → Step 2 Generate Storyboard → Step 3 Generate Scene Assets → Step 4 Per-scene Character + Scene Upload → Step 5 Per-scene Voice + Video → Step 6 Optional Global Voice → Step 7 Generate Music → Step 8 Final Render
       </p>
       <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={() => setDebugMode((prev) => !prev)}
-          style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: debugMode ? "rgba(236,72,153,0.18)" : "rgba(255,255,255,0.08)", color: "white" }}
-        >
-          {debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
-        </button>
+        {supervisorAccess && (
+          <button
+            type="button"
+            onClick={() => setDebugMode((prev) => !prev)}
+            style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)", background: debugMode ? "rgba(236,72,153,0.18)" : "rgba(255,255,255,0.08)", color: "white" }}
+          >
+            {debugMode ? "Debug Mode: ON" : "Debug Mode: OFF"}
+          </button>
+        )}
         {envStatus ? (
           <div style={{ fontSize: 12, opacity: 0.82 }}>
             env:

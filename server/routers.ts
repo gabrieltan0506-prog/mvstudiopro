@@ -96,7 +96,8 @@ import {
 } from "@shared/growth";
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
-import { desc, eq } from "drizzle-orm";
+import { stripeUsageLogs } from "../drizzle/schema-stripe";
+import { and, desc, eq, gte } from "drizzle-orm";
 
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
@@ -1478,47 +1479,6 @@ async function generateKlingBeijingVideo(params: {
   throw new Error("kling_beijing video generation timeout");
 }
 
-async function generateKlingFallbackImage(params: {
-  prompt: string;
-  referenceImageUrl?: string;
-}): Promise<string> {
-  const { configureKlingClient, parseKeysFromEnv, createImageTask, getImageTask, buildImageRequest } = await import("./kling");
-  const keys = parseKeysFromEnv();
-  if (keys.length === 0) {
-    throw new Error("kling_image unavailable: Kling API keys not configured");
-  }
-  configureKlingClient(keys, "cn");
-
-  const request = buildImageRequest({
-    prompt: params.prompt,
-    model: "kling-image-o1",
-    resolution: "1k",
-    aspectRatio: "1:1",
-    referenceImageUrl: params.referenceImageUrl,
-    imageFidelity: params.referenceImageUrl ? 0.5 : undefined,
-    count: 1,
-  });
-  const created = await createImageTask(request, "cn");
-  if (!created.task_id) {
-    throw new Error(created.task_status_msg || "kling_image task creation failed");
-  }
-
-  const timeoutMs = 75_000;
-  const pollMs = 5_000;
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    await new Promise(resolve => setTimeout(resolve, pollMs));
-    const task = await getImageTask(created.task_id, "cn");
-    if (task.task_status === "succeed" && task.task_result?.images?.[0]?.url) {
-      return task.task_result.images[0].url;
-    }
-    if (task.task_status === "failed") {
-      throw new Error(task.task_status_msg || "kling_image generation failed");
-    }
-  }
-
-  throw new Error("kling_image generation timeout");
-}
 
 function resolveImageUrlForVertexFetch(imageUrl: string): string {
   const u = String(imageUrl || "").trim();
@@ -2225,11 +2185,39 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user?.id) {
-          await deductCredits(
-            ctx.user.id,
-            "platformTrendFollowUp",
-            `平台追问分析 (${input.windowDays}天 / Gemini 3.1 Pro)`,
-          );
+          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+          // 试用包用户不支持趋势续分析
+          const isTrial = !isAdminUser && (await resolveWatermark(ctx.user.id, isAdminUser));
+          if (isTrial) {
+            throw new Error("試用包不支持趋势续分析，请升级至正式方案後使用。");
+          }
+
+          const drizzleDb = await import("./db").then(m => m.getDb());
+          let isFreeThisTime = false;
+          if (drizzleDb) {
+            // 正式包每日首次趋势续分析免费，之后每次扣 platformTrendFollowUp（6 cr）
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+            const [todayRecord] = await drizzleDb
+              .select({ id: stripeUsageLogs.id })
+              .from(stripeUsageLogs)
+              .where(
+                and(
+                  eq(stripeUsageLogs.userId, ctx.user.id),
+                  eq(stripeUsageLogs.action, "platformTrendFollowUp"),
+                  gte(stripeUsageLogs.createdAt, todayStart),
+                )
+              )
+              .limit(1);
+            isFreeThisTime = !todayRecord;
+          }
+          if (!isFreeThisTime) {
+            await deductCredits(
+              ctx.user.id,
+              "platformTrendFollowUp",
+              `平台趋势续分析 (${input.windowDays}天 / Gemini 3.1 Pro)`,
+            );
+          }
         }
         try {
           const response = await invokeLLM({
@@ -3462,7 +3450,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         gender: z.enum(["female", "male", "neutral"]),
         description: z.string().max(500).optional(),
         referenceImageUrl: z.string().url().optional(),
-        quality: z.enum(["free", "2k", "4k", "kling_1k", "kling_2k"]).default("free"),
+        quality: z.enum(["free", "2k", "4k"]).default("free"),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -3507,7 +3495,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             execute: async (provider) => {
               if (provider === "nano-banana-flash") {
                 if (!isGeminiImageAvailable()) {
-                  throw new Error("Nano Banana Flash unavailable: GEMINI_API_KEY is not configured");
+                  throw new Error("Nano Banana Flash unavailable: Vertex AI credentials not configured");
                 }
                 const result = await generateGeminiImage({
                   prompt: `high resolution 1K, ${prompt}`,
@@ -3519,7 +3507,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 
               if (provider === "nano-banana-pro") {
                 if (!isGeminiImageAvailable()) {
-                  throw new Error("Nano Banana Pro unavailable: GEMINI_API_KEY is not configured");
+                  throw new Error("Nano Banana Pro unavailable: Vertex AI credentials not configured");
                 }
                 const result = await generateGeminiImage({
                   prompt: `high resolution 2K, ${prompt}`,
@@ -3527,14 +3515,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
                   referenceImageUrl: input.referenceImageUrl,
                 });
                 return { data: { imageUrl: result.imageUrl } };
-              }
-
-              if (provider === "kling_image") {
-                const imageUrl = await generateKlingFallbackImage({
-                  prompt,
-                  referenceImageUrl: input.referenceImageUrl,
-                });
-                return { data: { imageUrl } };
               }
 
               throw new Error(`Unsupported image provider: ${provider}`);
@@ -3593,88 +3573,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
           };
         }
 
-        // ─── Kling tier: use Kling Image Generation API ─────
-        if (input.quality === "kling_1k" || input.quality === "kling_2k") {
-          const resolution = input.quality === "kling_2k" ? "2k" : "1k";
-          const creditKey = input.quality === "kling_2k" ? "klingImageO1_2K" as const : "klingImageO1_1K" as const;
-
-          if (!isAdminUser) {
-            const deduction = await deductCredits(userId, creditKey);
-            if (!deduction.success) {
-              return { success: false, error: "Credits 不足，请充值后再试", quality: input.quality };
-            }
-          }
-
-          try {
-            // Ensure Kling client is initialized with API keys from env
-            const { configureKlingClient, parseKeysFromEnv, getKlingClient } = await import("./kling/client");
-            const klingKeys = parseKeysFromEnv();
-            if (klingKeys.length > 0) {
-              configureKlingClient(klingKeys, "cn");
-            } else {
-              return { success: false, error: "Kling API 未配置，请联系管理员设置 KLING_CN_VIDEO_ACCESS_KEY 和 KLING_CN_VIDEO_SECRET_KEY", quality: input.quality };
-            }
-            const { createImageTask, getImageTask, buildImageRequest } = await import("./kling/image-generation");
-            const request = buildImageRequest({
-              prompt,
-              model: "kling-image-o1",
-              resolution: resolution as "1k" | "2k",
-              aspectRatio: "1:1",
-              referenceImageUrl: input.referenceImageUrl,
-              imageFidelity: input.referenceImageUrl ? 0.5 : undefined,
-              count: 1,
-            });
-            const taskResult = await createImageTask(request, "cn");
-
-            if (!taskResult.task_id) {
-              if (!isAdminUser) {
-                try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
-              }
-              return { success: false, error: taskResult.task_status_msg || "Kling 图片生成失败", quality: input.quality };
-            }
-
-            // Poll for result (max 120 seconds)
-            const taskId = taskResult.task_id;
-            const startTime = Date.now();
-            const maxWait = 120000;
-            let imageResult: any = null;
-            while (Date.now() - startTime < maxWait) {
-              await new Promise(resolve => setTimeout(resolve, 5000));
-              imageResult = await getImageTask(taskId, "cn");
-              if (imageResult.task_status === "succeed" || imageResult.task_status === "failed") break;
-            }
-            if (imageResult?.task_status === "succeed" && imageResult?.task_result?.images?.[0]?.url) {
-              await incrementUsageCount(userId, "avatar");
-              // Auto-record Kling creation
-              try {
-                const plan = await getUserPlan(userId);
-                await recordCreation({
-                  userId,
-                  type: "idol_image",
-                  title: input.description?.slice(0, 100) || `Kling ${resolution} 偶像`,
-                  outputUrl: imageResult.task_result.images[0].url,
-                  thumbnailUrl: imageResult.task_result.images[0].url,
-                  quality: `kling-o1-${resolution}`,
-                  creditsUsed: CREDIT_COSTS[creditKey],
-                  plan,
-                });
-              } catch (e) { console.error("[VirtualIdol] recordCreation failed:", e); }
-              return { success: true, imageUrl: imageResult.task_result.images[0].url, quality: input.quality };
-            } else {
-              if (!isAdminUser) {
-                try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("Refund failed:", e); }
-              }
-              return { success: false, error: imageResult?.task_status_msg || "Kling 图片生成超时", quality: input.quality };
-            }
-          } catch (err: any) {
-            if (!isAdminUser) {
-              try { await addCredits(userId, CREDIT_COSTS[creditKey], "bonus"); } catch (e) { console.error("[VirtualIdol] Refund failed:", e); }
-            }
-            console.error("[VirtualIdol] Kling image generation failed:", err);
-            return { success: false, error: `Kling 图片生成失败: ${err.message || '请稍后再试'}`, quality: input.quality };
-          }
-        }
-
         // ─── 2K / 4K tier: use Gemini API (Nano Banana Pro) ─────
         const creditKey = input.quality === "4k" ? "nbpImage4K" as const : "nbpImage2K" as const;
 
@@ -3703,7 +3601,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
               }
               if (provider === "nano-banana-flash") {
                 if (!isGeminiImageAvailable()) {
-                  throw new Error("Nano Banana Flash unavailable: GEMINI_API_KEY is not configured");
+                  throw new Error("Nano Banana Flash unavailable: Vertex AI credentials not configured");
                 }
                 const result = await generateGeminiImage({
                   prompt: `high resolution 1K, ${prompt}`,
@@ -3711,13 +3609,6 @@ ${JSON.stringify(platformEvidence, null, 2)}
                   referenceImageUrl: input.referenceImageUrl,
                 });
                 return { data: { imageUrl: result.imageUrl } };
-              }
-              if (provider === "kling_image") {
-                const imageUrl = await generateKlingFallbackImage({
-                  prompt,
-                  referenceImageUrl: input.referenceImageUrl,
-                });
-                return { data: { imageUrl } };
               }
               throw new Error(`Unsupported image provider: ${provider}`);
             },
@@ -4177,6 +4068,11 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         const isAdminUser = ctx.user.role === "admin";
         const userTier = await resolveUserTier(ctx.user.id, isAdminUser);
         const shouldWatermark = await resolveWatermark(ctx.user.id, isAdminUser);
+
+        // 试用包（trial-only / free）不支持任何格式的导出
+        if (!isAdminUser && shouldWatermark) {
+          throw new Error("試用包不支持 PDF/Word 導出功能，請升級至正式方案後使用。");
+        }
 
         if (input.format === "word") {
           const result = await exportToWord(input.storyboard, { addWatermark: shouldWatermark });

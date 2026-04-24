@@ -7,7 +7,6 @@ export type GenerationProvider =
   | "veo_3_1"
   | "fal_kling_video"
   | "cometapi"
-  | "kling_image"
   | "basic_model"
   | "gemini_3_flash"
   | "gemini_3_pro"

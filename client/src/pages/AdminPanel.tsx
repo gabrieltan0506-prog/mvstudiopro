@@ -25,15 +25,20 @@ export default function AdminPanel() {
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
+  const myCodesList = trpc.betaCode.listMine.useQuery(undefined, {
+    enabled: isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"),
+  });
+
   const generateCodesMutation = trpc.betaCode.generate.useMutation({
     onSuccess: (data) => {
       setGeneratedCodes(data.codes);
       toast.success(`成功生成 ${data.count} 个内测码`);
+      // 立即刷新历史列表
+      myCodesList.refetch();
+      // 稍后再刷新一次，确保 DB 写入完成
+      setTimeout(() => myCodesList.refetch(), 1200);
     },
     onError: (err) => toast.error(err.message || "生成失败"),
-  });
-  const myCodesList = trpc.betaCode.listMine.useQuery(undefined, {
-    enabled: isAuthenticated && user?.role === "admin",
   });
 
   function copyCode(code: string) {
@@ -44,8 +49,10 @@ export default function AdminPanel() {
   }
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
-  // Redirect non-admin
-  if (isAuthenticated && user?.role !== "admin") {
+  const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
+
+  // Redirect non-admin / non-supervisor
+  if (isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
     return (
       <div className="min-h-screen bg-background text-foreground">
         <Navbar />
@@ -162,15 +169,15 @@ export default function AdminPanel() {
           </Card>
         ) : null}
 
-        <Tabs defaultValue="payments" className="space-y-6">
+        <Tabs defaultValue={isSupervisorOnly ? "invite-codes" : "payments"} className="space-y-6">
           <TabsList className="bg-card/50 border border-border/50 flex flex-wrap gap-1">
-            <TabsTrigger value="payments">付款审核</TabsTrigger>
-            <TabsTrigger value="finance">财务监控</TabsTrigger>
-            <TabsTrigger value="teams">团队统计</TabsTrigger>
-            <TabsTrigger value="beta">Beta 审核</TabsTrigger>
-            <TabsTrigger value="verifications">身份认证</TabsTrigger>
+            {!isSupervisorOnly && <TabsTrigger value="payments">付款审核</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="finance">财务监控</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="teams">团队统计</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="beta">Beta 审核</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="verifications">身份认证</TabsTrigger>}
             <TabsTrigger value="invite-codes">邀请码</TabsTrigger>
-            <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>
+            {!isSupervisorOnly && <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>}
           </TabsList>
 
           {/* Payments Tab */}
@@ -453,16 +460,29 @@ export default function AdminPanel() {
 
                 {/* 刚生成的码 */}
                 {generatedCodes.length > 0 && (
-                  <div className="mt-2 space-y-2">
-                    <p className="text-xs text-muted-foreground">刚生成的码（点击复制）：</p>
+                  <div className="mt-4 rounded-xl border border-green-500/30 bg-green-500/5 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-green-400">
+                        ✓ 已生成 {generatedCodes.length} 个邀请码（点击单个复制）
+                      </p>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(generatedCodes.join("\n"));
+                          toast.success("已复制全部邀请码");
+                        }}
+                        className="text-xs text-muted-foreground hover:text-foreground border border-border rounded px-2 py-1 transition-colors"
+                      >
+                        复制全部
+                      </button>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {generatedCodes.map((code) => (
                         <button
                           key={code}
                           onClick={() => copyCode(code)}
-                          className="flex items-center justify-between bg-background border border-border rounded-lg px-4 py-2 font-mono text-sm text-foreground hover:border-primary/60 transition-colors"
+                          className="flex items-center justify-between bg-background border border-border rounded-lg px-4 py-2.5 font-mono text-base font-bold text-foreground hover:border-primary/60 transition-colors"
                         >
-                          <span>{code}</span>
+                          <span className="tracking-widest">{code}</span>
                           {copiedCode === code ? (
                             <CheckCircle className="h-4 w-4 text-green-400 ml-2 shrink-0" />
                           ) : (

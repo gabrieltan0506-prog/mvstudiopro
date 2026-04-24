@@ -177,11 +177,16 @@ export const PLANS: Record<PlanType, PlanConfig> = {
  */
 export const CREDIT_COSTS = {
   // ─── 创作者成长营（内测三大产品，1cr ≈ ¥0.70 人民币）────────
-  growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
-  growthCampRemix: 50,        // 成长营 · 二次创作（REMIX）：50 cr ≈ ¥35（毛利率 98.2%）
-  platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
-  platformTrendFollowUp: 5,   // 平台趋势「追问 / 续问」每次 5 cr
-  workflowNodes: 20,          // 节点工作流整体（已废弃，改为逐步计费）
+  growthCampGrowth: 40,         // GROWTH 模式主分析：40 cr
+  growthCampGrowthMusic: 10,    // 成长营·配乐生成（GROWTH）：10 cr
+  growthCampRemix: 60,          // 二创分析（REMIX）：60 cr
+  growthCampRemixMusic: 8,      // 二创·配乐生成（REMIX）：8 cr
+  platformTrend: 50,            // 平台数据分析（主看板）：50 cr
+  platformTrendFollowUp: 6,     // 平台趋势·趋势数据续分析：正式包每日首次免费，之后 6 cr
+  platformRefImage: 12,         // 平台趋势·生成参考图：12 cr/张
+  platformRefImageUpscale2x: 36, // 参考图高清放大 2×：36 cr
+  platformRefImageUpscale4x: 48, // 参考图高清放大 4×：48 cr
+  workflowNodes: 20,            // 节点工作流整体（已废弃，改为逐步计费）
 
   // ─── 节点工作流（逐步计费，脚本每日首通免费）────────
   workflowScript: 0,           // 脚本生成：每日第 1 次免费
@@ -267,11 +272,16 @@ export interface CreditFeatureBreakdownRow {
  */
 export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   // ─── 创作者成长营 ─────────────────────────────────────────
-  { product: "创作者成长营", subFeature: "GROWTH 模式（主流程分析）", credits: CREDIT_COSTS.growthCampGrowth, note: "视频分析 + 策划报告等" },
-  { product: "创作者成长营", subFeature: "二次创作（REMIX）", credits: CREDIT_COSTS.growthCampRemix, note: "图/文/视频参考 + 二次创作策划" },
+  { product: "创作者成长营", subFeature: "GROWTH 主分析", credits: CREDIT_COSTS.growthCampGrowth, note: "视频分析 + 策划报告" },
+  { product: "创作者成长营", subFeature: "GROWTH 配乐生成", credits: CREDIT_COSTS.growthCampGrowthMusic, note: "额外扣费" },
+  { product: "创作者成长营", subFeature: "二创分析（REMIX）", credits: CREDIT_COSTS.growthCampRemix, note: "图/文/视频参考 + 二创策划" },
+  { product: "创作者成长营", subFeature: "REMIX 配乐生成", credits: CREDIT_COSTS.growthCampRemixMusic, note: "额外扣费" },
   // ─── 平台趋势分析 ─────────────────────────────────────────
-  { product: "平台趋势分析", subFeature: "初次看板 / 快照加载（主分析）", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
-  { product: "平台趋势分析", subFeature: "追问 / 续问（顾问式问答）", credits: CREDIT_COSTS.platformTrendFollowUp, note: "每次追问独立扣费" },
+  { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
+  { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 6 cr；试用包不支持" },
+  { product: "平台数据分析", subFeature: "生成参考图（每张）", credits: CREDIT_COSTS.platformRefImage },
+  { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
+  { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },
   // ─── 节点工作流（逐步） ───────────────────────────────────
   { product: "节点工作流", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },
   { product: "节点工作流", subFeature: "脚本生成（当日第2次起）", credits: CREDIT_COSTS.workflowScriptExtra, note: "同用户按自然日计" },
