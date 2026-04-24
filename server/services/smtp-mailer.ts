@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 type SmtpConfig = {
   host: string;
@@ -108,7 +109,45 @@ function createTransport(config: SmtpConfig) {
   });
 }
 
+async function sendViaResendHttp(params: {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  attachments?: Array<{ filename: string; content?: string | Buffer; contentType?: string }>;
+}): Promise<void> {
+  const apiKey = String(process.env.RESEND_API_KEY || "");
+  const resend = new Resend(apiKey);
+  const { error } = await resend.emails.send({
+    from: params.from,
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+    attachments: params.attachments?.map(a => ({
+      filename: a.filename,
+      content: a.content instanceof Buffer ? a.content : (a.content ? Buffer.from(a.content) : undefined),
+    })),
+  });
+  if (error) throw new Error(`Resend API error: ${error.message}`);
+}
+
 export async function sendOtpMail(email: string, otp: string): Promise<void> {
+  // 優先使用 Resend HTTP API（不受 SMTP 端口封鎖影響）
+  if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
+    const from = String(process.env.RESEND_FROM);
+    console.info(`[mail.otp] resend-http to=${email}`);
+    await sendViaResendHttp({
+      from,
+      to: email,
+      subject: "MVStudioPro 登入驗證碼",
+      text: `您的登入驗證碼是：${otp}。驗證碼 10 分鐘內有效。`,
+      html: `<p>您的登入驗證碼是：<b style="font-size:20px">${otp}</b></p><p>驗證碼 10 分鐘內有效，請勿泄露給他人。</p>`,
+    });
+    return;
+  }
+
   const config = getConfig();
   if (config.host === "console") {
     console.log(`[Auth API] OTP for ${email}: ${otp}`);
@@ -116,13 +155,12 @@ export async function sendOtpMail(email: string, otp: string): Promise<void> {
   }
 
   const transporter = createTransport(config);
-
   await transporter.sendMail({
     from: config.from,
     to: email,
-    subject: "MVStudioPro 登录验证码",
-    text: `您的登录验证码是：${otp}。验证码 10 分钟内有效。`,
-    html: `<p>您的登录验证码是：<b style=\"font-size:20px\">${otp}</b></p><p>验证码 10 分钟内有效，请勿泄露给他人。</p>`,
+    subject: "MVStudioPro 登入驗證碼",
+    text: `您的登入驗證碼是：${otp}。驗證碼 10 分鐘內有效。`,
+    html: `<p>您的登入驗證碼是：<b style="font-size:20px">${otp}</b></p><p>驗證碼 10 分鐘內有效，請勿泄露給他人。</p>`,
   });
 }
 
@@ -139,6 +177,30 @@ export async function sendMailWithAttachments(params: {
     contentType?: string;
   }>;
 }): Promise<void> {
+  const attachmentCount = params.attachments?.length || 0;
+
+  // 優先使用 Resend HTTP API
+  if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
+    const from = String(process.env.RESEND_FROM);
+    console.info(`[mail.send] resend-http to=${params.to} attachments=${attachmentCount} subject=${params.subject}`);
+    try {
+      await sendViaResendHttp({
+        from,
+        to: params.to,
+        subject: params.subject,
+        text: params.text,
+        html: params.html,
+        attachments: params.attachments,
+      });
+      console.info(`[mail.send] success resend-http to=${params.to}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[mail.send] failed resend-http to=${params.to}: ${message}`);
+      throw error;
+    }
+    return;
+  }
+
   const config = getConfig({ requireResend: params.requireResend });
   if (config.host === "console") {
     console.log(`[Mail] to=${params.to} subject=${params.subject}`);
@@ -146,8 +208,6 @@ export async function sendMailWithAttachments(params: {
   }
 
   const transporter = createTransport(config);
-  const attachmentCount = params.attachments?.length || 0;
-
   console.info(
     `[mail.send] provider=${config.provider} host=${config.host} to=${params.to} attachments=${attachmentCount} subject=${params.subject}`,
   );
