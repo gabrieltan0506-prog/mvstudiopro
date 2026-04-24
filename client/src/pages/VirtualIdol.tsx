@@ -209,8 +209,8 @@ export default function VirtualIdol() {
     setGeneratedImage(null);
     setShow3DPanel(false);
     setImage3D(null);
-    const qualityMap: Record<string, "free" | "2k" | "4k" | "kling_1k" | "kling_2k"> = {
-      nano_flash: "free", nbp_2k: "2k", nbp_4k: "4k", kling_1k: "kling_1k", kling_2k: "kling_2k",
+    const qualityMap: Record<string, "free" | "2k" | "4k"> = {
+      nano_flash: "free", forge: "free", nbp_2k: "2k", nbp_4k: "4k",
     };
     const quality = qualityMap[imageEngine] || "free";
     try {

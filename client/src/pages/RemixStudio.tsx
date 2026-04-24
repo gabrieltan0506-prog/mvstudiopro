@@ -366,74 +366,37 @@ function WorkflowCanvas(props: {
 
 function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChange: (state: PanelState) => void }) {
   const [prompt, setPrompt] = useState("电影级博物馆展陈，柔和博物馆灯光，超高清，构图干净，适合做视频参考图");
-  const [size, setSize] = useState("1024x576");
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">("16:9");
   const [busy, setBusy] = useState(false);
-  const [taskId, setTaskId] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [debug, setDebug] = useState<any>(null);
-  const stopRef = useRef(false);
-
-  useEffect(() => {
-    stopRef.current = false;
-    return () => {
-      stopRef.current = true;
-    };
-  }, []);
 
   useEffect(() => {
     props.onStateChange({
       stage: busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle",
-      taskId,
+      taskId: "",
       assetUrl: imageUrl,
       error: debug?.ok === false ? String(debug?.error || "") : "",
     });
-  }, [busy, taskId, imageUrl, debug, props]);
+  }, [busy, imageUrl, debug, props]);
 
   async function start() {
     if (busy) return;
     setBusy(true);
-    setTaskId("");
     setImageUrl("");
-    setDebug({ ok: true, message: "clicked: kling-image create" });
+    setDebug({ ok: true, message: "vertex image: starting" });
 
     try {
-      const created = await fetchJsonish("/api/kling-image", {
+      const resp = await fetch("/api/google?op=nanoImage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, image_size: size, n: 1 }),
+        body: JSON.stringify({ prompt, tier: "pro", imageSize: "2K", aspectRatio }),
       });
-      setDebug(created);
-
-      const tid =
-        (created as any)?.json?.taskId ||
-        (created as any)?.json?.task_id ||
-        (created as any)?.json?.raw?.data?.task_id ||
-        (created as any)?.json?.data?.task_id ||
-        null;
-      if (!tid) throw new Error("missing task_id");
-      setTaskId(String(tid));
-
-      for (let i = 0; i < 120 && !stopRef.current; i++) {
-        const polled = await fetchJsonish(`/api/kling-image?taskId=${encodeURIComponent(String(tid))}`);
-        setDebug(polled);
-        const status =
-          (polled as any)?.json?.task_status ||
-          (polled as any)?.json?.raw?.data?.task_status ||
-          "";
-        const nextUrl =
-          (polled as any)?.json?.imageUrl ||
-          (polled as any)?.json?.raw?.data?.task_result?.images?.[0]?.url ||
-          null;
-        if (nextUrl) {
-          setImageUrl(String(nextUrl));
-          return;
-        }
-        if (String(status).toLowerCase() === "failed") {
-          throw new Error("kling image failed");
-        }
-        await sleep(2000);
-      }
-      throw new Error("kling image timeout");
+      const data = await resp.json();
+      setDebug(data);
+      const url = data?.imageUrl || data?.imageUrls?.[0] || "";
+      if (!url) throw new Error(data?.error || "no image returned");
+      setImageUrl(String(url));
     } catch (error: any) {
       setDebug({ ok: false, error: error?.message || String(error) });
     } finally {
@@ -449,7 +412,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
           <div style={{ ...MUTED_TEXT, marginTop: 6 }}>先产出一张质量足够的参考图，再把它送入图生视频节点。</div>
         </div>
         <div style={HEADER_BADGE}>
-          Kling Image
+          Vertex AI Image
         </div>
       </div>
 
@@ -459,25 +422,24 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} style={{ ...INPUT_STYLE, marginTop: 0 }} />
         </div>
         <div style={SUB_PANEL}>
-          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>输出设置</div>
-          <select value={size} onChange={(e) => setSize(e.target.value)} style={{ ...INPUT_STYLE, marginTop: 0 }}>
-            <option value="1024x576">1024x576（横屏）</option>
-            <option value="576x1024">576x1024（竖屏）</option>
-            <option value="1024x1024">1024x1024（方形）</option>
+          <div style={{ fontSize: 12, color: "rgba(148,163,184,0.9)", fontWeight: 800, marginBottom: 8 }}>画面比例</div>
+          <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as "16:9" | "9:16" | "1:1")} style={{ ...INPUT_STYLE, marginTop: 0 }}>
+            <option value="16:9">16:9（横屏）</option>
+            <option value="9:16">9:16（竖屏）</option>
+            <option value="1:1">1:1（方形）</option>
           </select>
           <button onClick={start} disabled={busy} style={{ ...PRIMARY_BUTTON, opacity: busy ? 0.7 : 1, marginTop: 12, width: "100%" }}>
             {busy ? "生成中…" : "开始生成"}
           </button>
-          {taskId ? <div style={{ marginTop: 10, fontSize: 12, color: "rgba(226,232,240,0.72)" }}>任务：<code style={CODE_STYLE}>{taskId}</code></div> : null}
         </div>
       </div>
 
-      <ResultBanner stage={busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle"} error={debug?.error} okText="参考图已生成，可直接设为图生视频输入。" runningText="正在轮询可灵生图任务，请稍候。" />
+      <ResultBanner stage={busy ? "running" : imageUrl ? "done" : debug?.ok === false ? "error" : "idle"} error={debug?.error} okText="参考图已生成，可直接设为图生视频输入。" runningText="正在通过 Vertex AI 生成图片，请稍候。" />
 
       {imageUrl ? (
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           <img src={imageUrl} alt="generated" style={{ width: "100%", borderRadius: 18, background: "#0f172a" }} />
-          <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="klingImageV2_1K" />
+          <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="nbpImage2K" />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href={imageUrl} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, textDecoration: "none" }}>
               打开图片

@@ -155,12 +155,30 @@ export const sunoRouter = router({
       title: z.string().min(1).max(80),
       mood: z.string().max(200).optional(),
       duration: z.number().int().min(30).max(600).optional(),
+      // 来源：区分成长营/二创/普通
+      source: z.enum(["normal", "growth_camp_growth", "growth_camp_remix"]).default("normal"),
       // 回调 URL（可选，前端可以轮询）
       callbackUrl: z.string().url().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const isAdmin = ctx.user.role === "admin";
+
+      // 成长营/二创配乐：独立费率，先扣后生成，不走下方 billingPolicy
+      let growthMusicBilled = false;
+      if (input.source === "growth_camp_growth" || input.source === "growth_camp_remix") {
+        const creditKey = input.source === "growth_camp_growth" ? "growthCampGrowthMusic" : "growthCampRemixMusic";
+        const cost = CREDIT_COSTS[creditKey];
+        if (!isAdmin) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < cost) {
+            throw new Error(`Credits 不足，配乐生成需要 ${cost} Credits`);
+          }
+          await deductCredits(userId, creditKey,
+            input.source === "growth_camp_growth" ? "成长营·配乐生成" : "二创·配乐生成");
+        }
+        growthMusicBilled = true;
+      }
 
       const plan = isAdmin ? "enterprise" : await getUserPlan(userId);
       let billingPolicy: AudioBillingPolicy = getPolicyFromPlan(plan);
@@ -172,12 +190,13 @@ export const sunoRouter = router({
       }
 
       const quality: ProducerQuality = billingPolicy === "package" ? "high" : "normal";
-      const creditCost =
-        billingPolicy === "free"
-          ? 0
-          : billingPolicy === "single_purchase"
-          ? CREDIT_COSTS.audioSinglePurchase
-          : CREDIT_COSTS.audioPackageGeneration;
+      const creditCost = growthMusicBilled
+        ? 0
+        : billingPolicy === "free"
+        ? 0
+        : billingPolicy === "single_purchase"
+        ? CREDIT_COSTS.audioSinglePurchase
+        : CREDIT_COSTS.audioPackageGeneration;
 
       if (!isAdmin && creditCost > 0) {
         const creditsInfo = await getCredits(userId);

@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, Baby, Grid, Paintbrush, Smile, Box, Crop, Laugh, Sparkles, Info, Loader2 } from 'lucide-react';
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 
 // ─── 情绪分类 ───────────────────────────────────
 const EMOTIONS = [
@@ -50,6 +51,7 @@ export default function WechatSticker() {
   const [characterDesc, setCharacterDesc] = useState("");
   const [generating, setGenerating] = useState(false);
   const [results, setResults] = useState<Array<{ imageUrl: string; emotion: string; phrase: string }>>([]);
+  const [upscaledUrls, setUpscaledUrls] = useState<Record<number, string>>({});
 
   const generateMutation = trpc.mvAnalysis.generate.useMutation(); // Assuming 'geminiImage' is the correct tRPC route
 
@@ -245,12 +247,24 @@ export default function WechatSticker() {
               <h2 className="text-lg font-semibold mb-4">已生成 · {results.length} 个表情</h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 {results.map((r, i) => (
-                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-white/10">
-                    <img src={r.imageUrl} alt={`Generated sticker ${i + 1}`} className="w-full h-full object-contain" />
-                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
-                      <p className="text-sm font-bold text-white truncate">{r.emotion}</p>
-                      {r.phrase && <p className="text-xs text-white/80 truncate">{r.phrase}</p>}
+                  <div key={i} className="flex flex-col gap-1">
+                    <div className="relative aspect-square rounded-lg overflow-hidden border border-white/10">
+                      <img
+                        src={upscaledUrls[i] ?? r.imageUrl}
+                        alt={`Generated sticker ${i + 1}`}
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">
+                        <p className="text-sm font-bold text-white truncate">{r.emotion}</p>
+                        {r.phrase && <p className="text-xs text-white/80 truncate">{r.phrase}</p>}
+                      </div>
                     </div>
+                    <ImageUpscaleBar
+                      imageUrl={upscaledUrls[i] ?? r.imageUrl}
+                      baseCreditKey="forgeImage"
+                      compact
+                      onUpscaled={(newUrl) => setUpscaledUrls((prev) => ({ ...prev, [i]: newUrl }))}
+                    />
                   </div>
                 ))}
               </div>

@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import {
   ChevronRight,
   Sparkles,
@@ -1172,11 +1173,29 @@ export default function StoryboardPage() {
                     </div>
                     
                     {scene.previewImageUrl && (
-                      <div className="mb-4 rounded-xl overflow-hidden bg-muted/30">
-                        <img
-                          src={scene.previewImageUrl}
-                          alt={`Scene ${scene.sceneNumber} preview`}
-                          className="w-full aspect-video object-contain"
+                      <div className="mb-4">
+                        <div className="rounded-xl overflow-hidden bg-muted/30">
+                          <img
+                            src={scene.previewImageUrl}
+                            alt={`Scene ${scene.sceneNumber} preview`}
+                            className="w-full aspect-video object-contain"
+                          />
+                        </div>
+                        <ImageUpscaleBar
+                          imageUrl={scene.previewImageUrl}
+                          baseCreditKey="workflowSceneImage"
+                          compact
+                          onUpscaled={(newUrl) => {
+                            if (!storyboard) return;
+                            setStoryboard({
+                              ...storyboard,
+                              scenes: storyboard.scenes.map((s) =>
+                                s.sceneNumber === scene.sceneNumber
+                                  ? { ...s, previewImageUrl: newUrl }
+                                  : s
+                              ),
+                            });
+                          }}
                         />
                       </div>
                     )}

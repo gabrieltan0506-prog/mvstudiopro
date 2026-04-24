@@ -1,19 +1,16 @@
 /**
- * NBP 引擎选择器组件
- * 
+ * Google Vertex AI 引擎选择器组件
+ *
  * 用于分镜页面和虚拟偶像页面，让用户选择图像生成引擎：
- * - Forge（Forge AI，含水印）— 基础引擎
- * - NBP 2K（5 Credits/张）
- * - NBP 4K（9 Credits/张）
- * - Kling 1K（8 Credits/张）
- * - Kling 2K（10 Credits/张）
- * 
+ * - Forge（基础引擎，含水印）— 3 Credits/张
+ * - Google 2K（Vertex Flash，5 Credits/张）
+ * - Google 4K（Vertex Pro，9 Credits/张）
+ *
  * 管理员：所有引擎不消耗 Credits
- * 所有付费引擎必须标明 Credits 数量
  */
-import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle, Zap } from "lucide-react";
+import { Sparkles, MonitorPlay, Tv2, Lock, Star, CheckCircle } from "lucide-react";
 
-export type EngineOption = "forge" | "nano_flash" | "nbp_2k" | "nbp_4k" | "kling_1k" | "kling_2k";
+export type EngineOption = "forge" | "nano_flash" | "nbp_2k" | "nbp_4k";
 
 interface EngineInfo {
   id: EngineOption;
@@ -46,7 +43,6 @@ export function NbpEngineSelector({
   compact = false,
   isAdmin = false,
 }: NbpEngineSelectorProps) {
-  // 管理员拥有所有引擎的完整权限
   const effectivePlan = isAdmin ? "enterprise" : plan;
   const effectiveCredits = isAdmin ? 99999 : creditsAvailable;
   const engines: EngineInfo[] = [
@@ -61,13 +57,13 @@ export function NbpEngineSelector({
     },
     {
       id: "nbp_2k",
-      label: "NBP 2K",
+      label: "Google 2K",
       desc: isAdmin
-        ? "高清 2K，无浮水印"
-        : effectivePlan === "free" ? "需升级" : effectivePlan === "pro" ? "含浮水印" : "无浮水印",
+        ? "Vertex AI Flash，高清 2K，无浮水印"
+        : effectivePlan === "free" ? "需升级" : "Vertex AI · 无浮水印",
       cost: "5 Cr/张",
       icon: MonitorPlay,
-      color: "#64D2FF",
+      color: "#4285F4",
       available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 5),
       reason:
         !isAdmin && effectivePlan === "free"
@@ -78,52 +74,18 @@ export function NbpEngineSelector({
     },
     {
       id: "nbp_4k",
-      label: "NBP 4K",
+      label: "Google 4K",
       desc: isAdmin
-        ? "超高清 4K，无浮水印"
+        ? "Vertex AI Pro，超高清 4K，无浮水印"
         : effectivePlan === "enterprise" ? "无浮水印" : "需升级",
       cost: "9 Cr/张",
       icon: Tv2,
-      color: "#FFD60A",
+      color: "#34A853",
       available: isAdmin || (effectivePlan === "enterprise" && (effectiveCredits ?? 0) >= 9),
       reason:
         !isAdmin && effectivePlan !== "enterprise"
           ? "升级到 Enterprise 方案即可使用"
           : !isAdmin && (effectiveCredits ?? 0) < 9
-          ? "Credits 不足，请充值"
-          : undefined,
-    },
-    {
-      id: "kling_1k",
-      label: "Kling 1K",
-      desc: isAdmin
-        ? "Kling AI O1，1K 解析度"
-        : effectivePlan === "free" ? "需升级" : "Kling AI O1 模型",
-      cost: "8 Cr/张",
-      icon: Zap,
-      color: "#F97316",
-      available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 8),
-      reason:
-        !isAdmin && effectivePlan === "free"
-          ? "升级到 Pro 方案即可使用"
-          : !isAdmin && (effectiveCredits ?? 0) < 8
-          ? "Credits 不足，请充值"
-          : undefined,
-    },
-    {
-      id: "kling_2k",
-      label: "Kling 2K",
-      desc: isAdmin
-        ? "Kling AI O1，2K 高清"
-        : effectivePlan === "free" ? "需升级" : "Kling AI O1 模型，2K 解析度",
-      cost: "10 Cr/张",
-      icon: Zap,
-      color: "#EF4444",
-      available: isAdmin || (effectivePlan !== "free" && (effectiveCredits ?? 0) >= 10),
-      reason:
-        !isAdmin && effectivePlan === "free"
-          ? "升级到 Pro 方案即可使用"
-          : !isAdmin && (effectiveCredits ?? 0) < 10
           ? "Credits 不足，请充值"
           : undefined,
     },
@@ -161,7 +123,6 @@ export function NbpEngineSelector({
             );
           })}
         </div>
-        {/* Credits 余额（管理员不显示） */}
         {!isAdmin && (
           <div className="flex items-center gap-1">
             <Star size={14} className="text-yellow-400" />

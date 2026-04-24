@@ -49,8 +49,10 @@ export default function AdminPanel() {
   }
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
-  // Redirect non-admin
-  if (isAuthenticated && user?.role !== "admin") {
+  const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
+
+  // Redirect non-admin / non-supervisor
+  if (isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
     return (
       <div className="min-h-screen bg-background text-foreground">
         <Navbar />
@@ -167,15 +169,15 @@ export default function AdminPanel() {
           </Card>
         ) : null}
 
-        <Tabs defaultValue="payments" className="space-y-6">
+        <Tabs defaultValue={isSupervisorOnly ? "invite-codes" : "payments"} className="space-y-6">
           <TabsList className="bg-card/50 border border-border/50 flex flex-wrap gap-1">
-            <TabsTrigger value="payments">付款审核</TabsTrigger>
-            <TabsTrigger value="finance">财务监控</TabsTrigger>
-            <TabsTrigger value="teams">团队统计</TabsTrigger>
-            <TabsTrigger value="beta">Beta 审核</TabsTrigger>
-            <TabsTrigger value="verifications">身份认证</TabsTrigger>
+            {!isSupervisorOnly && <TabsTrigger value="payments">付款审核</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="finance">财务监控</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="teams">团队统计</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="beta">Beta 审核</TabsTrigger>}
+            {!isSupervisorOnly && <TabsTrigger value="verifications">身份认证</TabsTrigger>}
             <TabsTrigger value="invite-codes">邀请码</TabsTrigger>
-            <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>
+            {!isSupervisorOnly && <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>}
           </TabsList>
 
           {/* Payments Tab */}

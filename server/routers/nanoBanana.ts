@@ -11,68 +11,12 @@
 
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { generateGeminiImage } from "../gemini-image";
+import { generateGeminiImage, isGeminiImageAvailable } from "../gemini-image";
 import { storagePut } from "../storage";
 import { deductNbpCredits, checkNbpCapacity, getUserPlan, deductCredits } from "../credits";
 import { PLANS, CREDIT_COSTS } from "../plans";
 
-// ─── NBP 图片生成（通过用户的 Gemini API Key）─────────
-async function generateNbpImage(
-  apiKey: string,
-  prompt: string,
-  resolution: "2k" | "4k",
-  referenceImageUrl?: string
-): Promise<{ imageData: Buffer; mimeType: string } | null> {
-  try {
-    const { GoogleGenAI } = await import("@google/genai");
-    const ai = new GoogleGenAI({ apiKey });
-
-    const contents: any[] = [];
-
-    // 如果有参考图片，先添加参考图
-    if (referenceImageUrl) {
-      try {
-        const resp = await fetch(referenceImageUrl);
-        const imgBuffer = Buffer.from(await resp.arrayBuffer());
-        const base64 = imgBuffer.toString("base64");
-        const mimeType = resp.headers.get("content-type") || "image/png";
-        contents.push({
-          inlineData: { mimeType, data: base64 },
-        });
-      } catch (e) {
-        console.warn("[NBP] Failed to load reference image:", e);
-      }
-    }
-
-    contents.push({ text: prompt });
-
-    const response = await ai.models.generateContent({
-      model: "nano-banana-pro-preview",
-      contents,
-      config: {
-        responseModalities: ["image", "text"],
-      },
-    });
-
-    // 从回应中提取图片
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData?.data) {
-          const imageData = Buffer.from(part.inlineData.data, "base64");
-          return {
-            imageData,
-            mimeType: part.inlineData.mimeType || "image/png",
-          };
-        }
-      }
-    }
-
-    return null;
-  } catch (error) {
-    console.error("[NBP] Generation failed:", error);
-    return null;
-  }
-}
+// generateNbpImage 已遷移至 Vertex AI（generateGeminiImage），不再使用 Gemini API Key。
 
 // ─── 添加水印 ──────────────────────────────────────
 async function addWatermark(imageBuffer: Buffer, _mimeType: string): Promise<Buffer> {
@@ -198,8 +142,8 @@ export const nanoBananaRouter = router({
       let engine: "nbp" | "flash" = "flash";
       let resolution = input.resolution;
 
-      // 尝试 NBP 生成
-      if (planConfig.nbp.enabled && input.geminiApiKey) {
+      // 尝试 NBP Pro 生成（Vertex AI，无需 Gemini API Key）
+      if (planConfig.nbp.enabled && isGeminiImageAvailable()) {
         if (resolution === "4k" && planConfig.nbp.maxResolution !== "4k") {
           resolution = "2k";
         }
@@ -209,21 +153,25 @@ export const nanoBananaRouter = router({
           const deductResult = await deductNbpCredits(userId, 1, resolution, `分镜图 #${input.sceneIndex + 1}`);
 
           if (deductResult.success) {
-            const result = await generateNbpImage(
-              input.geminiApiKey,
-              fullPrompt,
-              resolution,
-              input.referenceImageUrl
-            );
+            const result = await generateGeminiImage({
+              prompt: fullPrompt,
+              quality: resolution,
+              referenceImageUrl: input.referenceImageUrl,
+            });
 
-            if (result) {
-              let finalImage = result.imageData;
+            if (result?.imageUrl) {
+              let imageBuffer: Buffer | null = null;
               if (planConfig.nbp.watermark) {
-                finalImage = await addWatermark(finalImage, result.mimeType);
+                try {
+                  const resp = await fetch(result.imageUrl);
+                  imageBuffer = Buffer.from(await resp.arrayBuffer());
+                  imageBuffer = await addWatermark(imageBuffer, "image/png");
+                  const filename = `storyboard/nbp_scene_${input.sceneIndex + 1}_${Date.now()}.png`;
+                  imageUrl = await uploadImage(imageBuffer, filename, "image/png");
+                } catch { imageUrl = result.imageUrl; }
+              } else {
+                imageUrl = result.imageUrl;
               }
-
-              const filename = `storyboard/nbp_scene_${input.sceneIndex + 1}_${Date.now()}.png`;
-              imageUrl = await uploadImage(finalImage, filename, "image/png");
               engine = "nbp";
 
               return {
@@ -240,7 +188,7 @@ export const nanoBananaRouter = router({
         }
       }
 
-      // Nano Banana Flash 1K 降级生成（免费，有水印）
+      // Vertex Flash 1K 降级生成（有水印）
       const flashResult = await generateGeminiImage({ prompt: fullPrompt, quality: "1k" });
       if (flashResult?.imageUrl) {
         try {
@@ -309,7 +257,7 @@ export const nanoBananaRouter = router({
       let nbpRemaining = 0;
       let resolution = input.resolution;
 
-      if (planConfig.nbp.enabled && input.geminiApiKey) {
+      if (planConfig.nbp.enabled && isGeminiImageAvailable()) {
         if (resolution === "4k" && planConfig.nbp.maxResolution !== "4k") {
           resolution = "2k";
         }
@@ -327,25 +275,28 @@ export const nanoBananaRouter = router({
         const fullPrompt = `Professional video storyboard frame. Scene ${scene.index + 1} of ${input.scenes.length}. ${styleMap[input.style]}. ${scene.description}. Aspect ratio 16:9, high quality, detailed.`;
 
         try {
-          if (nbpRemaining > 0 && input.geminiApiKey) {
+          if (nbpRemaining > 0) {
             const deductResult = await deductNbpCredits(userId, 1, resolution, `批量分镜图 #${scene.index + 1}`);
 
             if (deductResult.success) {
-              const result = await generateNbpImage(
-                input.geminiApiKey,
-                fullPrompt,
-                resolution,
-                input.referenceImageUrl
-              );
+              const result = await generateGeminiImage({
+                prompt: fullPrompt,
+                quality: resolution,
+                referenceImageUrl: input.referenceImageUrl,
+              });
 
-              if (result) {
-                let finalImage = result.imageData;
+              if (result?.imageUrl) {
+                let finalImageUrl = result.imageUrl;
                 if (planConfig.nbp.watermark) {
-                  finalImage = await addWatermark(finalImage, result.mimeType);
+                  try {
+                    const resp = await fetch(result.imageUrl);
+                    let buf: Buffer = Buffer.from(await resp.arrayBuffer());
+                    buf = await addWatermark(buf, "image/png");
+                    const filename = `storyboard/nbp_batch_${scene.index + 1}_${Date.now()}.png`;
+                    finalImageUrl = await uploadImage(buf, filename, "image/png");
+                  } catch { /* keep original URL */ }
                 }
-                const filename = `storyboard/nbp_batch_${scene.index + 1}_${Date.now()}.png`;
-                const imageUrl = await uploadImage(finalImage, filename, "image/png");
-                results.push({ index: scene.index, imageUrl, engine: "nbp", success: true });
+                results.push({ index: scene.index, imageUrl: finalImageUrl, engine: "nbp", success: true });
                 nbpRemaining--;
                 continue;
               }
@@ -450,28 +401,30 @@ export const nanoBananaRouter = router({
 
       const prompt = `Virtual idol character design. ${styleMap[input.style]}. Character name: ${input.name}. ${input.description}. Full body or upper body portrait, clean background, suitable for music video production.`;
 
-      const result = await generateNbpImage(
-        input.geminiApiKey,
+      const vertexResult = await generateGeminiImage({
         prompt,
-        resolution,
-        input.referenceImageUrl
-      );
+        quality: resolution,
+        referenceImageUrl: input.referenceImageUrl,
+      });
 
-      if (!result) {
+      if (!vertexResult?.imageUrl) {
         return {
           success: false,
-          error: "NBP 图片生成失败，请检查 API Key 或稍后重试",
+          error: "Vertex AI 图片生成失败，请稍后重试",
           needUpgrade: false,
         };
       }
 
-      let finalImage = result.imageData;
+      let imageUrl = vertexResult.imageUrl;
       if (planConfig.nbp.watermark) {
-        finalImage = await addWatermark(finalImage, result.mimeType);
+        try {
+          const resp = await fetch(vertexResult.imageUrl);
+          let buf = Buffer.from(await resp.arrayBuffer()) as Buffer;
+          buf = await addWatermark(buf, "image/png") as Buffer;
+          const filename = `idol/nbp_${input.name}_${resolution}_${Date.now()}.png`;
+          imageUrl = await uploadImage(buf, filename, "image/png");
+        } catch { /* keep original URL on error */ }
       }
-
-      const filename = `idol/nbp_${input.name}_${resolution}_${Date.now()}.png`;
-      const imageUrl = await uploadImage(finalImage, filename, "image/png");
 
       return {
         success: true,

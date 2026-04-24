@@ -267,6 +267,11 @@ const OP_CREDIT_STEP: Record<string, { step: StepKey; getQuantity?: (body: Recor
   workflowrenderfinalvideo:          { step: "final_render" },
 };
 
+function isSupervisorSession() {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem("mvs-supervisor-access") === "1";
+}
+
 export default function WorkflowNodes() {
   const [selected, setSelected] = useState<string>("prompt");
   const [workflowId, setWorkflowId] = useState<string>("");
@@ -274,6 +279,7 @@ export default function WorkflowNodes() {
   const [workflow, setWorkflow] = useState<any>(null);
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [debugMode, setDebugMode] = useState(false);
+  const supervisorAccess = isSupervisorSession();
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
@@ -2000,7 +2006,9 @@ export default function WorkflowNodes() {
                 <CardContent className="p-5">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="text-lg font-bold">当前节点 <span className="ml-2 text-xs text-white/45">Selected Node</span></div>
-                    <button type="button" onClick={() => setDebugMode((prev) => !prev)} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70"><Bug className="h-3.5 w-3.5" /> {debugMode ? "Debug ON" : "Debug OFF"}</button>
+                    {supervisorAccess && (
+                      <button type="button" onClick={() => setDebugMode((prev) => !prev)} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70"><Bug className="h-3.5 w-3.5" /> {debugMode ? "Debug ON" : "Debug OFF"}</button>
+                    )}
                   </div>
                   <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4">
                     <div className="mb-1 text-xl font-black">{current.title}</div>
