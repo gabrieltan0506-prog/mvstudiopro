@@ -107,7 +107,9 @@ const EDGES = [
   ["storyboard", "assets"],
   ["assets", "renderStill"],
   ["assets", "video"],
-  ["video", "render"],
+  ["renderStill", "video"],  // 多人静帧 → 视频生成（角色一致性）
+  ["video", "voice"],        // 视频生成完成后 → 智能旁白
+  ["video", "music"],        // 视频生成完成后 → 自动配乐
   ["voice", "render"],
   ["music", "render"],
 ];
