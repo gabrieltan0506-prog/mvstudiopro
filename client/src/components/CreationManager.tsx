@@ -10,6 +10,7 @@
 import React, { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { formatDateGMT8 } from "@/lib/utils";
 import {
   Heart, HeartOff, Download, Trash2, Clock, AlertTriangle,
   ChevronDown, ChevronUp, Star, Loader2, Image as ImageIcon,
@@ -365,6 +366,7 @@ export function CreationHistoryPanel({
                         <span className="text-[10px] text-yellow-500">{item.creditsUsed} credits</span>
                       )}
                     </div>
+                    <p className="text-[10px] text-gray-600 mt-0.5">{formatDateGMT8(item.createdAt)}</p>
                     {/* Script preview for storyboard */}
                     {item.type === "storyboard" && item.metadata && (() => {
                       try {

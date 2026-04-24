@@ -31,6 +31,7 @@ const WorkflowNodes = lazy(() => import("./pages/WorkflowNodes"));
 const SupervisorAccess = lazy(() => import("./pages/SupervisorAccess"));
 
 const ThreeDStudio = lazy(() => import("./pages/ThreeDStudio"));
+const MyWorks = lazy(() => import("./pages/MyWorks"));
 
 function PageLoader() {
   return (
@@ -78,6 +79,7 @@ function Router() {
         <Route path={"/test-lab"} component={TestLab} />
         <Route path={"/workflow-nodes"} component={WorkflowNodes} />
         <Route path={"/supervisor"} component={SupervisorAccess} />
+        <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/login"} component={Login} />
 
         <Route path={"/3d-studio"} component={ThreeDStudio} />

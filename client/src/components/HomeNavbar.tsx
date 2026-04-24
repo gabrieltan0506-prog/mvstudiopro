@@ -203,6 +203,13 @@ export default function HomeNavbar() {
                     个人中心
                   </a>
                   <a
+                    href="/my-works"
+                    style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.9)", fontSize: 13, textDecoration: "none", fontWeight: 700, background: "rgba(99,102,241,0.12)" }}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    📁 我的作品
+                  </a>
+                  <a
                     href="/creator-growth-camp"
                     style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                     onClick={() => setMenuOpen(false)}

@@ -485,6 +485,8 @@ export default function PlatformPage() {
   // ── Async Job Queue mutations ──────────────────────────────────────────────
   const createPlatformAnalysisJobMutation = trpc.mvAnalysis.createPlatformAnalysisJob.useMutation();
   const createPlatformQAJobMutation = trpc.mvAnalysis.createPlatformQAJob.useMutation();
+  const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
+
   const downloadPlatformPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
     onSuccess: (result) => {
       setIsDownloadingPdf(false);
@@ -500,7 +502,14 @@ export default function PlatformPage() {
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast.success("平台分析 PDF 已开始下载");
+        toast.success("平台分析 PDF 已开始下载，快照已保存至「我的作品」");
+        // Save snapshot record (GMT+8 title)
+        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        recordSnapshotMutation.mutate({
+          analysisType: "platform",
+          title: `平台趨勢分析 ${gmt8Label}`,
+          analysisDate: new Date().toISOString(),
+        });
       } catch { toast.error("PDF 下载时出错，请重试"); }
     },
     onError: (err) => { setIsDownloadingPdf(false); toast.error(err.message || "PDF 导出失败"); },
@@ -2241,19 +2250,32 @@ export default function PlatformPage() {
             </div>
             {/* PDF Download — captures current rendered page via Cloud Run Puppeteer */}
             {hasAnalyzed && (
-              <div className="mt-4 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleDownloadPlatformPdf}
-                  disabled={isDownloadingPdf || isDashboardLoading || isContentLoading}
-                  className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isDownloadingPdf ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />生成 PDF 中...</>
-                  ) : (
-                    <><FileText className="h-4 w-4" />下载平台分析 PDF</>
-                  )}
-                </button>
+              <div className="mt-4 space-y-3">
+                {/* 時效性提醒 */}
+                <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
+                  <span className="text-lg leading-none mt-0.5">⚡</span>
+                  <div>
+                    <div className="font-semibold mb-0.5">分析結果具有時效性</div>
+                    <div className="text-xs text-amber-200/80">平台數據每日更新，本次分析基於當前時間點快照。建議立即下載 PDF 保存，下載後快照記錄將同步保存至「我的作品」。</div>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <a href="/my-works" className="inline-flex items-center gap-1.5 rounded-full border border-purple-500/30 bg-purple-500/10 px-4 py-2.5 text-sm font-semibold text-purple-300 transition hover:bg-purple-500/20">
+                    📁 我的作品
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleDownloadPlatformPdf}
+                    disabled={isDownloadingPdf || isDashboardLoading || isContentLoading}
+                    className="inline-flex items-center gap-2 rounded-full border border-[#49e6ff]/25 bg-[linear-gradient(135deg,#15c8ff,#6a5cff)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_32px_rgba(73,230,255,0.15)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isDownloadingPdf ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" />生成 PDF 中...</>
+                    ) : (
+                      <><FileText className="h-4 w-4" />下载平台分析 PDF</>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
           </section>
