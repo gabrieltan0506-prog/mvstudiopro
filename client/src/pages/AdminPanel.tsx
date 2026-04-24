@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2 } from "lucide-react";
+import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle, Clock, Loader2, Copy, KeyRound, RefreshCw } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
 
@@ -15,6 +15,33 @@ export default function AdminPanel() {
   const [, navigate] = useLocation();
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verifications, setVerifications] = useState<any[]>([]);
+
+  // ── 邀请码生成 state ────────────────────────────────────────────
+  const [codeCount, setCodeCount] = useState("5");
+  const [codeCredits, setCodeCredits] = useState("200");
+  const [codeMaxUses, setCodeMaxUses] = useState("1");
+  const [codeNote, setCodeNote] = useState("");
+  const [codeExpireDays, setCodeExpireDays] = useState("30");
+  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
+  const generateCodesMutation = trpc.betaCode.generate.useMutation({
+    onSuccess: (data) => {
+      setGeneratedCodes(data.codes);
+      toast.success(`成功生成 ${data.count} 个内测码`);
+    },
+    onError: (err) => toast.error(err.message || "生成失败"),
+  });
+  const myCodesList = trpc.betaCode.listMine.useQuery(undefined, {
+    enabled: isAuthenticated && user?.role === "admin",
+  });
+
+  function copyCode(code: string) {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopiedCode(code);
+      setTimeout(() => setCopiedCode(null), 1500);
+    });
+  }
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
   // Redirect non-admin
@@ -123,6 +150,7 @@ export default function AdminPanel() {
             <TabsTrigger value="teams">团队统计</TabsTrigger>
             <TabsTrigger value="beta">Beta 审核</TabsTrigger>
             <TabsTrigger value="verifications">身份认证</TabsTrigger>
+            <TabsTrigger value="invite-codes">邀请码</TabsTrigger>
           </TabsList>
 
           {/* Payments Tab */}
@@ -311,6 +339,164 @@ export default function AdminPanel() {
                             <XCircle className="h-3.5 w-3.5" /> 拒绝
                           </Button>
                         </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Invite Codes Tab */}
+          <TabsContent value="invite-codes" className="space-y-6">
+            {/* 生成表单 */}
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <KeyRound className="h-5 w-5 text-primary" />
+                  生成内测邀请码
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">生成数量</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={codeCount}
+                      onChange={(e) => setCodeCount(e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Credits / 每码</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10000}
+                      value={codeCredits}
+                      onChange={(e) => setCodeCredits(e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">最大兑换次数</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={codeMaxUses}
+                      onChange={(e) => setCodeMaxUses(e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">有效天数</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={codeExpireDays}
+                      onChange={(e) => setCodeExpireDays(e.target.value)}
+                      className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">备注（选填）</label>
+                  <input
+                    type="text"
+                    maxLength={120}
+                    placeholder="例：内测第一批 / 合作伙伴专属"
+                    value={codeNote}
+                    onChange={(e) => setCodeNote(e.target.value)}
+                    className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm text-foreground"
+                  />
+                </div>
+                <Button
+                  className="w-full gap-2"
+                  disabled={generateCodesMutation.isPending}
+                  onClick={() =>
+                    generateCodesMutation.mutate({
+                      count: Math.max(1, Math.min(100, parseInt(codeCount) || 1)),
+                      credits: Math.max(1, parseInt(codeCredits) || 200),
+                      maxUses: Math.max(1, parseInt(codeMaxUses) || 1),
+                      note: codeNote.trim() || undefined,
+                      expiresInDays: Math.max(1, parseInt(codeExpireDays) || 30),
+                    })
+                  }
+                >
+                  {generateCodesMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                  生成邀请码
+                </Button>
+
+                {/* 刚生成的码 */}
+                {generatedCodes.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-xs text-muted-foreground">刚生成的码（点击复制）：</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {generatedCodes.map((code) => (
+                        <button
+                          key={code}
+                          onClick={() => copyCode(code)}
+                          className="flex items-center justify-between bg-background border border-border rounded-lg px-4 py-2 font-mono text-sm text-foreground hover:border-primary/60 transition-colors"
+                        >
+                          <span>{code}</span>
+                          {copiedCode === code ? (
+                            <CheckCircle className="h-4 w-4 text-green-400 ml-2 shrink-0" />
+                          ) : (
+                            <Copy className="h-4 w-4 text-muted-foreground ml-2 shrink-0" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 历史码列表 */}
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>已生成的邀请码</CardTitle>
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => myCodesList.refetch()}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    刷新
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {myCodesList.isPending ? (
+                  <div className="flex justify-center py-8"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                ) : !myCodesList.data || myCodesList.data.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">暂无邀请码</div>
+                ) : (
+                  <div className="space-y-2">
+                    {myCodesList.data.map((row: any) => (
+                      <div key={row.id} className="flex items-center justify-between bg-background/30 rounded-lg px-4 py-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-sm text-foreground">{row.code}</span>
+                            <span className="text-xs text-muted-foreground">{row.credits} Credits</span>
+                            {row.note && <span className="text-xs text-muted-foreground truncate">· {row.note}</span>}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            已用 {row.usedCount}/{row.maxUses === -1 ? "∞" : row.maxUses}
+                            {row.expiresAt ? ` · 有效至 ${new Date(row.expiresAt).toLocaleDateString("zh-CN")}` : " · 永不过期"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => copyCode(row.code)}
+                          className="ml-3 p-1.5 rounded hover:bg-white/5 transition-colors"
+                        >
+                          {copiedCode === row.code ? (
+                            <CheckCircle className="h-4 w-4 text-green-400" />
+                          ) : (
+                            <Copy className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </button>
                       </div>
                     ))}
                   </div>
