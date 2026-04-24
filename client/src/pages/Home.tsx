@@ -6,6 +6,7 @@ import HomeRemixStrip from "../components/HomeRemixStrip";
 import HomeTools from "../components/HomeTools";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
+import HomeEducation from "../components/HomeEducation";
 
 // 以下 section 在正式版開放前暫時隱藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -34,6 +35,8 @@ export default function HomePage() {
       <HomeShowcase />
 
       <HomePricing />
+
+      <HomeEducation />
 
       {/* 内测阶段暂时隐藏，正式版再开放 */}
       {/* <HomeWorkflow /> */}

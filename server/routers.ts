@@ -19,6 +19,7 @@ import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
 import { feedbackRouter } from "./routers/feedback";
 import { staticPayRouter } from "./routers/staticPay";
+import { educationRouter } from "./routers/education";
 import { emailOtpRouter, phoneOtpRouter } from "./routers/emailOtp";
 import { stripeRouter } from "./routers/stripe";
 import { teamRouter } from "./routers/team";
@@ -1538,6 +1539,7 @@ export const appRouter = router({
   betaCode: betaCodeRouter,
   feedback: feedbackRouter,
   staticPay: staticPayRouter,
+  education: educationRouter,
   emailAuth: emailAuthRouter,
   beta: betaRouter,
   emailOtp: emailOtpRouter,
