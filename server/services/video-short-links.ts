@@ -38,7 +38,8 @@ export async function saveVideoShortLink(taskId: string, videoUrl: string): Prom
     await db
       .insert(videoShortLinks)
       .values({ taskId: cleanTaskId, videoUrl: cleanVideoUrl })
-      .onDuplicateKeyUpdate({
+      .onConflictDoUpdate({
+        target: videoShortLinks.taskId,
         set: {
           videoUrl: cleanVideoUrl,
           updatedAt: new Date(),

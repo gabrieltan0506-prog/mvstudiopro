@@ -1,13 +1,13 @@
-import { int, mysqlTable, text, timestamp, varchar, mysqlEnum, json } from "drizzle-orm/mysql-core";
+import { integer, json, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 /**
  * 用戶實名認證表
  *
  * 上傳視頻前必須完成實名認證。
  */
-export const userVerifications = mysqlTable("user_verifications", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().unique(),
+export const userVerifications = pgTable("user_verifications", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull().unique(),
   /** 真實姓名 */
   realName: varchar("realName", { length: 100 }).notNull(),
   /** 身份證號碼（加密存儲，僅保留後 4 位用於展示） */
@@ -17,13 +17,13 @@ export const userVerifications = mysqlTable("user_verifications", {
   /** 身份證反面照片 URL */
   idBackUrl: text("idBackUrl"),
   /** 認證狀態 */
-  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  status: text("status").default("pending").notNull(),
   /** 管理員審核備註 */
   adminNotes: text("adminNotes"),
   /** 審核時間 */
   reviewedAt: timestamp("reviewedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type UserVerification = typeof userVerifications.$inferSelect;
@@ -49,11 +49,11 @@ export type InsertUserVerification = typeof userVerifications.$inferInsert;
  * - 平台可進行二次開發
  * - 無需告知原作者
  */
-export const videoSubmissions = mysqlTable("video_submissions", {
-  id: int("id").autoincrement().primaryKey(),
+export const videoSubmissions = pgTable("video_submissions", {
+  id: serial().primaryKey(),
 
   /** 上傳用戶 ID */
-  userId: int("userId").notNull(),
+  userId: integer("userId").notNull(),
 
   /** 視頻標題 */
   title: varchar("title", { length: 255 }).notNull(),
@@ -68,7 +68,7 @@ export const videoSubmissions = mysqlTable("video_submissions", {
   thumbnailUrl: text("thumbnailUrl"),
 
   /** 視頻時長（秒） */
-  duration: int("duration"),
+  duration: integer("duration"),
 
   /** 視頻分類標籤 */
   category: varchar("category", { length: 100 }),
@@ -81,18 +81,18 @@ export const videoSubmissions = mysqlTable("video_submissions", {
   contentFingerprint: varchar("contentFingerprint", { length: 128 }),
 
   /** AI 爆款評分（0-100） */
-  viralScore: int("viralScore"),
+  viralScore: integer("viralScore"),
 
   /** AI 評分詳情（JSON：各維度得分 + 文字分析） */
   scoreDetails: json("scoreDetails"),
 
   /** 評分狀態 */
-  scoreStatus: mysqlEnum("scoreStatus", ["pending", "scoring", "scored", "failed"]).default("pending").notNull(),
+  scoreStatus: text("scoreStatus").default("pending").notNull(),
 
   /** ─── 授權協議 ─── */
 
   /** 是否同意平台授權協議（0=否，1=是） */
-  licenseAgreed: int("licenseAgreed").default(0).notNull(),
+  licenseAgreed: integer("licenseAgreed").default(0).notNull(),
 
   /** 授權協議版本 */
   licenseVersion: varchar("licenseVersion", { length: 20 }).default("1.0"),
@@ -103,7 +103,7 @@ export const videoSubmissions = mysqlTable("video_submissions", {
   /** ─── Credits 獎勵 ─── */
 
   /** Credits 獎勵金額（0 = 未獎勵） */
-  creditsRewarded: int("creditsRewarded").default(0).notNull(),
+  creditsRewarded: integer("creditsRewarded").default(0).notNull(),
 
   /** 獎勵發放時間 */
   rewardedAt: timestamp("rewardedAt"),
@@ -111,19 +111,19 @@ export const videoSubmissions = mysqlTable("video_submissions", {
   /** ─── 平台展示 ─── */
 
   /** 平台展示狀態 */
-  showcaseStatus: mysqlEnum("showcaseStatus", ["private", "pending_review", "showcased", "rejected"]).default("private").notNull(),
+  showcaseStatus: text("showcaseStatus").default("private").notNull(),
 
   /** 管理員審核備註 */
   adminNotes: text("adminNotes"),
 
   /** 視頻觀看次數（平台展示後統計） */
-  viewCount: int("viewCount").default(0).notNull(),
+  viewCount: integer("viewCount").default(0).notNull(),
 
   /** 視頻點讚次數 */
-  likeCount: int("likeCount").default(0).notNull(),
+  likeCount: integer("likeCount").default(0).notNull(),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type VideoSubmission = typeof videoSubmissions.$inferSelect;
@@ -135,14 +135,14 @@ export type InsertVideoSubmission = typeof videoSubmissions.$inferInsert;
  * 一個視頻可以在多個平台發布，每個平台一條記錄。
  * 用於驗證視頻確實已在平台發布，以及去重判斷。
  */
-export const videoPlatformLinks = mysqlTable("video_platform_links", {
-  id: int("id").autoincrement().primaryKey(),
+export const videoPlatformLinks = pgTable("video_platform_links", {
+  id: serial().primaryKey(),
 
   /** 關聯的視頻提交 ID */
-  videoSubmissionId: int("videoSubmissionId").notNull(),
+  videoSubmissionId: integer("videoSubmissionId").notNull(),
 
   /** 發布平台 */
-  platform: mysqlEnum("platform", ["douyin", "weixin_channels", "xiaohongshu", "bilibili"]).notNull(),
+  platform: text("platform").notNull(),
 
   /** 平台上的視頻發布鏈接 */
   videoLink: text("videoLink").notNull(),
@@ -151,19 +151,19 @@ export const videoPlatformLinks = mysqlTable("video_platform_links", {
   dataScreenshotUrl: text("dataScreenshotUrl").notNull(),
 
   /** 平台上的播放量（從截圖中提取或用戶填寫） */
-  playCount: int("playCount"),
+  playCount: integer("playCount"),
 
   /** 平台上的點讚數 */
-  likeCount: int("likeCount"),
+  likeCount: integer("likeCount"),
 
   /** 平台上的評論數 */
-  commentCount: int("commentCount"),
+  commentCount: integer("commentCount"),
 
   /** 平台上的分享/轉發數 */
-  shareCount: int("shareCount"),
+  shareCount: integer("shareCount"),
 
   /** 驗證狀態（管理員核實截圖和鏈接真實性） */
-  verifyStatus: mysqlEnum("verifyStatus", ["pending", "verified", "rejected"]).default("pending").notNull(),
+  verifyStatus: text("verifyStatus").default("pending").notNull(),
 
   /** 管理員驗證備註 */
   verifyNotes: text("verifyNotes"),

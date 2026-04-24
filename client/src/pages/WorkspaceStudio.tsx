@@ -234,14 +234,14 @@ export default function WorkspaceStudioPage() {
     });
   };
 
-  const handleRenameWorkflow = async (id: number, name: string, description: string | null, status: "draft" | "active" | "archived") => {
+  const handleRenameWorkflow = async (id: number, name: string, description: string | null, status: string) => {
     const next = window.prompt("工作流名称", name)?.trim();
     if (!next || next === name) return;
     await updateWorkflow.mutateAsync({
       id,
       name: next,
       description,
-      status,
+      status: status as "active" | "draft" | "archived",
     });
   };
 

@@ -13,7 +13,7 @@ interface PendingPayment {
   amount: string;
   paymentMethod: string | null;
   screenshotUrl: string;
-  status: "pending" | "approved" | "rejected";
+  status: string;
   createdAt: Date;
 }
 

@@ -1,4 +1,4 @@
-import { int, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 /**
  * Persistent sessions table.
@@ -11,10 +11,10 @@ import { int, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-cor
  * request the server checks that the token exists in this table AND that
  * it has not expired. On logout the row is deleted.
  */
-export const sessions = mysqlTable("sessions", {
-  id: int("id").autoincrement().primaryKey(),
+export const sessions = pgTable("sessions", {
+  id: serial().primaryKey(),
   /** The user's numeric ID (FK to users.id) */
-  userId: int("userId").notNull(),
+  userId: integer("userId").notNull(),
   /** The user's openId for quick look-up without joining users */
   openId: varchar("openId", { length: 64 }).notNull(),
   /** The full JWT session token string */

@@ -1,42 +1,42 @@
-import { boolean, int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, integer, json, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
-export const workspaces = mysqlTable("workspaces", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const workspaces = pgTable("workspaces", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
   name: varchar("name", { length: 120 }).notNull(),
   description: text("description"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
-export const workflows = mysqlTable("workflows", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  workspaceId: int("workspaceId").notNull(),
+export const workflows = pgTable("workflows", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
+  workspaceId: integer("workspaceId").notNull(),
   name: varchar("name", { length: 160 }).notNull(),
   description: text("description"),
-  status: mysqlEnum("status", ["draft", "active", "archived"]).default("draft").notNull(),
+  status: text("status").default("draft").notNull(),
   klingMotionControlEnabled: boolean("klingMotionControlEnabled").default(false).notNull(),
   klingLipsyncEnabled: boolean("klingLipsyncEnabled").default(false).notNull(),
   klingElementsEnabled: boolean("klingElementsEnabled").default(false).notNull(),
   klingParams: json("klingParams"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
-export const workflowStepRuns = mysqlTable("workflow_step_runs", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  workflowId: int("workflowId").notNull(),
-  stepType: mysqlEnum("stepType", ["script", "storyboard", "images", "video", "audio", "export"]).notNull(),
-  version: int("version").notNull(),
-  status: mysqlEnum("status", ["running", "completed", "failed"]).default("running").notNull(),
+export const workflowStepRuns = pgTable("workflow_step_runs", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
+  workflowId: integer("workflowId").notNull(),
+  stepType: text("stepType").notNull(),
+  version: integer("version").notNull(),
+  status: text("status").default("running").notNull(),
   input: json("input"),
   output: json("output"),
   startedAt: timestamp("startedAt").defaultNow().notNull(),
   completedAt: timestamp("completedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type Workspace = typeof workspaces.$inferSelect;

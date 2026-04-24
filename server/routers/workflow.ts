@@ -157,13 +157,13 @@ export const workflowRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const database = await db();
-      const [result] = await database.insert(workspaces).values({
+      const [row] = await database.insert(workspaces).values({
         userId: ctx.user.id,
         name: input.name,
         description: input.description ?? null,
-      });
+      }).returning({ id: workspaces.id });
 
-      return { id: result.insertId };
+      return { id: row?.id ?? 0 };
     }),
 
   updateWorkspace: protectedProcedure
@@ -266,7 +266,7 @@ export const workflowRouter = router({
     .mutation(async ({ ctx, input }) => {
       await assertWorkspaceOwner(input.workspaceId, ctx.user.id);
       const database = await db();
-      const [result] = await database.insert(workflows).values({
+      const [row] = await database.insert(workflows).values({
         userId: ctx.user.id,
         workspaceId: input.workspaceId,
         name: input.name,
@@ -275,9 +275,9 @@ export const workflowRouter = router({
         klingMotionControlEnabled: false,
         klingLipsyncEnabled: false,
         klingElementsEnabled: false,
-      });
+      }).returning({ id: workflows.id });
 
-      return { id: result.insertId };
+      return { id: row?.id ?? 0 };
     }),
 
   updateWorkflow: protectedProcedure
@@ -411,21 +411,21 @@ export const workflowRouter = router({
 
       const nextVersion = (latest?.version ?? 0) + 1;
 
-      const [result] = await database.insert(workflowStepRuns).values({
+      const [runRow] = await database.insert(workflowStepRuns).values({
         userId: ctx.user.id,
         workflowId: input.workflowId,
         stepType: input.stepType,
         version: nextVersion,
         status: "running",
         input: input.input ?? null,
-      });
+      }).returning({ id: workflowStepRuns.id });
 
       await database
         .update(workflows)
         .set({ updatedAt: new Date() })
         .where(and(eq(workflows.id, input.workflowId), eq(workflows.userId, ctx.user.id)));
 
-      return { id: result.insertId, version: nextVersion };
+      return { id: runRow?.id ?? 0, version: nextVersion };
     }),
 
   completeStepRun: protectedProcedure
@@ -518,9 +518,9 @@ export const workflowRouter = router({
         klingParams: {
           sourceTemplateId: template.id,
         },
-      });
+      }).returning({ id: workflows.id });
 
-      const workflowId = workflowInsert.insertId;
+      const workflowId = workflowInsert?.id ?? 0;
 
       for (const [stepType, textValue] of Object.entries(template.blueprint.initialSteps)) {
         await database.insert(workflowStepRuns).values({

@@ -40,24 +40,26 @@ export const emailAuthRouter = router({
       }
 
       // 创建用户
-      const [newUser] = await db.insert(users).values({
+      const [newUserRow] = await db.insert(users).values({
         openId: `email_${input.email}`,
         email: input.email,
         name: input.name || input.email.split("@")[0],
         loginMethod: "email",
         role: "user",
-      });
+      }).returning({ id: users.id });
+
+      const newUserId = newUserRow?.id ?? 0;
 
       // 创建 email 认证记录
       const passwordHash = hashPassword(input.password);
       await db.insert(emailAuth).values({
         email: input.email,
         passwordHash,
-        userId: newUser.insertId,
+        userId: newUserId,
       });
 
       // Email 注册成功，返回用户 ID
-      return { success: true, userId: newUser.insertId };
+      return { success: true, userId: newUserId };
     }),
 
   /**
