@@ -176,6 +176,22 @@ export const PLANS: Record<PlanType, PlanConfig> = {
  * - Forge AI: 免费（平台内置）→ 0 credits
  */
 export const CREDIT_COSTS = {
+  // ─── 创作者成长营 / 平台趋势 / 节点工作流（与 server/plans 数值一致，供前端定价展示与扣费逻辑共用）─
+  growthCampGrowth: 40,
+  growthCampRemix: 50,
+  platformTrend: 30,
+  platformTrendFollowUp: 5,
+  workflowNodes: 20,
+  workflowScript: 0,
+  workflowScriptExtra: 2,
+  workflowStoryboard: 5,
+  workflowSceneImage: 5,
+  workflowRenderStill: 9,
+  workflowSceneVideo: 80,
+  workflowSceneVoice: 5,
+  workflowMusic: 12,
+  workflowFinalRender: 5,
+
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,
   idolGeneration: 3,
@@ -227,7 +243,61 @@ export const CREDIT_COSTS = {
   // ─── Kling 视频生成（最高门槛）────────────────
   klingVideo: 80,
   klingLipSync: 60,
+
+  // ─── Kling 图片（与 server/plans 一致）──────────
+  klingImageO1_1K: 8,
+  klingImageO1_2K: 10,
+  klingImageV2_1K: 5,
+  klingImageV2_2K: 7,
 } as const;
+
+/** 允许作为「原图生成单价」基准的 CREDIT_COSTS 键（用于 Imagen 高清放大计费） */
+export const IMAGE_UPSCALE_BASE_CREDIT_KEYS = [
+  "nbpImage2K",
+  "nbpImage4K",
+  "forgeImage",
+  "workflowSceneImage",
+  "workflowRenderStill",
+  "idolGeneration",
+  "klingImageO1_1K",
+  "klingImageO1_2K",
+  "klingImageV2_1K",
+  "klingImageV2_2K",
+] as const;
+
+export type ImageUpscaleBaseCreditKey = (typeof IMAGE_UPSCALE_BASE_CREDIT_KEYS)[number];
+
+/** 相对原图单价：2× = 3 倍积分，4× = 5 倍积分 */
+export const IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS = { x2: 3, x4: 5 } as const;
+
+export function imageUpscaleTotalCredits(
+  baseKey: ImageUpscaleBaseCreditKey,
+  factor: keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS,
+): number {
+  const base = CREDIT_COSTS[baseKey];
+  const mult = IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS[factor];
+  return base * mult;
+}
+
+/** Upscale 扣费区间（随原图生成单价基准变化，仅用于展示） */
+export function imageUpscaleCreditRangeHint(
+  factor: keyof typeof IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS,
+): { min: number; max: number } {
+  const mult = IMAGE_UPSCALE_FACTOR_CREDIT_MULTIPLIERS[factor];
+  const bases = IMAGE_UPSCALE_BASE_CREDIT_KEYS.map((k) => CREDIT_COSTS[k]);
+  return { min: Math.min(...bases) * mult, max: Math.max(...bases) * mult };
+}
+
+/** ¥19.9 试用包：按 0.6 元/积分折算（19.9÷0.6≈33.17，向下取整为 33 积分） */
+export const TRIAL_PACK_199_PRICE_CNY = 19.9 as const;
+export const TRIAL_PACK_199_PER_CREDIT_CNY = 0.6 as const;
+export const TRIAL_PACK_199_CREDITS = Math.floor(TRIAL_PACK_199_PRICE_CNY / TRIAL_PACK_199_PER_CREDIT_CNY);
+
+/** 静态收款「¥19.9 试用包」每人最多可购买次数（含待审核订单占用名额） */
+export const TRIAL_PACK_199_MAX_PURCHASES_PER_USER = 2 as const;
+
+/** 1 Credit ≈ ¥0.70（人民币，与 server/plans 展示口径一致） */
+export const CREDIT_TO_CNY = 0.7 as const;
 
 /** PK 评分奖励等级：根据综合评分给予不同 Credits 奖励 */
 export const PK_REWARD_TIERS = [
@@ -245,6 +315,14 @@ export function getRewardTier(overallScore: number) {
  * Credits 加值包
  */
 export const CREDIT_PACKS = {
+  trial199: {
+    credits: TRIAL_PACK_199_CREDITS,
+    price: TRIAL_PACK_199_PRICE_CNY,
+    label: `${TRIAL_PACK_199_CREDITS} Credits Trial`,
+    labelCn: "¥19.9 试用包",
+    perCredit: TRIAL_PACK_199_PER_CREDIT_CNY,
+    discount: `约 ¥${TRIAL_PACK_199_PER_CREDIT_CNY}/积分 · ${TRIAL_PACK_199_CREDITS} Credits · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
+  },
   small: {
     credits: 50,
     price: 35,

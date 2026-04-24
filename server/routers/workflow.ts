@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { workflows, workflowStepRuns, workspaces } from "../../drizzle/schema";
+import { users, workflows, workflowStepRuns, workspaces, stripeUsageLogs } from "../../drizzle/schema";
 import { deductCredits, getCredits, refundCredits } from "../credits";
 import { CREDIT_COSTS } from "../plans";
+import { hasUnlimitedAccess } from "../services/access-policy";
 
 // 付费步骤 → CREDIT_COSTS 键映射（脚本生成免费，不在此表中）
 const WORKFLOW_STEP_COST_KEY = {
@@ -639,5 +640,60 @@ export const workflowRouter = router({
         input.reason ?? `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}失败退款`,
       );
       return { refunded: totalCost };
+    }),
+
+  /** 节点工作流脚本：每日第 1 次免费，第 2 次起扣 2 cr（防薅）。请在调用 /api/jobs 前执行。 */
+  prepareScriptGeneration: protectedProcedure.mutation(async ({ ctx }) => {
+    const database = await db();
+    const [u] = await database
+      .select({ role: users.role, email: users.email })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+    if (hasUnlimitedAccess({ role: u?.role, email: u?.email ?? undefined })) {
+      return { chargedCredits: 0 };
+    }
+    const [row] = await database
+      .select({ c: count() })
+      .from(stripeUsageLogs)
+      .where(
+        and(
+          eq(stripeUsageLogs.userId, ctx.user.id),
+          eq(stripeUsageLogs.action, "workflowScriptDaily"),
+          sql`DATE(${stripeUsageLogs.createdAt}) = CURDATE()`,
+        ),
+      );
+    const n = Number(row?.c ?? 0);
+    if (n === 0) {
+      return { chargedCredits: 0 };
+    }
+    await deductCredits(
+      ctx.user.id,
+      "workflowScriptExtra",
+      `节点工作流·脚本生成（当日第 ${n + 1} 次）`,
+    );
+    return { chargedCredits: CREDIT_COSTS.workflowScriptExtra };
+  }),
+
+  recordScriptGeneration: protectedProcedure
+    .input(z.object({ chargedCredits: z.number().int().min(0).max(10) }))
+    .mutation(async ({ ctx, input }) => {
+      const database = await db();
+      await database.insert(stripeUsageLogs).values({
+        userId: ctx.user.id,
+        action: "workflowScriptDaily",
+        creditsCost: input.chargedCredits,
+        isFreeQuota: input.chargedCredits === 0 ? 1 : 0,
+        description: "workflow 脚本生成",
+        balanceAfter: null,
+      });
+      return { ok: true as const };
+    }),
+
+  refundScriptGenerationCharge: protectedProcedure
+    .input(z.object({ amount: z.number().int().min(1).max(10) }))
+    .mutation(async ({ ctx, input }) => {
+      await refundCredits(ctx.user.id, input.amount, "脚本生成失败退款");
+      return { ok: true as const };
     }),
 });

@@ -10,6 +10,8 @@ import { StudentUpgradePrompt } from "@/components/StudentUpgradePrompt";
 import { TrialCountdownBanner } from "@/components/TrialCountdownBanner";
 import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { NbpEngineSelector, type EngineOption } from "@/components/NbpEngineSelector";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import type { ImageUpscaleBaseCreditKey } from "@shared/plans";
 import { ModelViewer } from "@/components/ModelViewer";
 import { toast } from "sonner";
 import { Loader2, Upload, X, Bot, Sparkles, Wand2, ChevronDown, ChevronUp, Download, Check, Copy, RefreshCw, Eye, EyeOff, Palette, User, Users, Zap, Crown, Flame, Star } from "lucide-react";
@@ -36,6 +38,23 @@ const GENDERS: GenderOption[] = [
   { id: "male", label: "男性", icon: User },
   { id: "neutral", label: "中性", icon: Users },
 ];
+
+function virtualIdolUpscaleBaseKey(engine: EngineOption): ImageUpscaleBaseCreditKey {
+  switch (engine) {
+    case "nbp_4k":
+      return "nbpImage4K";
+    case "nbp_2k":
+      return "nbpImage2K";
+    case "kling_2k":
+      return "klingImageO1_2K";
+    case "kling_1k":
+      return "klingImageO1_1K";
+    case "forge":
+      return "forgeImage";
+    default:
+      return "idolGeneration";
+  }
+}
 
 export default function VirtualIdol() {
   const [location, navigate] = useLocation();
@@ -484,6 +503,14 @@ export default function VirtualIdol() {
                     <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 backdrop-blur-sm p-2.5 rounded-xl text-white/70 hover:bg-black/70 hover:text-white transition-all duration-200 hover:scale-110 active:scale-95">
                       <Download className="h-5 w-5" />
                     </button>
+                  </div>
+                  <div className="absolute bottom-3 left-3 right-3 z-10 rounded-xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
+                    <ImageUpscaleBar
+                      imageUrl={generatedImage}
+                      baseCreditKey={virtualIdolUpscaleBaseKey(imageEngine)}
+                      compact
+                      onUpscaled={(u) => setGeneratedImage(u)}
+                    />
                   </div>
                 </>
               )}

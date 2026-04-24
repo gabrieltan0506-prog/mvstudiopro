@@ -188,6 +188,120 @@ export async function deductCredits(
   );
 }
 
+/**
+ * 按固定数额扣费（用于放大等 = 基准单价 × 倍率的场景）
+ */
+export async function deductCreditsAmount(
+  userId: number,
+  amount: number,
+  action: string,
+  description?: string
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const cost = Math.max(0, Math.floor(Number(amount) || 0));
+  if (cost <= 0) {
+    return { success: true, cost: 0, remainingBalance: -1, source: "none" as const };
+  }
+
+  if (await isAdmin(userId)) {
+    return {
+      success: true,
+      cost: 0,
+      remainingBalance: -1,
+      source: "admin" as const,
+    };
+  }
+
+  const balance = await getOrCreateBalance(userId);
+  if (balance.balance >= cost) {
+    const newBalance = balance.balance - cost;
+    const newLifetimeSpent = balance.lifetimeSpent + cost;
+
+    await db
+      .update(creditBalances)
+      .set({ balance: newBalance, lifetimeSpent: newLifetimeSpent })
+      .where(eq(creditBalances.userId, userId));
+
+    await db.insert(creditTransactions).values({
+      userId,
+      amount: -cost,
+      type: "debit",
+      source: "usage",
+      action: action.slice(0, 50),
+      description: description ?? `${action} (${cost} cr)`,
+      balanceAfter: newBalance,
+    });
+
+    await db.insert(stripeUsageLogs).values({
+      userId,
+      action: action.slice(0, 50),
+      creditsCost: cost,
+      isFreeQuota: 0,
+      description: description ?? `${action} (${cost} cr, 个人帐户)`,
+      balanceAfter: newBalance,
+    });
+
+    return {
+      success: true,
+      cost,
+      remainingBalance: newBalance,
+      source: "personal" as const,
+    };
+  }
+
+  const membership = await getTeamMembership(userId);
+  if (membership) {
+    const availableTeamCredits = membership.allocatedCredits - membership.usedCredits;
+    if (availableTeamCredits >= cost) {
+      const newUsed = membership.usedCredits + cost;
+
+      await db
+        .update(teamMembers)
+        .set({ usedCredits: newUsed })
+        .where(eq(teamMembers.id, membership.id));
+
+      await db.insert(stripeUsageLogs).values({
+        userId,
+        action: action.slice(0, 50),
+        creditsCost: cost,
+        isFreeQuota: 0,
+        description: description ?? `${action} (${cost} cr, 团队额度)`,
+        balanceAfter: membership.allocatedCredits - newUsed,
+        metadata: JSON.stringify({
+          source: "team",
+          teamId: membership.teamId,
+          memberId: membership.id,
+        }),
+      });
+
+      await db.insert(teamActivityLogs).values({
+        teamId: membership.teamId,
+        userId,
+        action: "credits_used",
+        description: `使用 ${cost} Credits 进行 ${action}`,
+        metadata: JSON.stringify({ action, cost, remainingAllocation: availableTeamCredits - cost }),
+      });
+
+      return {
+        success: true,
+        cost,
+        remainingBalance: availableTeamCredits - cost,
+        source: "team" as const,
+        teamId: membership.teamId,
+      };
+    }
+  }
+
+  const teamInfo = membership
+    ? `（团队额度剩余: ${membership.allocatedCredits - membership.usedCredits}）`
+    : "";
+  throw new Error(
+    `Credits 不足。需要: ${cost}, 个人帐户可用: ${balance.balance}${teamInfo}`
+  );
+}
+
 // ─── 充值 ───────────────────────────────────────────
 export async function addCredits(
   userId: number,

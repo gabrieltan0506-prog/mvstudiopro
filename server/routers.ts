@@ -17,6 +17,7 @@ import { paymentRouter } from "./routers/payment";
 import { emailAuthRouter } from "./routers/emailAuth";
 import { betaRouter } from "./routers/beta";
 import { betaCodeRouter } from "./routers/betaCode";
+import { feedbackRouter } from "./routers/feedback";
 import { staticPayRouter } from "./routers/staticPay";
 import { emailOtpRouter, phoneOtpRouter } from "./routers/emailOtp";
 import { stripeRouter } from "./routers/stripe";
@@ -38,8 +39,14 @@ import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
-import { deductCredits, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
+import { deductCredits, deductCreditsAmount, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
 import { CREDIT_COSTS, CREDIT_FEATURE_BREAKDOWN, CREDIT_TO_CNY } from "./plans";
+import { runVertexUpscaleImage } from "../api/google";
+import {
+  IMAGE_UPSCALE_BASE_CREDIT_KEYS,
+  imageUpscaleTotalCredits,
+  type ImageUpscaleBaseCreditKey,
+} from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
@@ -1503,6 +1510,15 @@ async function generateKlingFallbackImage(params: {
   throw new Error("kling_image generation timeout");
 }
 
+function resolveImageUrlForVertexFetch(imageUrl: string): string {
+  const u = String(imageUrl || "").trim();
+  if (!u) return u;
+  if (u.startsWith("data:") || u.startsWith("http://") || u.startsWith("https://")) return u;
+  const base = String(process.env.OAUTH_SERVER_URL || process.env.PUBLIC_APP_URL || "").replace(/\/$/, "");
+  if (u.startsWith("/") && base) return `${base}${u}`;
+  return u;
+}
+
 export const appRouter = router({
   // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
@@ -1511,6 +1527,7 @@ export const appRouter = router({
   student: studentRouter,
   payment: paymentRouter,
   betaCode: betaCodeRouter,
+  feedback: feedbackRouter,
   staticPay: staticPayRouter,
   emailAuth: emailAuthRouter,
   beta: betaRouter,
@@ -5304,6 +5321,71 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       if (!gen || (gen as any).userId !== ctx.user.id) return null;
       return gen;
     }),
+  }),
+
+  /** Vertex Imagen 图片高清放大（积分 = 原图单价 × 3 或 ×5） */
+  vertexImage: router({
+    upscale: protectedProcedure
+      .input(
+        z.object({
+          imageUrl: z.string().min(1),
+          upscaleFactor: z.enum(["x2", "x4"]),
+          baseCreditKey: z.string().refine(
+            (v): v is ImageUpscaleBaseCreditKey =>
+              (IMAGE_UPSCALE_BASE_CREDIT_KEYS as readonly string[]).includes(v),
+            { message: "invalid_base_credit_key" },
+          ),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const isAdminUser = ctx.user.role === "admin";
+        const creditsNeeded = imageUpscaleTotalCredits(
+          input.baseCreditKey as ImageUpscaleBaseCreditKey,
+          input.upscaleFactor,
+        );
+
+        if (!isAdminUser) {
+          try {
+            await deductCreditsAmount(
+              ctx.user.id,
+              creditsNeeded,
+              "imageUpscale",
+              `图片高清放大 ${input.upscaleFactor}（基准 ${input.baseCreditKey}）`,
+            );
+          } catch (e: any) {
+            return { success: false as const, error: e?.message || "Credits 不足，请充值后再试" };
+          }
+        }
+
+        const fetchable = resolveImageUrlForVertexFetch(input.imageUrl);
+        const result = await runVertexUpscaleImage({
+          imageUrl: fetchable,
+          prompt: "",
+          upscaleFactor: input.upscaleFactor,
+          outputMimeType: "image/png",
+        });
+
+        if (!result.ok || !result.imageUrl) {
+          if (!isAdminUser) {
+            try {
+              await addCredits(ctx.user.id, creditsNeeded, "refund", "图片放大失败退款");
+            } catch (refErr) {
+              console.error("[vertexImage.upscale] refund failed", refErr);
+            }
+          }
+          return {
+            success: false as const,
+            error: result.error || "放大失败，请稍后重试",
+          };
+        }
+
+        return {
+          success: true as const,
+          imageUrl: result.imageUrl,
+          creditsUsed: isAdminUser ? 0 : creditsNeeded,
+          upscaleFactor: result.upscaleFactor,
+        };
+      }),
   }),
 
 });

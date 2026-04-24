@@ -86,6 +86,7 @@ export * from "./schema-video-signatures";
 export * from "./schema-jobs";
 export * from "./schema-workflow";
 export * from "./schema-video-short-links";
+export * from "./schema-feedback";
 
 export const workflowRuns = mysqlTable("workflow_runs", {
   id: varchar("id", { length: 64 }).primaryKey(),
