@@ -164,7 +164,7 @@
 
 ## Phase 18: 2D转3D 功能全面重构
 - [x] 新建 shared/credits.ts（独立 Credits 定价文件）
-- [x] 更新 shared/plans.ts（新增导演包、学生版、Credits加值包等完整定价体系）
+- [x] 更新 shared/plans.ts（学生版、Credits 加值包等定价体系；对外以积分包为准）
 - [x] 重写 server/hunyuan3d.ts（Rapid/Pro 双模式 + GLB/OBJ 导出 + PBR + 多视角 + 自定义面数）
 - [x] server/routers.ts hunyuan3d 路由更新：新增 estimateCost、status 接口
 - [x] 前端 3D Studio 页面（从 RN 转换为 React Web + Tailwind + shadcn/ui）

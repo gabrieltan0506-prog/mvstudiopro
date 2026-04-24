@@ -39,21 +39,30 @@ import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
-import { deductCredits, deductCreditsAmount, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
-import { CREDIT_COSTS, CREDIT_FEATURE_BREAKDOWN, CREDIT_TO_CNY } from "./plans";
+import {
+  deductCredits,
+  deductCreditsAmount,
+  getCredits,
+  getUserPlan,
+  addCredits,
+  getCreditTransactions,
+  getOrCreateBalance,
+  refundCredits,
+} from "./credits";
+import { CREDIT_COSTS, CREDIT_TO_CNY } from "./plans";
 import { runVertexUpscaleImage } from "../api/google";
 import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
+  getProductPackageDisplayRows,
   type ImageUpscaleBaseCreditKey,
 } from "../shared/plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
 import { createGcsSignedUploadUrl } from "./services/gcs";
-import { getTierProviderChain, resolveUserTier, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
+import { getTierProviderChain, resolveUserTier, resolveWatermark, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
-import { getOrCreateBalance } from "./credits";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
@@ -3541,9 +3550,9 @@ ${JSON.stringify(platformEvidence, null, 2)}
             };
           }
           
-          // 免費生图添加 MVStudioPro.com 水印（管理員跳過）
+          // 僅 trial199 / 免費帳號添加水印（管理員及正式加值包用戶跳過）
           let finalUrl = imageResult.data.imageUrl;
-          if (shouldApplyWatermarkForTier(userTier)) {
+          if (await resolveWatermark(userId, isAdminUser)) {
             try {
               const { addWatermarkToUrl } = await import("./watermark");
               const { storagePut } = await import("./storage");
@@ -3739,13 +3748,15 @@ ${JSON.stringify(platformEvidence, null, 2)}
             fallback: imageResult.fallback,
           };
         } catch (err: any) {
-          // Refund credits on failure (admin doesn't need refund)
           if (!isAdminUser) {
             try {
-              const { addCredits } = await import("./credits");
-              await addCredits(userId, CREDIT_COSTS[creditKey], "bonus");
-            } catch (refundErr) {
-              console.error("[VirtualIdol] Failed to refund credits:", refundErr);
+              await refundCredits(
+                userId,
+                CREDIT_COSTS[creditKey],
+                "虚拟偶像·图片生成失败·退回已扣积分",
+              );
+            } catch (restoreErr) {
+              console.error("[VirtualIdol] Failed to restore credits:", restoreErr);
             }
           }
           console.error("[VirtualIdol] Gemini image generation failed:", err);
@@ -4095,9 +4106,9 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           
           try {
             const imageResult = await generateGeminiImage({ prompt: imagePrompt, quality: "1k" });
-            // 免費生图添加水印（管理員跳過）
+            // 僅 trial199 / 免費帳號添加水印（管理員及正式加值包用戶跳過）
             let finalUrl = imageResult.imageUrl;
-            if (shouldApplyWatermarkForTier(userTier) && imageResult.imageUrl) {
+            if ((await resolveWatermark(userId, isAdminUser)) && imageResult.imageUrl) {
               try {
                 const { addWatermarkToUrl } = await import("./watermark");
                 const { storagePut } = await import("./storage");
@@ -4163,7 +4174,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         const { exportToPDF, exportToWord } = await import("./storyboard-export");
         const isAdminUser = ctx.user.role === "admin";
         const userTier = await resolveUserTier(ctx.user.id, isAdminUser);
-        const shouldWatermark = shouldApplyWatermarkForTier(userTier);
+        const shouldWatermark = await resolveWatermark(ctx.user.id, isAdminUser);
 
         if (input.format === "word") {
           const result = await exportToWord(input.storyboard, { addWatermark: shouldWatermark });
@@ -4841,7 +4852,7 @@ ${sceneSummary}
     stats: adminProcedure.query(async () => getAdminStats()),
     creditBreakdown: adminProcedure.query(() => ({
       creditToCny: CREDIT_TO_CNY,
-      rows: CREDIT_FEATURE_BREAKDOWN,
+      packages: getProductPackageDisplayRows(),
     })),
     paymentList: adminProcedure.input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional()).query(async ({ input }) => getPaymentSubmissions(input?.status)),
     paymentReview: adminProcedure.input(z.object({
@@ -4918,9 +4929,12 @@ ${sceneSummary}
       }
 
       try {
-        // Refund on failure
         if (!isAdmin(ctx.user)) {
-          await addCredits(ctx.user.id, CREDIT_COSTS.audioAnalysis, "refund", "音频分析失败退款");
+          await refundCredits(
+            ctx.user.id,
+            CREDIT_COSTS.audioAnalysis,
+            "音频分析·生成失败·退回已扣积分",
+          );
         }
         return {
           success: false as const,
@@ -5294,8 +5308,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         };
       }
 
-      // Refund credits on failure
-      if (creditsUsed > 0) await addCredits(ctx.user.id, creditsUsed, "refund", "视频生成失败退款");
+      if (creditsUsed > 0) {
+        await refundCredits(ctx.user.id, creditsUsed, "视频生成·失败·退回已扣积分");
+      }
       await updateVideoGeneration(genId, {
         status: "failed",
         errorMessage: videoResult.error || "Unknown error",
@@ -5368,9 +5383,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         if (!result.ok || !result.imageUrl) {
           if (!isAdminUser) {
             try {
-              await addCredits(ctx.user.id, creditsNeeded, "refund", "图片放大失败退款");
+              await refundCredits(ctx.user.id, creditsNeeded, "图片放大·失败·退回已扣积分");
             } catch (refErr) {
-              console.error("[vertexImage.upscale] refund failed", refErr);
+              console.error("[vertexImage.upscale] restore credits failed", refErr);
             }
           }
           return {

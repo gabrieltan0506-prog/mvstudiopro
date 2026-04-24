@@ -1387,7 +1387,7 @@ export default function PlatformPage() {
               </p>
               <p className="mt-3 max-w-3xl text-sm leading-8 text-[#b8afd9] md:text-[15px]">
                 {platformDashboard?.subheadline
-                  || "这个页面不做视频上传，不做二创，不讲空泛平台画像。它只解决三件事：当前时间窗口里，哪个平台值得优先做；热点赛道该怎么切；以及你怎样把这轮内容机会变成真实商业承接。"}
+                  || "这个页面不做视频上传，不做二次创作流程，不讲空泛平台画像。它只解决三件事：当前时间窗口里，哪个平台值得优先做；热点赛道该怎么切；以及你怎样把这轮内容机会变成真实商业承接。"}
               </p>
 
               <div className="mt-6 grid gap-3 md:grid-cols-3">

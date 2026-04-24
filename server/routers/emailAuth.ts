@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { publicProcedure, router } from "../_core/trpc";
+import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { emailAuth, users } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -125,5 +125,62 @@ export const emailAuthRouter = router({
           role: user.role,
         },
       };
+    }),
+
+  /** 郵箱驗證登入用戶是否已設置密碼（用於個人中心引導） */
+  hasLoginPassword: protectedProcedure.query(async ({ ctx }) => {
+    const database = await getDb();
+    if (!database) return { hasPassword: false as const };
+    const email = ctx.user.email?.trim().toLowerCase();
+    if (!email) return { hasPassword: false as const };
+    const [row] = await database.select({ id: emailAuth.id }).from(emailAuth).where(eq(emailAuth.email, email)).limit(1);
+    return { hasPassword: !!row };
+  }),
+
+  /**
+   * 設置或修改登錄密碼。
+   * - 尚未在 email_auth 建檔（僅郵箱驗證碼註冊）：只需 newPassword。
+   * - 已有密碼：必須提供 currentPassword。
+   */
+  setLoginPassword: protectedProcedure
+    .input(
+      z.object({
+        newPassword: z.string().min(8).max(128),
+        currentPassword: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const database = await getDb();
+      if (!database) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+      }
+      const email = ctx.user.email?.trim().toLowerCase();
+      if (!email) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "当前账号未绑定邮箱，无法设置密码" });
+      }
+
+      const [auth] = await database.select().from(emailAuth).where(eq(emailAuth.email, email)).limit(1);
+      const hashNew = hashPassword(input.newPassword);
+
+      if (!auth) {
+        await database.insert(emailAuth).values({
+          email,
+          passwordHash: hashNew,
+          userId: ctx.user.id,
+        });
+        return { ok: true as const, created: true as const };
+      }
+
+      if (!input.currentPassword?.length) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "已设置过登录密码，修改时请填写原密码",
+        });
+      }
+      if (hashPassword(input.currentPassword) !== auth.passwordHash) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "原密码不正确" });
+      }
+      await database.update(emailAuth).set({ passwordHash: hashNew }).where(eq(emailAuth.email, email));
+      return { ok: true as const, created: false as const };
     }),
 });

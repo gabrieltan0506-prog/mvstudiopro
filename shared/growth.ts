@@ -102,12 +102,12 @@ export const remixLlmSchema = z.object({
   remixVisualAnalysis: z
     .string()
     .describe(
-      "二创视觉分析（借鉴与避坑）：必须分析原视频优缺点，并明确指出新选题该借鉴什么、避开什么。",
+      "二次创作视觉分析（借鉴与避坑）：必须分析原视频优缺点，并明确指出新选题该借鉴什么、避开什么。",
     ),
   remixExpressionAnalysis: z
     .string()
     .describe(
-      "二创专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】三个标题。",
+      "二次创作专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】三个标题。",
     ),
   musicPrompt: z.string().describe("针对用户新选题方向的 BGM 提示词"),
 });
@@ -123,13 +123,13 @@ export const growthPremiumContentSchema = z.object({
   remixVisualAnalysis: z
     .string()
     .describe(
-      "二创视觉分析 (借鉴与避坑)：分析原视频优缺点，并指导用户拍摄新选题时该借鉴什么、避开什么",
+      "二次创作视觉分析 (借鉴与避坑)：分析原视频优缺点，并指导用户拍摄新选题时该借鉴什么、避开什么",
     )
     .default(""),
   remixExpressionAnalysis: z
     .string()
     .describe(
-      "二创专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】",
+      "二次创作专属表达指导：必须包含【参考语言表达力】、【参考情感表达方式】、【参考镜头表现与情绪张力】",
     )
     .default(""),
   musicPrompt: z
@@ -661,7 +661,7 @@ export const growthPremiumRemixTrackPlanSchema = z.object({
 });
 
 export const growthPremiumRemixSchema = z.object({
-  title: z.literal("优质视频二创"),
+  title: z.union([z.literal("优质二次创作"), z.literal("优质视频二创")]),
   sourceSummary: z.string(),
   visualDnaSummary: z.string(),
   contentRebuildSummary: z.string(),

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { Loader2, ArrowLeft, Plus, BarChart, User, Film, Video, Gift, TrendingUp, Workflow } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, Gift, Lock, Coins } from "lucide-react";
+import { CREDIT_TO_CNY } from "@shared/plans";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 
@@ -12,8 +13,17 @@ export default function LayoutDashboard() {
   const [activeTab, setActiveTab] = useState<TabType>("transactions");
   const [betaCode, setBetaCode] = useState("");
   const [redeemLoading, setRedeemLoading] = useState(false);
+  const [loginPasswordNew, setLoginPasswordNew] = useState("");
+  const [loginPasswordCurrent, setLoginPasswordCurrent] = useState("");
+  const [loginPasswordBusy, setLoginPasswordBusy] = useState(false);
   const { user } = useAuth();
   const redeemMutation = trpc.betaCode.redeem.useMutation();
+  const { data: loginPasswordStatus, refetch: refetchLoginPassword } = trpc.emailAuth.hasLoginPassword.useQuery(
+    undefined,
+    { retry: false },
+  );
+  const setLoginPasswordMutation = trpc.emailAuth.setLoginPassword.useMutation();
+  const hasLoginPassword = loginPasswordStatus?.hasPassword === true;
 
   const { data: subData, isLoading: subLoading } = trpc.stripe.getSubscription.useQuery(undefined, {
     retry: false,
@@ -127,18 +137,89 @@ export default function LayoutDashboard() {
           </p>
         </div>
 
-        {/* Quick Actions */}
-        <div className="m-4">
-          <span className="text-lg font-semibold mb-4 block">Credits 消耗参考</span>
-          <div className="grid grid-cols-2 gap-4">
-            <CostCard icon={<BarChart className="h-6 w-6" />} label="成长营 GROWTH" cost={40} balance={credits.balance} />
-            <CostCard icon={<Film className="h-6 w-6" />} label="成长营 REMIX" cost={50} balance={credits.balance} />
-            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势·主分析" cost={30} balance={credits.balance} />
-            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势·每次追问" cost={20} balance={credits.balance} />
-            <CostCard icon={<Video className="h-6 w-6" />} label="工作流·故事板起" cost={5} balance={credits.balance} />
-            <CostCard icon={<Video className="h-6 w-6" />} label="工作流·场景视频" cost={80} balance={credits.balance} />
+        {/* 登录密码（邮箱验证码注册用户可在此补设） */}
+        <div className="mx-4 mb-4 bg-[#1A1A1D] rounded-xl p-4 border border-white/10">
+          <div className="flex items-center gap-2 mb-2">
+            <Lock className="h-5 w-5 text-violet-400" />
+            <span className="text-sm font-semibold text-white">登录密码</span>
+            {!user?.email ? (
+              <span className="text-xs text-amber-400/90">当前账号无邮箱，无法设置</span>
+            ) : loginPasswordStatus === undefined ? (
+              <span className="text-xs text-gray-500">检查中…</span>
+            ) : hasLoginPassword ? (
+              <span className="text-xs text-emerald-400/90">已设置，可在此修改</span>
+            ) : (
+              <span className="text-xs text-amber-400/90">尚未设置，建议补设以便用密码登录</span>
+            )}
           </div>
-          <p className="text-xs text-gray-500 mt-2">节点工作流：脚本免费；分镜/静帧/配音/配乐/合成等按步计费，管理后台「定价明细」可查看全部。</p>
+          <p className="text-xs text-gray-500 mb-3 leading-relaxed">
+            通过邮箱验证码完成注册的用户，默认无密码。在此设置后，账号仍可同时使用邮箱验证码登录；修改密码需提供原密码。
+          </p>
+          {user?.email ? (
+            <div className="space-y-2">
+              {hasLoginPassword ? (
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="当前密码"
+                  value={loginPasswordCurrent}
+                  onChange={(e) => setLoginPasswordCurrent(e.target.value)}
+                  className="w-full bg-[#0A0A0C] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-violet-500/40"
+                />
+              ) : null}
+              <input
+                type="password"
+                autoComplete="new-password"
+                placeholder={hasLoginPassword ? "新密码（至少 8 位）" : "设置密码（至少 8 位）"}
+                value={loginPasswordNew}
+                onChange={(e) => setLoginPasswordNew(e.target.value)}
+                className="w-full bg-[#0A0A0C] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-violet-500/40"
+              />
+              <button
+                type="button"
+                disabled={
+                  loginPasswordBusy ||
+                  loginPasswordNew.length < 8 ||
+                  (hasLoginPassword && loginPasswordCurrent.length < 1)
+                }
+                onClick={async () => {
+                  setLoginPasswordBusy(true);
+                  try {
+                    await setLoginPasswordMutation.mutateAsync({
+                      newPassword: loginPasswordNew,
+                      currentPassword: hasLoginPassword ? loginPasswordCurrent : undefined,
+                    });
+                    toast.success(hasLoginPassword ? "密码已更新" : "登录密码已设置");
+                    setLoginPasswordNew("");
+                    setLoginPasswordCurrent("");
+                    void refetchLoginPassword();
+                  } catch (err: any) {
+                    toast.error(err?.message || "设置失败");
+                  } finally {
+                    setLoginPasswordBusy(false);
+                  }
+                }}
+                className="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold"
+              >
+                {loginPasswordBusy ? "提交中…" : hasLoginPassword ? "更新密码" : "设置登录密码"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="m-4 rounded-xl p-4 border border-white/10 bg-[#1C1C1E]">
+          <div className="flex items-center gap-2 mb-2">
+            <Coins className="h-5 w-5 text-[#FF6B35]" />
+            <span className="text-lg font-semibold">Credits 说明</span>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            对外定价以<strong className="text-gray-400">积分加值包</strong>为准；使用功能时按实际规则从余额扣减。当前余额{" "}
+            <span className="text-[#FF6B35] font-bold">{credits.balance}</span> Credits；参考约 1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}。充值见{" "}
+            <Link href="/pricing" className="text-[#FF6B35] underline-offset-2 hover:underline">
+              定价页
+            </Link>
+            。
+          </p>
         </div>
 
         {/* Tabs */}
@@ -192,7 +273,7 @@ export default function LayoutDashboard() {
                     <div className="flex-1">
                       <span className="font-medium">
                         {log.action === "growthCampGrowth" ? "成长营 GROWTH 分析" :
-                         log.action === "growthCampRemix" ? "成长营 REMIX 二创" :
+                         log.action === "growthCampRemix" ? "成长营 · 二次创作" :
                          log.action === "platformTrend" ? "平台趋势分析" :
                          log.action === "platformTrendFollowUp" ? "平台趋势追问" :
                          log.action === "workflowNodes" ? "节点工作流" :
@@ -217,21 +298,6 @@ export default function LayoutDashboard() {
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function CostCard({ icon, label, cost, balance }: { icon: React.ReactNode; label: string; cost: number; balance: number }) {
-  const canAfford = balance >= cost;
-  const times = canAfford ? Math.floor(balance / cost) : 0;
-  return (
-    <div className={`flex flex-col items-center justify-center p-4 rounded-lg bg-[#1C1C1E] ${canAfford ? 'text-white' : 'text-gray-600'}`}>
-      <div className={`mb-2 ${canAfford ? 'text-primary' : 'text-gray-600'}`}>{icon}</div>
-      <span className="text-sm text-center font-medium">{label}</span>
-      <span className="text-xs text-gray-400">{cost} Credits</span>
-      <span className={`text-xs mt-1 ${canAfford ? 'text-green-400' : 'text-red-500'}`}>
-        {canAfford ? `可用 ${times} 次` : '余额不足'}
-      </span>
     </div>
   );
 }

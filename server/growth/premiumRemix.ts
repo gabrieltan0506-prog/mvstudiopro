@@ -336,10 +336,10 @@ function buildOverviewFromEvidence(input: BuildPremiumRemixInput, brief: ReturnT
     .join("；");
 
   return {
-    sourceSummary: `这次二创不是照搬原片，而是抽离它“结果前置、动作解释、证据抬信任、结尾只留一个行动”的成交结构，再改写成符合当前人设与业务目标的新版本。原片最值得借的不是题材本身，而是它如何在前 8 秒内建立可信度、如何用镜头和信息密度推动用户继续看下去。`,
+    sourceSummary: `这次二次创作不是照搬原片，而是抽离它“结果前置、动作解释、证据抬信任、结尾只留一个行动”的成交结构，再改写成符合当前人设与业务目标的新版本。原片最值得借的不是题材本身，而是它如何在前 8 秒内建立可信度、如何用镜头和信息密度推动用户继续看下去。`,
     visualDnaSummary: `${brief.visual || analysis.visualSummary || "保留原视频的高完成度景别节奏和可信口播氛围"}。画面上优先保留单人出镜、近中景推进、干净背景和证据插入，不做多人物戏剧化表演，也不做廉价冲突感。`,
     contentRebuildSummary: `${decisionFramework?.mainPathExecution || brief.structure || "内容重构遵循开头钩子、动作解释、证据抬信任、结尾收动作四段结构"}。${titleExecution?.videoPlan ? `具体执行上参考成长营建议：${titleExecution.videoPlan}。` : ""}${businessSummary ? `这次还会把后台数据里最强的商业判断折进文案：${businessSummary}` : ""}`,
-    personaFit: `${brief.persona || "当前账号适合走高可信单人专业表达"}。二创不做炫技复刻，而是把参考视频的结构翻译成“你本人为什么值得相信、你的方法为什么值得执行、你的结尾为什么值得行动”的商业表达。`,
+    personaFit: `${brief.persona || "当前账号适合走高可信单人专业表达"}。二次创作不做炫技复刻，而是把参考视频的结构翻译成“你本人为什么值得相信、你的方法为什么值得执行、你的结尾为什么值得行动”的商业表达。`,
     performanceDirection: `演绎上维持克制、可信、专业，但每个镜头都要承担不同任务：开头先压问题和结果，中段讲一个具体动作或判断，第三段给证据与材料，最后只留一个行动引导。${platformSummary ? `平台落地优先考虑：${platformSummary}。` : ""}`,
     languageExpression: analysis.languageExpression || `口播必须走短句、结果句前置、动作句紧跟、证据句补刀的路线。开头不要先做背景交代，先把用户最在意的问题或结论砸出来；中段只讲一个方法，不要三四个要点并列；结尾只给一个动作，别把咨询、私信、预约同时塞进去。`,
     emotionalExpression: analysis.emotionalExpression || `情绪推进不能全程平。前 2 秒先制造“这个问题就在你身上”的压力感，中段把压力切成“我告诉你怎么处理”的可执行感，第三段用证据带来“这不是空话”的信任感，结尾再收成“现在行动就可以减少损失”的确定感。`,
@@ -394,7 +394,7 @@ function normalizeLoosePremiumRemixCandidate(candidate: any, input: BuildPremium
   return {
     ...fallback,
     ...obj,
-    title: "优质视频二创",
+    title: "优质二次创作",
     characterAnchors: rawAnchors.length
       ? rawAnchors.slice(0, 3).map((anchor: any, index: number) => ({
           id: String(anchor?.id || `anchor_${index + 1}`),
@@ -603,7 +603,7 @@ function enforcePremiumRemixExecutionDensity(
   const storyboard = rebuildStoryboardForExecutionDensity(remix, input);
   return growthPremiumRemixSchema.parse({
     ...remix,
-    title: "优质视频二创",
+    title: "优质二次创作",
     ...overview,
     storyboard,
     loopTrack: rebuildLoopTrack({ ...remix, storyboard } as ReturnType<typeof growthPremiumRemixSchema.parse>, input),
@@ -618,7 +618,7 @@ async function polishPremiumRemixPlan(
   issues: string[],
 ) {
   const polishPrompt = [
-    "你要重写一份低质量的二创 JSON 方案。",
+    "你要重写一份低质量的二次创作 JSON 方案。",
     "要求：",
     "1. 必须保留完全相同的 JSON 字段结构。",
     "2. 所有概述字段必须互不重复，不能反复复制用户上下文。",
@@ -653,7 +653,7 @@ async function rewritePremiumRemixCopyFromKeyMoments(
   remix: ReturnType<typeof growthPremiumRemixSchema.parse>,
 ) {
   const rewritePrompt = [
-    "你要基于原视频的关键时间节点、关键帧和转写，再次重写这份二创方案里的文案部分。",
+    "你要基于原视频的关键时间节点、关键帧和转写，再次重写这份二次创作方案里的文案部分。",
     "这不是润色，也不是简单改写，而是重新创作更有成交力、更具体、更能拍的文案。",
     "必须保留完全相同的 JSON 结构和镜头数量，不允许改字段名。",
     "重点重写这些字段：sourceSummary、visualDnaSummary、contentRebuildSummary、personaFit、performanceDirection、languageExpression、emotionalExpression、cameraEmotionTension、bgmAnalysis、musicRecommendation、sunoPrompt。",
@@ -692,7 +692,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
   const growthHandoff = input.growthHandoff;
   const brief = buildPremiumRemixBrief(input);
   const personaContext = brief.persona || "围绕当前账号身份，重构成更可信、更专业的单人商业表达。";
-  const title = primaryAngle?.title || input.analysis.titleSuggestions?.[0] || "优质视频二创";
+  const title = primaryAngle?.title || input.analysis.titleSuggestions?.[0] || "优质二次创作";
   const visualSummary = brief.visual || input.analysis.visualSummary || "保留参考视频的景别节奏、口播推进和结果前置结构。";
   const sceneA = keyFrames[0];
   const sceneB = keyFrames[1];
@@ -705,7 +705,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
   const visualBase = `${personaContext}；${visualSummary}；${structureLine}`;
 
   return growthPremiumRemixSchema.parse({
-    title: "优质视频二创",
+    title: "优质二次创作",
     sourceSummary: `${title}，核心可借鉴的是节奏、镜头推进和商业承接，而不是照搬原内容。`,
     visualDnaSummary: visualSummary,
     contentRebuildSummary: primaryAngle?.whyItFits || input.analysis.summary || structureLine || "将参考视频的高留存结构重写为符合当前赛道的商业短视频脚本。",
@@ -981,13 +981,13 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     .join(" || ");
   const prompt = [
     "你是 MVStudioPro 的优质视频逆向工程导演。",
-    "任务：把参考视频的成功节奏、镜头语言和商业推进抽离出来，再重写成一个新的二创版本。",
-    "重要：你不是重新做一遍泛化分析，而是要把成长营已经得出的成熟判断翻译成可直接拍、可直接生成、可直接卖的二创方案。",
-    "二创输出至少要达到成长营交付的执行密度，不能比成长营更空、更短、更模板化。",
+    "任务：把参考视频的成功节奏、镜头语言和商业推进抽离出来，再重写成一个新的二次创作版本。",
+    "重要：你不是重新做一遍泛化分析，而是要把成长营已经得出的成熟判断翻译成可直接拍、可直接生成、可直接卖的二次创作方案。",
+    "二次创作输出至少要达到成长营交付的执行密度，不能比成长营更空、更短、更模板化。",
     "必须严格输出 JSON，本体只能是 JSON，不允许 markdown 或解释。",
     "输出字段：title/sourceSummary/visualDnaSummary/contentRebuildSummary/personaFit/performanceDirection/languageExpression/emotionalExpression/cameraEmotionTension/bgmAnalysis/musicRecommendation/sunoPrompt/characterAnchors/storyboard/loopTrack/interpolationTrack/deliveryNotes。",
     "规则：",
-    "1. title 固定写“优质视频二创”。",
+    "1. title 固定写“优质二次创作”。",
     "2. storyboard 必须精确输出 4 个镜头，每个镜头 8 秒，总计 32 秒。",
     "2.1 每个 storyboard 镜头都必须填写 referencePrompt，内容要能直接用于生成该镜头的分镜参考图。",
     "3. characterAnchors 只允许 1 到 3 个角色锚点，且每个角色都要有 visualPrompt 和 consistencyRules。",
@@ -996,13 +996,13 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     "6. 文案与分镜必须可直接用于商业短视频重制，而不是泛泛而谈。",
     "7. 不允许使用“建立人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
     "8. 必须尽量复用输入里的 titleExecutions、assetAdaptation、growthHandoff、关键帧、时间点改法，而不是重新发明一套空泛模板。",
-    "8.1 如果 dataEvidence 里已经有 decisionFramework / platformRecommendations / businessInsights / growthPlan / referenceExamples，你必须把它们当成上游定论，再转译成二创。",
+    "8.1 如果 dataEvidence 里已经有 decisionFramework / platformRecommendations / businessInsights / growthPlan / referenceExamples，你必须把它们当成上游定论，再转译成二次创作。",
     "9. 如果用户上下文里有职业、人设、服装、场景、道具要求，必须写进角色锚定和 referencePrompt。",
     "10. sourceSummary/visualDnaSummary/contentRebuildSummary/personaFit/performanceDirection 这五个字段必须各写各的，不允许内容互相重复或改写同一句。",
     "11. 每个镜头的 sceneDescription、voiceover、performanceNote 都必须详细、具体、有拍摄执行感。",
     "12. referencePrompt 必须是英文，至少 80 个英文单词，不要复制中文背景，不要出现泛泛的模板词。",
     "13. languageExpression 必须具体回答这条视频的话术应该怎么说更有成交力，包含句式、口播节奏、结果句和避免的表达。",
-    "14. emotionalExpression 必须具体回答这条二创要怎么传达焦虑、希望、释压、信任或权威感，不能空泛写“更有感染力”。",
+    "14. emotionalExpression 必须具体回答这条二次创作要怎么传达焦虑、希望、释压、信任或权威感，不能空泛写“更有感染力”。",
     "15. cameraEmotionTension 必须把景别、运镜、节奏和情绪推进绑定起来，说明每一类镜头各自负责什么情绪任务。",
     "16. bgmAnalysis 和 musicRecommendation 必须写清楚节奏、氛围、乐器、起伏和适用场景。",
     "17. sunoPrompt 必须是可直接给 Suno 的英文 prompt，强调节奏、乐器、情绪、用途和不要抢口播。",
@@ -1068,7 +1068,7 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
       provider: "vertex",
       modelName: strategistModel,
       messages: [
-        { role: "system", content: "你擅长将参考视频的节奏抽象成可执行的商业二创脚本，并且严格输出 JSON。" },
+        { role: "system", content: "你擅长将参考视频的节奏抽象成可执行的二次创作商业脚本，并且严格输出 JSON。" },
         { role: "user", content: prompt },
       ],
       response_format: { type: "json_object" },

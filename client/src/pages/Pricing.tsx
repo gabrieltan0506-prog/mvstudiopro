@@ -4,9 +4,9 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
   Loader2, CheckCircle, Coins, ChevronRight,
-  Bolt, Zap, Flame, BarChart3, Smile, Box, Film, Video,
-  TrendingUp, Workflow, X, QrCode,
+  Bolt, Zap, Flame, BarChart3, Smile, X, QrCode,
 } from "lucide-react";
+import { CREDIT_TO_CNY } from "@shared/plans";
 
 type BillingInterval = "monthly" | "quarterly" | "yearly";
 type PackId = "trial199" | "small" | "medium" | "large" | "mega";
@@ -198,7 +198,9 @@ export default function Pricing() {
         {/* Header */}
         <div className="px-6 pt-8 pb-4">
           <h1 className="text-3xl font-extrabold text-white">Credits 加值</h1>
-          <p className="text-base text-gray-400 mt-1">微信 / 支付宝扫码；常规包约 ¥0.65–0.70/积分，¥19.9 试用包约 ¥0.60/积分</p>
+          <p className="text-base text-gray-400 mt-1">
+            对外定价以积分加值包为准。微信 / 支付宝扫码；常规包约 ¥0.65–0.70/积分，¥19.9 试用包约 ¥0.60/积分；参考换算 1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}。
+          </p>
         </div>
 
         {/* Credits Balance */}
@@ -277,21 +279,6 @@ export default function Pricing() {
           </div>
         </div>
 
-        {/* Feature costs for beta products */}
-        <div className="px-6 mb-8">
-          <h3 className="text-xl font-bold text-white mb-3">内测功能消耗说明</h3>
-          <div className="bg-[#1A1A1D] border border-white/10 rounded-xl divide-y divide-white/10">
-            <CostRow icon={<TrendingUp className="h-5 w-5 text-[#FF6B35]" />} label="成长营 GROWTH 分析" cost={40} approxRmb="≈¥28" badge="NEW" />
-            <CostRow icon={<Film className="h-5 w-5 text-[#FF6B35]" />} label="成长营 REMIX 二创" cost={50} approxRmb="≈¥35" badge="NEW" />
-            <CostRow icon={<BarChart3 className="h-5 w-5 text-[#FF6B35]" />} label="平台趋势分析" cost={30} approxRmb="≈¥21" badge="NEW" />
-            <CostRow icon={<Workflow className="h-5 w-5 text-[#FF6B35]" />} label="节点工作流" cost={20} approxRmb="≈¥14" badge="NEW" />
-            <CostRow icon={<BarChart3 className="h-5 w-5 text-gray-500" />} label="视频 PK 评分" cost={8} approxRmb="≈¥5.6" />
-            <CostRow icon={<Smile className="h-5 w-5 text-gray-500" />} label="虚拟偶像生成" cost={3} approxRmb="≈¥2.1" />
-            <CostRow icon={<Box className="h-5 w-5 text-gray-500" />} label="偶像转 3D" cost={10} approxRmb="≈¥7" />
-            <CostRow icon={<Video className="h-5 w-5 text-gray-500" />} label="视频生成" cost={25} approxRmb="≈¥17.5" />
-          </div>
-        </div>
-
         {/* Payment history shortcut */}
         <Link href="/dashboard">
           <a className="flex items-center justify-between mx-6 mb-8 p-4 bg-[#1A1A1D] rounded-xl border border-white/10">
@@ -341,32 +328,6 @@ export default function Pricing() {
           onClose={() => setPayModal(null)}
         />
       )}
-    </div>
-  );
-}
-
-function CostRow({
-  icon, label, cost, approxRmb, badge,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  cost: number;
-  approxRmb?: string;
-  badge?: string;
-}) {
-  return (
-    <div className="flex justify-between items-center p-3.5">
-      <div className="flex items-center gap-2.5">
-        {icon}
-        <span className="text-sm text-gray-200">{label}</span>
-        {badge && (
-          <div className="bg-[#FF6B35] rounded text-white text-[9px] font-extrabold px-1.5 py-0.5">{badge}</div>
-        )}
-      </div>
-      <div className="text-right">
-        <span className="text-sm font-semibold text-[#FF6B35]">{cost} cr</span>
-        {approxRmb && <span className="text-xs text-gray-500 ml-1">{approxRmb}</span>}
-      </div>
     </div>
   );
 }

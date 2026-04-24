@@ -528,33 +528,50 @@ export default function AdminPanel() {
           <TabsContent value="credit-pricing" className="space-y-4">
             <Card className="bg-card/50 border-border/50">
               <CardHeader>
-                <CardTitle>全站功能细项 Credits</CardTitle>
+                <CardTitle>产品包定价（对外口径）</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  1 Credit ≈ ¥{creditBreakdown?.creditToCny ?? 0.7} 人民币，与 server/plans.ts 中 CREDIT_COSTS 同步。
+                  1 Credit ≈ ¥{creditBreakdown?.creditToCny ?? 0.7} 人民币（展示用）。已剥离单功能逐项标价，以 shared/plans 中<strong>积分加值包</strong>为准；实际扣费仍由 CREDIT_COSTS 在服务端执行。
                 </p>
               </CardHeader>
               <CardContent className="overflow-x-auto">
-                {creditBreakdown?.rows && creditBreakdown.rows.length > 0 ? (
+                {creditBreakdown?.packages && creditBreakdown.packages.length > 0 ? (
                   <table className="w-full text-sm border-collapse">
                     <thead>
                       <tr className="border-b border-border/60 text-left text-muted-foreground">
-                        <th className="py-2 pr-3 font-medium">产品 / 模块</th>
-                        <th className="py-2 pr-3 font-medium">细项</th>
+                        <th className="py-2 pr-3 font-medium">类别</th>
+                        <th className="py-2 pr-3 font-medium">名称</th>
                         <th className="py-2 pr-3 font-medium">Credits</th>
-                        <th className="py-2 pr-3 font-medium">约人民币</th>
-                        <th className="py-2 font-medium">说明</th>
+                        <th className="py-2 pr-3 font-medium">标价（¥）</th>
+                        <th className="py-2 pr-3 font-medium">摘要 / 包含</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {creditBreakdown.rows.map((row, i) => {
-                        const cny = (row.credits * (creditBreakdown.creditToCny ?? 0.7)).toFixed(1);
+                      {creditBreakdown.packages.map((row, i) => {
+                        const cr = row.credits;
+                        const cnyEquiv =
+                          cr != null ? (cr * (creditBreakdown.creditToCny ?? 0.7)).toFixed(1) : "—";
                         return (
                           <tr key={i} className="border-b border-border/30 hover:bg-background/20">
-                            <td className="py-2 pr-3 align-top whitespace-nowrap">{row.product}</td>
-                            <td className="py-2 pr-3 align-top">{row.subFeature}</td>
-                            <td className="py-2 pr-3 align-top font-mono">{row.credits}</td>
-                            <td className="py-2 pr-3 align-top text-muted-foreground">≈ ¥{cny}</td>
-                            <td className="py-2 align-top text-xs text-muted-foreground">{row.note || "—"}</td>
+                            <td className="py-2 pr-3 align-top whitespace-nowrap">{row.category}</td>
+                            <td className="py-2 pr-3 align-top font-medium">{row.name}</td>
+                            <td className="py-2 pr-3 align-top font-mono">{cr ?? "—"}</td>
+                            <td className="py-2 pr-3 align-top">
+                              {row.priceCny != null ? (
+                                <span>¥{Number.isInteger(row.priceCny) ? row.priceCny : row.priceCny.toFixed(1)}</span>
+                              ) : (
+                                <span className="text-muted-foreground text-xs">组合包 · 参考约 ¥{cnyEquiv}</span>
+                              )}
+                            </td>
+                            <td className="py-2 align-top text-xs text-muted-foreground max-w-md">
+                              <div>{row.summary}</div>
+                              {row.bullets?.length ? (
+                                <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                                  {row.bullets.map((b) => (
+                                    <li key={b}>{b}</li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                            </td>
                           </tr>
                         );
                       })}

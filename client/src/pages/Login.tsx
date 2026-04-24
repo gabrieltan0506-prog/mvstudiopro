@@ -185,7 +185,10 @@ export default function LoginPage() {
             MV Studio Pro
           </div>
           <div style={{ marginTop: 6, color: "rgba(255,255,255,0.5)", fontSize: 14 }}>
-            登录以繼續使用
+            使用邮箱验证码登录；首次验证即完成注册
+          </div>
+          <div style={{ marginTop: 8, color: "rgba(255,255,255,0.42)", fontSize: 12, lineHeight: 1.55, maxWidth: 360, marginLeft: "auto", marginRight: "auto" }}>
+            注册成功后，可在「个人中心 / Credits 总览」设置登录密码，便于后续使用密码方式登录（与邮箱验证码并行，互不影响）。
           </div>
         </div>
 

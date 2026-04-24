@@ -637,7 +637,7 @@ export const workflowRouter = router({
       await refundCredits(
         ctx.user.id,
         totalCost,
-        input.reason ?? `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}失败退款`,
+        input.reason ?? `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}·生成失败·退回已扣积分`,
       );
       return { refunded: totalCost };
     }),
@@ -693,7 +693,7 @@ export const workflowRouter = router({
   refundScriptGenerationCharge: protectedProcedure
     .input(z.object({ amount: z.number().int().min(1).max(10) }))
     .mutation(async ({ ctx, input }) => {
-      await refundCredits(ctx.user.id, input.amount, "脚本生成失败退款");
+      await refundCredits(ctx.user.id, input.amount, "脚本生成·失败·退回已扣积分");
       return { ok: true as const };
     }),
 });

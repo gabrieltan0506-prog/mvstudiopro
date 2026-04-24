@@ -10,7 +10,8 @@ type ToolCard = {
 };
 
 const cards: ToolCard[] = [
-  { zh: "创作者成长营", en: "Creator Growth Camp", desc: "上传视频或图文，生成商业战略、爆款选题与导演级分镜，GROWTH / REMIX 双模式", price: "内测功能", pro: true, href: "/creator-growth-camp" },
+  { zh: "创作者成长营", en: "Creator Growth Camp", desc: "上传视频或图文，生成商业战略、爆款选题与导演级分镜；商业成长（GROWTH）与二次创作（REMIX）双模式", price: "内测功能", pro: true, href: "/creator-growth-camp" },
+  { zh: "二创中心", en: "Remix / 二次创作", desc: "图、文、视频等素材皆可：结构拆解、选题与分镜，输出可落地的二次创作方案（同「二次创作中心」入口）", price: "内测功能", pro: true, href: "/creator-growth-camp/premium-remix" },
   { zh: "平台趋势分析", en: "Platform Trend Analysis", desc: "小红书、抖音、B站、快手平台数据洞察，含 7 天发布计划与流量承接建议", price: "内测功能", pro: true, href: "/creator-growth-camp/platform" },
   { zh: "节点式工作流", en: "Workflow Nodes", desc: "可视化节点画布，串接分镜生成、AI 影片、BGM 与发布动作，一键执行完整创作流程", price: "内测功能", pro: true, href: "/workflow-nodes" },
 ];
@@ -25,7 +26,7 @@ export default function HomeTools() {
         className="home-tools-grid"
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
           gap: 18,
           marginTop: 22,
         }}
