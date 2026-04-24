@@ -1,12 +1,18 @@
 import { z } from "zod";
 import { eq, and, desc, sql } from "drizzle-orm";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { betaInviteCodes, betaCodeUsages } from "../../drizzle/schema-beta";
 import { addCredits } from "../credits";
 import { hasUnlimitedAccess } from "../services/access-policy";
 import { users } from "../../drizzle/schema";
+
+const SUPERVISOR_SECRET = process.env.SUPERVISOR_SECRET ?? "";
+
+function isSupervisorToken(token: string | null | undefined): boolean {
+  return !!SUPERVISOR_SECRET && !!token && token === SUPERVISOR_SECRET;
+}
 
 function generateCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -48,7 +54,7 @@ async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>
 }
 
 export const betaCodeRouter = router({
-  generate: protectedProcedure
+  generate: publicProcedure
     .input(
       z.object({
         count: z.number().int().min(1).max(100).default(1),
@@ -56,26 +62,26 @@ export const betaCodeRouter = router({
         maxUses: z.number().int().min(1).default(1),
         note: z.string().max(120).optional(),
         expiresInDays: z.number().int().min(1).max(365).optional(),
+        supervisorToken: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
 
-      // 確保表存在
       await ensureBetaTables(db);
 
-      const [userRow] = await db
-        .select({ role: users.role, email: users.email })
-        .from(users)
-        .where(eq(users.id, ctx.user.id))
-        .limit(1);
+      // supervisor token 直接通過
+      const tokenOk = isSupervisorToken(input.supervisorToken);
 
-      if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: `僅 Supervisor / Admin 可生成邀請碼（角色：${userRow?.role ?? "未知"}，郵箱：${userRow?.email ?? "未綁定"}）`,
-        });
+      if (!tokenOk) {
+        // 需要登入 session
+        const userId = (ctx as any).user?.id;
+        if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入或提供 supervisor token" });
+        const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+        if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `僅 Supervisor / Admin 可生成邀請碼` });
+        }
       }
 
       const expiresAt = input.expiresInDays
@@ -94,7 +100,7 @@ export const betaCodeRouter = router({
               credits: input.credits,
               maxUses: input.maxUses,
               usedCount: 0,
-              createdBy: ctx.user.id,
+              createdBy: (ctx as any).user?.id,
               note: input.note ?? null,
               expiresAt,
             });
@@ -156,7 +162,7 @@ export const betaCodeRouter = router({
         .where(
           and(
             eq(betaCodeUsages.codeId, codeRow.id),
-            eq(betaCodeUsages.userId, ctx.user.id)
+            eq(betaCodeUsages.userId, (ctx as any).user?.id)
           )
         )
         .limit(1);
@@ -165,10 +171,10 @@ export const betaCodeRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "您已使用过此内测码" });
       }
 
-      await addCredits(ctx.user.id, codeRow.credits, "beta");
+      await addCredits((ctx as any).user?.id, codeRow.credits, "beta");
       await db.insert(betaCodeUsages).values({
         codeId: codeRow.id,
-        userId: ctx.user.id,
+        userId: (ctx as any).user?.id,
         creditsAwarded: codeRow.credits,
       });
       await db
@@ -183,26 +189,28 @@ export const betaCodeRouter = router({
       };
     }),
 
-  listMine: protectedProcedure.query(async ({ ctx }) => {
+  listMine: publicProcedure
+    .input(z.object({ supervisorToken: z.string().optional() }).optional())
+    .query(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
 
     await ensureBetaTables(db);
 
-    const [userRow] = await db
-      .select({ role: users.role, email: users.email })
-      .from(users)
-      .where(eq(users.id, ctx.user.id))
-      .limit(1);
-
-    if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
-      throw new TRPCError({ code: "FORBIDDEN", message: "仅 Supervisor 可查看" });
+    const tokenOk = isSupervisorToken(input?.supervisorToken);
+    if (!tokenOk) {
+      const userId = (ctx as any).user?.id;
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入" });
+      const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+      if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "仅 Supervisor 可查看" });
+      }
     }
 
     return db
       .select()
       .from(betaInviteCodes)
-      .where(eq(betaInviteCodes.createdBy, ctx.user.id))
+      .where(eq(betaInviteCodes.createdBy, (ctx as any).user?.id))
       .orderBy(desc(betaInviteCodes.createdAt));
   }),
 });

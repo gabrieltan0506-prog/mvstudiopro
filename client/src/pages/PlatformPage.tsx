@@ -2292,6 +2292,8 @@ export default function PlatformPage() {
   );
 }
 
+const SUPERVISOR_TOKEN = "mvsp-super-2026";
+
 function InviteCodePanel() {
   const [count, setCount] = useState("5");
   const [credits, setCredits] = useState("200");
@@ -2301,7 +2303,7 @@ function InviteCodePanel() {
   const [generated, setGenerated] = useState<string[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
 
-  const listQuery = trpc.betaCode.listMine.useQuery(undefined, { staleTime: 10_000 });
+  const listQuery = trpc.betaCode.listMine.useQuery({ supervisorToken: SUPERVISOR_TOKEN }, { staleTime: 10_000 });
   const generateMut = trpc.betaCode.generate.useMutation({
     onSuccess: (d) => { setGenerated(d.codes); listQuery.refetch(); },
     onError: (e) => alert("生成失敗：" + e.message),
@@ -2333,7 +2335,7 @@ function InviteCodePanel() {
         <div><label style={labelStyle}>備注（選填）</label><input style={inputStyle} type="text" placeholder="備注" value={note} onChange={e => setNote(e.target.value)} /></div>
       </div>
       <button
-        onClick={() => generateMut.mutate({ count: Number(count), credits: Number(credits), maxUses: Number(maxUses), expiresInDays: Number(expireDays), note: note || undefined })}
+        onClick={() => generateMut.mutate({ count: Number(count), credits: Number(credits), maxUses: Number(maxUses), expiresInDays: Number(expireDays), note: note || undefined, supervisorToken: SUPERVISOR_TOKEN })}
         disabled={generateMut.isPending}
         style={{ background: "linear-gradient(135deg,#7c3aed,#4f46e5)", border: "none", borderRadius: 8, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: generateMut.isPending ? 0.6 : 1 }}
       >
