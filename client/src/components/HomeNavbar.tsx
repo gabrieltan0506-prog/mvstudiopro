@@ -23,12 +23,14 @@ export default function HomeNavbar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const isSupervisor = user?.role === "supervisor" || user?.role === "admin";
-  const emailPrefix = user?.email ? user.email.split("@")[0] : null;
-  const displayName = isSupervisor
-    ? (user?.role === "admin" ? "Admin" : "Supervisor")
-    : emailPrefix || user?.name || "用户";
-  const avatarLetter = isSupervisor ? "S" : displayName.charAt(0).toUpperCase();
+  const isSupervisor = user?.role === "supervisor";
+  const isAdmin = user?.role === "admin";
+  const displayName = isAdmin
+    ? "Admin"
+    : isSupervisor
+    ? "Supervisor"
+    : user?.name || "用户";
+  const avatarLetter = (isAdmin || isSupervisor) ? "S" : displayName.charAt(0).toUpperCase();
 
   return (
     <header
@@ -184,7 +186,7 @@ export default function HomeNavbar() {
                   >
                     <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 2 }}>已登录</div>
                     <div style={{ fontSize: 13, color: "white", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {isSupervisor ? displayName : (user.email || displayName)}
+                      {displayName}
                     </div>
                     {user.credits != null && (
                       <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,185,100,0.9)" }}>
