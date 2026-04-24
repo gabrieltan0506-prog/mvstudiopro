@@ -23,7 +23,8 @@ export default function HomeNavbar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const displayName = user?.name || user?.email || "用户";
+  const emailPrefix = user?.email ? user.email.split("@")[0] : null;
+  const displayName = emailPrefix || user?.name || "用户";
   const avatarLetter = displayName.charAt(0).toUpperCase();
 
   return (
