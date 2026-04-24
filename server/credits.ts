@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getDb } from "./db";
 import {
   creditBalances,
@@ -324,7 +324,7 @@ export async function addCredits(
   const newBalance = balance.balance + amount;
   const newLifetimeEarned = balance.lifetimeEarned + amount;
 
-  // 更新余额
+  // 更新 creditBalances 余额
   await db
     .update(creditBalances)
     .set({
@@ -332,6 +332,12 @@ export async function addCredits(
       lifetimeEarned: newLifetimeEarned,
     })
     .where(eq(creditBalances.userId, userId));
+
+  // 同步更新 users.credits，保持首頁積分顯示一致
+  await db
+    .update(users)
+    .set({ credits: sql`COALESCE(${users.credits}, 0) + ${amount}` })
+    .where(eq(users.id, userId));
 
   // 记录交易
   await db.insert(creditTransactions).values({
