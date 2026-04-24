@@ -2233,6 +2233,8 @@ export default function MVAnalysisPage() {
     if (!r.ok) toast.error(r.message);
   }, []);
 
+  const recordSnapshotMutation = trpc.mvAnalysis.recordAnalysisSnapshot.useMutation();
+
   // Cloud Run PDF proxy — replaces old html-to-image + jsPDF local approach
   const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
     onSuccess: (result) => {
@@ -2249,7 +2251,15 @@ export default function MVAnalysisPage() {
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast.success("分析页 PDF 已开始下载");
+        toast.success("分析页 PDF 已开始下载，快照已保存至「我的作品」");
+        // Save snapshot record (GMT+8 title)
+        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        recordSnapshotMutation.mutate({
+          analysisType: "growth_camp",
+          title: `成長營分析 ${gmt8Label}`,
+          summary: (analysis as any)?.summary?.slice(0, 300) ?? "",
+          analysisDate: new Date().toISOString(),
+        });
       } catch (err) {
         toast.error("PDF 下载时出错，请重试");
       }
@@ -3307,21 +3317,34 @@ export default function MVAnalysisPage() {
         ) : null}
 
         {analysis ? (
-          <div className="mt-8 rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
+          <div className="mt-8 rounded-[28px] border border-amber-500/30 bg-[#0f1a2c] p-6 space-y-4">
+            {/* 時效性提醒 */}
+            <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
+              <span className="text-lg leading-none mt-0.5">⚡</span>
+              <div>
+                <div className="font-semibold mb-0.5">分析結果具有時效性</div>
+                <div className="text-xs text-amber-200/80">平台數據每日更新，本次分析結果基於當前時間點的數據快照。建議立即下載 PDF，系統將同步保留一份快照紀錄在您的「我的作品」中。</div>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-white">分析页面下载</div>
-                <div className="mt-1 text-xs text-white/50">将当前分析页面导出为 PDF 文件</div>
+                <div className="mt-1 text-xs text-white/50">导出为 PDF，同时保存快照到「我的作品」</div>
               </div>
-              <button
-                type="button"
-                onClick={handleDownloadAnalysisPdf}
-                disabled={isDownloadingPdf}
-                className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
-              </button>
+              <div className="flex items-center gap-2">
+                <a href="/my-works" className="inline-flex items-center gap-1.5 rounded-2xl border border-purple-500/30 bg-purple-500/10 px-3 py-2.5 text-xs font-semibold text-purple-300 transition hover:bg-purple-500/20">
+                  📁 我的作品
+                </a>
+                <button
+                  type="button"
+                  onClick={handleDownloadAnalysisPdf}
+                  disabled={isDownloadingPdf}
+                  className="inline-flex items-center gap-2 rounded-2xl border border-[#49e6ff]/30 bg-[#49e6ff]/10 px-4 py-3 text-sm font-semibold text-[#8cefff] transition hover:bg-[#49e6ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isDownloadingPdf ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  {isDownloadingPdf ? "正在生成 PDF..." : "下载分析页 PDF"}
+                </button>
+              </div>
             </div>
           </div>
         ) : null}

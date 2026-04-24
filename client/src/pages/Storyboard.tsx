@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import { ExpiryWarningBanner, CreationHistoryPanel } from "@/components/CreationManager";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import {
   ChevronRight,
   Sparkles,
@@ -1175,9 +1176,10 @@ export default function StoryboardPage() {
                     {scene.previewImageUrl && (
                       <div className="mb-4">
                         <div className="rounded-xl overflow-hidden bg-muted/30">
-                          <img
+                          <TrialWatermarkImage
                             src={scene.previewImageUrl}
                             alt={`Scene ${scene.sceneNumber} preview`}
+                            isTrial={(usageStatsQuery.data as any)?.isTrial === true}
                             className="w-full aspect-video object-contain"
                           />
                         </div>

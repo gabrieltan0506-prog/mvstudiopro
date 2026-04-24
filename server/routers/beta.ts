@@ -184,14 +184,14 @@ export const betaRouter = router({
 
       if (!user) {
         // Create a placeholder user for this email
-        const [result] = await db.insert(users).values({
+        const [newRow] = await db.insert(users).values({
           openId: `beta_${input.email}`,
           email: input.email,
           name: input.email.split("@")[0],
           loginMethod: "beta_invite",
           role: "user",
-        });
-        [user] = await db.select().from(users).where(eq(users.id, result.insertId)).limit(1);
+        }).returning({ id: users.id });
+        [user] = await db.select().from(users).where(eq(users.id, newRow!.id)).limit(1);
       }
 
       // Check if already has beta quota
@@ -250,13 +250,13 @@ export const betaRouter = router({
       let [user] = await db.select().from(users).where(eq(users.openId, phoneOpenId)).limit(1);
 
       if (!user) {
-        const [result] = await db.insert(users).values({
+        const [newRow] = await db.insert(users).values({
           openId: phoneOpenId,
           name: input.name || input.phone,
           loginMethod: "phone",
           role: "user",
-        });
-        [user] = await db.select().from(users).where(eq(users.id, result.insertId)).limit(1);
+        }).returning({ id: users.id });
+        [user] = await db.select().from(users).where(eq(users.id, newRow!.id)).limit(1);
       }
 
       // Check if already has beta quota

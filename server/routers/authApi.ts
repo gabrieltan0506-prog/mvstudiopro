@@ -347,11 +347,10 @@ export function registerAuthApiRoutes(app: Express) {
               name: email.split("@")[0],
               loginMethod: "email_otp",
               role: "free",
-            });
-          // 用 email 查回，避免 insertId 在某些驱动下为 undefined
+            }).returning({ id: users.id });
           [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-          if (!user && insertResult?.insertId) {
-            [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+          if (!user && insertResult?.id) {
+            [user] = await db.select().from(users).where(eq(users.id, insertResult.id)).limit(1);
           }
         }
 
@@ -447,11 +446,10 @@ export function registerAuthApiRoutes(app: Express) {
             credits: 0,
             roleTag: "normal",
             verifyStatus: "none",
-          });
-        // 优先用 email 查回，避免 insertId 在某些驱动下为 undefined
+          }).returning({ id: users.id });
         [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-        if (!user && insertResult?.insertId) {
-          [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+        if (!user && insertResult?.id) {
+          [user] = await db.select().from(users).where(eq(users.id, insertResult.id)).limit(1);
         }
         if (!user) {
           return res.status(500).json({ error: "用户创建失败，请稍后重试" });

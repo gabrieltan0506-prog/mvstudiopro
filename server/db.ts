@@ -1,5 +1,6 @@
 import { eq, desc, and, avg, count, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import { InsertUser, users, guestbookMessages, InsertGuestbookMessage, mvReviews, InsertMvReview, storyboards, InsertStoryboard, Storyboard, paymentSubmissions } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { isSupervisorEmail } from "./services/access-policy";
@@ -10,7 +11,8 @@ let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const sql_conn = neon(process.env.DATABASE_URL);
+      _db = drizzle(sql_conn);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -72,7 +74,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       updateSet.lastSignedIn = new Date();
     }
 
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
+    await db.insert(users).values(values).onConflictDoUpdate({
+      target: users.openId,
       set: updateSet,
     });
   } catch (error) {
@@ -98,8 +101,8 @@ export async function getUserByOpenId(openId: string) {
 export async function createGuestbookMessage(data: InsertGuestbookMessage) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(guestbookMessages).values(data);
-  return result[0].insertId;
+  const [row] = await db.insert(guestbookMessages).values(data).returning({ id: guestbookMessages.id });
+  return row?.id ?? 0;
 }
 
 export async function getGuestbookMessages(limit = 50) {
@@ -117,8 +120,8 @@ export async function getGuestbookMessages(limit = 50) {
 export async function createMvReview(data: InsertMvReview) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(mvReviews).values(data);
-  return result[0].insertId;
+  const [row] = await db.insert(mvReviews).values(data).returning({ id: mvReviews.id });
+  return row?.id ?? 0;
 }
 
 export async function getMvReviews(mvId: string, limit = 50) {
@@ -153,8 +156,8 @@ export async function getMvRatingStats(mvId: string) {
 export async function createStoryboard(data: InsertStoryboard) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(storyboards).values(data);
-  return result[0].insertId;
+  const [row] = await db.insert(storyboards).values(data).returning({ id: storyboards.id });
+  return row?.id ?? 0;
 }
 
 export async function getStoryboardById(id: number) {
@@ -325,19 +328,19 @@ export async function getAdminStats(): Promise<AdminStats> {
   const [dauRow] = await db
     .select({ c: count() })
     .from(users)
-    .where(sql`DATE(${users.lastSignedIn}) = CURDATE()`);
+    .where(sql`DATE(${users.lastSignedIn}) = CURRENT_DATE`);
   const [wauRow] = await db
     .select({ c: count() })
     .from(users)
-    .where(sql`${users.lastSignedIn} >= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
+    .where(sql`${users.lastSignedIn} >= NOW() - INTERVAL '7 days'`);
   const [mauRow] = await db
     .select({ c: count() })
     .from(users)
-    .where(sql`${users.lastSignedIn} >= DATE_SUB(NOW(), INTERVAL 30 DAY)`);
+    .where(sql`${users.lastSignedIn} >= NOW() - INTERVAL '30 days'`);
   const [newTodayRow] = await db
     .select({ c: count() })
     .from(users)
-    .where(sql`DATE(${users.createdAt}) = CURDATE()`);
+    .where(sql`DATE(${users.createdAt}) = CURRENT_DATE`);
 
   const roleRows = await db
     .select({ role: users.role, c: count() })

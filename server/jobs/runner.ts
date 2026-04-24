@@ -907,15 +907,16 @@ async function processOneJob() {
   if (!job) return false;
 
   try {
-    const timeoutMs = resolveJobTimeoutMs(job.type, job.input);
+    const jobType = job.type as JobType;
+    const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
     const { output, provider } = await withTimeout(
-      executeJob(job.type, job.input, timeoutMs, String(job.userId)),
+      executeJob(jobType, job.input, timeoutMs, String(job.userId)),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`
     );
     await markJobSucceeded(job.id, output, provider);
   } catch (error) {
-    const message = getJobFailureMessage(job.type, error);
+    const message = getJobFailureMessage(job.type as JobType, error);
     if ((job.attempts ?? 0) < 2) {
       await requeueJob(job.id, message);
     } else {

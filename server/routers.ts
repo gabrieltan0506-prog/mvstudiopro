@@ -2514,6 +2514,39 @@ export const appRouter = router({
         }
       }),
 
+    recordAnalysisSnapshot: protectedProcedure
+      .input(z.object({
+        analysisType: z.enum(["growth_camp", "platform"]),
+        title: z.string().max(200),
+        summary: z.string().max(2000).optional(),
+        thumbnailUrl: z.string().url().optional(),
+        analysisDate: z.string().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const plan = await getUserPlan(ctx.user.id);
+          const id = await recordCreation({
+            userId: ctx.user.id,
+            type: "storyboard",
+            title: input.title,
+            thumbnailUrl: input.thumbnailUrl,
+            metadata: {
+              analysisType: input.analysisType,
+              summary: input.summary,
+              analysisDate: input.analysisDate ?? new Date().toISOString(),
+              isSnapshot: true,
+            },
+            quality: input.analysisType === "growth_camp" ? "成長營分析" : "平台趨勢分析",
+            creditsUsed: 0,
+            plan,
+          });
+          return { success: true, id };
+        } catch (e) {
+          console.error("[recordAnalysisSnapshot] failed:", e);
+          return { success: false, id: 0 };
+        }
+      }),
+
     generateVisualReport: publicProcedure
       .input(z.object({
         // Extended to support short-form trend radar: 3d and 7d windows
@@ -5029,7 +5062,13 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           userId: ctx.user.id,
           type: "storyboard",
           title: parsed.title || "分镜腳本",
-          metadata: { sceneCount: input.sceneCount, overallMood: parsed.overallMood },
+          outputUrl: parsed.scenes?.[0]?.previewImageUrl ?? undefined,
+          metadata: {
+            sceneCount: input.sceneCount,
+            overallMood: parsed.overallMood,
+            script: parsed.scenes?.map((s: any) => `Scene ${s.sceneNumber}: ${s.description || s.script || ""}`).join("\n"),
+            fullScript: parsed,
+          },
           quality: `${input.sceneCount} 场景`,
           creditsUsed: 0,
           plan,

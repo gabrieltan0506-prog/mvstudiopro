@@ -1,39 +1,39 @@
-import { int, json, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { integer, json, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 /**
  * Core user table backing auth flow.
  * Extend this file with additional tables as your product grows.
  * Columns use camelCase to match both database fields and generated types.
  */
-export const users = mysqlTable("users", {
+export const users = pgTable("users", {
   /**
    * Surrogate primary key. Auto-incremented numeric value managed by the database.
    * Use this for relations between tables.
    */
-  id: int("id").autoincrement().primaryKey(),
+  id: serial().primaryKey(),
   /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "free", "beta", "paid", "supervisor"]).default("free").notNull(),
-  credits: int("credits").default(0).notNull(),
-  roleTag: mysqlEnum("roleTag", ["normal", "student", "teacher", "military_police"]).default("normal").notNull(),
+  role: text("role").default("free").notNull(),
+  credits: integer("credits").default(0).notNull(),
+  roleTag: text("roleTag").default("normal").notNull(),
   contactWechat: varchar("contactWechat", { length: 120 }),
   contactPhone: varchar("contactPhone", { length: 30 }),
-  verifyStatus: mysqlEnum("verifyStatus", ["none", "pending", "approved", "rejected"]).default("none").notNull(),
+  verifyStatus: text("verifyStatus").default("none").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-export const creditLedger = mysqlTable("credit_ledger", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  delta: int("delta").notNull(),
+export const creditLedger = pgTable("credit_ledger", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
+  delta: integer("delta").notNull(),
   reason: varchar("reason", { length: 64 }).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -42,8 +42,8 @@ export type CreditLedger = typeof creditLedger.$inferSelect;
 export type InsertCreditLedger = typeof creditLedger.$inferInsert;
 
 // Visitor guestbook / contact inquiry messages
-export const guestbookMessages = mysqlTable("guestbook_messages", {
-  id: int("id").autoincrement().primaryKey(),
+export const guestbookMessages = pgTable("guestbook_messages", {
+  id: serial().primaryKey(),
   name: varchar("name", { length: 100 }).notNull(),
   email: varchar("email", { length: 320 }),
   phone: varchar("phone", { length: 30 }),
@@ -57,11 +57,11 @@ export type GuestbookMessage = typeof guestbookMessages.$inferSelect;
 export type InsertGuestbookMessage = typeof guestbookMessages.$inferInsert;
 
 // Video comments and ratings
-export const mvReviews = mysqlTable("mv_reviews", {
-  id: int("id").autoincrement().primaryKey(),
+export const mvReviews = pgTable("mv_reviews", {
+  id: serial().primaryKey(),
   mvId: varchar("mvId", { length: 64 }).notNull(),
   nickname: varchar("nickname", { length: 100 }).notNull(),
-  rating: int("rating").notNull(), // 1-5 stars
+  rating: integer("rating").notNull(), // 1-5 stars
   comment: text("comment").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -88,7 +88,7 @@ export * from "./schema-workflow";
 export * from "./schema-video-short-links";
 export * from "./schema-feedback";
 
-export const workflowRuns = mysqlTable("workflow_runs", {
+export const workflowRuns = pgTable("workflow_runs", {
   id: varchar("id", { length: 64 }).primaryKey(),
   userId: varchar("user_id", { length: 64 }).notNull(),
   type: varchar("type", { length: 64 }).notNull(),
@@ -97,5 +97,5 @@ export const workflowRuns = mysqlTable("workflow_runs", {
   stateJson: json("state_json").notNull(),
   outputsJson: json("outputs_json").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

@@ -156,14 +156,14 @@ export const emailOtpRouter = router({
           }
         } else {
           // Create new user
-          const [result] = await db.insert(users).values({
+          const [newRow] = await db.insert(users).values({
             openId,
             email,
             name: email.split("@")[0],
             loginMethod: "email_otp",
             role: "user",
-          });
-          [user] = await db.select().from(users).where(eq(users.id, result.insertId)).limit(1);
+          }).returning({ id: users.id });
+          [user] = await db.select().from(users).where(eq(users.id, newRow!.id)).limit(1);
         }
       }
 
@@ -291,13 +291,13 @@ export const phoneOtpRouter = router({
       let [user] = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
       if (!user) {
-        const [result] = await db.insert(users).values({
+        const [newRow] = await db.insert(users).values({
           openId,
           name: `用户${phone.slice(-4)}`,
           loginMethod: "phone_otp",
           role: "user",
-        });
-        [user] = await db.select().from(users).where(eq(users.id, result.insertId)).limit(1);
+        }).returning({ id: users.id });
+        [user] = await db.select().from(users).where(eq(users.id, newRow!.id)).limit(1);
       }
 
       await db.update(users).set({ lastSignedIn: new Date() }).where(eq(users.id, user.id));

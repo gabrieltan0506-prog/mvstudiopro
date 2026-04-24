@@ -46,7 +46,7 @@ interface PendingStoryboard {
   lyrics: string;
   sceneCount: number;
   storyboard: string;
-  status: "pending" | "approved" | "rejected";
+  status: string;
   createdAt: Date;
 }
 

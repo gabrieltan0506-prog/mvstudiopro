@@ -5,6 +5,8 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, Baby, Grid, Paintbrush, Smile, Box, Crop, Laugh, Sparkles, Info, Loader2 } from 'lucide-react';
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import TrialWatermarkImage from "@/components/TrialWatermarkImage";
+import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 
 // ─── 情绪分类 ───────────────────────────────────
 const EMOTIONS = [
@@ -44,6 +46,7 @@ const STYLES = [
 
 export default function WechatSticker() {
   const [location, navigate] = useLocation();
+  const isTrial = useIsTrialUser();
   const [selectedEmotion, setSelectedEmotion] = useState<string>("");
   const [selectedPhrase, setSelectedPhrase] = useState<string>("");
   const [customText, setCustomText] = useState("");
@@ -249,9 +252,10 @@ export default function WechatSticker() {
                 {results.map((r, i) => (
                   <div key={i} className="flex flex-col gap-1">
                     <div className="relative aspect-square rounded-lg overflow-hidden border border-white/10">
-                      <img
+                      <TrialWatermarkImage
                         src={upscaledUrls[i] ?? r.imageUrl}
                         alt={`Generated sticker ${i + 1}`}
+                        isTrial={isTrial}
                         className="w-full h-full object-contain"
                       />
                       <div className="absolute bottom-0 left-0 right-0 p-2 bg-black/50 backdrop-blur-sm">

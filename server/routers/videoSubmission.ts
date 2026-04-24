@@ -536,7 +536,7 @@ export const videoSubmissionRouter = router({
       }
 
       // ── 4. 创建视频记录 ─────────────────────────
-      const insertResult = await db.insert(videoSubmissions).values({
+      const [insertedVideo] = await db.insert(videoSubmissions).values({
         userId,
         title: input.title,
         description: input.description || null,
@@ -548,9 +548,9 @@ export const videoSubmissionRouter = router({
         licenseAgreed: 1,
         licenseVersion: "1.0",
         licenseAgreedAt: new Date(),
-      });
+      }).returning({ id: videoSubmissions.id });
 
-      const videoId = insertResult[0].insertId;
+      const videoId = insertedVideo?.id ?? 0;
 
       // ── 5. AI 分析所有平台数据截屏 ──────────────
       const platformResults: Array<{

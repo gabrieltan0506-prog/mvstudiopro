@@ -1,10 +1,10 @@
-import { mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
-export const videoShortLinks = mysqlTable("video_short_links", {
+export const videoShortLinks = pgTable("video_short_links", {
   taskId: varchar("taskId", { length: 128 }).primaryKey(),
   videoUrl: text("videoUrl").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type VideoShortLink = typeof videoShortLinks.$inferSelect;

@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import BuildBadge from "../components/BuildBadge";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import TrialWatermarkImage from "@/components/TrialWatermarkImage";
+import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 
 async function fetchJsonish(url: string, init?: RequestInit) {
   const resp = await fetch(url, init);
@@ -365,6 +367,7 @@ function WorkflowCanvas(props: {
 }
 
 function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChange: (state: PanelState) => void }) {
+  const isTrial = useIsTrialUser();
   const [prompt, setPrompt] = useState("电影级博物馆展陈，柔和博物馆灯光，超高清，构图干净，适合做视频参考图");
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">("16:9");
   const [busy, setBusy] = useState(false);
@@ -438,7 +441,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
 
       {imageUrl ? (
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-          <img src={imageUrl} alt="generated" style={{ width: "100%", borderRadius: 18, background: "#0f172a" }} />
+          <TrialWatermarkImage src={imageUrl} isTrial={isTrial} style={{ borderRadius: 18, background: "#0f172a" }} />
           <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="nbpImage2K" />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href={imageUrl} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, textDecoration: "none" }}>

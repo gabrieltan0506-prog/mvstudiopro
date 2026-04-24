@@ -1,14 +1,14 @@
-import { int, mysqlTable, text, timestamp, varchar, mysqlEnum } from "drizzle-orm/mysql-core";
+import { integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
-export const userFeedback = mysqlTable("user_feedback", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const userFeedback = pgTable("user_feedback", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
   subject: varchar("subject", { length: 200 }).notNull(),
   message: text("message").notNull(),
-  status: mysqlEnum("status", ["pending", "adopted", "dismissed"]).default("pending").notNull(),
-  creditsAwarded: int("creditsAwarded"),
+  status: text("status").default("pending").notNull(),
+  creditsAwarded: integer("creditsAwarded"),
   adoptedAt: timestamp("adoptedAt"),
-  adoptedBy: int("adoptedBy"),
+  adoptedBy: integer("adoptedBy"),
   adminNote: varchar("adminNote", { length: 500 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });

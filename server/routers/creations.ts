@@ -71,7 +71,7 @@ export async function recordCreation(params: {
 }): Promise<number> {
   const expiresAt = params.expiresAt ?? getExpiryDate(params.plan ?? "free");
   const database = await db();
-  const [result] = await database.insert(userCreations).values({
+  const [row] = await database.insert(userCreations).values({
     userId: params.userId,
     type: params.type,
     title: params.title ?? null,
@@ -84,8 +84,8 @@ export async function recordCreation(params: {
     status: params.status ?? "completed",
     expiresAt,
     expiryReminded: false,
-  });
-  return result.insertId;
+  }).returning({ id: userCreations.id });
+  return row?.id ?? 0;
 }
 
 // ─── Router ───────────────────────────────────────────

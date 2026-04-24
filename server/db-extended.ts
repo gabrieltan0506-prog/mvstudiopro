@@ -32,8 +32,8 @@ export async function createOrUpdateUserPhone(data: InsertUserPhone) {
     await db.update(userPhones).set(data).where(eq(userPhones.userId, data.userId));
     return existing[0].id;
   } else {
-    const result = await db.insert(userPhones).values(data);
-    return result[0].insertId;
+    const [row] = await db.insert(userPhones).values(data).returning({ id: userPhones.id });
+    return row?.id ?? 0;
   }
 }
 
@@ -94,8 +94,8 @@ export async function getOrCreateUsageTracking(userId: number, featureType: "sto
       usageCount: 0,
       lastResetAt: new Date(),
     };
-    const result = await db.insert(usageTracking).values(data);
-    return { id: result[0].insertId, ...data };
+    const [row] = await db.insert(usageTracking).values(data).returning({ id: usageTracking.id });
+    return { id: row?.id ?? 0, ...data };
   }
 }
 
@@ -159,8 +159,8 @@ export async function checkUsageLimit(
 export async function createStudentSubscription(data: InsertStudentSubscription) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(studentSubscriptions).values(data);
-  return result[0].insertId;
+  const [row] = await db.insert(studentSubscriptions).values(data).returning({ id: studentSubscriptions.id });
+  return row?.id ?? 0;
 }
 
 export async function getStudentSubscriptionByUserId(userId: number) {
@@ -219,8 +219,8 @@ export async function createOrUpdateStudentVerification(data: InsertStudentVerif
     await db.update(studentVerifications).set(data).where(eq(studentVerifications.userId, data.userId));
     return existing[0].id;
   } else {
-    const result = await db.insert(studentVerifications).values(data);
-    return result[0].insertId;
+    const [row] = await db.insert(studentVerifications).values(data).returning({ id: studentVerifications.id });
+    return row?.id ?? 0;
   }
 }
 
@@ -259,8 +259,8 @@ export async function updateStudentVerificationStatus(
 export async function createPaymentTransaction(data: InsertPaymentTransaction) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.insert(paymentTransactions).values(data);
-  return result[0].insertId;
+  const [row] = await db.insert(paymentTransactions).values(data).returning({ id: paymentTransactions.id });
+  return row?.id ?? 0;
 }
 
 export async function getPaymentTransactionsByUserId(userId: number, limit = 50) {
@@ -294,8 +294,8 @@ export async function createOrUpdateContentUsageAgreement(data: InsertContentUsa
     await db.update(contentUsageAgreements).set(data).where(eq(contentUsageAgreements.userId, data.userId));
     return existing[0].id;
   } else {
-    const result = await db.insert(contentUsageAgreements).values(data);
-    return result[0].insertId;
+    const [row] = await db.insert(contentUsageAgreements).values(data).returning({ id: contentUsageAgreements.id });
+    return row?.id ?? 0;
   }
 }
 

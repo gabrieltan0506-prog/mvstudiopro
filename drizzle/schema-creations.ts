@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
+import { boolean, integer, pgTable, serial, text, timestamp, varchar } from "drizzle-orm/pg-core";
 
 /**
  * Unified creation records & favorites system
@@ -13,22 +13,12 @@ import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "d
  */
 
 // ─── Unified Creation Records ─────────────────────────
-export const userCreations = mysqlTable("user_creations", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const userCreations = pgTable("user_creations", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
   
   /** Type of creation */
-  type: mysqlEnum("type", [
-    "idol_image",      // 虛擬偶像圖片
-    "idol_3d",         // 偶像 3D 模型
-    "music",           // Suno 音樂
-    "video",           // 視頻生成（Veo/Kling）
-    "storyboard",      // 分鏡腳本
-    "kling_video",     // 可靈視頻
-    "kling_lipsync",   // 可靈口型同步
-    "kling_motion",    // 可靈動作遷移
-    "kling_image",     // 可靈圖片生成
-  ]).notNull(),
+  type: text("type").notNull(),
   
   /** Display title (auto-generated or user-set) */
   title: varchar("title", { length: 255 }),
@@ -49,10 +39,10 @@ export const userCreations = mysqlTable("user_creations", {
   quality: varchar("quality", { length: 20 }),
   
   /** Credits consumed */
-  creditsUsed: int("creditsUsed").default(0),
+  creditsUsed: integer("creditsUsed").default(0),
   
   /** Status */
-  status: mysqlEnum("status", ["pending", "completed", "failed", "expired"]).default("completed").notNull(),
+  status: text("status").default("completed").notNull(),
   
   /** Expiry date (based on user plan) */
   expiresAt: timestamp("expiresAt"),
@@ -61,19 +51,19 @@ export const userCreations = mysqlTable("user_creations", {
   expiryReminded: boolean("expiryReminded").default(false).notNull(),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
 });
 
 export type UserCreation = typeof userCreations.$inferSelect;
 export type InsertUserCreation = typeof userCreations.$inferInsert;
 
 // ─── User Favorites ───────────────────────────────────
-export const userFavorites = mysqlTable("user_favorites", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+export const userFavorites = pgTable("user_favorites", {
+  id: serial().primaryKey(),
+  userId: integer("userId").notNull(),
   
   /** Reference to user_creations.id */
-  creationId: int("creationId").notNull(),
+  creationId: integer("creationId").notNull(),
   
   /** Optional user note/tag */
   note: varchar("note", { length: 500 }),

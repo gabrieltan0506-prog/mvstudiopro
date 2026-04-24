@@ -92,7 +92,7 @@ export async function verifyVideoSignature(
   const record = records[0];
   return {
     verified: true,
-    source: record.source,
+    source: record.source as "original" | "remix" | undefined,
     userId: record.userId,
     signatureHash: record.signatureHash,
   };
