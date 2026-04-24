@@ -879,8 +879,6 @@ export default function WorkflowNodes() {
         return {
           musicProvider,
           musicPrompt,
-          musicMood,
-          musicBpm,
           musicDuration,
           outputMusicUrl: outputs.musicUrl,
         };

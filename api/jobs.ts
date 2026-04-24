@@ -2078,7 +2078,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const storyboard = getStoryboardDraftFromBody(workflow, b);
       const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
-      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+      const scene: any = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
 
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
         prompt: s(scene?.scenePrompt).trim(),
