@@ -1,0 +1,233 @@
+/**
+ * 静态收款码支付路由
+ *
+ * 流程：
+ * 1. 用户选套餐 → getPaymentInfo 获取收款码图片路径 + 应付金额
+ * 2. 用户扫码付款（微信/支付宝固定收款码）
+ * 3. 用户点"我已付款" → submitConfirmation 创建 pending 记录
+ * 4. 管理员在后台看到待审核列表 → approvePayment 充值积分 / rejectPayment 拒绝
+ * 5. 充值成功后前端显示"上海德智熙人工智能科技有限公司 充值成功 xx 积分"
+ *
+ * 注意：收款码图片放到 public/assets/payment/ 目录下（需用户提供）
+ */
+import { z } from "zod";
+import { eq, desc } from "drizzle-orm";
+import { protectedProcedure, router } from "../_core/trpc";
+import { TRPCError } from "@trpc/server";
+import { getDb } from "../db";
+import { addCredits } from "../credits";
+import { hasUnlimitedAccess } from "../services/access-policy";
+import { users } from "../../drizzle/schema";
+import { paymentSubmissions } from "../../drizzle/schema-payments";
+import { nanoid } from "nanoid";
+import { CREDIT_PACKS } from "../plans";
+
+/** 公司全称（付款后在微信/支付宝收款界面显示） */
+export const COMPANY_NAME = "上海德智熙人工智能科技有限公司";
+
+/** 静态收款码图片路径（用户需将图片放至 client/public/assets/payment/ 目录） */
+const QR_IMAGE_PATHS = {
+  wechat: "/assets/payment/wechat-collect.jpg",
+  alipay: "/assets/payment/alipay-collect.jpg",
+} as const;
+
+type BillingCycle = "monthly" | "quarterly" | "yearly";
+type PackId = keyof typeof CREDIT_PACKS;
+
+function calcPriceAndCredits(
+  packId: PackId,
+  cycle: BillingCycle
+): { price: number; credits: number; discountLabel: string } {
+  const pack = CREDIT_PACKS[packId];
+  if (cycle === "quarterly") {
+    return {
+      price: Math.round(pack.price * 3 * 0.9),
+      credits: pack.credits * 3,
+      discountLabel: "季度套餐九折",
+    };
+  }
+  if (cycle === "yearly") {
+    return {
+      price: Math.round(pack.price * 12 * 0.8),
+      credits: pack.credits * 12,
+      discountLabel: "年度套餐八折",
+    };
+  }
+  return { price: pack.price, credits: pack.credits, discountLabel: "" };
+}
+
+export const staticPayRouter = router({
+  // ─── 获取支付信息（QR 图片 + 应付金额）───────────────
+  getPaymentInfo: protectedProcedure
+    .input(
+      z.object({
+        packId: z.enum(["small", "medium", "large", "mega"]),
+        method: z.enum(["wechat", "alipay"]),
+        billingCycle: z.enum(["monthly", "quarterly", "yearly"]).default("monthly"),
+      })
+    )
+    .query(({ input }) => {
+      const { price, credits, discountLabel } = calcPriceAndCredits(
+        input.packId,
+        input.billingCycle
+      );
+      const pack = CREDIT_PACKS[input.packId];
+      return {
+        qrImageUrl: QR_IMAGE_PATHS[input.method],
+        companyName: COMPANY_NAME,
+        amount: price,
+        credits,
+        packLabel: pack.labelCn,
+        discountLabel,
+        method: input.method,
+        orderId: `PAY-${Date.now()}-${nanoid(6).toUpperCase()}`,
+      };
+    }),
+
+  // ─── 用户提交"我已付款"确认 ────────────────────────
+  submitConfirmation: protectedProcedure
+    .input(
+      z.object({
+        orderId: z.string().min(1).max(50),
+        packId: z.enum(["small", "medium", "large", "mega"]),
+        method: z.enum(["wechat", "alipay"]),
+        amount: z.number().positive(),
+        credits: z.number().int().positive(),
+        billingCycle: z.enum(["monthly", "quarterly", "yearly"]).default("monthly"),
+        transactionNote: z.string().max(200).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      await db.insert(paymentSubmissions).values({
+        userId: ctx.user.id,
+        packageType: `${input.packId}_${input.billingCycle}`,
+        amount: String(input.amount),
+        paymentMethod: input.method,
+        screenshotUrl: input.transactionNote ?? "-",
+        status: "pending",
+      });
+
+      return {
+        success: true,
+        orderId: input.orderId,
+        message: "已收到您的付款确认，管理员将在 1-2 小时内审核并充值 Credits。",
+      };
+    }),
+
+  // ─── 管理员审核通过 → 充值积分 ─────────────────────
+  approvePayment: protectedProcedure
+    .input(
+      z.object({
+        submissionId: z.number().int().positive(),
+        credits: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [admin] = await db
+        .select({ role: users.role, email: users.email })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      if (!hasUnlimitedAccess({ role: admin?.role, email: admin?.email })) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "仅管理员可审核" });
+      }
+
+      const [submission] = await db
+        .select()
+        .from(paymentSubmissions)
+        .where(eq(paymentSubmissions.id, input.submissionId))
+        .limit(1);
+      if (!submission) throw new TRPCError({ code: "NOT_FOUND", message: "订单不存在" });
+      if (submission.status !== "pending") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "订单已处理，请勿重复操作" });
+      }
+
+      await addCredits(submission.userId, input.credits, "payment");
+      await db
+        .update(paymentSubmissions)
+        .set({ status: "approved", reviewedBy: ctx.user.id, reviewedAt: new Date() })
+        .where(eq(paymentSubmissions.id, input.submissionId));
+
+      return {
+        success: true,
+        creditsAdded: input.credits,
+        userId: submission.userId,
+        message: `${COMPANY_NAME} 充值成功 ${input.credits} 积分`,
+      };
+    }),
+
+  // ─── 管理员拒绝付款 ─────────────────────────────
+  rejectPayment: protectedProcedure
+    .input(
+      z.object({
+        submissionId: z.number().int().positive(),
+        reason: z.string().max(200).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      const [admin] = await db
+        .select({ role: users.role, email: users.email })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      if (!hasUnlimitedAccess({ role: admin?.role, email: admin?.email })) {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      await db
+        .update(paymentSubmissions)
+        .set({
+          status: "rejected",
+          rejectionReason: input.reason ?? null,
+          reviewedBy: ctx.user.id,
+          reviewedAt: new Date(),
+        })
+        .where(eq(paymentSubmissions.id, input.submissionId));
+
+      return { success: true };
+    }),
+
+  // ─── 管理员查看待审核列表 ────────────────────────
+  listPending: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+    const [admin] = await db
+      .select({ role: users.role, email: users.email })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+    if (!hasUnlimitedAccess({ role: admin?.role, email: admin?.email })) {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+
+    return db
+      .select()
+      .from(paymentSubmissions)
+      .where(eq(paymentSubmissions.status, "pending"))
+      .orderBy(desc(paymentSubmissions.createdAt))
+      .limit(100);
+  }),
+
+  // ─── 用户查看自己的付款历史 ─────────────────────
+  myHistory: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+
+    return db
+      .select()
+      .from(paymentSubmissions)
+      .where(eq(paymentSubmissions.userId, ctx.user.id))
+      .orderBy(desc(paymentSubmissions.createdAt))
+      .limit(30);
+  }),
+});

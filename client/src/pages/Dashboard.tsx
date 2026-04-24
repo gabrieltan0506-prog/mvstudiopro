@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
-import { Loader2, ArrowLeft, Plus, BarChart, User, Film, Video } from "lucide-react";
+import { Loader2, ArrowLeft, Plus, BarChart, User, Film, Video, Gift, TrendingUp, Workflow } from "lucide-react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { toast } from "sonner";
 
 type TabType = "transactions" | "usage";
 
 export default function LayoutDashboard() {
   const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState<TabType>("transactions");
+  const [betaCode, setBetaCode] = useState("");
+  const [redeemLoading, setRedeemLoading] = useState(false);
   const { user } = useAuth();
+  const redeemMutation = trpc.betaCode.redeem.useMutation();
 
   const { data: subData, isLoading: subLoading } = trpc.stripe.getSubscription.useQuery(undefined, {
     retry: false,
@@ -85,14 +89,50 @@ export default function LayoutDashboard() {
           </div>
         </div>
 
+        {/* Beta Code Redemption */}
+        <div className="mx-4 mb-4 bg-gradient-to-r from-[#1A1A1D] to-[#1C1C2E] rounded-xl p-4 border border-[#FF6B35]/30">
+          <div className="flex items-center gap-2 mb-3">
+            <Gift className="h-5 w-5 text-[#FF6B35]" />
+            <span className="text-sm font-semibold text-white">兑换内测码</span>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="输入内测码（如 ABCD-EFGH-IJKL）"
+              value={betaCode}
+              onChange={(e) => setBetaCode(e.target.value.toUpperCase())}
+              className="flex-1 bg-[#0A0A0C] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-[#FF6B35]/50 font-mono"
+            />
+            <button
+              disabled={redeemLoading || !betaCode.trim()}
+              onClick={async () => {
+                setRedeemLoading(true);
+                try {
+                  const result = await redeemMutation.mutateAsync({ code: betaCode });
+                  toast.success(result.message);
+                  setBetaCode("");
+                } catch (err: any) {
+                  toast.error(err.message || "兑换失败，请检查内测码是否正确");
+                } finally {
+                  setRedeemLoading(false);
+                }
+              }}
+              className="bg-[#FF6B35] text-white px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+            >
+              {redeemLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "兑换"}
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">内测码可解锁 Credits，用于创作者成长营、平台趋势分析等功能</p>
+        </div>
+
         {/* Quick Actions */}
         <div className="m-4">
           <span className="text-lg font-semibold mb-4 block">Credits 消耗参考</span>
           <div className="grid grid-cols-2 gap-4">
-            <CostCard icon={<BarChart className="h-6 w-6" />} label="视频 PK 评分" cost={8} balance={credits.balance} />
-            <CostCard icon={<User className="h-6 w-6" />} label="偶像生成" cost={3} balance={credits.balance} />
-            <CostCard icon={<Film className="h-6 w-6" />} label="分镜脚本" cost={15} balance={credits.balance} />
-            <CostCard icon={<Video className="h-6 w-6" />} label="视频生成" cost={25} balance={credits.balance} />
+            <CostCard icon={<BarChart className="h-6 w-6" />} label="成长营 GROWTH" cost={40} balance={credits.balance} />
+            <CostCard icon={<Film className="h-6 w-6" />} label="成长营 REMIX" cost={50} balance={credits.balance} />
+            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势分析" cost={30} balance={credits.balance} />
+            <CostCard icon={<Video className="h-6 w-6" />} label="节点工作流" cost={20} balance={credits.balance} />
           </div>
         </div>
 
@@ -114,10 +154,12 @@ export default function LayoutDashboard() {
                     <div className="flex-1">
                       <span className="font-medium">
                         {tx.source === "purchase" ? "Credits 购买" :
+                         tx.source === "payment" ? "扫码充值" :
                          tx.source === "subscription" ? "订阅发放" :
                          tx.source === "bonus" ? "管理员赠送" :
-                         tx.source === "beta" ? "内测奖励" :
+                         tx.source === "beta" ? "内测码兑换" :
                          tx.source === "referral" ? "邀请奖励" :
+                         tx.source === "refund" ? "分析失败退款" :
                          tx.source === "usage" ? tx.action : tx.source}
                       </span>
                       <span className="text-xs text-gray-400 block">
@@ -144,7 +186,11 @@ export default function LayoutDashboard() {
                   <div key={log.id} className="flex justify-between items-center p-3 bg-[#1C1C1E] rounded-lg mb-2">
                     <div className="flex-1">
                       <span className="font-medium">
-                        {log.action === "mvAnalysis" ? "视频 PK 评分" :
+                        {log.action === "growthCampGrowth" ? "成长营 GROWTH 分析" :
+                         log.action === "growthCampRemix" ? "成长营 REMIX 二创" :
+                         log.action === "platformTrend" ? "平台趋势分析" :
+                         log.action === "workflowNodes" ? "节点工作流" :
+                         log.action === "mvAnalysis" ? "视频 PK 评分" :
                          log.action === "idolGeneration" ? "虚拟偶像生成" :
                          log.action === "storyboard" ? "分镜脚本生成" :
                          log.action === "videoGeneration" ? "视频生成" : log.action}

@@ -38,3 +38,28 @@ export const betaReferrals = mysqlTable("beta_referrals", {
 
 export type BetaReferral = typeof betaReferrals.$inferSelect;
 export type InsertBetaReferral = typeof betaReferrals.$inferInsert;
+
+// ─── Beta invite codes (supervisor → user, redeemable for credits) ────────
+export const betaInviteCodes = mysqlTable("beta_invite_codes", {
+  id: int("id").autoincrement().primaryKey(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  credits: int("credits").default(200).notNull(),
+  maxUses: int("max_uses").default(1).notNull(),        // -1 = unlimited
+  usedCount: int("used_count").default(0).notNull(),
+  createdBy: int("created_by").notNull(),               // supervisor userId
+  note: varchar("note", { length: 120 }),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const betaCodeUsages = mysqlTable("beta_code_usages", {
+  id: int("id").autoincrement().primaryKey(),
+  codeId: int("code_id").notNull(),
+  userId: int("user_id").notNull(),
+  creditsAwarded: int("credits_awarded").notNull(),
+  redeemedAt: timestamp("redeemed_at").defaultNow().notNull(),
+});
+
+export type BetaInviteCode = typeof betaInviteCodes.$inferSelect;
+export type InsertBetaInviteCode = typeof betaInviteCodes.$inferInsert;
+export type BetaCodeUsage = typeof betaCodeUsages.$inferSelect;

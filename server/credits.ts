@@ -423,6 +423,36 @@ export async function getCreditTransactions(userId: number, limit = 50) {
     .limit(limit);
 }
 
+// ─── 退款（分析失败时返还 Credits）──────────────────
+export async function refundCredits(
+  userId: number,
+  amount: number,
+  reason: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+
+  const balance = await getOrCreateBalance(userId);
+  const newBalance = balance.balance + amount;
+  const newLifetimeEarned = balance.lifetimeEarned + amount;
+
+  await db
+    .update(creditBalances)
+    .set({ balance: newBalance, lifetimeEarned: newLifetimeEarned })
+    .where(eq(creditBalances.userId, userId));
+
+  await db.insert(creditTransactions).values({
+    userId,
+    amount,
+    type: "credit",
+    source: "refund",
+    description: reason,
+    balanceAfter: newBalance,
+  });
+
+  console.log(`[Credits] refundCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
+}
+
 // ─── 获取使用日志 ──────────────────────────────────
 export async function getUsageLogs(userId: number, limit = 50) {
   const db = await getDb();

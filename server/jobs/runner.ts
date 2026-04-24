@@ -208,48 +208,76 @@ async function runFalOmniFallback(
   };
 }
 
-async function processVideoJob(input: JobEnvelope, timeoutMs: number): Promise<{ output: unknown; provider?: string }> {
+async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: string): Promise<{ output: unknown; provider?: string }> {
   const params = input.params ?? {};
 
   if (input.action === "growth_analyze_video") {
-    const result = await analyzeGrowthCampVideo({
-      gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
-      fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
-      fileKey: typeof params.fileKey === "string" ? params.fileKey : undefined,
-      mimeType: String(params.mimeType ?? "video/mp4"),
-      fileName: typeof params.fileName === "string" ? params.fileName : undefined,
-      context: typeof params.context === "string" ? params.context : undefined,
-      modelName: typeof params.modelName === "string" ? params.modelName : undefined,
-      mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
-      forceRefresh: params.forceRefresh === true,
-    });
+    const numericUserId = userId ? Number(userId) : NaN;
+    const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
+    const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
+    let creditDeducted = 0;
 
-    return {
-      provider: result.videoMeta.provider,
-      output: {
-        analysis: result.analysis,
-        videoUrl: result.videoMeta.videoUrl,
-        audioUrl: result.videoMeta.audioUrl,
-        transcript: result.videoMeta.transcript,
-        videoDuration: result.videoMeta.videoDuration,
-        debug: {
-          route: "analyzeVideoJob",
-          provider: result.videoMeta.provider,
-          model: result.videoMeta.model,
-          pipeline: result.videoMeta.pipeline,
-          stageOneModel: result.videoMeta.stageOneModel,
-          stageTwoModel: result.videoMeta.stageTwoModel,
-          sparseFrameCount: result.videoMeta.sparseFrameCount,
-          visualPassModel: resolveGrowthCampExtractorModel(),
-          estimatedCostProfile: result.videoMeta.estimatedCostProfile,
-          fallback: result.videoMeta.fallback,
-          transcriptChars: result.videoMeta.transcript.length,
+    if (Number.isFinite(numericUserId)) {
+      const credits = await getCredits(numericUserId);
+      const cost = CREDIT_COSTS[creditAction];
+      if (credits.totalAvailable < cost) {
+        throw new Error(`Credits 不足，本次分析需要 ${cost} Credits（当前余额: ${credits.totalAvailable}）`);
+      }
+      await deductCredits(numericUserId, creditAction, `创作者成长营 ${growthMode} 分析`);
+      creditDeducted = cost;
+    }
+
+    try {
+      const result = await analyzeGrowthCampVideo({
+        gcsUri: typeof params.gcsUri === "string" ? params.gcsUri : undefined,
+        fileUrl: typeof params.fileUrl === "string" ? params.fileUrl : undefined,
+        fileKey: typeof params.fileKey === "string" ? params.fileKey : undefined,
+        mimeType: String(params.mimeType ?? "video/mp4"),
+        fileName: typeof params.fileName === "string" ? params.fileName : undefined,
+        context: typeof params.context === "string" ? params.context : undefined,
+        modelName: typeof params.modelName === "string" ? params.modelName : undefined,
+        mode: params.mode === "REMIX" ? "REMIX" : "GROWTH",
+        forceRefresh: params.forceRefresh === true,
+      });
+
+      return {
+        provider: result.videoMeta.provider,
+        output: {
+          analysis: result.analysis,
+          videoUrl: result.videoMeta.videoUrl,
+          audioUrl: result.videoMeta.audioUrl,
+          transcript: result.videoMeta.transcript,
           videoDuration: result.videoMeta.videoDuration,
-          failureStage: result.videoMeta.failureStage || null,
-          failureReason: result.videoMeta.failureReason || null,
+          debug: {
+            route: "analyzeVideoJob",
+            provider: result.videoMeta.provider,
+            model: result.videoMeta.model,
+            pipeline: result.videoMeta.pipeline,
+            stageOneModel: result.videoMeta.stageOneModel,
+            stageTwoModel: result.videoMeta.stageTwoModel,
+            sparseFrameCount: result.videoMeta.sparseFrameCount,
+            visualPassModel: resolveGrowthCampExtractorModel(),
+            estimatedCostProfile: result.videoMeta.estimatedCostProfile,
+            fallback: result.videoMeta.fallback,
+            transcriptChars: result.videoMeta.transcript.length,
+            videoDuration: result.videoMeta.videoDuration,
+            failureStage: result.videoMeta.failureStage || null,
+            failureReason: result.videoMeta.failureReason || null,
+          },
         },
-      },
-    };
+      };
+    } catch (err) {
+      // 分析失败时退还已扣除的积分
+      if (creditDeducted > 0 && Number.isFinite(numericUserId)) {
+        const { refundCredits } = await import("../credits");
+        await refundCredits(
+          numericUserId,
+          creditDeducted,
+          `创作者成长营 ${growthMode} 分析失败退款`
+        ).catch((e) => console.error("[Credits] refund failed:", e));
+      }
+      throw err;
+    }
   }
 
   ensureKlingInitialized();
@@ -868,7 +896,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
 
 async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
-  if (type === "video") return processVideoJob(input, timeoutMs);
+  if (type === "video") return processVideoJob(input, timeoutMs, userId);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
   if (type === "platform") return processPlatformJob(input);
   return processAudioJob(input, timeoutMs, userId);

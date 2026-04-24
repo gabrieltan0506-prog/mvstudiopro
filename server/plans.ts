@@ -176,6 +176,12 @@ export const PLANS: Record<PlanType, PlanConfig> = {
  * - Forge AI: 免费（平台内置）→ 0 credits
  */
 export const CREDIT_COSTS = {
+  // ─── 创作者成长营（内测三大产品，1cr ≈ ¥0.70 人民币）────────
+  growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
+  growthCampRemix: 50,        // REMIX 二创模式：50 cr ≈ ¥35（毛利率 98.2%）
+  platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
+  workflowNodes: 20,          // 节点工作流每次调用：20 cr ≈ ¥14
+
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,              // 每次视频 PK 评分消耗 8 credits
   idolGeneration: 3,          // 每次 Forge 偶像生成消耗 3 credits
