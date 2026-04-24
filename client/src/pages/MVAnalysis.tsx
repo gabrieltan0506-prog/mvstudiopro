@@ -3375,8 +3375,6 @@ export default function MVAnalysisPage() {
                   <div>输入类型：{String(debugInfo?.inputKind || inputKind || "-")}</div>
                   <div>路由：{String(debugInfo?.route || "-")}</div>
                   <div>服务提供方：{String(debugInfo?.provider || "-")}</div>
-                  <div>模型：{String(debugInfo?.model || "-")}</div>
-                  <div>当前选择模型：{"gemini-2.5-pro"}</div>
                   <div>降级补位：{String(debugInfo?.fallback ?? "-")}</div>
                   <div>趋势数据来源：{String(growthSnapshot?.status.source || "-")}</div>
                   <div>真值口径：{formatTruthSource(growthSystemStatusQuery.data?.truthStore?.source)}</div>
@@ -3410,10 +3408,10 @@ export default function MVAnalysisPage() {
                       <div>1. 选择文件：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
                       <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
-                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")} / 模型 {String((debugInfo as any)?.videoPipeline?.dispatch?.modelName || "-")}</div>
+                      <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")}</div>
                       <div>5. 派发状态：{String((debugInfo as any)?.videoPipeline?.dispatch?.status || "idle")}</div>
                       <div>6. Job：ID {String((debugInfo as any)?.videoPipeline?.job?.jobId || "-")} / 状态 {String((debugInfo as any)?.videoPipeline?.job?.status || "-")} / 轮询 {String((debugInfo as any)?.videoPipeline?.job?.pollCount ?? "-")} 次</div>
-                      <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")} / Model {String((debugInfo as any)?.videoPipeline?.analysis?.model || debugInfo?.model || "-")}</div>
+                      <div>7. 分析：{String((debugInfo as any)?.videoPipeline?.analysis?.status || "idle")} / Provider {String((debugInfo as any)?.videoPipeline?.analysis?.provider || debugInfo?.provider || "-")}</div>
                       <div>8. Signed URL 申请失败：{String((debugInfo as any)?.videoPipeline?.upload?.signedUrlError || "-")}</div>
                       <div>9. 上传失败：{String((debugInfo as any)?.videoPipeline?.upload?.error || "-")}</div>
                       <div>10. 失败定位：阶段 {String((debugInfo as any)?.videoPipeline?.analysis?.failureStage || debugInfo?.failureStage || "-")} / 原因 {String((debugInfo as any)?.videoPipeline?.analysis?.failureReason || debugInfo?.failureReason || (debugInfo as any)?.videoPipeline?.analysis?.error || "-")}</div>
@@ -3530,7 +3528,6 @@ export default function MVAnalysisPage() {
                     <div className="font-semibold text-emerald-100">Growth Snapshot Debug</div>
                     <div className="grid gap-1 md:grid-cols-2">
                       <div>快照路由：{String(growthSnapshotDebug.route || "-")}</div>
-                      <div>快照模型：{String(growthSnapshotDebug.modelName || "-")}</div>
                       <div>基础来源：{String(growthSnapshotDebug.baseSource || "-")}</div>
                       <div>最终来源：{String(growthSnapshotDebug.finalSource || "-")}</div>
                       <div>分析窗口天数：{String(growthSnapshotDebug.windowDays || "-")}</div>
