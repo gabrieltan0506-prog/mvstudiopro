@@ -593,7 +593,7 @@ export function registerAuthApiRoutes(app: Express) {
           id: authedUser.id,
           email: authedUser.email ?? null,
           role: authedUser.role,
-          credits: authedUser.credits ?? 9999,
+          credits: authedUser.credits ?? 0,
           verifyStatus: authedUser.verifyStatus ?? "approved",
           roleTag: authedUser.roleTag ?? "normal",
           contactWechat: null,
