@@ -187,9 +187,9 @@ export const CREDIT_COSTS = {
   workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成，成本 ≈¥0.04）
   workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张（成本 ≈¥0.08）
   workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次（成本 ≈¥0.10）
-  workflowSceneVideo: 80,      // 场景视频（Kling）：80 cr/次（成本 ≈¥1.12）
+  workflowSceneVideo: 80,      // 场景视频（Veo 3.1 · Vertex AI）：80 cr/次（成本 ≈¥1.12）
   workflowSceneVoice: 5,       // 场景配音（TTS）：5 cr/次（成本 ≈¥0.05）
-  workflowMusic: 12,           // 自动配乐（Suno V4）：12 cr（成本 ≈¥0.42）
+  workflowMusic: 12,           // 自动配乐（Suno V5.5）：12 cr（成本 ≈¥0.42）
   workflowFinalRender: 5,      // 最终合成：5 cr（计算资源）
 
   // ─── 基础功能 ───────────────────────────────────
