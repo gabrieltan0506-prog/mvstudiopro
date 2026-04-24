@@ -398,6 +398,11 @@ export function registerAuthApiRoutes(app: Express) {
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
+      if (!process.env.JWT_SECRET) {
+        console.error("[Auth API] FATAL: JWT_SECRET 未配置");
+        return res.status(500).json({ error: "服务器配置错误，请联系管理员" });
+      }
+
       pruneExpired();
       const emailRaw = typeof req.body?.email === "string" ? req.body.email : "";
       const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
@@ -428,6 +433,9 @@ export function registerAuthApiRoutes(app: Express) {
       const fallbackOpenId = createEmailOpenId(email);
       let [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
       if (!user) {
+        [user] = await db.select().from(users).where(eq(users.openId, fallbackOpenId)).limit(1);
+      }
+      if (!user) {
         const [insertResult] = await db
           .insert(users)
           .values({
@@ -440,7 +448,14 @@ export function registerAuthApiRoutes(app: Express) {
             roleTag: "normal",
             verifyStatus: "none",
           });
-        [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+        // 优先用 email 查回，避免 insertId 在某些驱动下为 undefined
+        [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+        if (!user && insertResult?.insertId) {
+          [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+        }
+        if (!user) {
+          return res.status(500).json({ error: "用户创建失败，请稍后重试" });
+        }
       }
 
       const shouldSetPending = roleTag !== "normal" && hasAnyContact(contactWechat, contactPhone);
@@ -507,8 +522,9 @@ export function registerAuthApiRoutes(app: Express) {
         verifyStatus: freshUser.verifyStatus,
       });
     } catch (error) {
-      console.error("[Auth API] signup 失败:", error);
-      return res.status(500).json({ error: "注册失败，请稍后重试" });
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error("[Auth API] signup 失败:", errMsg, error);
+      return res.status(500).json({ error: `注册失败：${errMsg}` });
     }
   });
 

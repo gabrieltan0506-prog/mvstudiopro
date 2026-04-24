@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import FloatingVideoWatermark from "./FloatingVideoWatermark";
+import { useAuth } from "../_core/hooks/useAuth";
 
 const slides = [
   {
@@ -37,6 +38,7 @@ const slides = [
 ];
 
 export default function HomeHero() {
+  const { isAuthenticated } = useAuth({ autoFetch: true });
   const [idx, setIdx] = useState(0);
 
   useEffect(() => {
@@ -312,21 +314,23 @@ export default function HomeHero() {
               >
                 进入成长营
               </a>
-              <a
-                href="/login"
-                style={{
-                  padding: "14px 20px",
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.04)",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: "pointer",
-                  textDecoration: "none",
-                }}
-              >
-                登录 / 注册
-              </a>
+              {!isAuthenticated && (
+                <a
+                  href="/login"
+                  style={{
+                    padding: "14px 20px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "rgba(255,255,255,0.04)",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor: "pointer",
+                    textDecoration: "none",
+                  }}
+                >
+                  登录 / 注册
+                </a>
+              )}
             </div>
           </div>
         </div>
