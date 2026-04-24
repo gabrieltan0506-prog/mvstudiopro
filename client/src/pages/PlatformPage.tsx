@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import { useAuth } from "@/_core/hooks/useAuth";
+import TrialWatermarkImage from "@/components/TrialWatermarkImage";
+import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { getLoginUrl } from "@/const";
 import { createJob, getJob } from "@/lib/jobs";
 import { trpc } from "@/lib/trpc";
@@ -342,6 +344,7 @@ function TopicImageGenerator({
   supervisorAccess: boolean;
   executionDetails?: any;
 }) {
+  const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
     onSuccess: (res) => setImageUrl(res.imageUrl),
@@ -378,7 +381,7 @@ function TopicImageGenerator({
             <span>参考视觉风格 (Gemini 3.1 Flash)</span>
             <button onClick={() => setImageUrl("")} className="hover:text-white">重置</button>
           </div>
-          <img src={imageUrl} alt="Generated visual reference" className="w-full rounded-xl" />
+          <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
           <div className="px-2 pb-2">
             <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="forgeImage" className="mt-2" />
           </div>

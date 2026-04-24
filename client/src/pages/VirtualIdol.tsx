@@ -12,6 +12,8 @@ import { QuotaExhaustedModal } from "@/components/QuotaExhaustedModal";
 import { NbpEngineSelector, type EngineOption } from "@/components/NbpEngineSelector";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import type { ImageUpscaleBaseCreditKey } from "@shared/plans";
+import TrialWatermarkImage from "@/components/TrialWatermarkImage";
+import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
 import { ModelViewer } from "@/components/ModelViewer";
 import { toast } from "sonner";
 import { Loader2, Upload, X, Bot, Sparkles, Wand2, ChevronDown, ChevronUp, Download, Check, Copy, RefreshCw, Eye, EyeOff, Palette, User, Users, Zap, Crown, Flame, Star } from "lucide-react";
@@ -59,6 +61,7 @@ function virtualIdolUpscaleBaseKey(engine: EngineOption): ImageUpscaleBaseCredit
 export default function VirtualIdol() {
   const [location, navigate] = useLocation();
   const { isAuthenticated, loading, user } = useAuth();
+  const isTrial = useIsTrialUser();
 
   const [selectedStyle, setSelectedStyle] = useState<string>("anime");
   const [selectedGender, setSelectedGender] = useState<string>("female");
@@ -498,11 +501,13 @@ export default function VirtualIdol() {
               )}
               {generatedImage && !generating && (
                 <>
-                  <img src={generatedImage} alt="Generated virtual idol" className="object-contain w-full h-full rounded-xl" />
+                  <TrialWatermarkImage src={generatedImage} isTrial={isTrial} className="object-contain w-full h-full rounded-xl" />
                   <div className="absolute top-4 right-4 flex gap-2">
+                    {!isTrial && (
                     <button onClick={() => window.open(generatedImage, '_blank')} className="bg-black/50 backdrop-blur-sm p-2.5 rounded-xl text-white/70 hover:bg-black/70 hover:text-white transition-all duration-200 hover:scale-110 active:scale-95">
                       <Download className="h-5 w-5" />
                     </button>
+                    )}
                   </div>
                   <div className="absolute bottom-3 left-3 right-3 z-10 rounded-xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md">
                     <ImageUpscaleBar
