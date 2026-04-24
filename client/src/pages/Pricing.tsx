@@ -130,7 +130,7 @@ export default function Pricing() {
                 <button
                   key={packId}
                   onClick={() => { setSelected(packId); setSubmitted(false); }}
-                  className={`relative flex flex-col items-center justify-center rounded-2xl p-5 text-center transition-all duration-150 border-2 ${
+                  className={`relative flex flex-col items-center justify-center rounded-2xl text-center transition-all duration-150 border-2 ${
                     active
                       ? "border-[#FF6B35] bg-[#FF6B35]/10 scale-[1.02]"
                       : m.trial
@@ -148,17 +148,32 @@ export default function Pricing() {
                   {m.best && (
                     <span className="absolute -top-3 bg-green-500 text-white text-[11px] font-bold rounded-full px-2.5 py-0.5">最超值</span>
                   )}
-                  {m.icon}
-                  <span className="text-4xl font-black text-white mt-2 leading-none">{c}</span>
-                  <span className="text-sm text-gray-400 mt-0.5">Credits</span>
-                  <span className="text-2xl font-extrabold text-white mt-3">
+                  {/* Credits 数字：11vw ≈ 每张卡宽度的 80% */}
+                  <span
+                    className="font-black text-white leading-none"
+                    style={{ fontSize: "11vw" }}
+                  >
+                    {c}
+                  </span>
+                  <span
+                    className="font-bold text-gray-400 leading-tight mt-0.5"
+                    style={{ fontSize: "3vw" }}
+                  >
+                    Credits
+                  </span>
+                  {/* 价格 */}
+                  <span
+                    className="font-extrabold text-white leading-none mt-2"
+                    style={{ fontSize: "6.5vw" }}
+                  >
                     ¥{Number.isInteger(p) ? p : p.toFixed(1)}
                   </span>
-                  {dt ? (
-                    <span className="text-xs text-green-400 mt-1">{dt}</span>
-                  ) : (
-                    <span className="text-xs text-gray-500 mt-1">{m.label}</span>
-                  )}
+                  <span
+                    className="font-medium mt-1"
+                    style={{ fontSize: "2.4vw", color: dt ? "#4ade80" : "#6b7280" }}
+                  >
+                    {dt || m.label}
+                  </span>
                 </button>
               );
             })}
@@ -201,52 +216,62 @@ export default function Pricing() {
                 </div>
               </div>
 
-              {/* 双二维码 */}
+              {/* 双二维码：横排，QR 固定 120px */}
               <div className="px-5 py-4">
-                <p className="text-sm text-gray-400 mb-3 text-center">扫码付款后点击下方「我已付款」</p>
-                <div className="grid grid-cols-2 gap-3 mb-4">
+                <p className="text-sm text-gray-400 mb-3 text-center">扫码后点「我已付款」，1-2 小时到账</p>
+                <div className="flex flex-col gap-3 mb-4">
                   {/* 微信 */}
-                  <div className="flex flex-col items-center bg-white rounded-xl p-3 gap-2">
+                  <div className="flex items-center gap-4 bg-[#0A0A0C] rounded-xl p-3 border border-white/8">
                     <img
                       src="/assets/payment/wechat-collect.jpg"
                       alt="微信收款码"
-                      className="w-full aspect-square object-contain rounded-lg"
+                      style={{ width: 120, height: 120, flexShrink: 0, objectFit: "contain", borderRadius: 8, background: "#fff" }}
                       onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }}
                     />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-lg">💚</span>
-                      <span className="text-xs font-bold text-gray-700">微信支付</span>
+                    <div className="flex flex-col gap-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">💚</span>
+                        <span className="text-base font-bold text-white">微信支付</span>
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed">
+                        上海德智熙人工智能科技有限公司
+                      </p>
+                      <button
+                        disabled={submitting}
+                        onClick={() => handleConfirm("wechat")}
+                        className="bg-[#07C160] text-white text-sm font-bold py-2.5 rounded-xl disabled:opacity-50 flex items-center justify-center gap-1"
+                      >
+                        {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                        我已付款（微信）
+                      </button>
                     </div>
-                    <button
-                      disabled={submitting}
-                      onClick={() => handleConfirm("wechat")}
-                      className="w-full bg-[#07C160] text-white text-xs font-bold py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-1"
-                    >
-                      {submitting ? <Loader2 size={12} className="animate-spin" /> : null}
-                      我已付款
-                    </button>
                   </div>
 
                   {/* 支付宝 */}
-                  <div className="flex flex-col items-center bg-white rounded-xl p-3 gap-2">
+                  <div className="flex items-center gap-4 bg-[#0A0A0C] rounded-xl p-3 border border-white/8">
                     <img
                       src="/assets/payment/alipay-collect.jpg"
                       alt="支付宝收款码"
-                      className="w-full aspect-square object-contain rounded-lg"
+                      style={{ width: 120, height: 120, flexShrink: 0, objectFit: "contain", borderRadius: 8, background: "#fff" }}
                       onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0.3"; }}
                     />
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-lg">💙</span>
-                      <span className="text-xs font-bold text-gray-700">支付宝</span>
+                    <div className="flex flex-col gap-2 flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-2xl">💙</span>
+                        <span className="text-base font-bold text-white">支付宝</span>
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed">
+                        上海德智熙人工智能科技有限公司
+                      </p>
+                      <button
+                        disabled={submitting}
+                        onClick={() => handleConfirm("alipay")}
+                        className="bg-[#1677FF] text-white text-sm font-bold py-2.5 rounded-xl disabled:opacity-50 flex items-center justify-center gap-1"
+                      >
+                        {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
+                        我已付款（支付宝）
+                      </button>
                     </div>
-                    <button
-                      disabled={submitting}
-                      onClick={() => handleConfirm("alipay")}
-                      className="w-full bg-[#1677FF] text-white text-xs font-bold py-2 rounded-lg disabled:opacity-50 flex items-center justify-center gap-1"
-                    >
-                      {submitting ? <Loader2 size={12} className="animate-spin" /> : null}
-                      我已付款
-                    </button>
                   </div>
                 </div>
 
