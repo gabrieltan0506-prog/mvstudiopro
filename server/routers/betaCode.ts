@@ -15,8 +15,38 @@ function generateCode(): string {
   return `${part(4)}-${part(4)}-${part(4)}`;
 }
 
+/** 確保表存在（生產環境可能尚未跑 migration） */
+async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
+  try {
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS \`beta_invite_codes\` (
+        \`id\`         INT AUTO_INCREMENT PRIMARY KEY,
+        \`code\`       VARCHAR(20) NOT NULL UNIQUE,
+        \`credits\`    INT NOT NULL DEFAULT 200,
+        \`max_uses\`   INT NOT NULL DEFAULT 1,
+        \`used_count\` INT NOT NULL DEFAULT 0,
+        \`created_by\` INT NOT NULL,
+        \`note\`       VARCHAR(120),
+        \`expires_at\` TIMESTAMP NULL,
+        \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`
+    );
+    await db.execute(
+      `CREATE TABLE IF NOT EXISTS \`beta_code_usages\` (
+        \`id\`              INT AUTO_INCREMENT PRIMARY KEY,
+        \`code_id\`         INT NOT NULL,
+        \`user_id\`         INT NOT NULL,
+        \`credits_awarded\` INT NOT NULL,
+        \`redeemed_at\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_code_user\` (\`code_id\`, \`user_id\`)
+      )`
+    );
+  } catch (e) {
+    console.warn("[betaCode] ensureBetaTables:", e);
+  }
+}
+
 export const betaCodeRouter = router({
-  // Supervisor generates invite codes in batch
   generate: protectedProcedure
     .input(
       z.object({
@@ -31,6 +61,9 @@ export const betaCodeRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
 
+      // 確保表存在
+      await ensureBetaTables(db);
+
       const [userRow] = await db
         .select({ role: users.role, email: users.email })
         .from(users)
@@ -38,7 +71,10 @@ export const betaCodeRouter = router({
         .limit(1);
 
       if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "仅 Supervisor / Admin 可生成内测码" });
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `僅 Supervisor / Admin 可生成邀請碼（角色：${userRow?.role ?? "未知"}，郵箱：${userRow?.email ?? "未綁定"}）`,
+        });
       }
 
       const expiresAt = input.expiresInDays
@@ -46,6 +82,7 @@ export const betaCodeRouter = router({
         : null;
 
       const codes: string[] = [];
+      let lastErr = "";
       for (let i = 0; i < input.count; i++) {
         let code = generateCode();
         let inserted = false;
@@ -63,17 +100,23 @@ export const betaCodeRouter = router({
             codes.push(code);
             inserted = true;
             break;
-          } catch {
+          } catch (err: any) {
+            lastErr = String(err?.message ?? err);
             code = generateCode();
           }
         }
-        if (!inserted) codes.push(`[FAILED-${i}]`);
+        if (!inserted) {
+          // 所有嘗試均失敗 → 拋出明確錯誤，讓前端看到問題
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `邀請碼寫入失敗（${lastErr}）——請確認數據庫表已建立`,
+          });
+        }
       }
 
-      return { codes, count: codes.filter((c) => !c.startsWith("[FAILED")).length };
+      return { codes, count: codes.length };
     }),
 
-  // User redeems a code to receive credits
   redeem: protectedProcedure
     .input(
       z.object({
@@ -87,6 +130,8 @@ export const betaCodeRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+
+      await ensureBetaTables(db);
 
       const [codeRow] = await db
         .select()
@@ -133,14 +178,15 @@ export const betaCodeRouter = router({
       return {
         success: true,
         creditsAwarded: codeRow.credits,
-        message: `🎉 成功兑换 ${codeRow.credits} Credits！可立即使用创作者成长营、平台趋势分析、节点工作流等功能。`,
+        message: `成功兌換 ${codeRow.credits} Credits！可立即使用創作者成長營、平台趨勢分析、節點工作流等功能。`,
       };
     }),
 
-  // Supervisor lists codes they created
   listMine: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+
+    await ensureBetaTables(db);
 
     const [userRow] = await db
       .select({ role: users.role, email: users.email })
