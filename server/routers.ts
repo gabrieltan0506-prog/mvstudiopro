@@ -1668,7 +1668,29 @@ export const appRouter = router({
         modelName: growthCampModelSchema.optional(),
         mode: growthAnalysisModeSchema.default("GROWTH"),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // ── 扣費邏輯：每次分析扣除對應積分 ──────────────────────────────
+        if (ctx.user?.id) {
+          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+          if (!isAdminUser) {
+            const mode = input.mode || "GROWTH";
+            const creditKey = mode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
+            const cost = CREDIT_COSTS[creditKey];
+            const creditsInfo = await getCredits(ctx.user.id);
+            if (creditsInfo.totalAvailable < cost) {
+              throw new Error(
+                `Credits 不足，${mode === "REMIX" ? "二創分析" : "成長營分析"}需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
+              );
+            }
+            await deductCredits(
+              ctx.user.id,
+              creditKey,
+              `創作者成長營 ${mode} 分析（文件）`
+            );
+          }
+        } else {
+          throw new Error("請先登入，才能使用分析功能");
+        }
         const result = await analyzeDocument(input);
         return {
           success: true,
@@ -2338,12 +2360,28 @@ export const appRouter = router({
         requestedPlatforms: z.array(z.string()).default(["douyin", "xiaohongshu", "bilibili", "kuaishou"]),
         snapshotSummary: z.record(z.string(), z.any()).optional(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // ── 扣費：每次平台數據分析扣 platformTrend（50 cr）─────────────────
+        if (ctx.user?.id) {
+          const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+          if (!isAdminUser) {
+            const cost = CREDIT_COSTS["platformTrend"];
+            const creditsInfo = await getCredits(ctx.user.id);
+            if (creditsInfo.totalAvailable < cost) {
+              throw new Error(
+                `Credits 不足，平台數據分析需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
+              );
+            }
+            await deductCredits(ctx.user.id, "platformTrend", `平台數據分析（${input.windowDays}天窗口）`);
+          }
+        } else {
+          throw new Error("請先登入，才能使用平台數據分析功能");
+        }
+
         const jobId = nanoid(16);
-        // Create queued job record immediately — frontend gets this ID to poll
         await createJobRecord({
           id: jobId,
-          userId: "public",
+          userId: String(ctx.user.id),
           type: "platform",
           provider: "vertex",
           input: {
@@ -2357,8 +2395,6 @@ export const appRouter = router({
           },
         });
 
-        // Job is now processed by the Worker (processPlatformJob in runner.ts).
-        // No setImmediate here — worker picks up the queued job within seconds.
         return { jobId, status: "queued" };
       }),
 
