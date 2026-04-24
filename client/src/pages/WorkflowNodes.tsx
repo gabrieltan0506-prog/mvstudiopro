@@ -558,11 +558,35 @@ export default function WorkflowNodes() {
   async function runAuxStep(key: string, op: string, body: Record<string, any>, onSuccess?: (json: any) => void) {
     setAuxBusyKey(key);
     setAuxError("");
+
+    // 与 runOp 共用同一套积分拦截（aux 级别的场景步骤也要扣费）
+    const opKey = op.toLowerCase();
+    const creditInfo = OP_CREDIT_STEP[opKey];
+    let auxChargedCost = 0;
+    let auxChargedStep: StepKey | null = null;
+    let auxChargedQty = 1;
+    if (creditInfo) {
+      try {
+        const qty = creditInfo.getQuantity ? creditInfo.getQuantity(body) : 1;
+        const charge = await chargeStepMutation.mutateAsync({ step: creditInfo.step, quantity: qty });
+        auxChargedCost = charge.cost;
+        auxChargedStep = creditInfo.step;
+        auxChargedQty = qty;
+      } catch (err: any) {
+        setAuxError(err?.message || "Credits 不足，请前往充值页面购买积分");
+        setAuxBusyKey("");
+        return null;
+      }
+    }
+
     try {
       const payload = buildRequestBody(body);
       const result = await postJson(op, payload);
       setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
       if (!result.httpOk || result.json?.ok === false) {
+        if (auxChargedStep && auxChargedCost > 0) {
+          void refundStepMutation.mutateAsync({ step: auxChargedStep, quantity: auxChargedQty, reason: `${op} 失败退款` }).catch(() => {});
+        }
         setAuxError(extractErrorText(result.json));
         return null;
       }
@@ -570,8 +594,88 @@ export default function WorkflowNodes() {
       onSuccess?.(result.json);
       return result.json;
     } catch (error: any) {
+      if (auxChargedStep && auxChargedCost > 0) {
+        void refundStepMutation.mutateAsync({ step: auxChargedStep, quantity: auxChargedQty, reason: `${op} 异常退款` }).catch(() => {});
+      }
       setAuxError(error?.message || String(error) || "request_failed");
       return null;
+    } finally {
+      setAuxBusyKey("");
+    }
+  }
+
+  // ─── Veo 3.1 异步生成场景视频（start → poll → save）──────────────────────
+  async function generateSceneVideoVeo(sceneIndex: number, sceneBody: Record<string, any>) {
+    const busyKey = `scene-video-${sceneIndex}`;
+    setAuxBusyKey(busyKey);
+    setAuxError("");
+
+    // 先扣积分
+    try {
+      await chargeStepMutation.mutateAsync({ step: "scene_video", quantity: 1 });
+    } catch (err: any) {
+      setAuxError(err?.message || "Credits 不足，请前往充值页面购买积分");
+      setAuxBusyKey("");
+      return;
+    }
+
+    try {
+      // Phase-1: 启动任务
+      const startPayload = buildRequestBody({ ...sceneBody, sceneIndex });
+      const startResult = await postJson("workflowGenerateSceneVideo", startPayload);
+      if (!startResult.httpOk || startResult.json?.ok === false) {
+        void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason: "veo_start 失败退款" }).catch(() => {});
+        setAuxError(extractErrorText(startResult.json));
+        setAuxBusyKey("");
+        return;
+      }
+      writeBackWorkflow(startResult.json);
+
+      const { taskId, veoModel, veoLocation } = startResult.json as { taskId: string; veoModel: string; veoLocation: string };
+      if (!taskId) {
+        void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason: "veo_no_taskId 退款" }).catch(() => {});
+        setAuxError("Veo 任务启动失败：未返回 taskId");
+        setAuxBusyKey("");
+        return;
+      }
+
+      // Phase-2: 前端轮询（最多 80 次，每 5s，共 ~6.5min）
+      let videoUrl = "";
+      for (let i = 0; i < 80; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const pollResult = await postJson("workflowVeoPoll", {
+          taskId, veoModel, veoLocation,
+          workflowId: effectiveWorkflowId,
+        });
+        if (!pollResult.httpOk) continue;
+        const { done, failed, videoUrl: url, error } = pollResult.json as { done: boolean; failed: boolean; videoUrl: string; error?: string };
+        if (failed) {
+          void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason: `veo 生成失败退款: ${error || ""}` }).catch(() => {});
+          setAuxError(`Veo 生成失败: ${error || "unknown"}`);
+          setAuxBusyKey("");
+          return;
+        }
+        if (done && url) { videoUrl = url; break; }
+      }
+
+      if (!videoUrl) {
+        void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason: "veo 超时退款" }).catch(() => {});
+        setAuxError("Veo 生成超时（约 6.5 分钟），请重试");
+        setAuxBusyKey("");
+        return;
+      }
+
+      // Phase-3: 保存 URL 回 workflow
+      const saveResult = await postJson("workflowVeoSave", buildRequestBody({
+        sceneIndex, videoUrl,
+        veoModel: veoModel || "veo-3.1-generate-001",
+      }));
+      if (saveResult.httpOk && saveResult.json?.ok !== false) {
+        writeBackWorkflow(saveResult.json);
+      }
+    } catch (err: any) {
+      void refundStepMutation.mutateAsync({ step: "scene_video", quantity: 1, reason: "veo 异常退款" }).catch(() => {});
+      setAuxError(err?.message || "veo_error");
     } finally {
       setAuxBusyKey("");
     }
@@ -1276,20 +1380,23 @@ export default function WorkflowNodes() {
               <div className="text-xs text-white/60">Primary Subject: {scene.primarySubject || "--"}</div>
               <div className="text-xs text-white/60">Render Still Needed: {String(Boolean(scene.renderStillNeeded))}</div>
               <div className="mt-3 flex flex-wrap gap-3">
-                <Button disabled={auxBusyKey === `scene-video-${scene.sceneIndex}`} onClick={() => void runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", {
-                  workflowId,
-                  sceneIndex: scene.sceneIndex,
-                  duration: "8s",
-                  scenePrompt: scene.scenePrompt,
-                  primarySubject: scene.primarySubject,
-                  character: scene.character,
-                  action: scene.action,
-                  camera: scene.camera,
-                  mood: scene.mood,
-                  lighting: scene.lighting,
-                  voiceType: sceneVoiceTypeMap[String(scene.sceneIndex)] ?? scene.voiceType ?? "female",
-                  voiceStyle: sceneVoiceStyleMap[String(scene.sceneIndex)] ?? scene.voiceStyle ?? "",
-                })} className="rounded-xl bg-primary px-5">{auxBusyKey === `scene-video-${scene.sceneIndex}` ? "生成中..." : "生成场景视频"}</Button>
+                <Button
+                  disabled={auxBusyKey === `scene-video-${scene.sceneIndex}`}
+                  onClick={() => void generateSceneVideoVeo(scene.sceneIndex, {
+                    workflowId,
+                    duration: "8s",
+                    scenePrompt: scene.scenePrompt,
+                    primarySubject: scene.primarySubject,
+                    character: scene.character,
+                    action: scene.action,
+                    camera: scene.camera,
+                    mood: scene.mood,
+                    lighting: scene.lighting,
+                  })}
+                  className="rounded-xl bg-primary px-5"
+                >
+                  {auxBusyKey === `scene-video-${scene.sceneIndex}` ? "Veo 生成中…" : "生成场景视频 · Veo 3.1"}
+                </Button>
               </div>
               {bundle?.sceneVideoUrl ? <video key={bundle.sceneVideoUrl} className="mt-3 w-full rounded-xl border border-white/10" controls src={toMediaUrl(bundle.sceneVideoUrl)} /> : null}
             </div>
@@ -1683,21 +1790,22 @@ export default function WorkflowNodes() {
                         </div>
                       ) : null}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <Button className="rounded-xl bg-primary px-4" disabled={busyVideo || !characterUrl || !sceneUrl || Boolean(scene.renderStillNeeded)} onClick={() => void runAuxStep(`scene-video-${scene.sceneIndex}`, "workflowGenerateSceneVideo", {
-                          workflowId,
-                          sceneIndex: scene.sceneIndex,
-                          duration: "8s",
-                          scenePrompt: scene.scenePrompt,
-                          primarySubject: scene.primarySubject,
-                          character: scene.character,
-                          action: scene.action,
-                          camera: scene.camera,
-                          mood: scene.mood,
-                          lighting: scene.lighting,
-                          voiceType: getSceneVoiceTypeValue(scene),
-                          voiceStyle: getSceneVoiceStyleValue(scene),
-                        })}>
-                          {busyVideo ? "生成中..." : "生成视频"}
+                        <Button
+                          className="rounded-xl bg-primary px-4"
+                          disabled={busyVideo || !characterUrl || !sceneUrl || Boolean(scene.renderStillNeeded)}
+                          onClick={() => void generateSceneVideoVeo(scene.sceneIndex, {
+                            workflowId,
+                            duration: "8s",
+                            scenePrompt: scene.scenePrompt,
+                            primarySubject: scene.primarySubject,
+                            character: scene.character,
+                            action: scene.action,
+                            camera: scene.camera,
+                            mood: scene.mood,
+                            lighting: scene.lighting,
+                          })}
+                        >
+                          {busyVideo ? "Veo 生成中…" : "生成视频 · Veo 3.1"}
                         </Button>
                       </div>
                     </div>

@@ -2003,22 +2003,87 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!sceneImageUrls.length) return res.status(400).json(fail("at least one scene image is required before scene video generation"));
 
       const prompt = simplifySceneVideoPrompt(effectiveScene);
+      // 仅上传参考图；视频生成改为异步模式，立即返回 taskId
       const preparedReferenceImages = await Promise.all(
         referenceImages.map((imageUrl, idx) => uploadWorkflowImageToBlob(imageUrl, `scene-video-${sceneIndex}-ref-${idx + 1}`, { mode: "video" })),
       );
-      const generated = await generateVideoWithVeo({
-        scenePrompt: prompt,
-        referenceImages: preparedReferenceImages,
-        imageUrls: preparedReferenceImages,
-      });
-      if (!generated.videoUrl) {
-        return res.status(502).json(fail("fal veo task creation failed", generated.errorMessage || "scene video generation failed"));
+
+      let operationName = "";
+      let veoModel = "veo-3.1-generate-001";
+      let veoLocation = "us-central1";
+      try {
+        const { startVideo } = await import("../server/veo.js");
+        const started = await startVideo({
+          prompt,
+          imageUrl: preparedReferenceImages[0] || "",
+          quality: "standard",
+          aspectRatio: "16:9",
+          resolution: "720p",
+          negativePrompt: "multiple people, extra limbs, duplicate subject, distorted face",
+        });
+        operationName = started.operationName;
+        veoModel = started.model;
+        veoLocation = started.location;
+      } catch (err: any) {
+        return res.status(502).json(fail("veo_start_failed", err?.message || "Veo 3.1 task creation failed"));
       }
 
+      // 将 taskId 写入 workflow，供前端轮询
+      const next = saveWorkflowPatch(workflow, {
+        currentStep: "video",
+        outputs: {
+          script: s(b.script || workflow.outputs?.script).trim(),
+          storyboard: storyboard.map((item: any) =>
+            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
+          ),
+          storyboardImages: storyboardImages,
+          videoProvider: "vertex",
+          videoModel: veoModel,
+        },
+      });
+      return res.status(200).json({
+        ok: true,
+        workflow: next,
+        taskId: operationName,
+        veoModel,
+        veoLocation,
+        sceneIndex,
+        status: "pending",
+      });
+    }
+
+    // ─── Veo 轮询（单次）────────────────────────────────────────────────────
+    if (opNormalized === "workflowveopoll") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const taskId = s(b.taskId).trim();
+      const veoModel = s(b.veoModel || "veo-3.1-generate-001").trim();
+      const veoLocation = s(b.veoLocation || "us-central1").trim();
+      if (!taskId) return res.status(400).json(fail("taskId is required"));
+      try {
+        const { pollVideo } = await import("../server/veo.js");
+        const result = await pollVideo(taskId, veoModel, veoLocation);
+        return res.status(200).json({ ok: true, ...result });
+      } catch (err: any) {
+        return res.status(502).json(fail("veo_poll_failed", err?.message || "poll failed"));
+      }
+    }
+
+    // ─── 将完成的 Veo 视频 URL 保存回 workflow ──────────────────────────────
+    if (opNormalized === "workflowveosave") {
+      if (req.method !== "POST") return res.status(405).json(fail("Method not allowed"));
+      const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
+      const sceneIndex = Number(b.sceneIndex || 0);
+      const videoUrl = s(b.videoUrl).trim();
+      if (!sceneIndex || !videoUrl) return res.status(400).json(fail("sceneIndex and videoUrl are required"));
+
+      const storyboard = getStoryboardDraftFromBody(workflow, b);
+      const storyboardImages = Array.isArray(workflow.outputs?.storyboardImages) ? workflow.outputs.storyboardImages : [];
+      const scene = storyboard.find((item: any) => Number(item?.sceneIndex) === sceneIndex) || {};
+
       const nextStoryboardImages = upsertStoryboardImageItem(storyboardImages, sceneIndex, (existing: any) => buildSceneAssetBundle(existing, sceneIndex, {
-        prompt: s(effectiveScene?.scenePrompt).trim(),
+        prompt: s(scene?.scenePrompt).trim(),
         duration: 8,
-        sceneVideoUrl: s(generated.videoUrl).trim(),
+        sceneVideoUrl: videoUrl,
         backgroundStatus: s(existing?.backgroundStatus).trim() || "not_removed",
         characterLocked: Boolean(existing?.characterLocked),
         referenceCharacterUrl: s(existing?.referenceCharacterUrl).trim(),
@@ -2027,17 +2092,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const next = saveWorkflowPatch(workflow, {
         currentStep: "video",
         outputs: {
-          script: s(b.script || workflow.outputs?.script).trim(),
-          storyboard: storyboard.map((item: any) =>
-            Number(item?.sceneIndex) === sceneIndex ? effectiveScene : item,
-          ),
           storyboardImages: nextStoryboardImages,
           videoProvider: "vertex",
-          videoModel: "veo-3.1-generate-001",
-          videoErrorMessage: generated.errorMessage || "",
+          videoModel: s(b.veoModel || "veo-3.1-generate-001").trim(),
         },
       });
-      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: generated.videoUrl });
+      return res.status(200).json({ ok: true, workflow: next, sceneVideoUrl: videoUrl });
     }
 
     if (opNormalized === "workflowgeneratevoice") {

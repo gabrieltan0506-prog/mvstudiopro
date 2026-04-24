@@ -37,6 +37,85 @@ function pickVeoModel(quality: VeoGenerateOptions["quality"]) {
   return String(process.env.VERTEX_VEO_MODEL_STANDARD || "veo-3.1-generate-001").trim();
 }
 
+// ─── Phase-1: 启动 Veo 任务，立即返回 operationName（不阻塞）────────────────
+export async function startVideo(opts: VeoGenerateOptions): Promise<{
+  operationName: string;
+  model: string;
+  location: string;
+}> {
+  const projectId = getVertexProjectId();
+  const location = getVertexVideoLocation();
+  const model = pickVeoModel(opts.quality);
+  const baseUrl = baseUrlForVertex(location);
+  const headers = await getVertexAuthHeaders();
+  const image = opts.imageUrl ? await fetchRemoteAssetAsBase64(opts.imageUrl) : null;
+  const url = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predictLongRunning`;
+
+  const createResp = await fetchVertexJson(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      instances: [{
+        prompt: opts.prompt,
+        ...(image ? { image: { bytesBase64Encoded: image.base64, mimeType: image.mimeType } } : {}),
+      }],
+      parameters: {
+        aspectRatio: opts.aspectRatio || "16:9",
+        resolution: opts.resolution || "720p",
+        durationSeconds: 8,
+        generateAudio: false,
+        upscale: false,
+        ...(opts.negativePrompt ? { negativePrompt: opts.negativePrompt } : {}),
+      },
+    }),
+  });
+
+  if (!createResp.ok) throw new Error(`vertex_veo_create_failed_${createResp.status}: ${createResp.rawText.slice(0, 400)}`);
+  const operationName = extractVideoOperationName(createResp.json);
+  if (!operationName) throw new Error("vertex_veo_missing_operation_name");
+  return { operationName, model, location };
+}
+
+// ─── Phase-2: 单次轮询状态，由前端循环调用 ──────────────────────────────────
+export async function pollVideo(operationName: string, model: string, location: string): Promise<{
+  done: boolean;
+  failed: boolean;
+  videoUrl: string;
+  error?: string;
+}> {
+  const projectId = getVertexProjectId();
+  const baseUrl = baseUrlForVertex(location);
+  const headers = await getVertexAuthHeaders();
+  const pollUrl = `${baseUrl}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:fetchPredictOperation`;
+  const normalizedOp = normalizePredictOperationName(operationName, projectId, model, location);
+
+  const pollResp = await fetchVertexJson(pollUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ operationName: normalizedOp }),
+  });
+
+  if (!pollResp.ok) throw new Error(`vertex_veo_poll_failed_${pollResp.status}: ${pollResp.rawText.slice(0, 400)}`);
+
+  const raw = pollResp.json;
+  const done = Boolean(raw?.done);
+  const failed = done && Boolean(raw?.error);
+  const rawVideoUrl = extractVideoUrl(raw);
+
+  if (done && !failed && rawVideoUrl) {
+    const downloadResp = await fetch(rawVideoUrl);
+    if (!downloadResp.ok) throw new Error(`vertex_veo_download_failed_${downloadResp.status}`);
+    const buffer = Buffer.from(await downloadResp.arrayBuffer());
+    if (!buffer.length) throw new Error("vertex_veo_empty_video");
+    const fileKey = `veo-videos/${nanoid(12)}.mp4`;
+    const { url: persistedUrl } = await storagePut(fileKey, buffer, "video/mp4");
+    return { done: true, failed: false, videoUrl: persistedUrl };
+  }
+
+  return { done, failed, videoUrl: "", error: failed ? JSON.stringify(raw?.error || "veo_failed") : undefined };
+}
+
+// ─── 原有同步接口（供 runner.ts 等批处理场景使用）────────────────────────────
 export async function generateVideo(opts: VeoGenerateOptions): Promise<VeoResult> {
   const projectId = getVertexProjectId();
   const location = getVertexVideoLocation();
