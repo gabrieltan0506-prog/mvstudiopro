@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import Navbar from "@/components/Navbar";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -280,6 +281,9 @@ export default function WorkflowNodes() {
 
   const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
   const refundStepMutation = trpc.workflow.refundStep.useMutation();
+  const prepareScriptGenMutation = trpc.workflow.prepareScriptGeneration.useMutation();
+  const recordScriptGenMutation = trpc.workflow.recordScriptGeneration.useMutation();
+  const refundScriptGenMutation = trpc.workflow.refundScriptGenerationCharge.useMutation();
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
@@ -508,8 +512,20 @@ export default function WorkflowNodes() {
     setGlobalStep({ loading: true, error: "", success: false });
     setAuxError("");
 
-    // ── 付费步骤：先扣积分，失败则退款 ──
     const opKey = op.toLowerCase();
+    // ── 脚本生成：每日第 1 次免费，第 2 次起先扣 2 cr ──
+    let scriptPreCharge = 0;
+    if (opKey === "workflowgeneratescript") {
+      try {
+        const prep = await prepareScriptGenMutation.mutateAsync();
+        scriptPreCharge = Number(prep.chargedCredits ?? 0) || 0;
+      } catch (e: any) {
+        setGlobalStep({ loading: false, error: e?.message || "脚本次数校验失败", success: false });
+        return null;
+      }
+    }
+
+    // ── 付费步骤：先扣积分，失败则退款 ──
     const creditInfo = OP_CREDIT_STEP[opKey];
     let chargedCost = 0;
     let chargedStep: StepKey | null = null;
@@ -533,22 +549,33 @@ export default function WorkflowNodes() {
       const result = await postJson(op, payload);
       setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
       if (!result.httpOk || result.json?.ok === false) {
-        // 操作失败，退款
         if (chargedStep && chargedCost > 0) {
           void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 失败退款` }).catch(() => {});
+        }
+        if (scriptPreCharge > 0) {
+          void refundScriptGenMutation.mutateAsync({ amount: scriptPreCharge }).catch(() => {});
         }
         const errorText = extractErrorText(result.json);
         setGlobalStep({ loading: false, error: errorText, success: false });
         return null;
+      }
+      if (opKey === "workflowgeneratescript") {
+        try {
+          await recordScriptGenMutation.mutateAsync({ chargedCredits: scriptPreCharge });
+        } catch {
+          // 日志失败不阻塞主流程
+        }
       }
       writeBackWorkflow(result.json);
       setGlobalStep({ loading: false, error: "", success: true });
       onSuccess?.(result.json);
       return result.json;
     } catch (error: any) {
-      // 异常，退款
       if (chargedStep && chargedCost > 0) {
         void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 异常退款` }).catch(() => {});
+      }
+      if (scriptPreCharge > 0) {
+        void refundScriptGenMutation.mutateAsync({ amount: scriptPreCharge }).catch(() => {});
       }
       setGlobalStep({ loading: false, error: error?.message || String(error) || "request_failed", success: false });
       return null;
@@ -1045,11 +1072,14 @@ export default function WorkflowNodes() {
                 <div>
                   <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/55">Character</div>
                   {characterUrls.length ? (
-                    <img
-                      src={toMediaUrl(characterUrls[0])}
-                      alt={`scene-${bundle.sceneIndex}-character`}
-                      className="h-64 w-full rounded-xl border border-white/10 object-cover"
-                    />
+                    <div>
+                      <img
+                        src={toMediaUrl(characterUrls[0])}
+                        alt={`scene-${bundle.sceneIndex}-character`}
+                        className="h-64 w-full rounded-xl border border-white/10 object-cover"
+                      />
+                      <ImageUpscaleBar imageUrl={characterUrls[0]} baseCreditKey="workflowSceneImage" className="mt-2" />
+                    </div>
                   ) : (
                     <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-white/15 text-sm text-white/40">No character image</div>
                   )}
@@ -1074,18 +1104,20 @@ export default function WorkflowNodes() {
                     {sceneUrls.length ? sceneUrls.map((url) => {
                       const active = url === selectedSceneUrl;
                       return (
-                        <button
-                          key={url}
-                          type="button"
-                          onClick={() => selectSceneImage(bundle.sceneIndex, url)}
-                          className={`overflow-hidden rounded-2xl border text-left transition-all ${active ? "border-primary shadow-[0_0_0_1px_rgba(236,72,153,0.28)]" : "border-white/10 hover:border-white/20"}`}
-                        >
-                          <img src={toMediaUrl(url)} alt={`scene-${bundle.sceneIndex}`} className="h-48 w-full object-cover" />
-                          <div className="flex items-center justify-between gap-3 p-3 text-sm">
-                            <span className={active ? "text-primary" : "text-white/80"}>{active ? "Selected Scene" : "Use This Scene"}</span>
-                            <span className="text-xs text-white/45">for video</span>
-                          </div>
-                        </button>
+                        <div key={url} className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={() => selectSceneImage(bundle.sceneIndex, url)}
+                            className={`w-full overflow-hidden rounded-2xl border text-left transition-all ${active ? "border-primary shadow-[0_0_0_1px_rgba(236,72,153,0.28)]" : "border-white/10 hover:border-white/20"}`}
+                          >
+                            <img src={toMediaUrl(url)} alt={`scene-${bundle.sceneIndex}`} className="h-48 w-full object-cover" />
+                            <div className="flex items-center justify-between gap-3 p-3 text-sm">
+                              <span className={active ? "text-primary" : "text-white/80"}>{active ? "Selected Scene" : "Use This Scene"}</span>
+                              <span className="text-xs text-white/45">for video</span>
+                            </div>
+                          </button>
+                          <ImageUpscaleBar imageUrl={url} baseCreditKey="workflowSceneImage" />
+                        </div>
                       );
                     }) : (
                       <div className="flex h-48 items-center justify-center rounded-xl border border-dashed border-white/15 text-sm text-white/40">No scene images yet</div>
@@ -1136,6 +1168,16 @@ export default function WorkflowNodes() {
             ) : (
               <>
                 <textarea value={renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""} onChange={(e) => setRenderStillPromptMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} rows={3} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" />
+                {(() => {
+                  const rsUrl = s(storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex)?.renderStillImageUrl).trim();
+                  if (!rsUrl) return null;
+                  return (
+                    <div className="mt-3">
+                      <img src={toMediaUrl(rsUrl)} alt={`render-still-${scene.sceneIndex}`} className="max-h-72 w-full rounded-xl border border-white/10 object-contain" />
+                      <ImageUpscaleBar imageUrl={rsUrl} baseCreditKey="workflowRenderStill" className="mt-2" />
+                    </div>
+                  );
+                })()}
                 <div className="mt-3 flex flex-wrap gap-3">
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 hover:bg-white/10">
                     <CloudUpload className="h-4 w-4" />
@@ -1672,8 +1714,11 @@ export default function WorkflowNodes() {
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] ${characterUrl ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" : "border-white/10 bg-white/5 text-white/45"}`}>{characterUrl ? "Ready" : "Pending"}</span>
                     </div>
                     {characterUrl ? (
-                      <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 p-3">
-                        <img src={toMediaUrl(characterUrl)} alt={`scene-${scene.sceneIndex}-character`} className="max-h-[500px] w-full rounded-xl object-contain" />
+                      <div className="space-y-3">
+                        <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-black/30 p-3">
+                          <img src={toMediaUrl(characterUrl)} alt={`scene-${scene.sceneIndex}-character`} className="max-h-[500px] w-full rounded-xl object-contain" />
+                        </div>
+                        <ImageUpscaleBar imageUrl={characterUrl} baseCreditKey="workflowSceneImage" />
                       </div>
                     ) : (
                       <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 text-sm text-white/35">No character image</div>
@@ -1721,11 +1766,14 @@ export default function WorkflowNodes() {
                       <span className={`rounded-full border px-2.5 py-1 text-[11px] ${selectedSceneImageUrl ? "border-primary/30 bg-primary/10 text-primary" : "border-white/10 bg-white/5 text-white/45"}`}>{selectedSceneImageUrl ? "Selected" : "Pending"}</span>
                     </div>
                     {sceneUrl ? (
-                      <button type="button" onClick={() => selectSceneImage(scene.sceneIndex, sceneUrl)} className="block w-full">
-                        <div className={`flex min-h-[360px] items-center justify-center rounded-2xl border bg-black/30 p-3 transition-all ${selectedSceneImageUrl === sceneUrl ? "border-primary shadow-[0_0_0_1px_rgba(236,72,153,0.28)]" : "border-white/10"}`}>
-                          <img src={toMediaUrl(sceneUrl)} alt={`scene-${scene.sceneIndex}-environment`} className="max-h-[340px] w-full rounded-xl object-contain" />
-                        </div>
-                      </button>
+                      <div className="space-y-3">
+                        <button type="button" onClick={() => selectSceneImage(scene.sceneIndex, sceneUrl)} className="block w-full">
+                          <div className={`flex min-h-[360px] items-center justify-center rounded-2xl border bg-black/30 p-3 transition-all ${selectedSceneImageUrl === sceneUrl ? "border-primary shadow-[0_0_0_1px_rgba(236,72,153,0.28)]" : "border-white/10"}`}>
+                            <img src={toMediaUrl(sceneUrl)} alt={`scene-${scene.sceneIndex}-environment`} className="max-h-[340px] w-full rounded-xl object-contain" />
+                          </div>
+                        </button>
+                        <ImageUpscaleBar imageUrl={sceneUrl} baseCreditKey="workflowSceneImage" />
+                      </div>
                     ) : (
                       <div className="flex min-h-[360px] items-center justify-center rounded-2xl border border-dashed border-white/10 bg-black/20 text-sm text-white/35">No scene image</div>
                     )}

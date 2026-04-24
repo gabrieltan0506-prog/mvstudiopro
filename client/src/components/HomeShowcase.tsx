@@ -62,22 +62,6 @@ fontSize:12
 {item.model}
 </div>
 
-<div style={{display:"flex",gap:10,marginTop:14}}>
-
-<a href="/kling-studio"
-style={{
-padding:"8px 14px",
-borderRadius:10,
-background:"#ff4fb3",
-color:"white",
-fontWeight:800,
-textDecoration:"none"
-}}>
-重新创作
-</a>
-
-</div>
-
 </div>
 </div>
 ))}

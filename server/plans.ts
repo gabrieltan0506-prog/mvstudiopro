@@ -180,11 +180,12 @@ export const CREDIT_COSTS = {
   growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
   growthCampRemix: 50,        // REMIX 二创模式：50 cr ≈ ¥35（毛利率 98.2%）
   platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
-  platformTrendFollowUp: 20,  // 平台趋势「追问 / 续问」每次 20 cr（Gemini 3.1 Pro）
+  platformTrendFollowUp: 5,   // 平台趋势「追问 / 续问」每次 5 cr
   workflowNodes: 20,          // 节点工作流整体（已废弃，改为逐步计费）
 
-  // ─── 节点工作流（逐步计费，脚本生成免费）────────
-  workflowScript: 0,           // 脚本生成：免费（入口引流）
+  // ─── 节点工作流（逐步计费，脚本每日首通免费）────────
+  workflowScript: 0,           // 脚本生成：每日第 1 次免费
+  workflowScriptExtra: 2,      // 脚本生成：当日第 2 次起每次 2 cr（防薅 API）
   workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成，成本 ≈¥0.04）
   workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张（成本 ≈¥0.08）
   workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次（成本 ≈¥0.10）
@@ -272,7 +273,8 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "平台趋势分析", subFeature: "初次看板 / 快照加载（主分析）", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台趋势分析", subFeature: "追问 / 续问（顾问式问答）", credits: CREDIT_COSTS.platformTrendFollowUp, note: "每次追问独立扣费" },
   // ─── 节点工作流（逐步） ───────────────────────────────────
-  { product: "节点工作流", subFeature: "脚本生成", credits: CREDIT_COSTS.workflowScript, note: "免费引流" },
+  { product: "节点工作流", subFeature: "脚本生成（每日第1次）", credits: CREDIT_COSTS.workflowScript, note: "第2次起 2 cr/次" },
+  { product: "节点工作流", subFeature: "脚本生成（当日第2次起）", credits: CREDIT_COSTS.workflowScriptExtra, note: "同用户按自然日计" },
   { product: "节点工作流", subFeature: "故事板确认", credits: CREDIT_COSTS.workflowStoryboard },
   { product: "节点工作流", subFeature: "分镜图（每场景 NBP 2K）", credits: CREDIT_COSTS.workflowSceneImage, note: "按场景张数" },
   { product: "节点工作流", subFeature: "多人静帧（NBP 4K）", credits: CREDIT_COSTS.workflowRenderStill, note: "每场景一次" },
@@ -340,6 +342,15 @@ export const SINGLE_PURCHASE = {
  * Credits 加值包
  */
 export const CREDIT_PACKS = {
+  /** ¥19.9 试用：按 ¥0.6/积分 → floor(19.9/0.6)=33 Credits */
+  trial199: {
+    credits: 33,
+    price: 19.9,
+    label: "33 Credits Trial",
+    labelCn: "¥19.9 试用包",
+    perCredit: 0.6,
+    discount: "约 ¥0.60/积分 · 33 Credits · 每人限 2 次",
+  },
   small: {
     credits: 50,
     price: 35,
@@ -357,12 +368,12 @@ export const CREDIT_PACKS = {
     discount: "省 2.9%",
   },
   large: {
-    credits: 250,
-    price: 168,
-    label: "250 Credits",
-    labelCn: "250 Credits 超值包",
-    perCredit: 0.672,
-    discount: "省 4%",
+    credits: 300,
+    price: 198,
+    label: "300 Credits",
+    labelCn: "300 Credits 超值包",
+    perCredit: 0.66,
+    discount: "省 4% · 可覆盖一次完整 3 场景工作流",
   },
   mega: {
     credits: 500,

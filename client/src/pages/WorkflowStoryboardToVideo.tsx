@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 
 type Scene = {
   sceneIndex: number;
@@ -910,6 +911,7 @@ export default function WorkflowStoryboardToVideo() {
                     {characterImageUrls.map((url: string, idx: number) => (
                       <div key={`${scene.sceneIndex}-${idx}`}>
                         <img src={toAssetDisplayUrl(url)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                        <ImageUpscaleBar imageUrl={url} baseCreditKey="workflowSceneImage" style={{ marginTop: 8 }} />
                         <div style={{ marginTop: 8 }}>
                           <button type="button" onClick={() => exportStoryboardImage(url)}>Export Image</button>
                         </div>
@@ -933,6 +935,7 @@ export default function WorkflowStoryboardToVideo() {
                         }}
                       >
                         <img src={toAssetDisplayUrl(url)} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                        <ImageUpscaleBar imageUrl={url} baseCreditKey="workflowSceneImage" style={{ marginTop: 8 }} />
                         <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button type="button" onClick={(e) => { e.stopPropagation(); selectSceneImage(Number(scene.sceneIndex || 0), url); }}>
                             {selectedSceneImageUrl === url ? "Selected" : "Use This Scene"}
@@ -951,6 +954,7 @@ export default function WorkflowStoryboardToVideo() {
                 {item.renderStillImageUrl ? (
                   <div style={{ marginTop: 10, maxWidth: 360 }}>
                     <img src={toAssetDisplayUrl(String(item.renderStillImageUrl))} style={{ width: "100%", borderRadius: 8, background: "black" }} />
+                    <ImageUpscaleBar imageUrl={String(item.renderStillImageUrl)} baseCreditKey="workflowRenderStill" style={{ marginTop: 8 }} />
                   </div>
                 ) : null}
                 <div style={{ marginTop: 10, fontWeight: 600 }}>Scene Voice Text</div>

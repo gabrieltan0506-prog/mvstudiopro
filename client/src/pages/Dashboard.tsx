@@ -122,7 +122,9 @@ export default function LayoutDashboard() {
               {redeemLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "兑换"}
             </button>
           </div>
-          <p className="text-xs text-gray-500 mt-2">内测码可解锁 Credits，用于创作者成长营、平台趋势分析等功能</p>
+          <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+            内测码由 <span className="text-gray-400">Supervisor / Admin</span> 在「管理面板 → 生成内测邀请码」批量生成：可设每组码赠送的积分、最大兑换次数与有效期；用户在此输入码并兑换后，积分立即入账（来源：内测码）。
+          </p>
         </div>
 
         {/* Quick Actions */}

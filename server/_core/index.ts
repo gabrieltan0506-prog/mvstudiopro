@@ -143,6 +143,22 @@ async function runAutoMigrations() {
       )
     `);
     console.log("[AutoMigrate] beta_invite_codes & beta_code_usages: OK");
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`user_feedback\` (
+        \`id\`              INT AUTO_INCREMENT PRIMARY KEY,
+        \`userId\`          INT NOT NULL,
+        \`subject\`         VARCHAR(200) NOT NULL,
+        \`message\`         TEXT NOT NULL,
+        \`status\`          ENUM('pending','adopted','dismissed') NOT NULL DEFAULT 'pending',
+        \`creditsAwarded\`  INT NULL,
+        \`adoptedAt\`       TIMESTAMP NULL,
+        \`adoptedBy\`        INT NULL,
+        \`adminNote\`       VARCHAR(500) NULL,
+        \`createdAt\`       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("[AutoMigrate] user_feedback: OK");
   } catch (err) {
     console.warn("[AutoMigrate] skipped (non-fatal):", err instanceof Error ? err.message : err);
   }

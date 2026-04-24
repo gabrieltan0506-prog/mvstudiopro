@@ -9,10 +9,13 @@ import {
 } from "lucide-react";
 
 type BillingInterval = "monthly" | "quarterly" | "yearly";
-type PackId = "small" | "medium" | "large" | "mega";
+type PackId = "trial199" | "small" | "medium" | "large" | "mega";
 type PayMethod = "wechat" | "alipay";
 
-const PACK_META: Record<PackId, { credits: number; basePrice: number; icon: React.ReactNode; label: string; popular?: boolean; best?: boolean }> = {
+const PACK_ORDER: PackId[] = ["trial199", "small", "medium", "large", "mega"];
+
+const PACK_META: Record<PackId, { credits: number; basePrice: number; icon: React.ReactNode; label: string; popular?: boolean; best?: boolean; trial?: boolean }> = {
+  trial199: { credits: 33, basePrice: 19.9, icon: <Smile className="h-7 w-7 text-emerald-400" />, label: "试用包", trial: true },
   small:  { credits: 50,  basePrice: 35,  icon: <Bolt className="h-7 w-7 text-[#FF6B35]" />, label: "入门包" },
   medium: { credits: 100, basePrice: 68,  icon: <Zap  className="h-7 w-7 text-[#FF6B35]" />, label: "高端包", popular: true },
   large:  { credits: 250, basePrice: 168, icon: <Flame className="h-7 w-7 text-[#FF6B35]" />, label: "超值包", best: true },
@@ -21,6 +24,9 @@ const PACK_META: Record<PackId, { credits: number; basePrice: number; icon: Reac
 
 function calcPrice(packId: PackId, cycle: BillingInterval): { price: number; credits: number; discountText: string } {
   const m = PACK_META[packId];
+  if (packId === "trial199") {
+    return { price: m.basePrice, credits: m.credits, discountText: "约 ¥0.6/积分" };
+  }
   if (cycle === "quarterly") return { price: Math.round(m.basePrice * 3 * 0.9), credits: m.credits * 3, discountText: "季度九折" };
   if (cycle === "yearly")    return { price: Math.round(m.basePrice * 12 * 0.8), credits: m.credits * 12, discountText: "年度八折" };
   return { price: m.basePrice, credits: m.credits, discountText: "" };
@@ -192,7 +198,7 @@ export default function Pricing() {
         {/* Header */}
         <div className="px-6 pt-8 pb-4">
           <h1 className="text-3xl font-extrabold text-white">Credits 加值</h1>
-          <p className="text-base text-gray-400 mt-1">微信 / 支付宝扫码，1 积分 ≈ ¥0.70</p>
+          <p className="text-base text-gray-400 mt-1">微信 / 支付宝扫码；常规包约 ¥0.65–0.70/积分，¥19.9 试用包约 ¥0.60/积分</p>
         </div>
 
         {/* Credits Balance */}
@@ -235,7 +241,7 @@ export default function Pricing() {
         {/* Credits Packs */}
         <div className="px-6 mb-8">
           <div className="grid grid-cols-2 gap-3">
-            {(Object.keys(PACK_META) as PackId[]).map((packId) => {
+            {PACK_ORDER.map((packId) => {
               const meta = PACK_META[packId];
               const { price, credits: cr, discountText } = calcPrice(packId, interval);
               return (
@@ -243,9 +249,12 @@ export default function Pricing() {
                   key={packId}
                   onClick={() => openMethodPicker(packId)}
                   className={`relative flex flex-col items-center justify-center bg-[#1A1A1D] rounded-xl p-4 text-center transition-all duration-200 hover:scale-[1.03] active:scale-[0.97] border ${
-                    meta.popular ? "border-2 border-[#FF6B35]" : "border-white/10 hover:border-[#FF6B35]/50"
+                    meta.popular ? "border-2 border-[#FF6B35]" : meta.trial ? "border-2 border-emerald-500/50" : "border-white/10 hover:border-[#FF6B35]/50"
                   }`}
                 >
+                  {meta.trial && (
+                    <div className="absolute -top-2.5 bg-emerald-500 text-white text-[10px] font-bold rounded-full px-2 py-0.5">试用</div>
+                  )}
                   {meta.popular && (
                     <div className="absolute -top-2.5 bg-[#FF6B35] text-white text-[10px] font-bold rounded-full px-2 py-0.5">热门</div>
                   )}
@@ -255,7 +264,7 @@ export default function Pricing() {
                   {meta.icon}
                   <span className="text-2xl font-extrabold text-white mt-2">{cr}</span>
                   <span className="text-xs text-gray-400">Credits</span>
-                  <span className="text-lg font-bold text-white mt-2">¥{price}</span>
+                  <span className="text-lg font-bold text-white mt-2">¥{Number.isInteger(price) ? price : price.toFixed(1)}</span>
                   {discountText ? (
                     <span className="text-[10px] text-green-400 mt-0.5">{discountText}</span>
                   ) : (

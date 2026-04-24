@@ -11,6 +11,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import BuildBadge from "../components/BuildBadge";
+import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 
 async function fetchJsonish(url: string, init?: RequestInit) {
   const resp = await fetch(url, init);
@@ -476,6 +477,7 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
       {imageUrl ? (
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           <img src={imageUrl} alt="generated" style={{ width: "100%", borderRadius: 18, background: "#0f172a" }} />
+          <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="klingImageV2_1K" />
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <a href={imageUrl} target="_blank" rel="noreferrer" style={{ ...GHOST_BUTTON, textDecoration: "none" }}>
               打开图片

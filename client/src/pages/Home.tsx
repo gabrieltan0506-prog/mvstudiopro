@@ -2,9 +2,10 @@ import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
 import HomeHero from "../components/HomeHero";
 import HomeTools from "../components/HomeTools";
+import HomeShowcase from "../components/HomeShowcase";
+import HomePricing from "../components/HomePricing";
 
 // 以下 section 在正式版開放前暫時隱藏
-// import HomeShowcase from "../components/HomeShowcase";
 // import HomeWorkflow from "../components/HomeWorkflow";
 // import HomeCreatorEco from "../components/HomeCreatorEco";
 // import HomePlans from "../components/HomePlans";
@@ -24,8 +25,11 @@ export default function HomePage() {
 
       <HomeTools />
 
+      <HomeShowcase />
+
+      <HomePricing />
+
       {/* 内测阶段暂时隐藏，正式版再开放 */}
-      {/* <HomeShowcase /> */}
       {/* <HomeWorkflow /> */}
       {/* <HomeCreatorEco /> */}
       {/* <HomePlans /> */}

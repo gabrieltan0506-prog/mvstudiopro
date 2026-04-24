@@ -11,7 +11,7 @@
  * 注意：收款码图片放到 public/assets/payment/ 目录下（需用户提供）
  */
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
+import { and, count, desc, eq, inArray, like } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
@@ -21,6 +21,7 @@ import { users } from "../../drizzle/schema";
 import { paymentSubmissions } from "../../drizzle/schema-payments";
 import { nanoid } from "nanoid";
 import { CREDIT_PACKS } from "../plans";
+import { TRIAL_PACK_199_MAX_PURCHASES_PER_USER } from "../../shared/plans";
 
 /** 公司全称（付款后在微信/支付宝收款界面显示） */
 export const COMPANY_NAME = "上海德智熙人工智能科技有限公司";
@@ -34,11 +35,44 @@ const QR_IMAGE_PATHS = {
 type BillingCycle = "monthly" | "quarterly" | "yearly";
 type PackId = keyof typeof CREDIT_PACKS;
 
+/** 试用包订单数（pending 占用名额，避免重复提交；approved 为已通过次数） */
+async function countTrial199SubmissionsForUser(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  userId: number,
+  statuses: ("pending" | "approved")[],
+): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(paymentSubmissions)
+    .where(
+      and(
+        eq(paymentSubmissions.userId, userId),
+        like(paymentSubmissions.packageType, "trial199_%"),
+        inArray(paymentSubmissions.status, statuses),
+      ),
+    );
+  return Number(row?.n ?? 0);
+}
+
+function assertTrial199PurchaseAllowed(
+  pendingOrApproved: number,
+) {
+  if (pendingOrApproved >= TRIAL_PACK_199_MAX_PURCHASES_PER_USER) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `¥19.9 试用包每人最多购买 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次（含待审核订单），您已达上限`,
+    });
+  }
+}
+
 function calcPriceAndCredits(
   packId: PackId,
   cycle: BillingCycle
 ): { price: number; credits: number; discountLabel: string } {
   const pack = CREDIT_PACKS[packId];
+  if (packId === "trial199") {
+    return { price: pack.price, credits: pack.credits, discountLabel: "试用包单次 · 不参与季/年折" };
+  }
   if (cycle === "quarterly") {
     return {
       price: Math.round(pack.price * 3 * 0.9),
@@ -61,12 +95,19 @@ export const staticPayRouter = router({
   getPaymentInfo: protectedProcedure
     .input(
       z.object({
-        packId: z.enum(["small", "medium", "large", "mega"]),
+        packId: z.enum(["trial199", "small", "medium", "large", "mega"]),
         method: z.enum(["wechat", "alipay"]),
         billingCycle: z.enum(["monthly", "quarterly", "yearly"]).default("monthly"),
       })
     )
-    .query(({ input }) => {
+    .query(async ({ ctx, input }) => {
+      if (input.packId === "trial199") {
+        const db = await getDb();
+        if (db) {
+          const used = await countTrial199SubmissionsForUser(db, ctx.user.id, ["pending", "approved"]);
+          assertTrial199PurchaseAllowed(used);
+        }
+      }
       const { price, credits, discountLabel } = calcPriceAndCredits(
         input.packId,
         input.billingCycle
@@ -89,7 +130,7 @@ export const staticPayRouter = router({
     .input(
       z.object({
         orderId: z.string().min(1).max(50),
-        packId: z.enum(["small", "medium", "large", "mega"]),
+        packId: z.enum(["trial199", "small", "medium", "large", "mega"]),
         method: z.enum(["wechat", "alipay"]),
         amount: z.number().positive(),
         credits: z.number().int().positive(),
@@ -100,6 +141,11 @@ export const staticPayRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+      if (input.packId === "trial199") {
+        const used = await countTrial199SubmissionsForUser(db, ctx.user.id, ["pending", "approved"]);
+        assertTrial199PurchaseAllowed(used);
+      }
 
       await db.insert(paymentSubmissions).values({
         userId: ctx.user.id,
@@ -146,6 +192,16 @@ export const staticPayRouter = router({
       if (!submission) throw new TRPCError({ code: "NOT_FOUND", message: "订单不存在" });
       if (submission.status !== "pending") {
         throw new TRPCError({ code: "BAD_REQUEST", message: "订单已处理，请勿重复操作" });
+      }
+
+      if (submission.packageType.startsWith("trial199_")) {
+        const approvedCount = await countTrial199SubmissionsForUser(db, submission.userId, ["approved"]);
+        if (approvedCount >= TRIAL_PACK_199_MAX_PURCHASES_PER_USER) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `该用户试用包已通过审核 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次，无法再批准此单`,
+          });
+        }
       }
 
       await addCredits(submission.userId, input.credits, "payment");

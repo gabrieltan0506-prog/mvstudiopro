@@ -84,6 +84,27 @@ export default function HomeNavbar() {
               <span style={{ fontSize: 10, opacity: 0.55 }}>{en}</span>
             </a>
           ))}
+          {isAuthenticated && user ? (
+            <a
+              href="/dashboard"
+              style={{
+                color: "#e9d5ff",
+                textDecoration: "none",
+                fontWeight: 800,
+                fontSize: 14,
+                display: "grid",
+                lineHeight: 1.2,
+                textAlign: "center",
+                padding: "4px 10px",
+                borderRadius: 12,
+                background: "rgba(139,92,246,0.22)",
+                border: "1px solid rgba(167,139,250,0.35)",
+              }}
+            >
+              <span>个人中心</span>
+              <span style={{ fontSize: 10, opacity: 0.75 }}>Dashboard</span>
+            </a>
+          ) : null}
         </nav>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -169,6 +190,13 @@ export default function HomeNavbar() {
                     )}
                   </div>
 
+                  <a
+                    href="/dashboard"
+                    style={{ display: "block", padding: "11px 14px", color: "white", fontSize: 13, textDecoration: "none", fontWeight: 800, background: "rgba(139,92,246,0.15)" }}
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    个人中心
+                  </a>
                   <a
                     href="/creator-growth-camp"
                     style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
