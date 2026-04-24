@@ -2153,24 +2153,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!AIM_KEY) return res.status(500).json(fail("missing_env", "AIMUSIC_API_KEY is required", { detail: "AIMUSIC_API_KEY" }));
       const workflow = readWorkflow(b.workflowId || b.id, b.workflow);
       const requestedMusicProvider = normalizeMusicProvider(b.musicProvider || workflow.outputs?.musicProvider || "suno");
-      const musicMood = s(b.musicMood || "cinematic").trim() || "cinematic";
-      const musicBpm = Number(b.musicBpm || 0) || 110;
       const musicDuration = Number(b.musicDuration || 0) || 30;
       const storyboard = getStoryboardDraftFromBody(workflow, b);
-      const autoMusicPrompt = deriveMusicSeedFromStoryboard(storyboard, s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim());
-      const rawPrompt = truncateText(
-        s(b.musicPrompt).trim() || autoMusicPrompt || s(workflow.outputs?.script).trim() || s(workflow.payload?.prompt).trim(),
-        100,
-      );
-      if (!rawPrompt) return res.status(400).json(fail("musicPrompt is required"));
-      const prompt = buildMusicPrompt({
-        genre: rawPrompt,
-        mood: musicMood,
-        pace: s(b.musicPace || "medium-fast").trim() || "medium-fast",
-        duration: musicDuration,
-        hasVocal: Boolean(b.hasVocal),
-        bpm: musicBpm,
-      });
+      const scriptText = s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim();
+
+      // ── 用 Gemini 2.5 Pro 生成 Suno 专用 music prompt（与成长营同链路）──
+      let aiMusicPrompt = s(b.musicPrompt).trim(); // 若前端手动传入则直接用
+      if (!aiMusicPrompt) {
+        const storyboardMoodSummary = (Array.isArray(storyboard) ? storyboard : [])
+          .slice(0, 5)
+          .map((sc: any) => [s(sc?.mood), s(sc?.lighting), s(sc?.scenePrompt).slice(0, 60)].filter(Boolean).join(", "))
+          .join(" | ");
+        const geminiMusicPromptRequest = `You are a professional film composer and music director.
+Based on the video script and scene mood summary below, write a concise English music style prompt for Suno AI V5.5.
+
+Requirements:
+- English only, max 100 words
+- Describe: genre, mood, tempo, key instruments, energy level
+- Purely instrumental, no vocals
+- Suitable as a cinematic short-video BGM
+- Output only the prompt, no explanation
+
+Script (excerpt):
+${truncateText(scriptText, 400)}
+
+Scene mood summary:
+${truncateText(storyboardMoodSummary, 200)}`;
+
+        try {
+          const geminiResult = await callGeminiScriptGateway(geminiMusicPromptRequest);
+          const geminiText = extractGoogleText(geminiResult?.raw).trim();
+          if (geminiText) aiMusicPrompt = truncateText(geminiText, 160);
+        } catch (_err) {
+          // Gemini 失败时回退到关键词推导
+        }
+      }
+
+      // 最终兜底：机械推导
+      if (!aiMusicPrompt) {
+        aiMusicPrompt = deriveMusicSeedFromStoryboard(storyboard, scriptText);
+      }
+      if (!aiMusicPrompt) return res.status(400).json(fail("musicPrompt is required"));
+
+      // 送给 Suno 的 prompt 直接使用 Gemini 输出，不再套 buildMusicPrompt 壳
+      const prompt = aiMusicPrompt;
 
       const createUrl = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/nuro/create` : `${AIM_BASE}/api/v1/sonic/create`;
       const taskUrlBase = requestedMusicProvider === "udio" ? `${AIM_BASE}/api/v1/nuro/task/` : `${AIM_BASE}/api/v1/sonic/task/`;
@@ -2243,14 +2269,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         outputs: {
           storyboard,
           musicProvider: requestedMusicProvider,
-          musicPrompt: rawPrompt,
-          musicMood,
-          musicBpm,
+          musicPrompt: aiMusicPrompt,
+          musicModel: "sonic-v5-5",
           musicDuration,
           musicUrl: persistedMusicUrl,
         },
       });
-      return res.status(200).json({ ok: true, workflow: next });
+      return res.status(200).json({ ok: true, workflow: next, musicPrompt: aiMusicPrompt });
     }
 
     if (opNormalized === "workflowrendervideo" || opNormalized === "workflowrenderfinalvideo") {
