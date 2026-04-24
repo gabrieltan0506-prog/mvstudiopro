@@ -65,23 +65,6 @@ export default function AdminPanel() {
     });
   }
 
-  const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
-
-  // Redirect non-admin / non-supervisor
-  if (isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
-    return (
-      <div className="min-h-screen bg-background text-foreground">
-        <Navbar />
-        <div className="pt-32 text-center container">
-          <Shield className="h-16 w-16 text-red-400 mx-auto mb-6" />
-          <h1 className="text-3xl font-bold mb-4">无权限访问</h1>
-          <p className="text-muted-foreground mb-8">此页面仅限管理员访问</p>
-          <Button onClick={() => navigate("/")}>返回首页</Button>
-        </div>
-      </div>
-    );
-  }
-
   const fetchVerifications = async () => {
     if (!isAuthenticated || user?.role !== "admin") return;
     setVerificationLoading(true);
@@ -115,9 +98,27 @@ export default function AdminPanel() {
     }
   };
 
+  // ── useEffect 必須在所有 conditional return 之前 ──
   useEffect(() => {
     void fetchVerifications();
   }, [isAuthenticated, user?.role]);
+
+  const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
+
+  // Redirect non-admin / non-supervisor
+  if (isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <Navbar />
+        <div className="pt-32 text-center container">
+          <Shield className="h-16 w-16 text-red-400 mx-auto mb-6" />
+          <h1 className="text-3xl font-bold mb-4">无权限访问</h1>
+          <p className="text-muted-foreground mb-8">此页面仅限管理员访问</p>
+          <Button onClick={() => navigate("/")}>返回首页</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
