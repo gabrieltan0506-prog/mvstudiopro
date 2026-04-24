@@ -180,7 +180,17 @@ export const CREDIT_COSTS = {
   growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
   growthCampRemix: 50,        // REMIX 二创模式：50 cr ≈ ¥35（毛利率 98.2%）
   platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
-  workflowNodes: 20,          // 节点工作流每次调用：20 cr ≈ ¥14
+  workflowNodes: 20,          // 节点工作流整体（已废弃，改为逐步计费）
+
+  // ─── 节点工作流（逐步计费，脚本生成免费）────────
+  workflowScript: 0,           // 脚本生成：免费（入口引流）
+  workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成，成本 ≈¥0.04）
+  workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张（成本 ≈¥0.08）
+  workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次（成本 ≈¥0.10）
+  workflowSceneVideo: 80,      // 场景视频（Kling）：80 cr/次（成本 ≈¥1.12）
+  workflowSceneVoice: 5,       // 场景配音（TTS）：5 cr/次（成本 ≈¥0.05）
+  workflowMusic: 12,           // 自动配乐（Suno V4）：12 cr（成本 ≈¥0.42）
+  workflowFinalRender: 5,      // 最终合成：5 cr（计算资源）
 
   // ─── 基础功能 ───────────────────────────────────
   mvAnalysis: 8,              // 每次视频 PK 评分消耗 8 credits

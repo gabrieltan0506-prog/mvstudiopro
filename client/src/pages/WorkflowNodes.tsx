@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import Navbar from "@/components/Navbar";
+import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -86,6 +87,20 @@ type NodeItem = {
   color: string;
   icon: React.ComponentType<any>;
   status: NodeStatus;
+};
+
+// 每个节点的积分成本（0 = 免费）
+const NODE_CREDIT_COST: Record<string, { cost: number; unit?: string; step?: string }> = {
+  prompt:      { cost: 0 },
+  script:      { cost: 0 },                               // 脚本生成：免费
+  storyboard:  { cost: 5, step: "storyboard" },
+  assets:      { cost: 5, unit: "/张", step: "scene_image" },
+  renderStill: { cost: 9, unit: "/次", step: "render_still" },
+  removebg:    { cost: 0 },                               // 开发中
+  video:       { cost: 80, unit: "/场景", step: "scene_video" },
+  voice:       { cost: 5, unit: "/场景", step: "scene_voice" },
+  music:       { cost: 12, step: "music" },
+  render:      { cost: 5, step: "final_render" },
 };
 
 const NODE_ITEMS: NodeItem[] = [
@@ -233,6 +248,24 @@ async function postJson(op: string, body: Record<string, any>) {
   return { httpOk: resp.ok, status: resp.status, json: jparse(text) ?? { rawText: text } };
 }
 
+// op → { step, getQuantity? } 映射表（只列付费步骤）
+type StepKey = "storyboard" | "scene_image" | "render_still" | "scene_video" | "scene_voice" | "music" | "final_render";
+const OP_CREDIT_STEP: Record<string, { step: StepKey; getQuantity?: (body: Record<string, any>) => number }> = {
+  workflowgeneratestoryboard:        { step: "storyboard" },
+  workflowgeneratestoryboardimages:  { step: "scene_image", getQuantity: (b) => Number(b.storyboard?.length ?? b.sceneCount ?? 1) || 1 },
+  workflowregeneratesceneimages:     { step: "scene_image" },
+  workflowgeneratesceneimage:        { step: "scene_image" },
+  workflowregeneratesceneasset:      { step: "scene_image" },
+  workflowgeneraterenderstill:       { step: "render_still" },
+  workflowgeneratevideo:             { step: "scene_video" },
+  workflowgeneratescenevideo:        { step: "scene_video" },
+  workflowgeneratevoice:             { step: "scene_voice" },
+  workflowgeneratescenevoice:        { step: "scene_voice" },
+  workflowgeneratemusic:             { step: "music" },
+  workflowrendervideo:               { step: "final_render" },
+  workflowrenderfinalvideo:          { step: "final_render" },
+};
+
 export default function WorkflowNodes() {
   const [selected, setSelected] = useState<string>("prompt");
   const [workflowId, setWorkflowId] = useState<string>("");
@@ -244,6 +277,9 @@ export default function WorkflowNodes() {
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
   const [auxError, setAuxError] = useState("");
+
+  const chargeStepMutation = trpc.workflow.chargeStep.useMutation();
+  const refundStepMutation = trpc.workflow.refundStep.useMutation();
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
 
   const [prompt, setPrompt] = useState("未来都市追逐，镜头节奏快速，电影感强");
@@ -477,11 +513,36 @@ export default function WorkflowNodes() {
   async function runOp(op: string, body: Record<string, any>, onSuccess?: (json: any) => void) {
     setGlobalStep({ loading: true, error: "", success: false });
     setAuxError("");
+
+    // ── 付费步骤：先扣积分，失败则退款 ──
+    const opKey = op.toLowerCase();
+    const creditInfo = OP_CREDIT_STEP[opKey];
+    let chargedCost = 0;
+    let chargedStep: StepKey | null = null;
+    let chargedQty = 1;
+    if (creditInfo) {
+      try {
+        const qty = creditInfo.getQuantity ? creditInfo.getQuantity(body) : 1;
+        const charge = await chargeStepMutation.mutateAsync({ step: creditInfo.step, quantity: qty });
+        chargedCost = charge.cost;
+        chargedStep = creditInfo.step;
+        chargedQty = qty;
+      } catch (err: any) {
+        const msg = err?.message || "Credits 不足，请前往充值页面购买积分";
+        setGlobalStep({ loading: false, error: msg, success: false });
+        return null;
+      }
+    }
+
     try {
       const payload = buildRequestBody(body);
       const result = await postJson(op, payload);
       setLastDebugEntry({ op, request: payload, httpOk: result.httpOk, status: result.status, json: result.json });
       if (!result.httpOk || result.json?.ok === false) {
+        // 操作失败，退款
+        if (chargedStep && chargedCost > 0) {
+          void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 失败退款` }).catch(() => {});
+        }
         const errorText = extractErrorText(result.json);
         setGlobalStep({ loading: false, error: errorText, success: false });
         return null;
@@ -491,6 +552,10 @@ export default function WorkflowNodes() {
       onSuccess?.(result.json);
       return result.json;
     } catch (error: any) {
+      // 异常，退款
+      if (chargedStep && chargedCost > 0) {
+        void refundStepMutation.mutateAsync({ step: chargedStep, quantity: chargedQty, reason: `${op} 异常退款` }).catch(() => {});
+      }
       setGlobalStep({ loading: false, error: error?.message || String(error) || "request_failed", success: false });
       return null;
     }
@@ -1330,7 +1395,26 @@ export default function WorkflowNodes() {
                 </div>
                 <div className="mt-5 flex items-center justify-between text-xs text-white/55">
                   <span>{renderNodeStatus(node.id)}</span>
-                  <span className={`rounded-full border px-2 py-1 ${badgeClass(node.status)}`}>{node.status}</span>
+                  <div className="flex items-center gap-1.5">
+                    {/* 积分标签 */}
+                    {(() => {
+                      const info = NODE_CREDIT_COST[node.id];
+                      if (!info) return null;
+                      if (info.cost === 0) {
+                        return (
+                          <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                            免费
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                          {info.cost} cr{info.unit ?? ""}
+                        </span>
+                      );
+                    })()}
+                    <span className={`rounded-full border px-2 py-1 ${badgeClass(node.status)}`}>{node.status}</span>
+                  </div>
                 </div>
               </button>
             );

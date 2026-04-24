@@ -1,8 +1,32 @@
 import { z } from "zod";
 import { and, desc, eq, sql } from "drizzle-orm";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { workflows, workflowStepRuns, workspaces } from "../../drizzle/schema";
+import { deductCredits, getCredits, refundCredits } from "../credits";
+import { CREDIT_COSTS } from "../plans";
+
+// 付费步骤 → CREDIT_COSTS 键映射（脚本生成免费，不在此表中）
+const WORKFLOW_STEP_COST_KEY = {
+  storyboard:    "workflowStoryboard",
+  scene_image:   "workflowSceneImage",
+  render_still:  "workflowRenderStill",
+  scene_video:   "workflowSceneVideo",
+  scene_voice:   "workflowSceneVoice",
+  music:         "workflowMusic",
+  final_render:  "workflowFinalRender",
+} as const satisfies Record<string, keyof typeof CREDIT_COSTS>;
+
+const WORKFLOW_STEP_LABEL: Record<keyof typeof WORKFLOW_STEP_COST_KEY, string> = {
+  storyboard:    "故事板生成",
+  scene_image:   "分镜图生成",
+  render_still:  "多人静帧",
+  scene_video:   "场景视频",
+  scene_voice:   "场景配音",
+  music:         "自动配乐",
+  final_render:  "最终合成",
+};
 
 const stepTypeSchema = z.enum(["script", "storyboard", "images", "video", "audio", "export"]);
 
@@ -561,5 +585,59 @@ export const workflowRouter = router({
       ];
 
       return cards.sort((a, b) => b.relevance - a.relevance);
+    }),
+
+  // ─── 节点工作流逐步计费 ──────────────────────────────────
+
+  chargeStep: protectedProcedure
+    .input(
+      z.object({
+        step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
+        quantity: z.number().int().min(1).max(100).default(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const costKey = WORKFLOW_STEP_COST_KEY[input.step];
+      const unitCost = CREDIT_COSTS[costKey];
+      const totalCost = unitCost * input.quantity;
+
+      if (totalCost === 0) return { cost: 0, remaining: -1 };
+
+      const credits = await getCredits(ctx.user.id);
+      if (credits.totalAvailable < totalCost) {
+        throw new TRPCError({
+          code: "PAYMENT_REQUIRED",
+          message: `Credits 不足，${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""} 需要 ${totalCost} Credits（当前余额: ${credits.totalAvailable}）`,
+        });
+      }
+
+      const result = await deductCredits(
+        ctx.user.id,
+        costKey,
+        `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}${input.quantity > 1 ? ` ×${input.quantity}` : ""}`,
+      );
+      return { cost: totalCost, remaining: result.remainingBalance };
+    }),
+
+  refundStep: protectedProcedure
+    .input(
+      z.object({
+        step: z.enum(["storyboard", "scene_image", "render_still", "scene_video", "scene_voice", "music", "final_render"]),
+        quantity: z.number().int().min(1).max(100).default(1),
+        reason: z.string().max(200).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const costKey = WORKFLOW_STEP_COST_KEY[input.step];
+      const unitCost = CREDIT_COSTS[costKey];
+      const totalCost = unitCost * input.quantity;
+      if (totalCost === 0) return { refunded: 0 };
+
+      await refundCredits(
+        ctx.user.id,
+        totalCost,
+        input.reason ?? `节点工作流·${WORKFLOW_STEP_LABEL[input.step]}失败退款`,
+      );
+      return { refunded: totalCost };
     }),
 });
