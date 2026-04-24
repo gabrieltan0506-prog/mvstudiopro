@@ -29,13 +29,13 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function HomeMyWorks() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading } = useAuth({ autoFetch: true });
   const creationsQuery = trpc.creations.list.useQuery(
     { page: 1, pageSize: 8, type: undefined },
-    { enabled: isAuthenticated, staleTime: 30_000 }
+    { enabled: !!isAuthenticated, staleTime: 30_000, retry: false }
   );
 
-  if (!isAuthenticated) return null;
+  if (loading || !isAuthenticated) return null;
 
   const items = creationsQuery.data?.items ?? [];
   const total = creationsQuery.data?.total ?? 0;
