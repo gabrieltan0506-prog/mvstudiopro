@@ -318,14 +318,25 @@ export function registerAuthApiRoutes(app: Express) {
 
       otpStore.delete(email);
 
+      // ── JWT_SECRET 必须配置，否则 jose 签名会抛 "key material too short" ──
+      if (!process.env.JWT_SECRET) {
+        console.error("[Auth API] FATAL: JWT_SECRET 未配置，无法签发 session token");
+        return res.status(500).json({ error: "服务器配置错误，请联系管理员" });
+      }
+
       const db = await getDb();
       const fallbackOpenId = createEmailOpenId(email);
       let openId = fallbackOpenId;
       let userId: number | null = null;
-      let userName = email;
+      let userName = email.split("@")[0] || email;
 
       if (db) {
         let [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+
+        if (!user) {
+          // 先检查 openId 是否已存在（重复注册防护）
+          [user] = await db.select().from(users).where(eq(users.openId, fallbackOpenId)).limit(1);
+        }
 
         if (!user) {
           const [insertResult] = await db
@@ -337,31 +348,33 @@ export function registerAuthApiRoutes(app: Express) {
               loginMethod: "email_otp",
               role: "free",
             });
-          [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+          // 用 email 查回，避免 insertId 在某些驱动下为 undefined
+          [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
+          if (!user && insertResult?.insertId) {
+            [user] = await db.select().from(users).where(eq(users.id, insertResult.insertId)).limit(1);
+          }
         }
 
-        await db
-          .update(users)
-          .set({
-            lastSignedIn: new Date(),
-            loginMethod: "email_otp",
-          })
-          .where(eq(users.id, user.id));
-
-        openId = user.openId;
-        userId = user.id;
-        userName = user.name || userName;
+        if (user) {
+          await db
+            .update(users)
+            .set({ lastSignedIn: new Date(), loginMethod: "email_otp" })
+            .where(eq(users.id, user.id));
+          openId = user.openId;
+          userId = user.id;
+          userName = user.name || userName;
+        }
       } else {
         console.warn("[Auth API] 数据库不可用，将使用临时会话模式");
       }
 
       const sessionToken = await sdk.createSessionToken(openId, {
-        name: userName,
+        name: userName || "user",
         expiresInMs: SESSION_TTL_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, cookieOptions);
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_TTL_MS });
 
       if (userId != null) {
         await sessionDb.createSession({
@@ -376,8 +389,10 @@ export function registerAuthApiRoutes(app: Express) {
 
       return res.status(200).json({ ok: true });
     } catch (error) {
-      console.error("[Auth API] verify-otp 失败:", error);
-      return res.status(500).json({ error: "登录失败，请稍后重试" });
+      const errMsg = error instanceof Error ? error.message : String(error);
+      console.error("[Auth API] verify-otp 失败:", errMsg, error);
+      // 将真实错误信息透传给前端（生产环境可按需屏蔽）
+      return res.status(500).json({ error: `登录失败：${errMsg}` });
     }
   });
 

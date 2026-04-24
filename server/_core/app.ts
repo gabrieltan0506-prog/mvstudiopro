@@ -8,6 +8,10 @@ import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
 
 export function createApp() {
+  if (!process.env.JWT_SECRET) {
+    console.error("⚠️  [STARTUP] JWT_SECRET 未设置！Email OTP 登录将无法签发 session token。请运行: flyctl secrets set JWT_SECRET=<随机长字符串>");
+  }
+
   const app = express();
 
   app.use(cookieParser());
