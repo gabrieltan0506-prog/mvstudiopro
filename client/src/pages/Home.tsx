@@ -29,6 +29,8 @@ export default function HomePage() {
 
       <HomeNoticeBar />
 
+      <HomeRedeemCode />
+
       <HomeHero />
 
       <HomeRemixStrip />
@@ -40,8 +42,6 @@ export default function HomePage() {
       <HomePricing />
 
       <HomeEducation />
-
-      <HomeRedeemCode />
 
       <HomeMyWorks />
 

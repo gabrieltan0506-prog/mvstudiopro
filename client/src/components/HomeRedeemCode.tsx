@@ -3,7 +3,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 
 export default function HomeRedeemCode() {
-  const { isAuthenticated, loading } = useAuth({ autoFetch: true });
+  const { isAuthenticated, loading, refresh } = useAuth({ autoFetch: true });
+  const utils = trpc.useUtils();
   const [code, setCode] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "err">("idle");
   const [msg, setMsg] = useState("");
@@ -19,6 +20,9 @@ export default function HomeRedeemCode() {
       setMsg(r.message || "兌換成功！");
       setStatus("ok");
       setCode("");
+      // 重新抓用戶資料，讓積分即時更新
+      await utils.auth.me.invalidate();
+      refresh?.();
     } catch (e: any) {
       setMsg(e.message || "兌換失敗，請確認邀請碼是否正確");
       setStatus("err");
@@ -26,7 +30,7 @@ export default function HomeRedeemCode() {
   }
 
   return (
-    <section style={{ maxWidth: 600, margin: "0 auto 40px", padding: "0 24px" }}>
+    <section style={{ maxWidth: 600, margin: "0 auto 40px", padding: "0 24px", paddingTop: 8 }}>
       <div style={{
         background: "rgba(255,107,53,0.08)", border: "1px solid rgba(255,107,53,0.25)",
         borderRadius: 16, padding: "20px 24px",
