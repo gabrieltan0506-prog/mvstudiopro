@@ -15,35 +15,35 @@ function generateCode(): string {
   return `${part(4)}-${part(4)}-${part(4)}`;
 }
 
-/** 確保表存在（生產環境可能尚未跑 migration） */
+/** 確保表存在（PostgreSQL 語法） */
 async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
   try {
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS \`beta_invite_codes\` (
-        \`id\`         INT AUTO_INCREMENT PRIMARY KEY,
-        \`code\`       VARCHAR(20) NOT NULL UNIQUE,
-        \`credits\`    INT NOT NULL DEFAULT 200,
-        \`max_uses\`   INT NOT NULL DEFAULT 1,
-        \`used_count\` INT NOT NULL DEFAULT 0,
-        \`created_by\` INT NOT NULL,
-        \`note\`       VARCHAR(120),
-        \`expires_at\` TIMESTAMP NULL,
-        \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS "beta_invite_codes" (
+        "id"         SERIAL PRIMARY KEY,
+        "code"       VARCHAR(20) NOT NULL UNIQUE,
+        "credits"    INTEGER NOT NULL DEFAULT 200,
+        "max_uses"   INTEGER NOT NULL DEFAULT 1,
+        "used_count" INTEGER NOT NULL DEFAULT 0,
+        "created_by" INTEGER NOT NULL,
+        "note"       VARCHAR(120),
+        "expires_at" TIMESTAMP,
+        "created_at" TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS \`beta_code_usages\` (
-        \`id\`              INT AUTO_INCREMENT PRIMARY KEY,
-        \`code_id\`         INT NOT NULL,
-        \`user_id\`         INT NOT NULL,
-        \`credits_awarded\` INT NOT NULL,
-        \`redeemed_at\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE KEY \`uq_code_user\` (\`code_id\`, \`user_id\`)
+      CREATE TABLE IF NOT EXISTS "beta_code_usages" (
+        "id"              SERIAL PRIMARY KEY,
+        "code_id"         INTEGER NOT NULL,
+        "user_id"         INTEGER NOT NULL,
+        "credits_awarded" INTEGER NOT NULL,
+        "redeemed_at"     TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE ("code_id", "user_id")
       )
     `);
     console.log("[betaCode] ensureBetaTables: OK");
   } catch (e) {
-    console.warn("[betaCode] ensureBetaTables:", e);
+    console.warn("[AutoMigrate] skipped (non-fatal):", (e as Error).message?.slice(0, 80));
   }
 }
 
