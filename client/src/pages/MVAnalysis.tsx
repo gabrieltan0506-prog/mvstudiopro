@@ -199,7 +199,7 @@ type AnalysisResult = {
   followUpPrompt?: string;
 };
 
-/** 成長营專用：关键影格與视覺診斷（二创模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
+/** 成長营專用：关键影格與视覺診斷（二次创作模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
 function VisualAnalysisSection({
   analysis,
   visualKeyFrames,
@@ -3028,7 +3028,7 @@ export default function MVAnalysisPage() {
               </h1>
               <p className="mt-5 max-w-4xl text-base leading-8 text-white/70">
                 {isPlatformPage
-                  ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二创流程混进来。"
+                  ? "专门看平台推荐、平台数据参考、扶持信号和数据库证据，不把二次创作流程混进来。"
                   : "直接指出内容卡在哪里、该先修什么、先发哪里，以及怎么把流量接到可成交的商业动作。"}
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
@@ -3039,7 +3039,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">扶持信号</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">发平台判断</div>
                     <a href="/creator-growth-camp" className="rounded-2xl border border-[#ffcf92]/25 bg-[rgba(255,207,146,0.08)] px-4 py-3 text-sm text-[#fff0d4] transition hover:bg-[rgba(255,207,146,0.12)]">返回成长营全页</a>
-                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入视频二创页</a>
+                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
                   </>
                 ) : (
                   <>
@@ -3049,7 +3049,7 @@ export default function MVAnalysisPage() {
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">推荐平台</div>
                     <div className="rounded-2xl border border-white/10 bg-black/15 px-4 py-3 text-sm text-white/80">7 天增长规划</div>
                     <a href="/creator-growth-camp/platform" className="rounded-2xl border border-[#90c4ff]/25 bg-[rgba(144,196,255,0.08)] px-4 py-3 text-sm text-[#c7e3ff] transition hover:bg-[rgba(144,196,255,0.12)]">进入平台分析页</a>
-                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入视频二创页</a>
+                    <a href="/creator-growth-camp/premium-remix" className="rounded-2xl border border-[#ff8a3d]/25 bg-[rgba(255,138,61,0.08)] px-4 py-3 text-sm text-[#ffd4b7] transition hover:bg-[rgba(255,138,61,0.12)]">进入二次创作中心</a>
                   </>
                 )}
               </div>
@@ -3060,7 +3060,7 @@ export default function MVAnalysisPage() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   {[
                     { value: "GROWTH" as const, label: "商业成长营", desc: "保留全局分析，强化商业路径与增长判断" },
-                    { value: "REMIX" as const, label: "爆款拆解二创", desc: "聚焦钩子、情绪曲线、分镜和复刻执行" },
+                    { value: "REMIX" as const, label: "爆款拆解 · 二次创作", desc: "聚焦钩子、情绪曲线、分镜和复刻执行（支持图、文、视频等素材）" },
                   ].map((item) => (
                     <button
                       key={item.value}
@@ -3091,7 +3091,7 @@ export default function MVAnalysisPage() {
                   </div>
                   <p className="mt-3 max-w-md text-sm leading-7 text-white/60">
                     {isPlatformPage
-                      ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二创模块一起展开。"
+                      ? "支持 Word、PDF、MP4。上传后聚焦输出平台推荐、平台数据参考和扶持判断，不把二次创作模块一起展开。"
                       : "支持 Word、PDF、MP4。上传后会直接帮你找出内容卖点、转化缺口与可放大的商业方向，让分析结果值得你采用。"}
                   </p>
                 </button>
@@ -4024,21 +4024,21 @@ export default function MVAnalysisPage() {
             const _re = (pcRemix?.remixExpressionAnalysis ?? "").trim();
             const _rmp = (pcRemix?.musicPrompt ?? "").trim();
 
-            /* ====== 二创：量身选题 → 借鉴避坑视覺 → 專屬表达+配樂（标题硬編码）====== */
+            /* ====== 二次创作：量身选题 → 借鉴避坑视覺 → 專屬表达+配樂（标题硬編码）====== */
             return (
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffcf92]">
                   <LayoutDashboard className="h-5 w-5" />
-                  <h2 className="text-2xl font-bold">实战爆款二创</h2>
+                  <h2 className="text-2xl font-bold">实战爆款 · 二次创作</h2>
                 </div>
 
                 <div className="space-y-12">
-                  {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 专为您量身定制的二创选题", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
-                  {renderTopics(analysis.premiumContent?.topics, "🎯 深度二创选题", "purple", 3, "mb-6 text-xl font-bold text-white")}
+                  {renderTopics(analysis.premiumContent?.actionableTopics, "🚀 专为您量身定制的二次创作选题", "amber", 3, "mb-6 text-xl font-bold text-emerald-400")}
+                  {renderTopics(analysis.premiumContent?.topics, "🎯 深度二次创作选题", "purple", 3, "mb-6 text-xl font-bold text-white")}
 
                   <section className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-8 shadow-lg" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                     <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-blue-400" style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>
-                      <Film className="h-5 w-5 shrink-0" /> 二创视觉分析 (借鉴与避坑)
+                      <Film className="h-5 w-5 shrink-0" /> 二次创作视觉分析 (借鉴与避坑)
                     </h3>
                     {_rv ? (
                       <div className="whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
@@ -4046,14 +4046,14 @@ export default function MVAnalysisPage() {
                       </div>
                     ) : (
                       <p className="text-[15px] leading-relaxed text-white/55">
-                        （本节本次未生成可展示正文。请确认已选择「实战爆款二创」并完成分析，或点击「强制重新分析」重试。）
+                        （本节本次未生成可展示正文。请确认已选择「实战爆款 · 二次创作」并完成分析，或点击「强制重新分析」重试。）
                       </p>
                     )}
                   </section>
 
                   <section className="rounded-3xl border border-purple-500/30 bg-purple-500/10 p-8 shadow-lg" style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
                     <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-purple-400" style={{ breakAfter: "avoid", pageBreakAfter: "avoid" }}>
-                      <Orbit className="h-5 w-5 shrink-0" /> 二创专属表达与配乐指导
+                      <Orbit className="h-5 w-5 shrink-0" /> 二次创作专属表达与配乐指导
                     </h3>
                     {_re ? (
                       <div className="mb-8 whitespace-pre-wrap text-[16px] leading-[2.2] tracking-wide text-gray-200">
@@ -4071,7 +4071,7 @@ export default function MVAnalysisPage() {
                             <span className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-purple-400">
                               <Music2 className="h-4 w-4 shrink-0" /> 专属 BGM 提示词 (Prompt)
                             </span>
-                            <span className="text-xs text-white/50">基于您的二创选题量身生成的音乐指令，可直接复制使用</span>
+                            <span className="text-xs text-white/50">基于您的二次创作选题量身生成的音乐指令，可直接复制使用</span>
                           </div>
                           <code className="block break-words rounded-lg bg-black/40 p-4 font-mono text-sm leading-relaxed text-purple-200" style={{ overflowWrap: "break-word", wordBreak: "break-word" }}>
                             {_rmp}

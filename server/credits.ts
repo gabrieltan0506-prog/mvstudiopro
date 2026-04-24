@@ -306,7 +306,15 @@ export async function deductCreditsAmount(
 export async function addCredits(
   userId: number,
   amount: number,
-  source: "subscription" | "purchase" | "bonus" | "beta" | "referral" | "payment" | "refund",
+  source:
+    | "subscription"
+    | "purchase"
+    | "bonus"
+    | "beta"
+    | "referral"
+    | "payment"
+    | "refund"
+    | "credit_restore",
   stripePaymentIntentId?: string
 ) {
   const db = await getDb();
@@ -537,7 +545,7 @@ export async function getCreditTransactions(userId: number, limit = 50) {
     .limit(limit);
 }
 
-// ─── 退款（分析失败时返还 Credits）──────────────────
+// ─── 生成失敗時退回已扣除積分（非金流退款）──────────
 export async function refundCredits(
   userId: number,
   amount: number,
@@ -559,12 +567,12 @@ export async function refundCredits(
     userId,
     amount,
     type: "credit",
-    source: "refund",
+    source: "credit_restore",
     description: reason,
     balanceAfter: newBalance,
   });
 
-  console.log(`[Credits] refundCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
+  console.log(`[Credits] restoreCredits: userId=${userId}, amount=+${amount}, reason=${reason}`);
 }
 
 // ─── 获取使用日志 ──────────────────────────────────

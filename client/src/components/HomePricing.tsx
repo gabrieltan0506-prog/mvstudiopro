@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "wouter";
-import { CREDIT_COSTS, CREDIT_PACKS, CREDIT_TO_CNY } from "@shared/plans";
+import { CREDIT_PACKS, CREDIT_TO_CNY } from "@shared/plans";
 
 const PACK_ORDER = ["trial199", "small", "medium", "large", "mega"] as const;
 
@@ -21,46 +21,18 @@ export default function HomePricing() {
           marginBottom: 8,
         }}
       >
-        Credits 定价
+        积分包定价
         <span style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.45)", marginLeft: 10 }}>
-          1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}
+          对外以积分加值包为准 · 参考换算 1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}
         </span>
       </h2>
-      <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 14, marginBottom: 24, maxWidth: 720 }}>
-        成长营、平台趋势、节点工作流等功能按次扣积分；充值包支持扫码购买，详见套餐页。
+      <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 14, marginBottom: 24, maxWidth: 760 }}>
+        不再展示单功能逐项标价；创作所需 Credits 以您购买的积分包为准，在功能使用时从余额扣减。充值与周期优惠详见套餐页。
       </p>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          gap: 14,
-          marginBottom: 28,
-        }}
-      >
-        {[
-          { k: "商业成长营 · GROWTH", v: CREDIT_COSTS.growthCampGrowth },
-          { k: "商业成长营 · REMIX", v: CREDIT_COSTS.growthCampRemix },
-          { k: "平台趋势 · 主分析", v: CREDIT_COSTS.platformTrend },
-          { k: "平台趋势 · 每次追问", v: CREDIT_COSTS.platformTrendFollowUp },
-          { k: "节点 · 故事板", v: CREDIT_COSTS.workflowStoryboard },
-          { k: "节点 · 场景视频 (Veo)", v: CREDIT_COSTS.workflowSceneVideo },
-        ].map((row) => (
-          <div
-            key={row.k}
-            style={{
-              borderRadius: 16,
-              padding: "14px 16px",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.08)",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 6 }}>{row.k}</div>
-            <div style={{ fontSize: 20, fontWeight: 900, color: "#ff9b75" }}>{row.v} cr</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>≈ ¥{(row.v * CREDIT_TO_CNY).toFixed(0)}</div>
-          </div>
-        ))}
-      </div>
+      <p style={{ color: "rgba(253,224,71,0.88)", fontSize: 13, marginBottom: 24, maxWidth: 760, lineHeight: 1.65, padding: "12px 14px", borderRadius: 14, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)" }}>
+        <strong style={{ color: "#fde68a" }}>试用与公平使用：</strong>
+        ¥19.9 试用包及免费、未订阅等体验账户，为防止多邮箱重复领取试用资源，<strong style={{ color: "white" }}>生成的图片与视频可能带有平台水印</strong>；正式积分包与会员档位可按规则减少或去除水印，以实际导出为准。
+      </p>
 
       <h3 style={{ color: "white", fontSize: 18, fontWeight: 800, marginBottom: 14 }}>积分加值包</h3>
       <div
@@ -120,7 +92,7 @@ export default function HomePricing() {
             fontSize: 15,
           }}
         >
-          查看完整套餐与充值说明
+          前往充值与周期优惠
         </Link>
       </div>
     </section>

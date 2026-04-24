@@ -1,6 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, not, like, count, isNotNull } from "drizzle-orm";
 import { users } from "../../drizzle/schema";
 import { betaQuotas } from "../../drizzle/schema-beta";
+import { paymentSubmissions } from "../../drizzle/schema-payments";
+import { creditTransactions } from "../../drizzle/schema-stripe";
 import { getDb } from "../db";
 import { getUserPlan } from "../credits";
 import type { GenerationProvider } from "./provider-manager";
@@ -38,6 +40,49 @@ export function getTierProviderChain(tier: UserTier, surface: ProviderSurface): 
 
 export function shouldApplyWatermarkForTier(tier: UserTier): boolean {
   return tier !== "paid" && tier !== "supervisor";
+}
+
+/**
+ * 精細化水印判斷：僅試用包（trial199）帳號才需要加水印。
+ * 只要曾有任何正式加值包（non-trial199 靜態付款審核通過，或 Stripe 正式購買），
+ * 即視為付費用戶，不加水印。
+ */
+export async function resolveWatermark(userId: number, isAdminUser: boolean): Promise<boolean> {
+  const tier = await resolveUserTier(userId, isAdminUser);
+  // role-based paid / supervisor → 一律不加水印
+  if (tier === "paid" || tier === "supervisor") return false;
+
+  const db = await getDb();
+  if (!db) return true;
+
+  // 靜態付款：是否有任何非 trial199 的審核通過訂單
+  const [staticRow] = await db
+    .select({ n: count() })
+    .from(paymentSubmissions)
+    .where(
+      and(
+        eq(paymentSubmissions.userId, userId),
+        eq(paymentSubmissions.status, "approved"),
+        not(like(paymentSubmissions.packageType, "trial199_%")),
+      ),
+    );
+  if (Number(staticRow?.n ?? 0) > 0) return false;
+
+  // Stripe 購買：source="purchase" 且有 stripePaymentIntentId（Stripe 僅開放 small/medium/large，非 trial）
+  const [stripeRow] = await db
+    .select({ n: count() })
+    .from(creditTransactions)
+    .where(
+      and(
+        eq(creditTransactions.userId, userId),
+        eq(creditTransactions.source, "purchase"),
+        isNotNull(creditTransactions.stripePaymentIntentId),
+      ),
+    );
+  if (Number(stripeRow?.n ?? 0) > 0) return false;
+
+  // 僅 trial199 或免費帳號 → 加水印
+  return true;
 }
 
 export async function resolveUserTier(userId: number, isAdminUser: boolean): Promise<UserTier> {

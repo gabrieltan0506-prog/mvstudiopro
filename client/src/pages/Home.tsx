@@ -1,6 +1,8 @@
 import React from "react";
 import HomeNavbar from "../components/HomeNavbar";
+import HomeNoticeBar from "../components/HomeNoticeBar";
 import HomeHero from "../components/HomeHero";
+import HomeRemixStrip from "../components/HomeRemixStrip";
 import HomeTools from "../components/HomeTools";
 import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
@@ -21,7 +23,11 @@ export default function HomePage() {
     >
       <HomeNavbar />
 
+      <HomeNoticeBar />
+
       <HomeHero />
+
+      <HomeRemixStrip />
 
       <HomeTools />
 

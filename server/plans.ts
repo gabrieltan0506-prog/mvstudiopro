@@ -178,7 +178,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
 export const CREDIT_COSTS = {
   // ─── 创作者成长营（内测三大产品，1cr ≈ ¥0.70 人民币）────────
   growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
-  growthCampRemix: 50,        // REMIX 二创模式：50 cr ≈ ¥35（毛利率 98.2%）
+  growthCampRemix: 50,        // 成长营 · 二次创作（REMIX）：50 cr ≈ ¥35（毛利率 98.2%）
   platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
   platformTrendFollowUp: 5,   // 平台趋势「追问 / 续问」每次 5 cr
   workflowNodes: 20,          // 节点工作流整体（已废弃，改为逐步计费）
@@ -268,7 +268,7 @@ export interface CreditFeatureBreakdownRow {
 export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   // ─── 创作者成长营 ─────────────────────────────────────────
   { product: "创作者成长营", subFeature: "GROWTH 模式（主流程分析）", credits: CREDIT_COSTS.growthCampGrowth, note: "视频分析 + 策划报告等" },
-  { product: "创作者成长营", subFeature: "REMIX 二创模式", credits: CREDIT_COSTS.growthCampRemix, note: "参考视频 + 二创策划" },
+  { product: "创作者成长营", subFeature: "二次创作（REMIX）", credits: CREDIT_COSTS.growthCampRemix, note: "图/文/视频参考 + 二次创作策划" },
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台趋势分析", subFeature: "初次看板 / 快照加载（主分析）", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台趋势分析", subFeature: "追问 / 续问（顾问式问答）", credits: CREDIT_COSTS.platformTrendFollowUp, note: "每次追问独立扣费" },
@@ -517,90 +517,5 @@ export const STUDENT_PLANS: Record<StudentPlanType, StudentPlanConfig> = {
       videoGeneration: 2,
       storyboardImages: 15,
     },
-  },
-};
-
-/**
- * 导演包定义
- * 
- * 初级导演包：Forge 免费脚本生成 + 分镜转视频 + Suno V4 配乐
- * 高级导演包：Gemini 脚本生成 + 分镜转视频 + Suno V5 配乐
- */
-export type DirectorPackType = "junior" | "senior";
-
-export interface DirectorPackConfig {
-  name: string;
-  nameCn: string;
-  nameEn: string;
-  description: string;
-  descriptionCn: string;
-  totalCredits: number;       // 包内总 Credits 消耗
-  savings: number;            // 相比单独购买省多少 Credits
-  includes: {
-    scriptEngine: "forge" | "gemini";
-    scriptCredits: number;
-    storyboardToVideo: boolean;
-    videoCredits: number;
-    musicEngine: "v4" | "v5";
-    musicCredits: number;
-  };
-  features: string[];
-  featuresCn: string[];
-}
-
-export const DIRECTOR_PACKS: Record<DirectorPackType, DirectorPackConfig> = {
-  junior: {
-    name: "Junior Director Pack",
-    nameCn: "初级导演包",
-    nameEn: "Junior Director Pack",
-    description: "Free script generation with Forge AI, storyboard-to-video conversion, and Suno V4 background music",
-    descriptionCn: "Forge AI 脚本生成（0 Credits）+ 分镜转视频 + Suno V4 配乐",
-    totalCredits: 62,           // 0 (Forge) + 50 (视频) + 12 (V4音乐)
-    savings: 0,                 // 基础包无折扣
-    includes: {
-      scriptEngine: "forge",
-      scriptCredits: 0,         // Forge 0 Credits
-      storyboardToVideo: true,
-      videoCredits: 50,
-      musicEngine: "v4",
-      musicCredits: 12,
-    },
-    features: [
-      "Forge AI Script Generation (free)",
-      "Storyboard to Video Conversion",
-      "Suno V4 Background Music",
-    ],
-    featuresCn: [
-      "Forge AI 腳本生成（0 Credits）",
-      "分镜转视频",
-      "Suno V4 配乐",
-    ],
-  },
-  senior: {
-    name: "Senior Director Pack",
-    nameCn: "高级导演包",
-    nameEn: "Senior Director Pack",
-    description: "Gemini AI script generation, storyboard-to-video conversion, and Suno V5 premium music",
-    descriptionCn: "Gemini AI 脚本生成 + 分镜转视频 + Suno V5 高品质配乐",
-    totalCredits: 77,           // 5 (Gemini) + 50 (视频) + 22 (V5音乐)
-    savings: 0,                 // 后续可加折扣
-    includes: {
-      scriptEngine: "gemini",
-      scriptCredits: 5,         // Gemini AI 生成
-      storyboardToVideo: true,
-      videoCredits: 50,
-      musicEngine: "v5",
-      musicCredits: 22,
-    },
-    features: [
-      "Gemini AI Script Generation",
-      "Storyboard to Video Conversion",
-      "Suno V5 Premium Music",
-    ],
-    featuresCn: [
-      "Gemini AI 脚本生成",
-      "分镜转视频",
-      "Suno V5 高品质配乐",
-    ],
   },
 };

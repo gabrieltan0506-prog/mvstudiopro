@@ -273,8 +273,8 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
         await refundCredits(
           numericUserId,
           creditDeducted,
-          `创作者成长营 ${growthMode} 分析失败退款`
-        ).catch((e) => console.error("[Credits] refund failed:", e));
+          `创作者成长营 ${growthMode}·分析失败·退回已扣积分`,
+        ).catch((e) => console.error("[Credits] restore credits failed:", e));
       }
       throw err;
     }

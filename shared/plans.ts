@@ -371,90 +371,32 @@ export const SINGLE_PURCHASE = {
   },
 } as const;
 
-/**
- * 导演包定义
- *
- * 初级导演包：Forge 免费脚本生成 + 分镜转视频 + Suno V4 配乐
- * 高级导演包：Gemini 脚本生成 + 分镜转视频 + Suno V5 配乐
- */
-export type DirectorPackType = "junior" | "senior";
-
-export interface DirectorPackConfig {
+/** 對外用：僅以積分加值包為準的定價展示行（不含單項功能拆價） */
+export type ProductPackageDisplayRow = {
+  category: string;
   name: string;
-  nameCn: string;
-  nameEn: string;
-  description: string;
-  descriptionCn: string;
-  totalCredits: number;
-  savings: number;
-  includes: {
-    scriptEngine: "forge" | "gemini";
-    scriptCredits: number;
-    storyboardToVideo: boolean;
-    videoCredits: number;
-    musicEngine: "v4" | "v5";
-    musicCredits: number;
-  };
-  features: string[];
-  featuresCn: string[];
-}
-
-export const DIRECTOR_PACKS: Record<DirectorPackType, DirectorPackConfig> = {
-  junior: {
-    name: "Junior Director Pack",
-    nameCn: "初级导演包",
-    nameEn: "Junior Director Pack",
-    description: "Free script generation with Forge AI, storyboard-to-video conversion, and Suno V4 background music",
-    descriptionCn: "Forge AI 免费脚本生成 + 分镜转视频 + Suno V4 配乐",
-    totalCredits: 62,
-    savings: 0,
-    includes: {
-      scriptEngine: "forge",
-      scriptCredits: 0,
-      storyboardToVideo: true,
-      videoCredits: 50,
-      musicEngine: "v4",
-      musicCredits: 12,
-    },
-    features: [
-      "Free Script Generation",
-      "Storyboard to Video Conversion",
-      "Suno V4 Background Music",
-    ],
-    featuresCn: [
-      "免費腳本生成",
-      "分镜转视频",
-      "Suno V4 配乐",
-    ],
-  },
-  senior: {
-    name: "Senior Director Pack",
-    nameCn: "高级导演包",
-    nameEn: "Senior Director Pack",
-    description: "Gemini AI script generation, storyboard-to-video conversion, and Suno V5 premium music",
-    descriptionCn: "Gemini AI 脚本生成 + 分镜转视频 + Suno V5 高品质配乐",
-    totalCredits: 77,
-    savings: 0,
-    includes: {
-      scriptEngine: "gemini",
-      scriptCredits: 5,
-      storyboardToVideo: true,
-      videoCredits: 50,
-      musicEngine: "v5",
-      musicCredits: 22,
-    },
-    features: [
-      "Gemini AI Script Generation",
-      "Storyboard to Video Conversion",
-      "Suno V5 Premium Music",
-    ],
-    featuresCn: [
-      "Gemini AI 脚本生成",
-      "分镜转视频",
-      "Suno V5 高品质配乐",
-    ],
-  },
+  credits: number | null;
+  priceCny: number | null;
+  summary: string;
+  bullets: string[];
 };
+
+const CREDIT_PACK_ORDER = ["trial199", "small", "medium", "large", "mega"] as const;
+
+export function getProductPackageDisplayRows(): ProductPackageDisplayRow[] {
+  return CREDIT_PACK_ORDER.map((id): ProductPackageDisplayRow => {
+    const p = CREDIT_PACKS[id];
+    const price = p.price;
+    return {
+      category: "积分加值包",
+      name: p.labelCn,
+      credits: p.credits,
+      priceCny: typeof price === "number" ? price : Number(price),
+      summary: p.discount || `约 ¥${p.perCredit}/积分`,
+      bullets: [],
+    };
+  });
+}
 
 /**
  * 学生版方案定义

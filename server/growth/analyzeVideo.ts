@@ -824,7 +824,7 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
     commercialAngles: Array.isArray(parsed?.commercialAngles) && parsed.commercialAngles.length
       ? parsed.commercialAngles
       : premiumTopics.slice(0, 4).map((item) => ({
-          title: item.title || "二创方向",
+          title: item.title || "二次创作方向",
           scenario: premiumSummary || "把原视频改造成更有情绪张力和商业承接的版本。",
           whyItFits: reverseEngineering.commercialLogic || "这条方向更容易建立信任并承接成交动作。",
           brands: [],
@@ -834,7 +834,7 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
         })),
     followUpPrompt: String(
       parsed?.followUpPrompt
-      || `请基于以下商业拆解与二创方向，继续输出一版可直接拍摄的脚本：钩子策略：${reverseEngineering.hookStrategy}；情绪弧线：${reverseEngineering.emotionalArc}；商业逻辑：${reverseEngineering.commercialLogic}`,
+      || `请基于以下商业拆解与二次创作方向，继续输出一版可直接拍摄的脚本：钩子策略：${reverseEngineering.hookStrategy}；情绪弧线：${reverseEngineering.emotionalArc}；商业逻辑：${reverseEngineering.commercialLogic}`,
     ),
   };
 }
@@ -916,18 +916,18 @@ function strategistPremiumVertexSchema(mode: GrowthAnalysisMode): Record<string,
         minItems: 3,
         maxItems: 3,
         description:
-          "恰好 3 个深度二创选题，与 actionableTopics 递进延伸，导演级分镜，每个 businessInsight 不少于 200 字",
+          "恰好 3 个深度二次创作选题，与 actionableTopics 递进延伸，导演级分镜，每个 businessInsight 不少于 200 字",
         items: STRATEGIST_PREMIUM_TOPIC_ITEM_JSON,
       },
       remixVisualAnalysis: {
         type: "string",
         description:
-          "二创视觉分析（借鉴与避坑）：分析原视频优缺点，明确指出新选题该借鉴什么、避开什么。",
+          "二次创作视觉分析（借鉴与避坑）：分析原视频优缺点，明确指出新选题该借鉴什么、避开什么。",
       },
       remixExpressionAnalysis: {
         type: "string",
         description:
-          "二创专属表达指导：必须含 **参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力** 三个加粗小标题（用字一致）。",
+          "二次创作专属表达指导：必须含 **参考语言表达力**、**参考情感表达方式**、**参考镜头表现与情绪张力** 三个加粗小标题（用字一致）。",
       },
       musicPrompt: {
         type: "string",
@@ -1043,7 +1043,7 @@ async function runDeepDivePass(params: {
   const businessGoal = (params.context || "未提供").trim() || "未提供";
   const STRATEGIST_SYSTEM_MAIN = `
 你是顶级商业IP操盘手与大师级导演。
-模式：${mode === "REMIX" ? "实战爆款二创" : "商业成长营"}
+模式：${mode === "REMIX" ? "实战爆款 · 二次创作" : "商业成长营"}
 用户业务背景（必须严格对齐，禁止忽略）：${businessGoal}
 
 【排版禁令：禁止文字墙】
@@ -1081,7 +1081,7 @@ async function runDeepDivePass(params: {
 `;
 
   const PROMPT_PREMIUM_REMIX = `
-你是顶级商业IP操盘手与大师级导演。模式：实战爆款二创
+你是顶级商业IP操盘手与大师级导演。模式：实战爆款 · 二次创作
 用户业务背景（必须严格对齐）：${businessGoal}
 【排版要求】Markdown 条列（- ）与 **加粗（关键字）**；段落之间空一行。
 【输出要求 — 禁止敷衍｜必须量身定做｜禁止套话】
@@ -1097,12 +1097,12 @@ async function runDeepDivePass(params: {
 
 2. topics：恰好 3 个长线IP定位选题，与 actionableTopics 递进（不重复角度，提升到 3 个月 IP 积累视角）；格式要求同上（storyboard 5-6 条）；businessInsight 不少于 200 字。
 
-3. remixVisualAnalysis：**二创视觉分析（借鉴与避坑）**。
+3. remixVisualAnalysis：**二次创作视觉分析（借鉴与避坑）**。
    - **借鉴**：原视频哪些视觉手法值得学习（具体到景别/灯光/B-roll 类型）
    - **避坑**：原视频哪些视觉缺点必须避开（具体到画面细节）
    - 结合用户业务和新选题，禁止空泛套话。
 
-4. remixExpressionAnalysis：**二创专属表达指导**（必须针对用户新选题，禁止照搬原片套话）。内文必须含且 **加粗** 三个小标题（用字一致）：
+4. remixExpressionAnalysis：**二次创作专属表达指导**（必须针对用户新选题，禁止照搬原片套话）。内文必须含且 **加粗** 三个小标题（用字一致）：
    **参考语言表达力**：用户应使用哪些语气/词汇/表达技巧
    **参考情感表达方式**：情绪节奏如何设计，从开场到结尾
    **参考镜头表现与情绪张力**：具体镜头语言建议（景别、眼神、节奏）
@@ -1607,7 +1607,7 @@ export async function analyzeVideo(params: {
       }));
 
       // 实作残留清洗 (Data Wiping)
-      // 如果是二创模式，强制将所有可能导致 UI 重复渲染的字段物理清空
+      // 如果是二次创作（REMIX）模式，强制将所有可能导致 UI 重复渲染的字段物理清空
       const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       if (analysisMode === "REMIX") {
         // 診斷陣列全部清空

@@ -2672,8 +2672,8 @@ export const sampleGrowthSignals = buildMockGrowthSnapshot({
       commercialLogic: "样例商业逻辑",
     },
     premiumContent: {
-      summary: "样例二创摘要",
-      strategy: "样例二创策略",
+      summary: "样例二次创作摘要",
+      strategy: "样例二次创作策略",
       actionableTopics: [],
       topics: [],
       explosiveTopicAnalysis: "",

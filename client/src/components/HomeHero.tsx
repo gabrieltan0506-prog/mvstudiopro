@@ -253,12 +253,13 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                内测阶段开放三大核心功能，帮助创作者快速完成内容策略、平台洞察与工作流落地。
+                内测阶段开放多项核心功能，帮助创作者快速完成内容策略、平台洞察、二次创作与工作流落地。
               </div>
 
               <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
                 {[
                   { label: "创作者成长营", desc: "上传内容 → 商业战略 + 爆款选题 + 导演分镜", href: "/creator-growth-camp" },
+                  { label: "二创中心", desc: "图/文/视频 · 拆解结构、选题与分镜级方案（REMIX）", href: "/creator-growth-camp/premium-remix" },
                   { label: "平台趋势分析", desc: "平台数据洞察 + 7 天发布计划", href: "/creator-growth-camp/platform" },
                   { label: "节点式工作流", desc: "可视化节点画布，一键执行完整创作流程", href: "/workflow-nodes" },
                 ].map((item) => (
@@ -340,7 +341,7 @@ export default function HomeHero() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
           gap: 14,
           marginTop: 16,
         }}
@@ -352,11 +353,22 @@ export default function HomeHero() {
             badge: "核心功能",
             badgeColor: "rgba(251,146,60,0.9)",
             title: "创作者成长营",
-            desc: "上传视频或图文，即时生成商业战略、爆款选题与导演级分镜，GROWTH / REMIX 双模式。",
+            desc: "上传视频或图文，即时生成商业战略、爆款选题与导演级分镜；商业成长（GROWTH）与二次创作（REMIX）双模式。",
             gradient: "linear-gradient(135deg, rgba(251,146,60,0.18), rgba(239,68,68,0.10))",
             border: "rgba(251,146,60,0.30)",
             arrow: "rgba(251,146,60,1)",
             cta: "开始分析 →",
+          },
+          {
+            href: "/creator-growth-camp/premium-remix",
+            badge: "二创 / REMIX",
+            badgeColor: "rgba(244,114,182,0.95)",
+            title: "二创中心",
+            desc: "二次创作中心：上传或引用图、文、视频等参考，完成结构拆解、选题策划与分镜级执行指引。",
+            gradient: "linear-gradient(135deg, rgba(244,114,182,0.22), rgba(251,146,60,0.12))",
+            border: "rgba(244,114,182,0.45)",
+            arrow: "rgba(244,114,182,1)",
+            cta: "进入二创中心 →",
           },
           {
             href: "/creator-growth-camp/platform",
