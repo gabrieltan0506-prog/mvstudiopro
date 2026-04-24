@@ -8,6 +8,7 @@ import HomeShowcase from "../components/HomeShowcase";
 import HomePricing from "../components/HomePricing";
 import HomeEducation from "../components/HomeEducation";
 import HomeFeedback from "../components/HomeFeedback";
+import HomeMyWorks from "../components/HomeMyWorks";
 
 // 以下 section 在正式版開放前暫時隱藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -38,6 +39,8 @@ export default function HomePage() {
       <HomePricing />
 
       <HomeEducation />
+
+      <HomeMyWorks />
 
       <HomeFeedback />
 

@@ -2,7 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { Menu, X, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown } from "lucide-react";
+import { Menu, X, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
 import { useState } from "react";
 import {
   DropdownMenu,
@@ -78,6 +78,10 @@ export default function Navbar() {
                   <LayoutDashboard className="mr-2 h-4 w-4" />
                   个人中心
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/my-works")}>
+                  <FolderOpen className="mr-2 h-4 w-4" />
+                  我的作品
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate("/team")}>
                   <User className="mr-2 h-4 w-4" />
                   团队管理
@@ -146,6 +150,9 @@ export default function Navbar() {
               <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
                 <Link href="/dashboard" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
                   个人中心
+                </Link>
+                <Link href="/my-works" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
+                  📁 我的作品
                 </Link>
                 <Link href="/team" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
                   团队管理
