@@ -8,6 +8,7 @@ import { sdk } from "../_core/sdk";
 import { COOKIE_NAME, ONE_YEAR_MS } from "../../shared/const.js";
 import { getSessionCookieOptions } from "../_core/cookies";
 import * as sessionDb from "../sessionDb";
+import { isSupervisorEmail } from "../services/access-policy";
 import * as crypto from "crypto";
 
 /**
@@ -150,18 +151,22 @@ export const emailOtpRouter = router({
         [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
         if (user) {
-          // Update openId to match email login pattern
-          if (!user.openId.startsWith("email_")) {
-            await db.update(users).set({ openId, loginMethod: "email_otp" }).where(eq(users.id, user.id));
+          // Update openId and auto-fix role for supervisor emails
+          const roleUpdate = isSupervisorEmail(email) && user.role !== "supervisor" && user.role !== "admin"
+            ? { openId, loginMethod: "email_otp" as const, role: "supervisor" as const }
+            : { openId, loginMethod: "email_otp" as const };
+          if (!user.openId.startsWith("email_") || (isSupervisorEmail(email) && user.role === "free")) {
+            await db.update(users).set(roleUpdate).where(eq(users.id, user.id));
           }
         } else {
-          // Create new user
+          // Create new user - 自動判斷 supervisor/admin 身份
+          const autoRole = isSupervisorEmail(email) ? "supervisor" : "user";
           const [newRow] = await db.insert(users).values({
             openId,
             email,
             name: email.split("@")[0],
             loginMethod: "email_otp",
-            role: "user",
+            role: autoRole,
           }).returning({ id: users.id });
           [user] = await db.select().from(users).where(eq(users.id, newRow!.id)).limit(1);
         }
