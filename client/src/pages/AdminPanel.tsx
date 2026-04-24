@@ -25,20 +25,37 @@ export default function AdminPanel() {
   const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
-  const myCodesList = trpc.betaCode.listMine.useQuery(undefined, {
-    enabled: isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"),
-  });
+  const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
+
+  const isAdminOrSupervisor = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
+  const isAdminOnly = isAuthenticated && user?.role === "admin";
+
+  // ── 所有 hooks 必須在 conditional return 之前 ──
+  const myCodesList = trpc.betaCode.listMine.useQuery(undefined, { enabled: isAdminOrSupervisor });
+  const { data: stats } = trpc.admin.stats.useQuery(undefined, { enabled: isAdminOnly });
+  const { data: creditBreakdown } = trpc.admin.creditBreakdown.useQuery(undefined, { enabled: isAdminOnly });
+  const { data: payments, refetch: refetchPayments } = trpc.admin.paymentList.useQuery({ status: "pending" }, { enabled: isAdminOnly });
+  const { data: betaQuotas, refetch: refetchBeta } = trpc.admin.betaList.useQuery(undefined, { enabled: isAdminOnly });
+  const { data: teams } = trpc.admin.teamList.useQuery(undefined, { enabled: isAdminOnly });
 
   const generateCodesMutation = trpc.betaCode.generate.useMutation({
     onSuccess: (data) => {
       setGeneratedCodes(data.codes);
       toast.success(`成功生成 ${data.count} 个内测码`);
-      // 立即刷新历史列表
       myCodesList.refetch();
-      // 稍后再刷新一次，确保 DB 写入完成
       setTimeout(() => myCodesList.refetch(), 1200);
     },
     onError: (err) => toast.error(err.message || "生成失败"),
+  });
+
+  const reviewPayment = trpc.admin.paymentReview.useMutation({
+    onSuccess: () => { toast.success("审核完成"); refetchPayments(); },
+    onError: () => toast.error("操作失败"),
+  });
+
+  const reviewBeta = trpc.admin.betaGrant.useMutation({
+    onSuccess: () => { toast.success("审核完成"); refetchBeta(); },
+    onError: () => toast.error("操作失败"),
   });
 
   function copyCode(code: string) {
@@ -47,7 +64,6 @@ export default function AdminPanel() {
       setTimeout(() => setCopiedCode(null), 1500);
     });
   }
-  const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
   const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
 
@@ -65,22 +81,6 @@ export default function AdminPanel() {
       </div>
     );
   }
-
-  const { data: stats } = trpc.admin.stats.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
-  const { data: creditBreakdown } = trpc.admin.creditBreakdown.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
-  const { data: payments, refetch: refetchPayments } = trpc.admin.paymentList.useQuery({ status: "pending" }, { enabled: isAuthenticated && user?.role === "admin" });
-  const { data: betaQuotas, refetch: refetchBeta } = trpc.admin.betaList.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
-  const { data: teams } = trpc.admin.teamList.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
-
-  const reviewPayment = trpc.admin.paymentReview.useMutation({
-    onSuccess: () => { toast.success("审核完成"); refetchPayments(); },
-    onError: () => toast.error("操作失败"),
-  });
-
-  const reviewBeta = trpc.admin.betaGrant.useMutation({
-    onSuccess: () => { toast.success("审核完成"); refetchBeta(); },
-    onError: () => toast.error("操作失败"),
-  });
 
   const fetchVerifications = async () => {
     if (!isAuthenticated || user?.role !== "admin") return;
