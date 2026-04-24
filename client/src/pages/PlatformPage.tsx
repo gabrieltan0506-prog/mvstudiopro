@@ -378,7 +378,7 @@ function TopicImageGenerator({
       ) : (
         <div className="rounded-2xl border border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
           <div className="mb-2 flex items-center justify-between px-2 pt-2 text-[11px] font-semibold text-[#b7add8]">
-            <span>参考视觉风格 (Gemini 3.1 Flash)</span>
+            <span>参考视觉风格</span>
             <button onClick={() => setImageUrl("")} className="hover:text-white">重置</button>
           </div>
           <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
@@ -1464,9 +1464,6 @@ export default function PlatformPage() {
                     {growthSnapshotQuery.isFetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                     开始平台分析
                   </button>
-                  <div className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs text-[#c8bfe7]">
-                    分析模型：Gemini 3.1 Pro Preview
-                  </div>
                   {hasAnalyzed ? (
                     <div className="rounded-full border border-[#2f2260] bg-[#130b31] px-4 py-2 text-xs text-[#8cefff]">
                       当前窗口：近 {selectedWindowDays} 天
@@ -1622,7 +1619,7 @@ export default function PlatformPage() {
                   <div className="text-xs uppercase tracking-[0.16em] text-[#ffdd44]">分析步骤 · 模型使用明细</div>
                   <div className="mt-3 space-y-1 text-xs leading-6 text-[#d7d0ef]">
                     <div className="text-[#8cefff] font-semibold">── Call 1: 快照 ──</div>
-                    <div>1. 模型: gemini-2.5-pro (getGrowthSnapshot — 同步 tRPC query)</div>
+                    <div>1. 快照分析 (getGrowthSnapshot — 同步 tRPC query)</div>
                     <div>1a. 状态: {growthSnapshotQuery.isFetched ? `✅ 已返回 (${snapshotDebug?.baseSource})` : growthSnapshotQuery.isFetching ? "⏳ 进行中" : "⏸ 未开始"}</div>
                     <div>1b. 真实采集: {String(snapshotDebug?.hasAnyLiveCollection ?? "?")} / 平台数: {(snapshotDebug as any)?.stalePlatforms !== undefined ? `${(snapshotDebug as any)?.platformCount ?? 4}` : "?"}</div>
                     <div>1c. storeMs: {String((snapshotDebug?.timing as any)?.storeMs ?? "?")}</div>
@@ -1631,18 +1628,18 @@ export default function PlatformPage() {
                     <div>2a. DB 状态: <span className="font-mono">{analysisJobStatus}</span> / 轮询次数: <span className="text-[#ffdd44] font-bold">{analysisPollCount}</span></div>
                     <div>2b. 轮询: {isDashboardLoading ? `✅ 进行中，每 3 秒 GET /api/jobs/${analysisJobId || "..."}` : platformDashboard ? "✅ 已完成，已停止" : "⏸ 等待"}</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 1: 原创内容 (先执行) ──</div>
-                    <div>3. 模型: vertex/gemini-3.1-pro-preview (深度原创 — 不看趋势数据)</div>
+                    <div>3. 深度原创分析（不看趋势数据）</div>
                     <div>3a. system instruction: 导演模式 — 7条铁律强制执行，禁止大纲</div>
                     <div>3b. 状态: {isContentLoading ? "⏳ 运行中" : platformContent ? "✅ 成功" : "⏸ 等待"}</div>
                     <div>3c. contentBlueprints: {(platformContent as any)?.contentBlueprints?.length ?? "-"} 条</div>
                     <div>3d. monetizationLanes: {(platformContent as any)?.monetizationLanes?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── Stage 2: 趋势校准 (后执行) ──</div>
-                    <div>4. 模型: vertex/gemini-2.5-pro (趋势校准 — 包含 primaryTrack/estimatedTraffic/ipUniqueness/commercialConversion)</div>
+                    <div>4. 趋势校准分析（含 primaryTrack/estimatedTraffic/ipUniqueness/commercialConversion）</div>
                     <div>4a. 状态: {isDashboardLoading ? "⏳ 运行中" : platformDashboard ? "✅ 成功" : "⏸ 等待 Stage1"}</div>
                     <div>4b. headline: {(platformDashboard as any)?.headline?.slice(0, 60) || "-"}</div>
                     <div>4c. hotTopics: {(platformDashboard as any)?.hotTopics?.length ?? "-"} 条</div>
                     <div className="text-[#8cefff] font-semibold mt-1">── QA 答疑 Job ──</div>
-                    <div>5. 模型: vertex/gemini-3.1-pro-preview (纯文本对话模式，支持 fileUri 多模态)</div>
+                    <div>5. 纯文本对话分析（支持 fileUri 多模态）</div>
                     <div>5a. QA Job ID: <span className="font-mono text-[#ffdd44]">{qaJobId || "未创建"}</span></div>
                     <div>5b. 状态: {isQaLoading ? "⏳ 运行中，轮询每 3 秒" : qaJobId ? "✅ job 已完成" : "⏸ 等待提问"}</div>
                   </div>
@@ -1680,7 +1677,7 @@ export default function PlatformPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-[#49e6ff]" />
                 <div>
                   <div className="text-sm font-semibold text-white">平台数据已就绪，正在生成个性化分析...</div>
-                  <div className="mt-1 text-xs text-[#b7add8]">Gemini 2.5 Pro 正在根据你的背景生成专属平台策略与选题文案，通常需要 30–90 秒。</div>
+                  <div className="mt-1 text-xs text-[#b7add8]">正在根据你的背景生成专属平台策略与选题文案，通常需要 30–90 秒。</div>
                 </div>
               </div>
             </div>
