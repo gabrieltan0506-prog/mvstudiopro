@@ -171,15 +171,13 @@ export const emailAuthRouter = router({
         return { ok: true as const, created: true as const };
       }
 
-      if (!input.currentPassword?.length) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "已设置过登录密码，修改时请填写原密码",
-        });
+      // 若用戶提供了原密碼，先做驗證（可選）；若未提供，允許已登入用戶直接覆蓋
+      if (input.currentPassword?.length) {
+        if (hashPassword(input.currentPassword) !== auth.passwordHash) {
+          throw new TRPCError({ code: "UNAUTHORIZED", message: "原密码不正确" });
+        }
       }
-      if (hashPassword(input.currentPassword) !== auth.passwordHash) {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: "原密码不正确" });
-      }
+      // 已通過 session 身份認證，允許直接設定新密碼
       await database.update(emailAuth).set({ passwordHash: hashNew }).where(eq(emailAuth.email, email));
       return { ok: true as const, created: false as const };
     }),

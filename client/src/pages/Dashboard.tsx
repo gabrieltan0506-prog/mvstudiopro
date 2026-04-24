@@ -14,7 +14,6 @@ export default function LayoutDashboard() {
   const [betaCode, setBetaCode] = useState("");
   const [redeemLoading, setRedeemLoading] = useState(false);
   const [loginPasswordNew, setLoginPasswordNew] = useState("");
-  const [loginPasswordCurrent, setLoginPasswordCurrent] = useState("");
   const [loginPasswordBusy, setLoginPasswordBusy] = useState(false);
   const { user } = useAuth();
   const redeemMutation = trpc.betaCode.redeem.useMutation();
@@ -153,20 +152,10 @@ export default function LayoutDashboard() {
             )}
           </div>
           <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-            通过邮箱验证码完成注册的用户，默认无密码。在此设置后，账号仍可同时使用邮箱验证码登录；修改密码需提供原密码。
+            通过邮箱验证码完成注册的用户，默认无密码。在此设置后，账号仍可同时使用邮箱验证码登录。已登录状态下可直接设置/重置密码，无需填写原密码。
           </p>
           {user?.email ? (
             <div className="space-y-2">
-              {hasLoginPassword ? (
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="当前密码"
-                  value={loginPasswordCurrent}
-                  onChange={(e) => setLoginPasswordCurrent(e.target.value)}
-                  className="w-full bg-[#0A0A0C] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-violet-500/40"
-                />
-              ) : null}
               <input
                 type="password"
                 autoComplete="new-password"
@@ -177,21 +166,15 @@ export default function LayoutDashboard() {
               />
               <button
                 type="button"
-                disabled={
-                  loginPasswordBusy ||
-                  loginPasswordNew.length < 8 ||
-                  (hasLoginPassword && loginPasswordCurrent.length < 1)
-                }
+                disabled={loginPasswordBusy || loginPasswordNew.length < 8}
                 onClick={async () => {
                   setLoginPasswordBusy(true);
                   try {
                     await setLoginPasswordMutation.mutateAsync({
                       newPassword: loginPasswordNew,
-                      currentPassword: hasLoginPassword ? loginPasswordCurrent : undefined,
                     });
                     toast.success(hasLoginPassword ? "密码已更新" : "登录密码已设置");
                     setLoginPasswordNew("");
-                    setLoginPasswordCurrent("");
                     void refetchLoginPassword();
                   } catch (err: any) {
                     toast.error(err?.message || "设置失败");
@@ -201,7 +184,7 @@ export default function LayoutDashboard() {
                 }}
                 className="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold"
               >
-                {loginPasswordBusy ? "提交中…" : hasLoginPassword ? "更新密码" : "设置登录密码"}
+                {loginPasswordBusy ? "提交中…" : hasLoginPassword ? "重置密码" : "设置登录密码"}
               </button>
             </div>
           ) : null}
