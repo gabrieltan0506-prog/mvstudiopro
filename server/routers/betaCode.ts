@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
@@ -18,8 +18,8 @@ function generateCode(): string {
 /** 確保表存在（生產環境可能尚未跑 migration） */
 async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
   try {
-    await db.execute(
-      `CREATE TABLE IF NOT EXISTS \`beta_invite_codes\` (
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`beta_invite_codes\` (
         \`id\`         INT AUTO_INCREMENT PRIMARY KEY,
         \`code\`       VARCHAR(20) NOT NULL UNIQUE,
         \`credits\`    INT NOT NULL DEFAULT 200,
@@ -29,18 +29,19 @@ async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>
         \`note\`       VARCHAR(120),
         \`expires_at\` TIMESTAMP NULL,
         \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-      )`
-    );
-    await db.execute(
-      `CREATE TABLE IF NOT EXISTS \`beta_code_usages\` (
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`beta_code_usages\` (
         \`id\`              INT AUTO_INCREMENT PRIMARY KEY,
         \`code_id\`         INT NOT NULL,
         \`user_id\`         INT NOT NULL,
         \`credits_awarded\` INT NOT NULL,
         \`redeemed_at\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY \`uq_code_user\` (\`code_id\`, \`user_id\`)
-      )`
-    );
+      )
+    `);
+    console.log("[betaCode] ensureBetaTables: OK");
   } catch (e) {
     console.warn("[betaCode] ensureBetaTables:", e);
   }
