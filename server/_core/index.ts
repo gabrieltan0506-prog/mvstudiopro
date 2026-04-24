@@ -111,8 +111,46 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+async function runAutoMigrations() {
+  try {
+    const { getDb } = await import("../db");
+    const db = await getDb();
+    if (!db) return;
+
+    // 内测码系统表（幂等，IF NOT EXISTS 安全重跑）
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`beta_invite_codes\` (
+        \`id\`         INT AUTO_INCREMENT PRIMARY KEY,
+        \`code\`       VARCHAR(20) NOT NULL UNIQUE,
+        \`credits\`    INT NOT NULL DEFAULT 200,
+        \`max_uses\`   INT NOT NULL DEFAULT 1,
+        \`used_count\` INT NOT NULL DEFAULT 0,
+        \`created_by\` INT NOT NULL,
+        \`note\`       VARCHAR(120),
+        \`expires_at\` TIMESTAMP NULL,
+        \`created_at\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`beta_code_usages\` (
+        \`id\`              INT AUTO_INCREMENT PRIMARY KEY,
+        \`code_id\`         INT NOT NULL,
+        \`user_id\`         INT NOT NULL,
+        \`credits_awarded\` INT NOT NULL,
+        \`redeemed_at\`     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY \`uq_code_user\` (\`code_id\`, \`user_id\`)
+      )
+    `);
+    console.log("[AutoMigrate] beta_invite_codes & beta_code_usages: OK");
+  } catch (err) {
+    console.warn("[AutoMigrate] skipped (non-fatal):", err instanceof Error ? err.message : err);
+  }
+}
+
 async function startServer() {
   warnLegacyKlingEnvIgnored();
+  void runAutoMigrations();
 
   const app = express();
   const server = createServer(app);
