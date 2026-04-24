@@ -10,9 +10,22 @@ import { Shield, DollarSign, Users, FileCheck, TrendingUp, CheckCircle, XCircle,
 import { useLocation } from "wouter";
 import { useEffect, useState } from "react";
 
+const SUPERVISOR_KEY = "mvs-supervisor-access";
+
+function checkSupervisorUrl(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("supervisor") === "1") {
+    localStorage.setItem(SUPERVISOR_KEY, "1");
+    return true;
+  }
+  return localStorage.getItem(SUPERVISOR_KEY) === "1";
+}
+
 export default function AdminPanel() {
   const { user, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const isSupervisorUrl = checkSupervisorUrl();
   const [verificationLoading, setVerificationLoading] = useState(false);
   const [verifications, setVerifications] = useState<any[]>([]);
 
@@ -27,7 +40,7 @@ export default function AdminPanel() {
 
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
-  const isAdminOrSupervisor = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
+  const isAdminOrSupervisor = isSupervisorUrl || (isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"));
   const isAdminOnly = isAuthenticated && user?.role === "admin";
 
   // ── 所有 hooks 必須在 conditional return 之前 ──
@@ -105,8 +118,8 @@ export default function AdminPanel() {
 
   const isSupervisorOnly = isAuthenticated && user?.role === "supervisor";
 
-  // Redirect non-admin / non-supervisor
-  if (isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
+  // Redirect non-admin / non-supervisor（supervisor URL bypass 例外）
+  if (!isSupervisorUrl && isAuthenticated && user?.role !== "admin" && user?.role !== "supervisor") {
     return (
       <div className="min-h-screen bg-background text-foreground">
         <Navbar />

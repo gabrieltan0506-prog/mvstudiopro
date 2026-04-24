@@ -2280,7 +2280,93 @@ export default function PlatformPage() {
             )}
           </section>
         ) : null}
+
+        {/* ── Supervisor：邀請碼生成 ── */}
+        {supervisorAccess && (
+          <div className="mt-8">
+            <InviteCodePanel />
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function InviteCodePanel() {
+  const [count, setCount] = useState("5");
+  const [credits, setCredits] = useState("200");
+  const [maxUses, setMaxUses] = useState("1");
+  const [expireDays, setExpireDays] = useState("30");
+  const [note, setNote] = useState("");
+  const [generated, setGenerated] = useState<string[]>([]);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const listQuery = trpc.betaCode.listMine.useQuery(undefined, { staleTime: 10_000 });
+  const generateMut = trpc.betaCode.generate.useMutation({
+    onSuccess: (d) => { setGenerated(d.codes); listQuery.refetch(); },
+    onError: (e) => alert("生成失敗：" + e.message),
+  });
+
+  function copy(code: string) {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(code);
+      setTimeout(() => setCopied(null), 1500);
+    });
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)",
+    borderRadius: 8, padding: "8px 12px", color: "#fff", fontSize: 13, width: "100%",
+  };
+  const labelStyle: React.CSSProperties = { fontSize: 11, color: "rgba(255,255,255,0.5)", marginBottom: 4, display: "block" };
+
+  return (
+    <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(139,92,246,0.3)", borderRadius: 16, padding: 24 }}>
+      <div style={{ fontSize: 15, fontWeight: 800, color: "#a78bfa", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+        🔑 邀請碼生成
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <div><label style={labelStyle}>生成數量</label><input style={inputStyle} type="number" min={1} max={50} value={count} onChange={e => setCount(e.target.value)} /></div>
+        <div><label style={labelStyle}>Credits/每碼</label><input style={inputStyle} type="number" min={1} value={credits} onChange={e => setCredits(e.target.value)} /></div>
+        <div><label style={labelStyle}>最大兌換次數</label><input style={inputStyle} type="number" min={1} value={maxUses} onChange={e => setMaxUses(e.target.value)} /></div>
+        <div><label style={labelStyle}>有效天數</label><input style={inputStyle} type="number" min={1} value={expireDays} onChange={e => setExpireDays(e.target.value)} /></div>
+        <div><label style={labelStyle}>備注（選填）</label><input style={inputStyle} type="text" placeholder="備注" value={note} onChange={e => setNote(e.target.value)} /></div>
+      </div>
+      <button
+        onClick={() => generateMut.mutate({ count: Number(count), credits: Number(credits), maxUses: Number(maxUses), expiresInDays: Number(expireDays), note: note || undefined })}
+        disabled={generateMut.isPending}
+        style={{ background: "linear-gradient(135deg,#7c3aed,#4f46e5)", border: "none", borderRadius: 8, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: generateMut.isPending ? 0.6 : 1 }}
+      >
+        {generateMut.isPending ? "生成中…" : "生成邀請碼"}
+      </button>
+
+      {generated.length > 0 && (
+        <div style={{ marginTop: 16, background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: 14 }}>
+          <div style={{ fontSize: 12, color: "#a78bfa", marginBottom: 8, fontWeight: 700 }}>✅ 生成成功 {generated.length} 個</div>
+          {generated.map(code => (
+            <div key={code} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <code style={{ fontSize: 14, fontWeight: 700, color: "#e2e8f0", letterSpacing: 2, flex: 1 }}>{code}</code>
+              <button onClick={() => copy(code)} style={{ fontSize: 11, background: "rgba(139,92,246,0.2)", border: "1px solid rgba(139,92,246,0.4)", borderRadius: 6, padding: "3px 10px", color: "#a78bfa", cursor: "pointer" }}>
+                {copied === code ? "✓ 已複製" : "複製"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(listQuery.data?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>歷史邀請碼（{listQuery.data?.length} 個）</div>
+          <div style={{ maxHeight: 160, overflowY: "auto" }}>
+            {listQuery.data?.map((c: any) => (
+              <div key={c.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.6)", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                <code style={{ letterSpacing: 1 }}>{c.code}</code>
+                <span>{c.usedCount}/{c.maxUses} 次使用</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
