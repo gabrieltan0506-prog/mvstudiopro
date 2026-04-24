@@ -273,14 +273,23 @@ export function CreationHistoryPanel({
       ) : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {/* 視頻下載提醒 */}
+            {items.some((item: any) => item.type?.includes("video") || item.type?.includes("kling")) && (
+              <div className="col-span-full flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 mb-1">
+                <Download className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                <span>⚠️ 視頻文件較大且有過期時限，請及時下載保存到本地。圖片和腳本已永久保存在您的作品庫中。</span>
+              </div>
+            )}
+
             {items.map((item: any) => {
               const Icon = TYPE_ICONS[item.type as CreationType] || Sparkles;
+              const isVideo = item.type?.includes("video") || item.type?.includes("kling");
               const isExpiringSoon = item.expiresAt && new Date(item.expiresAt).getTime() - Date.now() < 2 * 24 * 60 * 60 * 1000;
               return (
                 <div
                   key={item.id}
                   className={`bg-gray-800/80 rounded-lg overflow-hidden border ${
-                    isExpiringSoon ? "border-amber-700/60" : "border-gray-700/40"
+                    isExpiringSoon ? "border-amber-700/60" : isVideo ? "border-blue-700/40" : "border-gray-700/40"
                   } hover:border-gray-600 transition-colors group`}
                 >
                   {/* Thumbnail */}
@@ -328,6 +337,14 @@ export function CreationHistoryPanel({
                       </button>
                     </div>
 
+                    {/* Video download reminder badge */}
+                    {isVideo && (
+                      <div className="absolute top-1 right-1 bg-blue-600/90 text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center space-x-0.5">
+                        <Download className="h-2.5 w-2.5" />
+                        <span>請下載</span>
+                      </div>
+                    )}
+
                     {/* Expiry badge */}
                     {isExpiringSoon && (
                       <div className="absolute top-1 left-1 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center space-x-0.5">
@@ -348,6 +365,16 @@ export function CreationHistoryPanel({
                         <span className="text-[10px] text-yellow-500">{item.creditsUsed} credits</span>
                       )}
                     </div>
+                    {/* Script preview for storyboard */}
+                    {item.type === "storyboard" && item.metadata && (() => {
+                      try {
+                        const meta = typeof item.metadata === "string" ? JSON.parse(item.metadata) : item.metadata;
+                        if (meta?.script) return (
+                          <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{meta.script}</p>
+                        );
+                      } catch {}
+                      return null;
+                    })()}
                   </div>
                 </div>
               );
