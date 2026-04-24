@@ -1,4 +1,4 @@
-import { eq, desc, and, avg, count } from "drizzle-orm";
+import { eq, desc, and, avg, count, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, guestbookMessages, InsertGuestbookMessage, mvReviews, InsertMvReview, storyboards, InsertStoryboard, Storyboard, paymentSubmissions } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -285,20 +285,79 @@ export async function getUserPayments(userId: number, limit = 50) {
 
 
 // === Restored functions (simplified stubs for missing tables) ===
-import { sql } from "drizzle-orm";
 import { teams } from "../drizzle/schema-teams";
 import { betaQuotas } from "../drizzle/schema-beta";
 
-export async function getAdminStats() {
+export type AdminStats = {
+  totalUsers: number;
+  totalTeams: number;
+  totalBetaQuotas: number;
+  /** 今日有登录/会话刷新（lastSignedIn 为今日） */
+  dau: number;
+  /** 近 7 天活跃（lastSignedIn） */
+  wau7: number;
+  /** 近 30 天活跃（lastSignedIn） */
+  mau30: number;
+  /** 今日新注册 */
+  newUsersToday: number;
+  /** 各角色人数 */
+  usersByRole: Record<string, number>;
+};
+
+export async function getAdminStats(): Promise<AdminStats> {
+  const empty: AdminStats = {
+    totalUsers: 0,
+    totalTeams: 0,
+    totalBetaQuotas: 0,
+    dau: 0,
+    wau7: 0,
+    mau30: 0,
+    newUsersToday: 0,
+    usersByRole: {},
+  };
   const db = await getDb();
-  if (!db) return { totalUsers: 0, totalTeams: 0, totalBetaQuotas: 0 };
+  if (!db) return empty;
+
   const [userCount] = await db.select({ count: count() }).from(users);
   const [teamCount] = await db.select({ count: count() }).from(teams);
   const [betaCount] = await db.select({ count: count() }).from(betaQuotas);
+
+  const [dauRow] = await db
+    .select({ c: count() })
+    .from(users)
+    .where(sql`DATE(${users.lastSignedIn}) = CURDATE()`);
+  const [wauRow] = await db
+    .select({ c: count() })
+    .from(users)
+    .where(sql`${users.lastSignedIn} >= DATE_SUB(NOW(), INTERVAL 7 DAY)`);
+  const [mauRow] = await db
+    .select({ c: count() })
+    .from(users)
+    .where(sql`${users.lastSignedIn} >= DATE_SUB(NOW(), INTERVAL 30 DAY)`);
+  const [newTodayRow] = await db
+    .select({ c: count() })
+    .from(users)
+    .where(sql`DATE(${users.createdAt}) = CURDATE()`);
+
+  const roleRows = await db
+    .select({ role: users.role, c: count() })
+    .from(users)
+    .groupBy(users.role);
+
+  const usersByRole: Record<string, number> = {};
+  for (const row of roleRows) {
+    usersByRole[String(row.role)] = row.c;
+  }
+
   return {
     totalUsers: userCount?.count ?? 0,
     totalTeams: teamCount?.count ?? 0,
     totalBetaQuotas: betaCount?.count ?? 0,
+    dau: dauRow?.c ?? 0,
+    wau7: wauRow?.c ?? 0,
+    mau30: mauRow?.c ?? 0,
+    newUsersToday: newTodayRow?.c ?? 0,
+    usersByRole,
   };
 }
 

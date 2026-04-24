@@ -39,7 +39,7 @@ import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
 import { deductCredits, getCredits, getUserPlan, addCredits, getCreditTransactions } from "./credits";
-import { CREDIT_COSTS } from "./plans";
+import { CREDIT_COSTS, CREDIT_FEATURE_BREAKDOWN, CREDIT_TO_CNY } from "./plans";
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
@@ -2197,7 +2197,11 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         if (ctx.user?.id) {
-          await deductCredits(ctx.user.id, "aiInspiration", `平台追问分析 (${input.windowDays}天 / Gemini 2.5 Pro)`);
+          await deductCredits(
+            ctx.user.id,
+            "platformTrendFollowUp",
+            `平台追问分析 (${input.windowDays}天 / Gemini 3.1 Pro)`,
+          );
         }
         try {
           const response = await invokeLLM({
@@ -4818,6 +4822,10 @@ ${sceneSummary}
 
   admin: router({
     stats: adminProcedure.query(async () => getAdminStats()),
+    creditBreakdown: adminProcedure.query(() => ({
+      creditToCny: CREDIT_TO_CNY,
+      rows: CREDIT_FEATURE_BREAKDOWN,
+    })),
     paymentList: adminProcedure.input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional()).query(async ({ input }) => getPaymentSubmissions(input?.status)),
     paymentReview: adminProcedure.input(z.object({
       id: z.number(),

@@ -60,6 +60,7 @@ export default function AdminPanel() {
   }
 
   const { data: stats } = trpc.admin.stats.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
+  const { data: creditBreakdown } = trpc.admin.creditBreakdown.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
   const { data: payments, refetch: refetchPayments } = trpc.admin.paymentList.useQuery({ status: "pending" }, { enabled: isAuthenticated && user?.role === "admin" });
   const { data: betaQuotas, refetch: refetchBeta } = trpc.admin.betaList.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
   const { data: teams } = trpc.admin.teamList.useQuery(undefined, { enabled: isAuthenticated && user?.role === "admin" });
@@ -120,16 +121,20 @@ export default function AdminPanel() {
             <Shield className="h-6 w-6 text-primary" />
             <h1 className="text-3xl font-bold">管理后台</h1>
           </div>
-          <p className="text-muted-foreground">付款审核、财务监控、团队统计、Beta 功能审核</p>
+          <p className="text-muted-foreground">用户与活跃、付款审核、财务监控、团队统计、内测与定价</p>
         </div>
 
         {/* Stats Overview */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           {[
             { label: "总用户数", value: stats?.totalUsers ?? 0, icon: Users, color: "text-blue-400" },
-            { label: "总收入", value: `¥0`, icon: DollarSign, color: "text-green-400" },
-            { label: "待审核付款", value: stats?.totalBetaQuotas ?? 0, icon: Clock, color: "text-yellow-400" },
-            { label: "活跃团队", value: stats?.teams ?? 0, icon: TrendingUp, color: "text-primary" },
+            { label: "今日新注册", value: stats?.newUsersToday ?? 0, icon: Users, color: "text-cyan-400" },
+            { label: "日活 DAU", value: stats?.dau ?? 0, icon: TrendingUp, color: "text-emerald-400" },
+            { label: "近7日活跃 WAU", value: stats?.wau7 ?? 0, icon: TrendingUp, color: "text-green-400" },
+            { label: "近30日活跃 MAU", value: stats?.mau30 ?? 0, icon: TrendingUp, color: "text-lime-400" },
+            { label: "活跃团队", value: stats?.totalTeams ?? 0, icon: TrendingUp, color: "text-primary" },
+            { label: "待审 Beta 配额条数", value: stats?.totalBetaQuotas ?? 0, icon: Clock, color: "text-yellow-400" },
+            { label: "总收入（占位）", value: `¥0`, icon: DollarSign, color: "text-green-400" },
           ].map(item => (
             <Card key={item.label} className="bg-card/50 border-border/50">
               <CardContent className="p-4">
@@ -143,14 +148,29 @@ export default function AdminPanel() {
           ))}
         </div>
 
+        {stats?.usersByRole && Object.keys(stats.usersByRole).length > 0 ? (
+          <Card className="mb-8 bg-card/50 border-border/50">
+            <CardHeader className="py-3"><CardTitle className="text-sm font-medium">用户角色分布</CardTitle></CardHeader>
+            <CardContent className="pt-0 flex flex-wrap gap-3 text-sm">
+              {Object.entries(stats.usersByRole).map(([role, n]) => (
+                <span key={role} className="rounded-md border border-border/60 px-2 py-1 bg-background/40">
+                  <span className="text-muted-foreground">{role}</span>
+                  <span className="ml-1 font-semibold">{n}</span>
+                </span>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
         <Tabs defaultValue="payments" className="space-y-6">
-          <TabsList className="bg-card/50 border border-border/50">
+          <TabsList className="bg-card/50 border border-border/50 flex flex-wrap gap-1">
             <TabsTrigger value="payments">付款审核</TabsTrigger>
             <TabsTrigger value="finance">财务监控</TabsTrigger>
             <TabsTrigger value="teams">团队统计</TabsTrigger>
             <TabsTrigger value="beta">Beta 审核</TabsTrigger>
             <TabsTrigger value="verifications">身份认证</TabsTrigger>
             <TabsTrigger value="invite-codes">邀请码</TabsTrigger>
+            <TabsTrigger value="credit-pricing">定价明细</TabsTrigger>
           </TabsList>
 
           {/* Payments Tab */}
@@ -500,6 +520,48 @@ export default function AdminPanel() {
                       </div>
                     ))}
                   </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="credit-pricing" className="space-y-4">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <CardTitle>全站功能细项 Credits</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  1 Credit ≈ ¥{creditBreakdown?.creditToCny ?? 0.7} 人民币，与 server/plans.ts 中 CREDIT_COSTS 同步。
+                </p>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {creditBreakdown?.rows && creditBreakdown.rows.length > 0 ? (
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b border-border/60 text-left text-muted-foreground">
+                        <th className="py-2 pr-3 font-medium">产品 / 模块</th>
+                        <th className="py-2 pr-3 font-medium">细项</th>
+                        <th className="py-2 pr-3 font-medium">Credits</th>
+                        <th className="py-2 pr-3 font-medium">约人民币</th>
+                        <th className="py-2 font-medium">说明</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {creditBreakdown.rows.map((row, i) => {
+                        const cny = (row.credits * (creditBreakdown.creditToCny ?? 0.7)).toFixed(1);
+                        return (
+                          <tr key={i} className="border-b border-border/30 hover:bg-background/20">
+                            <td className="py-2 pr-3 align-top whitespace-nowrap">{row.product}</td>
+                            <td className="py-2 pr-3 align-top">{row.subFeature}</td>
+                            <td className="py-2 pr-3 align-top font-mono">{row.credits}</td>
+                            <td className="py-2 pr-3 align-top text-muted-foreground">≈ ¥{cny}</td>
+                            <td className="py-2 align-top text-xs text-muted-foreground">{row.note || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">加载中或暂无数据</div>
                 )}
               </CardContent>
             </Card>

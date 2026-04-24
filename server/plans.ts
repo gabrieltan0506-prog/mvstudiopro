@@ -180,6 +180,7 @@ export const CREDIT_COSTS = {
   growthCampGrowth: 40,       // GROWTH 模式：40 cr ≈ ¥28（毛利率 97.7%）
   growthCampRemix: 50,        // REMIX 二创模式：50 cr ≈ ¥35（毛利率 98.2%）
   platformTrend: 30,          // 平台趋势分析：30 cr ≈ ¥21
+  platformTrendFollowUp: 20,  // 平台趋势「追问 / 续问」每次 20 cr（Gemini 3.1 Pro）
   workflowNodes: 20,          // 节点工作流整体（已废弃，改为逐步计费）
 
   // ─── 节点工作流（逐步计费，脚本生成免费）────────
@@ -249,6 +250,76 @@ export const CREDIT_COSTS = {
   // ─── 音频分析 ────────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 } as const;
+
+/** 1 Credit ≈ ¥0.70（人民币，用于展示） */
+export const CREDIT_TO_CNY = 0.7;
+
+export interface CreditFeatureBreakdownRow {
+  product: string;
+  subFeature: string;
+  credits: number;
+  note?: string;
+}
+
+/**
+ * 全站功能细项 Credits 定价表（与 CREDIT_COSTS 一致，供后台与文档展示）
+ */
+export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
+  // ─── 创作者成长营 ─────────────────────────────────────────
+  { product: "创作者成长营", subFeature: "GROWTH 模式（主流程分析）", credits: CREDIT_COSTS.growthCampGrowth, note: "视频分析 + 策划报告等" },
+  { product: "创作者成长营", subFeature: "REMIX 二创模式", credits: CREDIT_COSTS.growthCampRemix, note: "参考视频 + 二创策划" },
+  // ─── 平台趋势分析 ─────────────────────────────────────────
+  { product: "平台趋势分析", subFeature: "初次看板 / 快照加载（主分析）", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
+  { product: "平台趋势分析", subFeature: "追问 / 续问（顾问式问答）", credits: CREDIT_COSTS.platformTrendFollowUp, note: "每次追问独立扣费" },
+  // ─── 节点工作流（逐步） ───────────────────────────────────
+  { product: "节点工作流", subFeature: "脚本生成", credits: CREDIT_COSTS.workflowScript, note: "免费引流" },
+  { product: "节点工作流", subFeature: "故事板确认", credits: CREDIT_COSTS.workflowStoryboard },
+  { product: "节点工作流", subFeature: "分镜图（每场景 NBP 2K）", credits: CREDIT_COSTS.workflowSceneImage, note: "按场景张数" },
+  { product: "节点工作流", subFeature: "多人静帧（NBP 4K）", credits: CREDIT_COSTS.workflowRenderStill, note: "每场景一次" },
+  { product: "节点工作流", subFeature: "场景视频（Veo 3.1）", credits: CREDIT_COSTS.workflowSceneVideo, note: "每场景一次" },
+  { product: "节点工作流", subFeature: "场景配音（TTS）", credits: CREDIT_COSTS.workflowSceneVoice, note: "每场景一次" },
+  { product: "节点工作流", subFeature: "自动配乐（Suno V5.5 + Gemini Prompt）", credits: CREDIT_COSTS.workflowMusic },
+  { product: "节点工作流", subFeature: "最终合成", credits: CREDIT_COSTS.workflowFinalRender },
+  // ─── 基础与创作工具 ───────────────────────────────────────
+  { product: "视频 PK / 分析", subFeature: "MV 对比评分", credits: CREDIT_COSTS.mvAnalysis },
+  { product: "虚拟偶像", subFeature: "Forge 2D 生成", credits: CREDIT_COSTS.idolGeneration },
+  { product: "分镜脚本", subFeature: "Gemini 3.0 Pro", credits: CREDIT_COSTS.storyboard },
+  { product: "分镜脚本", subFeature: "Gemini 3.0 Flash", credits: CREDIT_COSTS.storyboardFlash },
+  { product: "分镜脚本", subFeature: "GPT 5.1", credits: CREDIT_COSTS.storyboardGpt5 },
+  { product: "Forge 生图", subFeature: "单张", credits: CREDIT_COSTS.forgeImage },
+  { product: "AI 灵感", subFeature: "灵感脚本", credits: CREDIT_COSTS.aiInspiration },
+  { product: "NBP", subFeature: "2K 图", credits: CREDIT_COSTS.nbpImage2K },
+  { product: "NBP", subFeature: "4K 图", credits: CREDIT_COSTS.nbpImage4K },
+  // ─── 3D ─────────────────────────────────────────────────
+  { product: "腾讯混元 3D", subFeature: "闪电 Rapid", credits: CREDIT_COSTS.rapid3D },
+  { product: "腾讯混元 3D", subFeature: "闪电 + PBR", credits: CREDIT_COSTS.rapid3D_pbr },
+  { product: "腾讯混元 3D", subFeature: "精雕 Pro", credits: CREDIT_COSTS.pro3D },
+  { product: "腾讯混元 3D", subFeature: "精雕 + PBR", credits: CREDIT_COSTS.pro3D_pbr },
+  { product: "腾讯混元 3D", subFeature: "精雕 + PBR + 多视角", credits: CREDIT_COSTS.pro3D_pbr_mv },
+  { product: "腾讯混元 3D", subFeature: "精雕全选项", credits: CREDIT_COSTS.pro3D_full },
+  // ─── 高门槛 ─────────────────────────────────────────────
+  { product: "视频生成（通用）", subFeature: "单条", credits: CREDIT_COSTS.videoGeneration },
+  { product: "偶像 3D", subFeature: "单条", credits: CREDIT_COSTS.idol3D },
+  // ─── Suno ───────────────────────────────────────────────
+  { product: "Suno", subFeature: "V4 音乐", credits: CREDIT_COSTS.sunoMusicV4 },
+  { product: "Suno", subFeature: "V5 音乐", credits: CREDIT_COSTS.sunoMusicV5 },
+  { product: "Suno", subFeature: "歌词生成", credits: CREDIT_COSTS.sunoLyrics },
+  { product: "Suno", subFeature: "单曲购买池", credits: CREDIT_COSTS.audioSinglePurchase },
+  { product: "Suno", subFeature: "套餐内生成", credits: CREDIT_COSTS.audioPackageGeneration },
+  // ─── Kling 视频 / 图 ─────────────────────────────────────
+  { product: "可灵", subFeature: "图生视频", credits: CREDIT_COSTS.klingVideo },
+  { product: "可灵", subFeature: "动作迁移", credits: CREDIT_COSTS.klingMotionControl },
+  { product: "可灵", subFeature: "口型同步", credits: CREDIT_COSTS.klingLipSync },
+  { product: "可灵 图", subFeature: "O1 1K", credits: CREDIT_COSTS.klingImageO1_1K },
+  { product: "可灵 图", subFeature: "O1 2K", credits: CREDIT_COSTS.klingImageO1_2K },
+  { product: "可灵 图", subFeature: "V2.1 1K", credits: CREDIT_COSTS.klingImageV2_1K },
+  { product: "可灵 图", subFeature: "V2.1 2K", credits: CREDIT_COSTS.klingImageV2_2K },
+  // ─── 其他 AI ────────────────────────────────────────────
+  { product: "分镜", subFeature: "AI 改写脚本", credits: CREDIT_COSTS.storyboardRewrite },
+  { product: "分镜", subFeature: "推荐 BGM 描述", credits: CREDIT_COSTS.recommendBGM },
+  { product: "参考图", subFeature: "风格分析", credits: CREDIT_COSTS.referenceImageAnalysis },
+  { product: "音频", subFeature: "Gemini 音频分析", credits: CREDIT_COSTS.audioAnalysis },
+] as const;
 
 /**
  * 单次购买包（不需要订阅）

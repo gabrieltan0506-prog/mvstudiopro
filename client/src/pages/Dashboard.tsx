@@ -131,9 +131,12 @@ export default function LayoutDashboard() {
           <div className="grid grid-cols-2 gap-4">
             <CostCard icon={<BarChart className="h-6 w-6" />} label="成长营 GROWTH" cost={40} balance={credits.balance} />
             <CostCard icon={<Film className="h-6 w-6" />} label="成长营 REMIX" cost={50} balance={credits.balance} />
-            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势分析" cost={30} balance={credits.balance} />
-            <CostCard icon={<Video className="h-6 w-6" />} label="节点工作流" cost={20} balance={credits.balance} />
+            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势·主分析" cost={30} balance={credits.balance} />
+            <CostCard icon={<TrendingUp className="h-6 w-6" />} label="平台趋势·每次追问" cost={20} balance={credits.balance} />
+            <CostCard icon={<Video className="h-6 w-6" />} label="工作流·故事板起" cost={5} balance={credits.balance} />
+            <CostCard icon={<Video className="h-6 w-6" />} label="工作流·场景视频" cost={80} balance={credits.balance} />
           </div>
+          <p className="text-xs text-gray-500 mt-2">节点工作流：脚本免费；分镜/静帧/配音/配乐/合成等按步计费，管理后台「定价明细」可查看全部。</p>
         </div>
 
         {/* Tabs */}
@@ -189,6 +192,7 @@ export default function LayoutDashboard() {
                         {log.action === "growthCampGrowth" ? "成长营 GROWTH 分析" :
                          log.action === "growthCampRemix" ? "成长营 REMIX 二创" :
                          log.action === "platformTrend" ? "平台趋势分析" :
+                         log.action === "platformTrendFollowUp" ? "平台趋势追问" :
                          log.action === "workflowNodes" ? "节点工作流" :
                          log.action === "mvAnalysis" ? "视频 PK 评分" :
                          log.action === "idolGeneration" ? "虚拟偶像生成" :
