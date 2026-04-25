@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { useQueryClient } from "@tanstack/react-query";
 
 export default function HomeRedeemCode() {
   const { isAuthenticated, loading, refresh } = useAuth({ autoFetch: true });
   const utils = trpc.useUtils();
+  const queryClient = useQueryClient();
   const [code, setCode] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "ok" | "err">("idle");
   const [msg, setMsg] = useState("");
@@ -20,8 +22,9 @@ export default function HomeRedeemCode() {
       setMsg(r.message || "兌換成功！");
       setStatus("ok");
       setCode("");
-      // 重新抓用戶資料，讓積分即時更新
+      // 同時刷新 tRPC auth.me 和 REST /api/me，確保積分即時顯示
       await utils.auth.me.invalidate();
+      await queryClient.invalidateQueries({ queryKey: ["api-me"] });
       refresh?.();
     } catch (e: any) {
       setMsg(e.message || "兌換失敗，請確認邀請碼是否正確");

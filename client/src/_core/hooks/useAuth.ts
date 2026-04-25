@@ -152,7 +152,11 @@ export function useAuth(options?: UseAuthOptions) {
 
   return {
     ...state,
-    refresh: () => meQuery.refetch(),
+    refresh: () => {
+      meQuery.refetch();
+      // 同時刷新 REST /api/me，避免舊快取覆蓋 credits
+      queryClient.invalidateQueries({ queryKey: ["api-me"] });
+    },
     logout,
   };
 }
