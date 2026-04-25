@@ -2242,29 +2242,29 @@ export default function MVAnalysisPage() {
         const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
         const blob = new Blob([bytes], { type: "application/pdf" });
         const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = `creator-growth-camp-analysis-${Date.now()}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const dlLink = document.createElement("a");
+        dlLink.href = blobUrl;
+        dlLink.download = `creator-growth-camp-analysis-${Date.now()}.pdf`;
+        document.body.appendChild(dlLink);
+        dlLink.click();
+        document.body.removeChild(dlLink);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("分析页 PDF 已开始下载，快照已保存至「我的作品」");
         // Save snapshot record with richer summary
         const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
-        const a = analysis as any;
+        const anl = analysis as any;
         const summaryParts: string[] = [];
-        if (a?.premiumContent?.summary) summaryParts.push(a.premiumContent.summary);
-        if (a?.realityCheck) summaryParts.push(`\n📌 现实校验\n${a.realityCheck}`);
-        if (a?.reverseEngineering?.hookStrategy) summaryParts.push(`\n🎯 钩子策略\n${a.reverseEngineering.hookStrategy}`);
-        if (a?.reverseEngineering?.commercialLogic) summaryParts.push(`\n💰 商业逻辑\n${a.reverseEngineering.commercialLogic}`);
-        if (a?.premiumContent?.topics?.length) {
+        if (anl?.premiumContent?.summary) summaryParts.push(anl.premiumContent.summary);
+        if (anl?.realityCheck) summaryParts.push(`\n📌 现实校验\n${anl.realityCheck}`);
+        if (anl?.reverseEngineering?.hookStrategy) summaryParts.push(`\n🎯 钩子策略\n${anl.reverseEngineering.hookStrategy}`);
+        if (anl?.reverseEngineering?.commercialLogic) summaryParts.push(`\n💰 商业逻辑\n${anl.reverseEngineering.commercialLogic}`);
+        if (anl?.premiumContent?.topics?.length) {
           summaryParts.push(`\n📋 内容方向`);
-          (a.premiumContent.topics as any[]).slice(0, 4).forEach((t: any) => {
+          (anl.premiumContent.topics as any[]).slice(0, 4).forEach((t: any) => {
             summaryParts.push(`• ${t.title}${t.contentBrief ? ": " + t.contentBrief.slice(0, 60) : ""}`);
           });
         }
-        const scores = a?.platformScores;
+        const scores = anl?.platformScores;
         if (scores) {
           const lines = Object.entries(scores as Record<string, number>)
             .sort((x, y) => (y[1] as number) - (x[1] as number))
