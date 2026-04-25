@@ -4,19 +4,16 @@ import {
   ChevronRight, Clock, CheckCircle2,
 } from "lucide-react";
 
-// ─── 更新日志数据 ────────────────────────────────────────────────────
+// ─── 更新日志数据（仅展示用户可感知的功能更新）────────────────────
 const UPDATES = [
-  { date: "04/26", tag: "新功能", text: "语音输入上线 — 说话即输入，支持中文语音识别，告别手动打字" },
-  { date: "04/26", tag: "修复",   text: "管理后台统计数据正确显示，管理员账号可查看用户数与活跃度" },
-  { date: "04/26", tag: "新功能", text: "我的作品 — 分析快照生成专属查看页，随时回顾完整报告" },
-  { date: "04/26", tag: "新功能", text: "邀请码申请表上线，填写用途与联系方式即可申请内测资格" },
-  { date: "04/25", tag: "优化",   text: "首页文案全面升级，聚焦核心价值主张，降低用户决策门槛" },
-  { date: "04/25", tag: "安全",   text: "调试面板对普通用户完全隐藏，访问权限收归管理员专属" },
-  { date: "04/25", tag: "修复",   text: "兑换邀请码后积分实时刷新，修复积分显示延迟问题" },
-  { date: "04/25", tag: "新功能", text: "平台分析页支持管理员直接生成邀请码，无需跳转后台" },
-  { date: "04/24", tag: "修复",   text: "邮件通知功能恢复正常，OTP 验证邮件可稳定送达" },
-  { date: "04/24", tag: "新功能", text: "我的作品页面上线，导航栏与首页均可直达" },
-  { date: "04/24", tag: "优化",   text: "分析结果展示优化，聚焦核心洞察，减少干扰信息" },
+  { date: "04/26", tag: "新功能", text: "语音输入上线 — 说话即可输入提示词，支持中文识别，告别手动打字" },
+  { date: "04/26", tag: "新功能", text: "我的作品 — 每次分析自动生成专属查看页，附带复制链接功能" },
+  { date: "04/26", tag: "新功能", text: "内测邀请码申请表上线，填写用途与联系方式即可提交申请" },
+  { date: "04/25", tag: "优化",   text: "兑换邀请码后积分实时刷新，不再需要重新登录" },
+  { date: "04/25", tag: "优化",   text: "首页全面焕新，聚焦四大核心功能亮点，简洁直达" },
+  { date: "04/24", tag: "修复",   text: "验证邮件稳定送达，登录体验全面优化" },
+  { date: "04/24", tag: "新功能", text: "我的作品页面上线，所有分析记录一览无余" },
+  { date: "04/24", tag: "优化",   text: "分析报告展示升级，核心洞察更突出，视觉更清晰" },
 ];
 
 // ─── 杀手级功能模块 ───────────────────────────────────────────────────
@@ -98,55 +95,70 @@ export default function HomeChangelog() {
     <section style={{ width: "100%", padding: "0 0 64px" }}>
       <style>{TICKER_STYLE}</style>
 
-      {/* ── 标题列 ── */}
-      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px 20px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Clock size={18} color="#a78bfa" />
-            <span style={{ fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>
-              更新日志 & 功能导览
+      {/* ── 高亮边框容器 ── */}
+      <div style={{
+        maxWidth: 1120,
+        margin: "0 auto",
+        padding: "0 24px",
+      }}>
+        <div style={{
+          border: "1px solid rgba(139,92,246,0.35)",
+          borderRadius: 20,
+          background: "rgba(139,92,246,0.04)",
+          boxShadow: "0 0 40px rgba(139,92,246,0.08), inset 0 0 60px rgba(139,92,246,0.03)",
+          overflow: "hidden",
+          padding: "28px 0 28px",
+        }}>
+
+        {/* ── 标题列 ── */}
+        <div style={{ padding: "0 28px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Clock size={18} color="#a78bfa" />
+              <span style={{ fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>
+                更新日志 & 功能导览
+              </span>
+            </div>
+            <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>
+              持续迭代中
             </span>
           </div>
-          <span style={{ fontSize: 12, color: "rgba(167,139,250,0.6)", background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 99, padding: "3px 12px" }}>
-            持续迭代中
-          </span>
         </div>
-      </div>
 
-      {/* ── 滚动更新跑马灯 ── */}
-      <div style={{
-        width: "100%", overflow: "hidden",
-        background: "rgba(255,255,255,0.025)",
-        borderTop: "1px solid rgba(255,255,255,0.06)",
-        borderBottom: "1px solid rgba(255,255,255,0.06)",
-        padding: "10px 0", marginBottom: 40,
-      }}>
-        <div className="mvsp-ticker-track" style={{ gap: 0 }}>
-          {tickerItems.map((item, i) => {
-            const tc = TAG_COLORS[item.tag] ?? TAG_COLORS["新功能"];
-            return (
-              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 28px" }}>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontVariantNumeric: "tabular-nums" }}>
-                  {item.date}
+        {/* ── 滚动更新跑马灯 ── */}
+        <div style={{
+          overflow: "hidden",
+          background: "rgba(255,255,255,0.025)",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          padding: "12px 0", marginBottom: 28,
+        }}>
+          <div className="mvsp-ticker-track" style={{ gap: 0 }}>
+            {tickerItems.map((item, i) => {
+              const tc = TAG_COLORS[item.tag] ?? TAG_COLORS["新功能"];
+              return (
+                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 32px" }}>
+                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)", fontVariantNumeric: "tabular-nums" }}>
+                    {item.date}
+                  </span>
+                  <span style={{
+                    fontSize: 12, fontWeight: 700, letterSpacing: "0.08em",
+                    background: tc.bg, color: tc.text,
+                    borderRadius: 4, padding: "2px 7px",
+                  }}>
+                    {item.tag}
+                  </span>
+                  <span style={{ fontSize: 15, color: "rgba(255,255,255,0.7)" }}>{item.text}</span>
+                  <span style={{ color: "rgba(255,255,255,0.12)", fontSize: 20, marginLeft: 8 }}>·</span>
                 </span>
-                <span style={{
-                  fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                  background: tc.bg, color: tc.text,
-                  borderRadius: 4, padding: "1px 6px",
-                }}>
-                  {item.tag}
-                </span>
-                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.65)" }}>{item.text}</span>
-                <span style={{ color: "rgba(255,255,255,0.1)", fontSize: 18, marginLeft: 6 }}>·</span>
-              </span>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      {/* ── 功能模块卡片 ── */}
-      <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(460px, 1fr))", gap: 20 }}>
+        {/* ── 功能模块卡片 ── */}
+        <div style={{ padding: "0 28px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(440px, 1fr))", gap: 16 }}>
           {MODULES.map((mod, idx) => {
             const Icon = mod.icon;
             const isActive = activeIdx === idx;
@@ -228,7 +240,9 @@ export default function HomeChangelog() {
             );
           })}
         </div>
-      </div>
+        </div>{/* 功能卡片 padding */}
+        </div>{/* 高亮边框 */}
+      </div>{/* 外层 maxWidth */}
     </section>
   );
 }
