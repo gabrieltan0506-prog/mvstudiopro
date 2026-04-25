@@ -48,7 +48,7 @@ const MODULES = [
     color: "#34d399",
     glow: "rgba(52,211,153,0.18)",
     border: "rgba(52,211,153,0.18)",
-    badge: "影视全自动产线",
+    badge: "影视级全自动产线",
     href: "/workflow-nodes",
     killer: "从想法到成片全自动",
     desc: "可视化节点串联脚本生成、分镜规划、配乐合成、语音合成，点击执行坐等成片。",
