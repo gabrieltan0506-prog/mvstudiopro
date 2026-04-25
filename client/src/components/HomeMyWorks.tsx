@@ -1,8 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { formatDateGMT8 } from "@/lib/utils";
-import { Image as ImageIcon, Video, Layers, Music, Box, FolderOpen, ArrowRight, FileText, BarChart2 } from "lucide-react";
+import { Image as ImageIcon, Video, Layers, Music, Box, FolderOpen, ArrowRight, FileText, BarChart2, Copy, Check, ExternalLink } from "lucide-react";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   idol_image: ImageIcon,
@@ -82,92 +82,45 @@ export default function HomeMyWorks() {
           还没有作品，去生成第一件吧！
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 14 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {items.map((item: any) => {
             const isSnapshot = item.metadata?.isSnapshot === true;
             const analysisType: string = item.metadata?.analysisType ?? "growth_camp";
             const summary: string = item.metadata?.summary ?? "";
             const snapshotLabel = SNAPSHOT_LABELS[analysisType] ?? "分析快照";
             const snapshotGrad = SNAPSHOT_GRADIENTS[analysisType] ?? SNAPSHOT_GRADIENTS.growth_camp;
-
             const Icon = TYPE_ICONS[item.type] ?? FolderOpen;
             const label = TYPE_LABELS[item.type] ?? item.type;
             const isVideo = item.type?.includes("video") || item.type?.includes("lipsync") || item.type?.includes("motion");
             const thumb = item.thumbnailUrl || item.outputUrl;
-            const href = isSnapshot ? `/my-works/${item.id}` : undefined;
+            const viewUrl = `/my-works/${item.id}`;
+            const fullUrl = typeof window !== "undefined" ? `${window.location.origin}${viewUrl}` : viewUrl;
 
-            const cardContent = (
-              <div
-                style={{
-                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 12, overflow: "hidden", position: "relative",
-                  cursor: isSnapshot ? "pointer" : "default",
-                  transition: "border-color 0.2s, transform 0.15s",
-                  textDecoration: "none",
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.borderColor = "rgba(139,92,246,0.5)";
-                  if (isSnapshot) e.currentTarget.style.transform = "translateY(-2px)";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }}
-              >
-                {isSnapshot ? (
-                  /* ── 分析快照卡片 ── */
-                  <div style={{ width: "100%", aspectRatio: "1/1", background: snapshotGrad, position: "relative", padding: "14px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.12)", borderRadius: 6, padding: "2px 7px", fontSize: 9, color: "rgba(255,255,255,0.75)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 8 }}>
-                        {analysisType === "platform"
-                          ? <BarChart2 size={9} />
-                          : <FileText size={9} />}
-                        {snapshotLabel}
-                      </div>
-                      {summary && (
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" as const }}>
-                          {summary.slice(0, 120)}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
-                      点击查看完整报告 →
-                    </div>
-                  </div>
-                ) : (
-                  /* ── 一般创作缩图 ── */
-                  <div style={{ width: "100%", aspectRatio: "1/1", background: "rgba(0,0,0,0.3)", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {thumb ? (
-                      <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ) : (
-                      <Icon size={36} color="rgba(167,139,250,0.4)" />
-                    )}
-                    {isVideo && (
-                      <div style={{ position: "absolute", top: 6, right: 6, background: "rgba(239,68,68,0.85)", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#fff", fontWeight: 700 }}>
-                        请下载
-                      </div>
-                    )}
-                    <div style={{ position: "absolute", bottom: 5, left: 6, background: "rgba(0,0,0,0.6)", borderRadius: 4, padding: "2px 7px", fontSize: 10, color: "rgba(255,255,255,0.85)" }}>
-                      {label}
-                    </div>
-                  </div>
-                )}
-                {/* 资讯 */}
-                <div style={{ padding: "8px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {item.title || "未命名"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 3 }}>
-                    {formatDateGMT8(item.createdAt, { showTime: false })}
-                  </div>
+            if (isSnapshot) {
+              return <SnapshotCard key={item.id} item={item} analysisType={analysisType} summary={summary} snapshotLabel={snapshotLabel} snapshotGrad={snapshotGrad} viewUrl={viewUrl} fullUrl={fullUrl} />;
+            }
+
+            return (
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "10px 14px" }}>
+                <div style={{ width: 44, height: 44, borderRadius: 8, background: "rgba(0,0,0,0.3)", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {thumb
+                    ? <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <Icon size={22} color="rgba(167,139,250,0.5)" />}
                 </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title || "未命名"}</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{label} · {formatDateGMT8(item.createdAt, { showTime: false })}</div>
+                </div>
+                {isVideo && <div style={{ fontSize: 10, background: "rgba(239,68,68,0.15)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 4, padding: "2px 7px", flexShrink: 0 }}>请下载</div>}
               </div>
             );
-
-            return isSnapshot
-              ? <a key={item.id} href={href} style={{ textDecoration: "none", display: "block" }}>{cardContent}</a>
-              : <div key={item.id}>{cardContent}</div>;
           })}
+        </div>
+      )}
+
+      {items.length === 0 && !creationsQuery.isLoading && (
+        <div style={{ textAlign: "center", padding: "32px 0", color: "rgba(255,255,255,0.25)", fontSize: 13 }}>
+          暂无作品记录，开始分析后会自动保存在这里
         </div>
       )}
 
@@ -179,5 +132,91 @@ export default function HomeMyWorks() {
         </div>
       )}
     </section>
+  );
+}
+
+// ── 分析快照横向卡片 ──────────────────────────────────────────
+function SnapshotCard({ item, analysisType, summary, snapshotLabel, snapshotGrad, viewUrl, fullUrl }: {
+  item: any; analysisType: string; summary: string; snapshotLabel: string;
+  snapshotGrad: string; viewUrl: string; fullUrl: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard.writeText(fullUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  // Extract a clean 1-2 sentence brief from summary
+  const brief = summary
+    ? summary.replace(/#+\s*/g, "").split(/[。\n]/)[0]?.trim().slice(0, 100) ?? ""
+    : "";
+
+  return (
+    <a href={viewUrl} style={{ textDecoration: "none", display: "block" }}>
+      <div
+        style={{
+          background: snapshotGrad,
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 12,
+          padding: "14px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          transition: "border-color 0.2s, transform 0.15s",
+          cursor: "pointer",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(167,139,250,0.45)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)"; e.currentTarget.style.transform = "none"; }}
+      >
+        {/* 顶部：标签 + 日期 */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,0.12)", borderRadius: 6, padding: "3px 9px", fontSize: 10, color: "rgba(255,255,255,0.8)", fontWeight: 700, letterSpacing: "0.06em" }}>
+            {analysisType === "platform" ? <BarChart2 size={10} /> : <FileText size={10} />}
+            {snapshotLabel}
+          </div>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>{formatDateGMT8(item.createdAt, { showTime: false })}</span>
+        </div>
+
+        {/* 标题 */}
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", lineHeight: 1.4 }}>
+          {item.title || snapshotLabel}
+        </div>
+
+        {/* 简介摘要 */}
+        {brief && (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.6 }}>
+            {brief}…
+          </div>
+        )}
+
+        {/* URL + 操作 */}
+        <div
+          style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.25)", borderRadius: 7, padding: "7px 10px", marginTop: 2 }}
+          onClick={e => e.preventDefault()}
+        >
+          <span style={{ flex: 1, fontSize: 11, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace" }}>
+            {fullUrl}
+          </span>
+          <button
+            onClick={handleCopy}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 5, border: "1px solid rgba(255,255,255,0.15)", background: copied ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.07)", color: copied ? "#6ee7b7" : "rgba(255,255,255,0.55)", fontSize: 11, cursor: "pointer", transition: "all 0.2s", flexShrink: 0 }}
+          >
+            {copied ? <><Check size={11} /> 已复制</> : <><Copy size={11} /> 复制链接</>}
+          </button>
+          <a
+            href={viewUrl}
+            style={{ display: "flex", alignItems: "center", gap: 3, padding: "3px 8px", borderRadius: 5, border: "1px solid rgba(139,92,246,0.3)", background: "rgba(139,92,246,0.1)", color: "#c4b5fd", fontSize: 11, textDecoration: "none", flexShrink: 0 }}
+            onClick={e => e.stopPropagation()}
+          >
+            <ExternalLink size={11} /> 查看报告
+          </a>
+        </div>
+      </div>
+    </a>
   );
 }
