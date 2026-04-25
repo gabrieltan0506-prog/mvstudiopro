@@ -13,7 +13,6 @@ const Home = lazy(() => import("./pages/Home"));
 const Showcase = lazy(() => import("./pages/Showcase"));
 const GrowthCampPage = lazy(() => import("./pages/MVAnalysis"));
 const PlatformPage = lazy(() => import("./pages/PlatformPage"));
-const VirtualIdol = lazy(() => import("./pages/VirtualIdol"));
 const Storyboard = lazy(() => import("./pages/Storyboard"));
 const VFXEngine = lazy(() => import("./pages/VFXEngine"));
 const Pricing = lazy(() => import("./pages/Pricing"));
@@ -63,7 +62,6 @@ function Router() {
         <Route path={"/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/platform"} component={PlatformPage} />
         <Route path={"/creator-growth-camp/premium-remix"} component={RemixLanding} />
-        <Route path={"/idol"} component={VirtualIdol} />
         <Route path={"/storyboard"} component={Storyboard} />
         <Route path={"/vfx"} component={VFXEngine} />
         <Route path={"/pricing"} component={Pricing} />

@@ -17,9 +17,9 @@ export interface SEOProps {
 
 const SITE_NAME = "MV Studio Pro";
 const DEFAULT_DESCRIPTION =
-  "AI 驱动的一站式视频创作平台 — 视频PK评分、虚拟偶像批量制作、视觉特效、多平台发布策略一站式解决方案";
+  "AI 驱动的一站式视频创作平台 — 爆款视频分析、平台趋势雷达、影视级全自动产线、爆款二创解构引擎";
 const DEFAULT_KEYWORDS =
-  "视频制作,音乐视频,AI视频,虚拟偶像,视觉特效,视频PK评分,发布策略,抖音,B站,小红书,视频号,短视频,MV Studio Pro";
+  "视频制作,AI视频,爆款分析,平台趋势,成长营,创作者工具,抖音,小红书,短视频,MV Studio Pro";
 const DEFAULT_OG_IMAGE =
   "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/FlXkerfdYuPKPPqg.png";
 const SITE_URL = "https://mvstudiopro.com";

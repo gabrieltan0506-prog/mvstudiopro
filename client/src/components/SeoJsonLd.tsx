@@ -39,7 +39,7 @@ export function SeoJsonLd() {
     name: SITE_NAME,
     applicationCategory: "MultimediaApplication",
     operatingSystem: "Web, iOS, Android",
-    description: "AI 驱动的一站式视频创作平台 — 视频PK评分、虚拟偶像批量制作、视觉特效、多平台发布策略一站式解决方案",
+    description: "AI 驱动的一站式视频创作平台 — 爆款视频分析、平台趋势雷达、影视级全自动产线、爆款二创解构引擎",
     offers: {
       "@type": "Offer",
       price: "14.99",
@@ -47,7 +47,7 @@ export function SeoJsonLd() {
     },
     featureList: [
       "AI视频PK评分",
-      "虚拟偶像批量生成",
+      "影视级视频生成",
       "视觉特效滤镜",
       "多平台发布策略",
       "精华视频展厅",
