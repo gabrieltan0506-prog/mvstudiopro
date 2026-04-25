@@ -102,7 +102,7 @@ export default function VoiceInputButton({
       onClick={handleClick}
       disabled={disabled || status === "processing"}
       title={title}
-      className={`inline-flex items-center justify-center rounded-lg border p-1.5 transition-all duration-200 disabled:opacity-40 ${colorMap[status]} ${className}`}
+      className={`inline-flex items-center justify-center rounded-xl border p-2.5 transition-all duration-200 disabled:opacity-40 ${colorMap[status]} ${className}`}
     >
       {status === "processing" ? (
         <Loader2 size={size} className="animate-spin" />

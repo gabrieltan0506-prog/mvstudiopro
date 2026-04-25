@@ -934,7 +934,7 @@ export default function WorkflowNodes() {
             <VoiceInputButton
               onTranscript={(t) => setPrompt((prev) => prev ? prev + " " + t : t)}
               lang="zh-CN"
-              size={15}
+              size={28}
             />
           </div>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white outline-none" />

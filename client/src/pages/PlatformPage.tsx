@@ -2159,7 +2159,7 @@ export default function PlatformPage() {
                         <VoiceInputButton
                           onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
                           lang="zh-CN"
-                          size={16}
+                          size={28}
                         />
                       </div>
                     </div>
