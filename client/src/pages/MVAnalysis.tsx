@@ -2059,7 +2059,7 @@ export default function MVAnalysisPage() {
               }));
               const { jobId } = await createJob({
                 type: "video",
-                userId: "",
+                userId: user?.id ? String(user.id) : "",
                 input: {
                   action: "growth_analyze_video",
                   params: {
