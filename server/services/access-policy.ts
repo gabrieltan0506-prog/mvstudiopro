@@ -1,7 +1,6 @@
 const SUPERVISOR_EMAILS = new Set([
   "gabrieltan0506@gmail.com",
   "benjamintan0506@163.com",
-  "benjamintan0318@gmail.com",
 ]);
 
 function normalizeEmail(email: string | null | undefined): string {
