@@ -10,10 +10,10 @@ type ToolCard = {
 };
 
 const cards: ToolCard[] = [
-  { zh: "创作者成长营", en: "Creator Growth Camp", desc: "上传视频或图文，生成商业战略、爆款选题与导演级分镜；商业成长（GROWTH）与二次创作（REMIX）双模式", price: "内测功能", pro: true, href: "/creator-growth-camp" },
-  { zh: "二创中心", en: "Remix / 二次创作", desc: "图、文、视频等素材皆可：结构拆解、选题与分镜，输出可落地的二次创作方案（同「二次创作中心」入口）", price: "内测功能", pro: true, href: "/creator-growth-camp/premium-remix" },
-  { zh: "平台趋势分析", en: "Platform Trend Analysis", desc: "小红书、抖音、B站、快手平台数据洞察，含 7 天发布计划与流量承接建议", price: "内测功能", pro: true, href: "/creator-growth-camp/platform" },
-  { zh: "节点式工作流", en: "Workflow Nodes", desc: "可视化节点画布，串接分镜生成、AI 影片、BGM 与发布动作，一键执行完整创作流程", price: "内测功能", pro: true, href: "/workflow-nodes" },
+  { zh: "IP 战略指挥室", en: "IP Strategy Hub", desc: "丢掉低效的头脑风暴。上传竞品或灵感碎片，AI 瞬间为您输出万字商业战略、精准爆款选题库与导演级机位分镜。", price: "公测功能", pro: true, href: "/creator-growth-camp" },
+  { zh: "爆款解构引擎", en: "Viral Remix Engine", desc: "万物皆可爆改。一键输入对标爆款，精准拆解其底层爆火逻辑，为您重塑生成极具个人 IP 风格的独家二创落地脚本。", price: "公测功能", pro: true, href: "/creator-growth-camp/premium-remix" },
+  { zh: "全网流量雷达", en: "Trend Radar", desc: "告别盲目自嗨。实时捕捉小红书、抖音等主流平台最新流量风向，并为您量身定制快速起号、发布计划与精准流量承接策略。", price: "公测功能", pro: true, href: "/creator-growth-camp/platform" },
+  { zh: "工业级全自动产线", en: "Auto-Pilot Workflow", desc: "将繁琐步骤降维打击。可视化无缝串联 AI 脚本、Veo 顶级分镜、Suno 配乐与语音合成。点击执行，喝杯咖啡坐等成片。", price: "公测功能", pro: true, href: "/workflow-nodes" },
 ];
 
 export default function HomeTools() {

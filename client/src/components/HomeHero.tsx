@@ -247,21 +247,21 @@ export default function HomeHero() {
               </div>
 
               <div style={{ fontSize: 42, fontWeight: 900, lineHeight: 1.12, color: "white", marginTop: 18 }}>
-                一站式完成
+                从爆款洞察到大片生成，
                 <br />
-                图像、视频、音乐与分析
+                一个人就是一个顶配影视工作室。
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                内测阶段开放多项核心功能，帮助创作者快速完成内容策略、平台洞察、二次创作与工作流落地。
+                深度融合谷歌顶级AI逻辑大脑与 Veo 3.1 影院级视觉。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
               </div>
 
               <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
                 {[
-                  { label: "创作者成长营", desc: "上传内容 → 商业战略 + 爆款选题 + 导演分镜", href: "/creator-growth-camp" },
-                  { label: "二创中心", desc: "图/文/视频 · 拆解结构、选题与分镜级方案（REMIX）", href: "/creator-growth-camp/premium-remix" },
-                  { label: "平台趋势分析", desc: "平台数据洞察 + 7 天发布计划", href: "/creator-growth-camp/platform" },
-                  { label: "节点式工作流", desc: "可视化节点画布，一键执行完整创作流程", href: "/workflow-nodes" },
+                  { label: "IP 战略指挥室", desc: "上传竞品或灵感碎片，AI 输出万字商业战略与导演级分镜", href: "/creator-growth-camp" },
+                  { label: "爆款解构引擎", desc: "一键拆解对标爆款底层逻辑，重塑个人 IP 风格二创脚本", href: "/creator-growth-camp/premium-remix" },
+                  { label: "全网流量雷达", desc: "实时捕捉主流平台流量风向，量身定制起号与发布策略", href: "/creator-growth-camp/platform" },
+                  { label: "工业级全自动产线", desc: "可视化串联 AI 脚本、Veo 分镜、Suno 配乐，一键坐等成片", href: "/workflow-nodes" },
                 ].map((item) => (
                   <a
                     key={item.label}
@@ -295,7 +295,7 @@ export default function HomeHero() {
                   lineHeight: 1.7,
                 }}
               >
-                内测阶段限量开放，持有内测码的用户可解锁完整功能。
+                公测阶段现已开放，持有邀请码的用户可解锁完整功能。
               </div>
             </div>
 
