@@ -133,6 +133,17 @@ async function sendViaResendHttp(params: {
   if (error) throw new Error(`Resend API error: ${error.message}`);
 }
 
+export async function sendSimpleMail(params: { to: string; subject: string; text: string; html?: string }): Promise<void> {
+  if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
+    await sendViaResendHttp({ from: String(process.env.RESEND_FROM), ...params });
+    return;
+  }
+  const config = getConfig();
+  if (config.host === "console") { console.log(`[mail] to=${params.to} subject=${params.subject}`); return; }
+  const transporter = createTransport(config);
+  await transporter.sendMail({ from: config.from, ...params });
+}
+
 export async function sendOtpMail(email: string, otp: string): Promise<void> {
   // 優先使用 Resend HTTP API（不受 SMTP 端口封鎖影響）
   if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {

@@ -295,7 +295,7 @@ export default function HomeHero() {
                   lineHeight: 1.7,
                 }}
               >
-                公测阶段现已开放，持有邀请码的用户可解锁完整功能。
+                现在为内测阶段，可申请邀请码。
               </div>
             </div>
 
