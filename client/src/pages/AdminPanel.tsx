@@ -41,7 +41,7 @@ export default function AdminPanel() {
   const [verificationActingUserId, setVerificationActingUserId] = useState<number | null>(null);
 
   const isAdminOrSupervisor = isSupervisorUrl || (isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"));
-  const isAdminOnly = isAuthenticated && user?.role === "admin";
+  const isAdminOnly = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
 
   // ── 所有 hooks 必須在 conditional return 之前 ──
   const myCodesList = trpc.betaCode.listMine.useQuery(undefined, { enabled: isAdminOrSupervisor });

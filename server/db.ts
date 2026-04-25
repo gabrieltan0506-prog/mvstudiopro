@@ -349,17 +349,17 @@ export async function getAdminStats(): Promise<AdminStats> {
 
   const usersByRole: Record<string, number> = {};
   for (const row of roleRows) {
-    usersByRole[String(row.role)] = row.c;
+    usersByRole[String(row.role)] = Number(row.c);
   }
 
   return {
-    totalUsers: userCount?.count ?? 0,
-    totalTeams: teamCount?.count ?? 0,
-    totalBetaQuotas: betaCount?.count ?? 0,
-    dau: dauRow?.c ?? 0,
-    wau7: wauRow?.c ?? 0,
-    mau30: mauRow?.c ?? 0,
-    newUsersToday: newTodayRow?.c ?? 0,
+    totalUsers: Number(userCount?.count ?? 0),
+    totalTeams: Number(teamCount?.count ?? 0),
+    totalBetaQuotas: Number(betaCount?.count ?? 0),
+    dau: Number(dauRow?.c ?? 0),
+    wau7: Number(wauRow?.c ?? 0),
+    mau30: Number(mauRow?.c ?? 0),
+    newUsersToday: Number(newTodayRow?.c ?? 0),
     usersByRole,
   };
 }
