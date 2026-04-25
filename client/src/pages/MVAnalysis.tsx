@@ -1621,10 +1621,7 @@ export default function MVAnalysisPage() {
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
   const [analysisTranscript, setAnalysisTranscript] = useState("");
   const [analyzedVideoUrl, setAnalyzedVideoUrl] = useState("");
-  const [debugMode, setDebugMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
-  });
+  const [debugMode, setDebugMode] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
   const [activeDashboardPanel, setActiveDashboardPanel] = useState("readiness");
   const [selectedComparePlatform, setSelectedComparePlatform] = useState("");

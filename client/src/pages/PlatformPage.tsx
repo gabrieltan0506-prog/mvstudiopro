@@ -393,10 +393,7 @@ function TopicImageGenerator({
 
 export default function PlatformPage() {
   const [supervisorAccess] = useState(() => hasSupervisorAccess());
-  const [debugMode, setDebugMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
-  });
+  const [debugMode, setDebugMode] = useState(false);
   const { isAuthenticated, loading, user } = useAuth({
     autoFetch: !supervisorAccess,
     redirectOnUnauthenticated: !supervisorAccess,
