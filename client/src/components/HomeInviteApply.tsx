@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { trpc } from "../_core/trpc";
+import { trpc } from "@/lib/trpc";
 import { Send, CheckCircle, Loader2 } from "lucide-react";
 
 export default function HomeInviteApply() {
