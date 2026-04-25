@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
 
@@ -229,12 +230,8 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-function isSupervisorSession() {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("mvs-supervisor-access") === "1";
-}
-
 export default function WorkflowStoryboardToVideo() {
+  const { user } = useAuth();
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [workflow, setWorkflow] = useState<any>(null);
   const [stepStates, setStepStates] = useState<Record<MainStepKey, StepState>>(INITIAL_STEP_STATES);
@@ -270,7 +267,7 @@ export default function WorkflowStoryboardToVideo() {
   const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null);
   const [renderStillWarningScene, setRenderStillWarningScene] = useState<number | null>(null);
   const [debugMode, setDebugMode] = useState(false);
-  const supervisorAccess = isSupervisorSession();
+  const supervisorAccess = user?.role === "supervisor" || user?.role === "admin";
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
 

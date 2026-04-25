@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import Navbar from "@/components/Navbar";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
@@ -267,19 +268,15 @@ const OP_CREDIT_STEP: Record<string, { step: StepKey; getQuantity?: (body: Recor
   workflowrenderfinalvideo:          { step: "final_render" },
 };
 
-function isSupervisorSession() {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("mvs-supervisor-access") === "1";
-}
-
 export default function WorkflowNodes() {
+  const { user } = useAuth();
   const [selected, setSelected] = useState<string>("prompt");
   const [workflowId, setWorkflowId] = useState<string>("");
   const [workflowIdInput, setWorkflowIdInput] = useState<string>("");
   const [workflow, setWorkflow] = useState<any>(null);
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [debugMode, setDebugMode] = useState(false);
-  const supervisorAccess = isSupervisorSession();
+  const supervisorAccess = user?.role === "supervisor" || user?.role === "admin";
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
