@@ -3,6 +3,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { readGrowthHandoff } from "@/lib/growthHandoff";
 import Navbar from "@/components/Navbar";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import VoiceInputButton from "@/components/VoiceInputButton";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -928,7 +929,14 @@ export default function WorkflowNodes() {
     return (
       <div className="space-y-4">
         <div>
-          <div className="mb-2 text-sm font-medium text-white/80">创作提示</div>
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-medium text-white/80">创作提示</span>
+            <VoiceInputButton
+              onTranscript={(t) => setPrompt((prev) => prev ? prev + " " + t : t)}
+              lang="zh-CN"
+              size={15}
+            />
+          </div>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white outline-none" />
         </div>
         <div className="grid gap-3 md:grid-cols-2">

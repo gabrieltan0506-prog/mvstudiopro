@@ -58,6 +58,7 @@ import {
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
+import VoiceInputButton from "@/components/VoiceInputButton";
 
 const SUPERVISOR_ACCESS_KEY = "mvs-supervisor-access";
 
@@ -500,11 +501,27 @@ export default function PlatformPage() {
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("平台分析 PDF 已开始下载，快照已保存至「我的作品」");
-        // Save snapshot record (GMT+8 title)
+        // Save snapshot record (GMT+8 title) with summary content
         const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const summaryLines: string[] = [];
+        if (platformDashboard?.headline) summaryLines.push(platformDashboard.headline);
+        if (platformDashboard?.subheadline) summaryLines.push(platformDashboard.subheadline);
+        if (platformDashboard?.hotTopics?.length) {
+          summaryLines.push("\n🔥 热门趋势");
+          platformDashboard.hotTopics.slice(0, 5).forEach((t: any) => {
+            summaryLines.push(`• ${t.title || t.topic || t}`);
+          });
+        }
+        if (platformDashboard?.platformMenu?.length) {
+          summaryLines.push("\n📊 平台分析");
+          platformDashboard.platformMenu.slice(0, 4).forEach((p: any) => {
+            summaryLines.push(`• ${p.label || p.name || p}`);
+          });
+        }
         recordSnapshotMutation.mutate({
           analysisType: "platform",
           title: `平台趨勢分析 ${gmt8Label}`,
+          summary: summaryLines.join("\n").slice(0, 1800),
           analysisDate: new Date().toISOString(),
         });
       } catch { toast.error("PDF 下载时出错，请重试"); }
@@ -2131,12 +2148,21 @@ export default function PlatformPage() {
 
                 <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_auto]">
                   <div className="flex flex-col gap-2">
-                    <textarea
-                      value={question}
-                      onChange={(event) => setQuestion(event.target.value)}
-                      placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
-                      className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                    />
+                    <div className="relative">
+                      <textarea
+                        value={question}
+                        onChange={(event) => setQuestion(event.target.value)}
+                        placeholder="例如：如果我现在先做小红书，应该先做图文还是视频？为什么？"
+                        className="min-h-[128px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                      />
+                      <div className="absolute right-3 top-3">
+                        <VoiceInputButton
+                          onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
+                          lang="zh-CN"
+                          size={16}
+                        />
+                      </div>
+                    </div>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input

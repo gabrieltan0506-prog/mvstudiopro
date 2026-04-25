@@ -2,7 +2,7 @@ import React from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { formatDateGMT8 } from "@/lib/utils";
-import { Image as ImageIcon, Video, Layers, Music, Box, FolderOpen, ArrowRight } from "lucide-react";
+import { Image as ImageIcon, Video, Layers, Music, Box, FolderOpen, ArrowRight, FileText, BarChart2 } from "lucide-react";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   idol_image: ImageIcon,
@@ -26,6 +26,16 @@ const TYPE_LABELS: Record<string, string> = {
   kling_lipsync: "對嘴",
   kling_motion: "動作",
   storyboard: "腳本",
+};
+
+const SNAPSHOT_GRADIENTS: Record<string, string> = {
+  growth_camp: "linear-gradient(135deg, #3b1f6e 0%, #1a0a35 100%)",
+  platform: "linear-gradient(135deg, #0c3460 0%, #071528 100%)",
+};
+
+const SNAPSHOT_LABELS: Record<string, string> = {
+  growth_camp: "成長營分析",
+  platform: "平台趨勢分析",
 };
 
 export default function HomeMyWorks() {
@@ -74,37 +84,74 @@ export default function HomeMyWorks() {
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 14 }}>
           {items.map((item: any) => {
+            const isSnapshot = item.metadata?.isSnapshot === true;
+            const analysisType: string = item.metadata?.analysisType ?? "growth_camp";
+            const summary: string = item.metadata?.summary ?? "";
+            const snapshotLabel = SNAPSHOT_LABELS[analysisType] ?? "分析快照";
+            const snapshotGrad = SNAPSHOT_GRADIENTS[analysisType] ?? SNAPSHOT_GRADIENTS.growth_camp;
+
             const Icon = TYPE_ICONS[item.type] ?? FolderOpen;
             const label = TYPE_LABELS[item.type] ?? item.type;
             const isVideo = item.type?.includes("video") || item.type?.includes("lipsync") || item.type?.includes("motion");
             const thumb = item.thumbnailUrl || item.outputUrl;
-            return (
+            const href = isSnapshot ? `/my-works/${item.id}` : undefined;
+
+            const cardContent = (
               <div
-                key={item.id}
                 style={{
                   background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                  borderRadius: 12, overflow: "hidden", position: "relative", cursor: "default",
-                  transition: "border-color 0.2s",
+                  borderRadius: 12, overflow: "hidden", position: "relative",
+                  cursor: isSnapshot ? "pointer" : "default",
+                  transition: "border-color 0.2s, transform 0.15s",
+                  textDecoration: "none",
                 }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = "rgba(139,92,246,0.4)")}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)")}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = "rgba(139,92,246,0.5)";
+                  if (isSnapshot) e.currentTarget.style.transform = "translateY(-2px)";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
               >
-                {/* 縮圖 */}
-                <div style={{ width: "100%", aspectRatio: "1/1", background: "rgba(0,0,0,0.3)", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {thumb ? (
-                    <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    <Icon size={36} color="rgba(167,139,250,0.4)" />
-                  )}
-                  {isVideo && (
-                    <div style={{ position: "absolute", top: 6, right: 6, background: "rgba(239,68,68,0.85)", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#fff", fontWeight: 700 }}>
-                      請下載
+                {isSnapshot ? (
+                  /* ── 分析快照卡片 ── */
+                  <div style={{ width: "100%", aspectRatio: "1/1", background: snapshotGrad, position: "relative", padding: "14px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.12)", borderRadius: 6, padding: "2px 7px", fontSize: 9, color: "rgba(255,255,255,0.75)", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 8 }}>
+                        {analysisType === "platform"
+                          ? <BarChart2 size={9} />
+                          : <FileText size={9} />}
+                        {snapshotLabel}
+                      </div>
+                      {summary && (
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical" as const }}>
+                          {summary.slice(0, 120)}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div style={{ position: "absolute", bottom: 5, left: 6, background: "rgba(0,0,0,0.6)", borderRadius: 4, padding: "2px 7px", fontSize: 10, color: "rgba(255,255,255,0.85)" }}>
-                    {label}
+                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
+                      點擊查看完整報告 →
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* ── 一般創作縮圖 ── */
+                  <div style={{ width: "100%", aspectRatio: "1/1", background: "rgba(0,0,0,0.3)", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {thumb ? (
+                      <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <Icon size={36} color="rgba(167,139,250,0.4)" />
+                    )}
+                    {isVideo && (
+                      <div style={{ position: "absolute", top: 6, right: 6, background: "rgba(239,68,68,0.85)", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#fff", fontWeight: 700 }}>
+                        請下載
+                      </div>
+                    )}
+                    <div style={{ position: "absolute", bottom: 5, left: 6, background: "rgba(0,0,0,0.6)", borderRadius: 4, padding: "2px 7px", fontSize: 10, color: "rgba(255,255,255,0.85)" }}>
+                      {label}
+                    </div>
+                  </div>
+                )}
                 {/* 資訊 */}
                 <div style={{ padding: "8px 10px" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -116,6 +163,10 @@ export default function HomeMyWorks() {
                 </div>
               </div>
             );
+
+            return isSnapshot
+              ? <a key={item.id} href={href} style={{ textDecoration: "none", display: "block" }}>{cardContent}</a>
+              : <div key={item.id}>{cardContent}</div>;
           })}
         </div>
       )}

@@ -68,6 +68,7 @@ import {
   YAxis,
 } from "recharts";
 import { toast } from "sonner";
+import VoiceInputButton from "@/components/VoiceInputButton";
 
 type AnalysisResult = {
   mode?: "GROWTH" | "REMIX";
@@ -2249,12 +2250,31 @@ export default function MVAnalysisPage() {
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("分析页 PDF 已开始下载，快照已保存至「我的作品」");
-        // Save snapshot record (GMT+8 title)
+        // Save snapshot record with richer summary
         const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const a = analysis as any;
+        const summaryParts: string[] = [];
+        if (a?.premiumContent?.summary) summaryParts.push(a.premiumContent.summary);
+        if (a?.realityCheck) summaryParts.push(`\n📌 现实校验\n${a.realityCheck}`);
+        if (a?.reverseEngineering?.hookStrategy) summaryParts.push(`\n🎯 钩子策略\n${a.reverseEngineering.hookStrategy}`);
+        if (a?.reverseEngineering?.commercialLogic) summaryParts.push(`\n💰 商业逻辑\n${a.reverseEngineering.commercialLogic}`);
+        if (a?.premiumContent?.topics?.length) {
+          summaryParts.push(`\n📋 内容方向`);
+          (a.premiumContent.topics as any[]).slice(0, 4).forEach((t: any) => {
+            summaryParts.push(`• ${t.title}${t.contentBrief ? ": " + t.contentBrief.slice(0, 60) : ""}`);
+          });
+        }
+        const scores = a?.platformScores;
+        if (scores) {
+          const lines = Object.entries(scores as Record<string, number>)
+            .sort((x, y) => (y[1] as number) - (x[1] as number))
+            .map(([k, v]) => `${k} ${v}分`);
+          if (lines.length) summaryParts.push(`\n📊 平台评分: ${lines.join(" · ")}`);
+        }
         recordSnapshotMutation.mutate({
           analysisType: "growth_camp",
           title: `成長營分析 ${gmt8Label}`,
-          summary: (analysis as any)?.summary?.slice(0, 300) ?? "",
+          summary: summaryParts.join("\n").slice(0, 1800),
           analysisDate: new Date().toISOString(),
         });
       } catch (err) {
@@ -3245,13 +3265,22 @@ export default function MVAnalysisPage() {
                 <label className="mb-2 block text-sm font-semibold text-white/80">
                   业务背景 / 商业目标
                 </label>
-                <textarea
-                  value={context}
-                  onChange={(e) => setContext(e.target.value)}
-                  rows={4}
-                  placeholder="例如：我是形象穿搭美妆博主，想知道这支素材能承接什么商业价值，以及该先发哪个平台。"
-                  className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white placeholder:text-white/30"
-                />
+                <div className="relative">
+                  <textarea
+                    value={context}
+                    onChange={(e) => setContext(e.target.value)}
+                    rows={4}
+                    placeholder="例如：我是形象穿搭美妆博主，想知道这支素材能承接什么商业价值，以及该先发哪个平台。"
+                    className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 pr-12 text-sm text-white placeholder:text-white/30"
+                  />
+                  <div className="absolute right-3 top-3">
+                    <VoiceInputButton
+                      onTranscript={(t) => setContext((prev) => prev ? prev + " " + t : t)}
+                      lang="zh-CN"
+                      size={16}
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="mt-5">
