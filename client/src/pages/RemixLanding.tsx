@@ -61,7 +61,7 @@ export default function RemixLanding() {
         fontFamily: "system-ui,sans-serif",
       }}
     >
-      {/* 頂部導航 */}
+      {/* 顶部导航 */}
       <nav
         style={{
           display: "flex",

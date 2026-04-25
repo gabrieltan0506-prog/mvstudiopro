@@ -5,8 +5,8 @@ import { ArrowLeft, FileText, BarChart2, Calendar, RefreshCw } from "lucide-reac
 import { formatDateGMT8 } from "@/lib/utils";
 
 const ANALYSIS_LABELS: Record<string, string> = {
-  growth_camp: "成長營分析",
-  platform: "平台趨勢分析",
+  growth_camp: "成长营分析",
+  platform: "平台趋势分析",
 };
 
 const ANALYSIS_COLORS: Record<string, { from: string; to: string; badge: string }> = {
@@ -37,7 +37,7 @@ export default function AnalysisView() {
     return (
       <div className="min-h-screen bg-[#090915] flex flex-col items-center justify-center gap-4 text-white/50">
         <FileText className="w-12 h-12 opacity-30" />
-        <p>找不到此分析記錄</p>
+        <p>找不到此分析记录</p>
         <button onClick={() => navigate("/my-works")} className="text-purple-400 text-sm underline">
           返回我的作品
         </button>
@@ -125,8 +125,8 @@ export default function AnalysisView() {
         ) : (
           <div className="rounded-xl border border-dashed border-white/15 py-16 text-center text-white/30">
             <FileText className="mx-auto mb-3 opacity-30" size={32} />
-            <p className="text-sm">此快照未保存分析摘要內容</p>
-            <p className="mt-1 text-xs opacity-60">請重新下載 PDF 以生成新的快照記錄</p>
+            <p className="text-sm">此快照未保存分析摘要内容</p>
+            <p className="mt-1 text-xs opacity-60">请重新下载 PDF 以生成新的快照记录</p>
           </div>
         )}
 

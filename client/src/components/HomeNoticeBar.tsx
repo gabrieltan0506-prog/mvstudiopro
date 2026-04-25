@@ -1,7 +1,7 @@
 import React from "react";
 
 /**
- * 首頂說明：試用包 / 未訂閱帳戶的水印與公平使用（防多郵箱濫用）
+ * 首顶说明：试用包 / 未订阅帐户的水印与公平使用（防多邮箱滥用）
  */
 export default function HomeNoticeBar() {
   return (

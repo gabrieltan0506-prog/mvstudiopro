@@ -1,5 +1,5 @@
 /**
- * Growth / MVAnalysis：AIM 音樂輪詢與下載共用邏輯（避免 MVAnalysis vs GrowthCamp 分叉、減少 0 字節 MP3）
+ * Growth / MVAnalysis：AIM 音乐轮询与下载共用逻辑（避免 MVAnalysis vs GrowthCamp 分叉、减少 0 字节 MP3）
  */
 
 export function getMusicClipsFromJobPayload(j: unknown): any[] {
@@ -36,7 +36,7 @@ function firstNonEmptyString(...candidates: unknown[]): string {
   return "";
 }
 
-/** 下載檔案優先使用專用 download URL，再退回串流/預覽 URL */
+/** 下载档案优先使用专用 download URL，再退回串流/预览 URL */
 export function clipToGeneratedSong(clip: any, idx: number): {
   id: string;
   title: string;
@@ -68,7 +68,7 @@ export function clipToGeneratedSong(clip: any, idx: number): {
   };
 }
 
-/** 後端 audio job 的 output.songs（或 AIM clip）統一成前端結構 */
+/** 后端 audio job 的 output.songs（或 AIM clip）统一成前端结构 */
 export function normalizeSongsFromAudioJobOutput(songs: unknown): Array<{
   id: string;
   title: string;

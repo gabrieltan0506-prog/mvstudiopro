@@ -98,7 +98,7 @@ export default function HomeChangelog() {
     <section style={{ width: "100%", padding: "0 0 64px" }}>
       <style>{TICKER_STYLE}</style>
 
-      {/* ── 標題列 ── */}
+      {/* ── 标题列 ── */}
       <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px 20px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -113,7 +113,7 @@ export default function HomeChangelog() {
         </div>
       </div>
 
-      {/* ── 滾動更新跑馬燈 ── */}
+      {/* ── 滚动更新跑马灯 ── */}
       <div style={{
         width: "100%", overflow: "hidden",
         background: "rgba(255,255,255,0.025)",
@@ -174,7 +174,7 @@ export default function HomeChangelog() {
                   flexDirection: "column",
                   gap: 12,
                 }}>
-                  {/* 頂部：圖標 + Badge */}
+                  {/* 顶部：图标 + Badge */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <div style={{
                       width: 40, height: 40, borderRadius: 10,
@@ -214,7 +214,7 @@ export default function HomeChangelog() {
                     ))}
                   </div>
 
-                  {/* 進入連結 */}
+                  {/* 进入连结 */}
                   <div style={{
                     display: "flex", alignItems: "center", gap: 4,
                     fontSize: 12, fontWeight: 600,

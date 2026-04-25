@@ -17,15 +17,15 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
 };
 
 const TYPE_LABELS: Record<string, string> = {
-  idol_image: "圖片",
-  kling_image: "圖片",
+  idol_image: "图片",
+  kling_image: "图片",
   idol_3d: "3D",
-  music: "音樂",
-  video: "視頻",
-  kling_video: "視頻",
-  kling_lipsync: "對嘴",
-  kling_motion: "動作",
-  storyboard: "腳本",
+  music: "音乐",
+  video: "视频",
+  kling_video: "视频",
+  kling_lipsync: "对嘴",
+  kling_motion: "动作",
+  storyboard: "脚本",
 };
 
 const SNAPSHOT_GRADIENTS: Record<string, string> = {
@@ -34,8 +34,8 @@ const SNAPSHOT_GRADIENTS: Record<string, string> = {
 };
 
 const SNAPSHOT_LABELS: Record<string, string> = {
-  growth_camp: "成長營分析",
-  platform: "平台趨勢分析",
+  growth_camp: "成长营分析",
+  platform: "平台趋势分析",
 };
 
 export default function HomeMyWorks() {
@@ -52,7 +52,7 @@ export default function HomeMyWorks() {
 
   return (
     <section style={{ padding: "60px 0 20px", maxWidth: 1100, margin: "0 auto", paddingLeft: 24, paddingRight: 24 }}>
-      {/* 標題列 */}
+      {/* 标题列 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <FolderOpen size={22} color="#a78bfa" />
@@ -73,13 +73,13 @@ export default function HomeMyWorks() {
 
       {/* 作品格 */}
       {creationsQuery.isLoading ? (
-        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", padding: "40px 0" }}>載入中…</div>
+        <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 14, textAlign: "center", padding: "40px 0" }}>载入中…</div>
       ) : items.length === 0 ? (
         <div style={{
           border: "1.5px dashed rgba(139,92,246,0.25)", borderRadius: 16, padding: "48px 20px",
           textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 14,
         }}>
-          還沒有作品，去生成第一件吧！
+          还没有作品，去生成第一件吧！
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 14 }}>
@@ -131,11 +131,11 @@ export default function HomeMyWorks() {
                       )}
                     </div>
                     <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
-                      點擊查看完整報告 →
+                      点击查看完整报告 →
                     </div>
                   </div>
                 ) : (
-                  /* ── 一般創作縮圖 ── */
+                  /* ── 一般创作缩图 ── */
                   <div style={{ width: "100%", aspectRatio: "1/1", background: "rgba(0,0,0,0.3)", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {thumb ? (
                       <img src={thumb} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -144,7 +144,7 @@ export default function HomeMyWorks() {
                     )}
                     {isVideo && (
                       <div style={{ position: "absolute", top: 6, right: 6, background: "rgba(239,68,68,0.85)", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#fff", fontWeight: 700 }}>
-                        請下載
+                        请下载
                       </div>
                     )}
                     <div style={{ position: "absolute", bottom: 5, left: 6, background: "rgba(0,0,0,0.6)", borderRadius: 4, padding: "2px 7px", fontSize: 10, color: "rgba(255,255,255,0.85)" }}>
@@ -152,7 +152,7 @@ export default function HomeMyWorks() {
                     </div>
                   </div>
                 )}
-                {/* 資訊 */}
+                {/* 资讯 */}
                 <div style={{ padding: "8px 10px" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {item.title || "未命名"}

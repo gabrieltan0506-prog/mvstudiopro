@@ -161,7 +161,7 @@ export default function Pricing() {
                   >
                     Credits
                   </span>
-                  {/* 价格：字縮小一半 */}
+                  {/* 价格：字缩小一半 */}
                   <span
                     className="font-extrabold text-white leading-none mt-2"
                     style={{ fontSize: "3.2vw" }}

@@ -149,7 +149,7 @@ function OtpFlow() {
     try {
       const res = await verifyEmailOtp(email.trim(), otp.trim());
       if (res.ok) {
-        // 首次登入後導到個人中心，方便設定密碼
+        // 首次登入后导到个人中心，方便设定密码
         window.location.href = "/dashboard";
       } else {
         setErr(res.error || "验证失败，请重试");
@@ -175,7 +175,7 @@ function OtpFlow() {
         <form onSubmit={handleSendOtp} style={{ display: "grid", gap: 14 }}>
           <div>
             <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
-              郵箱地址
+              邮箱地址
             </label>
             <input
               type="email"
@@ -211,12 +211,12 @@ function OtpFlow() {
                 />
               ) : (
                 <div style={{ height: 44, width: 110, borderRadius: 10, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-                  加載中…
+                  加载中…
                 </div>
               )}
             </div>
             <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.35)", cursor: "pointer" }} onClick={loadCaptcha}>
-              看不清？点擊图片刷新
+              看不清？点击图片刷新
             </div>
           </div>
 
@@ -272,7 +272,7 @@ function OtpFlow() {
   );
 }
 
-// ─── 郵箱+密碼 登入流程 ─────────────────────────────────────────────────────
+// ─── 邮箱+密码 登入流程 ─────────────────────────────────────────────────────
 
 function PasswordFlow() {
   const [email, setEmail] = useState("");
@@ -299,12 +299,12 @@ function PasswordFlow() {
   return (
     <form onSubmit={handleLogin} style={{ display: "grid", gap: 14 }}>
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.20)", color: "rgba(200,191,231,0.8)", fontSize: 12, lineHeight: 1.6 }}>
-        使用在「個人中心」設定的登錄密碼。如尚未設定，請先用驗證碼登錄再補設。
+        使用在「个人中心」设定的登录密码。如尚未设定，请先用验证码登录再补设。
       </div>
 
       <div>
         <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
-          郵箱地址
+          邮箱地址
         </label>
         <input
           type="email"
@@ -318,13 +318,13 @@ function PasswordFlow() {
 
       <div>
         <label style={{ display: "block", color: "rgba(255,255,255,0.6)", fontSize: 12, marginBottom: 6, fontWeight: 700 }}>
-          登錄密碼
+          登录密码
         </label>
         <input
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="輸入登錄密碼"
+          placeholder="输入登录密码"
           autoComplete="current-password"
           style={inputStyle}
         />
@@ -333,17 +333,17 @@ function PasswordFlow() {
       {err && <div style={{ padding: "10px 12px", borderRadius: 10, background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.25)", color: "#fca5a5", fontSize: 13 }}>{err}</div>}
 
       <button type="submit" disabled={busy} style={{ ...btnPrimary, opacity: busy ? 0.7 : 1 }}>
-        {busy ? "登录中…" : "郵箱密碼登錄"}
+        {busy ? "登录中…" : "邮箱密码登录"}
       </button>
 
       <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
-        忘記密碼？切換到「驗證碼登錄」後重新驗證，再到個人中心重設密碼
+        忘记密码？切换到「验证码登录」后重新验证，再到个人中心重设密码
       </div>
     </form>
   );
 }
 
-// ─── 主頁面 ──────────────────────────────────────────────────────────────────
+// ─── 主页面 ──────────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
   const [mode, setMode] = useState<Mode>("otp");
@@ -377,7 +377,7 @@ export default function LoginPage() {
             MV Studio Pro
           </div>
           <div style={{ marginTop: 6, color: "rgba(255,255,255,0.5)", fontSize: 14 }}>
-            {mode === "otp" ? "驗證碼登錄 · 首次驗證即完成注冊" : "郵箱密碼登錄"}
+            {mode === "otp" ? "验证码登录 · 首次验证即完成注册" : "邮箱密码登录"}
           </div>
         </div>
 
@@ -409,7 +409,7 @@ export default function LoginPage() {
                 transition: "all 0.18s",
               }}
             >
-              {m === "otp" ? "驗證碼登錄" : "密碼登錄"}
+              {m === "otp" ? "验证码登录" : "密码登录"}
             </button>
           ))}
         </div>
@@ -418,7 +418,7 @@ export default function LoginPage() {
         {mode === "otp" ? <OtpFlow /> : <PasswordFlow />}
 
         <div style={{ marginTop: 24, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-          登錄即代表同意服務條款與隱私政策
+          登录即代表同意服务条款与隐私政策
         </div>
       </div>
     </div>

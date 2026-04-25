@@ -10,7 +10,7 @@ interface VoiceInputButtonProps {
   lang?: string;
   className?: string;
   size?: number;
-  /** append 模式：追加到現有文字；replace 模式：替換 */
+  /** append 模式：追加到现有文字；replace 模式：替换 */
   mode?: "append" | "replace";
   disabled?: boolean;
 }
@@ -77,7 +77,7 @@ export default function VoiceInputButton({
       type="button"
       onClick={handleClick}
       disabled={disabled || status === "processing"}
-      title={status === "listening" ? "點擊停止錄音" : "語音輸入（中文）"}
+      title={status === "listening" ? "点击停止录音" : "语音输入（中文）"}
       className={`inline-flex items-center justify-center rounded-lg border p-1.5 transition-all duration-200 disabled:opacity-40 ${colorMap[status]} ${className}`}
     >
       {status === "processing" ? (

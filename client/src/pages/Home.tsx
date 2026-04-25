@@ -13,7 +13,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeChangelog from "../components/HomeChangelog";
 
-// 以下 section 在正式版開放前暫時隱藏
+// 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
 // import HomeCreatorEco from "../components/HomeCreatorEco";
 // import HomePlans from "../components/HomePlans";

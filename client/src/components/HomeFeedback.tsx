@@ -58,27 +58,27 @@ export default function HomeFeedback() {
           >
             <Gift size={14} style={{ color: "#49e6ff" }} />
             <span style={{ fontSize: 12, fontWeight: 700, color: "#8cefff", letterSpacing: "0.14em", textTransform: "uppercase" }}>
-              用戶回饋
+              用户回馈
             </span>
           </div>
 
           <h2 style={{ fontSize: 30, fontWeight: 900, color: "#fff", lineHeight: 1.25, margin: "0 0 16px" }}>
-            說說你的想法，
+            说说你的想法，
             <br />
-            <span style={{ color: "#49e6ff" }}>送你 100 積分</span>
+            <span style={{ color: "#49e6ff" }}>送你 100 积分</span>
           </h2>
 
           <p style={{ fontSize: 15, color: "rgba(200,191,231,0.85)", lineHeight: 1.8, margin: 0 }}>
-            我們真心希望聽到你的使用感受。每一條被採納的建議都會為你帳戶發放
+            我们真心希望听到你的使用感受。每一条被采纳的建议都会为你帐户发放
             <strong style={{ color: "#fff" }}> 100 Credits</strong>，
-            可直接用於成長營分析、平台趨勢、節點工作流等所有功能。
+            可直接用于成长营分析、平台趋势、节点工作流等所有功能。
           </p>
 
           <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 12 }}>
             {[
-              "功能建議或 Bug 回報",
-              "使用體驗改進意見",
-              "行業洞察或內容需求",
+              "功能建议或 Bug 回报",
+              "使用体验改进意见",
+              "行业洞察或内容需求",
             ].map((item) => (
               <div key={item} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <CheckCircle size={16} style={{ color: "#49e6ff", flexShrink: 0 }} />
@@ -101,9 +101,9 @@ export default function HomeFeedback() {
               }}
             >
               <CheckCircle size={48} style={{ color: "#49e6ff", margin: "0 auto 16px" }} />
-              <p style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>感謝你的反饋！</p>
+              <p style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>感谢你的反馈！</p>
               <p style={{ fontSize: 14, color: "rgba(200,191,231,0.75)", margin: 0 }}>
-                我們已收到，若建議被採納將發放 100 Credits 至你的帳戶。
+                我们已收到，若建议被采纳将发放 100 Credits 至你的帐户。
               </p>
             </div>
           ) : !isAuthenticated ? (
@@ -118,7 +118,7 @@ export default function HomeFeedback() {
             >
               <MessageSquare size={40} style={{ color: "#8cefff", margin: "0 auto 16px" }} />
               <p style={{ fontSize: 15, color: "rgba(200,191,231,0.8)", margin: "0 0 20px" }}>
-                登入後即可提交回饋並獲得積分獎勵
+                登入后即可提交回馈并获得积分奖励
               </p>
               <a
                 href="/auth"
@@ -142,14 +142,14 @@ export default function HomeFeedback() {
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "rgba(140,239,255,0.8)", marginBottom: 6, letterSpacing: "0.08em" }}>
-                  標題
+                  标题
                 </label>
                 <input
                   type="text"
                   value={form.subject}
                   onChange={set("subject")}
                   maxLength={120}
-                  placeholder="例：希望支持批量導出"
+                  placeholder="例：希望支持批量导出"
                   style={{
                     width: "100%",
                     padding: "10px 14px",
@@ -166,14 +166,14 @@ export default function HomeFeedback() {
 
               <div>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "rgba(140,239,255,0.8)", marginBottom: 6, letterSpacing: "0.08em" }}>
-                  詳細描述
+                  详细描述
                 </label>
                 <textarea
                   value={form.message}
                   onChange={set("message")}
                   maxLength={4000}
                   rows={5}
-                  placeholder="請描述你的建議、問題或使用場景..."
+                  placeholder="请描述你的建议、问题或使用场景..."
                   style={{
                     width: "100%",
                     padding: "10px 14px",
@@ -213,12 +213,12 @@ export default function HomeFeedback() {
                 {submitMutation.isPending ? (
                   <><Loader2 size={16} className="animate-spin" /> 提交中…</>
                 ) : (
-                  <>提交回饋 · 獲取 100 積分 <Gift size={16} /></>
+                  <>提交回馈 · 获取 100 积分 <Gift size={16} /></>
                 )}
               </button>
 
               <p style={{ fontSize: 12, color: "rgba(140,130,180,0.6)", textAlign: "center", margin: 0 }}>
-                建議被採納後積分自動入帳，郵件通知
+                建议被采纳后积分自动入帐，邮件通知
               </p>
             </form>
           )}

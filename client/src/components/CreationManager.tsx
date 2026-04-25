@@ -274,11 +274,11 @@ export function CreationHistoryPanel({
       ) : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {/* 視頻下載提醒 */}
+            {/* 视频下载提醒 */}
             {items.some((item: any) => item.type?.includes("video") || item.type?.includes("kling")) && (
               <div className="col-span-full flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 mb-1">
                 <Download className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                <span>⚠️ 視頻文件較大且有過期時限，請及時下載保存到本地。圖片和腳本已永久保存在您的作品庫中。</span>
+                <span>⚠️ 视频文件较大且有过期时限，请及时下载保存到本地。图片和脚本已永久保存在您的作品库中。</span>
               </div>
             )}
 
@@ -342,7 +342,7 @@ export function CreationHistoryPanel({
                     {isVideo && (
                       <div className="absolute top-1 right-1 bg-blue-600/90 text-white text-[10px] px-1.5 py-0.5 rounded-full flex items-center space-x-0.5">
                         <Download className="h-2.5 w-2.5" />
-                        <span>請下載</span>
+                        <span>请下载</span>
                       </div>
                     )}
 

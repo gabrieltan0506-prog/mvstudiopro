@@ -200,7 +200,7 @@ type AnalysisResult = {
   followUpPrompt?: string;
 };
 
-/** 成長营專用：关键影格與视覺診斷（二次创作模式必須隱藏，避免與 remixVisualAnalysis 重疊） */
+/** 成长营专用：关键影格与视觉诊断（二次创作模式必须隐藏，避免与 remixVisualAnalysis 重叠） */
 function VisualAnalysisSection({
   analysis,
   visualKeyFrames,
@@ -2273,7 +2273,7 @@ export default function MVAnalysisPage() {
         }
         recordSnapshotMutation.mutate({
           analysisType: "growth_camp",
-          title: `成長營分析 ${gmt8Label}`,
+          title: `成长营分析 ${gmt8Label}`,
           summary: summaryParts.join("\n").slice(0, 1800),
           analysisDate: new Date().toISOString(),
         });
@@ -2291,7 +2291,7 @@ export default function MVAnalysisPage() {
     // Capture static DOM snapshot — strip heavy/non-print elements to slim payload
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
 
-    // 移除腳本
+    // 移除脚本
     clone.querySelectorAll("script").forEach((n) => n.remove());
 
     // 移除影片元素（src 可能非常大）
@@ -2300,10 +2300,10 @@ export default function MVAnalysisPage() {
     // 移除 iframe
     clone.querySelectorAll("iframe").forEach((n) => n.remove());
 
-    // 移除 print:hidden 元素（不会出现在 PDF，佔空間）
+    // 移除 print:hidden 元素（不会出现在 PDF，占空间）
     clone.querySelectorAll('[class*="print:hidden"]').forEach((n) => n.remove());
 
-    // 移除大型 base64 图片 src（> 50KB 的 data URI 替換为空）
+    // 移除大型 base64 图片 src（> 50KB 的 data URI 替换为空）
     clone.querySelectorAll("img").forEach((img) => {
       const src = img.getAttribute("src") || "";
       if (src.startsWith("data:") && src.length > 51200) {
@@ -2311,13 +2311,13 @@ export default function MVAnalysisPage() {
       }
     });
 
-    // 移除 blob: URL（影片縮图等）
+    // 移除 blob: URL（影片缩图等）
     clone.querySelectorAll("[src]").forEach((el) => {
       const src = el.getAttribute("src") || "";
       if (src.startsWith("blob:")) el.removeAttribute("src");
     });
 
-    // 移除互动性较强但 PDF 不需要的元件（上传區、input、按鈕群）
+    // 移除互动性较强但 PDF 不需要的元件（上传区、input、按钮群）
     clone.querySelectorAll('input, textarea, [data-pdf-exclude="true"]').forEach((n) => n.remove());
 
     const base = document.createElement("base");
@@ -3344,12 +3344,12 @@ export default function MVAnalysisPage() {
 
         {analysis ? (
           <div className="mt-8 rounded-[28px] border border-amber-500/30 bg-[#0f1a2c] p-6 space-y-4">
-            {/* 時效性提醒 */}
+            {/* 时效性提醒 */}
             <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-300">
               <span className="text-lg leading-none mt-0.5">⚡</span>
               <div>
-                <div className="font-semibold mb-0.5">分析結果具有時效性</div>
-                <div className="text-xs text-amber-200/80">平台數據每日更新，本次分析結果基於當前時間點的數據快照。建議立即下載 PDF，系統將同步保留一份快照紀錄在您的「我的作品」中。</div>
+                <div className="font-semibold mb-0.5">分析结果具有时效性</div>
+                <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析结果基于当前时间点的数据快照。建议立即下载 PDF，系统将同步保留一份快照纪录在您的「我的作品」中。</div>
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4070,7 +4070,7 @@ export default function MVAnalysisPage() {
             const _re = (pcRemix?.remixExpressionAnalysis ?? "").trim();
             const _rmp = (pcRemix?.musicPrompt ?? "").trim();
 
-            /* ====== 二次创作：量身选题 → 借鉴避坑视覺 → 專屬表达+配樂（标题硬編码）====== */
+            /* ====== 二次创作：量身选题 → 借鉴避坑视觉 → 专属表达+配乐（标题硬编码）====== */
             return (
               <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
                 <div className="flex items-center gap-3 text-[#ffcf92]">
@@ -4194,7 +4194,7 @@ export default function MVAnalysisPage() {
             );
           }
 
-          /* ====== 成長营：战略 → 执行版 → 核心选题 → 綜述 → 配樂（獨立區塊互不干擾） ====== */
+          /* ====== 成长营：战略 → 执行版 → 核心选题 → 综述 → 配乐（独立区块互不干扰） ====== */
           return (
             <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
               <div className="flex items-center gap-3 text-[#ffcf92]">

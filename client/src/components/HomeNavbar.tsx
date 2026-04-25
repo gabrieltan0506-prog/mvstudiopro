@@ -190,7 +190,7 @@ export default function HomeNavbar() {
                     </div>
                     {user.credits != null && (
                       <div style={{ marginTop: 4, fontSize: 11, color: "rgba(255,185,100,0.9)" }}>
-                        積分：{user.credits}
+                        积分：{user.credits}
                       </div>
                     )}
                   </div>
@@ -221,7 +221,7 @@ export default function HomeNavbar() {
                     style={{ display: "block", padding: "11px 14px", color: "rgba(255,255,255,0.82)", fontSize: 13, textDecoration: "none", fontWeight: 600 }}
                     onClick={() => setMenuOpen(false)}
                   >
-                    平台趨勢分析
+                    平台趋势分析
                   </a>
                   <a
                     href="/workflow-nodes"

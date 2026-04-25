@@ -43,7 +43,7 @@ export default function AdminPanel() {
   const isAdminOrSupervisor = isSupervisorUrl || (isAuthenticated && (user?.role === "admin" || user?.role === "supervisor"));
   const isAdminOnly = isAuthenticated && (user?.role === "admin" || user?.role === "supervisor");
 
-  // ── 所有 hooks 必須在 conditional return 之前 ──
+  // ── 所有 hooks 必须在 conditional return 之前 ──
   const myCodesList = trpc.betaCode.listMine.useQuery(undefined, { enabled: isAdminOrSupervisor });
   const { data: stats } = trpc.admin.stats.useQuery(undefined, { enabled: isAdminOnly });
   const { data: creditBreakdown } = trpc.admin.creditBreakdown.useQuery(undefined, { enabled: isAdminOnly });
@@ -111,7 +111,7 @@ export default function AdminPanel() {
     }
   };
 
-  // ── useEffect 必須在所有 conditional return 之前 ──
+  // ── useEffect 必须在所有 conditional return 之前 ──
   useEffect(() => {
     void fetchVerifications();
   }, [isAuthenticated, user?.role]);

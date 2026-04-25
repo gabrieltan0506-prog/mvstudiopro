@@ -19,15 +19,15 @@ export default function HomeRedeemCode() {
     setStatus("loading");
     try {
       const r = await redeemMut.mutateAsync({ code: code.trim() });
-      setMsg(r.message || "兌換成功！");
+      setMsg(r.message || "兑换成功！");
       setStatus("ok");
       setCode("");
-      // 同時刷新 tRPC auth.me 和 REST /api/me，確保積分即時顯示
+      // 同时刷新 tRPC auth.me 和 REST /api/me，确保积分即时显示
       await utils.auth.me.invalidate();
       await queryClient.invalidateQueries({ queryKey: ["api-me"] });
       refresh?.();
     } catch (e: any) {
-      setMsg(e.message || "兌換失敗，請確認邀請碼是否正確");
+      setMsg(e.message || "兑换失败，请确认邀请码是否正确");
       setStatus("err");
     }
   }
@@ -39,12 +39,12 @@ export default function HomeRedeemCode() {
         borderRadius: 16, padding: "20px 24px",
       }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: "#ff6b35", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-          🎁 兌換邀請碼
+          🎁 兑换邀请码
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             type="text"
-            placeholder="輸入邀請碼（如 ABCD-EFGH-IJKL）"
+            placeholder="输入邀请码（如 ABCD-EFGH-IJKL）"
             value={code}
             onChange={e => { setCode(e.target.value.toUpperCase()); setStatus("idle"); }}
             onKeyDown={e => e.key === "Enter" && handleRedeem()}
@@ -64,7 +64,7 @@ export default function HomeRedeemCode() {
               opacity: status === "loading" || !code.trim() ? 0.6 : 1, whiteSpace: "nowrap",
             }}
           >
-            {status === "loading" ? "兌換中…" : "兌換"}
+            {status === "loading" ? "兑换中…" : "兑换"}
           </button>
         </div>
         {msg && (

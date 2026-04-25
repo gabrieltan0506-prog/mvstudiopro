@@ -9,9 +9,9 @@ interface TrialWatermarkImageProps {
 }
 
 /**
- * 試用包圖片：
- * - 疊加對角線水印文字
- * - 右鍵禁止另存
+ * 试用包图片：
+ * - 叠加对角线水印文字
+ * - 右键禁止另存
  * - CSS 拖曳禁止
  */
 export default function TrialWatermarkImage({
@@ -46,7 +46,7 @@ export default function TrialWatermarkImage({
 
       {isTrial && (
         <>
-          {/* 全畫面透明遮罩阻止右鍵/拖曳 */}
+          {/* 全画面透明遮罩阻止右键/拖曳 */}
           <div
             style={{
               position: "absolute",
@@ -60,7 +60,7 @@ export default function TrialWatermarkImage({
             onDragStart={(e) => e.preventDefault()}
           />
 
-          {/* 對角線水印 */}
+          {/* 对角线水印 */}
           <div
             style={{
               position: "absolute",
@@ -70,7 +70,7 @@ export default function TrialWatermarkImage({
               overflow: "hidden",
             }}
           >
-            {/* 用 SVG 平鋪對角水印 */}
+            {/* 用 SVG 平铺对角水印 */}
             <svg
               width="100%"
               height="100%"
@@ -94,7 +94,7 @@ export default function TrialWatermarkImage({
                     fill="rgba(255,255,255,0.22)"
                     letterSpacing="1"
                   >
-                    試用版 · mvstudiopro
+                    试用版 · mvstudiopro
                   </text>
                 </pattern>
               </defs>
@@ -118,7 +118,7 @@ export default function TrialWatermarkImage({
                 userSelect: "none",
               }}
             >
-              試用版 · 僅供預覽
+              试用版 · 仅供预览
             </div>
           </div>
         </>

@@ -1,8 +1,8 @@
 import { trpc } from "@/lib/trpc";
 
 /**
- * 判斷當前用戶是否為試用包
- * 試用包需要對生成圖片加水印、禁止右鍵另存
+ * 判断当前用户是否为试用包
+ * 试用包需要对生成图片加水印、禁止右键另存
  */
 export function useIsTrialUser(): boolean {
   const { data } = trpc.usage.getUsageStats.useQuery(undefined, {

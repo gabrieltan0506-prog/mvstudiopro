@@ -140,26 +140,26 @@ export default function LayoutDashboard() {
         <div className="mx-4 mb-4 bg-[#1A1A1D] rounded-xl p-4 border border-white/10">
           <div className="flex items-center gap-2 mb-2">
             <Lock className="h-5 w-5 text-violet-400" />
-            <span className="text-sm font-semibold text-white">登錄密碼</span>
+            <span className="text-sm font-semibold text-white">登录密码</span>
             {loginPasswordStatus === undefined ? (
-              <span className="text-xs text-gray-500">檢查中…</span>
+              <span className="text-xs text-gray-500">检查中…</span>
             ) : hasLoginPassword ? (
-              <span className="text-xs text-emerald-400/90">已設置，可在此重置</span>
+              <span className="text-xs text-emerald-400/90">已设置，可在此重置</span>
             ) : (
-              <span className="text-xs text-amber-400/90">尚未設置，建議補設以便密碼登錄</span>
+              <span className="text-xs text-amber-400/90">尚未设置，建议补设以便密码登录</span>
             )}
           </div>
 
-          {/* 顯示綁定的郵箱 */}
+          {/* 显示绑定的邮箱 */}
           <div className="mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/8">
-            <span className="text-xs text-gray-400">綁定郵箱：</span>
+            <span className="text-xs text-gray-400">绑定邮箱：</span>
             <span className="text-xs text-white font-mono">
-              {user?.email ?? <span className="text-amber-400/80">未綁定郵箱（無法設置密碼）</span>}
+              {user?.email ?? <span className="text-amber-400/80">未绑定邮箱（无法设置密码）</span>}
             </span>
           </div>
 
           <p className="text-xs text-gray-500 mb-3 leading-relaxed">
-            用驗證碼登錄的帳號默認無密碼。設置後可同時使用驗證碼或密碼登錄。已登錄狀態下可直接設置/重置，無需填原密碼。
+            用验证码登录的帐号默认无密码。设置后可同时使用验证码或密码登录。已登录状态下可直接设置/重置，无需填原密码。
           </p>
 
           {user?.email ? (
@@ -167,7 +167,7 @@ export default function LayoutDashboard() {
               <input
                 type="password"
                 autoComplete="new-password"
-                placeholder={hasLoginPassword ? "新密碼（至少 8 位）" : "設置密碼（至少 8 位）"}
+                placeholder={hasLoginPassword ? "新密码（至少 8 位）" : "设置密码（至少 8 位）"}
                 value={loginPasswordNew}
                 onChange={(e) => setLoginPasswordNew(e.target.value)}
                 className="w-full bg-[#0A0A0C] border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-violet-500/40"
@@ -181,22 +181,22 @@ export default function LayoutDashboard() {
                     await setLoginPasswordMutation.mutateAsync({
                       newPassword: loginPasswordNew,
                     });
-                    toast.success(hasLoginPassword ? "密碼已更新" : "登錄密碼已設置");
+                    toast.success(hasLoginPassword ? "密码已更新" : "登录密码已设置");
                     setLoginPasswordNew("");
                     void refetchLoginPassword();
                   } catch (err: any) {
-                    toast.error(err?.message || "設置失敗");
+                    toast.error(err?.message || "设置失败");
                   } finally {
                     setLoginPasswordBusy(false);
                   }
                 }}
                 className="w-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-semibold"
               >
-                {loginPasswordBusy ? "提交中…" : hasLoginPassword ? "重置密碼" : "設置登錄密碼"}
+                {loginPasswordBusy ? "提交中…" : hasLoginPassword ? "重置密码" : "设置登录密码"}
               </button>
             </div>
           ) : (
-            <p className="text-xs text-amber-400/70">請先用郵箱驗證碼登錄，系統會自動綁定郵箱。</p>
+            <p className="text-xs text-amber-400/70">请先用邮箱验证码登录，系统会自动绑定邮箱。</p>
           )}
         </div>
 

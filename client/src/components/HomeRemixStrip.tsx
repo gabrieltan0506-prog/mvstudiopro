@@ -1,6 +1,6 @@
 import React from "react";
 
-/** 強化「二創中心」入口可見性（獨立一條，避免被大圖輪播擠到視野外） */
+/** 强化「二创中心」入口可见性（独立一条，避免被大图轮播挤到视野外） */
 export default function HomeRemixStrip() {
   return (
     <section style={{ maxWidth: 1240, margin: "0 auto", padding: "16px 20px 0" }}>

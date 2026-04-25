@@ -10,15 +10,15 @@ import { FavoriteButton } from "@/components/CreationManager";
 import { formatDateGMT8 } from "@/lib/utils";
 
 const TYPE_LABELS: Record<string, string> = {
-  idol_image: "偶像圖片",
+  idol_image: "偶像图片",
   idol_3d: "3D 模型",
-  music: "音樂",
-  video: "視頻",
-  storyboard: "分鏡/腳本",
-  kling_video: "Kling 視頻",
-  kling_lipsync: "Kling 對嘴",
-  kling_motion: "Kling 動作",
-  kling_image: "Kling 圖片",
+  music: "音乐",
+  video: "视频",
+  storyboard: "分镜/脚本",
+  kling_video: "Kling 视频",
+  kling_lipsync: "Kling 对嘴",
+  kling_motion: "Kling 动作",
+  kling_image: "Kling 图片",
 };
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
@@ -35,10 +35,10 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
 
 const FILTER_TABS = [
   { label: "全部", value: "" },
-  { label: "圖片", value: "idol_image" },
-  { label: "腳本/分鏡", value: "storyboard" },
-  { label: "視頻", value: "kling_video" },
-  { label: "音樂", value: "music" },
+  { label: "图片", value: "idol_image" },
+  { label: "脚本/分镜", value: "storyboard" },
+  { label: "视频", value: "kling_video" },
+  { label: "音乐", value: "music" },
 ];
 
 export default function MyWorks() {
@@ -66,14 +66,14 @@ export default function MyWorks() {
   const totalPages = (qData as any)?.totalPages ?? 1;
 
   const handleDelete = async (id: number) => {
-    if (!confirm("確定要刪除此作品嗎？")) return;
+    if (!confirm("确定要删除此作品吗？")) return;
     try {
       await deleteMutation.mutateAsync({ id });
-      toast.success("已刪除");
+      toast.success("已删除");
       utils.creations.list.invalidate();
       utils.creations.listFavorites.invalidate();
     } catch (err: any) {
-      toast.error(err?.message || "刪除失敗");
+      toast.error(err?.message || "删除失败");
     }
   };
 
@@ -94,7 +94,7 @@ export default function MyWorks() {
             </a>
             <div>
               <h1 className="text-lg font-black">我的作品</h1>
-              <p className="text-xs text-white/40">圖片與腳本永久保存，視頻請及時下載</p>
+              <p className="text-xs text-white/40">图片与脚本永久保存，视频请及时下载</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -133,22 +133,22 @@ export default function MyWorks() {
           <Download className="h-4 w-4 mt-0.5 flex-shrink-0" />
           <div>
             <span className="font-semibold">重要提醒：</span>
-            視頻文件有過期時限，請盡快下載保存到本地。
-            圖片、腳本與分析快照已永久保存在本頁面。
+            视频文件有过期时限，请尽快下载保存到本地。
+            图片、脚本与分析快照已永久保存在本页面。
           </div>
         </div>
 
         {isLoading ? (
           <div className="text-center py-16">
             <Loader2 className="h-8 w-8 animate-spin mx-auto text-purple-400" />
-            <p className="text-sm text-white/40 mt-3">載入中...</p>
+            <p className="text-sm text-white/40 mt-3">载入中...</p>
           </div>
         ) : items.length === 0 ? (
           <div className="text-center py-20">
             <Sparkles className="h-12 w-12 mx-auto opacity-20 mb-4" />
-            <p className="text-white/40">{showFavOnly ? "暫無收藏作品" : "暫無生成記錄，去創作第一個作品吧！"}</p>
+            <p className="text-white/40">{showFavOnly ? "暂无收藏作品" : "暂无生成记录，去创作第一个作品吧！"}</p>
             <a href="/" className="mt-4 inline-block px-5 py-2.5 rounded-full bg-purple-600 text-white text-sm font-semibold hover:bg-purple-500 transition">
-              開始創作
+              开始创作
             </a>
           </div>
         ) : (
@@ -218,12 +218,12 @@ export default function MyWorks() {
                       {/* Badges */}
                       {isVideo && (
                         <div className="absolute top-1.5 right-1.5 flex items-center gap-1 bg-blue-600/90 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                          <Download className="h-2.5 w-2.5" /><span>請下載</span>
+                          <Download className="h-2.5 w-2.5" /><span>请下载</span>
                         </div>
                       )}
                       {isExpiringSoon && (
                         <div className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                          <Clock className="h-2.5 w-2.5" /><span>即將過期</span>
+                          <Clock className="h-2.5 w-2.5" /><span>即将过期</span>
                         </div>
                       )}
                       {isAnalysis && (
@@ -261,7 +261,7 @@ export default function MyWorks() {
                   disabled={page === 1}
                   className="flex items-center gap-1 px-4 py-2 text-sm bg-white/8 text-white/60 rounded-full disabled:opacity-40 hover:bg-white/12 transition"
                 >
-                  <ChevronLeft className="h-4 w-4" /> 上一頁
+                  <ChevronLeft className="h-4 w-4" /> 上一页
                 </button>
                 <span className="text-sm text-white/40">{page} / {totalPages}</span>
                 <button
@@ -269,7 +269,7 @@ export default function MyWorks() {
                   disabled={page >= totalPages}
                   className="flex items-center gap-1 px-4 py-2 text-sm bg-white/8 text-white/60 rounded-full disabled:opacity-40 hover:bg-white/12 transition"
                 >
-                  下一頁 <ChevronRight className="h-4 w-4" />
+                  下一页 <ChevronRight className="h-4 w-4" />
                 </button>
               </div>
             )}
