@@ -1,17 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Loader2 } from "lucide-react";
 
-type SpeechRecognitionEvent = Event & {
-  results: SpeechRecognitionResultList;
-  error?: string;
-};
-
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
-}
+// Web Speech API — not in all TS lib versions, use any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySpeechRecognition = any;
 
 interface VoiceInputButtonProps {
   onTranscript: (text: string) => void;
@@ -35,10 +27,11 @@ export default function VoiceInputButton({
 }: VoiceInputButtonProps) {
   const [status, setStatus] = useState<Status>("idle");
   const [supported, setSupported] = useState(true);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<AnySpeechRecognition>(null);
 
   useEffect(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const w = window as AnySpeechRecognition;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) { setSupported(false); return; }
     const r = new SR();
     r.lang = lang;
@@ -46,7 +39,7 @@ export default function VoiceInputButton({
     r.interimResults = false;
     r.maxAlternatives = 1;
 
-    r.onresult = (e: SpeechRecognitionEvent) => {
+    r.onresult = (e: AnySpeechRecognition) => {
       const text = e.results[0][0].transcript;
       setStatus("idle");
       onTranscript(text);
