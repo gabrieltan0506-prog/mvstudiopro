@@ -11,6 +11,7 @@ import HomeFeedback from "../components/HomeFeedback";
 import HomeMyWorks from "../components/HomeMyWorks";
 import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
+import HomeChangelog from "../components/HomeChangelog";
 
 // 以下 section 在正式版開放前暫時隱藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -35,6 +36,8 @@ export default function HomePage() {
       <HomeInviteApply />
 
       <HomeHero />
+
+      <HomeChangelog />
 
       <HomeRemixStrip />
 
