@@ -146,7 +146,7 @@ export default function HomeChangelog() {
 
       {/* ── 功能模块卡片 ── */}
       <div style={{ maxWidth: 1120, margin: "0 auto", padding: "0 24px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(460px, 1fr))", gap: 20 }}>
           {MODULES.map((mod, idx) => {
             const Icon = mod.icon;
             const isActive = activeIdx === idx;
