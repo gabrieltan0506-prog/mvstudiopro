@@ -1364,6 +1364,7 @@ export default function PlatformPage() {
           </div>
         </div>
 
+
         {supervisorAccess ? (
           <div className="mb-6 flex items-center justify-end">
             <button
