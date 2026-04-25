@@ -1580,7 +1580,7 @@ export default function MVAnalysisPage() {
   const [, navigate] = useLocation();
   const isPlatformPage = false;
   const [supervisorAccess, setSupervisorAccess] = useState(() => hasSupervisorAccess());
-  const { isAuthenticated, loading, user } = useAuth({ autoFetch: !supervisorAccess });
+  const { isAuthenticated, loading, user } = useAuth({ autoFetch: true });
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileBase64, setFileBase64] = useState<string | null>(null);
@@ -2987,7 +2987,7 @@ export default function MVAnalysisPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex flex-wrap items-center gap-2">
-            {(user?.role === "supervisor" || user?.role === "admin") ? (
+            {(supervisorAccess || user?.role === "supervisor" || user?.role === "admin") ? (
               <>
                 <button
                   type="button"
