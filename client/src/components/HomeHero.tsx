@@ -6,7 +6,7 @@ const slides = [
   {
     title: "雷电网球",
     subtitle: "职业女子网球比赛的关键瞬间",
-    model: "Kling 3.0",
+    model: "影视级 AI",
     videoUrl: "/migrated/home/video1.mp4",
     poster: "/migrated/home/poster1.jpg",
     prompt: "职业女子网球比赛的关键瞬间，网球选手腾空击球，球拍与网球接触时爆发蓝色电弧能量轨迹，观众席沸腾欢呼，夕阳逆光照射球场，强烈动感与速度感，电影级体育广告画面，超高细节，动态运动模糊，8K cinematic lighting"
@@ -14,7 +14,7 @@ const slides = [
   {
     title: "海洋女神",
     subtitle: "史诗奇幻海洋场景",
-    model: "Veo 3.1 Pro",
+    model: "影视级 AI",
     videoUrl: "/migrated/home/video2.mp4",
     poster: "/migrated/home/poster2.jpg",
     prompt: "神秘海洋女神从海浪中升起，巨大的海浪在她身后形成弧形水幕，身体由水与光构成，蓝绿色能量粒子在周围漂浮，夕阳穿透海浪形成神圣光束，史诗奇幻风格，电影级光影，超高细节，幻想史诗场景"
@@ -22,7 +22,7 @@ const slides = [
   {
     title: "秘境森林",
     subtitle: "古代森林神庙遗迹",
-    model: "Veo 3.1 Pro",
+    model: "影视级 AI",
     videoUrl: "/migrated/home/video3.mp4",
     poster: "/migrated/home/poster3.jpg",
     prompt: "被遗忘的古代森林神庙遗迹，巨大的石柱与藤蔓缠绕的神殿入口，发光的蓝绿色植物沿着石柱延伸，清晨阳光穿透森林形成体积光，神秘而宁静的奇幻氛围，电影级构图，超高细节，史诗探险场景"
@@ -30,7 +30,7 @@ const slides = [
   {
     title: "太空站观景台",
     subtitle: "未来太空站内部观景大厅",
-    model: "Veo 3.1 Pro",
+    model: "影视级 AI",
     videoUrl: "/migrated/home/video4.mp4",
     poster: "/migrated/home/poster4.jpg",
     prompt: "未来太空站内部观景大厅，巨大弧形全景玻璃窗俯瞰地球与银河，极光在地球上空闪耀，一艘宇宙飞船从窗外掠过，空间站内部有植物与高科技控制台，温暖金色灯光与深空背景形成强烈对比，电影级科幻场景，超高细节"
@@ -123,7 +123,7 @@ export default function HomeHero() {
                   flexWrap: "wrap",
                 }}
               >
-                {["可灵 3.0", "Veo 3.1", "Nano Banana Pro"].map((tag) => (
+                {["影视级 AI 生成", "多平台数据分析", "全自动工作流"].map((tag) => (
                   <span
                     key={tag}
                     style={{
@@ -179,7 +179,7 @@ export default function HomeHero() {
                 </div>
 
                 <a
-                  href="/kling-studio"
+                  href="/workflow-nodes"
                   style={{
                     padding: "12px 18px",
                     borderRadius: 14,
@@ -253,7 +253,7 @@ export default function HomeHero() {
               </div>
 
               <div style={{ marginTop: 16, color: "rgba(255,255,255,0.78)", lineHeight: 1.75, fontSize: 15 }}>
-                深度融合谷歌顶级AI逻辑大脑与 Veo 3.1 影院级视觉。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
+                深度融合顶级 AI 逻辑分析与影院级视频生成能力。为您提供赛道级数据分析、爆款脚本无损拆解与全自动影音生成。告别低效产能，用 AI 掌控流量密码。
               </div>
 
               <div style={{ display: "grid", gap: 10, marginTop: 18 }}>
@@ -261,7 +261,7 @@ export default function HomeHero() {
                   { label: "IP 战略指挥室", desc: "上传竞品或灵感碎片，AI 输出万字商业战略与导演级分镜", href: "/creator-growth-camp" },
                   { label: "爆款解构引擎", desc: "一键拆解对标爆款底层逻辑，重塑个人 IP 风格二创脚本", href: "/creator-growth-camp/premium-remix" },
                   { label: "全网流量雷达", desc: "实时捕捉主流平台流量风向，量身定制起号与发布策略", href: "/creator-growth-camp/platform" },
-                  { label: "工业级全自动产线", desc: "可视化串联 AI 脚本、Veo 分镜、Suno 配乐，一键坐等成片", href: "/workflow-nodes" },
+                  { label: "影视级全自动产线", desc: "可视化串联脚本生成、分镜规划、配乐合成，一键坐等成片", href: "/workflow-nodes" },
                 ].map((item) => (
                   <a
                     key={item.label}

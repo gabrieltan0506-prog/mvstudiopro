@@ -14,12 +14,7 @@ import {
 
 const NAV_ITEMS = [
   { label: "创作画布", href: "/workflow-nodes" },
-  { label: "创作商业成长营", href: "/creator-growth-camp" },
-  { label: "可灵工作室", href: "/kling-studio" },
-  { label: "虚拟偶像", href: "/idol" },
-  { label: "2D转3D", href: "/3d-studio" },
-  { label: "分镜转视频", href: "/vfx" },
-  { label: "爆款展厅", href: "/showcase" },
+  { label: "创作者成长营", href: "/creator-growth-camp" },
   { label: "套餐", href: "/pricing" },
 ];
 

@@ -13,7 +13,7 @@ const cards: ToolCard[] = [
   { zh: "IP 战略指挥室", en: "IP Strategy Hub", desc: "丢掉低效的头脑风暴。上传竞品或灵感碎片，AI 瞬间为您输出万字商业战略、精准爆款选题库与导演级机位分镜。", price: "公测功能", pro: true, href: "/creator-growth-camp" },
   { zh: "爆款解构引擎", en: "Viral Remix Engine", desc: "万物皆可爆改。一键输入对标爆款，精准拆解其底层爆火逻辑，为您重塑生成极具个人 IP 风格的独家二创落地脚本。", price: "公测功能", pro: true, href: "/creator-growth-camp/premium-remix" },
   { zh: "全网流量雷达", en: "Trend Radar", desc: "告别盲目自嗨。实时捕捉小红书、抖音等主流平台最新流量风向，并为您量身定制快速起号、发布计划与精准流量承接策略。", price: "公测功能", pro: true, href: "/creator-growth-camp/platform" },
-  { zh: "工业级全自动产线", en: "Auto-Pilot Workflow", desc: "将繁琐步骤降维打击。可视化无缝串联 AI 脚本、Veo 顶级分镜、Suno 配乐与语音合成。点击执行，喝杯咖啡坐等成片。", price: "公测功能", pro: true, href: "/workflow-nodes" },
+  { zh: "影视级全自动产线", en: "Auto-Pilot Workflow", desc: "将繁琐步骤降维打击。可视化无缝串联脚本生成、分镜规划、配乐合成与语音输出。点击执行，喝杯咖啡坐等成片。", price: "公测功能", pro: true, href: "/workflow-nodes" },
 ];
 
 export default function HomeTools() {
