@@ -293,15 +293,8 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "节点工作流", subFeature: "自动配乐（Suno V5.5 + Gemini Prompt）", credits: CREDIT_COSTS.workflowMusic },
   { product: "节点工作流", subFeature: "最终合成", credits: CREDIT_COSTS.workflowFinalRender },
   // ─── 基础与创作工具 ───────────────────────────────────────
-  { product: "视频 PK / 分析", subFeature: "MV 对比评分", credits: CREDIT_COSTS.mvAnalysis },
-  { product: "虚拟偶像", subFeature: "Forge 2D 生成", credits: CREDIT_COSTS.idolGeneration },
-  { product: "分镜脚本", subFeature: "Gemini 3.0 Pro", credits: CREDIT_COSTS.storyboard },
-  { product: "分镜脚本", subFeature: "Gemini 3.0 Flash", credits: CREDIT_COSTS.storyboardFlash },
-  { product: "分镜脚本", subFeature: "GPT 5.1", credits: CREDIT_COSTS.storyboardGpt5 },
-  { product: "Forge 生图", subFeature: "单张", credits: CREDIT_COSTS.forgeImage },
-  { product: "AI 灵感", subFeature: "灵感脚本", credits: CREDIT_COSTS.aiInspiration },
-  { product: "NBP", subFeature: "2K 图", credits: CREDIT_COSTS.nbpImage2K },
-  { product: "NBP", subFeature: "4K 图", credits: CREDIT_COSTS.nbpImage4K },
+  { product: "分镜图（工作流）", subFeature: "标准 2K", credits: CREDIT_COSTS.nbpImage2K },
+  { product: "分镜图（工作流）", subFeature: "高清 4K", credits: CREDIT_COSTS.nbpImage4K },
   // ─── 3D ─────────────────────────────────────────────────
   { product: "腾讯混元 3D", subFeature: "闪电 Rapid", credits: CREDIT_COSTS.rapid3D },
   { product: "腾讯混元 3D", subFeature: "闪电 + PBR", credits: CREDIT_COSTS.rapid3D_pbr },
@@ -309,9 +302,6 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   { product: "腾讯混元 3D", subFeature: "精雕 + PBR", credits: CREDIT_COSTS.pro3D_pbr },
   { product: "腾讯混元 3D", subFeature: "精雕 + PBR + 多视角", credits: CREDIT_COSTS.pro3D_pbr_mv },
   { product: "腾讯混元 3D", subFeature: "精雕全选项", credits: CREDIT_COSTS.pro3D_full },
-  // ─── 高门槛 ─────────────────────────────────────────────
-  { product: "视频生成（通用）", subFeature: "单条", credits: CREDIT_COSTS.videoGeneration },
-  { product: "偶像 3D", subFeature: "单条", credits: CREDIT_COSTS.idol3D },
   // ─── Suno ───────────────────────────────────────────────
   { product: "Suno", subFeature: "V4 音乐", credits: CREDIT_COSTS.sunoMusicV4 },
   { product: "Suno", subFeature: "V5 音乐", credits: CREDIT_COSTS.sunoMusicV5 },
@@ -351,47 +341,48 @@ export const SINGLE_PURCHASE = {
 /**
  * Credits 加值包
  */
+// 定价基准：1 cr ≈ ¥0.65，每次完整分析约 50 cr
 export const CREDIT_PACKS = {
-  /** ¥19.9 试用：按 ¥0.6/积分 → floor(19.9/0.6)=33 Credits */
+  /** ¥39 体验包：60 cr，约可完成 1 次完整分析，每人限 1 次 */
   trial199: {
-    credits: 33,
-    price: 19.9,
-    label: "33 Credits Trial",
-    labelCn: "¥19.9 试用包",
-    perCredit: 0.6,
-    discount: "约 ¥0.60/积分 · 33 Credits · 每人限 2 次",
+    credits: 60,
+    price: 39,
+    label: "60 Credits Trial",
+    labelCn: "体验包",
+    perCredit: 0.65,
+    discount: "约 ¥0.65/积分 · 约可完成 1 次分析 · 每人限 1 次",
   },
   small: {
-    credits: 50,
-    price: 35,
-    label: "50 Credits",
-    labelCn: "50 Credits 入门包",
-    perCredit: 0.70,
-    discount: "",
+    credits: 160,
+    price: 99,
+    label: "160 Credits",
+    labelCn: "基础包",
+    perCredit: 0.619,
+    discount: "约可完成 3 次完整分析",
   },
   medium: {
-    credits: 100,
-    price: 68,
-    label: "100 Credits",
-    labelCn: "100 Credits 高端包",
-    perCredit: 0.68,
-    discount: "省 2.9%",
+    credits: 360,
+    price: 218,
+    label: "360 Credits",
+    labelCn: "进阶包",
+    perCredit: 0.606,
+    discount: "约可完成 7 次分析 · 省 6.8%",
   },
   large: {
-    credits: 300,
-    price: 198,
-    label: "300 Credits",
-    labelCn: "300 Credits 超值包",
-    perCredit: 0.66,
-    discount: "省 4% · 可覆盖一次完整 3 场景工作流",
+    credits: 700,
+    price: 418,
+    label: "700 Credits",
+    labelCn: "专业包",
+    perCredit: 0.597,
+    discount: "约可完成 14 次分析 · 省 8.2%",
   },
   mega: {
-    credits: 500,
-    price: 328,
-    label: "500 Credits",
-    labelCn: "500 Credits 专业包",
-    perCredit: 0.656,
-    discount: "省 6.3%",
+    credits: 1500,
+    price: 868,
+    label: "1500 Credits",
+    labelCn: "旗舰包",
+    perCredit: 0.579,
+    discount: "约可完成 30 次分析 · 省 11%",
   },
 } as const;
 

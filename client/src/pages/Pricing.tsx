@@ -14,16 +14,18 @@ type PackId = "trial199" | "small" | "medium" | "large" | "mega";
 
 const PACK_ORDER: PackId[] = ["trial199", "small", "medium", "large", "mega"];
 
+// 定价基准：1 cr ≈ ¥0.65，每次完整分析约 50 cr
 const PACK_META: Record<PackId, {
   credits: number; basePrice: number;
   icon: React.ReactNode; label: string;
   popular?: boolean; best?: boolean; trial?: boolean;
+  hint?: string;
 }> = {
-  trial199: { credits: 33,  basePrice: 19.9, icon: <Smile    size={28} className="text-emerald-400" />, label: "试用包",  trial: true },
-  small:    { credits: 50,  basePrice: 35,   icon: <Bolt     size={28} className="text-[#FF6B35]" />,   label: "入门包" },
-  medium:   { credits: 100, basePrice: 68,   icon: <Zap      size={28} className="text-[#FF6B35]" />,   label: "高端包",  popular: true },
-  large:    { credits: 250, basePrice: 168,  icon: <Flame    size={28} className="text-[#FF6B35]" />,   label: "超值包",  best: true },
-  mega:     { credits: 500, basePrice: 328,  icon: <BarChart3 size={28} className="text-[#FF6B35]" />,  label: "专业包" },
+  trial199: { credits: 60,  basePrice: 39,   icon: <Smile     size={28} className="text-emerald-400" />, label: "体验包",  trial: true, hint: "约可完成 1 次完整分析" },
+  small:    { credits: 160, basePrice: 99,   icon: <Bolt      size={28} className="text-[#FF6B35]" />,   label: "基础包",  hint: "约可完成 3 次分析" },
+  medium:   { credits: 360, basePrice: 218,  icon: <Zap       size={28} className="text-[#FF6B35]" />,   label: "进阶包",  popular: true, hint: "约可完成 7 次分析" },
+  large:    { credits: 700, basePrice: 418,  icon: <Flame     size={28} className="text-[#FF6B35]" />,   label: "专业包",  best: true, hint: "约可完成 14 次分析" },
+  mega:     { credits: 1500, basePrice: 868, icon: <BarChart3 size={28} className="text-[#FF6B35]" />,  label: "旗舰包",  hint: "约可完成 30 次分析" },
 };
 
 function calcPrice(packId: PackId, cycle: BillingInterval) {
@@ -174,6 +176,11 @@ export default function Pricing() {
                   >
                     {dt || m.label}
                   </span>
+                  {m.hint && !dt && (
+                    <span className="mt-0.5 text-gray-500" style={{ fontSize: "1.5vw" }}>
+                      {m.hint}
+                    </span>
+                  )}
                 </button>
               );
             })}
