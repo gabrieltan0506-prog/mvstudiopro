@@ -46,7 +46,6 @@ export function StudentUpgradePrompt({
           analysis: "视频 PK 评分",
           storyboard: "智能脚本与分镜",
           avatar: "虚拟偶像生成",
-          idol3D: "偶像转 3D",
           videoGeneration: "视频生成",
         };
         return {
@@ -127,7 +126,7 @@ export function StudentUpgradePrompt({
             <div className="flex flex-row items-center">
               <CheckCircle size={14} className="text-green-500" />
               <p className="text-muted-foreground text-xs ml-1.5">
-                一年版独享：3D 转换、口型同步、1080P 视频
+                一年版独享：口型同步、1080P 视频
               </p>
             </div>
           </div>
@@ -164,7 +163,6 @@ export function StudentUpgradePrompt({
         analysis: "视频 PK 评分",
         storyboard: "智能脚本与分镜",
         avatar: "虚拟偶像生成",
-        idol3D: "偶像转 3D",
         videoGeneration: "视频生成",
       };
       return {
@@ -228,12 +226,6 @@ export function StudentUpgradePrompt({
             <CheckCircle size={14} className="text-green-500" />
             <p className="text-muted-foreground text-xs ml-1.5">
               分镜脚本：3 次/月 → <span className="text-foreground font-semibold">8 次/月</span>
-            </p>
-          </div>
-          <div className="flex flex-row items-center">
-            <CheckCircle size={14} className="text-green-500" />
-            <p className="text-muted-foreground text-xs ml-1.5">
-              添加偶像转 3D（<span className="text-foreground font-semibold">3 次/月</span>）
             </p>
           </div>
           <div className="flex flex-row items-center">
