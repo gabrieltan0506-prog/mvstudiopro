@@ -397,7 +397,7 @@ export default function PlatformPage() {
     if (typeof window === "undefined") return false;
     return hasSupervisorAccess() && new URLSearchParams(window.location.search).get("debug") === "1";
   });
-  const { isAuthenticated, loading } = useAuth({
+  const { isAuthenticated, loading, user } = useAuth({
     autoFetch: !supervisorAccess,
     redirectOnUnauthenticated: !supervisorAccess,
     redirectPath: getLoginUrl(),
@@ -1365,7 +1365,7 @@ export default function PlatformPage() {
         </div>
 
 
-        {supervisorAccess ? (
+        {(user?.role === "supervisor" || user?.role === "admin") ? (
           <div className="mb-6 flex items-center justify-end">
             <button
               type="button"

@@ -2990,7 +2990,7 @@ export default function MVAnalysisPage() {
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div className="flex flex-wrap items-center gap-2">
-            {supervisorAccess ? (
+            {(user?.role === "supervisor" || user?.role === "admin") ? (
               <>
                 <button
                   type="button"
