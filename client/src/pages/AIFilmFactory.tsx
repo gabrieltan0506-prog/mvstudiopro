@@ -44,9 +44,7 @@ export default function AIFilmFactory() {
         生成短片
       </button>
 
-      <pre>
-        {JSON.stringify(debug,null,2)}
-      </pre>
+
 
     </div>
 

@@ -454,10 +454,6 @@ function KlingImagePanel(props: { onUseAsRef: (url: string) => void; onStateChan
         </div>
       ) : null}
 
-      <details style={{ marginTop: 14 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 800 }}>调试输出</summary>
-        <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{JSON.stringify(debug, null, 2)}</pre>
-      </details>
     </div>
   );
 }
@@ -678,10 +674,6 @@ function KlingVideoPanel(props: { refImageUrl: string; onRefImageUrlChange: (url
         </div>
       </div>
 
-      <details style={{ marginTop: 14 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 800 }}>调试输出</summary>
-        <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{JSON.stringify(debug, null, 2)}</pre>
-      </details>
     </div>
   );
 }
@@ -858,10 +850,6 @@ function MusicPanel(props: { onStateChange: (state: PanelState) => void }) {
         </div>
       ) : null}
 
-      <details style={{ marginTop: 14 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 800 }}>调试输出</summary>
-        <pre style={{ whiteSpace: "pre-wrap", marginTop: 8, fontSize: 12 }}>{JSON.stringify(debug, null, 2)}</pre>
-      </details>
     </div>
   );
 }

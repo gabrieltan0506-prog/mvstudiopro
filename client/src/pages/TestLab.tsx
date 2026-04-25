@@ -912,12 +912,6 @@ export default function TestLab() {
         </div>
       )}
 
-      <details style={{ marginTop: 20 }}>
-        <summary style={{ cursor: "pointer", fontWeight: 900 }}>返回数据（调试）</summary>
-        <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.5, marginTop: 12 }}>
-          {debug ? JSON.stringify(debug, null, 2) : "（暂无）"}
-        </pre>
-      </details>
     </div>
   );
 }
