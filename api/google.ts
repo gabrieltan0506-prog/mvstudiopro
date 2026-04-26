@@ -300,7 +300,12 @@ export async function runVertexUpscaleImage(args: {
   }
 
   const raw = r.json ?? r.rawText;
-  const images = r.ok ? extractGeneratedImages(r.json) : [];
+  if (!r.ok) {
+    const errMsg = r.json?.error?.message || r.json?.error?.status || r.rawText || `HTTP ${r.status}`;
+    console.error(`[runVertexUpscaleImage] upscale ${upscaleFactor} failed: ${errMsg}`, JSON.stringify(raw).slice(0, 400));
+    return { ok: false, status: r.status, url: r.url, raw, error: errMsg, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
+  }
+  const images = extractGeneratedImages(r.json);
   const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
   return {
     ok: r.ok,

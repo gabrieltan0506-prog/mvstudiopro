@@ -5371,6 +5371,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           const json: any = await res.json().catch(() => ({}));
           imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
           upscaleOk = res.ok && !!imageUrl;
+          if (!upscaleOk) {
+            const vertexErr = String(json?.error || json?.raw?.error?.message || "").slice(0, 300);
+            console.error(`[vertexImage.upscale] ${input.upscaleFactor} failed (HTTP ${res.status}): ${vertexErr}`);
+          }
         } catch (e: any) {
           console.error("[vertexImage.upscale] vercel proxy failed:", e?.message);
         }
@@ -5383,7 +5387,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               console.error("[vertexImage.upscale] restore credits failed", refErr);
             }
           }
-          return { success: false as const, error: "放大失败，请稍后重试" };
+          return { success: false as const, error: "放大失败，请稍后重试（已退回积分）" };
         }
 
         return {
