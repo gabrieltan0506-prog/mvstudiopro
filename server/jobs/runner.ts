@@ -35,6 +35,7 @@ import { users, type User } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { deductCredits, getCredits, getUserPlan } from "../credits";
 import { CREDIT_COSTS } from "../plans";
+import { calculateAnalysisCost, MAX_DURATION_SECONDS } from "../utils/costCalculator";
 import {
   createProducerTask,
   getProducerTaskStatus,
@@ -215,15 +216,30 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     const numericUserId = userId ? Number(userId) : NaN;
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
+
+    // 前端可传入 durationSeconds（本地文件上传时可获取），URL 类视频无法提前获取则为 0
+    const durationSeconds = typeof params.durationSeconds === "number" ? params.durationSeconds : 0;
+
+    // 硬限制：超过 60 分钟直接拒绝
+    if (durationSeconds > MAX_DURATION_SECONDS) {
+      throw new Error("系统暂不支持超过 60 分钟的超长视频，请剪辑后再试");
+    }
+
+    // 阶梯式计费（durationSeconds 为 0 时默认按 10 分钟 1.5× 计）
+    const cost = calculateAnalysisCost(growthMode, durationSeconds);
     let creditDeducted = 0;
 
     if (Number.isFinite(numericUserId)) {
       const credits = await getCredits(numericUserId);
-      const cost = CREDIT_COSTS[creditAction];
       if (credits.totalAvailable < cost) {
-        throw new Error(`Credits 不足，本次分析需要 ${cost} Credits（当前余额: ${credits.totalAvailable}）`);
+        throw new Error(
+          durationSeconds > 0
+            ? `积分不足，${Math.round(durationSeconds / 60)} 分钟视频分析需要 ${cost} 积分（当前余额: ${credits.totalAvailable}）`
+            : `积分不足，本次分析需要 ${cost} 积分（当前余额: ${credits.totalAvailable}）`,
+        );
       }
-      await deductCredits(numericUserId, creditAction, `创作者成长营 ${growthMode} 分析`);
+      const durationLabel = durationSeconds > 0 ? `（${Math.round(durationSeconds / 60)} 分钟）` : "（时长未知，按默认计费）";
+      await deductCredits(numericUserId, creditAction, `创作者成长营 ${growthMode} 分析${durationLabel}`);
       creditDeducted = cost;
     }
 

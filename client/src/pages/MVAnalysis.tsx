@@ -746,11 +746,12 @@ async function uploadFileToSignedUrl(params: {
   });
 }
 
-async function extractVideoPreview(file: File) {
-  return new Promise<string>((resolve, reject) => {
+async function extractVideoPreview(file: File): Promise<{ previewUrl: string; durationSeconds: number }> {
+  return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     const url = URL.createObjectURL(file);
     let settled = false;
+    let capturedDuration = 0;
 
     const cleanup = () => {
       video.onloadedmetadata = null;
@@ -766,11 +767,11 @@ async function extractVideoPreview(file: File) {
       reject(new Error(message));
     };
 
-    const done = (value: string) => {
+    const done = (previewUrl: string) => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolve(value);
+      resolve({ previewUrl, durationSeconds: capturedDuration });
     };
 
     video.preload = "metadata";
@@ -788,6 +789,7 @@ async function extractVideoPreview(file: File) {
         fail("视频元数据读取失败，请重试");
         return;
       }
+      capturedDuration = Math.round(video.duration);
       if (targetTime <= 0.16) {
         const canvas = document.createElement("canvas");
         canvas.width = video.videoWidth;
@@ -1618,6 +1620,7 @@ export default function MVAnalysisPage() {
   const [context, setContext] = useState("");
   const [fileName, setFileName] = useState("");
   const [fileSize, setFileSize] = useState(0);
+  const [localDurationSeconds, setLocalDurationSeconds] = useState<number>(0);
   const [quotaModalVisible, setQuotaModalVisible] = useState(false);
   const [quotaModalInfo, setQuotaModalInfo] = useState<{ isTrial?: boolean; planName?: string }>({});
   const [analysisTranscript, setAnalysisTranscript] = useState("");
@@ -1871,6 +1874,7 @@ export default function MVAnalysisPage() {
 
     setFileName(file.name);
     setFileSize(file.size);
+    setLocalDurationSeconds(0);
     setFileMimeType(file.type || "");
     setSelectedFile(file);
     setInputKind(isVideo ? "video" : "document");
@@ -1896,8 +1900,9 @@ export default function MVAnalysisPage() {
 
         setFileBase64(null);
 
-        const preview = await extractVideoPreview(file);
-        setPreviewUrl(preview);
+        const { previewUrl, durationSeconds } = await extractVideoPreview(file);
+        setPreviewUrl(previewUrl);
+        setLocalDurationSeconds(durationSeconds);
         setUploadStage("idle");
         setUploadProgress(100);
       } catch (fileError: any) {
@@ -2074,6 +2079,7 @@ export default function MVAnalysisPage() {
                     modelName: "gemini-2.5-pro",
                     mode: analysisMode,
                     forceRefresh,
+                    durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
                   },
                 },
               });
@@ -2253,7 +2259,7 @@ export default function MVAnalysisPage() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("分析页 PDF 已开始下载，快照已保存至「我的作品」");
         // Save snapshot record with richer summary
-        const gmt8Label = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
         const anl = analysis as any;
         const summaryParts: string[] = [];
         if (anl?.premiumContent?.summary) summaryParts.push(anl.premiumContent.summary);
@@ -3303,11 +3309,36 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
               </div>
 
               <div className="mt-5">
               </div>
+
+              {/* 预估积分提示 */}
+              {(selectedFile || fileBase64) && !isProcessing && (() => {
+                const base = analysisMode === "REMIX" ? 60 : 40;
+                let mult = 1.5; let tierLabel = "时长未知，按默认计费";
+                if (localDurationSeconds > 0) {
+                  const d = localDurationSeconds;
+                  if (d <= 180) { mult = 1.0; tierLabel = `${Math.round(d / 60)} 分钟以内`; }
+                  else if (d <= 600) { mult = 1.5; tierLabel = `约 ${Math.round(d / 60)} 分钟`; }
+                  else if (d <= 1800) { mult = 2.5; tierLabel = `约 ${Math.round(d / 60)} 分钟`; }
+                  else { mult = 4.0; tierLabel = `约 ${Math.round(d / 60)} 分钟（长视频）`; }
+                }
+                const est = Math.ceil(base * mult);
+                return (
+                  <div className="mt-3 inline-flex items-center gap-2 rounded-xl border border-orange-500/25 bg-orange-500/8 px-3 py-2 text-[12px] text-orange-300">
+                    <span>⏱️</span>
+                    <span>
+                      {localDurationSeconds > 0
+                        ? `检测到视频时长 ${tierLabel}，本次${analysisMode === "REMIX" ? "二创" : "深度"}分析将消耗 `
+                        : `${tierLabel}，本次${analysisMode === "REMIX" ? "二创" : "深度"}分析预计消耗 `}
+                      <strong className="text-orange-200">{est} 积分</strong>
+                    </span>
+                  </div>
+                );
+              })()}
 
               <div className="mt-5 flex flex-wrap items-center gap-4">
                 <button
