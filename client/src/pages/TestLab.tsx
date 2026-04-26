@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from "react";
 
 type TabKey = "script" | "image" | "video" | "music";
 type GoogleImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
+type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
@@ -79,8 +80,9 @@ export default function TestLab() {
 
   // Image
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
+  const [openaiImageModel] = useState<OpenAIImageModel>("gpt-image-2");
   const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
-  const [imageProvider, setImageProvider] = useState<"google" | "kling">("google");
+  const [imageProvider, setImageProvider] = useState<"google" | "openai" | "kling">("google");
   const [imageResolution, setImageResolution] = useState("1k");
   const [imageCount, setImageCount] = useState("1");
   const [guidanceScale, setGuidanceScale] = useState("4.0");
@@ -181,6 +183,20 @@ export default function TestLab() {
     setDebug({ ok: true, action: "image:start" });
 
     try {
+      if (imageProvider === "openai") {
+        const r = await fetchJsonish("/api/openai-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt, model: openaiImageModel, size: "1024x1024", quality: "high", n: Number(imageCount || 1) }),
+        });
+        setDebug(r);
+        if (!r.ok) throw new Error(r?.json?.error || "openai_image_failed");
+        const firstUrl = String(r?.json?.imageUrl || "").trim();
+        if (!firstUrl) throw new Error("openai_image_missing_url");
+        setImageUrl(firstUrl);
+        return;
+      }
+
       if (imageProvider === "google") {
         const model = googleImageModel;
         const tier = model === "gemini-3-pro-image-preview" ? "pro" : "flash";
@@ -561,12 +577,24 @@ export default function TestLab() {
                 onChange={(e) => setImageProvider(e.target.value as any)}
                 style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
               >
-                <option value="google">Google</option>
+                <option value="google">Google（Nano Banana）</option>
+                <option value="openai">OpenAI（GPT-image-2）</option>
                 <option value="kling">Kling</option>
               </select>
             </div>
 
-            {imageProvider === "google" ? (
+            {imageProvider === "openai" ? (
+              <div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
+                <select
+                  value={openaiImageModel}
+                  style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  disabled
+                >
+                  <option value="gpt-image-2">GPT-image-2</option>
+                </select>
+              </div>
+            ) : imageProvider === "google" ? (
               <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
                 <select
