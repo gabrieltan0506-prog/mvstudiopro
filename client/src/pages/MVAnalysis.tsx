@@ -3309,7 +3309,7 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
               </div>
 
               <div className="mt-5">
