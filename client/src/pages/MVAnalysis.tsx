@@ -3303,6 +3303,7 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
               </div>
 
               <div className="mt-5">
