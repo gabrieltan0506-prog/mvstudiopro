@@ -18,6 +18,7 @@ import { getSupervisorAllowlist } from "../services/access-policy";
 import { warnLegacyKlingEnvIgnored } from "../config/klingCn";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
+import { registerSpeechApiRoutes } from "../routers/speechApi";
 import { saveVideoShortLink } from "../services/video-short-links";
 import { bootstrapGrowthTrendScheduler } from "../growth/trendScheduler";
 import workflowJobsHandler from "../../api/jobs";
@@ -186,6 +187,7 @@ async function startServer() {
   app.use(uploadRouter);
   registerAuthApiRoutes(app);
   registerSmsAuthRoutes(app);
+  registerSpeechApiRoutes(app);
 
   app.all("/api/blob-put-image", async (req, res) => {
     return blobPutImageHandler(req as any, res as any);
