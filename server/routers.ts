@@ -2762,39 +2762,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         requestedPlatforms: z.array(z.string()).optional(),
-        // Slim snapshot — only what buildPlatformDashboard needs, avoids 503 on large POST body
-        snapshotSummary: z.object({
-          overview: z.object({ summary: z.string(), trendNarrative: z.string() }).passthrough(),
-          platformSnapshots: z.array(z.object({
-            platform: z.string(),
-            displayName: z.string(),
-            audienceFitScore: z.number(),
-            momentumScore: z.number(),
-            summary: z.string().optional(),
-            fitLabel: z.string().optional(),
-            sampleTopics: z.array(z.string()).optional(),
-          })).optional(),
-          platformRecommendations: z.array(z.object({
-            name: z.string(),
-            reason: z.string(),
-            action: z.string().optional(),
-          })).optional(),
-          topicLibrary: z.array(z.object({
-            title: z.string(),
-            rationale: z.string().optional(),
-            executionHint: z.string().optional(),
-          })).optional(),
-          monetizationStrategies: z.array(z.object({
-            platformLabel: z.string().optional(),
-            primaryTrack: z.string().optional(),
-            offerType: z.string().optional(),
-          })).optional(),
-          mainPath: z.object({
-            title: z.string().optional(),
-            summary: z.string().optional(),
-            whyNow: z.string().optional(),
-          }).optional(),
-        }),
+        snapshotSummary: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
@@ -2864,18 +2832,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         platformMenu: z.array(z.any()).optional(),
-        snapshotSummary: z.object({
-          overview: z.any().optional(),
-          platformSnapshots: z.array(z.any()).optional(),
-          platformRecommendations: z.array(z.any()).optional(),
-          topicLibrary: z.array(z.any()).optional(),
-          monetizationStrategies: z.array(z.any()).optional(),
-          mainPath: z.any().optional(),
-          // Call 3 also receives the full snapshot fields needed for content
-          titleExecutions: z.array(z.any()).optional(),
-          growthPlan: z.array(z.any()).optional(),
-          creationAssist: z.any().optional(),
-        }),
+        snapshotSummary: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input }) => {
         const t0 = Date.now();
@@ -5366,7 +5323,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               prompt: "",
               outputMimeType: "image/png",
             }),
-            signal: AbortSignal.timeout(120_000),
+            signal: AbortSignal.timeout(240_000),
           });
           const json: any = await res.json().catch(() => ({}));
           imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
