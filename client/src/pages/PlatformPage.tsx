@@ -347,8 +347,9 @@ function TopicImageGenerator({
 }) {
   const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
+  const [upscaledUrl, setUpscaledUrl] = useState<{ url: string; factor: string } | null>(null);
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onSuccess: (res) => setImageUrl(res.imageUrl),
+    onSuccess: (res) => { setImageUrl(res.imageUrl); setUpscaledUrl(null); },
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
   });
 
@@ -380,11 +381,34 @@ function TopicImageGenerator({
         <div className="rounded-2xl border border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
           <div className="mb-2 flex items-center justify-between px-2 pt-2 text-[11px] font-semibold text-[#b7add8]">
             <span>参考视觉风格</span>
-            <button onClick={() => setImageUrl("")} className="hover:text-white">重置</button>
+            <button onClick={() => { setImageUrl(""); setUpscaledUrl(null); }} className="hover:text-white">重置</button>
           </div>
-          <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
+
+          {upscaledUrl ? (
+            /* ── 放大对比：原图 + 放大图并排 ── */
+            <div className="flex gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="mb-1 text-center text-[10px] font-semibold text-white/40">原图</div>
+                <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="mb-1 text-center text-[10px] font-semibold text-[#49e6ff]/80">
+                  放大 {upscaledUrl.factor}
+                </div>
+                <TrialWatermarkImage src={upscaledUrl.url} isTrial={isTrial} className="w-full rounded-xl ring-1 ring-[#49e6ff]/30" />
+              </div>
+            </div>
+          ) : (
+            <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
+          )}
+
           <div className="px-2 pb-2">
-            <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="forgeImage" className="mt-2" onUpscaled={setImageUrl} />
+            <ImageUpscaleBar
+              imageUrl={imageUrl}
+              baseCreditKey="forgeImage"
+              className="mt-2"
+              onUpscaled={(url, factor) => setUpscaledUrl({ url, factor: factor ?? "" })}
+            />
           </div>
         </div>
       )}

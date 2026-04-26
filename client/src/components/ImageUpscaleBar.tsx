@@ -12,7 +12,8 @@ export type ImageUpscaleBarProps = {
   className?: string;
   style?: React.CSSProperties;
   compact?: boolean;
-  onUpscaled?: (newImageUrl: string) => void;
+  /** newImageUrl: 放大后图片 URL；factor: "2×" 或 "4×" */
+  onUpscaled?: (newImageUrl: string, factor?: string) => void;
 };
 
 export function ImageUpscaleBar({
@@ -26,11 +27,12 @@ export function ImageUpscaleBar({
   const utils = trpc.useUtils();
 
   function makeHandler(factor: "x2" | "x4") {
+    const label = factor === "x2" ? "2×" : "4×";
     return {
       onSuccess: async (data: { success: boolean; imageUrl?: string; error?: string }) => {
         if (data.success && data.imageUrl) {
-          toast.success("高清放大完成");
-          onUpscaled?.(data.imageUrl);
+          toast.success(`高清放大完成（${label}）`);
+          onUpscaled?.(data.imageUrl, label);
           await utils.stripe.getSubscription.invalidate().catch(() => undefined);
         } else {
           toast.error(String(data.error || "放大失败"));
