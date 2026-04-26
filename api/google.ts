@@ -70,6 +70,19 @@ function baseUrlFor(location:string){
   return location==="global" ? "https://aiplatform.googleapis.com" : `https://${location}-aiplatform.googleapis.com`;
 }
 
+/** 用 access token 从 GCS 下载文件，返回 Buffer */
+async function downloadFromGcs(gsUri: string, accessToken: string): Promise<Buffer> {
+  // gs://bucket/path/file.png → https://storage.googleapis.com/download/storage/v1/b/bucket/o/path%2Ffile.png?alt=media
+  const withoutScheme = gsUri.replace(/^gs:\/\//, "");
+  const slashIdx = withoutScheme.indexOf("/");
+  const bucket = withoutScheme.slice(0, slashIdx);
+  const object = encodeURIComponent(withoutScheme.slice(slashIdx + 1));
+  const url = `https://storage.googleapis.com/download/storage/v1/b/${bucket}/o/${object}?alt=media`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`GCS download failed: ${res.status} ${await res.text().catch(() => "")}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
 function getPublicAssetBaseUrl() {
   return String(process.env.OAUTH_SERVER_URL || "").trim() || "https://mvstudiopro.fly.dev";
 }
@@ -279,17 +292,26 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, error: e?.message || "image_fetch_failed" };
   }
 
+  // x4 放大输出文件较大（可达 30-50MB），超出 Vercel 函数 4.5MB 响应限制
+  // 解决方案：要求 Vertex AI 把结果写入 GCS，再转存到 Vercel Blob 返回 URL
+  const gcsOutputUri = upscaleFactor === "x4"
+    ? `gs://mv-studio-pro-vertex-video-temp/upscaled/${Date.now()}-x4.png`
+    : undefined;
+
+  const parameters: Record<string, unknown> = {
+    sampleCount: 1,
+    mode: "upscale",
+    outputOptions: { mimeType: outputMimeType },
+    upscaleConfig: { upscaleFactor },
+  };
+  if (gcsOutputUri) parameters.storageUri = gcsOutputUri;
+
   const requestInit: RequestInit = {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       instances: [{ prompt, image: { bytesBase64Encoded: img.b64 } }],
-      parameters: {
-        sampleCount: 1,
-        mode: "upscale",
-        outputOptions: { mimeType: outputMimeType },
-        upscaleConfig: { upscaleFactor },
-      },
+      parameters,
     }),
   };
 
@@ -305,18 +327,32 @@ export async function runVertexUpscaleImage(args: {
     console.error(`[runVertexUpscaleImage] upscale ${upscaleFactor} failed: ${errMsg}`, JSON.stringify(raw).slice(0, 400));
     return { ok: false, status: r.status, url: r.url, raw, error: errMsg, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
+
+  // 尝试 inline base64（x2 或 GCS 失败降级）
   const images = extractGeneratedImages(r.json);
-  const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-  return {
-    ok: r.ok,
-    status: r.status,
-    url: r.url,
-    raw,
-    imageUrl: imageUrls[0] || "",
-    imageUrls,
-    imageCount: imageUrls.length,
-    upscaleFactor,
-  };
+  if (images.length > 0) {
+    const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+    return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
+  }
+
+  // x4：从 GCS 下载后转存到 Vercel Blob，返回公开 URL
+  if (gcsOutputUri) {
+    try {
+      // Vertex AI 可能把文件写到 gcsOutputUri 或加后缀的路径，先从 predictions 里找
+      const preds: any[] = r.json?.predictions || [];
+      const gcsUri = preds.map((p: any) => s(p.gcsUri || p.outputUri || "")).find(Boolean) || gcsOutputUri;
+      console.log(`[runVertexUpscaleImage] x4 GCS output: ${gcsUri}`);
+      const buf = await downloadFromGcs(gcsUri, token);
+      const filename = `upscaled-x4-${Date.now()}.png`;
+      const blob = await put(filename, buf, { access: "public", contentType: "image/png" });
+      return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blob.url, imageUrls: [blob.url], imageCount: 1, upscaleFactor };
+    } catch (gcsErr: any) {
+      console.error("[runVertexUpscaleImage] x4 GCS download/upload failed:", gcsErr?.message);
+      return { ok: false, status: 500, url: predictUrl, raw, error: `x4 GCS transfer failed: ${gcsErr?.message}`, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
+    }
+  }
+
+  return { ok: false, status: r.status, url: r.url, raw, error: "no image in response", imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
