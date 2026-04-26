@@ -347,19 +347,9 @@ function TopicImageGenerator({
 }) {
   const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
-  const [compUrl, setCompUrl] = useState("");
-  const [compAnalysis, setCompAnalysis] = useState("");
-  const [compQuestion, setCompQuestion] = useState("");
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
     onSuccess: (res) => { setImageUrl(res.imageUrl); },
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
-  });
-  const analyzeMutation = trpc.openaiImage.analyze.useMutation({
-    onSuccess: (res) => {
-      if (res.ok) setCompAnalysis(res.analysis);
-      else toast.error(res.error || "分析失败");
-    },
-    onError: (err) => toast.error(err.message || "分析失败"),
   });
 
 
@@ -407,39 +397,6 @@ function TopicImageGenerator({
         </div>
       )}
 
-      {/* 竞品视觉分析 */}
-      <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-3">
-        <div className="mb-2 text-xs font-semibold text-[#b7add8]">🔍 竞品视觉分析</div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={compUrl}
-            onChange={(e) => setCompUrl(e.target.value)}
-            placeholder="粘贴竞品截图 URL..."
-            className="flex-1 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-[#f97316]/50"
-          />
-          <button
-            type="button"
-            disabled={!compUrl.trim() || analyzeMutation.isPending}
-            onClick={() => analyzeMutation.mutate({ imageUrl: compUrl.trim(), question: compQuestion || undefined })}
-            className="rounded-lg bg-[#f97316]/20 px-3 py-2 text-xs font-semibold text-[#f97316] transition hover:bg-[#f97316]/30 disabled:opacity-40"
-          >
-            {analyzeMutation.isPending ? "分析中..." : "分析"}
-          </button>
-        </div>
-        <input
-          type="text"
-          value={compQuestion}
-          onChange={(e) => setCompQuestion(e.target.value)}
-          placeholder="分析角度（可选）：如「分析封面色彩与情绪」"
-          className="mt-2 w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-white placeholder-white/30 outline-none focus:border-[#f97316]/50"
-        />
-        {compAnalysis && (
-          <div className="mt-3 rounded-lg bg-black/30 p-3 text-xs leading-relaxed text-white/80 whitespace-pre-line">
-            {compAnalysis}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
