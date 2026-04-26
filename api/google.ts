@@ -123,7 +123,7 @@ async function signGcsUrl(gsUri: string, sa: { client_email: string; private_key
 }
 
 /** 轮询 GCS 文件是否已写入（最多等 90s）*/
-async function waitForGcsFile(gsUri: string, accessToken: string, maxWaitMs = 90_000): Promise<boolean> {
+async function waitForGcsFile(gsUri: string, accessToken: string, maxWaitMs = 300_000): Promise<boolean> {
   const withoutScheme = gsUri.replace(/^gs:\/\//, "");
   const slashIdx = withoutScheme.indexOf("/");
   const bucket = withoutScheme.slice(0, slashIdx);
@@ -388,7 +388,7 @@ export async function runVertexUpscaleImage(args: {
   console.log(`[runVertexUpscaleImage] ${upscaleFactor} GCS target: ${finalGcsUri} (from_response=${!!gcsUriFromResponse})`);
 
   // 2. 等待文件写入 GCS（最多 90s）
-  const fileReady = await waitForGcsFile(finalGcsUri, token, 90_000);
+  const fileReady = await waitForGcsFile(finalGcsUri, token, 300_000);
   if (fileReady) {
     try {
       const signedUrl = await signGcsUrl(finalGcsUri, sa);
