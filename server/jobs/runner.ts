@@ -770,12 +770,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           content: JSON.stringify({
             context,
             windowDays,
-            snapshotData: {
-              platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
-              topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
-              titleExecutions: (snapshotSummary.titleExecutions as any[])?.slice(0, 3) || [],
-              monetizationStrategies: (snapshotSummary.monetizationStrategies as any[])?.slice(0, 2) || [],
-            },
+            snapshotData: snapshotSummary,
             task: "输出严格合法 JSON，必须包含以下字段：contentBlueprints（至少3个内容方案数组，每项含：title（选题标题）/format（「短视频」或「图文」）/hook（≥30字开场钩子，必须是让用户停下来的具体一句话）/copywriting（≥200字逐字文案，包含完整开头段落/中段展开/结尾引导行动）/suitablePlatforms（适合平台数组）/actionableSteps（至少3个落地步骤，字符串数组）/detailedScript（精确时间轴拍摄脚本：视频格式用「[00:00-00:05] 画面：...口播：...情绪：...」格式；图文格式用「[封面] 设计：... [图2] 文案：...」格式，≥400字）/publishingAdvice（发布时机与平台设置，包含具体hashtag）/executionDetails（对象，必须包含environmentAndWardrobe（拍摄环境+服装道具，≥50字）/lightingAndCamera（灯光+机位设置，≥50字）/stepByStepScript（逐步脚本数组，每步「[时段]动作描述」格式，至少5步））/highlightKeywords（热点关键字数组，格式如「[高亮:职场霸凌]」）） 和 monetizationLanes（1-2条变现路径数组，每项含：title/fitReason/offerShape/revenueModes（数组）/firstValidation）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
@@ -803,12 +798,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
             context,
             windowDays,
             contentBlueprint: contentResult,
-            snapshotSummary: {
-              overview: snapshotSummary.overview,
-              platformSnapshots: (snapshotSummary.platformSnapshots as any[])?.slice(0, 4) || [],
-              platformRecommendations: (snapshotSummary.platformRecommendations as any[])?.slice(0, 3) || [],
-              topicLibrary: (snapshotSummary.topicLibrary as any[])?.slice(0, 5) || [],
-            },
+            snapshotSummary,
             task: "请根据以上蓝图与快照数据，输出严格合法 JSON，必须包含以下所有字段：headline（平台策略标题）、subheadline（副标题，一句话说明当前时间窗口最值得做的事）、topSignals（4条核心信号，每项含 title/detail/badge）、hotTopics（每个平台5-8个热门赛道，每项含 title/whyHot/howToUse）、actionCards（3-5张可执行动作卡，每项含 title/detail）、platformMenu（数组，每项必须包含：platform/displayName/whyNow/signal/primaryTrack（当前最推荐赛道名称）/estimatedTraffic（流量预估区间，如「月播放 10-30万」）/ipUniqueness（IP稀缺度说明，50字以内）/commercialConversion（商业转化预期，如「私信转化 2-4%」）/trafficBoosters（字符串数组，2-3条流量扶持活动）/referenceAccounts（字符串数组，1-2个可参考的对标账号）/whyNowDetail（为什么现在值得做，100字以内）/nextMove（首发动作，50字以内）/hook（内容开场钩子示例）/monetization（变现切入方向）））、conversationStarters（4个追问建议，字符串数组）、ipScarcity（整体赛道稀缺度，100字以内）、trafficForecast（整体流量预估，如「月播放 15-40万」）、conversionRate（整体预期转化率，如「私信咨询转化 2-5%」）。第一个字符必须是 {，最后必须是 }。",
           }),
         },
@@ -828,7 +818,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           platformDashboard: dashboardResult,
           platformContent: contentResult,
           completedAt: new Date().toISOString(),
-          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro" },
+          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro", snapshotDepth: "full" },
         },
       };
     }
