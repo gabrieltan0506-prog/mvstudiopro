@@ -940,7 +940,7 @@ export default function WorkflowNodes() {
             />
           </div>
           <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white outline-none" />
-          <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
+          <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <input value={targetWords} onChange={(e) => setTargetWords(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Script Length" />

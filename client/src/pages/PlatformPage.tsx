@@ -1499,7 +1499,7 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -2194,7 +2194,7 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
+                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input
