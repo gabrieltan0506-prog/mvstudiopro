@@ -6,6 +6,7 @@ import { getSupervisorAllowlist } from "../services/access-policy";
 import { resolveUserTier, type UserTier } from "../services/tier-provider-routing";
 import { registerAuthApiRoutes } from "../routers/authApi";
 import { registerSmsAuthRoutes } from "../routers/smsAuth";
+import { registerSpeechApiRoutes } from "../routers/speechApi";
 
 export function createApp() {
   if (!process.env.JWT_SECRET) {
@@ -19,6 +20,7 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true, limit: "650mb" }));
   registerAuthApiRoutes(app);
   registerSmsAuthRoutes(app);
+  registerSpeechApiRoutes(app);
 
   // health check
   app.get("/api/health", (_req, res) => {
