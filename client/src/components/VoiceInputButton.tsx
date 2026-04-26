@@ -19,6 +19,8 @@ export default function VoiceInputButton({
   const [status, setStatus] = useState<Status>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
+  const onTranscriptRef = useRef(onTranscript);
+  useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
 
   // 组件卸载时强制停止录音并释放麦克风
   useEffect(() => {
@@ -64,7 +66,7 @@ export default function VoiceInputButton({
           });
           if (!response.ok) throw new Error(`API ${response.status}`);
           const data = await response.json();
-          if (data.text) onTranscript(data.text);
+          if (data.text) onTranscriptRef.current(data.text);
           setStatus("idle");
         } catch (err) {
           console.error("[VoiceInput] API error:", err);
