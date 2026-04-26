@@ -11,7 +11,6 @@ export type ImageUpscaleBarProps = {
   baseCreditKey: ImageUpscaleBaseCreditKey;
   className?: string;
   style?: React.CSSProperties;
-  /** 使用 Tailwind 时使用 */
   compact?: boolean;
   onUpscaled?: (newImageUrl: string) => void;
 };
@@ -25,18 +24,25 @@ export function ImageUpscaleBar({
   onUpscaled,
 }: ImageUpscaleBarProps) {
   const utils = trpc.useUtils();
-  const mut = trpc.vertexImage.upscale.useMutation({
-    onSuccess: async (data) => {
-      if (data.success && data.imageUrl) {
-        toast.success("高清放大完成");
-        onUpscaled?.(data.imageUrl);
-        await utils.stripe.getSubscription.invalidate().catch(() => undefined);
-      } else {
-        toast.error(String((data as { error?: string }).error || "放大失败"));
-      }
-    },
-    onError: (e) => toast.error(e.message || "放大失败"),
-  });
+
+  function makeHandler(factor: "x2" | "x4") {
+    return {
+      onSuccess: async (data: { success: boolean; imageUrl?: string; error?: string }) => {
+        if (data.success && data.imageUrl) {
+          toast.success("高清放大完成");
+          onUpscaled?.(data.imageUrl);
+          await utils.stripe.getSubscription.invalidate().catch(() => undefined);
+        } else {
+          toast.error(String(data.error || "放大失败"));
+        }
+      },
+      onError: (e: { message?: string }) => toast.error(e.message || "放大失败"),
+    };
+  }
+
+  // 两个独立 mutation，各自持有独立的 isPending 状态
+  const mut2 = trpc.vertexImage.upscale.useMutation(makeHandler("x2"));
+  const mut4 = trpc.vertexImage.upscale.useMutation(makeHandler("x4"));
 
   const url = String(imageUrl || "").trim();
   if (!url) return null;
@@ -59,23 +65,23 @@ export function ImageUpscaleBar({
         ...style,
       }}
     >
-      <span style={{ fontSize: 12, opacity: 0.72, fontWeight: 700 }}>Upscale</span>
+      <span style={{ fontSize: 12, opacity: 0.72, fontWeight: 700 }}>放大</span>
       <button
         type="button"
         className={btnBase}
-        disabled={mut.isPending}
-        onClick={() => mut.mutate({ imageUrl: url, upscaleFactor: "x2", baseCreditKey })}
+        disabled={mut2.isPending || mut4.isPending}
+        onClick={() => mut2.mutate({ imageUrl: url, upscaleFactor: "x2", baseCreditKey })}
       >
-        {mut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        {mut2.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         2×
       </button>
       <button
         type="button"
         className={btnBase}
-        disabled={mut.isPending}
-        onClick={() => mut.mutate({ imageUrl: url, upscaleFactor: "x4", baseCreditKey })}
+        disabled={mut2.isPending || mut4.isPending}
+        onClick={() => mut4.mutate({ imageUrl: url, upscaleFactor: "x4", baseCreditKey })}
       >
-        {mut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        {mut4.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         4×
       </button>
       <span style={{ fontSize: 11, opacity: 0.55, width: "100%", flexBasis: "100%" }}>

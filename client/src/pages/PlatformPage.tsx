@@ -384,7 +384,7 @@ function TopicImageGenerator({
           </div>
           <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
           <div className="px-2 pb-2">
-            <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="forgeImage" className="mt-2" />
+            <ImageUpscaleBar imageUrl={imageUrl} baseCreditKey="forgeImage" className="mt-2" onUpscaled={setImageUrl} />
           </div>
         </div>
       )}
