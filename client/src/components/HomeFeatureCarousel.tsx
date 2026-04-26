@@ -8,9 +8,10 @@ const CARDS = [
     date: "2026/04/26",
     tag: "今日上线",
     title: "语音输入功能升级",
-    subtitle: "说话即可输入 · 全浏览器兼容",
-    desc: "现已全面支持 Chrome、Edge、Safari。录音结束后 AI 自动识别中文并填入输入框，无需手动打字，创作效率大幅提升。",
-    pills: ["Chrome ✓", "Edge ✓", "Safari ✓", "中文识别"],
+    subtitle: "說話即可輸入 · 支援 Chrome、Edge、Safari",
+    desc: "全面支援三大瀏覽器！錄音結束後 AI 自動識別中文並填入輸入框，無需手動打字，創作效率大幅提升。",
+    pills: ["Chrome ✓", "Edge ✓", "Safari ✓", "中文識別"],
+    flashPills: true,
     icon: Mic,
     accentColor: "#fb923c",
     glowColor: "rgba(251,146,60,0.20)",
@@ -191,17 +192,26 @@ export default function HomeFeatureCarousel() {
 
               {/* 功能标签 Pills */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {card.pills.map((pill, i) => (
-                  <span key={i} style={{
-                    fontSize: 12, color: card.accentColor,
-                    background: card.glowColor,
-                    border: `1px solid ${card.borderColor}`,
-                    borderRadius: 99, padding: "4px 12px",
-                    fontWeight: 600,
-                  }}>
-                    {pill}
-                  </span>
-                ))}
+                {card.pills.map((pill, i) => {
+                  const isFlash = (card as any).flashPills && i < 3;
+                  return (
+                    <span key={i} style={{
+                      fontSize: 12, color: isFlash ? "#fff" : card.accentColor,
+                      background: isFlash
+                        ? `linear-gradient(90deg, ${card.accentColor}cc, ${card.accentColor}88)`
+                        : card.glowColor,
+                      border: `1px solid ${isFlash ? card.accentColor : card.borderColor}`,
+                      borderRadius: 99, padding: "4px 14px",
+                      fontWeight: 700,
+                      boxShadow: isFlash ? `0 0 10px ${card.accentColor}66` : "none",
+                      animation: isFlash
+                        ? `mvsp-flash-pill 1.6s ease-in-out ${i * 0.25}s infinite`
+                        : "none",
+                    }}>
+                      {pill}
+                    </span>
+                  );
+                })}
               </div>
 
               {/* 跳转按钮（仅有 href 的卡片显示） */}
@@ -310,11 +320,23 @@ export default function HomeFeatureCarousel() {
         </div>
       </div>
 
-      {/* 橙色脉冲动画 */}
+      {/* 动画关键帧 */}
       <style>{`
         @keyframes mvsp-pulse-orange {
           0%, 100% { box-shadow: 0 2px 8px rgba(249,115,22,0.45); }
           50% { box-shadow: 0 2px 16px rgba(249,115,22,0.75); }
+        }
+        @keyframes mvsp-flash-pill {
+          0%, 100% {
+            opacity: 1;
+            box-shadow: 0 0 10px rgba(251,146,60,0.5);
+            transform: scale(1);
+          }
+          50% {
+            opacity: 0.72;
+            box-shadow: 0 0 20px rgba(251,146,60,0.9), 0 0 36px rgba(251,146,60,0.4);
+            transform: scale(1.05);
+          }
         }
       `}</style>
     </section>
