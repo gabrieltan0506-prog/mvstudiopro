@@ -184,14 +184,17 @@ export default function TestLab() {
 
     try {
       if (imageProvider === "openai") {
-        const r = await fetchJsonish("/api/openai-image", {
+        const r = await fetchJsonish("/trpc/openaiImage.generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, model: openaiImageModel, size: "1024x1024", quality: "high", n: Number(imageCount || 1) }),
+          body: JSON.stringify({
+            json: { prompt, model: "gpt-image-1", size: "1024x1024", quality: "high", n: Number(imageCount || 1) }
+          }),
         });
         setDebug(r);
-        if (!r.ok) throw new Error(r?.json?.error || "openai_image_failed");
-        const firstUrl = String(r?.json?.imageUrl || "").trim();
+        const result = r?.json?.result?.data?.json ?? r?.json;
+        if (!r.ok || result?.ok === false) throw new Error(result?.error || "openai_image_failed");
+        const firstUrl = String(result?.imageUrl || "").trim();
         if (!firstUrl) throw new Error("openai_image_missing_url");
         setImageUrl(firstUrl);
         return;

@@ -5376,6 +5376,64 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
+  /** GPT-image-2 生图（TestLab 调试用，走 Fly 直连 OpenAI） */
+  openaiImage: router({
+    generate: publicProcedure
+      .input(z.object({
+        prompt: z.string().min(1),
+        model: z.string().optional(),
+        size: z.string().optional(),
+        quality: z.string().optional(),
+        n: z.number().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+        if (!apiKey) return { ok: false as const, error: "Missing OPENAI_IMAGE_API_KEY on server" };
+        const body = {
+          model: input.model || "gpt-image-1",
+          prompt: input.prompt,
+          n: input.n || 1,
+          size: input.size || "1024x1024",
+          quality: input.quality || "high",
+          response_format: "b64_json",
+        };
+        let res: Response;
+        try {
+          res = await fetch("https://api.openai.com/v1/images/generations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(120_000),
+          });
+        } catch (e: any) {
+          return { ok: false as const, error: e?.message || "fetch failed" };
+        }
+        const json: any = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const errMsg = String(json?.error?.message || `HTTP ${res.status}`);
+          console.error("[openaiImage.generate] failed:", errMsg);
+          return { ok: false as const, error: errMsg };
+        }
+        const items: Array<{ b64_json?: string; url?: string }> = Array.isArray(json?.data) ? json.data : [];
+        const { put } = await import("@vercel/blob");
+        const imageUrls: string[] = [];
+        for (const item of items) {
+          if (item.url) { imageUrls.push(item.url); continue; }
+          if (item.b64_json) {
+            try {
+              const buf = Buffer.from(item.b64_json, "base64");
+              const blob = await put(`gpt-image-${Date.now()}.png`, buf, { access: "public", contentType: "image/png" });
+              imageUrls.push(blob.url);
+            } catch {
+              imageUrls.push(`data:image/png;base64,${item.b64_json}`);
+            }
+          }
+        }
+        if (imageUrls.length === 0) return { ok: false as const, error: "no image in response" };
+        return { ok: true as const, imageUrl: imageUrls[0], imageUrls };
+      }),
+  }),
+
 });
 
 export type AppRouter = typeof appRouter;
