@@ -965,12 +965,20 @@ export default function WorkflowNodes() {
   function renderScriptPanel() {
     return (
       <div className="space-y-4">
-        <textarea
-          value={scriptText}
-          onChange={(e) => { setScriptDirty(true); setScriptText(e.target.value); }}
-          rows={14}
-          className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white outline-none"
-        />
+        <div className="relative">
+          <textarea
+            value={scriptText}
+            onChange={(e) => { setScriptDirty(true); setScriptText(e.target.value); }}
+            rows={14}
+            className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white outline-none"
+          />
+          <div className="absolute right-3 top-3">
+            <VoiceInputButton
+              onTranscript={(t) => { setScriptDirty(true); setScriptText((prev) => prev ? prev + " " + t : t); }}
+              size={28}
+            />
+          </div>
+        </div>
         <div className="flex flex-wrap gap-3">
           <Button disabled={globalStep.loading || !scriptText.trim()} onClick={() => void runOp("workflowGenerateStoryboard", {
             workflowId,
@@ -1009,7 +1017,15 @@ export default function WorkflowNodes() {
         {storyboard.length ? storyboard.map((scene) => (
           <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="mb-3 text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
-            <textarea value={scene.scenePrompt} onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })} rows={4} className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" />
+            <div className="relative mb-3">
+              <textarea value={scene.scenePrompt} onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })} rows={4} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white" />
+              <div className="absolute right-3 top-3">
+                <VoiceInputButton
+                  onTranscript={(t) => updateScene(scene.sceneIndex, { scenePrompt: (scene.scenePrompt ? scene.scenePrompt + " " + t : t) })}
+                  size={28}
+                />
+              </div>
+            </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               <input value={scene.primarySubject || ""} onChange={(e) => updateScene(scene.sceneIndex, { primarySubject: e.target.value })} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Primary Subject" />
               <input value={scene.character || ""} onChange={(e) => updateScene(scene.sceneIndex, { character: e.target.value })} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" placeholder="Character" />
@@ -1177,7 +1193,15 @@ export default function WorkflowNodes() {
               </Button>
             ) : (
               <>
-                <textarea value={renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""} onChange={(e) => setRenderStillPromptMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} rows={3} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white" />
+                <div className="relative">
+                  <textarea value={renderStillPromptMap[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""} onChange={(e) => setRenderStillPromptMap((prev) => ({ ...prev, [String(scene.sceneIndex)]: e.target.value }))} rows={3} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white" />
+                  <div className="absolute right-3 top-3">
+                    <VoiceInputButton
+                      onTranscript={(t) => setRenderStillPromptMap((prev) => { const cur = prev[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""; return { ...prev, [String(scene.sceneIndex)]: cur ? cur + " " + t : t }; })}
+                      size={28}
+                    />
+                  </div>
+                </div>
                 {(() => {
                   const rsUrl = s(storyboardImages.find((item) => Number(item.sceneIndex) === scene.sceneIndex)?.renderStillImageUrl).trim();
                   if (!rsUrl) return null;
@@ -1226,13 +1250,21 @@ export default function WorkflowNodes() {
         <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
           <div className="mb-2 text-sm font-semibold text-white">语音实验室</div>
           <div className="mb-3 text-sm text-white/70">直接输入文字生成语音，不依赖 scene、storyboard 或 script。</div>
-          <textarea
-            value={voiceLabText}
-            onChange={(e) => setVoiceLabText(e.target.value)}
-            rows={4}
-            placeholder="直接输入你要测试的旁白文字"
-            className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
-          />
+          <div className="relative mb-3">
+            <textarea
+              value={voiceLabText}
+              onChange={(e) => setVoiceLabText(e.target.value)}
+              rows={4}
+              placeholder="直接输入你要测试的旁白文字"
+              className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white"
+            />
+            <div className="absolute right-3 top-3">
+              <VoiceInputButton
+                onTranscript={(t) => setVoiceLabText((prev) => prev ? prev + " " + t : t)}
+                size={28}
+              />
+            </div>
+          </div>
           <div className="grid gap-3 md:grid-cols-2">
             <select value={voiceLabType} onChange={(e) => setVoiceLabType(e.target.value)} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
               <option value="female">Female</option>
@@ -1287,13 +1319,21 @@ export default function WorkflowNodes() {
             <div key={scene.sceneIndex} className="rounded-2xl border border-white/10 bg-white/5 p-4">
               <div className="mb-2 text-sm font-semibold text-white">Scene {scene.sceneIndex}</div>
               <div className="mb-2 text-xs font-medium uppercase tracking-[0.22em] text-white/45">Direct Voice Text</div>
-              <textarea
-                value={manualVoiceText}
-                onChange={(e) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: e.target.value }))}
-                rows={4}
-                placeholder="直接输入你要生成的旁白文字"
-                className="mb-3 w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white"
-              />
+              <div className="relative mb-3">
+                <textarea
+                  value={manualVoiceText}
+                  onChange={(e) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: e.target.value }))}
+                  rows={4}
+                  placeholder="直接输入你要生成的旁白文字"
+                  className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white"
+                />
+                <div className="absolute right-3 top-3">
+                  <VoiceInputButton
+                    onTranscript={(t) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: prev[key] ? prev[key] + " " + t : t }))}
+                    size={28}
+                  />
+                </div>
+              </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <select value={sceneVoiceTypeMap[key] ?? scene.voiceType ?? "female"} onChange={(e) => setSceneVoiceTypeMap((prev) => ({ ...prev, [key]: e.target.value }))} className="rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white">
                   <option value="female">Female</option>
@@ -1365,13 +1405,21 @@ export default function WorkflowNodes() {
               </button>
             )}
           </label>
-          <textarea
-            value={musicPrompt}
-            onChange={(e) => setMusicPrompt(e.target.value)}
-            rows={3}
-            placeholder="留空则由 Gemini 自动根据脚本生成…"
-            className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 text-sm text-white placeholder-white/25"
-          />
+          <div className="relative">
+            <textarea
+              value={musicPrompt}
+              onChange={(e) => setMusicPrompt(e.target.value)}
+              rows={3}
+              placeholder="留空则由 Gemini 自动根据脚本生成…"
+              className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white placeholder-white/25"
+            />
+            <div className="absolute right-3 top-3">
+              <VoiceInputButton
+                onTranscript={(t) => setMusicPrompt((prev) => prev ? prev + " " + t : t)}
+                size={28}
+              />
+            </div>
+          </div>
         </div>
 
         {/* 时长 */}
@@ -1693,12 +1741,20 @@ export default function WorkflowNodes() {
                 <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="space-y-4 rounded-[26px] border border-white/10 bg-[#0b1020] p-4">
                     <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Scene Prompt</div>
-                    <textarea
-                      value={scene.scenePrompt || ""}
-                      onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })}
-                      rows={6}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-white outline-none"
-                    />
+                    <div className="relative">
+                      <textarea
+                        value={scene.scenePrompt || ""}
+                        onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })}
+                        rows={6}
+                        className="w-full rounded-xl border border-white/10 bg-white/[0.03] p-3 pr-12 text-sm leading-6 text-white outline-none"
+                      />
+                      <div className="absolute right-3 top-3">
+                        <VoiceInputButton
+                          onTranscript={(t) => updateScene(scene.sceneIndex, { scenePrompt: (scene.scenePrompt ? scene.scenePrompt + " " + t : t) })}
+                          size={28}
+                        />
+                      </div>
+                    </div>
                     <div className="text-xs uppercase tracking-[0.18em] text-white/45">Scene Meta</div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <input value={scene.primarySubject || ""} onChange={(e) => updateScene(scene.sceneIndex, { primarySubject: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Primary Subject" />

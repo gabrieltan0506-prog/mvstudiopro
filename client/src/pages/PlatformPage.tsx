@@ -1463,12 +1463,20 @@ export default function PlatformPage() {
                   <Target className="h-4 w-4 text-[#ffdd44]" />
                   你这轮最想判断什么
                 </div>
-                <textarea
-                  value={focusPrompt}
-                  onChange={(event) => setFocusPrompt(event.target.value)}
-                  placeholder="例如：我现在是做女性健康/本地服务，想知道先做小红书还是抖音；应该先做图文、短视频，还是先验证某个商业化切口。"
-                  className="mt-4 min-h-[136px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
-                />
+                <div className="relative mt-4">
+                  <textarea
+                    value={focusPrompt}
+                    onChange={(event) => setFocusPrompt(event.target.value)}
+                    placeholder="例如：我现在是做女性健康/本地服务，想知道先做小红书还是抖音；应该先做图文、短视频，还是先验证某个商业化切口。"
+                    className="min-h-[136px] w-full rounded-2xl border border-white/10 bg-[#0c061e] px-4 py-3 pr-12 text-sm leading-7 text-white outline-none transition focus:border-[#49e6ff]/35"
+                  />
+                  <div className="absolute right-3 top-3">
+                    <VoiceInputButton
+                      onTranscript={(t) => setFocusPrompt((prev) => prev ? prev + " " + t : t)}
+                      size={28}
+                    />
+                  </div>
+                </div>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
