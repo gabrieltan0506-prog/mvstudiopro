@@ -1624,6 +1624,8 @@ export default function MVAnalysisPage() {
   const [analyzedVideoUrl, setAnalyzedVideoUrl] = useState("");
   const [debugMode, setDebugMode] = useState(false);
   const [debugInfo, setDebugInfo] = useState<DebugInfo>(null);
+  const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
+  const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [activeDashboardPanel, setActiveDashboardPanel] = useState("readiness");
   const [selectedComparePlatform, setSelectedComparePlatform] = useState("");
   const [selectedTrendPlatform, setSelectedTrendPlatform] = useState("all");
@@ -3276,6 +3278,7 @@ export default function MVAnalysisPage() {
                   <div className="absolute right-3 top-3">
                     <VoiceInputButton
                       onTranscript={(t) => setContext((prev) => prev ? prev + " " + t : t)}
+                      onDebugLog={addVoiceDebug}
                       size={28}
                     />
                   </div>
@@ -4799,6 +4802,24 @@ export default function MVAnalysisPage() {
                   ) : null}
                 </div>
               ) : null}
+              {/* 語音輸入 debug 區塊 */}
+              <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">🎤 語音輸入 Debug Log</div>
+                  <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+                </div>
+                {voiceDebugLog.length === 0 ? (
+                  <div className="mt-3 text-xs text-white/30">尚無記錄，點擊麥克風按鈕開始…</div>
+                ) : (
+                  <div className="mt-3 space-y-1">
+                    {voiceDebugLog.map((line, i) => (
+                      <div key={i} className={`font-mono text-[11px] leading-5 ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-white/75"}`}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         ) : null}
