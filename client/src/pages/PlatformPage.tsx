@@ -666,11 +666,50 @@ export default function PlatformPage() {
   }, []);
 
   const handleDownloadPlatformPdf = useCallback(() => {
+    // 1. 临时隐藏所有不应进入 PDF 的 UI 元素
+    const excludeSelectors = [
+      "[data-pdf-exclude]",          // 通用排除标记
+      "nav",                          // 导航栏
+      "header",
+      "[data-testid='navbar']",
+      ".no-print",
+    ];
+    const excluded: { el: HTMLElement; prev: string }[] = [];
+    excludeSelectors.forEach((sel) => {
+      document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+        excluded.push({ el, prev: el.style.display });
+        el.style.display = "none";
+      });
+    });
+
+    // 2. 克隆整个页面（保留所有 CSS）
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
+
+    // 3. 恢复被隐藏的元素
+    excluded.forEach(({ el, prev }) => { el.style.display = prev; });
+
+    // 4. 清理克隆中的脚本
     clone.querySelectorAll("script").forEach((n) => n.remove());
+
+    // 5. 注入 base 标签（让相对路径 CSS/图片正常加载）
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
+
+    // 6. 强制深色背景 + 禁止浏览器自动转白（print-color-adjust）
+    const darkStyle = document.createElement("style");
+    darkStyle.textContent = `
+      *, *::before, *::after {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      html, body {
+        background: #0a0616 !important;
+        color: #e2e8f0 !important;
+      }
+    `;
+    clone.querySelector("head")?.appendChild(darkStyle);
+
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
     downloadPlatformPdfMutation.mutate({ html: htmlContent });
