@@ -5390,7 +5390,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
         if (!apiKey) return { ok: false as const, error: "Missing OPENAI_IMAGE_API_KEY on server" };
         const body = {
-          model: input.model || "gpt-image-1",
+          model: input.model || "gpt-image-2",
           prompt: input.prompt,
           n: input.n || 1,
           size: input.size || "1024x1024",

@@ -188,7 +188,7 @@ export default function TestLab() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            json: { prompt, model: "gpt-image-1", size: "1024x1024", quality: "high", n: Number(imageCount || 1) }
+            json: { prompt, model: "gpt-image-2", size: "1024x1024", quality: "high", n: Number(imageCount || 1) }
           }),
         });
         setDebug(r);
