@@ -4,8 +4,8 @@ import { put } from "@vercel/blob";
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
 
-  const apiKey = String(process.env.OPENAI_API_KEY || "").trim();
-  if (!apiKey) return res.status(500).json({ ok: false, error: "Missing OPENAI_API_KEY" });
+  const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+  if (!apiKey) return res.status(500).json({ ok: false, error: "Missing OPENAI_IMAGE_API_KEY" });
 
   const body: any = (req as any).body || {};
   const prompt = String(body.prompt || "").trim();
