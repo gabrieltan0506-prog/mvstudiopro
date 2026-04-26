@@ -5457,7 +5457,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
             body: JSON.stringify({
-              model: "gpt-4.1-mini",
+              model: "gpt-5.4",
               input: [{
                 role: "user",
                 content: [
