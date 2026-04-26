@@ -55,7 +55,7 @@ app.post("/generate-pdf", async (req, res) => {
     });
 
     // Extra wait for CSS transitions and font loads to fully settle
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, 30_000));
 
     const pdfBuffer = await page.pdf({
       format: "A4",
