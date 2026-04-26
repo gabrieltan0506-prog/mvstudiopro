@@ -353,6 +353,7 @@ function TopicImageGenerator({
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
   });
 
+
   const handleGenerateImage = () => {
     let promptText = title + " " + hook;
     if (executionDetails) {
@@ -384,22 +385,17 @@ function TopicImageGenerator({
             <button onClick={() => { setImageUrl(""); setUpscaledUrl(null); }} className="hover:text-white">重置</button>
           </div>
 
-          {upscaledUrl ? (
-            /* ── 放大对比：原图 + 放大图并排 ── */
-            <div className="flex gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="mb-1 text-center text-[10px] font-semibold text-white/40">原图</div>
-                <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="mb-1 text-center text-[10px] font-semibold text-[#49e6ff]/80">
-                  放大 {upscaledUrl.factor}
-                </div>
-                <TrialWatermarkImage src={upscaledUrl.url} isTrial={isTrial} className="w-full rounded-xl ring-1 ring-[#49e6ff]/30" />
-              </div>
-            </div>
-          ) : (
-            <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
+          <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
+          {upscaledUrl && (
+            <a
+              href={upscaledUrl.url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 flex items-center justify-center gap-1.5 rounded-lg border border-[#49e6ff]/30 bg-[#49e6ff]/8 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[#49e6ff]/15"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              查看高清放大图（{upscaledUrl.factor}）
+            </a>
           )}
 
           <div className="px-2 pb-2">
@@ -1531,7 +1527,7 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -2226,7 +2222,7 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input

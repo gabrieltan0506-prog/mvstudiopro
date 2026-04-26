@@ -5347,15 +5347,35 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           }
         }
 
-        const fetchable = resolveImageUrlForVertexFetch(input.imageUrl);
-        const result = await runVertexUpscaleImage({
-          imageUrl: fetchable,
-          prompt: "",
-          upscaleFactor: input.upscaleFactor,
-          outputMimeType: "image/png",
-        });
+        // Proxy to Vercel — Vertex AI env vars (VERTEX_PROJECT_ID, SA credentials) live on Vercel, not Fly
+        const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+        const safeToken = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
 
-        if (!result.ok || !result.imageUrl) {
+        let imageUrl = "";
+        let upscaleOk = false;
+        try {
+          const res = await fetch(`${vercelBaseUrl}/api/google?op=upscaleImage`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(safeToken ? { Authorization: `Bearer ${safeToken}` } : {}),
+            },
+            body: JSON.stringify({
+              imageUrl: input.imageUrl,
+              upscaleFactor: input.upscaleFactor,
+              prompt: "",
+              outputMimeType: "image/png",
+            }),
+            signal: AbortSignal.timeout(120_000),
+          });
+          const json: any = await res.json().catch(() => ({}));
+          imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
+          upscaleOk = res.ok && !!imageUrl;
+        } catch (e: any) {
+          console.error("[vertexImage.upscale] vercel proxy failed:", e?.message);
+        }
+
+        if (!upscaleOk || !imageUrl) {
           if (!isAdminUser) {
             try {
               await refundCredits(ctx.user.id, creditsNeeded, "图片放大·失败·退回已扣积分");
@@ -5363,17 +5383,14 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               console.error("[vertexImage.upscale] restore credits failed", refErr);
             }
           }
-          return {
-            success: false as const,
-            error: result.error || "放大失败，请稍后重试",
-          };
+          return { success: false as const, error: "放大失败，请稍后重试" };
         }
 
         return {
           success: true as const,
-          imageUrl: result.imageUrl,
+          imageUrl,
           creditsUsed: isAdminUser ? 0 : creditsNeeded,
-          upscaleFactor: result.upscaleFactor,
+          upscaleFactor: input.upscaleFactor,
         };
       }),
   }),
