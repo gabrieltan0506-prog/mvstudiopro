@@ -1382,7 +1382,7 @@ export default function PlatformPage() {
 
 
         {(supervisorAccess || user?.role === "supervisor" || user?.role === "admin") ? (
-          <div className="mb-6 flex items-center justify-end">
+          <div className="mb-4 flex items-center justify-end">
             <button
               type="button"
               onClick={() => setDebugMode((value) => !value)}
@@ -1396,6 +1396,25 @@ export default function PlatformPage() {
             </button>
           </div>
         ) : null}
+        {debugMode && (
+          <div className="mb-6 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 语音输入 Debug Log</div>
+              <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+            </div>
+            {voiceDebugLog.length === 0 ? (
+              <div className="mt-3 text-xs text-white/30">暂无记录，点击麦克风按钮开始…</div>
+            ) : (
+              <div className="mt-3 space-y-1">
+                {voiceDebugLog.map((line, i) => (
+                  <div key={i} className={`font-mono text-[11px] leading-5 ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-[#d7d0ef]"}`}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <section className={shellCardClasses("overflow-hidden p-6 md:p-8")}>
           <div className="absolute inset-x-0 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(73,230,255,0.55),transparent)]" />
@@ -1690,24 +1709,6 @@ export default function PlatformPage() {
                     {JSON.stringify(dashboardDebug || null, null, 2)}
                   </pre>
                 </div>
-              </div>
-              {/* 語音輸入 debug 區塊 */}
-              <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 語音輸入 Debug Log</div>
-                  <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
-                </div>
-                {voiceDebugLog.length === 0 ? (
-                  <div className="mt-3 text-xs text-white/30">尚無記錄，點擊麥克風按鈕開始…</div>
-                ) : (
-                  <div className="mt-3 space-y-1">
-                    {voiceDebugLog.map((line, i) => (
-                      <div key={i} className={`text-[11px] leading-5 font-mono ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-[#d7d0ef]"}`}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           </section>

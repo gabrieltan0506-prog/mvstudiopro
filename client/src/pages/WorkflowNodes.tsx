@@ -278,6 +278,8 @@ export default function WorkflowNodes() {
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [debugMode, setDebugMode] = useState(false);
   const supervisorAccess = user?.role === "supervisor" || user?.role === "admin";
+  const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
+  const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [lastDebugEntry, setLastDebugEntry] = useState<DebugEntry | null>(null);
   const [globalStep, setGlobalStep] = useState<StepState>(INITIAL_STEP);
   const [auxBusyKey, setAuxBusyKey] = useState("");
@@ -933,6 +935,7 @@ export default function WorkflowNodes() {
             <span className="text-sm font-medium text-white/80">创作提示</span>
             <VoiceInputButton
               onTranscript={(t) => setPrompt((prev) => prev ? prev + " " + t : t)}
+              onDebugLog={addVoiceDebug}
               size={28}
             />
           </div>
@@ -975,6 +978,7 @@ export default function WorkflowNodes() {
           <div className="absolute right-3 top-3">
             <VoiceInputButton
               onTranscript={(t) => { setScriptDirty(true); setScriptText((prev) => prev ? prev + " " + t : t); }}
+              onDebugLog={addVoiceDebug}
               size={28}
             />
           </div>
@@ -1022,6 +1026,7 @@ export default function WorkflowNodes() {
               <div className="absolute right-3 top-3">
                 <VoiceInputButton
                   onTranscript={(t) => { setStoryboardDirty(true); setStoryboard((prev) => prev.map((s) => s.sceneIndex === scene.sceneIndex ? { ...s, scenePrompt: (s.scenePrompt ? s.scenePrompt + " " : "") + t } : s)); }}
+                  onDebugLog={addVoiceDebug}
                   size={28}
                 />
               </div>
@@ -1198,6 +1203,7 @@ export default function WorkflowNodes() {
                   <div className="absolute right-3 top-3">
                     <VoiceInputButton
                       onTranscript={(t) => setRenderStillPromptMap((prev) => { const cur = prev[String(scene.sceneIndex)] ?? scene.renderStillPrompt ?? ""; return { ...prev, [String(scene.sceneIndex)]: cur ? cur + " " + t : t }; })}
+                      onDebugLog={addVoiceDebug}
                       size={28}
                     />
                   </div>
@@ -1261,6 +1267,7 @@ export default function WorkflowNodes() {
             <div className="absolute right-3 top-3">
               <VoiceInputButton
                 onTranscript={(t) => setVoiceLabText((prev) => prev ? prev + " " + t : t)}
+                onDebugLog={addVoiceDebug}
                 size={28}
               />
             </div>
@@ -1330,6 +1337,7 @@ export default function WorkflowNodes() {
                 <div className="absolute right-3 top-3">
                   <VoiceInputButton
                     onTranscript={(t) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: prev[key] ? prev[key] + " " + t : t }))}
+                    onDebugLog={addVoiceDebug}
                     size={28}
                   />
                 </div>
@@ -1416,6 +1424,7 @@ export default function WorkflowNodes() {
             <div className="absolute right-3 top-3">
               <VoiceInputButton
                 onTranscript={(t) => setMusicPrompt((prev) => prev ? prev + " " + t : t)}
+                onDebugLog={addVoiceDebug}
                 size={28}
               />
             </div>
@@ -1751,6 +1760,7 @@ export default function WorkflowNodes() {
                       <div className="absolute right-3 top-3">
                         <VoiceInputButton
                   onTranscript={(t) => { setStoryboardDirty(true); setStoryboard((prev) => prev.map((s) => s.sceneIndex === scene.sceneIndex ? { ...s, scenePrompt: (s.scenePrompt ? s.scenePrompt + " " : "") + t } : s)); }}
+                  onDebugLog={addVoiceDebug}
                       size={28}
                     />
                   </div>
@@ -2070,6 +2080,25 @@ export default function WorkflowNodes() {
                       <button type="button" onClick={() => setDebugMode((prev) => !prev)} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/70"><Bug className="h-3.5 w-3.5" /> {debugMode ? "Debug ON" : "Debug OFF"}</button>
                     )}
                   </div>
+                  {debugMode && (
+                    <div className="mt-3 rounded-2xl border border-white/10 bg-[#0b1020] p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 语音输入 Debug Log</div>
+                        <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+                      </div>
+                      {voiceDebugLog.length === 0 ? (
+                        <div className="mt-2 text-xs text-white/30">暂无记录，点击麦克风按钮开始…</div>
+                      ) : (
+                        <div className="mt-2 space-y-1">
+                          {voiceDebugLog.map((line, i) => (
+                            <div key={i} className={`font-mono text-[11px] leading-5 ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-white/70"}`}>
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 p-4">
                     <div className="mb-1 text-xl font-black">{current.title}</div>
                     <div className="mb-3 text-xs text-white/45">{current.en}</div>

@@ -3029,6 +3029,26 @@ export default function MVAnalysisPage() {
           </div>
         </div>
 
+        {debugMode && (
+          <div className="mb-6 rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">🎤 语音输入 Debug Log</div>
+              <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+            </div>
+            {voiceDebugLog.length === 0 ? (
+              <div className="mt-3 text-xs text-white/30">暂无记录，点击麦克风按钮开始…</div>
+            ) : (
+              <div className="mt-3 space-y-1">
+                {voiceDebugLog.map((line, i) => (
+                  <div key={i} className={`font-mono text-[11px] leading-5 ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-white/75"}`}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <section className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(255,138,61,0.2),transparent_28%),radial-gradient(circle_at_top_right,rgba(38,132,255,0.15),transparent_24%),linear-gradient(180deg,#101d31_0%,#08111f_72%)] p-6 md:p-10">
           <div className="space-y-8">
             <div>
@@ -4802,24 +4822,6 @@ export default function MVAnalysisPage() {
                   ) : null}
                 </div>
               ) : null}
-              {/* 語音輸入 debug 區塊 */}
-              <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-100">🎤 語音輸入 Debug Log</div>
-                  <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
-                </div>
-                {voiceDebugLog.length === 0 ? (
-                  <div className="mt-3 text-xs text-white/30">尚無記錄，點擊麥克風按鈕開始…</div>
-                ) : (
-                  <div className="mt-3 space-y-1">
-                    {voiceDebugLog.map((line, i) => (
-                      <div key={i} className={`font-mono text-[11px] leading-5 ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-white/75"}`}>
-                        {line}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
           </section>
         ) : null}
