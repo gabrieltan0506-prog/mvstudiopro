@@ -184,7 +184,7 @@ export default function TestLab() {
 
     try {
       if (imageProvider === "openai") {
-        const r = await fetchJsonish("/trpc/openaiImage.generate", {
+        const r = await fetchJsonish("/api/trpc/openaiImage.generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

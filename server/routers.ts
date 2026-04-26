@@ -5395,7 +5395,6 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           n: input.n || 1,
           size: input.size || "1024x1024",
           quality: input.quality || "high",
-          response_format: "b64_json",
         };
         let res: Response;
         try {
