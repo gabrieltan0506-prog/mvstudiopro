@@ -686,7 +686,7 @@ export default function PlatformPage() {
 
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
-    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=3500&selector=%23platform-report` });
+    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=48000&selector=%23platform-report` });
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
