@@ -332,6 +332,13 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
+type ImageModel = "gemini" | "gpt-image-1";
+
+const IMAGE_MODEL_OPTIONS: { id: ImageModel; label: string; badge?: string }[] = [
+  { id: "gemini", label: "Gemini Flash" },
+  { id: "gpt-image-1", label: "GPT-image-2", badge: "NEW" },
+];
+
 function TopicImageGenerator({
   title,
   hook,
@@ -347,6 +354,7 @@ function TopicImageGenerator({
 }) {
   const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
+  const [imageModel, setImageModel] = useState<ImageModel>("gemini");
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
     onSuccess: (res) => setImageUrl(res.imageUrl),
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
@@ -361,11 +369,38 @@ function TopicImageGenerator({
         promptText = `场景与服装：${env}，灯光与镜头：${light}。主题：${title} ${hook}`;
       }
     }
-    generateMutation.mutate({ topicHook: promptText, format });
+    generateMutation.mutate({ topicHook: promptText, format, model: imageModel });
   };
 
   return (
     <div className="mt-4 border-t border-white/10 pt-4">
+      {/* 模型选择器 */}
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-[11px] font-semibold text-white/40">生图模型</span>
+        <div className="flex gap-1.5">
+          {IMAGE_MODEL_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setImageModel(opt.id)}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-all ${
+                imageModel === opt.id
+                  ? opt.id === "gpt-image-1"
+                    ? "border-orange-500/60 bg-orange-500/15 text-orange-300"
+                    : "border-blue-500/60 bg-blue-500/15 text-blue-300"
+                  : "border-white/10 bg-white/5 text-white/40 hover:text-white/70"
+              }`}
+            >
+              {opt.label}
+              {opt.badge && (
+                <span className="rounded bg-orange-500 px-1 py-0.5 text-[9px] font-black leading-none text-white">
+                  {opt.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
       {!imageUrl ? (
         <button
           type="button"
@@ -504,7 +539,7 @@ export default function PlatformPage() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("平台分析 PDF 已开始下载，快照已保存至「我的作品」");
         // Save snapshot record (GMT+8 title) with summary content
-        const gmt8Label = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
         const summaryLines: string[] = [];
         if (platformDashboard?.headline) summaryLines.push(platformDashboard.headline);
         if (platformDashboard?.subheadline) summaryLines.push(platformDashboard.subheadline);
@@ -1211,7 +1246,6 @@ export default function PlatformPage() {
     toast.success(`快照已生成，正在进行深度分析...`);
 
     // Dispatch async Job — returns jobId immediately, polls every 3s for result
-    // Stage 1: Gemini 2.5 Pro (dashboard) → Stage 2: Vertex 3.1 Pro Preview (content)
     const snap = result.data.snapshot;
     setIsDashboardLoading(true);
     setIsContentLoading(true);
@@ -1220,36 +1254,37 @@ export default function PlatformPage() {
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: {
-          overview: snap.overview,
-          platformSnapshots: snap.platformSnapshots.slice(0, 4).map((item) => ({
+          overview: snap.overview || "",
+          // 关键防呆：全面加入 (... || []) 和 ?. 确保即使 AI 漏字段，前端也绝不崩溃
+          platformSnapshots: (snap.platformSnapshots || []).slice(0, 4).map((item) => ({
             platform: item.platform,
             displayName: item.displayName,
             audienceFitScore: item.audienceFitScore,
             momentumScore: item.momentumScore,
             summary: item.summary,
             fitLabel: item.fitLabel,
-            sampleTopics: (item as any).sampleTopics?.slice(0, 4),
+            sampleTopics: (item as any).sampleTopics?.slice(0, 4) || [],
           })),
-          platformRecommendations: snap.platformRecommendations.slice(0, 3).map((item) => ({
+          platformRecommendations: (snap.platformRecommendations || []).slice(0, 3).map((item) => ({
             name: item.name,
             reason: item.reason,
             action: item.action,
           })),
-          topicLibrary: snap.topicLibrary.slice(0, 5).map((item) => ({
+          topicLibrary: (snap.topicLibrary || []).slice(0, 5).map((item) => ({
             title: item.title,
             rationale: item.rationale,
             executionHint: item.executionHint,
           })),
-          monetizationStrategies: snap.monetizationStrategies.slice(0, 2).map((item) => ({
+          monetizationStrategies: (snap.monetizationStrategies || []).slice(0, 2).map((item) => ({
             platformLabel: item.platformLabel,
             primaryTrack: item.primaryTrack,
             offerType: item.offerType,
           })),
-          titleExecutions: snap.titleExecutions?.slice(0, 3),
+          titleExecutions: snap.titleExecutions?.slice(0, 3) || [],
           mainPath: {
-            title: snap.decisionFramework.mainPath.title,
-            summary: snap.decisionFramework.mainPath.summary,
-            whyNow: snap.decisionFramework.mainPath.whyNow,
+            title: snap.decisionFramework?.mainPath?.title || "",
+            summary: snap.decisionFramework?.mainPath?.summary || "",
+            whyNow: snap.decisionFramework?.mainPath?.whyNow || "",
           },
         },
       });
@@ -1257,9 +1292,12 @@ export default function PlatformPage() {
       setDashboardDebug((prev) => ({ ...(prev || {}), jobId, jobStatus: "queued", stage1: "dispatched", stage2: "pending" }));
       startAnalysisPolling(jobId);
     } catch (err: any) {
+      console.error("[PlatformPage] Job creation crashed:", err);
       setIsDashboardLoading(false);
       setIsContentLoading(false);
-      toast.error(err.message || "深度分析任务创建失败");
+      toast.error(`任务派发失败: ${err.message || "未知错误"}`);
+      // 将错误写入 Debug 面板，不再静默失败
+      setDashboardDebug((prev) => ({ ...(prev || {}), error: err.message || String(err) }));
     }
   };
 
@@ -1499,7 +1537,7 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -2194,7 +2232,7 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                    <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input
