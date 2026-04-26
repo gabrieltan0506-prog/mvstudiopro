@@ -1,3 +1,4 @@
+import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import {
@@ -25,26 +26,29 @@ export function ImageUpscaleBar({
   onUpscaled,
 }: ImageUpscaleBarProps) {
   const utils = trpc.useUtils();
+  // 用 state 精确追踪是哪个按钮在转圈，与 mutation 的 isPending 完全解耦
+  const [activeFactor, setActiveFactor] = useState<"x2" | "x4" | null>(null);
+  const activeFactorRef = useRef<"x2" | "x4" | null>(null);
 
-  function makeHandler(factor: "x2" | "x4") {
-    const label = factor === "x2" ? "2×" : "4×";
-    return {
-      onSuccess: async (data: { success: boolean; imageUrl?: string; error?: string }) => {
-        if (data.success && data.imageUrl) {
-          toast.success(`高清放大完成（${label}）`);
-          onUpscaled?.(data.imageUrl, label);
-          await utils.stripe.getSubscription.invalidate().catch(() => undefined);
-        } else {
-          toast.error(String(data.error || "放大失败"));
-        }
-      },
-      onError: (e: { message?: string }) => toast.error(e.message || "放大失败"),
-    };
-  }
-
-  // 两个独立 mutation，各自持有独立的 isPending 状态
-  const mut2 = trpc.vertexImage.upscale.useMutation(makeHandler("x2"));
-  const mut4 = trpc.vertexImage.upscale.useMutation(makeHandler("x4"));
+  const mut = trpc.vertexImage.upscale.useMutation({
+    onSuccess: async (data) => {
+      const label = activeFactorRef.current === "x2" ? "2×" : "4×";
+      if (data.success && data.imageUrl) {
+        toast.success(`高清放大完成（${label}）`);
+        onUpscaled?.(data.imageUrl, label);
+        await utils.stripe.getSubscription.invalidate().catch(() => undefined);
+      } else {
+        toast.error(String((data as { error?: string }).error || "放大失败"));
+      }
+      setActiveFactor(null);
+      activeFactorRef.current = null;
+    },
+    onError: (e) => {
+      toast.error(e.message || "放大失败");
+      setActiveFactor(null);
+      activeFactorRef.current = null;
+    },
+  });
 
   const url = String(imageUrl || "").trim();
   if (!url) return null;
@@ -54,6 +58,13 @@ export function ImageUpscaleBar({
 
   const btnBase =
     "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/10 disabled:opacity-45";
+
+  function handleClick(factor: "x2" | "x4") {
+    if (activeFactor) return; // 防止重复点击
+    activeFactorRef.current = factor;
+    setActiveFactor(factor);
+    mut.mutate({ imageUrl: url, upscaleFactor: factor, baseCreditKey });
+  }
 
   return (
     <div
@@ -71,19 +82,19 @@ export function ImageUpscaleBar({
       <button
         type="button"
         className={btnBase}
-        disabled={mut2.isPending || mut4.isPending}
-        onClick={() => mut2.mutate({ imageUrl: url, upscaleFactor: "x2", baseCreditKey })}
+        disabled={!!activeFactor}
+        onClick={() => handleClick("x2")}
       >
-        {mut2.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        {activeFactor === "x2" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         2×
       </button>
       <button
         type="button"
         className={btnBase}
-        disabled={mut2.isPending || mut4.isPending}
-        onClick={() => mut4.mutate({ imageUrl: url, upscaleFactor: "x4", baseCreditKey })}
+        disabled={!!activeFactor}
+        onClick={() => handleClick("x4")}
       >
-        {mut4.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+        {activeFactor === "x4" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         4×
       </button>
       <span style={{ fontSize: 11, opacity: 0.55, width: "100%", flexBasis: "100%" }}>
