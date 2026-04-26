@@ -50,14 +50,13 @@ export function registerSpeechApiRoutes(app: Express) {
         const audioBuffer = Buffer.concat(chunks);
         const audioBytes = audioBuffer.toString("base64");
 
-        // sampleRateHertz 不指定，讓 GCP 從 WebM 容器自動讀取
         const [response] = await client.recognize({
           audio: { content: audioBytes },
           config: {
             encoding: "WEBM_OPUS" as any,
             languageCode: "zh-CN",
+            alternativeLanguageCodes: ["zh-TW", "en-US"],
             enableAutomaticPunctuation: true,
-            model: "latest_long",
           },
         });
 
