@@ -55,7 +55,6 @@ export function registerSpeechApiRoutes(app: Express) {
           config: {
             encoding: "WEBM_OPUS" as any,
             languageCode: "zh-CN",
-            alternativeLanguageCodes: ["zh-TW", "en-US"],
             enableAutomaticPunctuation: true,
           },
         });
