@@ -37,6 +37,18 @@ function cloneInMemoryJob(job: InMemoryJob): InMemoryJob {
   };
 }
 
+/**
+ * 平台 Job（type="platform"）无法插入 MySQL enum('video','image','audio')，
+ * 会回退到 inMemoryJobs。当 DB 可用时，各状态写函数也需要同步更新 in-memory。
+ */
+function syncInMemory(id: string, updates: Partial<InMemoryJob>): void {
+  const existing = inMemoryJobs.get(id);
+  if (existing) {
+    Object.assign(existing, updates, { updatedAt: new Date() });
+    inMemoryJobs.set(id, existing);
+  }
+}
+
 export async function createJob(data: {
   id: string;
   userId: string;
@@ -151,7 +163,18 @@ export async function claimNextQueuedJob(): Promise<InMemoryJob | null> {
     return cloneInMemoryJob(nextMem);
   }
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    // DB 无待处理任务，仍需检查 in-memory 队列（例如 platform job 无法写入 MySQL enum）
+    const memJob = Array.from(inMemoryJobs.values())
+      .filter((job) => job.status === "queued")
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+    if (!memJob) return null;
+    memJob.status = "running";
+    memJob.attempts = (memJob.attempts ?? 0) + 1;
+    memJob.updatedAt = new Date();
+    inMemoryJobs.set(memJob.id, memJob);
+    return cloneInMemoryJob(memJob);
+  }
 
   const next = rows[0];
   try {
@@ -205,25 +228,9 @@ export async function markJobSucceeded(id: string, output: unknown, provider?: s
     await db.update(jobs).set(setValues as any).where(eq(jobs.id, id));
   } catch (error) {
     console.error("[JobsRepo] markJobSucceeded db update failed; writing in-memory:", error);
-    const existing = inMemoryJobs.get(id);
-    const now = new Date();
-    inMemoryJobs.set(id, {
-      ...(existing || {
-        id,
-        userId: "public",
-        type: "video",
-        provider: provider || "unknown",
-        input: null,
-        attempts: 1,
-        createdAt: now,
-      }),
-      status: "succeeded",
-      output,
-      error: null,
-      updatedAt: now,
-      provider: provider || existing?.provider || "unknown",
-    } as InMemoryJob);
   }
+  // 同步更新 in-memory（platform job 存在 in-memory 中，DB update 不影响它）
+  syncInMemory(id, { status: "succeeded", output, error: null, ...(provider ? { provider } : {}) });
 }
 
 export async function markJobFailed(id: string, error: string): Promise<void> {
@@ -249,23 +256,8 @@ export async function markJobFailed(id: string, error: string): Promise<void> {
       .where(eq(jobs.id, id));
   } catch (dbError) {
     console.error("[JobsRepo] markJobFailed db update failed; writing in-memory:", dbError);
-    const existing = inMemoryJobs.get(id);
-    const now = new Date();
-    inMemoryJobs.set(id, {
-      ...(existing || {
-        id,
-        userId: "public",
-        type: "video",
-        provider: "unknown",
-        input: null,
-        attempts: 1,
-        createdAt: now,
-      }),
-      status: "failed",
-      error,
-      updatedAt: now,
-    } as InMemoryJob);
   }
+  syncInMemory(id, { status: "failed", error });
 }
 
 export async function requeueJob(id: string, error: string): Promise<void> {
@@ -291,21 +283,6 @@ export async function requeueJob(id: string, error: string): Promise<void> {
       .where(eq(jobs.id, id));
   } catch (dbError) {
     console.error("[JobsRepo] requeueJob db update failed; writing in-memory:", dbError);
-    const existing = inMemoryJobs.get(id);
-    const now = new Date();
-    inMemoryJobs.set(id, {
-      ...(existing || {
-        id,
-        userId: "public",
-        type: "video",
-        provider: "unknown",
-        input: null,
-        attempts: 1,
-        createdAt: now,
-      }),
-      status: "queued",
-      error,
-      updatedAt: now,
-    } as InMemoryJob);
   }
+  syncInMemory(id, { status: "queued", error });
 }

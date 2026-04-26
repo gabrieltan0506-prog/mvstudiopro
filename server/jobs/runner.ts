@@ -906,6 +906,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
 
     throw new Error(`不支持的平台任务动作：${input.action}`);
   } catch (error) {
+    console.error("[processPlatformJob] 实际错误详情:", error);
     throw new Error(getPlatformJobErrorMessage(error));
   }
 }
