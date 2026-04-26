@@ -1219,37 +1219,42 @@ export default function PlatformPage() {
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
         snapshotSummary: {
-          overview: snap.overview || "",
-          // 关键防呆：全面加入 (... || []) 和 ?. 确保即使 AI 漏字段，前端也绝不崩溃
-          platformSnapshots: (snap.platformSnapshots || []).slice(0, 4).map((item) => ({
+          overview: snap.overview ?? "",
+          platformSnapshots: (snap.platformSnapshots || []).slice(0, 4).map((item: any) => ({
             platform: item.platform,
             displayName: item.displayName,
             audienceFitScore: item.audienceFitScore,
             momentumScore: item.momentumScore,
-            summary: item.summary,
+            summary: typeof item.summary === "string" ? item.summary.slice(0, 300) : "",
             fitLabel: item.fitLabel,
-            sampleTopics: (item as any).sampleTopics?.slice(0, 4) || [],
+            sampleTopics: Array.isArray((item as any).sampleTopics)
+              ? (item as any).sampleTopics.slice(0, 4).map((t: any) => typeof t === "string" ? t.slice(0, 80) : String(t?.title || "").slice(0, 80))
+              : [],
           })),
-          platformRecommendations: (snap.platformRecommendations || []).slice(0, 3).map((item) => ({
+          platformRecommendations: (snap.platformRecommendations || []).slice(0, 3).map((item: any) => ({
             name: item.name,
-            reason: item.reason,
-            action: item.action,
+            reason: typeof item.reason === "string" ? item.reason.slice(0, 200) : "",
+            action: typeof item.action === "string" ? item.action.slice(0, 200) : "",
           })),
-          topicLibrary: (snap.topicLibrary || []).slice(0, 5).map((item) => ({
+          topicLibrary: (snap.topicLibrary || []).slice(0, 5).map((item: any) => ({
             title: item.title,
-            rationale: item.rationale,
-            executionHint: item.executionHint,
+            rationale: typeof item.rationale === "string" ? item.rationale.slice(0, 200) : "",
+            executionHint: typeof item.executionHint === "string" ? item.executionHint.slice(0, 200) : "",
           })),
-          monetizationStrategies: (snap.monetizationStrategies || []).slice(0, 2).map((item) => ({
+          monetizationStrategies: (snap.monetizationStrategies || []).slice(0, 2).map((item: any) => ({
             platformLabel: item.platformLabel,
             primaryTrack: item.primaryTrack,
             offerType: item.offerType,
           })),
-          titleExecutions: snap.titleExecutions?.slice(0, 3) || [],
+          titleExecutions: (snap.titleExecutions || []).slice(0, 3).map((item: any) => ({
+            title: item.title || "",
+            openingHook: typeof item.openingHook === "string" ? item.openingHook.slice(0, 200) : "",
+            copywriting: typeof item.copywriting === "string" ? item.copywriting.slice(0, 300) : "",
+          })),
           mainPath: {
             title: snap.decisionFramework?.mainPath?.title || "",
-            summary: snap.decisionFramework?.mainPath?.summary || "",
-            whyNow: snap.decisionFramework?.mainPath?.whyNow || "",
+            summary: typeof snap.decisionFramework?.mainPath?.summary === "string" ? snap.decisionFramework?.mainPath?.summary.slice(0, 300) : "",
+            whyNow: typeof snap.decisionFramework?.mainPath?.whyNow === "string" ? snap.decisionFramework?.mainPath?.whyNow.slice(0, 300) : "",
           },
         },
       });
