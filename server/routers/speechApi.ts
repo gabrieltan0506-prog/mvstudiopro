@@ -48,12 +48,18 @@ export function registerSpeechApiRoutes(app: Express) {
 
       try {
         const audioBuffer = Buffer.concat(chunks);
+        console.log(`[GCP Speech] audioBuffer size=${audioBuffer.length} bytes`);
+        if (audioBuffer.length < 100) {
+          res.status(400).json({ error: "Audio too short or empty" });
+          return;
+        }
         const audioBytes = audioBuffer.toString("base64");
 
         const [response] = await client.recognize({
           audio: { content: audioBytes },
           config: {
             encoding: "WEBM_OPUS" as any,
+            sampleRateHertz: 48000,
             languageCode: "zh-CN",
             enableAutomaticPunctuation: true,
           },

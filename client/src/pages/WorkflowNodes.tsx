@@ -1021,7 +1021,7 @@ export default function WorkflowNodes() {
               <textarea value={scene.scenePrompt} onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })} rows={4} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white" />
               <div className="absolute right-3 top-3">
                 <VoiceInputButton
-                  onTranscript={(t) => updateScene(scene.sceneIndex, { scenePrompt: (scene.scenePrompt ? scene.scenePrompt + " " + t : t) })}
+                  onTranscript={(t) => { const cur = scene.scenePrompt ?? ""; updateScene(scene.sceneIndex, { scenePrompt: cur ? cur + " " + t : t }); }}
                   size={28}
                 />
               </div>
@@ -1750,12 +1750,12 @@ export default function WorkflowNodes() {
                       />
                       <div className="absolute right-3 top-3">
                         <VoiceInputButton
-                          onTranscript={(t) => updateScene(scene.sceneIndex, { scenePrompt: (scene.scenePrompt ? scene.scenePrompt + " " + t : t) })}
-                          size={28}
-                        />
-                      </div>
-                    </div>
-                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Scene Meta</div>
+                  onTranscript={(t) => { const cur = scene.scenePrompt ?? ""; updateScene(scene.sceneIndex, { scenePrompt: cur ? cur + " " + t : t }); }}
+                      size={28}
+                    />
+                  </div>
+                </div>
+                <div className="text-xs uppercase tracking-[0.18em] text-white/45">Scene Meta</div>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <input value={scene.primarySubject || ""} onChange={(e) => updateScene(scene.sceneIndex, { primarySubject: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Primary Subject" />
                       <input value={scene.character || ""} onChange={(e) => updateScene(scene.sceneIndex, { character: e.target.value })} className="rounded-xl border border-white/10 bg-[#0b1020] p-3 text-sm text-white" placeholder="Character" />
