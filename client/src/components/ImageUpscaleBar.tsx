@@ -60,7 +60,12 @@ export function ImageUpscaleBar({
     "inline-flex items-center justify-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-white/90 transition hover:bg-white/10 disabled:opacity-45";
 
   function handleClick(factor: "x2" | "x4") {
-    if (activeFactor) return; // 防止重复点击
+    if (activeFactor) return;
+    const label = factor === "x2" ? "2×" : "4×";
+    const confirmed = window.confirm(
+      `放大（${label}）后将直接替换原图，无法还原。\n请先右键保存原图，再继续。\n\n确定放大吗？`
+    );
+    if (!confirmed) return;
     activeFactorRef.current = factor;
     setActiveFactor(factor);
     mut.mutate({ imageUrl: url, upscaleFactor: factor, baseCreditKey });

@@ -38,6 +38,7 @@ import { buildPremiumRemixPlan, generatePremiumRemixAssets } from "./growth/prem
 import { collectTrendPlatforms } from "./growth/trendCollector";
 import { exportTrendCollectionsCsv, getGrowthTrendStats, isTrendCollectionStale, mergeTrendCollections, readGrowthDebugSummary, readGrowthRuntimeControl, readGrowthStatusSnapshot, readTrendRuntimeMeta, readTrendSchedulerState, readTrendStore, readTrendStoreForPlatforms, reconcileTrendHistoryState, updateTrendSchedulerState, writeGrowthRuntimeControl } from "./growth/trendStore";
 import { getSmtpStatus, sendMailWithAttachments } from "./services/smtp-mailer";
+import { runVertexUpscaleImage } from "./services/vertexImage";
 import { creationsRouter, recordCreation } from "./routers/creations";
 import { workflowRouter } from "./routers/workflow";
 import { generateGeminiImage, isGeminiImageAvailable } from "./gemini-image";
@@ -52,7 +53,6 @@ import {
   refundCredits,
 } from "./credits";
 import { CREDIT_COSTS, CREDIT_TO_CNY } from "./plans";
-import { runVertexUpscaleImage } from "../api/google";
 import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
@@ -2762,39 +2762,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         requestedPlatforms: z.array(z.string()).optional(),
-        // Slim snapshot — only what buildPlatformDashboard needs, avoids 503 on large POST body
-        snapshotSummary: z.object({
-          overview: z.object({ summary: z.string(), trendNarrative: z.string() }).passthrough(),
-          platformSnapshots: z.array(z.object({
-            platform: z.string(),
-            displayName: z.string(),
-            audienceFitScore: z.number(),
-            momentumScore: z.number(),
-            summary: z.string().optional(),
-            fitLabel: z.string().optional(),
-            sampleTopics: z.array(z.string()).optional(),
-          })).optional(),
-          platformRecommendations: z.array(z.object({
-            name: z.string(),
-            reason: z.string(),
-            action: z.string().optional(),
-          })).optional(),
-          topicLibrary: z.array(z.object({
-            title: z.string(),
-            rationale: z.string().optional(),
-            executionHint: z.string().optional(),
-          })).optional(),
-          monetizationStrategies: z.array(z.object({
-            platformLabel: z.string().optional(),
-            primaryTrack: z.string().optional(),
-            offerType: z.string().optional(),
-          })).optional(),
-          mainPath: z.object({
-            title: z.string().optional(),
-            summary: z.string().optional(),
-            whyNow: z.string().optional(),
-          }).optional(),
-        }),
+        snapshotSummary: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input }) => {
         const requestedPlatforms = normalizePlatforms(input.requestedPlatforms || []);
@@ -2864,18 +2832,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
         windowDays: z.union([z.literal(15), z.literal(30), z.literal(45)]),
         platformMenu: z.array(z.any()).optional(),
-        snapshotSummary: z.object({
-          overview: z.any().optional(),
-          platformSnapshots: z.array(z.any()).optional(),
-          platformRecommendations: z.array(z.any()).optional(),
-          topicLibrary: z.array(z.any()).optional(),
-          monetizationStrategies: z.array(z.any()).optional(),
-          mainPath: z.any().optional(),
-          // Call 3 also receives the full snapshot fields needed for content
-          titleExecutions: z.array(z.any()).optional(),
-          growthPlan: z.array(z.any()).optional(),
-          creationAssist: z.any().optional(),
-        }),
+        snapshotSummary: z.record(z.string(), z.any()),
       }))
       .mutation(async ({ input }) => {
         const t0 = Date.now();
@@ -5347,32 +5304,56 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           }
         }
 
-        // Proxy to Vercel — Vertex AI env vars (VERTEX_PROJECT_ID, SA credentials) live on Vercel, not Fly
+        // 优先在 Fly 直接走 GCS 长任务（2x/4x 同一路径，300s 与 GCS 轮询一致）；无凭据时回退 Vercel
+        const hasVertexCreds = Boolean(String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim());
         const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
         const safeToken = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
 
         let imageUrl = "";
         let upscaleOk = false;
-        try {
-          const res = await fetch(`${vercelBaseUrl}/api/google?op=upscaleImage`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(safeToken ? { Authorization: `Bearer ${safeToken}` } : {}),
-            },
-            body: JSON.stringify({
+
+        if (hasVertexCreds) {
+          try {
+            const result = await runVertexUpscaleImage({
               imageUrl: input.imageUrl,
               upscaleFactor: input.upscaleFactor,
               prompt: "",
               outputMimeType: "image/png",
-            }),
-            signal: AbortSignal.timeout(120_000),
-          });
-          const json: any = await res.json().catch(() => ({}));
-          imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
-          upscaleOk = res.ok && !!imageUrl;
-        } catch (e: any) {
-          console.error("[vertexImage.upscale] vercel proxy failed:", e?.message);
+            });
+            imageUrl = String(result?.imageUrl || (Array.isArray(result?.imageUrls) ? result.imageUrls[0] : "") || "").trim();
+            upscaleOk = result.ok && !!imageUrl;
+            if (!upscaleOk) {
+              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (direct) failed:`, result?.error);
+            }
+          } catch (e: any) {
+            console.error("[vertexImage.upscale] direct GCS path failed:", e?.message);
+          }
+        } else {
+          try {
+            const res = await fetch(`${vercelBaseUrl}/api/google?op=upscaleImage`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(safeToken ? { Authorization: `Bearer ${safeToken}` } : {}),
+              },
+              body: JSON.stringify({
+                imageUrl: input.imageUrl,
+                upscaleFactor: input.upscaleFactor,
+                prompt: "",
+                outputMimeType: "image/png",
+              }),
+              signal: AbortSignal.timeout(300_000),
+            });
+            const json: any = await res.json().catch(() => ({}));
+            imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
+            upscaleOk = res.ok && !!imageUrl;
+            if (!upscaleOk) {
+              const vertexErr = String(json?.error || json?.raw?.error?.message || "").slice(0, 300);
+              console.error(`[vertexImage.upscale] ${input.upscaleFactor} (vercel) failed (HTTP ${res.status}): ${vertexErr}`);
+            }
+          } catch (e: any) {
+            console.error("[vertexImage.upscale] vercel proxy failed:", e?.message);
+          }
         }
 
         if (!upscaleOk || !imageUrl) {
@@ -5383,7 +5364,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               console.error("[vertexImage.upscale] restore credits failed", refErr);
             }
           }
-          return { success: false as const, error: "放大失败，请稍后重试" };
+          return { success: false as const, error: "放大失败，请稍后重试（已退回积分）" };
         }
 
         return {

@@ -347,9 +347,8 @@ function TopicImageGenerator({
 }) {
   const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
-  const [upscaledUrl, setUpscaledUrl] = useState<{ url: string; factor: string } | null>(null);
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onSuccess: (res) => { setImageUrl(res.imageUrl); setUpscaledUrl(null); },
+    onSuccess: (res) => { setImageUrl(res.imageUrl); },
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
   });
 
@@ -382,28 +381,17 @@ function TopicImageGenerator({
         <div className="rounded-2xl border border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
           <div className="mb-2 flex items-center justify-between px-2 pt-2 text-[11px] font-semibold text-[#b7add8]">
             <span>参考视觉风格</span>
-            <button onClick={() => { setImageUrl(""); setUpscaledUrl(null); }} className="hover:text-white">重置</button>
+            <button onClick={() => { setImageUrl(""); }} className="hover:text-white">重置</button>
           </div>
 
           <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
-          {upscaledUrl && (
-            <a
-              href={upscaledUrl.url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 flex items-center justify-center gap-1.5 rounded-lg border border-[#49e6ff]/30 bg-[#49e6ff]/8 py-2 text-xs font-semibold text-[#49e6ff] transition hover:bg-[#49e6ff]/15"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              查看高清放大图（{upscaledUrl.factor}）
-            </a>
-          )}
 
           <div className="px-2 pb-2">
             <ImageUpscaleBar
               imageUrl={imageUrl}
               baseCreditKey="forgeImage"
               className="mt-2"
-              onUpscaled={(url, factor) => setUpscaledUrl({ url, factor: factor ?? "" })}
+              onUpscaled={(url) => setImageUrl(url)}
             />
           </div>
         </div>
@@ -666,53 +654,15 @@ export default function PlatformPage() {
   }, []);
 
   const handleDownloadPlatformPdf = useCallback(() => {
-    // 1. 临时隐藏所有不应进入 PDF 的 UI 元素
-    const excludeSelectors = [
-      "[data-pdf-exclude]",          // 通用排除标记
-      "nav",                          // 导航栏
-      "header",
-      "[data-testid='navbar']",
-      ".no-print",
-    ];
-    const excluded: { el: HTMLElement; prev: string }[] = [];
-    excludeSelectors.forEach((sel) => {
-      document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
-        excluded.push({ el, prev: el.style.display });
-        el.style.display = "none";
-      });
-    });
-
-    // 2. 克隆整个页面（保留所有 CSS）
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
-
-    // 3. 恢复被隐藏的元素
-    excluded.forEach(({ el, prev }) => { el.style.display = prev; });
-
-    // 4. 清理克隆中的脚本
     clone.querySelectorAll("script").forEach((n) => n.remove());
-
-    // 5. 注入 base 标签（让相对路径 CSS/图片正常加载）
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
 
-    // 6. 强制深色背景 + 禁止浏览器自动转白（print-color-adjust）
-    const darkStyle = document.createElement("style");
-    darkStyle.textContent = `
-      *, *::before, *::after {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      html, body {
-        background: #0a0616 !important;
-        color: #e2e8f0 !important;
-      }
-    `;
-    clone.querySelector("head")?.appendChild(darkStyle);
-
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
-    downloadPlatformPdfMutation.mutate({ html: htmlContent });
+    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
@@ -1277,45 +1227,7 @@ export default function PlatformPage() {
       const { jobId } = await createPlatformAnalysisJobMutation.mutateAsync({
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
-        snapshotSummary: {
-          overview: snap.overview ?? "",
-          platformSnapshots: (snap.platformSnapshots || []).slice(0, 4).map((item: any) => ({
-            platform: item.platform,
-            displayName: item.displayName,
-            audienceFitScore: item.audienceFitScore,
-            momentumScore: item.momentumScore,
-            summary: typeof item.summary === "string" ? item.summary.slice(0, 300) : "",
-            fitLabel: item.fitLabel,
-            sampleTopics: Array.isArray((item as any).sampleTopics)
-              ? (item as any).sampleTopics.slice(0, 4).map((t: any) => typeof t === "string" ? t.slice(0, 80) : String(t?.title || "").slice(0, 80))
-              : [],
-          })),
-          platformRecommendations: (snap.platformRecommendations || []).slice(0, 3).map((item: any) => ({
-            name: item.name,
-            reason: typeof item.reason === "string" ? item.reason.slice(0, 200) : "",
-            action: typeof item.action === "string" ? item.action.slice(0, 200) : "",
-          })),
-          topicLibrary: (snap.topicLibrary || []).slice(0, 5).map((item: any) => ({
-            title: item.title,
-            rationale: typeof item.rationale === "string" ? item.rationale.slice(0, 200) : "",
-            executionHint: typeof item.executionHint === "string" ? item.executionHint.slice(0, 200) : "",
-          })),
-          monetizationStrategies: (snap.monetizationStrategies || []).slice(0, 2).map((item: any) => ({
-            platformLabel: item.platformLabel,
-            primaryTrack: item.primaryTrack,
-            offerType: item.offerType,
-          })),
-          titleExecutions: (snap.titleExecutions || []).slice(0, 3).map((item: any) => ({
-            title: item.title || "",
-            openingHook: typeof item.openingHook === "string" ? item.openingHook.slice(0, 200) : "",
-            copywriting: typeof item.copywriting === "string" ? item.copywriting.slice(0, 300) : "",
-          })),
-          mainPath: {
-            title: snap.decisionFramework?.mainPath?.title || "",
-            summary: typeof snap.decisionFramework?.mainPath?.summary === "string" ? snap.decisionFramework?.mainPath?.summary.slice(0, 300) : "",
-            whyNow: typeof snap.decisionFramework?.mainPath?.whyNow === "string" ? snap.decisionFramework?.mainPath?.whyNow.slice(0, 300) : "",
-          },
-        },
+        snapshotSummary: snap as any,
       });
       setAnalysisJobId(jobId);
       setDashboardDebug((prev) => ({ ...(prev || {}), jobId, jobStatus: "queued", stage1: "dispatched", stage2: "pending" }));
@@ -1566,7 +1478,7 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -1798,7 +1710,7 @@ export default function PlatformPage() {
         ) : null}
 
         {snapshot && platformDashboard ? (
-          <section className="mt-8 space-y-6">
+          <section id="platform-report" className="mt-8 space-y-6">
             {debugMode ? (
               <div className={shellCardClasses("p-5")}>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -2261,7 +2173,7 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
+                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input

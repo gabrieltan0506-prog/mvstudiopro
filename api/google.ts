@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { put } from "@vercel/blob";
+import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
+export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
  * Google Gateway (single function)
@@ -229,89 +231,6 @@ async function fetchImageAsBase64(imageUrl:string){
   if(!buf.length) throw new Error("empty_image");
   if(buf.length > 10*1024*1024) throw new Error("image_too_large");
   return { mimeType, b64: buf.toString("base64"), bytes: buf.length };
-}
-
-export type VertexUpscaleResult = {
-  ok: boolean;
-  status?: number;
-  url?: string;
-  raw?: any;
-  imageUrl?: string;
-  imageUrls?: string[];
-  imageCount?: number;
-  upscaleFactor?: string;
-  error?: string;
-};
-
-/** Imagen 4 upscale（供 /api/google 与 tRPC 共用） */
-export async function runVertexUpscaleImage(args: {
-  imageUrl: string;
-  prompt?: string;
-  upscaleFactor: "x2" | "x3" | "x4";
-  outputMimeType?: string;
-}): Promise<VertexUpscaleResult> {
-  const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
-  if (!projectId) return { ok: false, error: "missing_VERTEX_PROJECT_ID" };
-
-  let token: string;
-  try {
-    token = await getVertexAccessToken();
-  } catch (e: any) {
-    return { ok: false, error: e?.message || "vertex_token_failed" };
-  }
-
-  const imageUrl = s(args.imageUrl);
-  if (!imageUrl) return { ok: false, error: "missing_image_url" };
-
-  const prompt = s(args.prompt);
-  const outputMimeType = s(args.outputMimeType || "image/png").trim() || "image/png";
-  const requestedFactor = s(args.upscaleFactor || "x2").toLowerCase();
-  const upscaleFactor = requestedFactor === "x4" ? "x4" : requestedFactor === "x3" ? "x3" : "x2";
-  const location = (s(process.env.VERTEX_IMAGE_LOCATION_UPSCALE || process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
-  const model = (s(process.env.VERTEX_IMAGE_MODEL_UPSCALE) || "imagen-4.0-upscale-preview").trim();
-  const base = baseUrlFor(location);
-  const predictUrl = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:predict`;
-
-  let img: { mimeType: string; b64: string; bytes: number };
-  try {
-    img = await fetchImageAsBase64(imageUrl);
-  } catch (e: any) {
-    return { ok: false, error: e?.message || "image_fetch_failed" };
-  }
-
-  const requestInit: RequestInit = {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      instances: [{ prompt, image: { bytesBase64Encoded: img.b64 } }],
-      parameters: {
-        sampleCount: 1,
-        mode: "upscale",
-        outputOptions: { mimeType: outputMimeType },
-        upscaleConfig: { upscaleFactor },
-      },
-    }),
-  };
-
-  let r = await fetchJson(predictUrl, requestInit);
-  for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
-    await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
-    r = await fetchJson(predictUrl, requestInit);
-  }
-
-  const raw = r.json ?? r.rawText;
-  const images = r.ok ? extractGeneratedImages(r.json) : [];
-  const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-  return {
-    ok: r.ok,
-    status: r.status,
-    url: r.url,
-    raw,
-    imageUrl: imageUrls[0] || "",
-    imageUrls,
-    imageCount: imageUrls.length,
-    upscaleFactor,
-  };
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
