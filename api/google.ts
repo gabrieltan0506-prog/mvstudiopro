@@ -292,11 +292,8 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, error: e?.message || "image_fetch_failed" };
   }
 
-  // x4 放大输出文件较大（可达 30-50MB），超出 Vercel 函数 4.5MB 响应限制
-  // 解决方案：要求 Vertex AI 把结果写入 GCS，再转存到 Vercel Blob 返回 URL
-  const gcsOutputUri = upscaleFactor === "x4"
-    ? `gs://mv-studio-pro-vertex-video-temp/upscaled/${Date.now()}-x4.png`
-    : undefined;
+  // 所有放大结果统一走 GCS → Vercel Blob，避免 base64 撑爆 Vercel 4.5MB 响应限制
+  const gcsOutputUri = `gs://mv-studio-pro-vertex-video-temp/upscaled/${Date.now()}-${upscaleFactor}.png`;
 
   const parameters: Record<string, unknown> = {
     sampleCount: 1,
@@ -328,31 +325,25 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, status: r.status, url: r.url, raw, error: errMsg, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
 
-  // 尝试 inline base64（x2 或 GCS 失败降级）
-  const images = extractGeneratedImages(r.json);
-  if (images.length > 0) {
-    const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-    return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
-  }
-
-  // x4：从 GCS 下载后转存到 Vercel Blob，返回公开 URL
-  if (gcsOutputUri) {
-    try {
-      // Vertex AI 可能把文件写到 gcsOutputUri 或加后缀的路径，先从 predictions 里找
-      const preds: any[] = r.json?.predictions || [];
-      const gcsUri = preds.map((p: any) => s(p.gcsUri || p.outputUri || "")).find(Boolean) || gcsOutputUri;
-      console.log(`[runVertexUpscaleImage] x4 GCS output: ${gcsUri}`);
-      const buf = await downloadFromGcs(gcsUri, token);
-      const filename = `upscaled-x4-${Date.now()}.png`;
-      const blob = await put(filename, buf, { access: "public", contentType: "image/png" });
-      return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blob.url, imageUrls: [blob.url], imageCount: 1, upscaleFactor };
-    } catch (gcsErr: any) {
-      console.error("[runVertexUpscaleImage] x4 GCS download/upload failed:", gcsErr?.message);
-      return { ok: false, status: 500, url: predictUrl, raw, error: `x4 GCS transfer failed: ${gcsErr?.message}`, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
+  // 统一走 GCS → Vercel Blob
+  try {
+    const preds: any[] = r.json?.predictions || [];
+    const gcsUri = preds.map((p: any) => s(p.gcsUri || p.outputUri || "")).find(Boolean) || gcsOutputUri;
+    console.log(`[runVertexUpscaleImage] ${upscaleFactor} GCS output: ${gcsUri}`);
+    const buf = await downloadFromGcs(gcsUri, token);
+    const filename = `upscaled-${upscaleFactor}-${Date.now()}.png`;
+    const blob = await put(filename, buf, { access: "public", contentType: "image/png" });
+    return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blob.url, imageUrls: [blob.url], imageCount: 1, upscaleFactor };
+  } catch (gcsErr: any) {
+    // GCS 失败时降级：尝试 inline base64
+    console.error(`[runVertexUpscaleImage] ${upscaleFactor} GCS fallback to inline:`, gcsErr?.message);
+    const images = extractGeneratedImages(r.json);
+    if (images.length > 0) {
+      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+      return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
     }
+    return { ok: false, status: 500, url: predictUrl, raw, error: `GCS transfer failed: ${gcsErr?.message}`, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
-
-  return { ok: false, status: r.status, url: r.url, raw, error: "no image in response", imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
