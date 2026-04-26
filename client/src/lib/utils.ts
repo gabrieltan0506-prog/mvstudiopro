@@ -13,7 +13,7 @@ export function formatDateGMT8(date: Date | string | null | undefined, opts?: { 
   const d = typeof date === "string" ? new Date(date) : date;
   if (isNaN(d.getTime())) return "-";
   const showTime = opts?.showTime ?? true;
-  return d.toLocaleString("zh-TW", {
+  return d.toLocaleString("zh-CN", {
     timeZone: TZ,
     year: "numeric",
     month: "2-digit",
@@ -24,7 +24,7 @@ export function formatDateGMT8(date: Date | string | null | undefined, opts?: { 
 
 /** 取得目前 GMT+8 时间的本地化日期字串，用于标题 */
 export function nowDateLabelGMT8(): string {
-  return new Date().toLocaleDateString("zh-TW", {
+  return new Date().toLocaleDateString("zh-CN", {
     timeZone: TZ,
     year: "numeric",
     month: "2-digit",

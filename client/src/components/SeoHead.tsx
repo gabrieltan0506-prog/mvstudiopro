@@ -83,7 +83,7 @@ export function SEOHead({
       <meta property="og:description" content={finalOgDescription} />
       <meta property="og:image" content={ogImage} />
       <meta property="og:url" content={finalCanonical} />
-      <meta property="og:locale" content="zh_TW" />
+      <meta property="og:locale" content="zh_CN" />
 
       {/* Twitter Card */}
       <meta name="twitter:card" content={twitterCard} />

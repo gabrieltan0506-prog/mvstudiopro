@@ -504,7 +504,7 @@ export default function PlatformPage() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("平台分析 PDF 已开始下载，快照已保存至「我的作品」");
         // Save snapshot record (GMT+8 title) with summary content
-        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const gmt8Label = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
         const summaryLines: string[] = [];
         if (platformDashboard?.headline) summaryLines.push(platformDashboard.headline);
         if (platformDashboard?.subheadline) summaryLines.push(platformDashboard.subheadline);

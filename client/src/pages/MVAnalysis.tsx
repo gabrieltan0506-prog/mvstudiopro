@@ -2253,7 +2253,7 @@ export default function MVAnalysisPage() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         toast.success("分析页 PDF 已开始下载，快照已保存至「我的作品」");
         // Save snapshot record with richer summary
-        const gmt8Label = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+        const gmt8Label = new Date().toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
         const anl = analysis as any;
         const summaryParts: string[] = [];
         if (anl?.premiumContent?.summary) summaryParts.push(anl.premiumContent.summary);
