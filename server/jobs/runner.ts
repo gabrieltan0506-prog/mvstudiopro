@@ -838,12 +838,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           windowDays,
           context,
           question,
-          snapshot: {
-            overview: snapshot.overview,
-            platformSnapshots: (snapshot.platformSnapshots as any[]) || [],
-            platformRecommendations: (snapshot.platformRecommendations as any[]) || [],
-            topicLibrary: (snapshot.topicLibrary as any[]) || [],
-          },
+          snapshot,
         });
 
         const userContent: any = fileUri
