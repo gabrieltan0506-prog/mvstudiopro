@@ -332,13 +332,6 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
-type ImageModel = "gemini" | "gpt-image-1";
-
-const IMAGE_MODEL_OPTIONS: { id: ImageModel; label: string; badge?: string }[] = [
-  { id: "gemini", label: "Gemini Flash" },
-  { id: "gpt-image-1", label: "GPT-image-2", badge: "NEW" },
-];
-
 function TopicImageGenerator({
   title,
   hook,
@@ -354,7 +347,6 @@ function TopicImageGenerator({
 }) {
   const isTrial = useIsTrialUser();
   const [imageUrl, setImageUrl] = useState("");
-  const [imageModel, setImageModel] = useState<ImageModel>("gemini");
   const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
     onSuccess: (res) => setImageUrl(res.imageUrl),
     onError: (err) => toast.error(err.message || "生成失败，请重试"),
@@ -369,38 +361,11 @@ function TopicImageGenerator({
         promptText = `场景与服装：${env}，灯光与镜头：${light}。主题：${title} ${hook}`;
       }
     }
-    generateMutation.mutate({ topicHook: promptText, format, model: imageModel });
+    generateMutation.mutate({ topicHook: promptText, format });
   };
 
   return (
     <div className="mt-4 border-t border-white/10 pt-4">
-      {/* 模型选择器 */}
-      <div className="mb-3 flex items-center gap-2">
-        <span className="text-[11px] font-semibold text-white/40">生图模型</span>
-        <div className="flex gap-1.5">
-          {IMAGE_MODEL_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => setImageModel(opt.id)}
-              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition-all ${
-                imageModel === opt.id
-                  ? opt.id === "gpt-image-1"
-                    ? "border-orange-500/60 bg-orange-500/15 text-orange-300"
-                    : "border-blue-500/60 bg-blue-500/15 text-blue-300"
-                  : "border-white/10 bg-white/5 text-white/40 hover:text-white/70"
-              }`}
-            >
-              {opt.label}
-              {opt.badge && (
-                <span className="rounded bg-orange-500 px-1 py-0.5 text-[9px] font-black leading-none text-white">
-                  {opt.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
       {!imageUrl ? (
         <button
           type="button"
