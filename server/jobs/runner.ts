@@ -840,15 +840,9 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           question,
           snapshot: {
             overview: snapshot.overview,
-            platformSnapshots: (snapshot.platformSnapshots as any[])?.slice(0, 4).map((item: any) => ({
-              platform: item.platform,
-              displayName: item.displayName,
-              audienceFitScore: item.audienceFitScore,
-              momentumScore: item.momentumScore,
-              summary: item.summary,
-            })) || [],
-            platformRecommendations: (snapshot.platformRecommendations as any[])?.slice(0, 3) || [],
-            topicLibrary: (snapshot.topicLibrary as any[])?.slice(0, 5) || [],
+            platformSnapshots: (snapshot.platformSnapshots as any[]) || [],
+            platformRecommendations: (snapshot.platformRecommendations as any[]) || [],
+            topicLibrary: (snapshot.topicLibrary as any[]) || [],
           },
         });
 
