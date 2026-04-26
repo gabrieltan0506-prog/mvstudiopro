@@ -940,6 +940,18 @@ export default function TestLab() {
         </div>
       )}
 
+      {/* Debug Panel */}
+      {debug ? (
+        <div style={{ marginTop: 24, borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(0,0,0,0.45)", padding: 16 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8, color: debug?.ok === false ? "#ff6b6b" : "#6bffb8" }}>
+            {debug?.ok === false ? "❌ 调试输出（失败）" : "✅ 调试输出"}
+          </div>
+          <pre style={{ fontSize: 11, color: "#ccc", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 400 }}>
+            {JSON.stringify(debug, null, 2)}
+          </pre>
+        </div>
+      ) : null}
+
     </div>
   );
 }
