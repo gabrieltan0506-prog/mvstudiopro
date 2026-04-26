@@ -3276,7 +3276,6 @@ export default function MVAnalysisPage() {
                   <div className="absolute right-3 top-3">
                     <VoiceInputButton
                       onTranscript={(t) => setContext((prev) => prev ? prev + " " + t : t)}
-                      lang="zh-CN"
                       size={28}
                     />
                   </div>

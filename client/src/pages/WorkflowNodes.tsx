@@ -933,7 +933,6 @@ export default function WorkflowNodes() {
             <span className="text-sm font-medium text-white/80">创作提示</span>
             <VoiceInputButton
               onTranscript={(t) => setPrompt((prev) => prev ? prev + " " + t : t)}
-              lang="zh-CN"
               size={28}
             />
           </div>
