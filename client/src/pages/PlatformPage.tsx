@@ -654,27 +654,15 @@ export default function PlatformPage() {
   }, []);
 
   const handleDownloadPlatformPdf = useCallback(() => {
-    // 克隆整个页面，保留所有 CSS
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script").forEach((n) => n.remove());
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
 
-    // 强制深色背景 + 禁用浏览器自动转白
-    const darkStyle = document.createElement("style");
-    darkStyle.textContent = `
-      *, *::before, *::after {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      html, body { background: #0a0616 !important; color: #e2e8f0 !important; }
-    `;
-    clone.querySelector("head")?.appendChild(darkStyle);
-
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
-    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=48000&selector=%23platform-report` });
+    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
@@ -1490,7 +1478,7 @@ export default function PlatformPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -2185,7 +2173,7 @@ export default function PlatformPage() {
                         />
                       </div>
                     </div>
-                    <p className="mt-1.5 text-[11px] text-white/30">🎤 强烈建议使用 Chrome 或 Edge 浏览器，Safari 不支持语音输入</p>
+                    <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
                     {/* File attachment for multimodal QA */}
                     <div className="flex items-center gap-2">
                       <input
