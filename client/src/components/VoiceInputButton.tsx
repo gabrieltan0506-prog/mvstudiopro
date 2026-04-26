@@ -22,6 +22,7 @@ export default function VoiceInputButton({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   const onDebugLogRef = useRef(onDebugLog);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
@@ -108,6 +109,13 @@ export default function VoiceInputButton({
       mediaRecorder.start();
       setStatus("listening");
       dbg("② 錄音開始，等待停止…");
+      // 45 秒自動停止，避免超過 GCP sync API 1 分鐘上限
+      autoStopTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === "recording") {
+          dbg("⏰ 45秒自動停止");
+          mediaRecorderRef.current.stop();
+        }
+      }, 45000);
     } catch (err) {
       dbg(`❌ 麥克風錯誤: ${String(err)}`);
       alert("请允许浏览器使用麦克风权限后重试。");
@@ -117,6 +125,7 @@ export default function VoiceInputButton({
 
   const handleClick = () => {
     if (status === "listening") {
+      if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       mediaRecorderRef.current?.stop();
     } else if (status === "idle" || status === "error") {
       startRecording();
