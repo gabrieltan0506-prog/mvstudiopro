@@ -402,6 +402,8 @@ export default function PlatformPage() {
   });
   const [selectedWindowDays, setSelectedWindowDays] = useState<15 | 30 | 45>(15);
   const [focusPrompt, setFocusPrompt] = useState("");
+  const [voiceDebugLog, setVoiceDebugLog] = useState<string[]>([]);
+  const addVoiceDebug = (msg: string) => setVoiceDebugLog((prev) => [...prev.slice(-30), msg]);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [question, setQuestion] = useState("");
   const [askResult, setAskResult] = useState<AskResult | null>(null);
@@ -1473,6 +1475,7 @@ export default function PlatformPage() {
                   <div className="absolute right-3 top-3">
                     <VoiceInputButton
                       onTranscript={(t) => setFocusPrompt((prev) => prev ? prev + " " + t : t)}
+                      onDebugLog={addVoiceDebug}
                       size={28}
                     />
                   </div>
@@ -1687,6 +1690,24 @@ export default function PlatformPage() {
                     {JSON.stringify(dashboardDebug || null, null, 2)}
                   </pre>
                 </div>
+              </div>
+              {/* 語音輸入 debug 區塊 */}
+              <div className="mt-4 rounded-2xl border border-[#2b1f52] bg-[#140b31] p-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs uppercase tracking-[0.16em] text-[#ff7fd5]">🎤 語音輸入 Debug Log</div>
+                  <button onClick={() => setVoiceDebugLog([])} className="text-[10px] text-white/30 hover:text-white/60">清空</button>
+                </div>
+                {voiceDebugLog.length === 0 ? (
+                  <div className="mt-3 text-xs text-white/30">尚無記錄，點擊麥克風按鈕開始…</div>
+                ) : (
+                  <div className="mt-3 space-y-1">
+                    {voiceDebugLog.map((line, i) => (
+                      <div key={i} className={`text-[11px] leading-5 font-mono ${line.includes("❌") ? "text-red-400" : line.includes("✅") ? "text-green-400" : "text-[#d7d0ef]"}`}>
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -2166,6 +2187,7 @@ export default function PlatformPage() {
                       <div className="absolute right-3 top-3">
                         <VoiceInputButton
                           onTranscript={(t) => setQuestion((prev) => prev ? prev + " " + t : t)}
+                          onDebugLog={addVoiceDebug}
                           size={28}
                         />
                       </div>

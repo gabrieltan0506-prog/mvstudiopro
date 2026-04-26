@@ -3,6 +3,7 @@ import { Mic, MicOff, Loader2 } from "lucide-react";
 
 interface VoiceInputButtonProps {
   onTranscript: (text: string) => void;
+  onDebugLog?: (msg: string) => void;
   className?: string;
   size?: number;
   disabled?: boolean;
@@ -12,6 +13,7 @@ type Status = "idle" | "listening" | "processing" | "error";
 
 export default function VoiceInputButton({
   onTranscript,
+  onDebugLog,
   className = "",
   size = 18,
   disabled = false,
@@ -20,7 +22,14 @@ export default function VoiceInputButton({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const onTranscriptRef = useRef(onTranscript);
+  const onDebugLogRef = useRef(onDebugLog);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
+  useEffect(() => { onDebugLogRef.current = onDebugLog; }, [onDebugLog]);
+
+  const dbg = (msg: string) => {
+    console.log("[VoiceInput]", msg);
+    onDebugLogRef.current?.(`${new Date().toLocaleTimeString()} ${msg}`);
+  };
 
   // 组件卸载时强制停止录音并释放麦克风
   useEffect(() => {
@@ -39,47 +48,69 @@ export default function VoiceInputButton({
 
   const startRecording = async () => {
     try {
+      dbg("① 請求麥克風權限…");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : "audio/webm";
+      dbg(`② 麥克風已取得，mimeType=${mimeType}`);
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+          dbg(`③ 收到音頻塊 size=${e.data.size}`);
+        }
       };
 
       mediaRecorder.onstop = async () => {
         setStatus("processing");
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: "audio/webm",
-        });
+        const totalSize = audioChunksRef.current.reduce((s, b) => s + (b instanceof Blob ? b.size : (b as ArrayBuffer).byteLength ?? 0), 0);
+        dbg(`④ 錄音停止，chunks=${audioChunksRef.current.length} totalBytes≈${totalSize}`);
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        dbg(`⑤ Blob 大小=${audioBlob.size} type=${audioBlob.type}`);
         const formData = new FormData();
         formData.append("audio", audioBlob, "voice.webm");
 
         try {
+          dbg("⑥ 發送 POST /api/speech-to-text…");
           const response = await fetch("/api/speech-to-text", {
             method: "POST",
             body: formData,
           });
-          if (!response.ok) throw new Error(`API ${response.status}`);
+          dbg(`⑦ HTTP 回應 status=${response.status}`);
+          if (!response.ok) {
+            const errText = await response.text();
+            dbg(`❌ API 錯誤 ${response.status}: ${errText.slice(0, 200)}`);
+            throw new Error(`API ${response.status}`);
+          }
           const data = await response.json();
-          if (data.text) onTranscriptRef.current(data.text);
+          dbg(`⑧ 返回 text="${data.text ?? "(空)"}"`);
+          if (data.text) {
+            onTranscriptRef.current(data.text);
+            dbg("⑨ onTranscript 已調用 ✅");
+          } else {
+            dbg("⑨ text 為空，未調用 onTranscript");
+          }
           setStatus("idle");
         } catch (err) {
           console.error("[VoiceInput] API error:", err);
+          dbg(`❌ catch: ${String(err)}`);
           setStatus("error");
           setTimeout(() => setStatus("idle"), 2000);
         } finally {
           stream.getTracks().forEach((track) => track.stop());
+          dbg("⑩ 麥克風軌道已釋放");
         }
       };
 
       mediaRecorder.start();
       setStatus("listening");
-    } catch {
+      dbg("② 錄音開始，等待停止…");
+    } catch (err) {
+      dbg(`❌ 麥克風錯誤: ${String(err)}`);
       alert("请允许浏览器使用麦克风权限后重试。");
       setStatus("idle");
     }
