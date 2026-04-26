@@ -72,7 +72,6 @@ function baseUrlFor(location:string){
 
 /** 用 access token 从 GCS 下载文件，返回 Buffer */
 async function downloadFromGcs(gsUri: string, accessToken: string): Promise<Buffer> {
-  // gs://bucket/path/file.png → https://storage.googleapis.com/download/storage/v1/b/bucket/o/path%2Ffile.png?alt=media
   const withoutScheme = gsUri.replace(/^gs:\/\//, "");
   const slashIdx = withoutScheme.indexOf("/");
   const bucket = withoutScheme.slice(0, slashIdx);
@@ -81,6 +80,62 @@ async function downloadFromGcs(gsUri: string, accessToken: string): Promise<Buff
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`GCS download failed: ${res.status} ${await res.text().catch(() => "")}`);
   return Buffer.from(await res.arrayBuffer());
+}
+
+/**
+ * 用服务账号私钥生成 GCS V4 Signed URL（有效期 1 小时）。
+ * 不需要下载文件，直接给前端一个临时公开链接。
+ */
+async function signGcsUrl(gsUri: string, sa: { client_email: string; private_key: string }): Promise<string> {
+  const withoutScheme = gsUri.replace(/^gs:\/\//, "");
+  const slashIdx = withoutScheme.indexOf("/");
+  const bucket = withoutScheme.slice(0, slashIdx);
+  const objectPath = withoutScheme.slice(slashIdx + 1);
+  const encodedObject = objectPath.split("/").map(encodeURIComponent).join("/");
+
+  const expiry = 3600; // 1 hour
+  const now = Math.floor(Date.now() / 1000);
+  const dateIso = new Date(now * 1000).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const datePart = dateIso.slice(0, 8);
+  const credentialScope = `${datePart}/auto/storage/goog4_request`;
+  const credential = `${sa.client_email}/${credentialScope}`;
+
+  const headers = `host:storage.googleapis.com\n`;
+  const signedHeaders = "host";
+
+  const canonicalRequest = [
+    "GET",
+    `/${bucket}/${encodedObject}`,
+    `X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}`,
+    headers,
+    signedHeaders,
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+
+  const hash = crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+  const stringToSign = `GOOG4-RSA-SHA256\n${dateIso}\n${credentialScope}\n${hash}`;
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(stringToSign);
+  sign.end();
+  const signature = sign.sign(sa.private_key).toString("hex");
+
+  return `https://storage.googleapis.com/${bucket}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}&X-Goog-Signature=${signature}`;
+}
+
+/** 轮询 GCS 文件是否已写入（最多等 90s）*/
+async function waitForGcsFile(gsUri: string, accessToken: string, maxWaitMs = 90_000): Promise<boolean> {
+  const withoutScheme = gsUri.replace(/^gs:\/\//, "");
+  const slashIdx = withoutScheme.indexOf("/");
+  const bucket = withoutScheme.slice(0, slashIdx);
+  const object = encodeURIComponent(withoutScheme.slice(slashIdx + 1));
+  const metaUrl = `https://storage.googleapis.com/storage/v1/b/${bucket}/o/${object}`;
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const res = await fetch(metaUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (res.ok) return true;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return false;
 }
 
 function getPublicAssetBaseUrl() {
@@ -292,6 +347,11 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, error: e?.message || "image_fetch_failed" };
   }
 
+  // GCS 直写方案：让 Vertex AI 把结果写入 GCS，前端用 Signed URL 直接访问
+  // 完全不经过 base64 内存中转，避免 OOM 和 Vercel 4.5MB 响应限制
+  const gcsOutputUri = `gs://mv-studio-pro-vertex-video-temp/upscaled/${Date.now()}-${upscaleFactor}.png`;
+  const sa: any = jparse(s(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim());
+
   const requestInit: RequestInit = {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -302,6 +362,7 @@ export async function runVertexUpscaleImage(args: {
         mode: "upscale",
         outputOptions: { mimeType: outputMimeType },
         upscaleConfig: { upscaleFactor },
+        storageUri: gcsOutputUri,   // 要求 Vertex AI 直接写入 GCS
       },
     }),
   };
@@ -319,26 +380,46 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, status: r.status, url: r.url, raw, error: errMsg, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
 
-  // Vertex AI upscale 始终返回 inline base64。
-  // 直接上传到 Vercel Blob，绕过 Vercel 4.5MB 函数响应限制，返回公开 URL。
+  // 1. 优先从响应里拿 GCS URI（storageUri 生效时 Vertex AI 返回 gcsUri 字段）
+  const preds: any[] = r.json?.predictions || [];
+  const gcsUriFromResponse = preds.map((p: any) => s(p.gcsUri || p.outputUri || p.uri || "")).find(Boolean);
+
+  const finalGcsUri = gcsUriFromResponse || gcsOutputUri;
+  console.log(`[runVertexUpscaleImage] ${upscaleFactor} GCS target: ${finalGcsUri} (from_response=${!!gcsUriFromResponse})`);
+
+  // 2. 等待文件写入 GCS（最多 90s）
+  const fileReady = await waitForGcsFile(finalGcsUri, token, 90_000);
+  if (fileReady) {
+    try {
+      const signedUrl = await signGcsUrl(finalGcsUri, sa);
+      console.log(`[runVertexUpscaleImage] ${upscaleFactor} signed URL ready`);
+      return { ok: true, status: 200, url: predictUrl, raw, imageUrl: signedUrl, imageUrls: [signedUrl], imageCount: 1, upscaleFactor };
+    } catch (signErr: any) {
+      console.error(`[runVertexUpscaleImage] sign failed, fallback to Blob:`, signErr?.message);
+    }
+    // 签名失败降级：下载后上传 Vercel Blob
+    try {
+      const buf = await downloadFromGcs(finalGcsUri, token);
+      const blob = await put(`upscaled-${upscaleFactor}-${Date.now()}.png`, buf, { access: "public", contentType: "image/png" });
+      return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blob.url, imageUrls: [blob.url], imageCount: 1, upscaleFactor };
+    } catch (dlErr: any) {
+      console.error(`[runVertexUpscaleImage] GCS download fallback also failed:`, dlErr?.message);
+    }
+  }
+
+  // 3. GCS 未写入（storageUri 不受支持，API 返回 inline base64）→ 上传 Vercel Blob
+  console.warn(`[runVertexUpscaleImage] ${upscaleFactor} GCS not ready, falling back to inline blob upload`);
   const images = extractGeneratedImages(r.json);
   if (images.length === 0) {
     return { ok: false, status: 500, url: predictUrl, raw, error: "no image in upscale response", imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
-  try {
-    const blobUrls: string[] = [];
-    for (const item of images) {
-      const buf = Buffer.from(item.data, "base64");
-      const blob = await put(`upscaled-${upscaleFactor}-${Date.now()}.png`, buf, { access: "public", contentType: item.mimeType || "image/png" });
-      blobUrls.push(blob.url);
-    }
-    return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blobUrls[0], imageUrls: blobUrls, imageCount: blobUrls.length, upscaleFactor };
-  } catch (blobErr: any) {
-    console.error(`[runVertexUpscaleImage] ${upscaleFactor} Vercel Blob upload failed:`, blobErr?.message);
-    // 降级：直接返回 base64 data URL（仅 x2 小图可能成功）
-    const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-    return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
+  const blobUrls: string[] = [];
+  for (const item of images) {
+    const buf = Buffer.from(item.data, "base64");
+    const blob = await put(`upscaled-${upscaleFactor}-${Date.now()}.png`, buf, { access: "public", contentType: item.mimeType || "image/png" });
+    blobUrls.push(blob.url);
   }
+  return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blobUrls[0], imageUrls: blobUrls, imageCount: blobUrls.length, upscaleFactor };
 }
 
 export default async function handler(req:VercelRequest,res:VercelResponse){
