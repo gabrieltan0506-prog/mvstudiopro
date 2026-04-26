@@ -16,29 +16,23 @@ function createSpeechClient() {
 }
 
 const client = createSpeechClient();
-
-// 使用 multer memoryStorage 直接把音頻存入 Buffer，與 Express 完全相容
 const upload = multer({ storage: multer.memoryStorage() });
 
 export function registerSpeechApiRoutes(app: Express) {
   app.post("/api/speech-to-text", upload.single("audio"), async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No audio file found" });
+    }
+
     try {
-      const file = req.file;
-      console.log(`[GCP Speech] received file: size=${file?.size ?? 0} mimetype=${file?.mimetype ?? "none"}`);
-
-      if (!file || file.size < 100) {
-        res.status(400).json({ error: "No audio data found" });
-        return;
-      }
-
-      const audioBytes = file.buffer.toString("base64");
+      const audioBytes = req.file.buffer.toString("base64");
 
       const [response] = await client.recognize({
         audio: { content: audioBytes },
         config: {
           encoding: "WEBM_OPUS" as any,
-          sampleRateHertz: 48000,
           languageCode: "zh-CN",
+          alternativeLanguageCodes: ["zh-TW", "en-US"],
           enableAutomaticPunctuation: true,
         },
       });
@@ -49,7 +43,7 @@ export function registerSpeechApiRoutes(app: Express) {
           .join("\n")
           .trim() ?? "";
 
-      console.log(`[GCP Speech] results=${response.results?.length ?? 0} text="${transcription}"`);
+      console.log(`[GCP Speech] 识别成功，文字: "${transcription}"`);
       res.status(200).json({ text: transcription });
     } catch (error) {
       console.error("[GCP Speech] Error:", error);

@@ -1021,7 +1021,7 @@ export default function WorkflowNodes() {
               <textarea value={scene.scenePrompt} onChange={(e) => updateScene(scene.sceneIndex, { scenePrompt: e.target.value })} rows={4} className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white" />
               <div className="absolute right-3 top-3">
                 <VoiceInputButton
-                  onTranscript={(t) => { const cur = scene.scenePrompt ?? ""; updateScene(scene.sceneIndex, { scenePrompt: cur ? cur + " " + t : t }); }}
+                  onTranscript={(t) => { setStoryboardDirty(true); setStoryboard((prev) => prev.map((s) => s.sceneIndex === scene.sceneIndex ? { ...s, scenePrompt: (s.scenePrompt ? s.scenePrompt + " " : "") + t } : s)); }}
                   size={28}
                 />
               </div>
@@ -1750,7 +1750,7 @@ export default function WorkflowNodes() {
                       />
                       <div className="absolute right-3 top-3">
                         <VoiceInputButton
-                  onTranscript={(t) => { const cur = scene.scenePrompt ?? ""; updateScene(scene.sceneIndex, { scenePrompt: cur ? cur + " " + t : t }); }}
+                  onTranscript={(t) => { setStoryboardDirty(true); setStoryboard((prev) => prev.map((s) => s.sceneIndex === scene.sceneIndex ? { ...s, scenePrompt: (s.scenePrompt ? s.scenePrompt + " " : "") + t } : s)); }}
                       size={28}
                     />
                   </div>

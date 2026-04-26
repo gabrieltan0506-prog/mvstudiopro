@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Mic, MicOff, Loader2, Check } from "lucide-react";
 
 interface VoiceInputButtonProps {
   onTranscript: (text: string) => void;
@@ -9,7 +9,7 @@ interface VoiceInputButtonProps {
   disabled?: boolean;
 }
 
-type Status = "idle" | "listening" | "processing" | "error";
+type Status = "idle" | "listening" | "processing" | "success" | "error";
 
 export default function VoiceInputButton({
   onTranscript,
@@ -23,8 +23,10 @@ export default function VoiceInputButton({
   const audioChunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const onTranscriptRef = useRef(onTranscript);
   const onDebugLogRef = useRef(onDebugLog);
+
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
   useEffect(() => { onDebugLogRef.current = onDebugLog; }, [onDebugLog]);
 
@@ -33,92 +35,80 @@ export default function VoiceInputButton({
     onDebugLogRef.current?.(`${new Date().toLocaleTimeString()} ${msg}`);
   };
 
-  // 组件卸载时强制停止录音并释放麦克风
   useEffect(() => {
     return () => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
     };
   }, []);
 
   const startRecording = async () => {
     try {
-      dbg("① 請求麥克風權限…");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : "audio/webm";
-      dbg(`② 麥克風已取得，mimeType=${mimeType}`);
       streamRef.current = stream;
-      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+      const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? { mimeType: "audio/webm;codecs=opus" }
+        : undefined;
+
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
-          dbg(`③ 收到音頻塊 size=${e.data.size}`);
-        }
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
       mediaRecorder.onstop = async () => {
         setStatus("processing");
-        const totalSize = audioChunksRef.current.reduce((s, b) => s + (b instanceof Blob ? b.size : (b as ArrayBuffer).byteLength ?? 0), 0);
-        dbg(`④ 錄音停止，chunks=${audioChunksRef.current.length} totalBytes≈${totalSize}`);
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        dbg(`⑤ Blob 大小=${audioBlob.size} type=${audioBlob.type}`);
+        dbg("录音结束，正在发送至 GCP...");
+
         const formData = new FormData();
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         formData.append("audio", audioBlob, "voice.webm");
 
         try {
-          dbg("⑥ 發送 POST /api/speech-to-text…");
-          const response = await fetch("/api/speech-to-text", {
-            method: "POST",
-            body: formData,
-          });
-          dbg(`⑦ HTTP 回應 status=${response.status}`);
-          if (!response.ok) {
-            const errText = await response.text();
-            dbg(`❌ API 錯誤 ${response.status}: ${errText.slice(0, 200)}`);
-            throw new Error(`API ${response.status}`);
-          }
+          const response = await fetch("/api/speech-to-text", { method: "POST", body: formData });
+          if (!response.ok) throw new Error(`API Error: ${response.status}`);
+
           const data = await response.json();
-          dbg(`⑧ 返回 text="${data.text ?? "(空)"}"`);
-          if (data.text) {
+
+          if (data.text && data.text.trim() !== "") {
+            dbg(`识别成功: ${data.text}`);
             onTranscriptRef.current(data.text);
-            dbg("⑨ onTranscript 已調用 ✅");
+            setStatus("success");
+            setTimeout(() => setStatus("idle"), 1500);
           } else {
-            dbg("⑨ text 為空，未調用 onTranscript");
+            dbg("GCP 返回空字符串（可能无声音或太短）");
+            alert("未识别到语音或声音太小，请重试");
+            setStatus("error");
+            setTimeout(() => setStatus("idle"), 2000);
           }
-          setStatus("idle");
         } catch (err) {
-          console.error("[VoiceInput] API error:", err);
-          dbg(`❌ catch: ${String(err)}`);
+          dbg(`上传失败: ${String(err)}`);
           setStatus("error");
           setTimeout(() => setStatus("idle"), 2000);
         } finally {
           stream.getTracks().forEach((track) => track.stop());
-          streamRef.current = null;
-          dbg("⑩ 麥克風軌道已釋放");
         }
       };
 
       mediaRecorder.start();
       setStatus("listening");
-      dbg("② 錄音開始，等待停止…");
-      // 45 秒自動停止，避免超過 GCP sync API 1 分鐘上限
+      dbg("开始录音...");
+
       autoStopTimerRef.current = setTimeout(() => {
         if (mediaRecorderRef.current?.state === "recording") {
-          dbg("⏰ 45秒自動停止");
+          dbg("达到 45 秒上限，自动停止");
           mediaRecorderRef.current.stop();
         }
       }, 45000);
     } catch (err) {
-      dbg(`❌ 麥克風錯誤: ${String(err)}`);
-      alert("请允许浏览器使用麦克风权限后重试。");
+      dbg(`麦克风权限错误: ${String(err)}`);
+      alert("请允许浏览器使用麦克风权限后重试");
       setStatus("idle");
     }
   };
@@ -127,7 +117,7 @@ export default function VoiceInputButton({
     if (status === "listening") {
       if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
       mediaRecorderRef.current?.stop();
-    } else if (status === "idle" || status === "error") {
+    } else if (status === "idle" || status === "error" || status === "success") {
       startRecording();
     }
   };
@@ -136,6 +126,7 @@ export default function VoiceInputButton({
     idle: "text-gray-400 hover:text-blue-400 hover:border-blue-500/50 border-transparent",
     listening: "text-red-400 border-red-500/60 bg-red-500/10 animate-pulse",
     processing: "text-blue-400 border-blue-500/40 bg-blue-500/10",
+    success: "text-green-500 border-green-500/50 bg-green-500/10",
     error: "text-yellow-500 border-yellow-500/50 bg-yellow-500/10",
   };
 
@@ -143,6 +134,7 @@ export default function VoiceInputButton({
     idle: "语音输入（点击开始录音）",
     listening: "录音中… 点击停止并识别",
     processing: "识别中，请稍候…",
+    success: "识别成功！",
     error: "识别失败，点击重试",
   };
 
@@ -158,6 +150,8 @@ export default function VoiceInputButton({
         <Loader2 size={size} className="animate-spin" />
       ) : status === "listening" ? (
         <MicOff size={size} />
+      ) : status === "success" ? (
+        <Check size={size} />
       ) : (
         <Mic size={size} />
       )}
