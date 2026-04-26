@@ -21,6 +21,7 @@ export default function VoiceInputButton({
   const [status, setStatus] = useState<Status>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   const onDebugLogRef = useRef(onDebugLog);
   useEffect(() => { onTranscriptRef.current = onTranscript; }, [onTranscript]);
@@ -34,15 +35,11 @@ export default function VoiceInputButton({
   // 组件卸载时强制停止录音并释放麦克风
   useEffect(() => {
     return () => {
-      if (
-        mediaRecorderRef.current &&
-        mediaRecorderRef.current.state !== "inactive"
-      ) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
-      mediaRecorderRef.current?.stream
-        .getTracks()
-        .forEach((track) => track.stop());
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     };
   }, []);
 
@@ -54,6 +51,7 @@ export default function VoiceInputButton({
         ? "audio/webm;codecs=opus"
         : "audio/webm";
       dbg(`② 麥克風已取得，mimeType=${mimeType}`);
+      streamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -102,6 +100,7 @@ export default function VoiceInputButton({
           setTimeout(() => setStatus("idle"), 2000);
         } finally {
           stream.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
           dbg("⑩ 麥克風軌道已釋放");
         }
       };

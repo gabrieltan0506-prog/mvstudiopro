@@ -50,13 +50,14 @@ export function registerSpeechApiRoutes(app: Express) {
         const audioBuffer = Buffer.concat(chunks);
         const audioBytes = audioBuffer.toString("base64");
 
+        // sampleRateHertz 不指定，讓 GCP 從 WebM 容器自動讀取
         const [response] = await client.recognize({
           audio: { content: audioBytes },
           config: {
             encoding: "WEBM_OPUS" as any,
-            sampleRateHertz: 48000,
             languageCode: "zh-CN",
             enableAutomaticPunctuation: true,
+            model: "latest_long",
           },
         });
 
@@ -66,6 +67,7 @@ export function registerSpeechApiRoutes(app: Express) {
             .join("\n")
             .trim() ?? "";
 
+        console.log(`[GCP Speech] results=${response.results?.length ?? 0} text="${transcription}"`);
         res.status(200).json({ text: transcription });
       } catch (error) {
         console.error("[GCP Speech] Error:", error);
