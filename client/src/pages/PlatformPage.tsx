@@ -674,7 +674,7 @@ export default function PlatformPage() {
 
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
-    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
+    downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=48000&selector=%23platform-report` });
   }, [downloadPlatformPdfMutation]);
 
   const snapshot = growthSnapshotQuery.data?.snapshot as GrowthSnapshot | undefined;
@@ -1239,45 +1239,7 @@ export default function PlatformPage() {
       const { jobId } = await createPlatformAnalysisJobMutation.mutateAsync({
         context: focusPrompt || undefined,
         windowDays: selectedWindowDays,
-        snapshotSummary: {
-          overview: snap.overview ?? "",
-          platformSnapshots: (snap.platformSnapshots || []).map((item: any) => ({
-            platform: item.platform,
-            displayName: item.displayName,
-            audienceFitScore: item.audienceFitScore,
-            momentumScore: item.momentumScore,
-            summary: item.summary ?? "",
-            fitLabel: item.fitLabel,
-            sampleTopics: Array.isArray((item as any).sampleTopics)
-              ? (item as any).sampleTopics.map((t: any) => typeof t === "string" ? t : String(t?.title || ""))
-              : [],
-          })),
-          platformRecommendations: (snap.platformRecommendations || []).map((item: any) => ({
-            name: item.name,
-            reason: item.reason ?? "",
-            action: item.action ?? "",
-          })),
-          topicLibrary: (snap.topicLibrary || []).map((item: any) => ({
-            title: item.title,
-            rationale: item.rationale ?? "",
-            executionHint: item.executionHint ?? "",
-          })),
-          monetizationStrategies: (snap.monetizationStrategies || []).map((item: any) => ({
-            platformLabel: item.platformLabel,
-            primaryTrack: item.primaryTrack,
-            offerType: item.offerType,
-          })),
-          titleExecutions: (snap.titleExecutions || []).map((item: any) => ({
-            title: item.title || "",
-            openingHook: item.openingHook ?? "",
-            copywriting: item.copywriting ?? "",
-          })),
-          mainPath: {
-            title: snap.decisionFramework?.mainPath?.title || "",
-            summary: snap.decisionFramework?.mainPath?.summary ?? "",
-            whyNow: snap.decisionFramework?.mainPath?.whyNow ?? "",
-          },
-        },
+        snapshotSummary: snap as any,
       });
       setAnalysisJobId(jobId);
       setDashboardDebug((prev) => ({ ...(prev || {}), jobId, jobStatus: "queued", stage1: "dispatched", stage2: "pending" }));
