@@ -292,23 +292,17 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, error: e?.message || "image_fetch_failed" };
   }
 
-  // 所有放大结果统一走 GCS → Vercel Blob，避免 base64 撑爆 Vercel 4.5MB 响应限制
-  const gcsOutputUri = `gs://mv-studio-pro-vertex-video-temp/upscaled/${Date.now()}-${upscaleFactor}.png`;
-
-  const parameters: Record<string, unknown> = {
-    sampleCount: 1,
-    mode: "upscale",
-    outputOptions: { mimeType: outputMimeType },
-    upscaleConfig: { upscaleFactor },
-  };
-  if (gcsOutputUri) parameters.storageUri = gcsOutputUri;
-
   const requestInit: RequestInit = {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       instances: [{ prompt, image: { bytesBase64Encoded: img.b64 } }],
-      parameters,
+      parameters: {
+        sampleCount: 1,
+        mode: "upscale",
+        outputOptions: { mimeType: outputMimeType },
+        upscaleConfig: { upscaleFactor },
+      },
     }),
   };
 
@@ -325,24 +319,25 @@ export async function runVertexUpscaleImage(args: {
     return { ok: false, status: r.status, url: r.url, raw, error: errMsg, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
   }
 
-  // 统一走 GCS → Vercel Blob
+  // Vertex AI upscale 始终返回 inline base64。
+  // 直接上传到 Vercel Blob，绕过 Vercel 4.5MB 函数响应限制，返回公开 URL。
+  const images = extractGeneratedImages(r.json);
+  if (images.length === 0) {
+    return { ok: false, status: 500, url: predictUrl, raw, error: "no image in upscale response", imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
+  }
   try {
-    const preds: any[] = r.json?.predictions || [];
-    const gcsUri = preds.map((p: any) => s(p.gcsUri || p.outputUri || "")).find(Boolean) || gcsOutputUri;
-    console.log(`[runVertexUpscaleImage] ${upscaleFactor} GCS output: ${gcsUri}`);
-    const buf = await downloadFromGcs(gcsUri, token);
-    const filename = `upscaled-${upscaleFactor}-${Date.now()}.png`;
-    const blob = await put(filename, buf, { access: "public", contentType: "image/png" });
-    return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blob.url, imageUrls: [blob.url], imageCount: 1, upscaleFactor };
-  } catch (gcsErr: any) {
-    // GCS 失败时降级：尝试 inline base64
-    console.error(`[runVertexUpscaleImage] ${upscaleFactor} GCS fallback to inline:`, gcsErr?.message);
-    const images = extractGeneratedImages(r.json);
-    if (images.length > 0) {
-      const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-      return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
+    const blobUrls: string[] = [];
+    for (const item of images) {
+      const buf = Buffer.from(item.data, "base64");
+      const blob = await put(`upscaled-${upscaleFactor}-${Date.now()}.png`, buf, { access: "public", contentType: item.mimeType || "image/png" });
+      blobUrls.push(blob.url);
     }
-    return { ok: false, status: 500, url: predictUrl, raw, error: `GCS transfer failed: ${gcsErr?.message}`, imageUrl: "", imageUrls: [], imageCount: 0, upscaleFactor };
+    return { ok: true, status: 200, url: predictUrl, raw, imageUrl: blobUrls[0], imageUrls: blobUrls, imageCount: blobUrls.length, upscaleFactor };
+  } catch (blobErr: any) {
+    console.error(`[runVertexUpscaleImage] ${upscaleFactor} Vercel Blob upload failed:`, blobErr?.message);
+    // 降级：直接返回 base64 data URL（仅 x2 小图可能成功）
+    const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
+    return { ok: true, status: r.status, url: r.url, raw, imageUrl: imageUrls[0], imageUrls, imageCount: imageUrls.length, upscaleFactor };
   }
 }
 
