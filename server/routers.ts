@@ -5384,18 +5384,24 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         model: z.string().optional(),
         size: z.string().optional(),
         quality: z.string().optional(),
+        output_format: z.string().optional(),
+        output_compression: z.number().optional(),
         n: z.number().optional(),
       }))
       .mutation(async ({ input }) => {
         const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
         if (!apiKey) return { ok: false as const, error: "Missing OPENAI_IMAGE_API_KEY on server" };
-        const body = {
+        const body: Record<string, unknown> = {
           model: input.model || "gpt-image-2",
           prompt: input.prompt,
           n: input.n || 1,
           size: input.size || "1024x1024",
           quality: input.quality || "high",
+          output_format: input.output_format || "png",
         };
+        if ((input.output_format === "jpeg" || input.output_format === "webp") && input.output_compression != null) {
+          body.output_compression = input.output_compression;
+        }
         let res: Response;
         try {
           res = await fetch("https://api.openai.com/v1/images/generations", {

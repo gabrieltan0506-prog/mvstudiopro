@@ -81,6 +81,10 @@ export default function TestLab() {
   // Image
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
   const [openaiImageModel] = useState<OpenAIImageModel>("gpt-image-2");
+  const [openaiSize, setOpenaiSize] = useState("1024x1024");
+  const [openaiQuality, setOpenaiQuality] = useState("high");
+  const [openaiFormat, setOpenaiFormat] = useState("png");
+  const [openaiCompression, setOpenaiCompression] = useState("85");
   const [klingImageModel, setKlingImageModel] = useState("kling-v2-1");
   const [imageProvider, setImageProvider] = useState<"google" | "openai" | "kling">("google");
   const [imageResolution, setImageResolution] = useState("1k");
@@ -188,7 +192,15 @@ export default function TestLab() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            json: { prompt, model: "gpt-image-2", size: "1024x1024", quality: "high", n: Number(imageCount || 1) }
+            json: {
+              prompt,
+              model: "gpt-image-2",
+              size: openaiSize,
+              quality: openaiQuality,
+              output_format: openaiFormat,
+              output_compression: (openaiFormat === "jpeg" || openaiFormat === "webp") ? Number(openaiCompression) : undefined,
+              n: 1,
+            }
           }),
         });
         setDebug(r);
@@ -635,7 +647,67 @@ export default function TestLab() {
               </select>
             </div>
 
-            {imageProvider === "google" ? (
+            {imageProvider === "openai" ? (
+              <>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>尺寸</div>
+                  <select
+                    value={openaiSize}
+                    onChange={(e) => setOpenaiSize(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="1024x1024">1024×1024（方图）</option>
+                    <option value="1536x1024">1536×1024（横图）</option>
+                    <option value="1024x1536">1024×1536（竖图）</option>
+                    <option value="2048x2048">2048×2048（2K方）</option>
+                    <option value="2048x1152">2048×1152（2K横）</option>
+                    <option value="3840x2160">3840×2160（4K）</option>
+                    <option value="auto">auto（自动）</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>质量</div>
+                  <select
+                    value={openaiQuality}
+                    onChange={(e) => setOpenaiQuality(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="auto">auto（自动）</option>
+                    <option value="high">high（高质量）</option>
+                    <option value="medium">medium（中等）</option>
+                    <option value="low">low（草稿/快速）</option>
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>格式</div>
+                  <select
+                    value={openaiFormat}
+                    onChange={(e) => setOpenaiFormat(e.target.value)}
+                    style={{ padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  >
+                    <option value="png">PNG（无损）</option>
+                    <option value="jpeg">JPEG（快速）</option>
+                    <option value="webp">WebP</option>
+                  </select>
+                </div>
+
+                {(openaiFormat === "jpeg" || openaiFormat === "webp") && (
+                  <div>
+                    <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>压缩率 ({openaiCompression}%)</div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={openaiCompression}
+                      onChange={(e) => setOpenaiCompression(e.target.value)}
+                      style={{ width: 120, accentColor: "#f97316" }}
+                    />
+                  </div>
+                )}
+              </>
+            ) : imageProvider === "google" ? (
               <>
                 <div>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>图片数量</div>
