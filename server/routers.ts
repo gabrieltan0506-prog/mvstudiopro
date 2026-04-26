@@ -5437,6 +5437,140 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         if (imageUrls.length === 0) return { ok: false as const, error: "no image in response" };
         return { ok: true as const, imageUrl: imageUrls[0], imageUrls };
       }),
+
+    /** 竞品图片视觉分析（调用 gpt-4.1-mini vision） */
+    analyze: publicProcedure
+      .input(z.object({
+        imageUrl: z.string().min(1),
+        question: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+        if (!apiKey) return { ok: false as const, error: "Missing OPENAI_API_KEY" };
+
+        const question = input.question ||
+          "请详细分析这张图片的视觉风格、色彩搭配、构图特点、情绪氛围，以及创作者可以借鉴的核心元素。用简体中文回答，分点说明。";
+
+        let res: Response;
+        try {
+          res = await fetch("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            body: JSON.stringify({
+              model: "gpt-4.1-mini",
+              input: [{
+                role: "user",
+                content: [
+                  { type: "input_text", text: question },
+                  { type: "input_image", image_url: input.imageUrl },
+                ],
+              }],
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+        } catch (e: any) {
+          return { ok: false as const, error: e?.message || "fetch failed" };
+        }
+
+        const json: any = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { ok: false as const, error: String(json?.error?.message || `HTTP ${res.status}`) };
+        }
+
+        const text = String(json?.output_text || "").trim();
+        if (!text) return { ok: false as const, error: "no analysis returned" };
+        return { ok: true as const, analysis: text };
+      }),
+
+    /** 图片编辑（gpt-image-2 edit endpoint，用现有图 + 新 prompt 修改） */
+    edit: publicProcedure
+      .input(z.object({
+        imageUrl: z.string().min(1),
+        prompt: z.string().min(1),
+        size: z.string().optional(),
+        quality: z.string().optional(),
+        output_format: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const apiKey = String(process.env.OPENAI_IMAGE_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+        if (!apiKey) return { ok: false as const, error: "Missing OPENAI_API_KEY" };
+
+        // 下载原图为 Buffer
+        let imgBuf: Buffer;
+        try {
+          const imgRes = await fetch(input.imageUrl, { signal: AbortSignal.timeout(30_000) });
+          if (!imgRes.ok) return { ok: false as const, error: `download image failed: ${imgRes.status}` };
+          imgBuf = Buffer.from(await imgRes.arrayBuffer());
+        } catch (e: any) {
+          return { ok: false as const, error: `download image error: ${e?.message}` };
+        }
+
+        // 构建 multipart/form-data
+        const boundary = `----FormBoundary${Date.now()}`;
+        const crlf = "\r\n";
+        const parts: Buffer[] = [];
+
+        const addField = (name: string, value: string) => {
+          parts.push(Buffer.from(
+            `--${boundary}${crlf}Content-Disposition: form-data; name="${name}"${crlf}${crlf}${value}${crlf}`
+          ));
+        };
+
+        addField("model", "gpt-image-2");
+        addField("prompt", input.prompt);
+        if (input.size) addField("size", input.size);
+        if (input.quality) addField("quality", input.quality);
+        if (input.output_format) addField("output_format", input.output_format);
+
+        // 图片 part
+        const ext = (input.output_format === "jpeg" ? "jpg" : (input.output_format || "png"));
+        const mime = ext === "jpg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
+        parts.push(Buffer.from(
+          `--${boundary}${crlf}Content-Disposition: form-data; name="image[]"; filename="image.${ext}"${crlf}Content-Type: ${mime}${crlf}${crlf}`
+        ));
+        parts.push(imgBuf);
+        parts.push(Buffer.from(`${crlf}--${boundary}--${crlf}`));
+
+        const body = Buffer.concat(parts);
+
+        let res: Response;
+        try {
+          res = await fetch("https://api.openai.com/v1/images/edits", {
+            method: "POST",
+            headers: {
+              "Content-Type": `multipart/form-data; boundary=${boundary}`,
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body,
+            signal: AbortSignal.timeout(180_000),
+          });
+        } catch (e: any) {
+          return { ok: false as const, error: e?.message || "fetch failed" };
+        }
+
+        const json: any = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { ok: false as const, error: String(json?.error?.message || `HTTP ${res.status}`) };
+        }
+
+        const items: Array<{ b64_json?: string; url?: string }> = Array.isArray(json?.data) ? json.data : [];
+        const { put } = await import("@vercel/blob");
+        const imageUrls: string[] = [];
+        for (const item of items) {
+          if (item.url) { imageUrls.push(item.url); continue; }
+          if (item.b64_json) {
+            try {
+              const buf = Buffer.from(item.b64_json, "base64");
+              const blob = await put(`gpt-edit-${Date.now()}.png`, buf, { access: "public", contentType: "image/png" });
+              imageUrls.push(blob.url);
+            } catch {
+              imageUrls.push(`data:image/png;base64,${item.b64_json}`);
+            }
+          }
+        }
+        if (imageUrls.length === 0) return { ok: false as const, error: "no image in response" };
+        return { ok: true as const, imageUrl: imageUrls[0] };
+      }),
   }),
 
 });

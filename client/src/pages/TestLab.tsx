@@ -98,6 +98,9 @@ export default function TestLab() {
   const [upscaleBusy, setUpscaleBusy] = useState(false);
   const [upscaleFactor, setUpscaleFactor] = useState<"x2" | "x3" | "x4">("x2");
   const [upscaledImageUrl, setUpscaledImageUrl] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editedImageUrl, setEditedImageUrl] = useState("");
 
   // Video
   const [videoProvider, setVideoProvider] = useState<"google" | "kling">("google");
@@ -422,6 +425,42 @@ export default function TestLab() {
       setDebug({ ok: false, error: e?.message || String(e) });
     } finally {
       setUpscaleBusy(false);
+    }
+  }
+
+  async function runEditImage() {
+    const srcImage = upscaledImageUrl || imageUrl;
+    if (!srcImage || !editPrompt.trim()) {
+      setDebug({ ok: false, error: "missing_image_or_prompt" });
+      return;
+    }
+    setEditBusy(true);
+    setEditedImageUrl("");
+    setDebug({ ok: true, action: "edit:start" });
+    try {
+      const r = await fetchJsonish("/api/trpc/openaiImage.edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          json: {
+            imageUrl: srcImage,
+            prompt: editPrompt.trim(),
+            size: openaiSize,
+            quality: openaiQuality,
+            output_format: openaiFormat,
+          }
+        }),
+      });
+      setDebug(r);
+      const result = r?.json?.result?.data?.json ?? r?.json;
+      if (!r.ok || result?.ok === false) throw new Error(result?.error || "edit_failed");
+      const url = String(result?.imageUrl || "").trim();
+      if (!url) throw new Error("edit_missing_url");
+      setEditedImageUrl(url);
+    } catch (e: any) {
+      setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setEditBusy(false);
     }
   }
 
@@ -840,6 +879,43 @@ export default function TestLab() {
                       style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
                     >
                       设为参考图
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* GPT-image-2 图片编辑 */}
+          {imageProvider === "openai" && (upscaledImageUrl || imageUrl) ? (
+            <div style={{ marginTop: 16, padding: 14, borderRadius: 14, border: "1px solid rgba(249,115,22,0.25)", background: "rgba(249,115,22,0.06)" }}>
+              <div style={{ fontWeight: 900, marginBottom: 10, color: "#f97316" }}>✏️ 图片编辑（gpt-image-2）</div>
+              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>基于当前生成图，用新 prompt 修改</div>
+              <textarea
+                value={editPrompt}
+                onChange={(e) => setEditPrompt(e.target.value)}
+                placeholder="描述修改内容，如：把背景改成夜晚城市，人物改穿红色服装"
+                rows={3}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)", fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
+              />
+              <button
+                onClick={runEditImage}
+                disabled={editBusy || !editPrompt.trim()}
+                style={{ marginTop: 10, padding: "10px 20px", borderRadius: 12, background: editBusy ? "rgba(249,115,22,0.3)" : "rgba(249,115,22,0.2)", color: "#f97316", border: "1px solid rgba(249,115,22,0.3)", fontWeight: 900, cursor: editBusy ? "not-allowed" : "pointer" }}
+              >
+                {editBusy ? "编辑中…" : "开始编辑"}
+              </button>
+              {editedImageUrl ? (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 8 }}>编辑结果</div>
+                  <img src={editedImageUrl} style={{ width: "100%", borderRadius: 14, background: "black" }} />
+                  <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+                    <a href={editedImageUrl} target="_blank" rel="noreferrer" style={{ color: "#f97316" }}>打开编辑图</a>
+                    <button
+                      onClick={() => { setImageUrl(editedImageUrl); setEditedImageUrl(""); }}
+                      style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(249,115,22,0.3)", background: "rgba(249,115,22,0.1)", color: "#f97316", fontWeight: 900 }}
+                    >
+                      替换为当前图
                     </button>
                   </div>
                 </div>
