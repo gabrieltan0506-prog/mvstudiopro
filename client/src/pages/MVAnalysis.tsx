@@ -3087,7 +3087,7 @@ export default function MVAnalysisPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-[#c4b5fd]">🔍 竞品分析调研</h2>
-                <p className="mt-0.5 text-xs text-white/40">Gemma 4 31B 底层扫描 × Gemini 3.1 Pro 战略处方 · 单次扣除 20 点</p>
+                <p className="mt-0.5 text-xs text-white/40">双引擎深度扫描 × 战略处方生成 · 单次扣除 20 点</p>
               </div>
               <button
                 type="button"

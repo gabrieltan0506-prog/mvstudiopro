@@ -67,7 +67,7 @@ export default function ResearchPage() {
             <h1 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: 0 }}>竞品与对标分析</h1>
           </div>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 14, margin: 0 }}>
-            双引擎驱动 · Gemma 4 底层扫描 + Gemini 2.5 Pro 战略处方 · 30秒内生成降维打击方案
+            双引擎驱动 · 底层流量扫描 + 战略处方生成 · 30秒内输出降维打击方案
           </p>
         </div>
 
