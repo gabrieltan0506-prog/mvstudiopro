@@ -1,8 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+
+const VIDEO_FIRST_USE_KEY = "mvs-video-first-used";
 
 async function fetchJsonish(url: string, opts?: RequestInit) {
   try {
@@ -36,10 +38,44 @@ export default function ResearchPage() {
   const [rawResponse, setRawResponse] = useState<any>(null);
   const [isSupervisor, setIsSupervisor] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
   }, []);
+
+  const toggleVoice = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("当前浏览器不支持语音输入，请使用 Chrome");
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const rec = new SpeechRecognition();
+    rec.lang = "zh-CN";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.onstart = () => setIsListening(true);
+    rec.onend = () => setIsListening(false);
+    rec.onerror = (e: any) => {
+      setIsListening(false);
+      if (e.error !== "aborted") toast.error(`语音识别出错：${e.error}`);
+    };
+    rec.onresult = (e: any) => {
+      let transcript = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) transcript += e.results[i][0].transcript;
+      }
+      if (transcript) setContent((prev) => prev + transcript);
+    };
+    recognitionRef.current = rec;
+    rec.start();
+  }, [isListening]);
 
   const mutation = trpc.competitorResearch.run.useMutation({
     onSuccess: (data) => {
@@ -175,11 +211,29 @@ export default function ResearchPage() {
               fontFamily: "inherit",
             }}
           />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-            <span style={{ fontSize: 12, color: overLimit ? "#ef4444" : "rgba(255,255,255,0.3)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, gap: 8 }}>
+            <span style={{ fontSize: 12, color: overLimit ? "#ef4444" : "rgba(255,255,255,0.3)", flexShrink: 0 }}>
               {overLimit && <AlertCircle size={12} style={{ display: "inline", marginRight: 4 }} />}
               {content.length} / {MAX_CHARS} 字
             </span>
+
+            {/* 语音输入按钮 */}
+            <button
+              onClick={toggleVoice}
+              title={isListening ? "点击停止语音输入" : "点击开始语音输入"}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, flexShrink: 0,
+                background: isListening ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
+                border: isListening ? "1px solid rgba(239,68,68,0.5)" : "1px solid rgba(255,255,255,0.1)",
+                color: isListening ? "#ef4444" : "rgba(255,255,255,0.4)",
+                fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
+                animation: isListening ? "morandi-breathe 1.2s ease-in-out infinite" : "none",
+              }}
+            >
+              {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+              {isListening ? "停止录音" : "语音输入"}
+            </button>
+
             <button
               onClick={handleRun}
               disabled={mutation.isPending || content.trim().length === 0 || overLimit}
@@ -365,14 +419,13 @@ function SceneVideoCard({ scene, index, platform }: {
     setOrigUrl("");
     setHdUrl("");
     try {
-      const r = await fetchJsonish("/api/trpc/openaiImage.generate", {
+      const r = await fetchJsonish("/api/jobs?op=bananaGenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ json: { prompt: effectiveVisualPrompt, model: "gpt-image-2", size: "1024x1536", quality: "high", n: 1 } }),
+        body: JSON.stringify({ prompt: effectiveVisualPrompt, numImages: 1, aspectRatio: "9:16" }),
       });
-      const result = r?.json?.result?.data?.json ?? r?.json;
-      const url = String(result?.imageUrl || "").trim();
-      if (!url) throw new Error(result?.error || "生成失败");
+      const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
+      if (!url) throw new Error(r?.json?.error || "生成失败");
       setOrigUrl(url);
     } catch (e: any) {
       toast.error(`参考图生成失败：${e?.message}`);
@@ -402,19 +455,22 @@ function SceneVideoCard({ scene, index, platform }: {
   }
 
   async function generateVideo() {
-    if (!window.confirm(`生成镜头 ${index + 1} 的视频将扣除 100 点，确定继续？`)) return;
+    const isFirst = !localStorage.getItem(VIDEO_FIRST_USE_KEY);
+    const cost = isFirst ? 80 : 99;
+    if (!window.confirm(`生成镜头 ${index + 1} 的视频将扣除 ${cost} 点${isFirst ? "（首次体验优惠价）" : ""}，确定继续？`)) return;
     setVideoBusy(true);
     setVideoUrl("");
     try {
       const imageToUse = hdUrl || origUrl;
-      const r = await fetchJsonish("/api/video/generate", {
+      const r = await fetchJsonish("/api/jobs?op=klingI2V", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: imageToUse, audioPrompt, platform }),
+        body: JSON.stringify({ imageUrl: imageToUse, prompt: audioPrompt, platform, credits: cost }),
       });
       if (!r.ok) throw new Error(r.json?.error || "视频生成失败");
-      const url = String(r.json?.videoUrl || "").trim();
+      const url = String(r.json?.videoUrl || r.json?.url || "").trim();
       if (!url) throw new Error("未获得视频链接");
+      localStorage.setItem(VIDEO_FIRST_USE_KEY, "1");
       setVideoUrl(url);
     } catch (e: any) {
       toast.error(`视频生成失败：${e?.message}`);
@@ -491,14 +547,7 @@ function SceneVideoCard({ scene, index, platform }: {
             </button>
           )}
 
-          <button
-            onClick={generateVideo}
-            disabled={videoBusy}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: videoBusy ? "rgba(249,115,22,0.06)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.35)", color: videoBusy ? "rgba(249,115,22,0.4)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: videoBusy ? "not-allowed" : "pointer", marginLeft: "auto" }}
-          >
-            {videoBusy ? <Loader2 size={12} className="animate-spin" /> : <Video size={12} />}
-            {videoBusy ? "渲染中（约1分钟）…" : "生成此镜视频（100点）"}
-          </button>
+          <VideoButton videoBusy={videoBusy} onGenerate={generateVideo} />
         </div>
 
         {/* 图片对比区：原图左 / 高清右 */}
@@ -544,6 +593,28 @@ function SceneVideoCard({ scene, index, platform }: {
   );
 }
 
+// ── 视频生成按钮（动态显示首次/后续积分） ───────────────────────────
+function VideoButton({ videoBusy, onGenerate }: { videoBusy: boolean; onGenerate: () => void }) {
+  const [isFirst, setIsFirst] = useState(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
+  useEffect(() => {
+    setIsFirst(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
+  }, [videoBusy]);
+  const cost = isFirst ? 80 : 99;
+  return (
+    <button
+      onClick={onGenerate}
+      disabled={videoBusy}
+      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: videoBusy ? "rgba(249,115,22,0.06)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.35)", color: videoBusy ? "rgba(249,115,22,0.4)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: videoBusy ? "not-allowed" : "pointer", marginLeft: "auto", position: "relative" }}
+    >
+      {videoBusy ? <Loader2 size={12} className="animate-spin" /> : <Video size={12} />}
+      {videoBusy ? "渲染中（约1分钟）…" : `生成此镜视频（${cost}点）`}
+      {isFirst && !videoBusy && (
+        <span style={{ position: "absolute", top: -8, right: -4, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 5px", letterSpacing: 0 }}>首次优惠</span>
+      )}
+    </button>
+  );
+}
+
 // ── 脚本卡片：含生成参考图 + 高清放大 ──────────────────────────────
 function ScriptImageCard({ index, script, platform, platformLabel }: {
   index: number;
@@ -568,14 +639,13 @@ function ScriptImageCard({ index, script, platform, platformLabel }: {
     setOrigUrl("");
     setHdUrl("");
     try {
-      const r = await fetchJsonish("/api/trpc/openaiImage.generate", {
+      const r = await fetchJsonish("/api/jobs?op=bananaGenerate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ json: { prompt: imagePrompt, model: "gpt-image-2", size: "1024x1536", quality: "high", n: 1 } }),
+        body: JSON.stringify({ prompt: imagePrompt, numImages: 1, aspectRatio: "9:16" }),
       });
-      const result = r?.json?.result?.data?.json ?? r?.json;
-      const url = String(result?.imageUrl || "").trim();
-      if (!url) throw new Error(result?.error || "生成失败");
+      const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
+      if (!url) throw new Error(r?.json?.error || "生成失败");
       setOrigUrl(url);
     } catch (e: any) {
       toast.error(`参考图生成失败：${e?.message}`);
