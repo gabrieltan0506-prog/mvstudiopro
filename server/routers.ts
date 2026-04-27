@@ -5599,98 +5599,27 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${COST} 点，请充值` });
         }
 
-        let stage1Raw = "";
         let strategy: any = null;
 
-        const extractText = (res: Awaited<ReturnType<typeof invokeLLM>>) =>
-          String(res?.choices?.[0]?.message?.content ?? "");
-
-        // Gemma 4 31B IT (us-central1) — 独立服务模块
-        const { callGemma4 } = await import("./services/gemma4");
-
+        // Stage 1 + 2：调用 AI Studio 双引擎服务
         try {
-          // 2. Stage 1: Gemma 4 31B IT (us-central1) — 底层视觉与流量特征扫描
-          stage1Raw = await callGemma4(`你是一位顶级内容策略师。请对以下${label}竞品内容进行深度扫描，提炼：
-1. 爆款逻辑拆解（流量钩子、情绪触发点、内容结构）
-2. 视觉风格特征（色调、排版、封面设计模式）
-3. 受众画像与算法适配特征
-4. 高频词汇与标签矩阵
-
-竞品数据：${input.competitorData}
-
-输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns`);
-
-          // 3. Stage 2: gemini-3.1-pro-preview — 战略处方生成
-          const stage2Res = await invokeLLM({
-            provider: "vertex" as const,
-            modelName: "gemini-3.1-pro-preview",
-            temperature: 0.5,
-            messages: [
-              {
-                role: "user",
-                content: `你是一位整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师。
-
-基于以下竞品扫描报告：
-${stage1Raw}
-
-请为创作者生成一份完整的「降维打击」竞争处方，包含：
-1. **差异化人设定位**：与竞品的核心差距和突破口
-2. **内容执行脚本**：3个可立即使用的爆款标题+开场钩子
-3. **视觉排版指引**：推荐色卡（3色）、封面构图建议、字体风格
-4. **发布节奏策略**：最优发布时间、频次、话题标签
-5. **30天增长路径**：分阶段行动清单
-
-输出格式：结构化JSON，字段：positioning, scripts(数组，每个含title/hook/copywriting), visuals(含colorPalette数组/typography/layoutGuide), publishStrategy, growthPlan30Days`,
-              },
-            ],
-          });
-          const stage2Text = extractText(stage2Res);
-          strategy = (() => {
-            try { return JSON.parse(stage2Text.replace(/```json\n?|\n?```/g, "")); } catch { return { raw: stage2Text }; }
-          })();
-          strategy.platform = input.platform;
-          strategy.platformLabel = label;
-          strategy.generatedAt = new Date().toISOString();
-
+          const { runResearch } = await import("./services/researchService");
+          strategy = await runResearch(String(userId), String(input.platform), input.competitorData);
         } catch (e: any) {
           // LLM 失败，退回积分
           try { await refundCredits(userId, COST, `${label}竞品调研·LLM失败·退回`); } catch {}
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，已退回积分" });
         }
 
-        // 4. 写入 /data/growth/research/（复用现有 growth-backup GitHub Actions 定时备份流程）
-        // 4a. Fly 持久化存储：原始数据（重资产）→ /data/growth/research/
-        //     由现有 growth-backup GitHub Actions 每小时自动备份到 GitHub Releases
-        try {
-          const { mkdir, writeFile } = await import("fs/promises");
-          const { join } = await import("path");
-          const dir = "/data/growth/research";
-          await mkdir(dir, { recursive: true });
-          const filename = join(dir, `res_${input.platform}_${Date.now()}_u${userId}.json`);
-          await writeFile(filename, JSON.stringify({
-            userId,
-            platform: input.platform,
-            stage1Raw,   // Gemma 4 原始扫描结果（完整，不截断）
-            strategy,    // Gemini 最终战略处方（完整，不截断）
-            timestamp: new Date().toISOString(),
-          }, null, 2));
-          console.log(`[competitorResearch] Fly 原始数据已写入: ${filename}`);
-        } catch (e: any) {
-          console.error("[competitorResearch] Fly 存储失败（non-fatal）:", e?.message);
-        }
-
-        // 4b. Neon 快照存储：精华快照（轻资产）→ user_creations
+        // Neon 精华快照存储
         try {
           const { userCreations } = await import("../drizzle/schema-creations");
           const database = await db.getDb();
           if (database) {
-            const PLATFORM_LABEL: Record<string, string> = {
-              douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", bilibili: "B站"
-            };
             await database.insert(userCreations).values({
               userId,
               type: "research_snapshot",
-              title: `${PLATFORM_LABEL[input.platform] || input.platform} 竞品调研 ${new Date().toLocaleDateString("zh-CN")}`,
+              title: `${label} 竞品调研 ${new Date().toLocaleDateString("zh-CN")}`,
               metadata: JSON.stringify({
                 platform: input.platform,
                 positioning: strategy?.positioning,
@@ -5703,7 +5632,6 @@ ${stage1Raw}
               creditsUsed: deductResult.source === "admin" ? 0 : COST,
               status: "completed",
             });
-            console.log(`[competitorResearch] Neon 快照已写入 user_creations`);
           }
         } catch (e: any) {
           console.error("[competitorResearch] Neon 快照存储失败（non-fatal）:", e?.message);
