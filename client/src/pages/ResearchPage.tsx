@@ -107,34 +107,38 @@ export default function ResearchPage() {
     <div style={{
       minHeight: "100vh",
       fontFamily: "'Inter', sans-serif",
-      // 卡布奇诺底色：深浓缩咖啡棕 + 暖焦糖渐变
-      background: "linear-gradient(160deg, #1C0F07 0%, #221208 30%, #2A1608 55%, #1E1008 80%, #180D05 100%)",
+      // 琥珀暗金底：极深棕黑 + 暗琥珀渐变
+      background: "linear-gradient(145deg, #0E0700 0%, #160B00 25%, #1E1000 50%, #160900 75%, #0C0600 100%)",
       position: "relative",
       overflow: "hidden",
     }}>
-      {/* ── 卡布奇诺浮动光晕（始终漂浮） ── */}
+      {/* ── 流光琥珀浮动光晕 ── */}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        {/* 奶泡白 — 左上漂浮 */}
-        <div style={{ position: "absolute", top: "8%", left: "3%", width: 520, height: 520, borderRadius: "50%", background: "radial-gradient(circle, rgba(245,218,170,0.10) 0%, rgba(232,163,85,0.04) 50%, transparent 70%)", filter: "blur(70px)", animation: "cappuccino-float-a 14s ease-in-out infinite" }} />
-        {/* 焦糖橙 — 右下漂浮 */}
-        <div style={{ position: "absolute", bottom: "10%", right: "5%", width: 440, height: 440, borderRadius: "50%", background: "radial-gradient(circle, rgba(196,100,28,0.12) 0%, rgba(160,72,16,0.05) 50%, transparent 70%)", filter: "blur(60px)", animation: "cappuccino-float-b 18s ease-in-out infinite" }} />
-        {/* 乳白中光 — 中央漂浮 */}
-        <div style={{ position: "absolute", top: "42%", left: "45%", width: 380, height: 380, borderRadius: "50%", background: "radial-gradient(circle, rgba(245,230,200,0.07) 0%, transparent 65%)", filter: "blur(80px)", animation: "cappuccino-float-c 22s ease-in-out infinite" }} />
-        {/* 浓缩橙光 — 右上点缀 */}
-        <div style={{ position: "absolute", top: "20%", right: "12%", width: 260, height: 260, borderRadius: "50%", background: "radial-gradient(circle, rgba(220,130,50,0.09) 0%, transparent 70%)", filter: "blur(50px)", animation: "cappuccino-float-d 16s ease-in-out infinite" }} />
+        {/* 主光弧 — 左上，亮琥珀金 */}
+        <div style={{ position: "absolute", top: "-10%", left: "-8%", width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,120,0,0.22) 0%, rgba(160,80,0,0.10) 40%, transparent 70%)", filter: "blur(55px)", animation: "cappuccino-float-a 14s ease-in-out infinite" }} />
+        {/* 次光弧 — 右下，深琥珀 */}
+        <div style={{ position: "absolute", bottom: "-5%", right: "-5%", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(180,90,0,0.18) 0%, rgba(130,60,0,0.08) 45%, transparent 70%)", filter: "blur(65px)", animation: "cappuccino-float-b 20s ease-in-out infinite" }} />
+        {/* 高光核心 — 中偏右，最亮 */}
+        <div style={{ position: "absolute", top: "30%", left: "50%", width: 450, height: 450, borderRadius: "50%", background: "radial-gradient(circle, rgba(220,140,10,0.20) 0%, rgba(180,100,0,0.08) 45%, transparent 68%)", filter: "blur(50px)", animation: "cappuccino-float-c 17s ease-in-out infinite" }} />
+        {/* 边缘流光 — 右上 */}
+        <div style={{ position: "absolute", top: "10%", right: "5%", width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(240,160,20,0.15) 0%, transparent 65%)", filter: "blur(45px)", animation: "cappuccino-float-d 13s ease-in-out infinite" }} />
+        {/* 底部暗焰 */}
+        <div style={{ position: "absolute", bottom: "5%", left: "20%", width: 400, height: 200, borderRadius: "50%", background: "radial-gradient(ellipse, rgba(160,70,0,0.12) 0%, transparent 70%)", filter: "blur(60px)", animation: "cappuccino-float-a 25s ease-in-out infinite reverse" }} />
+        {/* 流光线条效果：对角线亮带 */}
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, transparent 20%, rgba(200,120,5,0.04) 40%, rgba(230,150,10,0.07) 50%, rgba(200,120,5,0.04) 60%, transparent 80%)", animation: "cappuccino-float-c 30s linear infinite" }} />
       </div>
 
-      {/* ── 生成中：暖焦糖渐变流动动画 ── */}
+      {/* ── 生成中：流光强化动画 ── */}
       {isGenerating && (
         <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1 }}>
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(120deg, rgba(196,100,28,0.0) 0%, rgba(220,140,60,0.08) 30%, rgba(245,200,130,0.10) 50%, rgba(200,110,40,0.08) 70%, rgba(196,100,28,0.0) 100%)", animation: "morandi-flow 3s ease-in-out infinite", backgroundSize: "200% 200%" }} />
-          <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 140px rgba(196,100,28,0.14)", animation: "morandi-breathe 2.4s ease-in-out infinite" }} />
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(220,140,60,0.7), rgba(245,200,130,0.9), rgba(196,100,28,0.7), transparent)", animation: "morandi-slide 2s ease-in-out infinite" }} />
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(120deg, transparent 0%, rgba(220,140,10,0.09) 30%, rgba(255,180,30,0.12) 50%, rgba(210,130,0,0.09) 70%, transparent 100%)", animation: "morandi-flow 2.8s ease-in-out infinite", backgroundSize: "200% 200%" }} />
+          <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 160px rgba(180,100,0,0.18)", animation: "morandi-breathe 2.2s ease-in-out infinite" }} />
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(200,120,5,0.5), rgba(255,180,30,1.0), rgba(200,120,5,0.5), transparent)", animation: "morandi-slide 1.8s ease-in-out infinite" }} />
         </div>
       )}
 
       {/* 顶部导航 */}
-      <div style={{ borderBottom: "1px solid rgba(196,100,28,0.18)", background: "rgba(24,13,5,0.94)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ borderBottom: "1px solid rgba(200,120,5,0.20)", background: "rgba(10,6,0,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
         <button onClick={() => navigate("/")} style={{ color: "rgba(255,255,255,0.45)", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
           <ChevronLeft size={16} />首页
         </button>
@@ -181,7 +185,7 @@ export default function ResearchPage() {
         )}
 
         {/* 主输入区 */}
-        <div style={{ background: isGenerating ? "rgba(196,100,28,0.07)" : "rgba(245,218,170,0.03)", border: `1px solid ${isGenerating ? "rgba(220,140,60,0.30)" : "rgba(196,100,28,0.15)"}`, borderRadius: 16, padding: "24px", marginBottom: 24, transition: "background 0.8s ease, border-color 0.8s ease" }}>
+        <div style={{ background: isGenerating ? "rgba(200,120,5,0.08)" : "rgba(200,120,5,0.04)", border: `1px solid ${isGenerating ? "rgba(230,150,10,0.35)" : "rgba(200,120,5,0.18)"}`, borderRadius: 16, padding: "24px", marginBottom: 24, transition: "background 0.8s ease, border-color 0.8s ease" }}>
           {/* 平台选择 */}
           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>选择分析平台</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
