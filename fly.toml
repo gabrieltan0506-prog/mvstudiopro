@@ -74,7 +74,7 @@ primary_region = 'sin'
   GROWTH_SCHEDULER_STALE_FORCE_RUN_MS = '1200000'
 
 [deploy]
-  strategy = "bluegreen"
+  strategy = "rolling"
   wait_timeout = "5m"
 
 [http_service]
