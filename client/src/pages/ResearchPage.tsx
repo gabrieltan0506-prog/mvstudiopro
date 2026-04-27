@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+
+const SUPERVISOR_KEY = "mvs-supervisor-access";
 
 const PLATFORMS = [
   { value: "xiaohongshu", label: "小红书" },
@@ -21,13 +23,22 @@ export default function ResearchPage() {
   const [content, setContent] = useState("");
   const [showGuide, setShowGuide] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [rawResponse, setRawResponse] = useState<any>(null);
+  const [isSupervisor, setIsSupervisor] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+
+  useEffect(() => {
+    setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
+  }, []);
 
   const mutation = trpc.competitorResearch.run.useMutation({
     onSuccess: (data) => {
       setResult(data.strategy);
+      setRawResponse(data);
       toast.success(`调研完成，消耗 ${data.creditsUsed} 点`);
     },
     onError: (err) => {
+      setRawResponse({ error: err.message, code: err.data?.code });
       toast.error(err.message || "调研失败，请重试");
     },
   });
@@ -225,11 +236,50 @@ export default function ResearchPage() {
             )}
           </div>
         )}
+
+        {/* ── Supervisor Debug 面板（仅 supervisor 可见） ── */}
+        {isSupervisor && (
+          <div style={{ marginTop: 32 }}>
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 10, cursor: "pointer", color: "rgba(239,68,68,0.8)", fontSize: 12, fontWeight: 700 }}
+            >
+              <Bug size={13} />
+              DEBUG {showDebug ? "▲ 收起" : "▼ 展开"}
+              <span style={{ marginLeft: 4, fontSize: 10, color: "rgba(239,68,68,0.5)", fontWeight: 400 }}>supervisor only</span>
+            </button>
+
+            {showDebug && (
+              <div style={{ marginTop: 12, background: "rgba(0,0,0,0.5)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 12, padding: "16px", animation: "fadeIn 0.2s ease" }}>
+                <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+                  <Stat label="状态" value={mutation.isPending ? "⏳ 请求中" : mutation.isSuccess ? "✅ 成功" : mutation.isError ? "❌ 失败" : "— 待机"} />
+                  <Stat label="平台" value={platform} />
+                  <Stat label="输入字数" value={`${content.length} / ${MAX_CHARS}`} />
+                  <Stat label="输出字段" value={result ? Object.keys(result).join(", ") : "—"} />
+                </div>
+
+                <p style={{ fontSize: 11, color: "rgba(239,68,68,0.6)", marginBottom: 6, fontWeight: 700 }}>RAW RESPONSE</p>
+                <pre style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 400, overflowY: "auto", margin: 0, lineHeight: 1.6 }}>
+                  {rawResponse ? JSON.stringify(rawResponse, null, 2) : "暂无数据，执行一次调研后显示"}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
       `}</style>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 8, padding: "6px 12px" }}>
+      <p style={{ fontSize: 10, color: "rgba(239,68,68,0.5)", margin: "0 0 2px", fontWeight: 700, textTransform: "uppercase" }}>{label}</p>
+      <p style={{ fontSize: 12, color: "rgba(255,255,255,0.75)", margin: 0, fontFamily: "monospace" }}>{value}</p>
     </div>
   );
 }
