@@ -1,8 +1,18 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+
+async function fetchJsonish(url: string, opts?: RequestInit) {
+  try {
+    const res = await fetch(url, opts);
+    const json = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, json };
+  } catch (e: any) {
+    return { ok: false, status: 0, json: { error: e?.message } };
+  }
+}
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -178,16 +188,12 @@ export default function ResearchPage() {
                   </Section>
                 )}
 
-                {/* 执行脚本 */}
+                {/* 执行脚本（含生成参考图 + 高清放大） */}
                 {Array.isArray(result.scripts) && result.scripts.length > 0 && (
                   <Section title="内容执行脚本" color="#34d399">
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                       {result.scripts.map((s: any, i: number) => (
-                        <div key={i} style={{ background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: 10, padding: "12px 14px" }}>
-                          <p style={{ fontWeight: 700, color: "#34d399", fontSize: 13, margin: "0 0 4px" }}>#{i + 1} {s.title}</p>
-                          {s.hook && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "0 0 4px" }}>🎣 钩子：{s.hook}</p>}
-                          {s.copywriting && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: 0 }}>✍️ 文案：{s.copywriting}</p>}
-                        </div>
+                        <ScriptImageCard key={i} index={i} script={s} platform={platform} platformLabel={result.platformLabel || platform} />
                       ))}
                     </div>
                   </Section>
@@ -271,6 +277,134 @@ export default function ResearchPage() {
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
       `}</style>
+    </div>
+  );
+}
+
+// ── 脚本卡片：含生成参考图 + 高清放大 ──────────────────────────────
+function ScriptImageCard({ index, script, platform, platformLabel }: {
+  index: number;
+  script: { title: string; hook?: string; copywriting?: string };
+  platform: string;
+  platformLabel: string;
+}) {
+  const [genBusy, setGenBusy] = useState(false);
+  const [upscaleBusy, setUpscaleBusy] = useState(false);
+  const [origUrl, setOrigUrl] = useState("");
+  const [hdUrl, setHdUrl] = useState("");
+
+  const imagePrompt = [
+    `${platformLabel}平台爆款内容封面图，竖版9:16`,
+    script.title ? `主题：${script.title}` : "",
+    script.hook ? `视觉钩子：${script.hook.slice(0, 60)}` : "",
+    "高对比度，强情绪感，专业博主风格，无文字",
+  ].filter(Boolean).join("，");
+
+  async function generate() {
+    setGenBusy(true);
+    setOrigUrl("");
+    setHdUrl("");
+    try {
+      const r = await fetchJsonish("/api/trpc/openaiImage.generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ json: { prompt: imagePrompt, model: "gpt-image-2", size: "1024x1536", quality: "high", n: 1 } }),
+      });
+      const result = r?.json?.result?.data?.json ?? r?.json;
+      const url = String(result?.imageUrl || "").trim();
+      if (!url) throw new Error(result?.error || "生成失败");
+      setOrigUrl(url);
+    } catch (e: any) {
+      toast.error(`参考图生成失败：${e?.message}`);
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  async function upscale() {
+    if (!origUrl) return;
+    setUpscaleBusy(true);
+    setHdUrl("");
+    try {
+      const r = await fetchJsonish("/api/google?op=upscaleImage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: origUrl, upscaleFactor: "x2", prompt: imagePrompt, outputMimeType: "image/png" }),
+      });
+      const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
+      if (!url) throw new Error("高清放大失败");
+      setHdUrl(url);
+    } catch (e: any) {
+      toast.error(`高清放大失败：${e?.message}`);
+    } finally {
+      setUpscaleBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: 12, padding: "14px 16px" }}>
+      {/* 文案内容 */}
+      <p style={{ fontWeight: 700, color: "#34d399", fontSize: 13, margin: "0 0 6px" }}>#{index + 1} {script.title}</p>
+      {script.hook && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "0 0 4px" }}>🎣 钩子：{script.hook}</p>}
+      {script.copywriting && <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 12, margin: "0 0 12px" }}>✍️ 文案：{script.copywriting}</p>}
+
+      {/* 操作按钮行 */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: origUrl ? 14 : 0 }}>
+        <button
+          onClick={generate}
+          disabled={genBusy}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: genBusy ? "rgba(52,211,153,0.05)" : "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.3)", color: genBusy ? "rgba(52,211,153,0.4)" : "#34d399", fontSize: 12, fontWeight: 700, cursor: genBusy ? "not-allowed" : "pointer" }}
+        >
+          {genBusy ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+          {genBusy ? "生成中…" : "生成参考图"}
+        </button>
+
+        {origUrl && (
+          <button
+            onClick={upscale}
+            disabled={upscaleBusy}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: upscaleBusy ? "rgba(56,189,248,0.05)" : "rgba(56,189,248,0.10)", border: "1px solid rgba(56,189,248,0.25)", color: upscaleBusy ? "rgba(56,189,248,0.4)" : "#38bdf8", fontSize: 12, fontWeight: 700, cursor: upscaleBusy ? "not-allowed" : "pointer" }}
+          >
+            {upscaleBusy ? <Loader2 size={12} className="animate-spin" /> : <ZoomIn size={12} />}
+            {upscaleBusy ? "放大中…" : "高清放大 2x"}
+          </button>
+        )}
+      </div>
+
+      {/* 图片对比区：原图左 / 高清右 */}
+      {origUrl && (
+        <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
+          {/* 原图 */}
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 6, fontWeight: 700, textTransform: "uppercase" }}>原图</p>
+            <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)" }}>
+              <img src={origUrl} alt="参考图" style={{ width: "100%", display: "block", borderRadius: 8 }} />
+              <a href={origUrl} target="_blank" rel="noreferrer" style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", borderRadius: 6, padding: "4px 6px", display: "flex", alignItems: "center" }}>
+                <ExternalLink size={11} color="rgba(255,255,255,0.7)" />
+              </a>
+            </div>
+          </div>
+
+          {/* 高清放大 */}
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: 10, color: "rgba(56,189,248,0.6)", marginBottom: 6, fontWeight: 700, textTransform: "uppercase" }}>高清放大 2x</p>
+            <div style={{ borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)", minHeight: 80, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {hdUrl ? (
+                <div style={{ position: "relative", width: "100%" }}>
+                  <img src={hdUrl} alt="高清放大" style={{ width: "100%", display: "block", borderRadius: 8 }} />
+                  <a href={hdUrl} target="_blank" rel="noreferrer" style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", borderRadius: 6, padding: "4px 6px", display: "flex", alignItems: "center" }}>
+                    <ExternalLink size={11} color="rgba(255,255,255,0.7)" />
+                  </a>
+                </div>
+              ) : upscaleBusy ? (
+                <Loader2 size={20} color="rgba(56,189,248,0.5)" className="animate-spin" />
+              ) : (
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", textAlign: "center", padding: 16 }}>点击「高清放大」<br/>在此显示</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
