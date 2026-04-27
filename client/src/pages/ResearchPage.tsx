@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { getMusicClipsFromJobPayload, clipToGeneratedSong, songDownloadUrlCandidates, downloadGeneratedMusicToFile } from "@/lib/growthMusic";
 
 const VIDEO_FIRST_USE_KEY = "mvs-video-first-used";
 
@@ -408,6 +409,10 @@ function SceneVideoCard({ scene, index, platform }: {
   const [genBusy, setGenBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
+  const [bgmBusy, setBgmBusy] = useState(false);
+  const [bgmProgress, setBgmProgress] = useState("");
+  const [bgmSong, setBgmSong] = useState<{ title: string; audioUrl?: string; streamUrl?: string } | null>(null);
+  const bgmRunRef = useRef(0);
   const [origUrl, setOrigUrl] = useState("");
   const [hdUrl, setHdUrl] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -451,6 +456,57 @@ function SceneVideoCard({ scene, index, platform }: {
       toast.error(`高清放大失败：${e?.message}`);
     } finally {
       setUpscaleBusy(false);
+    }
+  }
+
+  async function generateBgm() {
+    if (!audioPrompt.trim()) { toast.error("请先填写 BGM 指令"); return; }
+    bgmRunRef.current += 1;
+    const runId = bgmRunRef.current;
+    setBgmBusy(true);
+    setBgmSong(null);
+    setBgmProgress("提交音乐任务…");
+    try {
+      const create = await fetchJsonish("/api/jobs?op=aimusicSunoCreate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v5-5", gpt_description_prompt: audioPrompt }),
+      });
+      const taskId = String(
+        create?.json?.raw?.task_id || create?.json?.raw?.data?.task_id ||
+        create?.json?.json?.raw?.task_id || create?.json?.json?.raw?.data?.task_id || ""
+      );
+      if (!create.ok || !taskId) throw new Error(create?.json?.error || "音乐任务提交失败");
+
+      const MSGS = ["节拍引擎启动中…", "旋律正在生成…", "和弦编排中…", "混音渲染中…", "BGM 即将就绪…"];
+      let attempts = 0;
+      const startedAt = Date.now();
+
+      while (bgmRunRef.current === runId) {
+        if (Date.now() - startedAt > 8 * 60 * 1000) throw new Error("BGM 生成超时，请重试");
+        await new Promise((r) => setTimeout(r, 4000));
+        if (bgmRunRef.current !== runId) break;
+
+        const poll = await fetchJsonish(`/api/jobs?op=aimusicSunoTask&taskId=${encodeURIComponent(taskId)}`);
+        attempts++;
+        setBgmProgress(MSGS[Math.floor(attempts / 2) % MSGS.length]);
+
+        const clips = getMusicClipsFromJobPayload(poll.json);
+        const playable = clips.find((c: any) => c?.audio_url || c?.audioUrl || c?.download_url || c?.stream_url);
+        if (playable) {
+          const song = clipToGeneratedSong(playable, 0);
+          setBgmSong(song);
+          setBgmBusy(false);
+          toast.success("BGM 生成成功！");
+          return;
+        }
+      }
+    } catch (e: any) {
+      if (bgmRunRef.current === runId) {
+        toast.error(`BGM 生成失败：${e?.message}`);
+        setBgmBusy(false);
+        setBgmProgress("");
+      }
     }
   }
 
@@ -523,6 +579,44 @@ function SceneVideoCard({ scene, index, platform }: {
             onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.5)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.2)"; }}
           />
+        </div>
+
+        {/* BGM 生成区 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={generateBgm}
+              disabled={bgmBusy || !audioPrompt.trim()}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: bgmBusy ? "rgba(251,191,36,0.05)" : "linear-gradient(135deg, rgba(251,191,36,0.2), rgba(234,179,8,0.15))", border: "1px solid rgba(251,191,36,0.35)", color: bgmBusy || !audioPrompt.trim() ? "rgba(251,191,36,0.35)" : "#fbbf24", fontSize: 12, fontWeight: 700, cursor: bgmBusy || !audioPrompt.trim() ? "not-allowed" : "pointer", transition: "all 0.2s" }}
+            >
+              {bgmBusy ? <Loader2 size={12} className="animate-spin" /> : <Music size={12} />}
+              {bgmBusy ? bgmProgress : "生成 BGM"}
+            </button>
+            {bgmSong && (
+              <button
+                onClick={async () => {
+                  const urls = songDownloadUrlCandidates(bgmSong);
+                  const r = await downloadGeneratedMusicToFile(urls, bgmSong.title);
+                  if (!r.ok) toast.error(r.message);
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", color: "rgba(251,191,36,0.7)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                <Download size={11} />下载 MP3
+              </button>
+            )}
+          </div>
+
+          {/* BGM 播放器 */}
+          {bgmSong?.audioUrl && (
+            <div style={{ background: "rgba(251,191,36,0.05)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 10, padding: "10px 14px", animation: "fadeIn 0.3s ease" }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.6)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>🎵 {bgmSong.title}</p>
+              <audio
+                src={bgmSong.audioUrl}
+                controls
+                style={{ width: "100%", height: 36, borderRadius: 6, accentColor: "#fbbf24" }}
+              />
+            </div>
+          )}
         </div>
 
         {/* 操作按钮行 */}
