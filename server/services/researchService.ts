@@ -168,7 +168,7 @@ ${platformContext}
   // ── Stage 2: Gemini 2.5 Pro ─ 差异化战略处方（含平台数据） ────────
   console.log(`[researchService] Stage 2 Gemini 2.5 Pro 启动`);
   const stage2Raw = await generate(
-    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
     `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师。
 
 【竞品扫描报告（Stage 1）】
