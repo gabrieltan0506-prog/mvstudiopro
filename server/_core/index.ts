@@ -415,6 +415,10 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // Defer background worker startup until the HTTP listener is ready.
     startJobWorker();
+    // 启动时扫描并恢复孤儿 deepResearch 任务（机器重启/部署可能中断异步任务）
+    import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
+      recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));
+    }).catch(() => {});
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
     } else {

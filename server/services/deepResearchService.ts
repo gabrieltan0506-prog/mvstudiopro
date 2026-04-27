@@ -1,6 +1,6 @@
 /**
- * 全景行业战报服务 — AI 上帝视角
- * 使用 gemini-2.5-pro（高 maxOutputTokens）生成全景行业战报
+ * 深度行业研报服务 — AI 上帝视角
+ * 使用 gemini-2.5-pro（高 maxOutputTokens）生成万字商业白皮书
  * 异步脱机运行，结果写入 Fly 持久卷 + Neon
  */
 import fs from "fs/promises";
@@ -68,6 +68,44 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
   }
 }
 
+/**
+ * 服务启动时调用：扫描孤儿任务（running 超过 15 分钟）并标记为 failed。
+ * 防止机器重启/部署导致任务永远卡在 running 状态。
+ */
+export async function recoverOrphanedJobs(): Promise<void> {
+  try {
+    await fs.mkdir(REPORT_DIR, { recursive: true });
+    const files = await fs.readdir(REPORT_DIR);
+    const now = Date.now();
+    const ORPHAN_THRESHOLD_MS = 15 * 60 * 1000; // 15 分钟
+
+    for (const f of files) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const raw = await fs.readFile(path.join(REPORT_DIR, f), "utf-8");
+        const job: DeepResearchJob = JSON.parse(raw);
+        if (job.status === "running" || job.status === "pending") {
+          const age = now - new Date(job.createdAt).getTime();
+          if (age > ORPHAN_THRESHOLD_MS) {
+            await fs.writeFile(
+              path.join(REPORT_DIR, f),
+              JSON.stringify({
+                ...job,
+                status: "failed",
+                error: "服务重启导致任务中断，积分已退回，请重新发起",
+                progress: "❌ 任务因服务重启中断，积分已退回",
+              } satisfies DeepResearchJob, null, 2),
+            );
+            console.log(`[deepResearch] 🔄 孤儿任务已标记失败: ${job.jobId}`);
+          }
+        }
+      } catch {}
+    }
+  } catch (e) {
+    console.warn("[deepResearch] recoverOrphanedJobs 扫描失败:", e);
+  }
+}
+
 /** 创建任务（同步返回 jobId，立即响应前端） */
 export async function createDeepResearchJob(userId: string, topic: string): Promise<string> {
   const jobId = `dr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -81,7 +119,7 @@ export async function createDeepResearchJob(userId: string, topic: string): Prom
   return jobId;
 }
 
-/** 异步执行全景战报（fire-and-forget，不阻塞响应） */
+/** 异步执行深度研报（fire-and-forget，不阻塞响应） */
 export async function runDeepResearchAsync(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return;
@@ -90,7 +128,7 @@ export async function runDeepResearchAsync(jobId: string) {
     "📡 突破信息茧房，全网检索行业论文与商业数据…",
     "📊 抓取四平台 Top 变现博主链路与爆款底层逻辑…",
     "🧠 构建底层商业思维链（CoT），推演差异化战略…",
-    "✍️ 正在撰写全景行业战报，请稍候…",
+    "✍️ 正在撰写万字商业白皮书，请稍候…",
   ];
 
   try {
@@ -155,9 +193,10 @@ ${job.topic}
       throw new Error("战报内容过短，可能生成失败");
     }
 
-    // 完成，写入结果
+    // 完成，写入结果（重新读取最新 job 避免覆盖中间进度）
+    const latestJob = (await readJob(jobId)) ?? job;
     await writeJob({
-      ...job,
+      ...latestJob,
       status: "completed",
       progress: "✅ 全景战报生成完毕，可在下方查阅",
       reportMarkdown,
@@ -168,8 +207,10 @@ ${job.topic}
 
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
+    // 重新读取避免用过时的 job 对象覆盖
+    const latestJob = (await readJob(jobId)) ?? job;
     await writeJob({
-      ...job,
+      ...latestJob,
       status: "failed",
       error: err?.message || "未知错误",
       progress: "❌ 战报生成失败，积分已退回",
