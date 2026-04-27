@@ -73,6 +73,10 @@ primary_region = 'sin'
   GROWTH_TOUTIAO_PROFILE_PAGES = '2'
   GROWTH_SCHEDULER_STALE_FORCE_RUN_MS = '1200000'
 
+[deploy]
+  strategy = "bluegreen"
+  wait_timeout = "5m"
+
 [http_service]
   internal_port = 3000
   force_https = true
