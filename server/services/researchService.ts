@@ -114,11 +114,16 @@ ${titleList}
 /**
  * 执行双引擎竞品调研（不含扣费，由 tRPC router 管理）
  */
+const MAX_CONTENT_CHARS = 5000;
+
 export async function runResearch(
   userId: string,
   platform: string,
   competitorData: string,
 ): Promise<ResearchStrategy> {
+  if (competitorData.length > MAX_CONTENT_CHARS) {
+    throw new Error(`字数超过 ${MAX_CONTENT_CHARS} 字限制（当前 ${competitorData.length} 字），请精简后再试`);
+  }
   const label = PLATFORM_LABEL[platform] || platform;
 
   // 并行：读取平台实时数据库上下文
