@@ -5666,28 +5666,20 @@ ${stage1Raw}
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，已退回积分" });
         }
 
-        // 4. Fly 本地持久化存储
+        // 4. 写入 /data/growth/research/（复用现有 growth-backup GitHub Actions 定时备份流程）
         try {
           const { mkdir, writeFile } = await import("fs/promises");
           const { join } = await import("path");
-          const dir = "/data/research_logs";
+          const dir = "/data/growth/research";
           await mkdir(dir, { recursive: true });
           const filename = join(dir, `res_${input.platform}_${Date.now()}_u${userId}.json`);
-          await writeFile(filename, JSON.stringify({ userId, platform: input.platform, stage1Raw, strategy, timestamp: new Date() }, null, 2));
-
-          // 5. GitHub 自动 push（fire-and-forget，需要 GITHUB_TOKEN）
-          const ghToken = String(process.env.GITHUB_TOKEN || "").trim();
-          if (ghToken) {
-            const { exec } = await import("child_process");
-            exec(
-              `cd /data/research_logs && git config user.email "bot@mvstudiopro.com" && git config user.name "MVBot" && git add . && git commit -m "Research Backup u${userId} ${input.platform}" && git push https://x-token:${ghToken}@github.com/gabrieltan0506-prog/mvstudiopro.git HEAD:main 2>&1 || true`,
-              { timeout: 30000 },
-              (err, stdout, stderr) => {
-                if (err) console.error("[competitorResearch] git push failed:", stderr || err.message);
-                else console.log("[competitorResearch] git push ok:", stdout.slice(0, 100));
-              }
-            );
-          }
+          await writeFile(filename, JSON.stringify({
+            userId,
+            platform: input.platform,
+            stage1Raw,
+            strategy,
+            timestamp: new Date().toISOString(),
+          }, null, 2));
         } catch (e: any) {
           console.error("[competitorResearch] storage error (non-fatal):", e?.message);
         }
