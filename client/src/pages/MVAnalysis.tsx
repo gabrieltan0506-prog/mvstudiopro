@@ -1679,11 +1679,6 @@ export default function MVAnalysisPage() {
     enabled: isAuthenticated && !loading && !supervisorAccess,
     refetchOnMount: true,
   });
-  const hasPaidGrowthAccess = Boolean(
-    supervisorAccess ||
-      (usageStatsQuery.data as any)?.isAdmin ||
-      usageStatsQuery.data?.hasSubscription,
-  );
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
@@ -2891,7 +2886,6 @@ export default function MVAnalysisPage() {
       .slice(0, 5);
   }, [referenceExamples]);
   const authorAnalysis: GrowthAuthorAnalysis | null = (growthSnapshot as any)?.authorAnalysis ?? null;
-  const showPremiumReport = hasPaidGrowthAccess;
   const hotWordMatches: GrowthHotWordMatch[] = authorAnalysis?.hotWordMatches ?? [];
   const pushActivityMatches: GrowthPushActivity[] = authorAnalysis?.pushActivityMatches ?? [];
   const douyinIndexStatus = authorAnalysis?.douyinIndexStatus ?? null;
@@ -3864,11 +3858,8 @@ export default function MVAnalysisPage() {
 
         {analysis ? (
           <section className="mt-8 space-y-6">
-            {showPremiumReport ? (
-              <div className="space-y-6">
-                {showPremiumReport && (
-                  <PlatformTrendEntryPanel />
-                )}
+            <div className="space-y-6">
+                <PlatformTrendEntryPanel />
 
                 {(analysis.explosiveIndex || analysis.realityCheck || analysis.reverseEngineering || analysis.premiumContent?.topics?.length || analysis.growthStrategy || analysis.remixExecution) ? (
                   <>
@@ -4442,98 +4433,9 @@ export default function MVAnalysisPage() {
             </div>
           );
         })()}
-              </div>
-            ) : (
-              <div className="grid gap-4 xl:grid-cols-[1.05fr_1.2fr]">
-                <div className="rounded-[28px] border border-[#ff8a3d]/15 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#ffcf92]">
-                    <Sparkles className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">基础内容诊断</h2>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-white/65">
-                    免费版只提供素材本身的基础判断，包括五维度评分、当前优势和优先问题。优化方案、商业分析、平台建议和增长规划属于付费服务，不在免费版展示范围内。
-                  </p>
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-black/15 p-4 text-sm leading-7 text-white/68">
-                    <div className="font-semibold text-white">当前可查看</div>
-                    <div className="mt-2">1. 五维度成熟度</div>
-                    <div>2. 内容优点</div>
-                    <div>3. 优先问题</div>
-                  </div>
-                  <div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-400/10 p-4 text-sm leading-7 text-amber-50">
-                    升级后可解锁：趋势洞察、平台优化方案、商业分析、推荐发布平台、7 天增长规划与创作执行简报。
-                  </div>
-                </div>
-                <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center justify-between">
-                    <div className="text-lg font-bold text-white">五维度成熟度</div>
-                    <div className="text-xs text-white/45">满分 100</div>
-                  </div>
-                  <div className="mt-4 h-[260px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={scoreDistributionData} margin={{ top: 12, right: 8, left: -24, bottom: 8 }}>
-                        <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fill: "rgba(255,255,255,0.55)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <YAxis domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                        <Tooltip
-                          cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                          contentStyle={{ background: "#0b1628", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, color: "#fff" }}
-                        />
-                        <Bar dataKey="value" radius={[10, 10, 0, 0]}>
-                          {scoreDistributionData.map((entry) => (
-                            <Cell
-                              key={entry.name}
-                              fill={entry.value >= 80 ? "#8ef0b1" : entry.value >= 65 ? "#ffd08f" : "#ff9cab"}
-                            />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-white/60">
-                    说明：以上 5 个维度是独立评分，满分均为 100 分，数值越高代表该维度越成熟，并不是综合总分。
-                  </p>
-                </div>
-              </div>
-            )}
+            </div>
 
             <div className="space-y-6">
-              {!showPremiumReport ? (
-              <div className="rounded-[28px] border border-white/10 bg-[#0f1a2c] p-6">
-                <div className="flex items-center gap-3 text-[#ffb37f]">
-                  <Sparkles className="h-5 w-5" />
-                  <h2 className="text-2xl font-bold">内容分析</h2>
-                </div>
-                <div className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/15">
-                  <table className="w-full border-collapse text-sm leading-7 text-white/75">
-                    <tbody>
-                      {contentAnalysisRows.map((row) => (
-                        <tr key={row.label} className="border-b border-white/10 last:border-b-0">
-                          <td className="w-32 bg-white/5 px-4 py-4 align-top font-semibold text-white">{row.label}</td>
-                          <td className="px-4 py-4 align-top whitespace-normal break-words">{row.insight}</td>
-                          <td className="px-4 py-4 align-top whitespace-normal break-words text-white/65">{row.action}</td>
-                          <td className="px-4 py-4 align-top whitespace-normal break-words text-[#ffd08f]">{row.highlight || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              ) : null}
-
-              {showPremiumReport ? null : (
-                <div className="rounded-[28px] border border-[#ff8a3d]/15 bg-[#0f1a2c] p-6">
-                  <div className="flex items-center gap-3 text-[#ffcf92]">
-                    <BriefcaseBusiness className="h-5 w-5" />
-                    <h2 className="text-2xl font-bold">付费版可解锁内容</h2>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-white/65">
-                    趋势判断、平台建议、商业承接和 7 天计划都属于付费版内容，不在免费版展示范围内。
-                  </p>
-                </div>
-              )}
-
-              {showPremiumReport ? (
-                <div className="space-y-6">
                   <div ref={(node) => { sectionRefs.current.execution = node; }} className="rounded-[28px] border border-[#ffd08f]/25 bg-[#0f1a2c] p-6">
                     <div className="flex items-center gap-3 text-[#ffd08f]">
                       <Rocket className="h-5 w-5" />
@@ -4642,7 +4544,7 @@ export default function MVAnalysisPage() {
                     <VisualAnalysisSection analysis={analysis} visualKeyFrames={visualKeyFrames} />
                   ) : null}
 
-                  {!isRemixMode && showPremiumReport && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
+                  {!isRemixMode && analysis && (analysis.languageExpression || analysis.emotionalExpression || analysis.cameraEmotionTension || analysis.bgmAnalysis || analysis.musicRecommendation || analysis.sunoPrompt) ? (
                     <div className="rounded-[28px] border border-[#f5b7ff]/20 bg-[#151425] p-6">
                       <div className="flex items-center gap-3 text-[#f5b7ff]">
                         <Orbit className="h-5 w-5" />
@@ -5010,8 +4912,6 @@ export default function MVAnalysisPage() {
                       </div>
                     </div>
                   ) : null}
-                </div>
-              ) : null}
             </div>
           </section>
         ) : null}
