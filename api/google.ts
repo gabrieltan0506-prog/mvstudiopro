@@ -241,6 +241,36 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     const op = s(q.op || b.op).trim();
     if(!op) return res.status(400).json({ok:false,error:"missing_op"});
 
+    // ---------------- transcribeAudio (Gemini direct, no Vertex needed) ----------------
+    if (op === "transcribeAudio") {
+      const audioBase64 = s(b.audioBase64 || "");
+      const mimeType = s(b.mimeType || "audio/webm");
+      if (!audioBase64) return res.status(400).json({ ok: false, error: "missing_audio" });
+
+      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
+      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
+
+      const model = "gemini-2.0-flash-lite";
+      const body = {
+        contents: [{
+          parts: [
+            { text: "请将以下音频内容转录为文字。只输出转录文字，不要任何解释。" },
+            { inlineData: { mimeType, data: audioBase64 } }
+          ]
+        }],
+        generationConfig: { temperature: 0, maxOutputTokens: 1024 }
+      };
+
+      const r = await fetchJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      );
+
+      if (!r.ok) return res.status(200).json({ ok: true, text: "", fallback: true });
+      const text = (r.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+      return res.status(200).json({ ok: true, text });
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
 

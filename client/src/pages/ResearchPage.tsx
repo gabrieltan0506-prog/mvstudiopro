@@ -63,44 +63,74 @@ export default function ResearchPage() {
       toast.error(`PDF 生成失败：${err.message}`);
     },
   });
-  const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
   }, []);
 
-  const toggleVoice = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      toast.error("当前浏览器不支持语音输入，请使用 Chrome");
+  const toggleVoice = useCallback(async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
       return;
     }
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("当前浏览器不支持录音，请使用 Chrome 或 Safari");
       return;
     }
-    const rec = new SpeechRecognition();
-    rec.lang = "zh-CN";
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.onstart = () => setIsListening(true);
-    rec.onend = () => setIsListening(false);
-    rec.onerror = (e: any) => {
-      setIsListening(false);
-      if (e.error !== "aborted") toast.error(`语音识别出错：${e.error}`);
-    };
-    rec.onresult = (e: any) => {
-      let transcript = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) transcript += e.results[i][0].transcript;
-      }
-      if (transcript) setContent((prev) => prev + transcript);
-    };
-    recognitionRef.current = rec;
-    rec.start();
-  }, [isListening]);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (!blob.size) { toast.error("录音内容为空，请重试"); return; }
+        setIsTranscribing(true);
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          const r = await fetchJsonish("/api/google?op=transcribeAudio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audioBase64: base64, mimeType: mimeType.split(";")[0] }),
+          });
+          const text = String(r?.json?.text || "").trim();
+          if (text) {
+            setContent((prev) => prev + (prev ? " " : "") + text);
+            toast.success("转录成功");
+          } else {
+            toast.error("转录结果为空，请重试");
+          }
+        } catch (e: any) {
+          toast.error(`转录失败：${e?.message}`);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (e: any) {
+      toast.error(`录音失败：${e?.message}`);
+    }
+  }, [isRecording]);
 
   const mutation = trpc.competitorResearch.run.useMutation({
     onSuccess: (data) => {
@@ -320,21 +350,22 @@ export default function ResearchPage() {
               {content.length} / {MAX_CHARS} 字
             </span>
 
-            {/* 语音输入按钮 */}
+            {/* 语音输入按钮（Gemini 转录） */}
             <button
               onClick={toggleVoice}
-              title={isListening ? "点击停止语音输入" : "点击开始语音输入"}
+              disabled={isTranscribing}
+              title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "点击开始录音（Gemini 转录）"}
               style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, flexShrink: 0,
-                background: isListening ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
-                border: isListening ? "1px solid rgba(239,68,68,0.5)" : "1px solid rgba(255,255,255,0.1)",
-                color: isListening ? "#ef4444" : "rgba(255,255,255,0.4)",
-                fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.2s",
-                animation: isListening ? "morandi-breathe 1.2s ease-in-out infinite" : "none",
+                background: isRecording ? "rgba(239,68,68,0.15)" : isTranscribing ? "rgba(251,191,36,0.10)" : "rgba(255,255,255,0.05)",
+                border: isRecording ? "1px solid rgba(239,68,68,0.5)" : isTranscribing ? "1px solid rgba(251,191,36,0.4)" : "1px solid rgba(255,255,255,0.1)",
+                color: isRecording ? "#ef4444" : isTranscribing ? "#fbbf24" : "rgba(255,255,255,0.4)",
+                fontSize: 12, fontWeight: 700, cursor: isTranscribing ? "not-allowed" : "pointer", transition: "all 0.2s",
+                animation: isRecording ? "morandi-breathe 1.2s ease-in-out infinite" : "none",
               }}
             >
-              {isListening ? <MicOff size={14} /> : <Mic size={14} />}
-              {isListening ? "停止录音" : "语音输入"}
+              {isRecording ? <MicOff size={14} /> : isTranscribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+              {isTranscribing ? "转录中…" : isRecording ? "停止录音" : "语音输入"}
             </button>
 
             <button

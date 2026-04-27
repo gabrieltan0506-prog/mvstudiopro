@@ -1,134 +1,131 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { ChevronLeft, Loader2, Crown, Sparkles, FileDown, RotateCcw } from "lucide-react";
+import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
 const GOD_VIEW_FIRST_KEY = "mvs-godview-first-used";
+const SUPERVISOR_KEY = "mvs-supervisor-access";
 const COST_FIRST = 4000;
 const COST_FULL = 4900;
-
-const TERMINAL_SEQUENCE = [
-  "👑 [系统] 正在唤醒 AI 上帝视角研究集群，分配超级算力节点…",
-  "📡 [特工] 突破信息茧房，全网检索行业论文与商业数据库…",
-  "📊 [数据] 抓取四平台 Top 变现博主链路，解剖爆款底层逻辑…",
-  "🧠 [算力] 构建商业思维链（CoT），高载运算差异化战略矩阵…",
-  "✍️ [引擎] 万字商业白皮书撰写中，正在注入哈佛级商业逻辑…",
-  "⏳ [系统] 研报正在高速推演，您现在可以关闭页面，完成后通知您…",
-];
 
 export default function GodViewPage() {
   const [, navigate] = useLocation();
   const [topic, setTopic] = useState("");
-  const [jobId, setJobId] = useState("");
-  const [logs, setLogs] = useState<string[]>([]);
-  const [phase, setPhase] = useState<"idle" | "terminal" | "polling" | "done" | "failed">("idle");
-  const [reportMd, setReportMd] = useState("");
+  const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [isFirst, setIsFirst] = useState(!localStorage.getItem(GOD_VIEW_FIRST_KEY));
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef(0);
+
+  // supervisor debug
+  const [isSupervisor, setIsSupervisor] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [launchTime, setLaunchTime] = useState<Date | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // voice recording
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
+  }, []);
+
+  useEffect(() => {
+    if (!launchTime) return;
+    const t = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - launchTime.getTime()) / 1000));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [launchTime]);
 
   const cost = isFirst ? COST_FIRST : COST_FULL;
 
-  useEffect(() => {
-    if (terminalRef.current) terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-  }, [logs]);
-
-  // 终端日志动画
-  useEffect(() => {
-    if (phase !== "terminal") return;
-    let i = 0;
-    const iv = setInterval(() => {
-      if (i < TERMINAL_SEQUENCE.length) {
-        setLogs((p) => [...p, TERMINAL_SEQUENCE[i]]);
-        i++;
-      } else {
-        clearInterval(iv);
-        setPhase("polling");
-      }
-    }, 2200);
-    return () => clearInterval(iv);
-  }, [phase]);
-
   const launchMutation = trpc.deepResearch.launch.useMutation({
-    onSuccess: (data) => {
-      setJobId(data.jobId);
-      setPhase("terminal");
+    onSuccess: () => {
       if (!localStorage.getItem(GOD_VIEW_FIRST_KEY)) {
         localStorage.setItem(GOD_VIEW_FIRST_KEY, "1");
         setIsFirst(false);
       }
+      setPhase("dispatched");
     },
     onError: (err) => {
-      setPhase("idle");
-      setLogs([]);
-      toast.error(err.message || "任务启动失败");
+      setPhase("failed");
+      setErrorMsg(err.message || "任务启动失败");
     },
   });
-
-  const statusQuery = trpc.deepResearch.status.useQuery(
-    { jobId },
-    {
-      enabled: phase === "polling" && !!jobId,
-      refetchInterval: phase === "polling" ? 6000 : false,
-      refetchIntervalInBackground: true,
-    },
-  );
-
-  useEffect(() => {
-    if (phase !== "polling" || !statusQuery.data) return;
-    const { status, progress, reportMarkdown, error } = statusQuery.data;
-    if (progress) setLogs((p) => {
-      const last = p[p.length - 1];
-      return last === progress ? p : [...p, `🔄 ${progress}`];
-    });
-    if (status === "completed" && reportMarkdown) {
-      setReportMd(reportMarkdown);
-      setPhase("done");
-      setLogs((p) => [...p, "✅ [完成] 全景战报已生成，滚动查看完整白皮书 ↓"]);
-    }
-    if (status === "failed") {
-      setErrorMsg(error || "研报生成失败");
-      setPhase("failed");
-    }
-  }, [statusQuery.data, phase]);
 
   const handleLaunch = () => {
     if (!topic.trim()) { toast.error("请输入研究课题"); return; }
     const costStr = cost.toLocaleString();
-    if (!window.confirm(`启动「AI 上帝视角」将扣除 ${costStr} 点${isFirst ? "（首次优惠价）" : ""}，研报约需 15-20 分钟，确定执行？`)) return;
-    setLogs(["🚀 正在验证积分，分配超级算力节点…"]);
-    setPhase("terminal");
+    if (!window.confirm(`启动「AI 上帝视角」将扣除 ${costStr} 点${isFirst ? "（首次优惠价）" : ""}，战报约需 15-20 分钟，任务派发后可关闭页面，到「我的战报」查看结果，确定执行？`)) return;
+    setPhase("launching");
+    setLaunchTime(new Date());
+    setElapsedSec(0);
     launchMutation.mutate({ topic, isFirstTime: isFirst });
   };
 
-  const handleDownloadPdf = useCallback(() => {
-    if (!reportMd) return;
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-      <style>body{font-family:'Helvetica Neue',Arial,sans-serif;background:#0a0600;color:#e8d5a0;padding:40px;max-width:900px;margin:0 auto;line-height:1.8}
-      h1,h2,h3{color:#f5c842}h1{font-size:28px;border-bottom:2px solid #8a6200;padding-bottom:12px}
-      h2{font-size:20px;margin-top:36px;border-left:4px solid #c8a000;padding-left:12px}
-      h3{font-size:16px;color:#d4a840}p{margin:8px 0}li{margin:4px 0}
-      strong{color:#ffd060}code{background:#1a1000;padding:2px 6px;border-radius:4px;color:#ffcc44}
-      blockquote{border-left:3px solid #8a6200;padding-left:16px;color:#b89060;margin:12px 0}
-      hr{border:none;border-top:1px solid #3a2800;margin:24px 0}</style>
-    </head><body>
-      <h1>👑 AI 上帝视角：全景行业战报</h1>
-      <p style="color:#8a6200;font-size:13px">课题：${topic} &nbsp;|&nbsp; 生成于：${new Date().toLocaleString("zh-CN")}</p>
-      <hr>
-      ${reportMd.replace(/\n/g, "<br>").replace(/#{1,6}\s/g, (m) => `<h${m.trim().length}>`).replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/__(.*?)__/g, "<em>$1</em>")}
-      <hr><p style="color:#6a4800;font-size:11px;text-align:center">由 MV Studio Pro AI 上帝视角生成 · ${new Date().toLocaleDateString("zh-CN")}</p>
-    </body></html>`;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `AI上帝视角研报_${topic.slice(0, 20)}_${new Date().toISOString().slice(0, 10)}.html`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    toast.success("研报已导出为 HTML，可用浏览器打印为 PDF");
-  }, [reportMd, topic]);
+  const toggleVoice = useCallback(async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("当前浏览器不支持录音，请使用 Chrome 或 Safari");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (!blob.size) { toast.error("录音内容为空，请重试"); return; }
+        setIsTranscribing(true);
+        try {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          const r = await fetch("/api/google?op=transcribeAudio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audioBase64: base64, mimeType: mimeType.split(";")[0] }),
+          });
+          const data = await r.json().catch(() => ({}));
+          const text = String(data?.text || "").trim();
+          if (text) {
+            setTopic(text);
+            toast.success("转录成功");
+          } else {
+            toast.error("转录结果为空，请重试");
+          }
+        } catch (e: any) {
+          toast.error(`转录失败：${e?.message}`);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (e: any) {
+      toast.error(`录音失败：${e?.message}`);
+    }
+  }, [isRecording]);
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(160deg,#050300 0%,#0a0600 40%,#0e0800 70%,#060400 100%)", fontFamily: "'Inter',sans-serif", position: "relative", overflow: "hidden" }}>
@@ -163,7 +160,7 @@ export default function GodViewPage() {
                 AI 上帝视角
               </h1>
               <p style={{ color: "rgba(245,200,80,0.55)", fontSize: 13, margin: 0, letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                全景行业战报 · 旗舰级商业智库
+                全息行业研报 · 旗舰级商业智库
               </p>
             </div>
           </div>
@@ -179,33 +176,53 @@ export default function GodViewPage() {
           </div>
         </div>
 
-        {/* ── 输入区（idle 状态） ── */}
-        {phase === "idle" && (
+        {/* ── 输入区 ── */}
+        {(phase === "idle" || phase === "launching") && (
           <div style={{ background: "rgba(180,130,0,0.05)", border: "1px solid rgba(180,130,0,0.22)", borderRadius: 20, padding: 28 }}>
             <p style={{ fontSize: 12, color: "rgba(245,200,80,0.5)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>
               输入研究课题
             </p>
-            <textarea
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              rows={5}
-              placeholder="请描述您要研究的赛道或课题，例如：2026年小红书形体美学与心血管健康赛道的商业模式、头部变现路径与差异化破局策略…"
-              style={{ width: "100%", padding: "14px 16px", borderRadius: 12, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(180,130,0,0.25)", color: "#fff", fontSize: 14, lineHeight: 1.7, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
-              onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(245,200,80,0.5)"; }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(180,130,0,0.25)"; }}
-            />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
+            <div style={{ position: "relative" }}>
+              <textarea
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                rows={5}
+                placeholder="请描述您要研究的赛道或课题，例如：2026年小红书形体美学与心血管健康赛道的商业模式、头部变现路径与差异化破局策略…"
+                style={{ width: "100%", padding: "14px 16px", paddingRight: 52, borderRadius: 12, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(180,130,0,0.25)", color: "#fff", fontSize: 14, lineHeight: 1.7, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(245,200,80,0.5)"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(180,130,0,0.25)"; }}
+                disabled={phase === "launching"}
+              />
+              <button
+                onClick={toggleVoice}
+                disabled={isTranscribing || phase === "launching"}
+                title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题（Gemini 转录）"}
+                style={{
+                  position: "absolute", top: 10, right: 10,
+                  width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isRecording ? "rgba(239,68,68,0.18)" : isTranscribing ? "rgba(251,191,36,0.12)" : "rgba(180,130,0,0.10)",
+                  border: isRecording ? "1px solid rgba(239,68,68,0.5)" : isTranscribing ? "1px solid rgba(251,191,36,0.4)" : "1px solid rgba(180,130,0,0.3)",
+                  color: isRecording ? "#ef4444" : isTranscribing ? "#fbbf24" : "rgba(245,200,80,0.55)",
+                  cursor: isTranscribing || phase === "launching" ? "not-allowed" : "pointer",
+                  transition: "all 0.2s",
+                  animation: isRecording ? "godview-mic-pulse 1.2s ease-in-out infinite" : "none",
+                }}
+              >
+                {isRecording ? <MicOff size={14} /> : isTranscribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+              </button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", margin: 0 }}>
-                ⏱ 异步重算力推演，预计耗时 15-20 分钟，可关闭页面等待
+                ⏱ 异步重算力推演，约 15-20 分钟，派发后可关闭页面到「我的战报」查看
               </p>
               <button
                 onClick={handleLaunch}
-                disabled={!topic.trim() || launchMutation.isPending}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: !topic.trim() ? "rgba(180,130,0,0.08)" : "linear-gradient(135deg,#c8a000,#8a6200)", border: "1px solid rgba(180,130,0,0.5)", color: !topic.trim() ? "rgba(245,200,80,0.3)" : "#050300", fontWeight: 900, fontSize: 14, cursor: !topic.trim() ? "not-allowed" : "pointer", boxShadow: topic.trim() ? "0 0 20px rgba(200,160,0,0.30)" : "none", transition: "all 0.2s", position: "relative" }}
+                disabled={!topic.trim() || phase === "launching"}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(180,130,0,0.08)" : "linear-gradient(135deg,#c8a000,#8a6200)", border: "1px solid rgba(180,130,0,0.5)", color: (!topic.trim() || phase === "launching") ? "rgba(245,200,80,0.3)" : "#050300", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 0 20px rgba(200,160,0,0.30)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
               >
-                {launchMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
-                💎 启动战略深潜（{cost.toLocaleString()}点）
-                {isFirst && (
+                {phase === "launching" ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
+                {phase === "launching" ? "正在派发任务…" : `💎 启动战略深潜（${cost.toLocaleString()}点）`}
+                {isFirst && phase !== "launching" && (
                   <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次优惠</span>
                 )}
               </button>
@@ -213,59 +230,87 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 终端动画 + 轮询区 ── */}
-        {(phase === "terminal" || phase === "polling" || phase === "done" || phase === "failed") && (
-          <div style={{ background: "#050300", border: "1px solid rgba(180,130,0,0.35)", borderRadius: 16, overflow: "hidden", boxShadow: "0 0 40px rgba(200,160,0,0.10)" }}>
-            {/* 终端标题栏 */}
-            <div style={{ display: "flex", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid rgba(180,130,0,0.18)", background: "rgba(0,0,0,0.4)" }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                {["#ef4444", "#f59e0b", "#22c55e"].map((c) => <div key={c} style={{ width: 12, height: 12, borderRadius: "50%", background: c }} />)}
-              </div>
-              <span style={{ marginLeft: 12, fontSize: 12, color: "rgba(245,200,80,0.4)", fontFamily: "monospace" }}>Terminal — Deep Research Cluster · {topic.slice(0, 30)}{topic.length > 30 ? "…" : ""}</span>
-              {(phase === "polling" || phase === "terminal") && <Loader2 size={12} style={{ marginLeft: "auto", color: "rgba(245,200,80,0.5)", animation: "spin 1s linear infinite" }} />}
-            </div>
-
-            {/* 日志区 */}
-            <div ref={terminalRef} style={{ padding: 20, fontFamily: "monospace", fontSize: 13, maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
-              {logs.map((log, i) => (
-                <div key={i} style={{ color: i === logs.length - 1 && phase !== "done" && phase !== "failed" ? "#f5c842" : "#4ade80", animation: i === logs.length - 1 ? "fadeIn 0.3s ease" : "none" }}>
-                  {log}
-                </div>
-              ))}
-              {(phase === "terminal" || phase === "polling") && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, color: "rgba(245,200,80,0.6)" }}>
-                  <Loader2 size={12} className="animate-spin" />
-                  <span style={{ animation: "blink 1.2s step-end infinite" }}>_</span>
-                </div>
-              )}
+        {/* ── 已派发：任务接收确认 ── */}
+        {phase === "dispatched" && (
+          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease" }}>
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 0 40px rgba(22,163,74,0.35)", fontSize: 32 }}>✅</div>
+            <h2 style={{ fontSize: 24, fontWeight: 900, color: "#f5c842", marginBottom: 12 }}>
+              全景战报任务已成功派发
+            </h2>
+            <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, lineHeight: 1.9, maxWidth: 540, margin: "0 auto 32px" }}>
+              专属 AI 研究集群已接收指令并开始推演。由于涉及全网海量检索与万字逻辑推演，<br />
+              此过程预计需要 <strong style={{ color: "#f5c842" }}>15 到 30 分钟</strong>。<br />
+              <strong style={{ color: "rgba(255,255,255,0.75)" }}>您现在可以安心关闭此页面</strong>，战报生成后可在「我的战报」中查阅。
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => navigate("/my-reports")}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#c8a000,#8a6200)", border: "none", color: "#050300", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 0 20px rgba(200,160,0,0.30)" }}
+              >
+                <Sparkles size={16} />前往「我的战报」查看进度
+              </button>
+              <button
+                onClick={() => { setPhase("idle"); setTopic(""); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(180,130,0,0.08)", border: "1px solid rgba(180,130,0,0.3)", color: "rgba(245,200,80,0.7)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+              >
+                再发起一个新课题
+              </button>
             </div>
           </div>
         )}
 
-        {/* ── 错误状态 ── */}
+        {/* ── 启动失败 ── */}
         {phase === "failed" && (
-          <div style={{ marginTop: 20, padding: "16px 20px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ padding: "20px 24px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <p style={{ color: "#f87171", fontSize: 13, margin: 0 }}>❌ {errorMsg} · 积分已退回</p>
-            <button onClick={() => { setPhase("idle"); setLogs([]); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 12, cursor: "pointer" }}>
+            <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 12, cursor: "pointer" }}>
               <RotateCcw size={12} />重试
             </button>
           </div>
         )}
 
-        {/* ── 研报正文 ── */}
-        {phase === "done" && reportMd && (
-          <div style={{ marginTop: 24, animation: "fadeIn 0.6s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <p style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 16, fontWeight: 800, color: "#f5c842", margin: 0 }}>
-                <Sparkles size={18} />全景行业战报
-              </p>
-              <button onClick={handleDownloadPdf} style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: "linear-gradient(135deg,rgba(180,130,0,0.22),rgba(140,90,0,0.18))", border: "1px solid rgba(180,130,0,0.4)", color: "#f5c842", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-                <FileDown size={14} />导出研报 HTML
-              </button>
-            </div>
-            <div style={{ background: "rgba(180,130,0,0.04)", border: "1px solid rgba(180,130,0,0.18)", borderRadius: 16, padding: "24px 28px" }}>
-              <ReportRenderer markdown={reportMd} />
-            </div>
+        {/* ── Supervisor Debug 面板 ── */}
+        {isSupervisor && (
+          <div style={{ marginTop: 40 }}>
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", background: "rgba(0,255,70,0.06)", border: "1px solid rgba(0,255,70,0.2)", borderRadius: 8, cursor: "pointer", color: "rgba(0,255,70,0.7)", fontSize: 11, fontWeight: 700, fontFamily: "monospace", letterSpacing: "0.05em" }}
+            >
+              <Bug size={12} />
+              DEBUG {showDebug ? "▲ 收起" : "▼ 展开"}
+              <span style={{ marginLeft: 4, color: "rgba(0,255,70,0.35)", fontWeight: 400 }}>supervisor only</span>
+            </button>
+
+            {showDebug && (
+              <div style={{ marginTop: 10, background: "#000", border: "1px solid rgba(0,255,70,0.25)", borderRadius: 12, padding: "16px 18px", fontFamily: "monospace", fontSize: 11, color: "#00ff46", animation: "fadeIn 0.2s ease", lineHeight: 1.7 }}>
+                <p style={{ color: "rgba(0,255,70,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 10 }}>▶ GODVIEW DEBUG TERMINAL</p>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+                  {[
+                    { k: "PHASE", v: phase },
+                    { k: "MUTATION", v: launchMutation.isPending ? "⏳ pending" : launchMutation.isSuccess ? "✅ success" : launchMutation.isError ? "❌ error" : "— idle" },
+                    { k: "JOB_ID", v: String((launchMutation.data as any)?.jobId || (launchMutation.data as any)?.id || "—") },
+                    { k: "TOPIC_LEN", v: `${topic.length} chars` },
+                    { k: "LAUNCH_AT", v: launchTime ? launchTime.toLocaleTimeString("zh-CN") : "—" },
+                    { k: "ELAPSED", v: launchTime ? `${elapsedSec}s` : "—" },
+                  ].map(({ k, v }) => (
+                    <div key={k} style={{ background: "rgba(0,255,70,0.05)", border: "1px solid rgba(0,255,70,0.15)", borderRadius: 6, padding: "5px 10px", minWidth: 120 }}>
+                      <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, margin: "0 0 2px", fontWeight: 700 }}>{k}</p>
+                      <p style={{ color: "#00ff46", fontSize: 11, margin: 0 }}>{v}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>RAW MUTATION DATA</p>
+                <pre style={{ fontSize: 10, color: "rgba(0,255,70,0.75)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflowY: "auto", margin: 0, lineHeight: 1.6, background: "rgba(0,255,70,0.03)", borderRadius: 6, padding: "10px 12px" }}>
+                  {launchMutation.data
+                    ? JSON.stringify(launchMutation.data, null, 2)
+                    : launchMutation.error
+                      ? JSON.stringify({ error: launchMutation.error.message, code: (launchMutation.error as any)?.data?.code }, null, 2)
+                      : "暂无数据，启动任务后显示"}
+                </pre>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -279,6 +324,10 @@ export default function GodViewPage() {
         }
         @keyframes blink { 0%,100%{opacity:1}50%{opacity:0} }
         @keyframes spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
+        @keyframes godview-mic-pulse {
+          0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)}
+          50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}
+        }
       `}</style>
     </div>
   );
