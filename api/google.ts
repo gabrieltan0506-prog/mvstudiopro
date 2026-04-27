@@ -446,7 +446,7 @@ English Veo audio prompt:`
         generationConfig: { temperature: 0.2, maxOutputTokens: 512 }
       };
 
-      const model = "gemini-2.0-flash";
+      const model = "gemini-3-flash-preview";
       const tRes = await fetchJson(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(translateBody) }
