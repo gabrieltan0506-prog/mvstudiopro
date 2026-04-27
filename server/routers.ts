@@ -5605,46 +5605,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const extractText = (res: Awaited<ReturnType<typeof invokeLLM>>) =>
           String(res?.choices?.[0]?.message?.content ?? "");
 
-        // Gemma 4 31B IT 只在 us-central1，绕过 invokeLLM 直接调用
-        const callGemma4 = async (prompt: string): Promise<string> => {
-          const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
-          if (!raw) throw new Error("missing_GOOGLE_APPLICATION_CREDENTIALS_JSON");
-          const sa = JSON.parse(raw.replace(
-            /"private_key"\s*:\s*"([\s\S]*?)"/m,
-            (_m: string, k: string) => `"private_key": ${JSON.stringify(String(k))}`,
-          ));
-          const { createSign } = await import("crypto");
-          const now = Math.floor(Date.now() / 1000);
-          const hdr = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-          const pay = Buffer.from(JSON.stringify({
-            iss: sa.client_email,
-            scope: "https://www.googleapis.com/auth/cloud-platform",
-            aud: "https://oauth2.googleapis.com/token",
-            iat: now, exp: now + 3600,
-          })).toString("base64url");
-          const sign = createSign("RSA-SHA256");
-          sign.update(`${hdr}.${pay}`);
-          const sig = sign.sign(sa.private_key).toString("base64url");
-          const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${hdr}.${pay}.${sig}` }).toString(),
-            signal: AbortSignal.timeout(15_000),
-          });
-          const { access_token } = await tokenRes.json() as { access_token: string };
-          const projectId = String(process.env.VERTEX_PROJECT_ID || sa.project_id || "").trim();
-          const endpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/gemma-4-31b-it:generateContent`;
-          const body = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4096 } };
-          const res = await fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${access_token}` },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(90_000),
-          });
-          const json: any = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(`Gemma4 ${res.status}: ${JSON.stringify(json).slice(0, 200)}`);
-          return String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "");
-        };
+        // Gemma 4 31B IT (us-central1) — 独立服务模块
+        const { callGemma4 } = await import("./services/gemma4");
 
         try {
           // 2. Stage 1: Gemma 4 31B IT (us-central1) — 底层视觉与流量特征扫描
