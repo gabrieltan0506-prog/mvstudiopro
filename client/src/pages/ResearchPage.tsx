@@ -659,14 +659,32 @@ function SceneVideoCard({ scene, index, platform }: {
     setVideoBusy(true);
     setVideoUrl("");
     try {
-      // Step 1: 构造「视听对位」Veo 指令（口播对口型 + 拟音SFX，严格无BGM）
-      const veoPrompt = audioPrompt.trim()
+      // Step 1: 中文音效/台词 → Veo 原生英文指令（Gemini Flash 翻译中间件）
+      let veoAudio = audioPrompt.trim();
+      if (veoAudio) {
+        try {
+          const tr = await fetchJsonish("/api/google?op=translateForVeo", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: veoAudio }),
+          });
+          if (tr?.json?.translated) {
+            veoAudio = tr.json.translated;
+            console.log("[Veo] 翻译完成:", veoAudio.slice(0, 100));
+          }
+        } catch (tErr) {
+          console.warn("[Veo] 翻译中间件调用失败，降级使用原始文本:", tErr);
+        }
+      }
+
+      // Step 2: 构造「视听对位」Veo 指令（口播对口型 + 拟音SFX，严格无BGM）
+      const veoPrompt = veoAudio
         ? `Animate this reference image into a professional cinematic short video.
 
 VISUAL: The main character MUST have perfect lip-sync. Their mouth, jaw, and facial muscles must move naturally and precisely in synchronization with every spoken syllable.
 
 AUDIO DIRECTION (character voice & sound effects ONLY — strictly NO background music):
-${audioPrompt}
+${veoAudio}
 
 TECHNICAL REQUIREMENTS:
 1. Achieve Hollywood-grade lip-sync accuracy — every phoneme must match the mouth shape.

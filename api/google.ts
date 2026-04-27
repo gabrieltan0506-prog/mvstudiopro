@@ -6,10 +6,11 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
  * Google Gateway (single function)
- * - op=geminiScript (Gemini text)
- * - op=nanoImage    (Nano Banana image)
- * - op=veoCreate    (Veo create)
- * - op=veoTask      (Veo polling)
+ * - op=geminiScript    (Gemini text)
+ * - op=nanoImage       (Nano Banana image)
+ * - op=veoCreate       (Veo create)
+ * - op=veoTask         (Veo polling)
+ * - op=translateForVeo (Chinese → Veo-native English audio prompt)
  *
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
@@ -415,6 +416,53 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       }
 
       return res.status(200).json({ ok:true, status, videoUrl: videoUrl || null, materialized, raw:r.json });
+    }
+
+    // ---------------- translateForVeo (中文音效/台词 → Veo 原生英文指令) ----------------
+    if (op === "translateForVeo") {
+      const rawPrompt = s(b.prompt || q.prompt || "").trim();
+      if (!rawPrompt) return res.status(400).json({ ok: false, error: "missing_prompt" });
+
+      const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
+      if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
+
+      const translateBody = {
+        contents: [{
+          parts: [{
+            text: `You are a professional AI video prompt translator. Convert the following Chinese video scene audio description into a Veo-native English audio prompt.
+
+Rules:
+1. Translate ALL sound effect descriptions and action descriptions into precise English.
+2. Extract character dialogue and keep it in the original Chinese, using the format: A [male/female/old/young] voice speaking Mandarin Chinese: "[original Chinese dialogue]"
+3. If multiple characters speak, list each one separately.
+4. Output ONLY the final English audio prompt. No explanations, no preamble.
+
+Chinese input:
+${rawPrompt}
+
+English Veo audio prompt:`
+          }]
+        }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 512 }
+      };
+
+      const model = "gemini-2.0-flash";
+      const tRes = await fetchJson(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(translateBody) }
+      );
+
+      if (!tRes.ok) {
+        console.error("[translateForVeo] Gemini Flash failed:", tRes.status, tRes.rawText?.slice(0, 200));
+        // 降级：原样返回，让 Veo 尽力处理
+        return res.status(200).json({ ok: true, translated: rawPrompt, fallback: true });
+      }
+
+      const translatedText = (tRes.json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+      if (!translatedText) return res.status(200).json({ ok: true, translated: rawPrompt, fallback: true });
+
+      console.log(`[translateForVeo] ✅ 翻译成功: ${translatedText.slice(0, 120)}...`);
+      return res.status(200).json({ ok: true, translated: translatedText, fallback: false });
     }
 
     return res.status(400).json({ok:false,error:"unknown_op",op});
