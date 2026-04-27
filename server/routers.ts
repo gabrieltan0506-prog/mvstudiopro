@@ -5697,6 +5697,8 @@ ${stage1Raw}
         }
 
         // 4. 写入 /data/growth/research/（复用现有 growth-backup GitHub Actions 定时备份流程）
+        // 4a. Fly 持久化存储：原始数据（重资产）→ /data/growth/research/
+        //     由现有 growth-backup GitHub Actions 每小时自动备份到 GitHub Releases
         try {
           const { mkdir, writeFile } = await import("fs/promises");
           const { join } = await import("path");
@@ -5706,12 +5708,43 @@ ${stage1Raw}
           await writeFile(filename, JSON.stringify({
             userId,
             platform: input.platform,
-            stage1Raw,
-            strategy,
+            stage1Raw,   // Gemma 4 原始扫描结果（完整，不截断）
+            strategy,    // Gemini 最终战略处方（完整，不截断）
             timestamp: new Date().toISOString(),
           }, null, 2));
+          console.log(`[competitorResearch] Fly 原始数据已写入: ${filename}`);
         } catch (e: any) {
-          console.error("[competitorResearch] storage error (non-fatal):", e?.message);
+          console.error("[competitorResearch] Fly 存储失败（non-fatal）:", e?.message);
+        }
+
+        // 4b. Neon 快照存储：精华快照（轻资产）→ user_creations
+        try {
+          const { userCreations } = await import("../drizzle/schema-creations");
+          const database = await db.getDb();
+          if (database) {
+            const PLATFORM_LABEL: Record<string, string> = {
+              douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", bilibili: "B站"
+            };
+            await database.insert(userCreations).values({
+              userId,
+              type: "research_snapshot",
+              title: `${PLATFORM_LABEL[input.platform] || input.platform} 竞品调研 ${new Date().toLocaleDateString("zh-CN")}`,
+              metadata: JSON.stringify({
+                platform: input.platform,
+                positioning: strategy?.positioning,
+                scripts: strategy?.scripts,
+                visuals: strategy?.visuals,
+                publishStrategy: strategy?.publishStrategy,
+                growthPlan30Days: strategy?.growthPlan30Days,
+                generatedAt: strategy?.generatedAt,
+              }),
+              creditsUsed: deductResult.source === "admin" ? 0 : COST,
+              status: "completed",
+            });
+            console.log(`[competitorResearch] Neon 快照已写入 user_creations`);
+          }
+        } catch (e: any) {
+          console.error("[competitorResearch] Neon 快照存储失败（non-fatal）:", e?.message);
         }
 
         return { ok: true as const, strategy, creditsUsed: deductResult.source === "admin" ? 0 : COST };
