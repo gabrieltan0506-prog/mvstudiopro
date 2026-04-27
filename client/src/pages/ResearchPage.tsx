@@ -435,6 +435,7 @@ function SceneVideoCard({ scene, index, platform }: {
   platform: string;
 }) {
   const [audioPrompt, setAudioPrompt] = useState(scene.audioPrompt || "");
+  const [visualPrompt, setVisualPrompt] = useState(scene.visualPrompt || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`);
   const [genBusy, setGenBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
@@ -446,7 +447,7 @@ function SceneVideoCard({ scene, index, platform }: {
   const [hdUrl, setHdUrl] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
 
-  const effectiveVisualPrompt = scene.visualPrompt || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`;
+  const effectiveVisualPrompt = visualPrompt.trim() || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`;
 
   async function generateImage() {
     setGenBusy(true);
@@ -602,13 +603,26 @@ function SceneVideoCard({ scene, index, platform }: {
           <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" }}>{scene.copywriting}</p>
         </div>
 
-        {/* 画面提示词（只读展示） */}
-        {scene.visualPrompt && (
-          <div style={{ background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.12)", borderRadius: 10, padding: "10px 14px" }}>
-            <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(56,189,248,0.6)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>🎨 画面生图提示词</p>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6, margin: 0, fontFamily: "monospace" }}>{scene.visualPrompt}</p>
-          </div>
-        )}
+        {/* 画面提示词（可编辑） */}
+        <div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(56,189,248,0.7)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+            🎨 画面生图提示词（可修改）
+          </label>
+          <textarea
+            value={visualPrompt}
+            onChange={(e) => setVisualPrompt(e.target.value)}
+            rows={3}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 12,
+              background: "rgba(0,0,0,0.25)", border: "1px solid rgba(56,189,248,0.18)",
+              color: "rgba(255,255,255,0.75)", outline: "none", boxSizing: "border-box",
+              fontFamily: "monospace", lineHeight: 1.6, resize: "vertical",
+              transition: "border-color 0.2s",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(56,189,248,0.45)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(56,189,248,0.18)"; }}
+          />
+        </div>
 
         {/* 音效提示词（可编辑） */}
         <div>
