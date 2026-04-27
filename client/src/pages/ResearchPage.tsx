@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video, Mic, MicOff, Download, FileDown } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { getMusicClipsFromJobPayload, clipToGeneratedSong, songDownloadUrlCandidates, downloadGeneratedMusicToFile } from "@/lib/growthMusic";
@@ -39,6 +39,30 @@ export default function ResearchPage() {
   const [rawResponse, setRawResponse] = useState<any>(null);
   const [isSupervisor, setIsSupervisor] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [isPdfBusy, setIsPdfBusy] = useState(false);
+
+  const pdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
+    onSuccess: (res) => {
+      setIsPdfBusy(false);
+      if (!res.pdfBase64) { toast.error("PDF 内容为空，请重试"); return; }
+      const bytes = Uint8Array.from(atob(res.pdfBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const label = PLATFORMS.find((p) => p.value === platform)?.label || platform;
+      a.download = `竞品调研报告_${label}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast.success("PDF 已开始下载");
+    },
+    onError: (err) => {
+      setIsPdfBusy(false);
+      toast.error(`PDF 生成失败：${err.message}`);
+    },
+  });
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
@@ -89,6 +113,77 @@ export default function ResearchPage() {
       toast.error(err.message || "调研失败，请重试");
     },
   });
+
+  const handleDownloadPdf = useCallback(() => {
+    if (!result) return;
+    setIsPdfBusy(true);
+    const label = PLATFORMS.find((p) => p.value === platform)?.label || platform;
+    const date = new Date().toLocaleDateString("zh-TW", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+
+    const esc = (s: string) => String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+    const scenesHtml = Array.isArray(result.scenes)
+      ? result.scenes.map((sc: any) => `
+        <div style="margin-bottom:24px;padding:16px;background:#1a1008;border:1px solid #c87a00;border-radius:10px;">
+          <h3 style="color:#f5a800;margin:0 0 10px">🎬 镜头 ${sc.sceneNumber}</h3>
+          <p style="color:#e8d5b0;line-height:1.8;margin:0 0 10px">${esc(sc.copywriting)}</p>
+          ${sc.visualPrompt ? `<p style="font-size:12px;color:#7eb8d4;font-family:monospace;margin:0 0 6px"><b>🎨 生图提示词：</b>${esc(sc.visualPrompt)}</p>` : ""}
+          ${sc.audioPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 音效指令：</b>${esc(sc.audioPrompt)}</p>` : ""}
+        </div>`).join("") : "";
+
+    const scriptsHtml = !Array.isArray(result.scenes) && Array.isArray(result.scripts)
+      ? result.scripts.map((s: any, i: number) => `
+        <div style="margin-bottom:16px;padding:14px;background:#1a1008;border-left:3px solid #34d399;border-radius:8px;">
+          <p style="color:#34d399;font-weight:700;margin:0 0 6px">#${i + 1} ${esc(s.title)}</p>
+          ${s.hook ? `<p style="color:#aaa;font-size:13px;margin:0 0 4px">🎣 ${esc(s.hook)}</p>` : ""}
+          ${s.copywriting ? `<p style="color:#aaa;font-size:13px;margin:0">${esc(s.copywriting)}</p>` : ""}
+        </div>`).join("") : "";
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+      <style>
+        body{font-family:'Helvetica Neue',Arial,sans-serif;background:#120800;color:#f0e0c0;margin:0;padding:32px;line-height:1.7}
+        h1{color:#f5a800;font-size:24px;margin:0 0 4px}
+        h2{color:#c87a00;font-size:16px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-left:4px solid #c87a00;padding-left:12px;margin:28px 0 14px}
+        .meta{font-size:13px;color:#9a7a50;margin-bottom:28px}
+        .strategy{background:#1a1008;border:1px solid #3a2010;border-radius:10px;padding:16px;margin-bottom:24px;color:#e8d5b0;font-size:14px}
+        .text-block{font-size:13px;color:#d4b896;white-space:pre-wrap;line-height:1.8}
+        .color-dot{display:inline-block;width:18px;height:18px;border-radius:4px;margin-right:6px;vertical-align:middle}
+      </style>
+    </head><body>
+      <h1>竞品与对标分析报告</h1>
+      <div class="meta">平台：${label} &nbsp;|&nbsp; 生成日期：${date}</div>
+
+      ${result.overallStrategy || result.positioning ? `
+        <h2>战略洞察</h2>
+        <div class="strategy">${esc(result.overallStrategy || result.positioning)}</div>` : ""}
+
+      ${scenesHtml ? `<h2>智能分镜与制片台</h2>${scenesHtml}` : ""}
+      ${scriptsHtml ? `<h2>内容执行脚本</h2>${scriptsHtml}` : ""}
+
+      ${result.visuals ? `
+        <h2>视觉排版指引</h2>
+        <div class="strategy">
+          ${Array.isArray(result.visuals.colorPalette) ? result.visuals.colorPalette.map((c: string) =>
+            `<span class="color-dot" style="background:${esc(c)}"></span><code>${esc(c)}</code> `).join("") : ""}
+          ${result.visuals.typography ? `<p><b>字体风格：</b>${esc(result.visuals.typography)}</p>` : ""}
+          ${result.visuals.layoutGuide ? `<p><b>构图建议：</b>${esc(result.visuals.layoutGuide)}</p>` : ""}
+        </div>` : ""}
+
+      ${result.publishStrategy ? `
+        <h2>发布节奏策略</h2>
+        <div class="strategy text-block">${esc(typeof result.publishStrategy === "string" ? result.publishStrategy : JSON.stringify(result.publishStrategy, null, 2))}</div>` : ""}
+
+      ${result.growthPlan30Days ? `
+        <h2>30天增长路径</h2>
+        <div class="strategy text-block">${esc(typeof result.growthPlan30Days === "string" ? result.growthPlan30Days : JSON.stringify(result.growthPlan30Days, null, 2))}</div>` : ""}
+
+      <div style="margin-top:40px;padding-top:16px;border-top:1px solid #3a2010;font-size:11px;color:#6a4a30">
+        由 MV Studio Pro 竞品与对标分析生成 · ${date}
+      </div>
+    </body></html>`;
+
+    pdfMutation.mutate({ html });
+  }, [result, platform, pdfMutation]);
 
   const handleRun = () => {
     if (content.length > MAX_CHARS) {
@@ -262,6 +357,18 @@ export default function ResearchPage() {
         {/* 结果展示 */}
         {result && (
           <div style={{ animation: "fadeIn 0.4s ease" }}>
+            {/* PDF 下载栏 */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isPdfBusy}
+                style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: isPdfBusy ? "rgba(200,120,5,0.06)" : "linear-gradient(135deg,rgba(200,120,5,0.22),rgba(160,80,0,0.18))", border: "1px solid rgba(200,120,5,0.35)", color: isPdfBusy ? "rgba(200,120,5,0.4)" : "#f5a800", fontSize: 13, fontWeight: 700, cursor: isPdfBusy ? "not-allowed" : "pointer", transition: "all 0.2s" }}
+              >
+                {isPdfBusy ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+                {isPdfBusy ? "生成 PDF 中…" : "下载完整报告 PDF"}
+              </button>
+            </div>
+
             {result.raw ? (
               <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(249,115,22,0.2)", borderRadius: 16, padding: "24px" }}>
                 <h2 style={{ fontSize: 18, fontWeight: 800, color: "#fb923c", marginBottom: 20 }}>🏆 战略处方</h2>
