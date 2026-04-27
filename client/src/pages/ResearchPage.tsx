@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink } from "lucide-react";
+import { Loader2, ChevronLeft, Rocket, Search, BookOpen, AlertCircle, Bug, ImagePlus, ZoomIn, ExternalLink, Music, Video } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
@@ -200,24 +200,41 @@ export default function ResearchPage() {
 
         {/* 结果展示 */}
         {result && (
-          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(249,115,22,0.2)", borderRadius: 16, padding: "24px", animation: "fadeIn 0.4s ease" }}>
-            <h2 style={{ fontSize: 18, fontWeight: 800, color: "#fb923c", marginBottom: 20 }}>🏆 战略处方</h2>
-
+          <div style={{ animation: "fadeIn 0.4s ease" }}>
             {result.raw ? (
-              <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.7 }}>{result.raw}</pre>
+              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(249,115,22,0.2)", borderRadius: 16, padding: "24px" }}>
+                <h2 style={{ fontSize: 18, fontWeight: 800, color: "#fb923c", marginBottom: 20 }}>🏆 战略处方</h2>
+                <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, color: "rgba(255,255,255,0.7)", lineHeight: 1.7 }}>{result.raw}</pre>
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                {/* 差异化定位 */}
-                {result.positioning && (
-                  <Section title="差异化人设定位" color="#a78bfa">
+
+                {/* 整体战略洞察 */}
+                {(result.overallStrategy || result.positioning) && (
+                  <div style={{ background: "rgba(167,139,250,0.07)", border: "1px solid rgba(167,139,250,0.2)", borderRadius: 16, padding: "20px 24px" }}>
+                    <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 10 }}>📊 战略洞察</p>
                     <p style={{ fontSize: 14, color: "rgba(255,255,255,0.8)", lineHeight: 1.8, margin: 0 }}>
-                      {typeof result.positioning === "string" ? result.positioning : JSON.stringify(result.positioning, null, 2)}
+                      {result.overallStrategy || result.positioning}
                     </p>
-                  </Section>
+                  </div>
                 )}
 
-                {/* 执行脚本（含生成参考图 + 高清放大） */}
-                {Array.isArray(result.scripts) && result.scripts.length > 0 && (
+                {/* ── 多场景分镜制片台（新格式 scenes） ── */}
+                {Array.isArray(result.scenes) && result.scenes.length > 0 && (
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 800, color: "rgba(255,255,255,0.5)", letterSpacing: "0.08em", marginBottom: 14, textTransform: "uppercase" }}>
+                      🎥 智能分镜与制片台 · {result.scenes.length} 个场景
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {result.scenes.map((scene: any, i: number) => (
+                        <SceneVideoCard key={i} scene={scene} index={i} platform={platform} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 旧格式 scripts（兼容回退） */}
+                {!Array.isArray(result.scenes) && Array.isArray(result.scripts) && result.scripts.length > 0 && (
                   <Section title="内容执行脚本" color="#34d399">
                     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                       {result.scripts.map((s: any, i: number) => (
@@ -323,6 +340,206 @@ export default function ResearchPage() {
           100% { transform: translateX(100%); opacity: 0; }
         }
       `}</style>
+    </div>
+  );
+}
+
+// ── 多场景分镜制片台：文案 + 音效提示词（可编辑）+ 生成参考图 + 视频 ──
+function SceneVideoCard({ scene, index, platform }: {
+  scene: { sceneNumber: number; copywriting: string; visualPrompt: string; audioPrompt: string };
+  index: number;
+  platform: string;
+}) {
+  const [audioPrompt, setAudioPrompt] = useState(scene.audioPrompt || "");
+  const [genBusy, setGenBusy] = useState(false);
+  const [upscaleBusy, setUpscaleBusy] = useState(false);
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [origUrl, setOrigUrl] = useState("");
+  const [hdUrl, setHdUrl] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+
+  const effectiveVisualPrompt = scene.visualPrompt || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`;
+
+  async function generateImage() {
+    setGenBusy(true);
+    setOrigUrl("");
+    setHdUrl("");
+    try {
+      const r = await fetchJsonish("/api/trpc/openaiImage.generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ json: { prompt: effectiveVisualPrompt, model: "gpt-image-2", size: "1024x1536", quality: "high", n: 1 } }),
+      });
+      const result = r?.json?.result?.data?.json ?? r?.json;
+      const url = String(result?.imageUrl || "").trim();
+      if (!url) throw new Error(result?.error || "生成失败");
+      setOrigUrl(url);
+    } catch (e: any) {
+      toast.error(`参考图生成失败：${e?.message}`);
+    } finally {
+      setGenBusy(false);
+    }
+  }
+
+  async function upscale() {
+    if (!origUrl) return;
+    setUpscaleBusy(true);
+    setHdUrl("");
+    try {
+      const r = await fetchJsonish("/api/google?op=upscaleImage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: origUrl, upscaleFactor: "x2", prompt: effectiveVisualPrompt, outputMimeType: "image/png" }),
+      });
+      const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
+      if (!url) throw new Error("高清放大失败");
+      setHdUrl(url);
+    } catch (e: any) {
+      toast.error(`高清放大失败：${e?.message}`);
+    } finally {
+      setUpscaleBusy(false);
+    }
+  }
+
+  async function generateVideo() {
+    if (!window.confirm(`生成镜头 ${index + 1} 的视频将扣除 100 点，确定继续？`)) return;
+    setVideoBusy(true);
+    setVideoUrl("");
+    try {
+      const imageToUse = hdUrl || origUrl;
+      const r = await fetchJsonish("/api/video/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: imageToUse, audioPrompt, platform }),
+      });
+      if (!r.ok) throw new Error(r.json?.error || "视频生成失败");
+      const url = String(r.json?.videoUrl || "").trim();
+      if (!url) throw new Error("未获得视频链接");
+      setVideoUrl(url);
+    } catch (e: any) {
+      toast.error(`视频生成失败：${e?.message}`);
+    } finally {
+      setVideoBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, overflow: "hidden" }}>
+      {/* 镜头头部 */}
+      <div style={{ padding: "14px 18px 12px", background: "rgba(249,115,22,0.06)", borderBottom: "1px solid rgba(249,115,22,0.12)", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(249,115,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 900, color: "#fb923c" }}>{scene.sceneNumber ?? index + 1}</span>
+        </div>
+        <span style={{ fontSize: 13, fontWeight: 800, color: "#fb923c" }}>镜头 {scene.sceneNumber ?? index + 1}</span>
+      </div>
+
+      <div style={{ padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* 分镜文案 */}
+        <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: 10, padding: "12px 14px" }}>
+          <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>📝 分镜文案</p>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,0.8)", lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" }}>{scene.copywriting}</p>
+        </div>
+
+        {/* 画面提示词（只读展示） */}
+        {scene.visualPrompt && (
+          <div style={{ background: "rgba(56,189,248,0.04)", border: "1px solid rgba(56,189,248,0.12)", borderRadius: 10, padding: "10px 14px" }}>
+            <p style={{ fontSize: 10, fontWeight: 700, color: "rgba(56,189,248,0.6)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>🎨 画面生图提示词</p>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", lineHeight: 1.6, margin: 0, fontFamily: "monospace" }}>{scene.visualPrompt}</p>
+          </div>
+        )}
+
+        {/* 音效提示词（可编辑） */}
+        <div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.7)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+            <Music size={11} />
+            BGM & 音效指令（可修改）
+          </label>
+          <input
+            type="text"
+            value={audioPrompt}
+            onChange={(e) => setAudioPrompt(e.target.value)}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 13,
+              background: "rgba(0,0,0,0.3)", border: "1px solid rgba(251,191,36,0.2)",
+              color: "#fff", outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+              transition: "border-color 0.2s",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.5)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.2)"; }}
+          />
+        </div>
+
+        {/* 操作按钮行 */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={generateImage}
+            disabled={genBusy}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: genBusy ? "rgba(52,211,153,0.05)" : "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)", color: genBusy ? "rgba(52,211,153,0.4)" : "#34d399", fontSize: 12, fontWeight: 700, cursor: genBusy ? "not-allowed" : "pointer" }}
+          >
+            {genBusy ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+            {genBusy ? "生成中…" : "生成参考图"}
+          </button>
+
+          {origUrl && (
+            <button
+              onClick={upscale}
+              disabled={upscaleBusy}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: upscaleBusy ? "rgba(56,189,248,0.05)" : "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.25)", color: upscaleBusy ? "rgba(56,189,248,0.4)" : "#38bdf8", fontSize: 12, fontWeight: 700, cursor: upscaleBusy ? "not-allowed" : "pointer" }}
+            >
+              {upscaleBusy ? <Loader2 size={12} className="animate-spin" /> : <ZoomIn size={12} />}
+              {upscaleBusy ? "放大中…" : "高清放大 2x"}
+            </button>
+          )}
+
+          <button
+            onClick={generateVideo}
+            disabled={videoBusy}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: videoBusy ? "rgba(249,115,22,0.06)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.35)", color: videoBusy ? "rgba(249,115,22,0.4)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: videoBusy ? "not-allowed" : "pointer", marginLeft: "auto" }}
+          >
+            {videoBusy ? <Loader2 size={12} className="animate-spin" /> : <Video size={12} />}
+            {videoBusy ? "渲染中（约1分钟）…" : "生成此镜视频（100点）"}
+          </button>
+        </div>
+
+        {/* 图片对比区：原图左 / 高清右 */}
+        {origUrl && (
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginBottom: 6, fontWeight: 700, textTransform: "uppercase" }}>原图</p>
+              <div style={{ position: "relative", borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)" }}>
+                <img src={origUrl} alt={`Scene ${index + 1} ref`} style={{ width: "100%", display: "block", borderRadius: 8 }} />
+                <a href={origUrl} target="_blank" rel="noreferrer" style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", borderRadius: 6, padding: "4px 6px", display: "flex", alignItems: "center" }}>
+                  <ExternalLink size={11} color="rgba(255,255,255,0.7)" />
+                </a>
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 10, color: "rgba(56,189,248,0.6)", marginBottom: 6, fontWeight: 700, textTransform: "uppercase" }}>高清放大 2x</p>
+              <div style={{ borderRadius: 8, overflow: "hidden", background: "rgba(0,0,0,0.3)", minHeight: 80, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {hdUrl ? (
+                  <div style={{ position: "relative", width: "100%" }}>
+                    <img src={hdUrl} alt="高清放大" style={{ width: "100%", display: "block", borderRadius: 8 }} />
+                    <a href={hdUrl} target="_blank" rel="noreferrer" style={{ position: "absolute", top: 6, right: 6, background: "rgba(0,0,0,0.6)", borderRadius: 6, padding: "4px 6px", display: "flex", alignItems: "center" }}>
+                      <ExternalLink size={11} color="rgba(255,255,255,0.7)" />
+                    </a>
+                  </div>
+                ) : upscaleBusy ? (
+                  <Loader2 size={20} color="rgba(56,189,248,0.5)" className="animate-spin" />
+                ) : (
+                  <p style={{ fontSize: 12, color: "rgba(255,255,255,0.2)", textAlign: "center", padding: 16 }}>点击「高清放大」<br/>在此显示</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 视频展示区 */}
+        {videoUrl && (
+          <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid rgba(249,115,22,0.3)", background: "#000" }}>
+            <video src={videoUrl} controls autoPlay loop style={{ width: "100%", display: "block", aspectRatio: "9/16", objectFit: "cover", maxHeight: 480 }} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

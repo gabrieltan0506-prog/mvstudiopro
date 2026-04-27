@@ -47,7 +47,16 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
   return "";
 }
 
+export interface ResearchScene {
+  sceneNumber: number;
+  copywriting: string;
+  visualPrompt: string;
+  audioPrompt: string;
+}
+
 export interface ResearchStrategy {
+  overallStrategy?: string;
+  scenes?: ResearchScene[];
   positioning?: string;
   scripts?: Array<{ title: string; hook: string; copywriting: string }>;
   visuals?: { colorPalette?: string[]; typography?: string; layoutGuide?: string };
@@ -165,24 +174,43 @@ ${platformContext}
     );
   }
 
-  // ── Stage 2: Gemini 2.5 Pro ─ 差异化战略处方（含平台数据） ────────
-  console.log(`[researchService] Stage 2 Gemini 2.5 Pro 启动`);
+  // ── Stage 2: Gemini 3.1 Pro ─ 差异化战略处方 + 分镜场景（含平台数据） ────
+  console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
   const stage2Raw = await generate(
     "gemini-3.1-pro-preview",
-    `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师。
+    `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时兼任顶级音效导演。
 
 【竞品扫描报告（Stage 1）】
 ${stage1Raw}
 ${platformContext}
 
-为创作者生成「降维打击」竞争处方，充分利用平台实时热门数据制定精准策略，包含：
-1. 差异化人设定位：与竞品的核心差距和突破口
-2. 内容执行脚本：3个结合当前平台热点的爆款标题+开场钩子+文案
-3. 视觉排版指引：推荐色卡（3色HEX）、封面构图、字体风格
-4. 发布节奏策略：最优时间、频次、推荐话题标签（优先使用平台高频标签）
-5. 30天增长路径：分阶段行动清单
+为创作者生成「降维打击」竞争处方。请严格以 JSON 格式输出，结构如下：
 
-输出严格JSON格式，字段：positioning(string), scripts(数组，每项含title/hook/copywriting), visuals(含colorPalette数组/typography/layoutGuide), publishStrategy(string), growthPlan30Days(string)`,
+{
+  "overallStrategy": "整体账号定位与差异化战术分析（200字以内）",
+  "scenes": [
+    {
+      "sceneNumber": 1,
+      "copywriting": "【开场钩子】完整文案内容，融合平台高频热词，强情绪触发...",
+      "visualPrompt": "高保真参考图生图指令：场景描述、光线、构图、风格、色调（英文优先，50字以内）",
+      "audioPrompt": "BGM与音效导演指令：描述此场景的背景音乐风格、节奏、具体音效（如：紧张心跳声+赛博朋克合成器，BPM 120）"
+    }
+  ],
+  "visuals": {
+    "colorPalette": ["#HEX1", "#HEX2", "#HEX3"],
+    "typography": "字体风格描述",
+    "layoutGuide": "封面构图建议"
+  },
+  "publishStrategy": "最优发布时间、频次、推荐话题标签",
+  "growthPlan30Days": "分阶段30天行动清单"
+}
+
+要求：
+- scenes 数组动态生成 3 到 5 个场景，根据内容长短决定
+- 每个场景的 audioPrompt 必须具体且专业，直接可用于音效制作
+- 每个场景的 visualPrompt 必须是英文生图提示词，可直接输入 Midjourney/DALL-E
+- 优先使用平台实时高频标签和热词
+- 严格 JSON 格式，不要输出 JSON 之外的任何内容`,
   );
   console.log(`[researchService] Stage 2 完成，字符数: ${stage2Raw.length}`);
 
