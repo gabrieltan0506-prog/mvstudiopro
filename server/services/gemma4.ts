@@ -8,12 +8,18 @@ export async function callGemma4(prompt: string): Promise<string> {
   const raw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
   if (!raw) throw new Error("missing_GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
-  const sa = JSON.parse(
-    raw.replace(
+  // 优先直接解析（env var 是合法 JSON 时）；
+  // 若 private_key 含真实换行（Fly secrets 注入方式），则用正则修复后再解析
+  let sa: any;
+  try {
+    sa = JSON.parse(raw);
+  } catch {
+    const fixed = raw.replace(
       /"private_key"\s*:\s*"([\s\S]*?)"/m,
       (_m: string, k: string) => `"private_key": ${JSON.stringify(String(k))}`,
-    ),
-  );
+    );
+    sa = JSON.parse(fixed);
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const hdr = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");

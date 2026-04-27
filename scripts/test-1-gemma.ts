@@ -3,6 +3,10 @@
  * 验证 Vertex AI us-central1 JWT 与端点是否畅通
  * 运行: npx tsx scripts/test-1-gemma.ts
  */
+import { config } from "dotenv";
+import { resolve } from "path";
+config({ path: resolve(process.cwd(), ".env.local") });
+
 import { callGemma4 } from "../server/services/gemma4";
 
 async function testGemma() {
