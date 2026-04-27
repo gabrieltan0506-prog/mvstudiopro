@@ -250,7 +250,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
       if (!geminiApiKey) return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
 
-      const model = "gemini-2.0-flash-lite";
+      const model = "gemini-3.1-flash-lite-preview";
       const body = {
         contents: [{
           parts: [
