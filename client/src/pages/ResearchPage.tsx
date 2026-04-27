@@ -64,10 +64,38 @@ export default function ResearchPage() {
 
   const overLimit = content.length > MAX_CHARS;
 
+  const isGenerating = mutation.isPending;
+
   return (
-    <div className="min-h-screen bg-[#0a0a0f]" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div style={{
+      minHeight: "100vh",
+      fontFamily: "'Inter', sans-serif",
+      // 莫兰迪底色：深邃的灰蓝绿暗调
+      background: "linear-gradient(160deg, #1a1f25 0%, #1c2128 40%, #1e1d22 70%, #1a1c1e 100%)",
+      position: "relative",
+      overflow: "hidden",
+    }}>
+      {/* 莫兰迪装饰光晕（静态） */}
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
+        <div style={{ position: "absolute", top: "10%", left: "5%", width: 480, height: 480, borderRadius: "50%", background: "radial-gradient(circle, rgba(131,148,150,0.07) 0%, transparent 70%)", filter: "blur(60px)" }} />
+        <div style={{ position: "absolute", bottom: "15%", right: "8%", width: 360, height: 360, borderRadius: "50%", background: "radial-gradient(circle, rgba(180,163,150,0.06) 0%, transparent 70%)", filter: "blur(50px)" }} />
+        <div style={{ position: "absolute", top: "50%", left: "55%", width: 300, height: 300, borderRadius: "50%", background: "radial-gradient(circle, rgba(150,160,148,0.05) 0%, transparent 70%)", filter: "blur(70px)" }} />
+      </div>
+
+      {/* 生成中：莫兰迪渐变流动动画 */}
+      {isGenerating && (
+        <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 1 }}>
+          {/* 主流动光波 */}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(120deg, rgba(131,148,150,0.0) 0%, rgba(131,148,150,0.08) 30%, rgba(163,150,140,0.10) 50%, rgba(148,163,150,0.08) 70%, rgba(131,148,150,0.0) 100%)", animation: "morandi-flow 3s ease-in-out infinite", backgroundSize: "200% 200%" }} />
+          {/* 边框呼吸光 */}
+          <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 120px rgba(131,148,150,0.12)", animation: "morandi-breathe 2.4s ease-in-out infinite" }} />
+          {/* 顶部进度条 */}
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, transparent, rgba(131,148,150,0.6), rgba(180,163,150,0.8), rgba(148,163,150,0.6), transparent)", animation: "morandi-slide 2s ease-in-out infinite" }} />
+        </div>
+      )}
+
       {/* 顶部导航 */}
-      <div style={{ borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(10,10,15,0.95)", backdropFilter: "blur(12px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ borderBottom: "1px solid rgba(131,148,150,0.12)", background: "rgba(26,31,37,0.96)", backdropFilter: "blur(12px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
         <button onClick={() => navigate("/")} style={{ color: "rgba(255,255,255,0.45)", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
           <ChevronLeft size={16} />首页
         </button>
@@ -78,7 +106,7 @@ export default function ResearchPage() {
         </span>
       </div>
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px" }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
         {/* 页面标题 */}
         <div style={{ marginBottom: 32 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
@@ -114,7 +142,7 @@ export default function ResearchPage() {
         )}
 
         {/* 主输入区 */}
-        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, padding: "24px", marginBottom: 24 }}>
+        <div style={{ background: isGenerating ? "rgba(131,148,150,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${isGenerating ? "rgba(131,148,150,0.25)" : "rgba(255,255,255,0.08)"}`, borderRadius: 16, padding: "24px", marginBottom: 24, transition: "background 0.8s ease, border-color 0.8s ease" }}>
           {/* 平台选择 */}
           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>选择分析平台</p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}>
@@ -275,7 +303,25 @@ export default function ResearchPage() {
       </div>
 
       <style>{`
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes morandi-flow {
+          0%   { background-position: 0% 50%; opacity: 0.6; }
+          50%  { background-position: 100% 50%; opacity: 1; }
+          100% { background-position: 0% 50%; opacity: 0.6; }
+        }
+        @keyframes morandi-breathe {
+          0%,100% { opacity: 0.5; }
+          50%     { opacity: 1; }
+        }
+        @keyframes morandi-slide {
+          0%   { transform: translateX(-100%); opacity: 0; }
+          20%  { opacity: 1; }
+          80%  { opacity: 1; }
+          100% { transform: translateX(100%); opacity: 0; }
+        }
       `}</style>
     </div>
   );
