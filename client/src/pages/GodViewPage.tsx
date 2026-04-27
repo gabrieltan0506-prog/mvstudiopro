@@ -160,13 +160,13 @@ export default function GodViewPage() {
                 AI 上帝视角
               </h1>
               <p style={{ color: "rgba(245,200,80,0.55)", fontSize: 13, margin: 0, letterSpacing: "0.15em", textTransform: "uppercase" }}>
-                全息行业研报 · 旗舰级商业智库
+                全景行业战报 · 旗舰级商业智库
               </p>
             </div>
           </div>
           <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 14, maxWidth: 600, margin: "0 auto", lineHeight: 1.8 }}>
             停止在信息泥潭中盲目试错。派遣专属 AI 研究集群，独占极限算力，全网深度检索与逻辑推演，
-            为您交付降维打击的<strong style={{ color: "rgba(245,200,80,0.8)" }}>万字商业白皮书</strong>。
+            为您交付降维打击的<strong style={{ color: "rgba(245,200,80,0.8)" }}>全景行业战报</strong>。
             穿透赛道迷雾，锁定商业胜率。
           </p>
           <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 16, flexWrap: "wrap" }}>

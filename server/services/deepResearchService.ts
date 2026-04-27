@@ -1,7 +1,7 @@
 /**
- * 深度行业研报服务 — AI 上帝视角
+ * 全景行业战报服务 — AI 上帝视角
  * 使用 gemini-2.5-pro（高 maxOutputTokens）生成万字商业白皮书
- * 异步脱机运行，结果写入 Fly 持久卷 + Neon
+ * 异步脱机运行，结果双写：Fly 持久卷（断点恢复）+ Neon DB（研报中心展示）
  */
 import fs from "fs/promises";
 import path from "path";
@@ -9,7 +9,7 @@ import path from "path";
 const REPORT_DIR = "/data/growth/deep-research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** 直接 HTTP 调用 Gemini API（与 researchService 同一套机制） */
+/** 直接 HTTP 调用 Gemini API */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
@@ -39,10 +39,60 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
   return "";
 }
 
+// ── Neon DB 辅助 ────────────────────────────────────────────────────────────
+
+async function getDbAndSchema() {
+  const { getDb } = await import("../db");
+  const { userCreations } = await import("../../drizzle/schema-creations");
+  const db = await getDb();
+  return { db, userCreations };
+}
+
+/** 在 Neon DB 中创建 processing 状态的研报记录 */
+async function dbCreateRecord(userId: number, topic: string, jobId: string, creditsUsed: number): Promise<number | undefined> {
+  try {
+    const { db, userCreations } = await getDbAndSchema();
+    if (!db) return undefined;
+    const rows = await db.insert(userCreations).values({
+      userId,
+      type: "deep_research_report",
+      title: topic.slice(0, 120),
+      status: "processing",
+      creditsUsed,
+      metadata: JSON.stringify({ topic, jobId, progress: "🚀 任务已派发，等待算力节点…" }),
+    }).returning({ id: userCreations.id });
+    return rows[0]?.id;
+  } catch (e: any) {
+    console.warn("[deepResearch] dbCreateRecord failed:", e?.message);
+    return undefined;
+  }
+}
+
+/** 更新 Neon DB 研报状态 */
+async function dbUpdateRecord(dbRecordId: number, status: string, progress: string, reportMarkdown?: string, error?: string) {
+  try {
+    const { db, userCreations } = await getDbAndSchema();
+    if (!db) return;
+    const { eq } = await import("drizzle-orm");
+    await db.update(userCreations)
+      .set({
+        status,
+        metadata: JSON.stringify({ progress, reportMarkdown: reportMarkdown ?? null, error: error ?? null }),
+        updatedAt: new Date(),
+      })
+      .where(eq(userCreations.id, dbRecordId));
+  } catch (e: any) {
+    console.warn("[deepResearch] dbUpdateRecord failed:", e?.message);
+  }
+}
+
+// ── Fly 磁盘 Job 结构 ────────────────────────────────────────────────────────
+
 export interface DeepResearchJob {
   jobId: string;
   userId: string;
   topic: string;
+  dbRecordId?: number;
   status: "pending" | "running" | "completed" | "failed";
   progress?: string;
   reportMarkdown?: string;
@@ -77,7 +127,7 @@ export async function recoverOrphanedJobs(): Promise<void> {
     await fs.mkdir(REPORT_DIR, { recursive: true });
     const files = await fs.readdir(REPORT_DIR);
     const now = Date.now();
-    const ORPHAN_THRESHOLD_MS = 15 * 60 * 1000; // 15 分钟
+    const ORPHAN_THRESHOLD_MS = 15 * 60 * 1000;
 
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
@@ -87,15 +137,16 @@ export async function recoverOrphanedJobs(): Promise<void> {
         if (job.status === "running" || job.status === "pending") {
           const age = now - new Date(job.createdAt).getTime();
           if (age > ORPHAN_THRESHOLD_MS) {
-            await fs.writeFile(
-              path.join(REPORT_DIR, f),
-              JSON.stringify({
-                ...job,
-                status: "failed",
-                error: "服务重启导致任务中断，积分已退回，请重新发起",
-                progress: "❌ 任务因服务重启中断，积分已退回",
-              } satisfies DeepResearchJob, null, 2),
-            );
+            const failedJob: DeepResearchJob = {
+              ...job,
+              status: "failed",
+              error: "服务重启导致任务中断，积分已退回，请重新发起",
+              progress: "❌ 任务因服务重启中断，积分已退回",
+            };
+            await fs.writeFile(path.join(REPORT_DIR, f), JSON.stringify(failedJob, null, 2));
+            if (job.dbRecordId) {
+              await dbUpdateRecord(job.dbRecordId, "failed", "❌ 任务因服务重启中断，积分已退回", undefined, "服务重启导致任务中断");
+            }
             console.log(`[deepResearch] 🔄 孤儿任务已标记失败: ${job.jobId}`);
           }
         }
@@ -106,20 +157,31 @@ export async function recoverOrphanedJobs(): Promise<void> {
   }
 }
 
-/** 创建任务（同步返回 jobId，立即响应前端） */
-export async function createDeepResearchJob(userId: string, topic: string): Promise<string> {
+/** 创建任务（同步写入 Fly 磁盘 + Neon DB，立即响应前端） */
+export async function createDeepResearchJob(userId: string, topic: string, creditsUsed = 0): Promise<{ jobId: string; dbRecordId?: number }> {
   const jobId = `dr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // 先写 Fly 磁盘（保证一定成功）
   const job: DeepResearchJob = {
-    jobId, userId, topic,
+    jobId,
+    userId,
+    topic,
     status: "pending",
-    progress: "任务已接收，等待分配算力节点…",
+    progress: "🚀 任务已派发，等待算力节点…",
     createdAt: new Date().toISOString(),
   };
   await writeJob(job);
-  return jobId;
+
+  // 再写 Neon DB（允许失败，不影响任务启动）
+  const dbRecordId = await dbCreateRecord(Number(userId), topic, jobId, creditsUsed);
+  if (dbRecordId) {
+    await writeJob({ ...job, dbRecordId });
+  }
+
+  return { jobId, dbRecordId };
 }
 
-/** 异步执行深度研报（fire-and-forget，不阻塞响应） */
+/** 异步执行全景战报（fire-and-forget，不阻塞响应） */
 export async function runDeepResearchAsync(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return;
@@ -131,9 +193,16 @@ export async function runDeepResearchAsync(jobId: string) {
     "✍️ 正在撰写万字商业白皮书，请稍候…",
   ];
 
+  const updateProgress = async (progress: string, status: "running" | "completed" | "failed" = "running") => {
+    const latest = (await readJob(jobId)) ?? job;
+    await writeJob({ ...latest, status, progress });
+    if (latest.dbRecordId) {
+      await dbUpdateRecord(latest.dbRecordId, status, progress);
+    }
+  };
+
   try {
-    // 更新状态：运行中
-    await writeJob({ ...job, status: "running", progress: stages[0] });
+    await updateProgress(stages[0]);
 
     const prompt = `你是一个由哈佛商学院战略顾问、顶尖社媒运营专家和行业数据分析师组成的商业智库团队。
 
@@ -181,39 +250,65 @@ ${job.topic}
 
 要求：每个章节不少于 400 字，论据充分，数据具体，语言专业且有煽动力，让读者看完有立刻行动的冲动。`;
 
-    await writeJob({ ...job, status: "running", progress: stages[1] });
+    await updateProgress(stages[1]);
     await sleep(2000);
-    await writeJob({ ...job, status: "running", progress: stages[2] });
+    await updateProgress(stages[2]);
 
     const reportMarkdown = await generate("gemini-2.5-pro", prompt);
 
-    await writeJob({ ...job, status: "running", progress: stages[3] });
+    await updateProgress(stages[3]);
 
     if (!reportMarkdown || reportMarkdown.length < 500) {
       throw new Error("战报内容过短，可能生成失败");
     }
 
-    // 完成，写入结果（重新读取最新 job 避免覆盖中间进度）
-    const latestJob = (await readJob(jobId)) ?? job;
+    // 完成：写 Fly 磁盘
+    const latest = (await readJob(jobId)) ?? job;
     await writeJob({
-      ...latestJob,
+      ...latest,
       status: "completed",
       progress: "✅ 全景战报生成完毕，可在下方查阅",
       reportMarkdown,
       completedAt: new Date().toISOString(),
     });
 
+    // 完成：写 Neon DB
+    if (latest.dbRecordId) {
+      try {
+        const { db, userCreations } = await getDbAndSchema();
+        if (db) {
+          const { eq } = await import("drizzle-orm");
+          await db.update(userCreations)
+            .set({
+              status: "completed",
+              metadata: JSON.stringify({
+                topic: job.topic,
+                jobId,
+                progress: "✅ 全景战报生成完毕",
+                reportMarkdown,
+              }),
+              updatedAt: new Date(),
+            })
+            .where(eq(userCreations.id, latest.dbRecordId));
+        }
+      } catch (e: any) {
+        console.warn("[deepResearch] DB 写入完成状态失败:", e?.message);
+      }
+    }
+
     console.log(`[deepResearch] ✅ 任务 ${jobId} 完成，字符数: ${reportMarkdown.length}`);
 
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
-    // 重新读取避免用过时的 job 对象覆盖
-    const latestJob = (await readJob(jobId)) ?? job;
+    const latest = (await readJob(jobId)) ?? job;
     await writeJob({
-      ...latestJob,
+      ...latest,
       status: "failed",
       error: err?.message || "未知错误",
       progress: "❌ 战报生成失败，积分已退回",
     });
+    if (latest.dbRecordId) {
+      await dbUpdateRecord(latest.dbRecordId, "failed", "❌ 战报生成失败，积分已退回", undefined, err?.message || "未知错误");
+    }
   }
 }
