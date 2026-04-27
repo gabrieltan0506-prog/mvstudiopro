@@ -9,7 +9,7 @@ export async function callGemma4(prompt: string): Promise<string> {
   if (!raw) throw new Error("missing_GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
   // 优先直接解析（env var 是合法 JSON 时）；
-  // 若 private_key 含真实换行（Fly secrets 注入方式），则用正则修复后再解析
+  // 若 private_key 含真实换行（部分部署方式），则用正则修复后再解析
   let sa: any;
   try {
     sa = JSON.parse(raw);
@@ -20,6 +20,10 @@ export async function callGemma4(prompt: string): Promise<string> {
     );
     sa = JSON.parse(fixed);
   }
+
+  // 强制修复私钥换行：确保 \n 是真实换行，而非字面量两字符
+  // 无论 env var 如何注入，签名前都做这一步保证 OpenSSL 可以读取
+  const privateKey = String(sa.private_key || "").replace(/\\n/g, "\n");
 
   const now = Math.floor(Date.now() / 1000);
   const hdr = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
@@ -33,7 +37,7 @@ export async function callGemma4(prompt: string): Promise<string> {
 
   const sign = createSign("RSA-SHA256");
   sign.update(`${hdr}.${pay}`);
-  const sig = sign.sign(sa.private_key).toString("base64url");
+  const sig = sign.sign(privateKey).toString("base64url");
 
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
