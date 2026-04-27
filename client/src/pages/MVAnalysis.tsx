@@ -1598,6 +1598,24 @@ export default function MVAnalysisPage() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [analysisMode, setAnalysisMode] = useState<"GROWTH" | "REMIX">("GROWTH");
 
+  // 竞品分析调研
+  const [showResearch, setShowResearch] = useState(false);
+  const [researchPlatform, setResearchPlatform] = useState<"douyin" | "kuaishou" | "xiaohongshu" | "bilibili">("douyin");
+  const [researchInput, setResearchInput] = useState("");
+  const [researchResult, setResearchResult] = useState<any>(null);
+  const [showResearchGuide, setShowResearchGuide] = useState(false);
+  const researchMutation = trpc.competitorResearch.run.useMutation({
+    onSuccess: (res) => {
+      if (res.ok) {
+        setResearchResult(res.strategy);
+      }
+    },
+    onError: (err) => {
+      const { toast } = require("sonner");
+      toast.error(err.message || "调研失败，请重试");
+    },
+  });
+
   const inferRemixLayoutFromAnalysis = useCallback((a: AnalysisResult | null | undefined) => {
     if (!a) return false;
     if (a.mode === "REMIX") return true;
@@ -3032,6 +3050,14 @@ export default function MVAnalysisPage() {
             <div className="rounded-full border border-[#ff8a3d]/30 bg-[#ff8a3d]/10 px-3 py-1 text-sm text-[#ffb37f]">
               Creator Growth Camp
             </div>
+            <button
+              type="button"
+              onClick={() => setShowResearch((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#a78bfa]/30 bg-[#a78bfa]/10 px-3 py-1 text-sm font-semibold text-[#c4b5fd] transition hover:bg-[#a78bfa]/20"
+            >
+              <ScanSearch className="h-3.5 w-3.5" />
+              竞品分析调研
+            </button>
           </div>
         </div>
 
@@ -3050,6 +3076,138 @@ export default function MVAnalysisPage() {
                     {line}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── 竞品分析调研面板 ── */}
+        {showResearch && (
+          <div className="mb-8 rounded-2xl border border-[#a78bfa]/20 bg-[rgba(20,10,45,0.85)] p-6 shadow-[0_0_40px_rgba(167,139,250,0.08)]">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-[#c4b5fd]">🔍 竞品分析调研</h2>
+                <p className="mt-0.5 text-xs text-white/40">Gemma 4 31B 底层扫描 × Gemini 3.1 Pro 战略处方 · 单次扣除 20 点</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowResearchGuide((v) => !v)}
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/50 hover:text-white/80"
+              >
+                ⓘ 使用说明
+              </button>
+            </div>
+
+            {showResearchGuide && (
+              <div className="mb-5 rounded-xl border border-[#a78bfa]/15 bg-[#a78bfa]/5 p-4 text-xs leading-relaxed text-white/70">
+                <p className="mb-2 font-semibold text-[#c4b5fd]">📘 多平台双引擎调研指南</p>
+                <p className="mb-1"><span className="text-white/90">第一步：</span>选择战场 — 切换平台，AI 自动适配对应算法模型</p>
+                <p className="mb-1"><span className="text-white/90">第二步：</span>输入情报 — 粘贴竞品链接、爆款标题或对手账号描述</p>
+                <p className="mb-1"><span className="text-white/90">第三步：</span>点击「执行深度调研」，扣除 20 点，等待约 30-40 秒</p>
+                <p className="mb-3"><span className="text-white/90">第四步：</span>获取完整处方 — 流量钩子拆解、差异化人设、执行脚本</p>
+                <blockquote className="border-l-2 border-[#a78bfa]/40 pl-3 italic text-white/50">「不要用你的体力，去挑战对手的数据力。」</blockquote>
+              </div>
+            )}
+
+            <div className="mb-4 flex flex-wrap gap-2">
+              {(["douyin", "kuaishou", "xiaohongshu", "bilibili"] as const).map((p) => {
+                const labels: Record<string, string> = { douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", bilibili: "B站" };
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setResearchPlatform(p)}
+                    className={`rounded-full border px-4 py-1.5 text-sm font-semibold transition ${researchPlatform === p ? "border-[#a78bfa]/60 bg-[#a78bfa]/20 text-[#c4b5fd]" : "border-white/10 bg-white/5 text-white/50 hover:bg-white/10"}`}
+                  >
+                    {labels[p]}
+                  </button>
+                );
+              })}
+            </div>
+
+            <textarea
+              value={researchInput}
+              onChange={(e) => setResearchInput(e.target.value)}
+              placeholder="粘贴竞品链接、爆款标题、账号描述或内容截图文字…"
+              rows={5}
+              className="w-full resize-none rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white placeholder-white/25 outline-none focus:border-[#a78bfa]/40"
+            />
+
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                disabled={researchMutation.isPending || !researchInput.trim()}
+                onClick={() => {
+                  if (!window.confirm(`执行「${({douyin:"抖音",kuaishou:"快手",xiaohongshu:"小红书",bilibili:"B站"})[researchPlatform]}」深度调研将扣除 20 点，确定继续？`)) return;
+                  setResearchResult(null);
+                  researchMutation.mutate({ platform: researchPlatform, competitorData: researchInput });
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#a78bfa] px-5 py-2.5 text-sm font-bold text-white shadow-lg transition hover:brightness-110 disabled:opacity-50"
+              >
+                {researchMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" />分析中（约 30-40 秒）…</> : <><Rocket className="h-4 w-4" />执行深度调研（20点）</>}
+              </button>
+              {researchResult && (
+                <button type="button" onClick={() => setResearchResult(null)} className="text-xs text-white/30 hover:text-white/60">清除结果</button>
+              )}
+            </div>
+
+            {researchResult && (
+              <div className="mt-6 space-y-4 text-sm text-white/85">
+                {researchResult.raw ? (
+                  <pre className="whitespace-pre-wrap rounded-xl bg-black/30 p-4 text-xs">{researchResult.raw}</pre>
+                ) : (
+                  <>
+                    {researchResult.positioning && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div className="mb-2 font-bold text-[#c4b5fd]">🎯 差异化人设定位</div>
+                        <p className="leading-relaxed text-white/75">{typeof researchResult.positioning === "string" ? researchResult.positioning : JSON.stringify(researchResult.positioning, null, 2)}</p>
+                      </div>
+                    )}
+                    {Array.isArray(researchResult.scripts) && researchResult.scripts.length > 0 && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div className="mb-3 font-bold text-[#c4b5fd]">✍️ 内容执行脚本</div>
+                        <div className="space-y-3">
+                          {researchResult.scripts.map((s: any, i: number) => (
+                            <div key={i} className="rounded-lg bg-black/20 p-3">
+                              <div className="font-semibold text-white">{i + 1}. {s.title}</div>
+                              {s.hook && <div className="mt-1 text-xs text-[#a78bfa]">开场钩子：{s.hook}</div>}
+                              {s.copywriting && <div className="mt-1 text-xs text-white/60">{s.copywriting}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {researchResult.visuals && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div className="mb-2 font-bold text-[#c4b5fd]">🎨 视觉排版指引</div>
+                        {Array.isArray(researchResult.visuals.colorPalette) && (
+                          <div className="mb-2 flex gap-2">
+                            {researchResult.visuals.colorPalette.map((c: string, i: number) => (
+                              <div key={i} className="flex items-center gap-1.5">
+                                <div className="h-5 w-5 rounded-full border border-white/20" style={{ background: c }} />
+                                <span className="text-xs text-white/60">{c}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {researchResult.visuals.typography && <p className="text-xs text-white/60">字体：{researchResult.visuals.typography}</p>}
+                        {researchResult.visuals.layoutGuide && <p className="mt-1 text-xs text-white/60">构图：{researchResult.visuals.layoutGuide}</p>}
+                      </div>
+                    )}
+                    {researchResult.publishStrategy && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div className="mb-2 font-bold text-[#c4b5fd]">📅 发布节奏策略</div>
+                        <p className="text-xs leading-relaxed text-white/70">{typeof researchResult.publishStrategy === "string" ? researchResult.publishStrategy : JSON.stringify(researchResult.publishStrategy, null, 2)}</p>
+                      </div>
+                    )}
+                    {researchResult.growthPlan30Days && (
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                        <div className="mb-2 font-bold text-[#c4b5fd]">🚀 30天增长路径</div>
+                        <p className="text-xs leading-relaxed text-white/70">{typeof researchResult.growthPlan30Days === "string" ? researchResult.growthPlan30Days : JSON.stringify(researchResult.growthPlan30Days, null, 2)}</p>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -3309,7 +3467,7 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
               </div>
 
               <div className="mt-5">

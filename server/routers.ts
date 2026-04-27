@@ -5573,6 +5573,129 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
+  /** 竞品分析调研 — 双阶段 LLM + Fly 存储 + GitHub 备份 */
+  competitorResearch: router({
+    run: protectedProcedure
+      .input(z.object({
+        platform: z.enum(["douyin", "kuaishou", "xiaohongshu", "bilibili"]),
+        competitorData: z.string().min(1).max(8000),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const COST = 20;
+        const PLATFORM_LABEL: Record<string, string> = {
+          douyin: "抖音", kuaishou: "快手", xiaohongshu: "小红书", bilibili: "B站"
+        };
+        const label = PLATFORM_LABEL[input.platform] || input.platform;
+
+        // 1. 扣费
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, COST, "competitorResearch", `${label}竞品调研（20点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${COST} 点，请充值` });
+        }
+
+        let stage1Raw = "";
+        let strategy: any = null;
+
+        const extractText = (res: Awaited<ReturnType<typeof invokeLLM>>) =>
+          String(res?.choices?.[0]?.message?.content ?? "");
+
+        try {
+          // 2. Stage 1: Gemma 4 31B IT — 底层视觉与流量特征扫描
+          const stage1Res = await invokeLLM({
+            provider: "vertex" as const,
+            modelName: "gemma-4-31b-it",
+            temperature: 0.2,
+            messages: [
+              {
+                role: "user",
+                content: `你是一位顶级内容策略师。请对以下${label}竞品内容进行深度扫描，提炼：
+1. 爆款逻辑拆解（流量钩子、情绪触发点、内容结构）
+2. 视觉风格特征（色调、排版、封面设计模式）
+3. 受众画像与算法适配特征
+4. 高频词汇与标签矩阵
+
+竞品数据：${input.competitorData}
+
+输出格式：JSON，字段：hookLogic, visualStyle, audienceProfile, keywordMatrix, topPatterns`,
+              },
+            ],
+          });
+          stage1Raw = extractText(stage1Res);
+
+          // 3. Stage 2: gemini-3.1-pro-preview — 战略处方生成
+          const stage2Res = await invokeLLM({
+            provider: "vertex" as const,
+            modelName: "gemini-3.1-pro-preview",
+            temperature: 0.5,
+            messages: [
+              {
+                role: "user",
+                content: `你是一位整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师。
+
+基于以下竞品扫描报告：
+${stage1Raw}
+
+请为创作者生成一份完整的「降维打击」竞争处方，包含：
+1. **差异化人设定位**：与竞品的核心差距和突破口
+2. **内容执行脚本**：3个可立即使用的爆款标题+开场钩子
+3. **视觉排版指引**：推荐色卡（3色）、封面构图建议、字体风格
+4. **发布节奏策略**：最优发布时间、频次、话题标签
+5. **30天增长路径**：分阶段行动清单
+
+输出格式：结构化JSON，字段：positioning, scripts(数组，每个含title/hook/copywriting), visuals(含colorPalette数组/typography/layoutGuide), publishStrategy, growthPlan30Days`,
+              },
+            ],
+          });
+          const stage2Text = extractText(stage2Res);
+          strategy = (() => {
+            try { return JSON.parse(stage2Text.replace(/```json\n?|\n?```/g, "")); } catch { return { raw: stage2Text }; }
+          })();
+          strategy.platform = input.platform;
+          strategy.platformLabel = label;
+          strategy.generatedAt = new Date().toISOString();
+
+        } catch (e: any) {
+          // LLM 失败，退回积分
+          try { await refundCredits(userId, COST, `${label}竞品调研·LLM失败·退回`); } catch {}
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，已退回积分" });
+        }
+
+        // 4. Fly 本地持久化存储
+        try {
+          const { mkdir, writeFile } = await import("fs/promises");
+          const { join } = await import("path");
+          const dir = "/data/research_logs";
+          await mkdir(dir, { recursive: true });
+          const filename = join(dir, `res_${input.platform}_${Date.now()}_u${userId}.json`);
+          await writeFile(filename, JSON.stringify({ userId, platform: input.platform, stage1Raw, strategy, timestamp: new Date() }, null, 2));
+
+          // 5. GitHub 自动 push（fire-and-forget，需要 GITHUB_TOKEN）
+          const ghToken = String(process.env.GITHUB_TOKEN || "").trim();
+          if (ghToken) {
+            const { exec } = await import("child_process");
+            exec(
+              `cd /data/research_logs && git config user.email "bot@mvstudiopro.com" && git config user.name "MVBot" && git add . && git commit -m "Research Backup u${userId} ${input.platform}" && git push https://x-token:${ghToken}@github.com/gabrieltan0506-prog/mvstudiopro.git HEAD:main 2>&1 || true`,
+              { timeout: 30000 },
+              (err, stdout, stderr) => {
+                if (err) console.error("[competitorResearch] git push failed:", stderr || err.message);
+                else console.log("[competitorResearch] git push ok:", stdout.slice(0, 100));
+              }
+            );
+          }
+        } catch (e: any) {
+          console.error("[competitorResearch] storage error (non-fatal):", e?.message);
+        }
+
+        return { ok: true as const, strategy, creditsUsed: deductResult.source === "admin" ? 0 : COST };
+      }),
+  }),
+
 });
 
 export type AppRouter = typeof appRouter;
