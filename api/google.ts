@@ -368,7 +368,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
         body: JSON.stringify({
           instances:[{ prompt, image:{ bytesBase64Encoded: img.b64, mimeType: img.mimeType } }],
-          parameters:{ aspectRatio, resolution, durationSeconds, generateAudio:false, upscale:false }
+          parameters:{ aspectRatio, resolution, durationSeconds, generateAudio:true, upscale:false }
         })
       });
 
