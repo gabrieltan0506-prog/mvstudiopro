@@ -32,6 +32,7 @@ const SupervisorAccess = lazy(() => import("./pages/SupervisorAccess"));
 const MyWorks = lazy(() => import("./pages/MyWorks"));
 const AnalysisView = lazy(() => import("./pages/AnalysisView"));
 const ResearchPage = lazy(() => import("./pages/ResearchPage"));
+const GodViewPage = lazy(() => import("./pages/GodViewPage"));
 
 function PageLoader() {
   return (
@@ -81,6 +82,7 @@ function Router() {
         <Route path={"/my-works"} component={MyWorks} />
         <Route path={"/my-works/:id"} component={AnalysisView} />
         <Route path={"/research"} component={ResearchPage} />
+        <Route path={"/god-view"} component={GodViewPage} />
         <Route path={"/login"} component={Login} />
 
         <Route path={"/404"} component={NotFound} />

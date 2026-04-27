@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search } from "lucide-react";
+import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown } from "lucide-react";
 
 // ─── 固定置顶卡片（竞品分析，永久显示） ───────────────────────────────
 const PINNED_CARD = {
@@ -208,6 +208,43 @@ export default function HomeFeatureCarousel() {
           </span>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>最新上线与核心亮点</span>
         </div>
+
+        {/* ── 固定卡片：AI 上帝视角（黑金 VIP） ── */}
+        <a href="/god-view" style={{ display: "block", textDecoration: "none", marginBottom: 16 }}>
+          <div style={{ position: "relative", overflow: "hidden", borderRadius: 20, background: "linear-gradient(135deg, #0e0800 0%, #1a1000 50%, #0a0600 100%)", border: "1px solid rgba(180,130,0,0.45)", boxShadow: "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)", padding: "28px 28px 24px", cursor: "pointer", transition: "border-color 0.3s, box-shadow 0.3s" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(245,200,80,0.75)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 0 60px rgba(200,160,0,0.28), inset 0 0 60px rgba(200,160,0,0.06)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(180,130,0,0.45)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 0 40px rgba(200,160,0,0.15), inset 0 0 60px rgba(200,160,0,0.04)"; }}
+          >
+            {/* 背景光晕 */}
+            <div style={{ position: "absolute", top: -60, right: -60, width: 220, height: 220, borderRadius: "50%", background: "radial-gradient(circle, rgba(200,160,0,0.18) 0%, transparent 70%)", filter: "blur(30px)", pointerEvents: "none" }} />
+            <div style={{ position: "absolute", bottom: -40, left: "30%", width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle, rgba(160,100,0,0.12) 0%, transparent 70%)", filter: "blur(40px)", pointerEvents: "none" }} />
+            <div style={{ position: "relative", zIndex: 1 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+                <div style={{ width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg,#c8a000,#7a5c00)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 24px rgba(200,160,0,0.4)", flexShrink: 0 }}>
+                  <Crown size={24} color="#fff" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 10, fontWeight: 900, color: "#0a0600", background: "linear-gradient(90deg,#f5c842,#c8a000)", borderRadius: 99, padding: "3px 10px", letterSpacing: "0.08em", textTransform: "uppercase" }}>👑 VIP 专享 · 算力巅峰</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(239,68,68,0.9)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 99, padding: "2px 8px" }}>首次 4000 点</span>
+                  </div>
+                  <h3 style={{ fontSize: 22, fontWeight: 900, background: "linear-gradient(90deg,#f5c842,#ffd878,#c8a000)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: "0 0 8px", letterSpacing: "-0.01em" }}>
+                    AI 上帝视角：全景行业战报
+                  </h3>
+                  <p style={{ color: "rgba(245,218,150,0.65)", fontSize: 13, lineHeight: 1.75, margin: "0 0 14px", maxWidth: 680 }}>
+                    停止在信息泥潭中盲目试错。「核武级商业智库」，具备极限算力，深入全网解剖社媒爆款底层逻辑与头部变现链路，为您输出一份降维打击的<strong style={{ color: "#f5c842" }}>【专属商业战报】</strong>。穿透赛道迷雾，锁定商业胜率，从宏观趋势前瞻到微观私域留存，交付极具深度的商业全景图鉴。
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    {["宏观趋势前瞻", "竞品变现拆解", "30天行动清单", "私域留存路径"].map((t) => (
+                      <span key={t} style={{ fontSize: 11, fontWeight: 700, color: "rgba(245,200,80,0.7)", background: "rgba(180,130,0,0.12)", border: "1px solid rgba(180,130,0,0.28)", borderRadius: 99, padding: "3px 10px" }}>{t}</span>
+                    ))}
+                    <span style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>异步推演 · 约 15-20 分钟</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </a>
 
         {/* ── 固定卡片：竞品与对标分析 ── */}
         <FeatureCard card={PINNED_CARD as any} />

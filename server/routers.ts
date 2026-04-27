@@ -5573,6 +5573,67 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
+  /** AI 上帝视角：全景行业战报 — 脱机异步重算力推演 */
+  deepResearch: router({
+    launch: protectedProcedure
+      .input(z.object({
+        topic: z.string().min(5).max(1000),
+        isFirstTime: z.boolean().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const COST_FULL = 4900;
+        const COST_FIRST = 4000;
+        const cost = input.isFirstTime ? COST_FIRST : COST_FULL;
+
+        // 1. 扣费
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `AI上帝视角全景战报（${cost}点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
+        }
+
+        // 2. 创建任务（同步写入 Fly 磁盘，立即返回 jobId）
+        let jobId: string;
+        try {
+          const { createDeepResearchJob, runDeepResearchAsync } = await import("./services/deepResearchService");
+          jobId = await createDeepResearchJob(String(userId), input.topic);
+          // fire-and-forget：异步执行，不阻塞响应
+          runDeepResearchAsync(jobId).catch(async (err) => {
+            console.error("[deepResearch] 异步任务异常，尝试退款:", err?.message);
+            try { await refundCredits(userId, cost, `上帝视角研报·异步失败·退回`); } catch {}
+          });
+        } catch (e: any) {
+          try { await refundCredits(userId, cost, `上帝视角研报·启动失败·退回`); } catch {}
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
+        }
+
+        return { ok: true as const, jobId, creditsUsed: deductResult.source === "admin" ? 0 : cost };
+      }),
+
+    status: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ input, ctx }) => {
+        const { readJob } = await import("./services/deepResearchService");
+        const job = await readJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
+        return {
+          jobId: job.jobId,
+          status: job.status,
+          progress: job.progress || "",
+          reportMarkdown: job.reportMarkdown || null,
+          error: job.error || null,
+          createdAt: job.createdAt,
+          completedAt: job.completedAt || null,
+        };
+      }),
+  }),
+
   /** 竞品分析调研 — 双阶段 LLM + Fly 存储 + GitHub 备份 */
   competitorResearch: router({
     run: protectedProcedure
