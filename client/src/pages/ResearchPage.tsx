@@ -128,7 +128,8 @@ export default function ResearchPage() {
           <h3 style="color:#f5a800;margin:0 0 10px">🎬 镜头 ${sc.sceneNumber}</h3>
           <p style="color:#e8d5b0;line-height:1.8;margin:0 0 10px">${esc(sc.copywriting)}</p>
           ${sc.visualPrompt ? `<p style="font-size:12px;color:#7eb8d4;font-family:monospace;margin:0 0 6px"><b>🎨 生图提示词：</b>${esc(sc.visualPrompt)}</p>` : ""}
-          ${sc.audioPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 音效指令：</b>${esc(sc.audioPrompt)}</p>` : ""}
+          ${sc.audioPrompt ? `<p style="font-size:12px;color:#f97316;margin:0 0 6px"><b>🗣️ 口播台词&拟音（Veo）：</b>${esc(sc.audioPrompt)}</p>` : ""}
+          ${sc.bgmPrompt ? `<p style="font-size:12px;color:#e8c87a;margin:0"><b>🎵 BGM战略（Suno）：</b>${esc(sc.bgmPrompt)}</p>` : ""}
         </div>`).join("") : "";
 
     const scriptsHtml = !Array.isArray(result.scenes) && Array.isArray(result.scripts)
@@ -535,13 +536,14 @@ export default function ResearchPage() {
   );
 }
 
-// ── 多场景分镜制片台：文案 + 音效提示词（可编辑）+ 生成参考图 + 视频 ──
+// ── 多场景分镜制片台：文案 + 口播拟音（Veo）+ BGM战略（Suno）+ 参考图 + 视频 ──
 function SceneVideoCard({ scene, index, platform }: {
-  scene: { sceneNumber: number; copywriting: string; visualPrompt: string; audioPrompt: string };
+  scene: { sceneNumber: number; copywriting: string; visualPrompt: string; audioPrompt: string; bgmPrompt?: string };
   index: number;
   platform: string;
 }) {
   const [audioPrompt, setAudioPrompt] = useState(scene.audioPrompt || "");
+  const [bgmPrompt, setBgmPrompt] = useState(scene.bgmPrompt || "");
   const [visualPrompt, setVisualPrompt] = useState(scene.visualPrompt || `${platform} platform viral content cover, vertical 9:16, high contrast, professional blogger style`);
   const [genBusy, setGenBusy] = useState(false);
   const [upscaleBusy, setUpscaleBusy] = useState(false);
@@ -597,7 +599,8 @@ function SceneVideoCard({ scene, index, platform }: {
   }
 
   async function generateBgm() {
-    if (!audioPrompt.trim()) { toast.error("请先填写 BGM 指令"); return; }
+    const sunoPrompt = bgmPrompt.trim() || audioPrompt.trim();
+    if (!sunoPrompt) { toast.error("请先填写 BGM 战略指令"); return; }
     bgmRunRef.current += 1;
     const runId = bgmRunRef.current;
     setBgmBusy(true);
@@ -607,7 +610,7 @@ function SceneVideoCard({ scene, index, platform }: {
       const create = await fetchJsonish("/api/jobs?op=aimusicSunoCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v5-5", gpt_description_prompt: audioPrompt }),
+        body: JSON.stringify({ task_type: "create_music", custom_mode: false, mv: "sonic-v5-5", gpt_description_prompt: sunoPrompt }),
       });
       const taskId = String(
         create?.json?.raw?.task_id || create?.json?.raw?.data?.task_id ||
@@ -656,12 +659,28 @@ function SceneVideoCard({ scene, index, platform }: {
     setVideoBusy(true);
     setVideoUrl("");
     try {
-      // Step 1: 创建 Veo 3.1 Pro 任务
+      // Step 1: 构造「视听对位」Veo 指令（口播对口型 + 拟音SFX，严格无BGM）
+      const veoPrompt = audioPrompt.trim()
+        ? `Animate this reference image into a professional cinematic short video.
+
+VISUAL: The main character MUST have perfect lip-sync. Their mouth, jaw, and facial muscles must move naturally and precisely in synchronization with every spoken syllable.
+
+AUDIO DIRECTION (character voice & sound effects ONLY — strictly NO background music):
+${audioPrompt}
+
+TECHNICAL REQUIREMENTS:
+1. Achieve Hollywood-grade lip-sync accuracy — every phoneme must match the mouth shape.
+2. Include realistic, immersive sound effects that match the scene's physical actions.
+3. If animals or cartoon characters are present, add their authentic vocalizations.
+4. Maintain stable camera with subtle cinematic motion.
+5. ABSOLUTELY NO background music or BGM — only character voice and action SFX.`
+        : "Animate this reference image into a cinematic 8-second short video with natural character motion, stable camera, and rich environmental sound effects. No background music.";
+
       const create = await fetchJsonish("/api/google?op=veoCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: audioPrompt || "Cinematic motion shot with stable camera and rich detail.",
+          prompt: veoPrompt,
           imageUrl: imageToUse,
           provider: "pro",
           durationSeconds: 8,
@@ -731,16 +750,42 @@ function SceneVideoCard({ scene, index, platform }: {
           />
         </div>
 
-        {/* 音效提示词（可编辑） */}
+        {/* 口播台词 + 动作拟音（传给 Veo，可编辑） */}
+        <div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(249,115,22,0.8)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
+            <Music size={11} />
+            🗣️ 口播台词 & 动作拟音（Veo 对口型 · 可修改）
+          </label>
+          <textarea
+            rows={3}
+            value={audioPrompt}
+            onChange={(e) => setAudioPrompt(e.target.value)}
+            placeholder="角色说的具体台词 + 动作音效描述，传入 Veo 实现精准对口型…"
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 13,
+              background: "rgba(0,0,0,0.3)", border: "1px solid rgba(249,115,22,0.22)",
+              color: "#fff", outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+              lineHeight: 1.6, resize: "vertical", transition: "border-color 0.2s",
+            }}
+            onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(249,115,22,0.55)"; }}
+            onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(249,115,22,0.22)"; }}
+          />
+          <p style={{ fontSize: 10, color: "rgba(249,115,22,0.45)", margin: "4px 0 0", fontStyle: "italic" }}>
+            ⚡ 此指令直接传入 Veo · 严格无BGM · 仅角色人声 + 动作音效
+          </p>
+        </div>
+
+        {/* BGM 背景音乐战略（预留给 Suno，不传给 Veo） */}
         <div>
           <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontWeight: 700, color: "rgba(251,191,36,0.7)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
             <Music size={11} />
-            BGM & 音效指令（可修改）
+            🎵 背景音乐战略（预留给 Suno · 可修改）
           </label>
           <input
             type="text"
-            value={audioPrompt}
-            onChange={(e) => setAudioPrompt(e.target.value)}
+            value={bgmPrompt}
+            onChange={(e) => setBgmPrompt(e.target.value)}
+            placeholder="BPM、曲风、情绪、乐器组合…（例：BPM 118，治愈钢琴+电子合成器）"
             style={{
               width: "100%", padding: "10px 14px", borderRadius: 10, fontSize: 13,
               background: "rgba(0,0,0,0.3)", border: "1px solid rgba(251,191,36,0.2)",
@@ -750,6 +795,9 @@ function SceneVideoCard({ scene, index, platform }: {
             onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.5)"; }}
             onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(251,191,36,0.2)"; }}
           />
+          <p style={{ fontSize: 10, color: "rgba(251,191,36,0.4)", margin: "4px 0 0", fontStyle: "italic" }}>
+            🎼 此战略仅供 Suno BGM 生成使用，不影响 Veo 视频渲染
+          </p>
         </div>
 
         {/* BGM 生成区 */}

@@ -51,7 +51,10 @@ export interface ResearchScene {
   sceneNumber: number;
   copywriting: string;
   visualPrompt: string;
+  /** 角色口播台词 + 动作拟音（直接传给 Veo，不含 BGM） */
   audioPrompt: string;
+  /** 背景音乐战略提示词（预留给 Suno，不传给 Veo） */
+  bgmPrompt: string;
 }
 
 export interface ResearchStrategy {
@@ -178,7 +181,7 @@ ${platformContext}
   console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
   const stage2Raw = await generate(
     "gemini-3.1-pro-preview",
-    `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时兼任顶级音效导演。
+    `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
 【竞品扫描报告（Stage 1）】
 ${stage1Raw}
@@ -193,7 +196,8 @@ ${platformContext}
       "sceneNumber": 1,
       "copywriting": "【开场钩子】完整文案内容，融合平台高频热词，强情绪触发...",
       "visualPrompt": "高保真参考图生图指令：场景描述、光线、构图、风格、色调（英文优先，50字以内）",
-      "audioPrompt": "BGM与音效导演指令：描述此场景的背景音乐风格、节奏、具体音效（如：紧张心跳声+赛博朋克合成器，BPM 120）"
+      "audioPrompt": "【仅限角色口播台词与动作拟音，严禁包含背景音乐】角色说出的具体台词 + 场景动作音效描述（例如：角色说'三秒见效，不信你试'，随后听到清脆的点击声和轻微的心跳加速音效）",
+      "bgmPrompt": "【背景音乐战略，预留给 Suno 使用，不传给 Veo】BPM、曲风、情绪、乐器组合（例如：BPM 118，治愈系钢琴+低频电子合成器，情绪：从紧张到释然的弧线）"
     }
   ],
   "visuals": {
@@ -205,10 +209,12 @@ ${platformContext}
   "growthPlan30Days": "分阶段30天行动清单"
 }
 
-要求：
-- scenes 数组动态生成 3 到 5 个场景，根据内容长短决定
-- 每个场景的 audioPrompt 必须具体且专业，直接可用于音效制作
-- 每个场景的 visualPrompt 必须是英文生图提示词，可直接输入 Midjourney/DALL-E
+核心要求（必须严格遵守）：
+- audioPrompt 与 bgmPrompt 必须完全分离，audioPrompt 只包含角色人声+动作音效，bgmPrompt 只包含背景音乐战略
+- 每个场景 audioPrompt 需含具体可朗读的台词文本，以确保 Veo 能实现精准对口型
+- 每个场景 bgmPrompt 需含 BPM 数字、曲风关键词、情绪弧线，确保 Suno 可直接使用
+- scenes 数组生成 3 到 5 个场景
+- visualPrompt 必须为英文生图提示词
 - 优先使用平台实时高频标签和热词
 - 严格 JSON 格式，不要输出 JSON 之外的任何内容`,
   );
