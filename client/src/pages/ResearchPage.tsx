@@ -424,13 +424,13 @@ function SceneVideoCard({ scene, index, platform }: {
     setOrigUrl("");
     setHdUrl("");
     try {
-      const r = await fetchJsonish("/api/jobs?op=bananaGenerate", {
+      const r = await fetchJsonish("/api/google?op=nanoImage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: effectiveVisualPrompt, numImages: 1, aspectRatio: "9:16" }),
+        body: JSON.stringify({ prompt: effectiveVisualPrompt, tier: "pro", aspectRatio: "9:16", numberOfImages: 1 }),
       });
       const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
-      if (!url) throw new Error(r?.json?.error || "生成失败");
+      if (!url || !r.ok) throw new Error(r?.json?.error || r?.json?.raw?.error?.message || "生成失败");
       setOrigUrl(url);
     } catch (e: any) {
       toast.error(`参考图生成失败：${e?.message}`);
@@ -511,23 +511,44 @@ function SceneVideoCard({ scene, index, platform }: {
   }
 
   async function generateVideo() {
+    const imageToUse = hdUrl || origUrl;
+    if (!imageToUse) { toast.error("请先生成参考图，再生成视频"); return; }
     const isFirst = !localStorage.getItem(VIDEO_FIRST_USE_KEY);
     const cost = isFirst ? 80 : 99;
     if (!window.confirm(`生成镜头 ${index + 1} 的视频将扣除 ${cost} 点${isFirst ? "（首次体验优惠价）" : ""}，确定继续？`)) return;
     setVideoBusy(true);
     setVideoUrl("");
     try {
-      const imageToUse = hdUrl || origUrl;
-      const r = await fetchJsonish("/api/jobs?op=klingI2V", {
+      // Step 1: 创建 Veo 3.1 Pro 任务
+      const create = await fetchJsonish("/api/google?op=veoCreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: imageToUse, prompt: audioPrompt, platform, credits: cost }),
+        body: JSON.stringify({
+          prompt: audioPrompt || "Cinematic motion shot with stable camera and rich detail.",
+          imageUrl: imageToUse,
+          provider: "pro",
+          durationSeconds: 8,
+          aspectRatio: "9:16",
+          resolution: "720p",
+        }),
       });
-      if (!r.ok) throw new Error(r.json?.error || "视频生成失败");
-      const url = String(r.json?.videoUrl || r.json?.url || "").trim();
-      if (!url) throw new Error("未获得视频链接");
-      localStorage.setItem(VIDEO_FIRST_USE_KEY, "1");
-      setVideoUrl(url);
+      const taskId = String(create?.json?.taskId || "").trim();
+      if (!create.ok || !taskId) throw new Error(create?.json?.error || "Veo 任务创建失败");
+
+      // Step 2: 轮询结果（2.5s 间隔，最多 120 次 ≈ 5 分钟）
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const poll = await fetchJsonish(`/api/google?op=veoTask&provider=pro&taskId=${encodeURIComponent(taskId)}`);
+        const status = String(poll?.json?.status || "");
+        const url = String(poll?.json?.videoUrl || "").trim();
+        if (url) {
+          localStorage.setItem(VIDEO_FIRST_USE_KEY, "1");
+          setVideoUrl(url);
+          return;
+        }
+        if (status === "failed") throw new Error("Veo 渲染失败，请重试");
+      }
+      throw new Error("Veo 生成超时（超过5分钟），请重试");
     } catch (e: any) {
       toast.error(`视频生成失败：${e?.message}`);
     } finally {
@@ -641,7 +662,7 @@ function SceneVideoCard({ scene, index, platform }: {
             </button>
           )}
 
-          <VideoButton videoBusy={videoBusy} onGenerate={generateVideo} />
+          <VideoButton videoBusy={videoBusy} hasImage={!!(hdUrl || origUrl)} onGenerate={generateVideo} />
         </div>
 
         {/* 图片对比区：原图左 / 高清右 */}
@@ -688,21 +709,23 @@ function SceneVideoCard({ scene, index, platform }: {
 }
 
 // ── 视频生成按钮（动态显示首次/后续积分） ───────────────────────────
-function VideoButton({ videoBusy, onGenerate }: { videoBusy: boolean; onGenerate: () => void }) {
+function VideoButton({ videoBusy, hasImage, onGenerate }: { videoBusy: boolean; hasImage: boolean; onGenerate: () => void }) {
   const [isFirst, setIsFirst] = useState(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
   useEffect(() => {
     setIsFirst(!localStorage.getItem(VIDEO_FIRST_USE_KEY));
   }, [videoBusy]);
   const cost = isFirst ? 80 : 99;
+  const disabled = videoBusy || !hasImage;
   return (
     <button
       onClick={onGenerate}
-      disabled={videoBusy}
-      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: videoBusy ? "rgba(249,115,22,0.06)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.35)", color: videoBusy ? "rgba(249,115,22,0.4)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: videoBusy ? "not-allowed" : "pointer", marginLeft: "auto", position: "relative" }}
+      disabled={disabled}
+      title={!hasImage ? "请先生成参考图" : undefined}
+      style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: disabled ? "rgba(249,115,22,0.04)" : "linear-gradient(135deg, rgba(249,115,22,0.25), rgba(234,88,12,0.2))", border: "1px solid rgba(249,115,22,0.25)", color: disabled ? "rgba(249,115,22,0.3)" : "#fb923c", fontSize: 12, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", marginLeft: "auto", position: "relative" }}
     >
       {videoBusy ? <Loader2 size={12} className="animate-spin" /> : <Video size={12} />}
-      {videoBusy ? "渲染中（约1分钟）…" : `生成此镜视频（${cost}点）`}
-      {isFirst && !videoBusy && (
+      {videoBusy ? "Veo 3.1 渲染中…" : !hasImage ? "生成视频（先生成参考图）" : `生成此镜视频（${cost}点）`}
+      {isFirst && !disabled && (
         <span style={{ position: "absolute", top: -8, right: -4, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 5px", letterSpacing: 0 }}>首次优惠</span>
       )}
     </button>
@@ -733,13 +756,13 @@ function ScriptImageCard({ index, script, platform, platformLabel }: {
     setOrigUrl("");
     setHdUrl("");
     try {
-      const r = await fetchJsonish("/api/jobs?op=bananaGenerate", {
+      const r = await fetchJsonish("/api/google?op=nanoImage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: imagePrompt, numImages: 1, aspectRatio: "9:16" }),
+        body: JSON.stringify({ prompt: imagePrompt, tier: "pro", aspectRatio: "9:16", numberOfImages: 1 }),
       });
       const url = String(r?.json?.imageUrl || r?.json?.imageUrls?.[0] || "").trim();
-      if (!url) throw new Error(r?.json?.error || "生成失败");
+      if (!url || !r.ok) throw new Error(r?.json?.error || r?.json?.raw?.error?.message || "生成失败");
       setOrigUrl(url);
     } catch (e: any) {
       toast.error(`参考图生成失败：${e?.message}`);
