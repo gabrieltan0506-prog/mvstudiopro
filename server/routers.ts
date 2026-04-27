@@ -5573,7 +5573,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
-  /** AI 上帝视角：全景行业战报 — 脱机异步重算力推演 */
+  /** AI 上帝视角：全息行业研报 — 脱机异步重算力推演 */
   deepResearch: router({
     launch: protectedProcedure
       .input(z.object({
@@ -5589,7 +5589,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         // 1. 扣费
         let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
         try {
-          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `AI上帝视角全景战报（${cost}点）`);
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `AI上帝视角全息研报（${cost}点）`);
         } catch (e: any) {
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
         }
@@ -5597,11 +5597,14 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
         }
 
-        // 2. 创建任务（同步写入 Fly 磁盘，立即返回 jobId）
+        // 2. 创建任务（同步写入 Fly 磁盘 + Neon DB，立即返回 jobId）
         let jobId: string;
+        let dbRecordId: number | undefined;
         try {
           const { createDeepResearchJob, runDeepResearchAsync } = await import("./services/deepResearchService");
-          jobId = await createDeepResearchJob(String(userId), input.topic);
+          const result = await createDeepResearchJob(String(userId), input.topic, deductResult.source === "admin" ? 0 : cost);
+          jobId = result.jobId;
+          dbRecordId = result.dbRecordId;
           // fire-and-forget：异步执行，不阻塞响应
           runDeepResearchAsync(jobId).catch(async (err) => {
             console.error("[deepResearch] 异步任务异常，尝试退款:", err?.message);
@@ -5612,7 +5615,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
         }
 
-        return { ok: true as const, jobId, creditsUsed: deductResult.source === "admin" ? 0 : cost };
+        return { ok: true as const, jobId, dbRecordId: dbRecordId ?? null, creditsUsed: deductResult.source === "admin" ? 0 : cost };
       }),
 
     status: protectedProcedure
@@ -5632,6 +5635,48 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           completedAt: job.completedAt || null,
         };
       }),
+
+    /** 查询当前用户所有战报（研报中心） */
+    myReports: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { eq, and, desc } = await import("drizzle-orm");
+        const database = await db.getDb();
+        if (!database) return { reports: [] };
+
+        const rows = await database
+          .select()
+          .from(userCreations)
+          .where(and(
+            eq(userCreations.userId, ctx.user.id),
+            eq(userCreations.type, "deep_research_report"),
+          ))
+          .orderBy(desc(userCreations.createdAt))
+          .limit(50);
+
+        return {
+          reports: rows.map((r) => {
+            let meta: any = {};
+            try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+            return {
+              id: r.id,
+              title: r.title || meta.topic || "无标题",
+              topic: meta.topic || r.title || "",
+              status: r.status,
+              progress: meta.progress || "",
+              reportMarkdown: meta.reportMarkdown || null,
+              error: meta.error || null,
+              jobId: meta.jobId || null,
+              creditsUsed: r.creditsUsed ?? 0,
+              createdAt: r.createdAt.toISOString(),
+            };
+          }),
+        };
+      } catch (e: any) {
+        console.error("[deepResearch.myReports] 查询失败:", e?.message);
+        return { reports: [] };
+      }
+    }),
   }),
 
   /** 竞品分析调研 — 双阶段 LLM + Fly 存储 + GitHub 备份 */
