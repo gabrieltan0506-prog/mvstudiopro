@@ -1159,22 +1159,19 @@ ${job.topic}
     // 5. 耗时（分钟）
     const duration = ((Date.now() - taskStartMs) / 1000 / 60).toFixed(1);
 
-    // ── 草稿生成完成：状态进入 awaiting_review（等待主编人工审核） ─────────────
+    // ── 生成完成：直接 completed，无需人工审核 ──────────────────────────────────
     const latest = (await readJob(jobId)) ?? job;
-    const doneMsg = productType === "personalized"
-      ? "📝 尊享私人订制草稿已生成，请进入「战略作品快照库」审核增删后正式出刊"
-      : "📝 战略半月刊草稿已生成，请进入「战略作品快照库」审核增删后正式出刊";
+    const doneMsg = "✅ 战略研报已生成，请进入「战略作品快照库」查阅";
     await writeJob({
       ...latest,
-      status: "awaiting_review",
+      status: "completed",
       progress: doneMsg,
-      // 草稿 markdown 也写到 fly 磁盘，但区分字段：保留 reportMarkdown 字段以兼容老前端，draftMarkdown 才是审核工作台读取的字段
       reportMarkdown: finalReportMarkdown,
       draftMarkdown: finalReportMarkdown,
       completedAt: new Date().toISOString(),
     } as any);
 
-    // ── 草稿生成完成：写 Neon DB（status: awaiting_review，markdown 写入 metadata.draftMarkdown）
+    // ── 写 Neon DB（status: completed，reportMarkdown 直接写入可查阅）
     if (latest.dbRecordId) {
       try {
         const { db, userCreations } = await getDbAndSchema();
@@ -1185,16 +1182,14 @@ ${job.topic}
             jobId,
             productType,
             progress: doneMsg,
-            // 关键：reportMarkdown 字段留空（出刊后才填入），draftMarkdown 存草稿
-            reportMarkdown: null,
+            reportMarkdown: finalReportMarkdown,
             draftMarkdown: finalReportMarkdown,
-            draftReadyAt: new Date().toISOString(),
             lighthouseTitle,
             summary,
             duration,
           };
           const setPayload: Record<string, unknown> = {
-            status: "awaiting_review",
+            status: "completed",
             title: lighthouseTitle.slice(0, 120),
             metadata: JSON.stringify(metaPayload),
             updatedAt: new Date(),
@@ -1203,11 +1198,11 @@ ${job.topic}
           await db.update(userCreations).set(setPayload).where(eq(userCreations.id, latest.dbRecordId));
         }
       } catch (e: any) {
-        console.warn("[deepResearch] DB 写入草稿状态失败:", e?.message);
+        console.warn("[deepResearch] DB 写入完成状态失败:", e?.message);
       }
     }
 
-    console.log(`[deepResearch] ✅ 草稿 ${jobId} 已就绪（待审核），字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
+    console.log(`[deepResearch] ✅ 研报 ${jobId} 已完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
 
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);

@@ -37,7 +37,7 @@ function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
 export default function GodViewPage() {
   const [, navigate] = useLocation();
   const [topic, setTopic] = useState("");
-  const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "failed">("idle");
+  const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "done" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const [selectedProduct, setSelectedProduct] = useState<ProductType>("magazine_single");
@@ -53,6 +53,26 @@ export default function GodViewPage() {
   const [elapsedSec, setElapsedSec] = useState(0);
   // 当前正在轮询的 jobId（从 launchMutation.data 取出）
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+  // 普通用户轮询：dispatched 后每 20s 检查一次 job 状态
+  const jobDoneQuery = trpc.deepResearch.status.useQuery(
+    { jobId: pollingJobId! },
+    {
+      enabled: phase === "dispatched" && !!pollingJobId,
+      refetchInterval: (query) => {
+        const s = query.state.data?.status;
+        if (s === "completed" || s === "awaiting_review" || s === "failed") return false;
+        return 20_000;
+      },
+      retry: false,
+    },
+  );
+  // 感知完成/失败
+  useEffect(() => {
+    const s = jobDoneQuery.data?.status;
+    if (!s) return;
+    if (s === "completed" || s === "awaiting_review") setPhase("done");
+    if (s === "failed") { setPhase("failed"); setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已退回"); }
+  }, [jobDoneQuery.data?.status]);
 
   // voice recording
   const [isRecording, setIsRecording] = useState(false);
@@ -408,6 +428,25 @@ export default function GodViewPage() {
                 {isFirst && currentProduct.firstPrice !== undefined && phase !== "launching" && (
                   <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#dc2626", color: "#fff", borderRadius: 99, padding: "2px 8px" }}>首次优惠</span>
                 )}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── 研报已完成 ── */}
+        {phase === "done" && (
+          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#050d02,#081a04)", borderRadius: 20, border: "1px solid rgba(0,200,80,0.25)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+            <div style={{ width: 80, height: 80, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 8px 32px rgba(22,163,74,0.4)", fontSize: 36 }}>✅</div>
+            <h2 style={{ fontSize: 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 12 }}>战略研报已生成</h2>
+            <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: 480, margin: "0 auto 32px" }}>
+              深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
+                <Sparkles size={16} />前往「战略作品快照库」查阅
+              </button>
+              <button onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+                再发起一个新课题
               </button>
             </div>
           </div>
