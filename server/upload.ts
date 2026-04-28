@@ -123,7 +123,7 @@ uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
 
 // ── 半月刊补充资料上传 → GCS，返回公开 HTTPS URL + gs:// URI ──────────────────
 const MAGAZINE_SUPP_BUCKET = "mv-studio-pro-user-uploads-255451353515";
-const MAGAZINE_SUPP_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+const MAGAZINE_SUPP_MAX_BYTES = 100 * 1024 * 1024; // 100MB
 
 uploadRouter.post("/api/magazine/upload", async (req: any, res: any) => {
   try {
@@ -140,7 +140,7 @@ uploadRouter.post("/api/magazine/upload", async (req: any, res: any) => {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     if (!buffer.length) return res.status(400).json({ error: "Empty file" });
-    if (buffer.length > MAGAZINE_SUPP_MAX_BYTES) return res.status(413).json({ error: "File too large (max 10MB)" });
+    if (buffer.length > MAGAZINE_SUPP_MAX_BYTES) return res.status(413).json({ error: "File too large (max 100MB)" });
 
     const filename = file.name || "attachment";
     const ext = filename.includes(".") ? filename.split(".").pop()! : "bin";

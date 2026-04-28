@@ -468,7 +468,7 @@ export default function GodViewPage() {
                     </div>
                     {/* 文件上传 */}
                     <div>
-                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 10MB）</p>
+                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 100MB）</p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {suppFiles.map((f, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.2)", borderRadius: 8, fontSize: 12, color: "#7a5410" }}>
