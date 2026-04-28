@@ -3,6 +3,8 @@ import { useLocation } from "wouter";
 import { ChevronLeft, Plus, X, Layers } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
+import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 
@@ -12,6 +14,7 @@ interface AccountRow { platform: string; handle: string; notes?: string }
 
 export default function PlatformIpMatrixPage() {
   const [, navigate] = useLocation();
+  const [profileOpen, setProfileOpen] = useState(false);
   const [accounts, setAccounts] = useState<AccountRow[]>([
     { platform: "抖音", handle: "" },
     { platform: "小红书", handle: "" },
@@ -63,6 +66,9 @@ export default function PlatformIpMatrixPage() {
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
           <button onClick={() => navigate("/god-view")} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 13, fontWeight: 700 }}>
             <ChevronLeft size={14} /> 返回
+          </button>
+          <button onClick={() => setProfileOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 8, cursor: "pointer", color: "#d6a861", fontSize: 12, fontWeight: 800 }}>
+            <ShieldCheck size={12} /> 指挥官档案
           </button>
           <div style={{ flex: 1 }}>
             <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "#d6a861", letterSpacing: "0.06em" }}>
@@ -185,6 +191,7 @@ export default function PlatformIpMatrixPage() {
           )}
         </div>
       </div>
+      <CommanderProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );
 }
