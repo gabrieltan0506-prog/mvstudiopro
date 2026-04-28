@@ -92,10 +92,10 @@ function ensureYtdlpCookiesFile(): string | null {
   try {
     fs.writeFileSync(tmpFile, lines.join('\n') + '\n', { mode: 0o600 });
     cachedCookiesFilePath = tmpFile;
-    console.log(`[videoParser] 🍪 yt-dlp cookies 文档已生成: ${tmpFile}`);
+    console.log(`[videoParser] 🍪 yt-dlp cookies 文件已生成: ${tmpFile}`);
     return tmpFile;
   } catch (err) {
-    console.warn('[videoParser] 写 yt-dlp cookies 文档失败:', err);
+    console.warn('[videoParser] 写 yt-dlp cookies 文件失败:', err);
     return null;
   }
 }
@@ -299,7 +299,7 @@ async function parseYoutubeViaYtdlp(url: string): Promise<ParsedVideo> {
     ],
   };
 
-  // 带 cookie 时，yt-dlp 用专门的 cookies 文档（绕过数据中心 IP 风控）
+  // 带 cookie 时，yt-dlp 用专门的 cookies 文件（绕过数据中心 IP 风控）
   const cookiesFile = ensureYtdlpCookiesFile();
   if (cookiesFile) {
     extraArgs.cookies = cookiesFile;
@@ -340,7 +340,7 @@ async function parseYoutubeViaYtdlp(url: string): Promise<ParsedVideo> {
   };
 }
 
-// ── 对外置口 ──────────────────────────────────────────────────────────────────
+// ── 对外接口 ──────────────────────────────────────────────────────────────────
 export async function parseVideoUrl(url: string): Promise<ParsedVideo> {
   const isYoutube = /youtube\.com|youtu\.be/i.test(url);
 
@@ -348,14 +348,14 @@ export async function parseVideoUrl(url: string): Promise<ParsedVideo> {
     const videoId = extractYoutubeId(url);
     if (!videoId) throw new Error('无法解析 YouTube 视频 ID，请检查链接格式');
 
-    // 主信道：youtubei.js (INNERTUBE 直连，无 cookie)
+    // 主通道：youtubei.js (INNERTUBE 直连，无 cookie)
     try {
       return await parseYoutubeViaInnertube(videoId);
     } catch (innertubeErr) {
       const msg = innertubeErr instanceof Error ? innertubeErr.message : String(innertubeErr);
       console.log(`[videoParser] Innertube 全军覆没，回退 yt-dlp：${msg.slice(0, 120)}`);
 
-      // 兜底信道：yt-dlp 多 player_client
+      // 兜底通道：yt-dlp 多 player_client
       try {
         return await parseYoutubeViaYtdlp(url);
       } catch (ytdlpErr) {
@@ -372,6 +372,13 @@ export async function parseVideoUrl(url: string): Promise<ParsedVideo> {
           } catch {}
         }
 
+        // 区分 fly IP 风控（基础设施级，cookie 也救不了）vs 普通错误
+        const ipBlocked = /sign in.*bot|streaming_data.*为空|all.*client/i.test(`${msg} ${ytdlpMsg}`);
+        if (ipBlocked) {
+          throw new Error(
+            `YouTube 暂不可用：服务器 IP 被 YouTube 反爬系统拉黑（数据中心 IP 通病，cookie 也会被主动失效）。请改用 B 站 / 抖音 / 快手 / 小红书 链接 —— 这些平台都正常工作。`,
+          );
+        }
         throw new Error(
           `YouTube 解析失败：${msg.slice(0, 100)}。建议稍后重试，或换其他平台链接（B 站 / 抖音 / 快手 / 小红书均支持）。`,
         );
@@ -399,13 +406,13 @@ export async function checkYtdlpHealth(): Promise<{
   version: string;
   message: string;
 }> {
-  // 用 youtubei.js 测试 YouTube 主信道（Rick Astley 那条永远在线）
+  // 用 youtubei.js 测试 YouTube 主通道（Rick Astley 那条永远在线）
   try {
     const res = await parseYoutubeViaInnertube('dQw4w9WgXcQ');
     return {
       ok: !!res.title,
       version: 'youtubei.js v17',
-      message: res.title ? 'YouTube INNERTUBE 信道正常' : '信道异常',
+      message: res.title ? 'YouTube INNERTUBE 通道正常' : '通道异常',
     };
   } catch (err: unknown) {
     return {
