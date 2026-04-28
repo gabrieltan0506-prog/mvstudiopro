@@ -9,6 +9,80 @@ import path from "path";
 const REPORT_DIR = "/data/growth/deep-research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ── 四平台 7 天趋势 SVG 折线图生成器 ────────────────────────────────────────
+function buildTrendSvg(data: {
+  dates: string[];
+  xiaohongshu: number[];
+  douyin: number[];
+  bilibili: number[];
+  kuaishou: number[];
+}, topic: string): string {
+  const W = 680, H = 300;
+  const PAD = { top: 48, right: 20, bottom: 48, left: 44 };
+  const chartW = W - PAD.left - PAD.right;
+  const chartH = H - PAD.top - PAD.bottom;
+  const days = data.dates.length;
+  const xStep = chartW / (days - 1);
+
+  const platforms = [
+    { key: "xiaohongshu" as const, label: "小红书", color: "#f43f5e" },
+    { key: "douyin"      as const, label: "抖音",   color: "#a78bfa" },
+    { key: "bilibili"    as const, label: "B站",    color: "#38bdf8" },
+    { key: "kuaishou"    as const, label: "快手",   color: "#4ade80" },
+  ];
+
+  const toX = (i: number) => PAD.left + i * xStep;
+  const toY = (v: number) => PAD.top + chartH - (v / 100) * chartH;
+
+  // 水平网格线
+  const gridLines = [0, 25, 50, 75, 100].map((v) => {
+    const y = toY(v);
+    return `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
+<text x="${PAD.left - 6}" y="${y + 4}" font-size="9" fill="rgba(255,255,255,0.3)" text-anchor="end">${v}</text>`;
+  }).join("\n");
+
+  // X 轴日期标签
+  const xLabels = data.dates.map((d, i) =>
+    `<text x="${toX(i)}" y="${PAD.top + chartH + 16}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="middle">${d}</text>`
+  ).join("\n");
+
+  // 每条折线 + 填充区域
+  const lines = platforms.map(({ key, color }) => {
+    const vals = data[key];
+    const pts = vals.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
+    const areaBase = `${toX(days - 1)},${toY(0)} ${toX(0)},${toY(0)}`;
+    return `
+<defs>
+  <linearGradient id="grad-${key}" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+    <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+  </linearGradient>
+</defs>
+<polygon points="${pts} ${areaBase}" fill="url(#grad-${key})"/>
+<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3" fill="${color}" stroke="#0a0700" stroke-width="1.5"/>`).join("")}`;
+  }).join("\n");
+
+  // 图例
+  const legend = platforms.map(({ label, color }, i) =>
+    `<rect x="${PAD.left + i * 155}" y="14" width="10" height="10" rx="3" fill="${color}"/>
+<text x="${PAD.left + i * 155 + 14}" y="23" font-size="11" fill="rgba(255,255,255,0.75)">${label}</text>`
+  ).join("\n");
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="font-family:system-ui,sans-serif">
+  <rect width="${W}" height="${H}" rx="12" fill="#0e0900"/>
+  <rect width="${W}" height="${H}" rx="12" fill="none" stroke="rgba(180,130,0,0.25)" stroke-width="1"/>
+  <text x="${W / 2}" y="12" font-size="10" fill="rgba(245,200,80,0.5)" text-anchor="middle">📊 ${topic} · 四平台7天热度趋势指数（0-100）</text>
+  ${legend}
+  ${gridLines}
+  ${xLabels}
+  ${lines}
+</svg>`;
+
+  const b64 = Buffer.from(svg).toString("base64");
+  return `\n\n> 📈 **四平台 7 天趋势监控**（热度指数 0-100，100 为最热）\n\n<img src="data:image/svg+xml;base64,${b64}" width="680" alt="四平台7天趋势图" style="border-radius:12px;margin:8px 0"/>\n\n`;
+}
+
 /** 直接 HTTP 调用 Gemini API */
 async function generate(model: string, prompt: string, retries = 2): Promise<string> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -277,6 +351,37 @@ export async function runDeepResearchAsync(jobId: string) {
 4. 核心指标必须给出具体数字，禁止使用"较高""较低""显著"等模糊表述
 5. 每章结尾用"📊 数据速查"小节，用表格汇总本章关键数字
 `;
+
+    // ── 半月刊专属：四平台 7 天趋势图（Gemini 生成数据 → SVG 折线图）─────────
+    let trendChartBlock = "";
+    if (productType !== "personalized") {
+      try {
+        const trendJson = await generate(
+          "gemini-2.0-flash-exp",
+          `你是一个社交媒体数据分析师。请根据课题「${job.topic}」，模拟该细分赛道在小红书、抖音、B站、快手四平台过去 7 天的相对热度趋势指数（0-100，100为最热）。
+今天日期：${new Date().toLocaleDateString("zh-CN")}
+请直接输出 JSON，格式如下（不要任何其他文字）：
+{
+  "dates": ["Day1日期(M/D)", "Day2", "Day3", "Day4", "Day5", "Day6", "Day7(今天)"],
+  "xiaohongshu": [整数,整数,整数,整数,整数,整数,整数],
+  "douyin":      [整数,整数,整数,整数,整数,整数,整数],
+  "bilibili":    [整数,整数,整数,整数,整数,整数,整数],
+  "kuaishou":    [整数,整数,整数,整数,整数,整数,整数]
+}`,
+        );
+        const cleaned = trendJson.replace(/```json|```/g, "").trim();
+        const td = JSON.parse(cleaned) as {
+          dates: string[];
+          xiaohongshu: number[];
+          douyin: number[];
+          bilibili: number[];
+          kuaishou: number[];
+        };
+        trendChartBlock = buildTrendSvg(td, job.topic);
+      } catch {
+        console.warn("[deepResearch] 趋势图生成失败，跳过");
+      }
+    }
 
     const prompt = productType === "personalized"
       ? `你是由哈佛医师、顶尖商业战略顾问与四大平台资深运营专家组成的个性化智库。
@@ -635,10 +740,15 @@ ${job.topic}
       console.warn("[deepResearch] 封面图生成失败，跳过");
     }
 
-    // 3. 摘要（取正文开头 200 字，去除 Markdown 符号）
+    // 3. 注入趋势图（半月刊专属，插在报告正文前）
+    const finalReportMarkdown = trendChartBlock
+      ? trendChartBlock + reportMarkdown
+      : reportMarkdown;
+
+    // 4. 摘要（取正文开头 200 字，去除 Markdown 符号）
     const summary = reportMarkdown.replace(/#{1,6}\s/g, "").replace(/[*`>_\-|]/g, "").trim().slice(0, 200) + "…";
 
-    // 4. 耗时（分钟）
+    // 5. 耗时（分钟）
     const duration = ((Date.now() - taskStartMs) / 1000 / 60).toFixed(1);
 
     // ── 完成：写 Fly 磁盘 ─────────────────────────────────────────────────────
@@ -650,7 +760,7 @@ ${job.topic}
       ...latest,
       status: "completed",
       progress: doneMsg,
-      reportMarkdown,
+      reportMarkdown: finalReportMarkdown,
       completedAt: new Date().toISOString(),
     });
 
@@ -665,7 +775,7 @@ ${job.topic}
             jobId,
             productType,
             progress: doneMsg,
-            reportMarkdown,
+            reportMarkdown: finalReportMarkdown,
             lighthouseTitle,
             summary,
             duration,

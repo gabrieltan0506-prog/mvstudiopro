@@ -236,7 +236,7 @@ export default function GodViewPage() {
                   onClick={() => handleProductChange(p.id)}
                   style={{
                     textAlign: "left", padding: "16px 18px", borderRadius: 16, cursor: "pointer",
-                    background: isSelected ? `rgba(${p.id === "deep_report" ? "180,130,0" : p.id === "magazine_single" ? "120,80,200" : p.id === "magazine_sub" ? "30,160,100" : "200,100,20"},0.12)` : "rgba(255,255,255,0.03)",
+                    background: isSelected ? `rgba(${p.id === "magazine_single" ? "120,80,200" : p.id === "magazine_sub" ? "30,160,100" : "200,100,20"},0.12)` : "rgba(255,255,255,0.03)",
                     border: `1.5px solid ${isSelected ? p.color : "rgba(255,255,255,0.10)"}`,
                     boxShadow: isSelected ? `0 0 20px ${p.color}25` : "none",
                     transition: "all 0.2s",
