@@ -122,6 +122,22 @@ export default function GodViewPage() {
     onError: (err) => alert("批准计划失败：" + err.message),
   });
 
+  // 黑金 PDF 导出 · 容器内 Puppeteer 原生渲染 + GCS 签名链接（72h）
+  const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
+    onSuccess: (result) => {
+      const url = result?.signedUrl;
+      if (!url) { toast.error("黑金 PDF 已生成但未拿到签名链接"); return; }
+      try {
+        navigator.clipboard?.writeText(url).catch(() => {});
+        window.open(url, "_blank", "noopener,noreferrer");
+        toast.success("黑金 PDF 已生成 · 链接已复制（72 小时签名）");
+      } catch {
+        toast.success("黑金 PDF 已生成，签名链接：" + url);
+      }
+    },
+    onError: (err) => toast.error("黑金 PDF 生成失败：" + err.message),
+  });
+
   // ── 半月刊 10 天提醒
   const [reminderDismissed, setReminderDismissed] = useState(false);
   const reminderQuery = trpc.deepResearch.magazineReminder.useQuery(undefined, {
@@ -701,6 +717,18 @@ export default function GodViewPage() {
               深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
             </p>
             <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => {
+                  if (!pollingJobId) { toast.error("缺少 jobId"); return; }
+                  exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId });
+                }}
+                disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
+                title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
+              >
+                {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
+                {exportBlackGoldPdfMutation.isPending ? "正在压制黑金 PDF…" : "导出黑金 PDF（GCS 签名链接）"}
+              </button>
               <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
                 <Sparkles size={16} />前往「战略作品快照库」查阅
               </button>
