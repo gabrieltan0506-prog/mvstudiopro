@@ -375,10 +375,18 @@ function exportSampleAsPdf(
   clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
 
   // 把所有 body 子节点清空，只保留报告容器（用 innerHTML 取子节点，避免 fixed 定位被带进去）
-  // 关键：wrapper 的 background 叠加对角文字水印（SVG 平铺），puppeteer 渲染 PDF 时每页都会出现
+  // 关键水印策略：
+  //   1) wrapper 的 background-image 平铺 SVG（背景层兜底，但依赖 puppeteer printBackground）
+  //   2) 在 wrapper 内撒大量真实 DOM 元素（logo + 对角文字）做绝对定位 —— 不依赖任何打印配置
+  //      puppeteer 自动分页时，每个页位置都会自然包含撒在该位置的水印元素，每页 ≥ 4 个 logo + ≥ 12 个文字水印
   const cloneBody = clone.querySelector("body");
   if (cloneBody) {
     cloneBody.innerHTML = "";
+
+    // 用源容器 scrollHeight 作 wrapper 高度（contentLayer 没插入页面，无 layout，必须用源 containerEl）
+    // +200 buffer 确保末尾签名条也能被水印覆盖；最少 2000px 兜底（极短内容也至少 2 页水印）
+    const estimatedHeight = Math.max(containerEl.scrollHeight + 200, 2000);
+
     const wrapper = document.createElement("div");
     wrapper.style.cssText = `
       padding: 24px;
@@ -386,9 +394,102 @@ function exportSampleAsPdf(
       background-image: url('${WATERMARK_TILE_URI}');
       background-repeat: repeat;
       background-size: 540px 300px;
-      min-height: 100vh;
+      min-height: ${estimatedHeight}px;
+      position: relative;
+      overflow: visible;
     `;
-    wrapper.innerHTML = containerEl.innerHTML;
+
+    // 内容层（z-index 高，水印在它下面）
+    const contentLayer = document.createElement("div");
+    contentLayer.style.cssText = "position: relative; z-index: 2;";
+    contentLayer.innerHTML = containerEl.innerHTML;
+    wrapper.appendChild(contentLayer);
+
+    // 水印层（z-index 低，绝对定位撒在整个 wrapper 高度上）
+    const watermarkLayer = document.createElement("div");
+    watermarkLayer.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: ${estimatedHeight}px;
+      pointer-events: none;
+      z-index: 1;
+      overflow: hidden;
+    `;
+
+    // —— Logo 矩阵（3 列 × N 行，每页约 4-6 个）—— 半透明金色 logo
+    // logo 间距：水平 ~360px、垂直 ~480px。1100px 宽页 / 360 ≈ 3 列；1500px 高页 / 480 ≈ 3 行 → 单页 9 个
+    const logoSpacingX = 360;
+    const logoSpacingY = 480;
+    const logoStartX = 80;
+    const logoStartY = 240;
+    const logoCols = Math.ceil(1100 / logoSpacingX);
+    const logoRows = Math.ceil(estimatedHeight / logoSpacingY);
+    for (let row = 0; row < logoRows; row++) {
+      for (let col = 0; col < logoCols; col++) {
+        // 偶数行偏移半个间距，错落分布更高级
+        const offsetX = row % 2 === 0 ? 0 : logoSpacingX / 2;
+        const x = logoStartX + col * logoSpacingX + offsetX;
+        const y = logoStartY + row * logoSpacingY;
+        const logo = document.createElement("img");
+        logo.src = BRAND_LOGO_LIGHT_URI;
+        logo.alt = "MVStudioPro";
+        logo.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y}px;
+          width: 140px;
+          height: auto;
+          opacity: 0.085;
+          transform: rotate(-22deg);
+          pointer-events: none;
+          user-select: none;
+        `;
+        watermarkLayer.appendChild(logo);
+      }
+    }
+
+    // —— 文字水印矩阵（4 列 × N 行，更密更不抢戏）—— 半透明深咖啡文字
+    const textSpacingX = 280;
+    const textSpacingY = 200;
+    const textStartX = 30;
+    const textStartY = 100;
+    const textCols = Math.ceil(1100 / textSpacingX);
+    const textRows = Math.ceil(estimatedHeight / textSpacingY);
+    const watermarkPhrases = [
+      "MVStudioPro · 试读版",
+      "MVSTUDIOPRO.COM",
+      "MVStudioPro · 仅供品鉴",
+      "STRATEGIC INTELLIGENCE",
+    ];
+    for (let row = 0; row < textRows; row++) {
+      for (let col = 0; col < textCols; col++) {
+        const offsetX = row % 2 === 1 ? textSpacingX / 2 : 0;
+        const x = textStartX + col * textSpacingX + offsetX;
+        const y = textStartY + row * textSpacingY;
+        const txt = document.createElement("div");
+        txt.textContent = watermarkPhrases[(row + col) % watermarkPhrases.length];
+        txt.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y}px;
+          font-family: 'Playfair Display', Georgia, 'PingFang SC', serif;
+          font-size: ${(row + col) % 4 === 0 ? 18 : 14}px;
+          font-weight: 700;
+          color: #7a5410;
+          opacity: 0.075;
+          letter-spacing: 1.2px;
+          transform: rotate(-26deg);
+          white-space: nowrap;
+          pointer-events: none;
+          user-select: none;
+        `;
+        watermarkLayer.appendChild(txt);
+      }
+    }
+
+    wrapper.appendChild(watermarkLayer);
     cloneBody.appendChild(wrapper);
   }
 
@@ -638,26 +739,84 @@ export default function SampleReportDownload() {
   };
 
   return (
-    <section style={{ maxWidth: 1200, margin: "0 auto", padding: "56px 24px" }}>
-      {/* 品牌 Logo 头条 */}
+    <section
+      style={{
+        position: "relative",
+        maxWidth: 1200,
+        margin: "0 auto",
+        padding: "56px 24px",
+        // 柔和的卡布奇諾光晕（深紫背景下让 section 有自己的视觉容器，但不抢风头）
+        backgroundImage:
+          "radial-gradient(ellipse 80% 60% at 50% 25%, rgba(216, 162, 58, 0.10) 0%, transparent 70%)",
+      }}
+    >
+      {/* 品牌 Logo 头条（深色背景用 dark 版：深咖啡六边形 + 米白咖啡豆 + 浅金字） */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
-        <img src={BRAND_LOGO_LIGHT_URI} alt="MVStudioPro · Strategic Intelligence" style={{ height: 54, display: "block", filter: "drop-shadow(0 4px 12px rgba(122,84,16,0.18))" }} />
+        <img
+          src={BRAND_LOGO_DARK_URI}
+          alt="MVStudioPro · Strategic Intelligence"
+          style={{
+            height: 54,
+            display: "block",
+            filter: "drop-shadow(0 6px 18px rgba(216,162,58,0.32))",
+          }}
+        />
       </div>
 
       {/* 标题 */}
       <div style={{ textAlign: "center", marginBottom: 36 }}>
-        <div style={{ display: "inline-block", fontSize: 11, letterSpacing: "0.30em", color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", padding: "5px 18px", marginBottom: 18, fontWeight: 800, borderRadius: 99 }}>
+        <div
+          style={{
+            display: "inline-block",
+            fontSize: 11,
+            letterSpacing: "0.30em",
+            color: "#f0c984",
+            background: "rgba(240, 201, 132, 0.08)",
+            border: "1px solid rgba(240, 201, 132, 0.40)",
+            padding: "5px 18px",
+            marginBottom: 18,
+            fontWeight: 800,
+            borderRadius: 99,
+            backdropFilter: "blur(4px)",
+          }}
+        >
           免费试读 · 卡布奇諾级商务质感
         </div>
-        <h2 style={{ fontSize: 34, fontWeight: 900, color: "#3d2c14", margin: "0 0 12px", lineHeight: 1.3 }}>
+        <h2
+          style={{
+            fontSize: 34,
+            fontWeight: 900,
+            color: "#fff7df",
+            margin: "0 0 12px",
+            lineHeight: 1.3,
+            textShadow: "0 2px 14px rgba(0, 0, 0, 0.35)",
+          }}
+        >
           下载样本报告，感受
-          <span style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 65%, rgba(216,162,58,0.35) 65%)", padding: "0 6px" }}>
+          <span
+            style={{
+              color: "#f0c984",
+              background: "linear-gradient(180deg, transparent 62%, rgba(216,162,58,0.45) 62%)",
+              padding: "0 6px",
+            }}
+          >
             战略级
           </span>
           内容质感
         </h2>
-        <p style={{ fontSize: 15, color: "rgba(61,44,20,0.70)", maxWidth: 640, margin: "0 auto", lineHeight: 1.8, fontWeight: 500 }}>
-          两份按 <strong style={{ color: "#7a5410" }}>Gemini Deep Research Pro</strong> 接地数据 + Gemini 3.1 Pro 智能合成的真实样本，覆盖个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划五大模块。
+        <p
+          style={{
+            fontSize: 15,
+            color: "rgba(255, 247, 223, 0.78)",
+            maxWidth: 640,
+            margin: "0 auto",
+            lineHeight: 1.8,
+            fontWeight: 500,
+          }}
+        >
+          两份按{" "}
+          <strong style={{ color: "#f0c984" }}>Gemini Deep Research Pro</strong> 接地数据 + Gemini
+          3.1 Pro 智能合成的真实样本，覆盖个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划五大模块。
           <br />
           点击「下载试读版」可获得无打印对话框的真实 PDF（由谷歌云 Puppeteer 服务渲染）。
         </p>
@@ -674,13 +833,22 @@ export default function SampleReportDownload() {
           marginBottom: 32,
           borderRadius: 14,
           background: "linear-gradient(135deg,#fffaf0 0%,#f5ecda 100%)",
-          border: "1px solid rgba(168,118,27,0.35)",
-          boxShadow: "0 8px 22px rgba(122,84,16,0.10)",
+          border: "1px solid rgba(240, 201, 132, 0.50)",
+          boxShadow:
+            "0 10px 28px rgba(0, 0, 0, 0.25), 0 0 24px rgba(216, 162, 58, 0.18)",
           cursor: "pointer",
           transition: "all 0.2s",
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 32px rgba(168,118,27,0.20)"; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 22px rgba(122,84,16,0.10)"; }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)";
+          (e.currentTarget as HTMLElement).style.boxShadow =
+            "0 16px 40px rgba(0, 0, 0, 0.30), 0 0 38px rgba(216, 162, 58, 0.32)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.transform = "none";
+          (e.currentTarget as HTMLElement).style.boxShadow =
+            "0 10px 28px rgba(0, 0, 0, 0.25), 0 0 24px rgba(216, 162, 58, 0.18)";
+        }}
       >
         <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.32)" }}>
           <Sparkles size={22} color="#fff7df" />
@@ -742,8 +910,20 @@ export default function SampleReportDownload() {
       </div>
 
       {/* 底部说明 */}
-      <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(61,44,20,0.55)", lineHeight: 1.8, fontWeight: 500 }}>
-        样本含水印，仅供品鉴 · 完整版无水印且包含所有数据表 / 框架 / 行动清单 · PDF 由谷歌云专业 Puppeteer 服务渲染，**不会再出现打印对话框**。
+      <div
+        style={{
+          textAlign: "center",
+          marginTop: 28,
+          fontSize: 12,
+          color: "rgba(255, 247, 223, 0.55)",
+          lineHeight: 1.8,
+          fontWeight: 500,
+        }}
+      >
+        样本含水印，仅供品鉴 · 完整版无水印且包含所有数据表 / 框架 / 行动清单 · PDF 由谷歌云专业
+        Puppeteer 服务渲染，<strong style={{ color: "rgba(240, 201, 132, 0.80)" }}>
+          不会再出现打印对话框
+        </strong>。
       </div>
 
       {/* 隐藏渲染容器（导出时取这两个 div 的 outerHTML 作为 PDF 源） */}
@@ -802,13 +982,15 @@ function SampleCard({
     <div
       style={{
         background: "linear-gradient(180deg,#fffaf0 0%,#f5ecda 100%)",
-        border: `1px solid ${highlight ? "rgba(107,68,35,0.55)" : "rgba(168,118,27,0.30)"}`,
+        border: `1px solid ${highlight ? "rgba(240, 201, 132, 0.65)" : "rgba(240, 201, 132, 0.45)"}`,
         borderRadius: 18,
         padding: 0,
         display: "flex",
         flexDirection: "column",
         gap: 0,
-        boxShadow: "0 6px 24px rgba(122,84,16,0.12)",
+        // 双层阴影：底部沉稳 + 外圈金色光晕（让卡片在深紫背景上"浮"起来）
+        boxShadow:
+          "0 12px 36px rgba(0, 0, 0, 0.30), 0 0 0 1px rgba(240, 201, 132, 0.18), 0 0 32px rgba(216, 162, 58, 0.18)",
         overflow: "hidden",
         position: "relative",
       }}
