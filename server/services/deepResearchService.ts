@@ -69,20 +69,60 @@ async function dbCreateRecord(userId: number, topic: string, jobId: string, cred
 }
 
 /** 更新 Neon DB 研报状态 */
-async function dbUpdateRecord(dbRecordId: number, status: string, progress: string, reportMarkdown?: string, error?: string) {
+async function dbUpdateRecord(
+  dbRecordId: number,
+  status: string,
+  progress: string,
+  reportMarkdown?: string,
+  error?: string,
+  extras?: { thumbnailUrl?: string; lighthouseTitle?: string; summary?: string; duration?: string },
+) {
   try {
     const { db, userCreations } = await getDbAndSchema();
     if (!db) return;
     const { eq } = await import("drizzle-orm");
-    await db.update(userCreations)
-      .set({
-        status,
-        metadata: JSON.stringify({ progress, reportMarkdown: reportMarkdown ?? null, error: error ?? null }),
-        updatedAt: new Date(),
-      })
-      .where(eq(userCreations.id, dbRecordId));
+    const setPayload: Record<string, unknown> = {
+      status,
+      metadata: JSON.stringify({
+        progress,
+        reportMarkdown: reportMarkdown ?? null,
+        error: error ?? null,
+        ...(extras?.lighthouseTitle ? { lighthouseTitle: extras.lighthouseTitle } : {}),
+        ...(extras?.summary ? { summary: extras.summary } : {}),
+        ...(extras?.duration ? { duration: extras.duration } : {}),
+      }),
+      updatedAt: new Date(),
+    };
+    if (extras?.thumbnailUrl) setPayload.thumbnailUrl = extras.thumbnailUrl;
+    await db.update(userCreations).set(setPayload).where(eq(userCreations.id, dbRecordId));
   } catch (e: any) {
     console.warn("[deepResearch] dbUpdateRecord failed:", e?.message);
+  }
+}
+
+/** 抓取用户历史研报快照（供个性化分析「大洗牌」对比使用） */
+export async function getUserReportSnapshots(userId: string): Promise<Array<{ date: string; title: string; summary: string }>> {
+  try {
+    const { db, userCreations } = await getDbAndSchema();
+    if (!db) return [];
+    const { eq, and, desc } = await import("drizzle-orm");
+    const rows = await db
+      .select()
+      .from(userCreations)
+      .where(and(eq(userCreations.userId, Number(userId)), eq(userCreations.type, "deep_research_report"), eq(userCreations.status, "completed")))
+      .orderBy(desc(userCreations.createdAt))
+      .limit(5);
+    return rows.map((r) => {
+      let meta: any = {};
+      try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+      return {
+        date: r.createdAt.toLocaleDateString("zh-CN"),
+        title: r.title || meta.topic || "无标题",
+        summary: meta.summary || meta.reportMarkdown?.slice(0, 100) || "",
+      };
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -186,6 +226,8 @@ export async function runDeepResearchAsync(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return;
 
+  const taskStartMs = Date.now();
+
   const stages = [
     "📡 突破信息茧房，全网检索行业论文与商业数据…",
     "📊 抓取四平台 Top 变现博主链路与爆款底层逻辑…",
@@ -256,13 +298,55 @@ ${job.topic}
 
     const reportMarkdown = await generate("gemini-2.5-pro", prompt);
 
-    await updateProgress(stages[3]);
-
     if (!reportMarkdown || reportMarkdown.length < 500) {
       throw new Error("战报内容过短，可能生成失败");
     }
 
-    // 完成：写 Fly 磁盘
+    await updateProgress(stages[3]);
+
+    // ── 后处理：灯塔标题 + 封面图 + 摘要 + 耗时 ──────────────────────────────
+
+    // 1. 灯塔标题（Gemini Flash 快速生成）
+    let lighthouseTitle = job.topic;
+    try {
+      const titleText = await generate(
+        "gemini-2.5-flash",
+        `针对课题《${job.topic}》，生成一个哈佛商业评论风格的灯塔标题（不超过 20 字，不含引号和标点符号以外的特殊字符）。仅输出标题本身。`,
+      );
+      if (titleText.trim().length > 0) lighthouseTitle = titleText.trim().slice(0, 40);
+    } catch {
+      console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
+    }
+
+    // 2. 封面图（调用 Vercel nanoImage 端点，失败不阻断）
+    let coverUrl: string | undefined;
+    try {
+      const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+      const coverRes = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${lighthouseTitle}`,
+          tier: "flash",
+          aspectRatio: "3:4",
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (coverRes.ok) {
+        const coverJson = await coverRes.json();
+        if (coverJson?.imageUrl) coverUrl = String(coverJson.imageUrl);
+      }
+    } catch {
+      console.warn("[deepResearch] 封面图生成失败，跳过");
+    }
+
+    // 3. 摘要（取正文开头 200 字，去除 Markdown 符号）
+    const summary = reportMarkdown.replace(/#{1,6}\s/g, "").replace(/[*`>_\-|]/g, "").trim().slice(0, 200) + "…";
+
+    // 4. 耗时（分钟）
+    const duration = ((Date.now() - taskStartMs) / 1000 / 60).toFixed(1);
+
+    // ── 完成：写 Fly 磁盘 ─────────────────────────────────────────────────────
     const latest = (await readJob(jobId)) ?? job;
     await writeJob({
       ...latest,
@@ -272,31 +356,36 @@ ${job.topic}
       completedAt: new Date().toISOString(),
     });
 
-    // 完成：写 Neon DB
+    // ── 完成：写 Neon DB（含封面、摘要、灯塔标题）────────────────────────────
     if (latest.dbRecordId) {
       try {
         const { db, userCreations } = await getDbAndSchema();
         if (db) {
           const { eq } = await import("drizzle-orm");
-          await db.update(userCreations)
-            .set({
-              status: "completed",
-              metadata: JSON.stringify({
-                topic: job.topic,
-                jobId,
-                progress: "✅ 全景战报生成完毕",
-                reportMarkdown,
-              }),
-              updatedAt: new Date(),
-            })
-            .where(eq(userCreations.id, latest.dbRecordId));
+          const metaPayload: Record<string, unknown> = {
+            topic: job.topic,
+            jobId,
+            progress: "✅ 全景战报生成完毕",
+            reportMarkdown,
+            lighthouseTitle,
+            summary,
+            duration,
+          };
+          const setPayload: Record<string, unknown> = {
+            status: "completed",
+            title: lighthouseTitle.slice(0, 120),
+            metadata: JSON.stringify(metaPayload),
+            updatedAt: new Date(),
+          };
+          if (coverUrl) setPayload.thumbnailUrl = coverUrl;
+          await db.update(userCreations).set(setPayload).where(eq(userCreations.id, latest.dbRecordId));
         }
       } catch (e: any) {
         console.warn("[deepResearch] DB 写入完成状态失败:", e?.message);
       }
     }
 
-    console.log(`[deepResearch] ✅ 任务 ${jobId} 完成，字符数: ${reportMarkdown.length}`);
+    console.log(`[deepResearch] ✅ 任务 ${jobId} 完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
 
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);

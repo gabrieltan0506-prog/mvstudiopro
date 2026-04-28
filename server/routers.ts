@@ -5637,6 +5637,59 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /** 查询当前用户所有战报（研报中心） */
+    /** 主编后台：查看所有用户的研报（仅 supervisor/admin 可访问） */
+    supervisorListAll: adminProcedure.query(async () => {
+      try {
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { desc } = await import("drizzle-orm");
+        const database = await db.getDb();
+        if (!database) return { reports: [] };
+        const rows = await database
+          .select()
+          .from(userCreations)
+          .where((await import("drizzle-orm")).eq(userCreations.type, "deep_research_report"))
+          .orderBy(desc(userCreations.createdAt))
+          .limit(200);
+        return {
+          reports: rows.map((r) => {
+            let meta: any = {};
+            try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+            return {
+              id: r.id,
+              userId: r.userId,
+              title: r.title || meta.lighthouseTitle || meta.topic || "无标题",
+              lighthouseTitle: meta.lighthouseTitle || r.title || meta.topic || "",
+              topic: meta.topic || r.title || "",
+              status: r.status,
+              progress: meta.progress || "",
+              reportMarkdown: meta.reportMarkdown || null,
+              jobId: meta.jobId || null,
+              creditsUsed: r.creditsUsed ?? 0,
+              createdAt: r.createdAt.toISOString(),
+              coverUrl: r.thumbnailUrl || null,
+              summary: meta.summary || null,
+              duration: meta.duration || null,
+            };
+          }),
+        };
+      } catch (e: any) {
+        console.error("[deepResearch.supervisorListAll] 查询失败:", e?.message);
+        return { reports: [] };
+      }
+    }),
+
+    /** 主编奖励：采纳情报并发放 300 点 */
+    supervisorReward: adminProcedure
+      .input(z.object({ userId: z.number(), reportId: z.number(), credits: z.number().default(300) }))
+      .mutation(async ({ input }) => {
+        try {
+          await addCredits(input.userId, input.credits, "bonus", `主编采纳情报奖励（研报 #${input.reportId}）`);
+          return { success: true, message: `已发放 ${input.credits} 点奖励` };
+        } catch (e: any) {
+          throw new Error(`奖励发放失败: ${e?.message}`);
+        }
+      }),
+
     myReports: protectedProcedure.query(async ({ ctx }) => {
       try {
         const { userCreations } = await import("../drizzle/schema-creations");
@@ -5660,7 +5713,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             try { meta = JSON.parse(r.metadata || "{}"); } catch {}
             return {
               id: r.id,
-              title: r.title || meta.topic || "无标题",
+              title: r.title || meta.lighthouseTitle || meta.topic || "无标题",
+              lighthouseTitle: meta.lighthouseTitle || r.title || meta.topic || "",
               topic: meta.topic || r.title || "",
               status: r.status,
               progress: meta.progress || "",
@@ -5669,6 +5723,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               jobId: meta.jobId || null,
               creditsUsed: r.creditsUsed ?? 0,
               createdAt: r.createdAt.toISOString(),
+              coverUrl: r.thumbnailUrl || null,
+              summary: meta.summary || null,
+              duration: meta.duration || null,
             };
           }),
         };

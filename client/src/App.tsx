@@ -34,6 +34,7 @@ const AnalysisView = lazy(() => import("./pages/AnalysisView"));
 const ResearchPage = lazy(() => import("./pages/ResearchPage"));
 const GodViewPage = lazy(() => import("./pages/GodViewPage"));
 const MyReportsPage = lazy(() => import("./pages/MyReportsPage"));
+const SupervisorDeepResearchPage = lazy(() => import("./pages/SupervisorDeepResearchPage"));
 
 function PageLoader() {
   return (
@@ -85,6 +86,7 @@ function Router() {
         <Route path={"/research"} component={ResearchPage} />
         <Route path={"/god-view"} component={GodViewPage} />
         <Route path={"/my-reports"} component={MyReportsPage} />
+        <Route path={"/supervisor/deep-research"} component={SupervisorDeepResearchPage} />
         <Route path={"/login"} component={Login} />
 
         <Route path={"/404"} component={NotFound} />
