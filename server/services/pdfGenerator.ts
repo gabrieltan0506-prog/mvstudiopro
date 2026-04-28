@@ -87,13 +87,14 @@ export async function createAndUploadPdf(
         margin: { top: "72px", bottom: "72px", left: "36px", right: "36px" },
         displayHeaderFooter: true,
         headerTemplate: `
-          <div style="font-size:9px;width:100%;padding:0 36px;display:flex;justify-content:space-between;color:#B8860B;font-family:system-ui,sans-serif;">
-            <span>MV STUDIO PRO · 战略情报局</span>
-            <span style="color:#8B0000;font-weight:700;">CONFIDENTIAL</span>
+          <div style="font-size:8.5px;width:100%;padding:0 36px;display:flex;justify-content:space-between;align-items:center;color:#1F2A44;font-family:system-ui,'Helvetica Neue',sans-serif;letter-spacing:0.04em;">
+            <span style="font-weight:700;"><span style="color:#9C7A2A;">MV STUDIO PRO</span> · 战略情报局</span>
+            <span style="color:#6E2A2A;font-weight:600;letter-spacing:0.10em;">CONFIDENTIAL</span>
           </div>`,
         footerTemplate: `
-          <div style="font-size:9px;width:100%;text-align:center;color:#888;font-family:system-ui,sans-serif;">
-            <span class="pageNumber"></span> / <span class="totalPages"></span>
+          <div style="font-size:8.5px;width:100%;padding:0 36px;display:flex;justify-content:space-between;align-items:center;color:#777;font-family:system-ui,'Helvetica Neue',sans-serif;letter-spacing:0.04em;">
+            <span style="color:#9C7A2A;">© ${new Date().getFullYear()} · MV STUDIO PRO</span>
+            <span><span class="pageNumber"></span> / <span class="totalPages"></span></span>
           </div>`,
       }),
     );
