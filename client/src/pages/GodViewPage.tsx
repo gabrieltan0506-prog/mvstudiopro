@@ -107,6 +107,18 @@ export default function GodViewPage() {
     if (s === "failed") { setPhase("failed"); setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已退回"); }
   }, [jobDoneQuery.data?.status]);
 
+  // ── 半月刊 10 天提醒
+  const [reminderDismissed, setReminderDismissed] = useState(false);
+  const reminderQuery = trpc.deepResearch.magazineReminder.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const dismissReminderMutation = trpc.deepResearch.dismissReminder.useMutation({
+    onSuccess: () => setReminderDismissed(true),
+  });
+  const reminder = reminderQuery.data;
+  const showReminder = !reminderDismissed && reminder?.reminderDue === true && phase === "idle";
+
   // voice recording
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -363,6 +375,63 @@ export default function GodViewPage() {
             进入快照库 →
           </div>
         </div>
+
+        {/* ── 半月刊 10 天提醒卡片 ── */}
+        {showReminder && reminder && (
+          <div style={{ marginBottom: 20, borderRadius: 16, overflow: "hidden", border: "1.5px solid rgba(168,118,27,0.35)", background: "linear-gradient(135deg,rgba(255,248,230,0.95),rgba(255,243,210,0.9))", boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
+            <div style={{ padding: "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 22 }}>🔔</span>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: "#7a5410" }}>
+                    战略半月刊提醒
+                    {reminder.daysOverdue != null && reminder.daysOverdue > 0
+                      ? <span style={{ marginLeft: 8, fontSize: 12, color: "#c0392b", background: "rgba(192,57,43,0.1)", padding: "2px 8px", borderRadius: 6 }}>已逾期 {reminder.daysOverdue} 天</span>
+                      : <span style={{ marginLeft: 8, fontSize: 12, color: "#e67e22", background: "rgba(230,126,34,0.1)", padding: "2px 8px", borderRadius: 6 }}>首次提醒</span>
+                    }
+                  </div>
+                  <div style={{ fontSize: 12, color: "rgba(61,44,20,0.6)", marginTop: 2 }}>
+                    已发送提醒至 benjamintan0506@163.com · AI 为您推荐了以下选题
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => dismissReminderMutation.mutate()}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(61,44,20,0.4)", fontSize: 18, lineHeight: 1, padding: "4px 6px" }}
+                title="忽略本次提醒（10 天后再提醒）"
+              >×</button>
+            </div>
+
+            {/* 选题列表 */}
+            {reminder.topics.length > 0 && (
+              <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+                {reminder.topics.map((t, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setTopic(t);
+                      setSelectedProduct("magazine_single");
+                      setSuppExpanded(false);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    style={{
+                      textAlign: "left", padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(168,118,27,0.2)",
+                      background: topic === t ? "rgba(168,118,27,0.15)" : "rgba(255,255,255,0.7)",
+                      cursor: "pointer", color: "#3d2c14", fontSize: 13, lineHeight: 1.6,
+                      transition: "background 0.15s", fontFamily: "inherit",
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, color: "#a87020", marginRight: 6 }}>{i + 1}.</span>{t}
+                    <span style={{ float: "right", fontSize: 11, color: "#a87020", marginTop: 2 }}>点击填入 →</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {reminderQuery.isLoading && (
+              <div style={{ padding: "10px 18px 14px", color: "rgba(61,44,20,0.5)", fontSize: 13 }}>⏳ 正在生成选题建议…</div>
+            )}
+          </div>
+        )}
 
         {/* ── 定價矩陣 ── */}
         {(phase === "idle" || phase === "launching") && (

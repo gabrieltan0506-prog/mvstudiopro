@@ -1269,6 +1269,16 @@ ${job.topic}
 
     console.log(`[deepResearch] ✅ 研报 ${jobId} 已完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
 
+    // ── 半月刊：记录最后生成时间，触发 10 天提醒计时 ─────────────────────────
+    if (productType === "magazine_single" || productType === "magazine_sub") {
+      try {
+        const { recordMagazineGenerated } = await import("./magazineScheduler");
+        await recordMagazineGenerated(job.userId, job.topic ?? "");
+      } catch (e: any) {
+        console.warn("[deepResearch] magazine schedule 记录失败:", e?.message);
+      }
+    }
+
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
     const latest = (await readJob(jobId)) ?? job;

@@ -5733,6 +5733,43 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         };
       }),
 
+    /**
+     * 半月刊提醒：检查当前用户是否距上次生成 >= 10 天。
+     * 到期则自动生成 3-5 个选题建议。
+     */
+    magazineReminder: protectedProcedure.query(async ({ ctx }) => {
+      const { getMagazineSchedule, daysUntilReminder, generateTopicSuggestions, sendReminderEmailIfNeeded } =
+        await import("./services/magazineScheduler");
+      const userId = String(ctx.user.id);
+      const schedule = await getMagazineSchedule(userId);
+      if (!schedule) {
+        // 从未生成过，立即提醒
+        const topics = await generateTopicSuggestions();
+        // 异步发邮件，不阻塞响应
+        sendReminderEmailIfNeeded(userId, topics, undefined).catch(() => {});
+        return { reminderDue: true, daysOverdue: null, topics, lastTopic: null };
+      }
+      const remaining = daysUntilReminder(schedule.lastGeneratedAt);
+      if (remaining > 0) {
+        return { reminderDue: false, daysRemaining: Math.ceil(remaining), topics: [], lastTopic: schedule.lastTopic ?? null };
+      }
+      const daysOverdue = Math.floor(-remaining);
+      const topics = await generateTopicSuggestions(schedule.lastTopic);
+      // 异步发邮件（每轮只发一次）
+      sendReminderEmailIfNeeded(userId, topics, schedule.lastTopic).catch(() => {});
+      return { reminderDue: true, daysOverdue, topics, lastTopic: schedule.lastTopic ?? null };
+    }),
+
+    /** 忽略本次提醒（将 lastGeneratedAt 重置为现在，推迟 10 天） */
+    dismissReminder: protectedProcedure.mutation(async ({ ctx }) => {
+      const { recordMagazineGenerated, getMagazineSchedule } =
+        await import("./services/magazineScheduler");
+      const userId = String(ctx.user.id);
+      const schedule = await getMagazineSchedule(userId);
+      await recordMagazineGenerated(userId, schedule?.lastTopic ?? "");
+      return { ok: true };
+    }),
+
     /** 主编奖励：采纳情报并发放 300 点 */
     supervisorReward: adminProcedure
       .input(z.object({ userId: z.number(), reportId: z.number(), credits: z.number().default(300) }))
