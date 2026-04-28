@@ -4,7 +4,7 @@
 #
 
 app = 'mvstudiopro'
-primary_region = 'iad'  # 弗吉尼亚，Google AI 骨干网络最低延迟节点（备选：ord 芝加哥）
+primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器实际所在地（亚洲用户低延迟）
 
 [build]
 
