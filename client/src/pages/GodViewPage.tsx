@@ -142,9 +142,19 @@ export default function GodViewPage() {
         </button>
         <span style={{ color: "rgba(245,200,80,0.2)" }}>/</span>
         <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 13, fontWeight: 700 }}>AI 上帝视角</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#f5c842", background: "rgba(180,130,0,0.15)", border: "1px solid rgba(180,130,0,0.4)", borderRadius: 99, padding: "3px 10px" }}>
-          👑 VIP 专享
-        </span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            onClick={() => navigate("/my-reports")}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "linear-gradient(135deg,rgba(200,160,0,0.20),rgba(138,98,0,0.15))", border: "1px solid rgba(180,130,0,0.45)", color: "#f5c842", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: "all 0.2s" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "linear-gradient(135deg,#c8a000,#8a6200)"; (e.currentTarget as HTMLElement).style.color = "#050300"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "linear-gradient(135deg,rgba(200,160,0,0.20),rgba(138,98,0,0.15))"; (e.currentTarget as HTMLElement).style.color = "#f5c842"; }}
+          >
+            <Crown size={13} />我的战报
+          </button>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#f5c842", background: "rgba(180,130,0,0.15)", border: "1px solid rgba(180,130,0,0.4)", borderRadius: 99, padding: "3px 10px" }}>
+            👑 VIP 专享
+          </span>
+        </div>
       </div>
 
       <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
