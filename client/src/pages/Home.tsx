@@ -39,6 +39,9 @@ export default function HomePage() {
 
       <HomeHero />
 
+      {/* 试读样本 · 醒目位置（紧贴 Hero，让访客一进站就能下载） */}
+      <SampleReportDownload />
+
       <HomeFeatureCarousel />
 
       <HomeChangelog />
@@ -48,8 +51,6 @@ export default function HomePage() {
       <HomeTools />
 
       <HomeShowcase />
-
-      <SampleReportDownload />
 
       <HomePricing />
 

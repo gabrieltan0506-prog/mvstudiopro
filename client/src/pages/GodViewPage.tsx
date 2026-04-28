@@ -165,11 +165,39 @@ export default function GodViewPage() {
   }, [isRecording]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 35%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif", position: "relative", overflow: "hidden" }}>
-      {/* 卡布奇诺暖金光晕 */}
+    <div
+      style={{
+        minHeight: "100vh",
+        // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
+        background: `
+          radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
+          radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
+          linear-gradient(180deg,
+            #ede1c5 0%,
+            #ddc59c 22%,
+            #c9a878 48%,
+            #b08c5a 72%,
+            #8e6c45 92%,
+            #7a5e3f 100%
+          )
+        `,
+        fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* 卡布奇諾暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "5%", left: "10%", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle,rgba(168,118,27,0.16) 0%,transparent 65%)", filter: "blur(80px)", animation: "godview-float 18s ease-in-out infinite" }} />
-        <div style={{ position: "absolute", bottom: "10%", right: "5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle,rgba(122,84,16,0.14) 0%,transparent 65%)", filter: "blur(60px)", animation: "godview-float 22s ease-in-out infinite reverse" }} />
+        {/* 顶部奶泡高光（让顶端阅读区更明亮，文字更易读）*/}
+        <div style={{ position: "absolute", top: "-15%", left: "50%", transform: "translateX(-50%)", width: 1100, height: 700, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,247,224,0.55) 0%,transparent 70%)", filter: "blur(70px)" }} />
+        {/* 左上焦糖金光晕 · 慢呼吸动画 */}
+        <div style={{ position: "absolute", top: "8%", left: "8%", width: 620, height: 620, borderRadius: "50%", background: "radial-gradient(circle,rgba(216,162,58,0.32) 0%,rgba(168,118,27,0.18) 35%,transparent 70%)", filter: "blur(90px)", animation: "godview-float 18s ease-in-out infinite" }} />
+        {/* 右下深咖啡光晕 · 反向呼吸 */}
+        <div style={{ position: "absolute", bottom: "8%", right: "5%", width: 480, height: 480, borderRadius: "50%", background: "radial-gradient(circle,rgba(74,54,33,0.40) 0%,rgba(122,84,16,0.22) 35%,transparent 70%)", filter: "blur(80px)", animation: "godview-float 22s ease-in-out infinite reverse" }} />
+        {/* 中段焦糖核心暖光（强化「咖啡心脏」段的浓郁度）*/}
+        <div style={{ position: "absolute", top: "45%", right: "20%", width: 380, height: 380, borderRadius: "50%", background: "radial-gradient(circle,rgba(216,162,58,0.18) 0%,transparent 70%)", filter: "blur(60px)", animation: "godview-float 26s ease-in-out infinite" }} />
+        {/* 微噪点纹理（仿咖啡粉颗粒，提升手感与质感） */}
+        <div style={{ position: "absolute", inset: 0, opacity: 0.25, mixBlendMode: "overlay", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0 0.10  0 0 0 0.45 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />
       </div>
 
       {/* 顶部导航 */}

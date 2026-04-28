@@ -5678,6 +5678,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               status: r.status,
               progress: meta.progress || "",
               reportMarkdown: meta.reportMarkdown || null,
+              draftMarkdown: meta.draftMarkdown || null,
               jobId: meta.jobId || null,
               creditsUsed: r.creditsUsed ?? 0,
               createdAt: r.createdAt.toISOString(),
@@ -5731,11 +5732,16 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               title: r.title || meta.lighthouseTitle || meta.topic || "无标题",
               lighthouseTitle: meta.lighthouseTitle || r.title || meta.topic || "",
               topic: meta.topic || r.title || "",
+              // 状态：processing / awaiting_review / completed / failed
               status: r.status,
               progress: meta.progress || "",
               reportMarkdown: meta.reportMarkdown || null,
+              draftMarkdown: meta.draftMarkdown || null,
+              draftReadyAt: meta.draftReadyAt || null,
+              publishedAt: meta.publishedAt || null,
               error: meta.error || null,
               jobId: meta.jobId || null,
+              productType: meta.productType || null,
               creditsUsed: r.creditsUsed ?? 0,
               createdAt: r.createdAt.toISOString(),
               coverUrl: r.thumbnailUrl || null,
@@ -5749,6 +5755,155 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return { reports: [] };
       }
     }),
+
+    /** 主编审核：保存草稿（不出刊，状态保持 awaiting_review） */
+    saveDraft: protectedProcedure
+      .input(z.object({
+        recordId: z.number().int().positive(),
+        markdown: z.string().min(50).max(200_000),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { eq, and } = await import("drizzle-orm");
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "数据库未就绪" });
+
+        const rows = await database
+          .select()
+          .from(userCreations)
+          .where(and(eq(userCreations.id, input.recordId), eq(userCreations.userId, ctx.user.id)))
+          .limit(1);
+        const row = rows[0];
+        if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "战报不存在或无权限" });
+        if (row.status === "completed") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "已出刊的战报不可再编辑草稿（请联系管理员撤回）" });
+        }
+
+        let meta: any = {};
+        try { meta = JSON.parse(row.metadata || "{}"); } catch {}
+        meta.draftMarkdown = input.markdown;
+        meta.draftEditedAt = new Date().toISOString();
+
+        await database.update(userCreations).set({
+          status: "awaiting_review",
+          metadata: JSON.stringify(meta),
+          updatedAt: new Date(),
+        }).where(eq(userCreations.id, input.recordId));
+
+        return { ok: true as const, savedAt: meta.draftEditedAt };
+      }),
+
+    /** 主编审核：正式出刊（草稿 → 正式版，状态改 completed） */
+    publishDraft: protectedProcedure
+      .input(z.object({
+        recordId: z.number().int().positive(),
+        markdown: z.string().min(50).max(200_000),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { eq, and } = await import("drizzle-orm");
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "数据库未就绪" });
+
+        const rows = await database
+          .select()
+          .from(userCreations)
+          .where(and(eq(userCreations.id, input.recordId), eq(userCreations.userId, ctx.user.id)))
+          .limit(1);
+        const row = rows[0];
+        if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "战报不存在或无权限" });
+
+        let meta: any = {};
+        try { meta = JSON.parse(row.metadata || "{}"); } catch {}
+        meta.reportMarkdown = input.markdown;        // 正式版
+        meta.draftMarkdown = input.markdown;          // 草稿同步覆盖（保留可重新编辑能力）
+        meta.publishedAt = new Date().toISOString();
+        meta.progress = "✅ 战报已正式出刊，可下载富图文 PDF";
+
+        await database.update(userCreations).set({
+          status: "completed",
+          metadata: JSON.stringify(meta),
+          updatedAt: new Date(),
+        }).where(eq(userCreations.id, input.recordId));
+
+        return { ok: true as const, publishedAt: meta.publishedAt };
+      }),
+
+    /** AI 助手：对选中段落做重写 / 扩写 / 缩写 / 补一张表 */
+    aiAssist: protectedProcedure
+      .input(z.object({
+        recordId: z.number().int().positive(),
+        action: z.enum(["rewrite", "expand", "shrink", "addTable", "freeform"]),
+        blockText: z.string().min(1).max(20_000),
+        instruction: z.string().max(2000).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // 鉴权：必须是当前用户的报告
+        const { userCreations } = await import("../drizzle/schema-creations");
+        const { eq, and } = await import("drizzle-orm");
+        const database = await db.getDb();
+        if (!database) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "数据库未就绪" });
+
+        const rows = await database
+          .select()
+          .from(userCreations)
+          .where(and(eq(userCreations.id, input.recordId), eq(userCreations.userId, ctx.user.id)))
+          .limit(1);
+        if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "战报不存在或无权限" });
+
+        // 微扣 5 点（AI 助手按次计费）
+        const COST = 5;
+        try {
+          const r = await deductCreditsAmount(ctx.user.id, COST, "aiAssistEditor", `主编工作台AI助手·${input.action}`);
+          if (!r.success) throw new Error(`积分不足，需要 ${COST} 点`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分不足" });
+        }
+
+        const ACTION_PROMPT: Record<string, string> = {
+          rewrite: "请用同等字数重写以下段落，保持核心观点不变，但语言更精炼有力，避免任何英文专业名词（必须翻译成简体中文）。直接输出重写后的 markdown，不要任何前后说明。",
+          expand: "请在保留原有观点的基础上，扩写以下段落到原长度的 1.6 倍，补充更具体的数据、案例和操作建议。直接输出扩写后的 markdown，不要任何前后说明。",
+          shrink: "请把以下段落浓缩到原长度的 60%，保留核心数据与结论，删除冗余表达。直接输出浓缩后的 markdown，不要任何前后说明。",
+          addTable: "请基于以下段落的主题，在段落末尾追加一张包含 4-6 行真实数据的 markdown 表格（必须有数据来源列）。直接输出原段落 + 新增表格的完整 markdown，不要任何前后说明。",
+          freeform: "请根据以下「主编指令」修改给定段落。如果指令有歧义，按最合理的中文商务白皮书风格处理。直接输出修改后的 markdown，不要任何前后说明。",
+        };
+
+        const finalPrompt = `${ACTION_PROMPT[input.action]}
+
+${input.instruction ? `【主编指令】\n${input.instruction}\n` : ""}
+【原段落】
+${input.blockText}`;
+
+        // 调用 Gemini 3.1 Pro Preview（与正式合成同一模型，保持文风一致）
+        try {
+          const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+          if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key=${apiKey}`;
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+              generationConfig: { temperature: 0.55, maxOutputTokens: 8192 },
+            }),
+            signal: AbortSignal.timeout(120_000),
+          });
+          const json: any = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            // 失败退积分
+            try { await refundCredits(ctx.user.id, COST, `主编工作台AI助手·${input.action}·失败退回`); } catch {}
+            throw new Error(json?.error?.message || `Gemini API ${r.status}`);
+          }
+          const text = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+          if (!text) {
+            try { await refundCredits(ctx.user.id, COST, `主编工作台AI助手·${input.action}·空响应退回`); } catch {}
+            throw new Error("AI 未返回内容");
+          }
+          return { ok: true as const, suggestion: text, creditsCost: COST };
+        } catch (e: any) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "AI 助手调用失败" });
+        }
+      }),
   }),
 
   /** 竞品分析调研 — 双阶段 LLM + Fly 存储 + GitHub 备份 */

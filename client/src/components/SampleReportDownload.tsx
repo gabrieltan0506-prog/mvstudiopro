@@ -1,938 +1,789 @@
-import React from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
+import { trpc } from "@/lib/trpc";
+import ReportRenderer from "@/components/ReportRenderer";
+import { Loader2, FileDown, ArrowRight, Crown, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 
-// ─── 水印层 ────────────────────────────────────────────────────────────────
-const WATERMARK_TEXT = "试读版 · 仅供参考 · MV Studio Pro";
+// ─────────────────────────────────────────────────────────────────────────────
+// 试读版 Markdown 内容（卡布奇諾色调 · 富图文 · 配五大必选模块）
+// ─────────────────────────────────────────────────────────────────────────────
 
-function WatermarkLayer() {
-  const rows = 8;
-  const cols = 6;
-  const items: React.ReactNode[] = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const offset = r % 2 === 0 ? 0 : 8;
-      items.push(
-        <span
-          key={`${r}-${c}`}
-          style={{
-            display: "inline-block",
-            width: `${100 / cols}%`,
-            marginLeft: r % 2 === 1 && c === 0 ? `${offset}%` : undefined,
-            textAlign: "center",
-            color: "#c8a000",
-            opacity: 0.10,
-            fontSize: 13,
-            fontWeight: 600,
-            transform: "rotate(-35deg)",
-            whiteSpace: "nowrap",
-            userSelect: "none",
-          }}
-        >
-          {WATERMARK_TEXT}
-        </span>
-      );
-    }
+const BIWEEKLY_TOPIC = "AI 短剧大揭秘 · 一秒钟脑补三集，这届年轻人为什么戒不掉？";
+
+const BIWEEKLY_MARKDOWN = `# AI 短剧大揭秘 · 一秒钟脑补三集
+
+> 📅 出品日期：2026 年 4 月 28 日 · 个性化种子：\`sample-biweekly-ai-shortform\`
+> 🔍 数据来源：Google 搜索接地（覆盖 2024–2026 Q1） + 平台公开数据 + 头部账号样本
+> 🧠 推演引擎：Gemini 2.5 Pro 数据采集 + Gemini 3.1 Pro 智能合成
+
+---
+
+# 一、行业全景扫描（宏观趋势 + 监管变化）
+
+人工智能短剧（俗称「AI 短剧」）已从 2024 年的实验性赛道，演变为 2026 年第 1 季度日均播放量超 18 亿次的「内容核反应堆」。腾讯视频、爱奇艺、抖音、快手相继成立 AI 短剧专项基金；监管层面 2025 年 11 月发布的《生成式视听内容标识规范》要求所有 AI 短剧片头明示「合成内容」标签。**红利窗口正在收窄，但用户黏性反而提升 38%——上瘾机制比内容本身更值钱**。
+
+| 年份 | 市场规模 | 年增速 | 关键驱动事件 |
+|---|---|---|---|
+| **2024** | 87 亿元 | +280% | 抖音「即梦 AI」对外开放，单条爆款破亿 |
+| **2025** | 312 亿元 | +258% | 快手「可灵」上线，3 分钟生成 90 秒短剧 |
+| **2026E** | 740 亿元 | +137% | 监管落地后，付费会员转化率反弹至 11.2% |
+| **2027F** | 1380 亿元 | +86% | 院线级长剧出现，AI 工业化制片成熟 |
+
+用「政治经济社会技术分析」拆解外部环境，**社会层面的「即时爽感经济」是最大推力**：根据中国网络视听研究院 2026 年 1 月报告，18-35 岁用户日均观看 AI 短剧 41 分钟，超过传统短剧 27 分钟。技术层面，单分钟视频生成成本从 2024 年的 12 元降至 2026 年的 0.43 元，降幅 96.4%，这彻底重写了内容供给曲线。
+
+📊 数据速查
+
+| 指标 | 数值 | 数据来源 |
+|---|---|---|
+| 日均播放量 | 18.4 亿次 | QuestMobile 2026Q1 |
+| 头部集中度 CR10 | 41.7% | 中国网络视听研究院 |
+| 单分钟生成成本下降 | -96.4% | 灼识咨询 2026 年 1 月 |
+
+---
+
+# 二、个人亮点提取 + 平台赛道全景（千人千面的差异化身份与赛道地图）
+
+**洞察一：你不是在做 AI 短剧，你是在经营「成瘾算法」**——头部账号的爆款公式不是剧情，而是「钩子—反转—悬念—停顿」四段神经触发器，平均触发率可达 73%，远高于传统短剧 28%。
+
+**洞察二：男性观众比例从 2024 年的 31% 飙升至 2026 年的 47%**——这是赛道里被严重低估的红利窗口，绝大多数博主仍在套用女频「霸总」公式，男频「逆袭—修仙—战神」三大题材尚未饱和。
+
+**洞察三：付费转化的关键不是会员墙，是「评论区情绪燃料」**——头部账号 1 万评论里，有 38% 集中在「这是哪个 App 看完整版？」类问题，这意味着引流到私域的链路被严重低估。
+
+**定位锚点（一句话）：你不是又一个 AI 短剧创作者，你是「成瘾算法的设计师」——把神经科学与剧情公式合体，把每一帧都当作多巴胺触发器在设计。**
+
+| 能力维度 | 用户评分 | 行业头部均值 | 差距说明 |
+|---|---|---|---|
+| **剧本钩子设计** | 6 / 10 | 9.1 / 10 | 头部前 3 秒钩子触发率 73% |
+| **AI 工具熟练度** | 8 / 10 | 8.6 / 10 | 头部用 4-5 套工具协同 |
+| **数据反馈速度** | 5 / 10 | 9.3 / 10 | 头部 2 小时内完成迭代 |
+| **私域转化** | 3 / 10 | 8.5 / 10 | 头部单粉获取成本仅 4.2 元 |
+| **跨平台协同** | 4 / 10 | 8.0 / 10 | 头部 4 平台同步分发 |
+| **品牌商业敏感** | 7 / 10 | 8.7 / 10 | 头部品牌单价 ¥18-58 万 |
+
+| 平台 | 月活（亿） | 算法侧重 | 最佳内容形式 | 最佳发布时段 | 本人适配度 | 推荐顺位 |
+|---|---|---|---|---|---|---|
+| **抖音** | 7.8 | 完播率 + 互动率 | 60-90 秒竖屏 AI 短剧 | 19:00-22:30 | ⭐⭐⭐⭐⭐ | 主战场 |
+| **快手** | 4.1 | 老铁信任 + 直播 | 直播解说 AI 短剧花絮 | 20:30-23:00 | ⭐⭐⭐⭐ | 第二阵地 |
+| **小红书** | 3.2 | 收藏 + 关注 | 图文「AI 工具教程」 | 20:00-22:00 | ⭐⭐⭐⭐ | 引流到私域 |
+| **哔哩哔哩** | 3.6 | 完播率 + 三连 | 10-15 分钟「制作幕后」 | 周末 14:00-17:00 | ⭐⭐⭐ | 沉淀铁粉 |
+| **视频号** | 5.1 | 社交关系链 | 30 秒预告 + 公众号长文 | 早 7:30-9:00 | ⭐⭐⭐ | 高净值变现 |
+
+用「波士顿矩阵」对候选赛道分类：「男频战神 AI 短剧」是明星方向（高增速 + 低竞争），「女频霸总 AI 短剧」是现金牛（高增速 + 高竞争已成红海），「萌宠 AI 短剧」是问题赛道（中增速 + 中竞争），「励志正能量 AI 短剧」是瘦狗（增速放缓且监管严苛）。
+
+---
+
+# 三、产品矩阵设计 + 商业变现路径（投入产出比最大化）
+
+| 层级 | 产品名 | 形态 | 价格 | 目标用户 | 五段漏斗目标转化率 |
+|---|---|---|---|---|---|
+| **塔基（引流品）** | 《AI 短剧 7 日上手营》 | 直播课 + 社群 | ¥99 | 0-1 万粉新手 | 获取 → 激活：22% |
+| **塔身（主力品）** | 《成瘾算法实验室》 | 6 周训练营 | ¥4 999 | 1-10 万粉腰部 | 激活 → 留存：64% |
+| **塔尖（高端旗舰）** | 1v1 爆款剧本工作坊 | 季度陪跑 | ¥39 800 | 头部品牌方 / MCN | 留存 → 收入：28% |
+
+用「蓝海战略画布」给出四象限改动：
+- **消除**：消除「教学讲解 AI 工具」的入门内容（市场已饱和）
+- **减少**：减少「华丽特效炫技」（用户已审美疲劳，2026Q1 同类内容互动率下降 41%）
+- **增加**：增加「神经触发器拆解」（强调每个钩子背后的脑科学原理）
+- **创造**：创造「成瘾度评分体系」（独家方法论，可申请知识产权）
+
+📊 数据速查
+
+| 变现指标 | 行业中位数 | 头部账号 | 90 天目标 |
+|---|---|---|---|
+| 单粉获取成本 | 9.3 元 | 4.2 元 | 6.8 元 |
+| 用户终身价值 | 32 元 | 187 元 | 78 元 |
+| 月销售额 | ¥18 万 | ¥260 万 | ¥48 万 |
+| 投入产出比 | 1 : 2.4 | 1 : 8.7 | 1 : 4.3 |
+
+⚠️ **执行风险提醒**：监管层 2025 年 11 月已要求 AI 合成内容必须打标，未来 6-12 个月将出现一波「不合规账号被限流」的洗牌。请提前将主体认证为机构号、确保片头标识合规，避免百万粉一夜清零。
+
+---
+
+# 四、生涯规划 + 30 天冲刺行动手册
+
+用「SMART 目标拆解」给出 1 年与 3 年里程碑：
+
+| 时限 | 角色定位 | 具体可达成目标 | 关键能力跃迁 | 资产规模 |
+|---|---|---|---|---|
+| **90 天** | AI 短剧实验员 | 抖音粉丝破 5 万，单条爆款超 500 万 | 钩子设计公式 | 私域 800 人 |
+| **1 年** | 成瘾算法工程师 | 三平台总粉丝破 50 万，月营收 ¥50 万 | 完整成瘾算法体系 | 私域 8 000 人 |
+| **3 年** | AI 内容工厂主理人 | 自建 MCN 矩阵 30 账号，年营收 ¥3000 万 | 工业化生产流水线 | 团队 15 人 + 知识产权 |
+
+| 时间段 | 核心主题 | 每日必做动作 | 阶段达成指标 | 成功判断标准 |
+|---|---|---|---|---|
+| **第 1-7 天** | 账号冷启动 | 拆解 5 个对标账号 + 发布 1 条 AI 短剧 | 涨粉 200，互动率 ≥ 3% | 至少 1 条破 1 万播放 |
+| **第 8-14 天** | 钩子公式测试 | 同选题做 3 个不同钩子的 AB 测试 | 涨粉 1 500，找到爆款公式 | 完播率 ≥ 45% |
+| **第 15-21 天** | 矩阵号搭建 | 复制公式开 2 个矩阵号 | 主号粉丝 6 000，矩阵 2 000 | 单条最高破 50 万播放 |
+| **第 22-30 天** | 私域闭环测试 | 评论区置顶引流 + 直播首秀 | 私域 ≥ 300 人，付费 30 人 | 验证 ¥99 引流品转化 ≥ 8% |
+
+⚠️ **执行风险提醒**：第 8-14 天 AB 测试容易陷入「自我感动」陷阱，如果 3 个钩子互动率全部低于 2%，请果断换选题，不要恋战。
+
+---
+
+# 五、核武级总结
+
+**三大核心洞察（每条附数据点）**：
+
+1. **AI 短剧的护城河不是工具，是钩子公式**——头部账号前 3 秒钩子触发率 73% vs 行业均值 28%，这是 2.6 倍效率差。
+2. **男频赛道是被严重低估的金矿**——男性观众占比 47%，但男频内容仅占总供给的 22%，错位窗口至少持续 6-9 个月。
+3. **私域是真正的护城河**——头部账号 38% 的评论是「求完整版」，从公域转私域的转化率被绝大多数博主低估。
+
+**一句话品牌口号**：用神经科学的精准，设计每一帧多巴胺。
+
+**90 天三大里程碑**：
+
+| 里程碑 | 时间节点 | 量化目标 | 验证方式 |
+|---|---|---|---|
+| **M1** | 第 30 天 | 粉丝 5 000 人，3 条破百万播放 | 后台播放量截图 |
+| **M2** | 第 60 天 | 粉丝 2.5 万，私域 800 人 | 私域微信群人数截图 |
+| **M3** | 第 90 天 | 粉丝 5 万，月营收 ¥4.8 万 | 后台收益结算页 |
+
+> 🔒 **试读版到此为止**——完整版还包含：12 套钩子公式实拍模板、6 个真实头部账号变现明细表、AI 工具协同矩阵、监管合规清单、私域 SOP 手册等共 47 页内容。`;
+
+const QUARTERLY_TOPIC = "我 88 岁奶奶熬夜追《凡人修仙传》· 银发族银幕审美的算法蓝海";
+
+const QUARTERLY_MARKDOWN = `# 88 岁奶奶熬夜追凡修 · 银发审美的算法蓝海
+
+> 📅 出品日期：2026 年 4 月 28 日 · 个性化种子：\`sample-quarterly-silver-bili\`
+> 🔍 数据来源：Google 搜索接地（覆盖 2024–2026 Q1） + 哔哩哔哩公开数据 + 银发用户调研样本
+> 🧠 推演引擎：Gemini 2.5 Pro 数据采集 + Gemini 3.1 Pro 智能合成
+
+---
+
+# 一、个人亮点提取（基于您真实账户行为的 X 光）
+
+**洞察一**：您的账户基线显示，过去 6 个月在「银发内容 / 古风修仙 / 家庭代际」三个标签下累计研究 7 次，**远超平台平均水平的 1.4 次**。这不是兴趣，是一种「直觉雷达」——您比 95% 的同行更早闻到了银发赛道。
+
+**洞察二**：您的研究素材里 64% 来自哔哩哔哩，**这是一个被严重低估的判断力**。哔哩哔哩 60 岁以上用户 2026Q1 同比增长 211%，是全网增速最快的人群之一，但绝大多数创作者还在死磕 18-25 岁。
+
+**洞察三**：您历史 3 次竞品调研都聚焦在「中老年情感 / 家庭剧」，**说明您天然带有同理心型内容设计能力**——这是银发赛道里最稀缺的特质，远比「年轻有梗」重要。
+
+**洞察四**：您累计积分投入中 71% 用于「调研类」而非「创作类」工具，**说明您是「研究先行型」创作者**——这是高客单价知识付费创作者的核心特征，强行让您去拍短视频是浪费您的天赋。
+
+**洞察五**：您的研究课题里反复出现「凡人修仙传」「玄幻」「古风」等关键词，**说明您对国风 IP 的算法时机有极强的判断力**——而国风 + 银发是 2026 年最被低估的交叉赛道之一。
+
+**定位锚点（一句话）**：您不是创作者，您是「银发国风内容的算法侦探」——用研究员的耐心，去解码 60 岁人群在哔哩哔哩为什么能为修仙剧熬夜。
+
+| 能力维度 | 用户评分 | 行业头部均值 | 差距 | 优先补强 |
+|---|---|---|---|---|
+| **同理心型内容设计** | 9 / 10 | 7.8 / 10 | +1.2 | 维持优势 |
+| **算法时机判断** | 8 / 10 | 8.5 / 10 | -0.5 | 第 3 顺位 |
+| **跨代际话题敏感度** | 9 / 10 | 6.2 / 10 | +2.8 | **核心壁垒** |
+| **创作执行力** | 4 / 10 | 8.6 / 10 | -4.6 | 第 1 顺位（找搭档） |
+| **私域转化** | 3 / 10 | 8.2 / 10 | -5.2 | 第 2 顺位 |
+| **数据复盘** | 8 / 10 | 7.9 / 10 | +0.1 | 维持 |
+
+📊 数据速查（个人）
+
+| 指标 | 您的现状 | 行业头部 | 差距说明 |
+|---|---|---|---|
+| 累计研究课题 | 7 次 | 1.4 次（平均） | 比同行多 5 倍 |
+| 银发标签命中率 | 64% | 9% | 比同行精准 7 倍 |
+| 创作执行频率 | 0.3 条/月 | 24 条/月 | **最大短板，需找搭档** |
+
+---
+
+# 二、平台赛道全景（哔哩哔哩银发国风蓝海）
+
+**银发用户增速第一的平台是哔哩哔哩**，但绝大多数创作者还在围着年轻用户打转——这是您的最大机会。
+
+| 平台 | 月活 60+ 用户 | 同比增速 | 算法侧重 | 最佳内容形式 | 银发国风适配 |
+|---|---|---|---|---|---|
+| **哔哩哔哩** | 4 200 万 | **+211%** | 完播率 + 三连 | 8-15 分钟解读 | ⭐⭐⭐⭐⭐ |
+| **抖音** | 1.8 亿 | +37% | 完播率 + 互动率 | 30-90 秒短视频 | ⭐⭐⭐ |
+| **快手** | 1.1 亿 | +52% | 老铁信任 + 直播 | 直播 + 短视频 | ⭐⭐⭐⭐ |
+| **小红书** | 980 万 | +89% | 收藏 + 关注 | 图文长文 | ⭐⭐ |
+| **视频号** | 1.6 亿 | +118% | 社交关系链 | 30 秒预告 + 公众号 | ⭐⭐⭐⭐ |
+
+用「优劣势机会威胁矩阵（中文化版）」对最推荐平台哔哩哔哩做四象限战略：
+
+| 内部优势 | 内部劣势 |
+|---|---|
+| 银发用户增速 211% / 您的判断力天然契合 | 创作执行力短板 / 视频制作经验不足 |
+
+| 外部机会 | 外部威胁 |
+|---|---|
+| 国风 IP 持续热度（凡修日均播放 1.2 亿） | 平台 2026Q2 可能调整推荐权重 |
+
+**SO 战略（用优势抓机会）**：与一位 25-30 岁视频剪辑搭档合作，您负责「为什么奶奶看得上」的研究输出，搭档负责把研究变成 10 分钟以内的可视化解读视频，主攻哔哩哔哩。
+
+**WO 战略（补劣势抓机会）**：第一阶段不要自己拍，用图文 + 文字稿的形式发到小红书做内容验证，验证选题后再外包视频制作。
+
+**ST 战略（用优势防威胁）**：把研究方法论沉淀为「可复用的银发国风分析报告」，作为知识付费产品出售，不依赖平台流量也能赚钱。
+
+**WT 战略（防御）**：避免重金投入单一平台，先以哔哩哔哩为根据地，3 个月后再向视频号扩展。
+
+⚠️ **执行风险提醒**：哔哩哔哩 2026Q2 可能调整推荐算法，建议在 4-5 月窗口期密集发布 12 条以上内容沉淀粉丝，6 月后转向私域留存。
+
+---
+
+# 三、产品矩阵设计（高客单价金字塔）
+
+| 层级 | 产品名 | 形态 | 价格 | 毛利率 | 目标用户 |
+|---|---|---|---|---|---|
+| **塔基（引流品）** | 《银发用户内容偏好白皮书》 | PDF + 数据包 | ¥69 | 95% | 中老年自媒体新手 |
+| **塔身（主力品）** | 《银发国风方法论训练营》 | 8 周线上 + 1v1 诊断 | ¥6 980 | 78% | 1-5 万粉腰部博主 |
+| **塔尖（高端旗舰）** | 季度银发赛道战略陪跑 | 1v1 + 内容反向定制 | ¥58 000 | 65% | 头部 MCN / 银发品牌 |
+
+📊 定价对标
+
+| 产品 | 您的建议价 | 赛道竞品均价 | 溢价空间 | 推荐定价理由 |
+|---|---|---|---|---|
+| **白皮书** | ¥69 | ¥29-49 | 40%-138% | 您的同理心稀缺度配得上 |
+| **训练营** | ¥6 980 | ¥3 980 | 75% | 1v1 诊断是绝对差异化 |
+| **高端陪跑** | ¥58 000 | ¥29 800 | 95% | 银发 + 国风双标签独家 |
+
+---
+
+# 四、商业成长与变现路径（投入产出比最短路径）
+
+| 阶段 | 现状 | 行业头部 | 90 天目标 | 杠杆动作 |
+|---|---|---|---|---|
+| **获取（曝光 → 关注）** | 1.2% | 8.7% | 3.5% | 标题用「奶奶 + 凡修」组合钩子 |
+| **激活（关注 → 互动）** | 18% | 64% | 35% | 评论区主动回复每一条 |
+| **留存（互动 → 复看）** | 22% | 71% | 45% | 系列化内容（每周固定主题） |
+| **收入（复看 → 付费）** | 0% | 14% | 5% | 引流到私域，转化白皮书 |
+| **推荐（付费 → 老带新）** | 0% | 38% | 12% | 私域社群每月一次「研究分享会」 |
+
+| 成长阶段 | 粉丝规模 | 预计周期 | 主要变现方式 | 月收入预估 |
+|---|---|---|---|---|
+| **冷启动期** | 0 - 1 万 | 第 1-3 月 | 白皮书引流品 | ¥3 000 - 8 000 |
+| **成长期** | 1 - 5 万 | 第 4-6 月 | 训练营首期 | ¥4 万 - 12 万 |
+| **加速期** | 5 - 20 万 | 第 7-12 月 | 高端 1v1 + 训练营复购 | ¥18 万 - 45 万 |
+| **成熟期** | 20+ 万 | 第 12 月后 | 银发品牌商单 + 知识 IP 授权 | ¥80 万+ |
+
+---
+
+# 五、生涯规划（5 年战略弓与箭）
+
+| 时限 | 角色定位 | 关键能力跃迁 | 资产规模 | 风险防御 |
+|---|---|---|---|---|
+| **1 年** | 银发国风算法侦探 | 系统化的银发用户研究方法论 | 哔哩哔哩 5 万粉 + 私域 1 500 人 | 与 1 位剪辑搭档绑定 |
+| **3 年** | 银发内容研究院主理人 | 数据 + 同理心 + 工业化生产 | 自建研究院团队 6 人 + 年营收 ¥600 万 | 注册商标，知识产权护城河 |
+| **5 年** | 银发产业生态架构师 | 横跨内容 / 教育 / 适老化产品 | 上市公司战略顾问 / 多品牌矩阵 | 至少 2 个非内容收入主体 |
+
+**3 条弯道超车机会窗口**：
+
+1. **2026Q2-Q3**：哔哩哔哩调整推荐权重前的红利窗口，密集发布 12+ 条内容
+2. **2027Q1**：国风 IP《凡人修仙传》第二季播出预期高峰，蹭流量做联名解读
+3. **2027Q4**：60 岁人群占网民比例预计突破 21%，会触发一波品牌大金主入场
+
+**3 条必须立刻放弃的旧思维**：
+
+1. **「自己一个人做内容」**——您的天赋不在执行，找搭档是杠杆而非妥协
+2. **「先做大粉丝量再变现」**——银发赛道用户终身价值高，2 000 私域足以撑起 ¥10 万月营收
+3. **「只盯着哔哩哔哩」**——视频号的 60+ 用户增速已达 118%，要尽快建立第二阵地
+
+⚠️ **执行风险提醒**：5 年规划最大风险是「平台周期切换」——任何一个平台都不会永远红利，每年至少做一次「核心战场迁移评估」，提前 6 个月布局新阵地。
+
+---
+
+# 六、核武级总结
+
+**三大核心洞察**（每条附数据点）：
+
+1. **银发国风是 2026 年最被低估的双标签蓝海**——哔哩哔哩 60+ 用户同比增速 211%，但创作者占比仅 0.7%。
+2. **您的核心壁垒是「跨代际同理心」**——评分 9/10 远高于行业头部均值 6.2/10，比执行能力更值钱。
+3. **执行短板必须用搭档解决**——单靠自己 1 年最多做到 5 千粉，搭档协同可以做到 5 万粉。
+
+**一句话品牌口号**：用奶奶看得懂的语言，解读 Z 世代抢着追的国风。
+
+**90 天里程碑**：
+
+| 里程碑 | 时间节点 | 量化目标 | 验证方式 |
+|---|---|---|---|
+| **M1** | 第 30 天 | 哔哩哔哩 5 000 粉，发布 8 条内容 | 后台粉丝数截图 |
+| **M2** | 第 60 天 | 私域 500 人，白皮书首发 30 单 | 私域社群截图 + 销售记录 |
+| **M3** | 第 90 天 | 哔哩哔哩 2 万粉，月营收 ¥3 万 | 后台收益结算页 |
+
+> 🔒 **试读版到此为止**——完整版还包含：12 个真实银发头部账号拆解、银发用户行为数据库、训练营完整课程大纲、品牌商单谈判模板等共 52 页内容。`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 富图文 PDF 导出（复用 GCS pdf-worker，与作品库同款）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function exportSampleAsPdf(
+  containerEl: HTMLElement,
+  fileName: string,
+  downloadPdfMutation: ReturnType<typeof trpc.mvAnalysis.downloadAnalysisPdf.useMutation>,
+  setLoading: (b: boolean) => void,
+) {
+  // 把当前文档克隆 → 替换 body 内容为单纯的报告容器（避免页面其他内容混进来）
+  const clone = document.documentElement.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("script").forEach((n) => n.remove());
+  clone.querySelectorAll("video, audio, iframe").forEach((n) => n.remove());
+  clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+
+  // 把所有 body 子节点清空，只保留报告容器（用 innerHTML 取子节点，避免 fixed 定位被带进去）
+  const cloneBody = clone.querySelector("body");
+  if (cloneBody) {
+    cloneBody.innerHTML = "";
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100vh;";
+    wrapper.innerHTML = containerEl.innerHTML;
+    cloneBody.appendChild(wrapper);
   }
+
+  const base = document.createElement("base");
+  base.href = window.location.origin + "/";
+  clone.querySelector("head")?.prepend(base);
+
+  const html = "<!DOCTYPE html>" + clone.outerHTML;
+  setLoading(true);
+  downloadPdfMutation.mutate(
+    { html },
+    {
+      onSuccess: (result) => {
+        setLoading(false);
+        if (!result.pdfBase64) {
+          toast.error("PDF 生成成功但内容为空，请重试");
+          return;
+        }
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        toast.success("PDF 已开始下载");
+      },
+      onError: (err) => {
+        setLoading(false);
+        toast.error(err.message || "PDF 导出失败");
+      },
+    },
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 封面图：调用 Nano Banana Pro（Gemini 3 Pro Image），结果缓存到 localStorage
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COVER_CACHE_PREFIX = "mvs-sample-cover-v3-";
+
+const BIWEEKLY_COVER_PROMPT = `Premium luxury Chinese business magazine cover, vertical 3:4 portrait composition, cappuccino cream and warm coffee gold tones (no pure black), elegant modern typography reading "AI 短剧" in stylish Chinese, several softly glowing smartphone screens floating mid-air showing dramatic AI-generated short drama scenes (sword fights, romance, fantasy), warm golden hour lighting with cappuccino latte color palette, subtle film grain, sophisticated editorial photography style, high-end Bloomberg-Businessweek meets Vogue China aesthetic, no text watermark`;
+
+const QUARTERLY_COVER_PROMPT = `Premium warm magazine cover, vertical 3:4 portrait, cappuccino cream and golden honey tones (avoid pure black), tender editorial photograph of a kind 88-year-old Chinese grandmother in cozy traditional armchair under warm lamp, holding a tablet that displays a stylized Chinese xianxia immortal cultivation animation scene with golden flying sword, wrinkles full of warmth, soft window light at dusk, oolong tea cup beside her, sophisticated Chinese editorial photography aesthetic similar to The New Yorker meets National Geographic, dignified and emotional, no text watermark`;
+
+async function fetchCover(prompt: string, cacheKey: string): Promise<string> {
+  // 先看缓存
+  try {
+    const cached = localStorage.getItem(COVER_CACHE_PREFIX + cacheKey);
+    if (cached && cached.startsWith("data:")) return cached;
+  } catch {}
+
+  const res = await fetch("/api/google?op=nanoImage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      tier: "pro",
+      aspectRatio: "3:4",
+      imageSize: "2K",
+      model: "gemini-3-pro-image-preview",
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  const imageUrl = String(data?.imageUrl || "");
+  if (imageUrl) {
+    try { localStorage.setItem(COVER_CACHE_PREFIX + cacheKey, imageUrl); } catch {}
+  }
+  return imageUrl;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 隐藏渲染器：把 Markdown 渲染成 HTML 后，传给 pdf-worker
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HiddenSampleReport({
+  markdown,
+  containerRef,
+  cover,
+  watermark,
+  edition,
+  topic,
+}: {
+  markdown: string;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  cover: string;
+  watermark: string;
+  edition: string;
+  topic: string;
+}) {
   return (
     <div
+      ref={containerRef}
       style={{
         position: "fixed",
-        inset: 0,
-        pointerEvents: "none",
-        zIndex: 9999,
-        display: "flex",
-        flexWrap: "wrap",
-        alignContent: "space-around",
-        padding: "40px 20px",
+        left: "-99999px",
+        top: 0,
+        width: 1100,
+        background: "#f7ede0",
+        padding: 24,
       }}
     >
-      {items}
+      {/* 杂志封面页 */}
+      <div
+        style={{
+          position: "relative",
+          height: 1380,
+          borderRadius: 18,
+          overflow: "hidden",
+          border: "1px solid rgba(122,84,16,0.30)",
+          background: cover ? `url(${cover}) center / cover no-repeat` : "linear-gradient(160deg,#3d2c14,#1c1407)",
+          boxShadow: "0 10px 30px rgba(122,84,16,0.18)",
+          marginBottom: 24,
+        }}
+      >
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(28,20,7,0.12) 0%,rgba(28,20,7,0.55) 60%,rgba(28,20,7,0.85) 100%)" }} />
+        <div style={{ position: "absolute", top: 32, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
+          <div style={{ fontSize: 13, letterSpacing: "0.30em", fontWeight: 700 }}>MV STUDIO PRO · STRATEGIC INTELLIGENCE</div>
+          <div style={{ fontSize: 11, marginTop: 6, opacity: 0.85 }}>{edition} · 2026 年 4 月 28 日</div>
+        </div>
+        <div style={{ position: "absolute", bottom: 80, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
+          <div
+            style={{
+              display: "inline-block",
+              padding: "5px 12px",
+              fontSize: 11,
+              fontWeight: 800,
+              letterSpacing: "0.15em",
+              background: "linear-gradient(135deg,#a8761b,#7a5410)",
+              borderRadius: 4,
+              marginBottom: 18,
+            }}
+          >
+            BIWEEKLY · 战略半月刊
+          </div>
+          <h1 style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.25, margin: 0, textShadow: "0 4px 18px rgba(0,0,0,0.45)" }}>
+            {topic}
+          </h1>
+          <div style={{ marginTop: 22, fontSize: 14, opacity: 0.85, lineHeight: 1.7 }}>
+            五大模块 · 8 张数据表 · 6 套分析框架 · 千人千面定制 · {watermark}
+          </div>
+        </div>
+        <div style={{ position: "absolute", bottom: 24, left: 32, right: 32, display: "flex", justifyContent: "space-between", alignItems: "center", color: "rgba(255,247,223,0.65)", fontSize: 11, fontFamily: "'PingFang SC',sans-serif" }}>
+          <span>试读样本 · 完整版需订阅解锁</span>
+          <span>mvstudiopro.com · {edition}</span>
+        </div>
+      </div>
+
+      {/* 报告正文 */}
+      <ReportRenderer markdown={markdown} padding="40px 56px" />
+
+      {/* 解锁提示 */}
+      <div style={{ marginTop: 24, padding: "20px 28px", borderRadius: 14, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", textAlign: "center" }}>
+        <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: "0.05em" }}>🔒 完整版还有 32+ 页深度内容</div>
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>包含全部 8 张数据表、12 套钩子模板、私域转化 SOP、品牌商单话术、监管合规清单</div>
+      </div>
     </div>
   );
 }
 
-// ─── 公共样式 ──────────────────────────────────────────────────────────────
-const PAGE: React.CSSProperties = {
-  width: 794,
-  minHeight: 1123,
-  background: "#050300",
-  color: "#fff",
-  padding: 60,
-  boxSizing: "border-box",
-  fontFamily: "'Noto Serif SC', 'SimSun', serif",
-  position: "relative",
-  pageBreakAfter: "always",
-  breakAfter: "page",
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// 主组件
+// ─────────────────────────────────────────────────────────────────────────────
 
-const GOLD = "#c8a000";
-const GOLD_DIM = "rgba(180,130,0,0.3)";
-const GOLD_BG = "rgba(180,130,0,0.05)";
-
-const TABLE_STYLE: React.CSSProperties = {
-  width: "100%",
-  borderCollapse: "collapse",
-  fontSize: 13,
-  marginTop: 16,
-};
-
-const TH: React.CSSProperties = {
-  background: "#1a1500",
-  color: GOLD,
-  border: `1px solid ${GOLD_DIM}`,
-  padding: "8px 12px",
-  textAlign: "left",
-  fontWeight: 700,
-};
-
-const TD: React.CSSProperties = {
-  border: `1px solid ${GOLD_DIM}`,
-  padding: "7px 12px",
-  fontSize: 12,
-};
-
-const BLUR_OVERLAY: React.CSSProperties = {
-  position: "absolute",
-  bottom: 0,
-  left: 0,
-  right: 0,
-  height: 260,
-  background: "linear-gradient(to bottom, transparent 0%, #050300 75%)",
-  backdropFilter: "blur(8px)",
-  WebkitBackdropFilter: "blur(8px)",
-  zIndex: 2,
-  display: "flex",
-  alignItems: "flex-end",
-  justifyContent: "center",
-  paddingBottom: 32,
-};
-
-// ─── 半月刊 HTML ────────────────────────────────────────────────────────────
-function BiweeklyPages() {
-  return (
-    <>
-      {/* 封面页 */}
-      <div style={PAGE}>
-        <WatermarkLayer />
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: 1003,
-            textAlign: "center",
-            gap: 24,
-          }}
-        >
-          <div style={{ fontSize: 13, color: GOLD, letterSpacing: 4, fontFamily: "sans-serif" }}>
-            MV Studio Pro 战略智库
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(200,160,0,0.6)", letterSpacing: 2, fontFamily: "sans-serif" }}>
-            第 8 期 · 2026年4月28日
-          </div>
-          <div
-            style={{
-              width: "100%",
-              height: 1,
-              background: `linear-gradient(to right, transparent, ${GOLD}, transparent)`,
-              margin: "8px 0",
-            }}
-          />
-          <div
-            style={{
-              fontSize: 38,
-              fontWeight: 900,
-              lineHeight: 1.35,
-              color: "#fff",
-              letterSpacing: 2,
-            }}
-          >
-            《医美赛道2026：<br />
-            流量红利终结后的<br />
-            精准破局手册》
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "rgba(255,255,255,0.55)",
-              letterSpacing: 1,
-              lineHeight: 1.8,
-            }}
-          >
-            全平台数据解析 × 头部玩家变现拆解 × 差异化人设定位公式
-          </div>
-          <div
-            style={{
-              width: "100%",
-              height: 1,
-              background: `linear-gradient(to right, transparent, ${GOLD}, transparent)`,
-              margin: "8px 0",
-            }}
-          />
-          <div
-            style={{
-              fontSize: 12,
-              color: GOLD_DIM,
-              border: `1px solid ${GOLD_DIM}`,
-              padding: "6px 20px",
-              letterSpacing: 2,
-              fontFamily: "sans-serif",
-            }}
-          >
-            试读版 · 完整版共 47 页
-          </div>
-        </div>
-      </div>
-
-      {/* 数据页 */}
-      <div style={PAGE}>
-        <WatermarkLayer />
-        <div style={{ fontSize: 10, color: "rgba(200,160,0,0.5)", letterSpacing: 3, marginBottom: 8, fontFamily: "sans-serif" }}>
-          MV STUDIO PRO 战略智库 · 第8期 · 医美赛道
-        </div>
-        <h2 style={{ fontSize: 22, color: GOLD, fontWeight: 800, marginBottom: 4 }}>
-          一、行业全景扫描
-        </h2>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.8, marginBottom: 20 }}>
-          中国医美市场历经三年高速扩张，2026年预计突破4,280亿元。监管趋严、平台分化、AI工具普及，三重力量重塑竞争格局——流量红利消退后，精准定位与私域运营成为决胜关键。
-        </p>
-
-        <h3 style={{ fontSize: 15, color: "#fff", fontWeight: 700, marginBottom: 8 }}>
-          市场规模五年趋势
-        </h3>
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              <th style={TH}>年份</th>
-              <th style={TH}>市场规模</th>
-              <th style={TH}>YoY增速</th>
-              <th style={TH}>关键驱动事件</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["2022", "1,891亿元", "+18.2%", "轻医美普及，水光针爆发"],
-              ["2023", "2,274亿元", "+20.3%", "小红书医美笔记月均破5000万"],
-              ["2024", "2,851亿元", "+25.4%", "抖音医美官方认证开放，直播GMV翻倍"],
-              ["2025E", "3,512亿元", "+23.2%", "AI肤质检测+私域闭环成主流"],
-              ["2026F", "4,280亿元", "+21.9%", "合规化监管重塑竞争格局"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, color: j === 0 ? GOLD : "rgba(255,255,255,0.85)", fontWeight: j === 0 ? 700 : 400 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <h3 style={{ fontSize: 15, color: "#fff", fontWeight: 700, margin: "28px 0 8px" }}>
-          四平台医美账号数据对比（2025Q4）
-        </h3>
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              {["平台", "月活创作者", "头部粉丝均值", "平均CPM", "主要变现路径", "客单价区间"].map(h => (
-                <th key={h} style={{ ...TH, fontSize: 11 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["小红书", "42万+", "28.6万", "¥85", "种草引流+私信咨询", "¥3,000-18,000"],
-              ["抖音", "63万+", "51.2万", "¥62", "直播带货+橱窗", "¥580-3,600"],
-              ["B站", "8.7万", "18.4万", "¥120", "知识付费+品牌合作", "¥398-2,800"],
-              ["快手", "29万+", "38.1万", "¥41", "直播连麦+私域社群", "¥299-1,800"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, fontSize: 11, color: j === 0 ? GOLD : "rgba(255,255,255,0.82)", fontWeight: j === 0 ? 700 : 400 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            marginTop: 28,
-            flexWrap: "wrap",
-          }}
-        >
-          {[
-            ["赛道总规模(2026F)", "¥4,280亿"],
-            ["年增速CAGR", "+22.3%"],
-            ["头部集中度CR10", "34.7%"],
-            ["小红书医美月均笔记", "7,200万篇"],
-          ].map(([label, value]) => (
-            <div
-              key={label}
-              style={{
-                flex: "1 1 160px",
-                background: "#111",
-                border: `1px solid ${GOLD_DIM}`,
-                borderRadius: 6,
-                padding: "14px 16px",
-              }}
-            >
-              <div style={{ fontSize: 10, color: "rgba(200,160,0,0.6)", marginBottom: 6, fontFamily: "sans-serif" }}>{label}</div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: GOLD }}>{value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* 差异化方案页 */}
-      <div style={{ ...PAGE, position: "relative", overflow: "hidden" }}>
-        <WatermarkLayer />
-        <div style={{ fontSize: 10, color: "rgba(200,160,0,0.5)", letterSpacing: 3, marginBottom: 8, fontFamily: "sans-serif" }}>
-          MV STUDIO PRO 战略智库 · 第8期 · 医美赛道
-        </div>
-        <h2 style={{ fontSize: 22, color: GOLD, fontWeight: 800, marginBottom: 4 }}>
-          四、差异化破局方案
-        </h2>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.8, marginBottom: 20 }}>
-          基于全平台数据扫描与头部账号拆解，我们识别出12个尚未饱和的蓝海机会矩阵。以下展示前3个典型方向，完整版包含定位公式、内容模板与30天冲刺方案。
-        </p>
-
-        <h3 style={{ fontSize: 15, color: "#fff", fontWeight: 700, marginBottom: 8 }}>
-          蓝海机会矩阵（节选）
-        </h3>
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              {["机会方向", "竞争密度", "变现天花板", "推荐平台", "核心差异化标签"].map(h => (
-                <th key={h} style={TH}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["熟龄抗衰科普", "低", "¥28万/月", "小红书+B站", "#40+逆龄 #科学护肤"],
-              ["男性医美启蒙", "极低", "¥19万/月", "抖音+快手", "#直男变帅 #无痛变化"],
-              ["术前术后真实记录", "中", "¥35万/月", "小红书", "#真实不滤镜 #恢复日记"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, color: j === 0 ? GOLD : "rgba(255,255,255,0.82)", fontWeight: j === 0 ? 700 : 400 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* 模糊遮罩 */}
-        <div style={{ ...BLUR_OVERLAY }}>
-          <div
-            style={{
-              textAlign: "center",
-              padding: "18px 32px",
-              border: `1px solid ${GOLD_DIM}`,
-              background: "rgba(5,3,0,0.85)",
-              borderRadius: 8,
-            }}
-          >
-            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 6 }}>
-              🔒 完整版内容已解锁
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-              完整版包含 12 个蓝海机会分析 + 30天冲刺手册 + 90天里程碑目标
-            </div>
-          </div>
-        </div>
-
-        {/* 填充模糊区内容（被遮罩） */}
-        <div style={{ marginTop: 8, filter: "blur(6px)" }}>
-          <table style={TABLE_STYLE}>
-            <tbody>
-              {["产后修复医美科普", "新生儿父母教育类医美", "医美避坑指南系列", "海外医美对比测评", "素人逆袭改造记录", "医美机构幕后探秘", "中医+现代医美融合", "学生党平价轻医美", "企业高管形象管理", "医美从业者职场成长"].map((item, i) => (
-                <tr key={i}>
-                  <td style={{ ...TD, color: "rgba(255,255,255,0.6)" }}>{item}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ─── 季度定制 HTML ─────────────────────────────────────────────────────────
-function QuarterlyPages() {
-  return (
-    <>
-      {/* 封面页 */}
-      <div style={PAGE}>
-        <WatermarkLayer />
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: 1003,
-            textAlign: "center",
-            gap: 24,
-          }}
-        >
-          <div style={{ fontSize: 13, color: GOLD, letterSpacing: 4, fontFamily: "sans-serif" }}>
-            MV Studio Pro 战略智库
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(200,160,0,0.6)", letterSpacing: 2, fontFamily: "sans-serif" }}>
-            尊享季度私人订制 · 2026年4月28日
-          </div>
-          <div
-            style={{
-              width: "100%",
-              height: 1,
-              background: `linear-gradient(to right, transparent, ${GOLD}, transparent)`,
-              margin: "8px 0",
-            }}
-          />
-          <div
-            style={{
-              fontSize: 36,
-              fontWeight: 900,
-              lineHeight: 1.4,
-              color: "#fff",
-              letterSpacing: 2,
-            }}
-          >
-            《你的专属战略升级方案》
-          </div>
-          <div
-            style={{
-              fontSize: 16,
-              color: GOLD,
-              fontWeight: 600,
-              letterSpacing: 3,
-            }}
-          >
-            个人IP孵化 × 知识付费赛道
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              color: "rgba(255,255,255,0.5)",
-              lineHeight: 1.8,
-              maxWidth: 480,
-            }}
-          >
-            基于你的账号数据、变现路径与竞品矩阵，本报告为你量身定制90天增长战役路线图。
-          </div>
-          <div
-            style={{
-              width: "100%",
-              height: 1,
-              background: `linear-gradient(to right, transparent, ${GOLD}, transparent)`,
-              margin: "8px 0",
-            }}
-          />
-          <div
-            style={{
-              fontSize: 12,
-              color: GOLD_DIM,
-              border: `1px solid ${GOLD_DIM}`,
-              padding: "6px 20px",
-              letterSpacing: 2,
-              fontFamily: "sans-serif",
-            }}
-          >
-            试读版 · 完整版共 52 页 · 专属定制
-          </div>
-        </div>
-      </div>
-
-      {/* 竞争力雷达页 */}
-      <div style={PAGE}>
-        <WatermarkLayer />
-        <div style={{ fontSize: 10, color: "rgba(200,160,0,0.5)", letterSpacing: 3, marginBottom: 8, fontFamily: "sans-serif" }}>
-          MV STUDIO PRO 尊享季度私人订制 · 知识博主IP孵化
-        </div>
-        <h2 style={{ fontSize: 22, color: GOLD, fontWeight: 800, marginBottom: 4 }}>
-          二、竞争力雷达分析
-        </h2>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.8, marginBottom: 20 }}>
-          对标知识付费赛道头部账号（粉丝量50万+），从六个维度解码你与行业标杆的差距，并给出可量化的提升路径。
-        </p>
-
-        <h3 style={{ fontSize: 15, color: "#fff", fontWeight: 700, marginBottom: 8 }}>
-          六维度竞争力评分对比
-        </h3>
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              {["能力维度", "行业头部均值", "新锐均值", "差距说明"].map(h => (
-                <th key={h} style={TH}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["内容生产力", "9.2/10", "5.8/10", "头部日更1.4条/持续3年以上"],
-              ["选题命中率", "8.7/10", "4.3/10", "头部选题爆率达38%，新锐约9%"],
-              ["私域转化率", "7.9/10", "3.1/10", "头部私域粉丝转化率14.6%"],
-              ["商业变现效率", "9.4/10", "2.8/10", "头部CPF(每粉价值)达¥18.7"],
-              ["粉丝粘性", "8.8/10", "4.6/10", "头部7日回访率71%"],
-              ["跨平台协同", "8.1/10", "2.4/10", "头部双平台协同涨粉效率提升3.2x"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, color: j === 0 ? GOLD : j === 1 ? "#4ade80" : j === 2 ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.55)", fontWeight: j === 0 ? 700 : 400, fontSize: j === 3 ? 11 : 13 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        <h3 style={{ fontSize: 15, color: "#fff", fontWeight: 700, margin: "28px 0 8px" }}>
-          四平台协同矩阵（2025年算法解码）
-        </h3>
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              {["平台", "月活用户", "最佳内容形式", "最佳发布时段", "首推变现路径", "知识付费客单价"].map(h => (
-                <th key={h} style={{ ...TH, fontSize: 11 }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["小红书", "3.2亿", "图文干货+短视频", "晚20:00-22:00", "1v1付费咨询", "¥299-1,980"],
-              ["抖音", "7.8亿", "60-180s竖屏干货", "晚19:00-21:30", "直播知识付费", "¥99-680"],
-              ["B站", "3.6亿", "10-25min横屏深度", "周末14:00-17:00", "专栏+课程", "¥198-2,580"],
-              ["快手", "4.1亿", "直播为主+短视频辅", "晚20:30-23:00", "直播粉丝团", "¥68-398"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, fontSize: 11, color: j === 0 ? GOLD : "rgba(255,255,255,0.82)", fontWeight: j === 0 ? 700 : 400 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* 里程碑页 */}
-      <div style={{ ...PAGE, position: "relative", overflow: "hidden" }}>
-        <WatermarkLayer />
-        <div style={{ fontSize: 10, color: "rgba(200,160,0,0.5)", letterSpacing: 3, marginBottom: 8, fontFamily: "sans-serif" }}>
-          MV STUDIO PRO 尊享季度私人订制 · 知识博主IP孵化
-        </div>
-        <h2 style={{ fontSize: 22, color: GOLD, fontWeight: 800, marginBottom: 4 }}>
-          五、90天战术里程碑
-        </h2>
-        <p style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.8, marginBottom: 20 }}>
-          10大战术里程碑，每个节点均包含可执行的行动清单与量化验收指标，帮助你在90天内完成从0到1的商业化突破。
-        </p>
-
-        <table style={TABLE_STYLE}>
-          <thead>
-            <tr>
-              {["编号", "战术目标", "完成时限", "预期量化效果"].map(h => (
-                <th key={h} style={TH}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {[
-              ["T1", "锁定1个细分垂类，完成竞品TOP20账号数据采集", "第1-2周", "输出竞品分析报告，找到3个差异化方向"],
-              ["T2", "完成人设标签系统搭建，确定「核心标签×3+辅助标签×5」组合", "第3-4周", "主页关键词覆盖率提升40%，精准粉比率从12%→28%"],
-              ["T3", "发布10条「爆款模板内容」，测试选题命中率", "第5-6周", "10条中至少3条互动率超2%，单条最高播放破5万"],
-            ].map((row, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                {row.map((cell, j) => (
-                  <td key={j} style={{ ...TD, color: j === 0 ? GOLD : "rgba(255,255,255,0.82)", fontWeight: j === 0 ? 700 : 400, fontSize: j === 1 ? 12 : 13 }}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-            {/* 模糊行 */}
-            {["T4", "T5", "T6", "T7", "T8", "T9", "T10"].map((t, i) => (
-              <tr key={t} style={{ filter: "blur(5px)", background: i % 2 === 0 ? "transparent" : GOLD_BG }}>
-                <td style={{ ...TD, color: GOLD }}>{t}</td>
-                <td style={TD}>████████████████</td>
-                <td style={TD}>第{(i + 4) * 2 - 1}-{(i + 4) * 2}周</td>
-                <td style={{ ...TD, fontSize: 11 }}>████████████████</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* 模糊遮罩 */}
-        <div style={{ ...BLUR_OVERLAY }}>
-          <div
-            style={{
-              textAlign: "center",
-              padding: "18px 32px",
-              border: `1px solid ${GOLD_DIM}`,
-              background: "rgba(5,3,0,0.85)",
-              borderRadius: 8,
-            }}
-          >
-            <div style={{ fontSize: 13, color: GOLD, fontWeight: 700, marginBottom: 6 }}>
-              🔒 订阅后解锁完整版
-            </div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-              完整版包含 T4–T10 全部里程碑 + 每周行动清单 + 专属1v1咨询
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ─── 打印函数 ──────────────────────────────────────────────────────────────
-function injectPrintStyles() {
-  const id = "sample-print-style";
-  if (document.getElementById(id)) return;
-  const style = document.createElement("style");
-  style.id = id;
-  style.textContent = `
-    @media print {
-      body > *:not(#pdf-print-root) { display: none !important; }
-      #pdf-print-root { display: block !important; position: static !important; }
-      @page { margin: 0; size: A4; }
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function renderAndPrint(content: string) {
-  injectPrintStyles();
-  const root = document.createElement("div");
-  root.id = "pdf-print-root";
-  root.style.cssText = "display:none;position:fixed;inset:0;z-index:99999;background:#050300;overflow:auto;";
-  root.innerHTML = content;
-  document.body.appendChild(root);
-
-  requestAnimationFrame(() => {
-    root.style.display = "block";
-    setTimeout(() => {
-      window.print();
-      setTimeout(() => {
-        root.remove();
-      }, 500);
-    }, 300);
-  });
-}
-
-// 将 React 元素序列化为 HTML 字符串（简单的 renderToStaticMarkup 替代）
-// 由于无法在客户端直接用 renderToStaticMarkup，我们使用 DOM 挂载后截取
-function printReactContent(pages: React.ReactNode, title: string) {
-  // 创建临时容器，ReactDOM.render 已过时，使用临时 div + innerHTML 复制
-  const tempContainer = document.createElement("div");
-  tempContainer.style.cssText = "position:fixed;left:-9999px;top:0;width:794px;";
-  document.body.appendChild(tempContainer);
-
-  // 动态 import react-dom/client 来渲染
-  import("react-dom/client").then(({ createRoot }) => {
-    const tempRoot = createRoot(tempContainer);
-    tempRoot.render(React.createElement("div", null, pages));
-
-    // 等待渲染完成
-    setTimeout(() => {
-      const html = tempContainer.innerHTML;
-      tempRoot.unmount();
-      tempContainer.remove();
-      renderAndPrint(`
-        <div style="font-family:'Noto Serif SC',SimSun,serif;background:#050300;min-height:100vh;">
-          <div style="padding:0;">${html}</div>
-        </div>
-      `);
-    }, 200);
-  });
-}
-
-// ─── 主组件 ────────────────────────────────────────────────────────────────
 export default function SampleReportDownload() {
-  function downloadBiweekly() {
-    printReactContent(React.createElement(BiweeklyPages), "战略半月刊第8期样本");
-  }
+  const [, navigate] = useLocation();
+  const [biweeklyCover, setBiweeklyCover] = useState<string>("");
+  const [quarterlyCover, setQuarterlyCover] = useState<string>("");
+  const [coverLoading, setCoverLoading] = useState(true);
+  const [biweeklyLoading, setBiweeklyLoading] = useState(false);
+  const [quarterlyLoading, setQuarterlyLoading] = useState(false);
 
-  function downloadQuarterly() {
-    printReactContent(React.createElement(QuarterlyPages), "尊享季度私人订制样本");
-  }
+  const biweeklyHiddenRef = useRef<HTMLDivElement>(null);
+  const quarterlyHiddenRef = useRef<HTMLDivElement>(null);
+
+  const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation();
+
+  // 页面挂载时异步生成两张封面（带缓存）
+  useEffect(() => {
+    let canceled = false;
+    (async () => {
+      try {
+        const [a, b] = await Promise.all([
+          fetchCover(BIWEEKLY_COVER_PROMPT, "biweekly-ai-shortform").catch(() => ""),
+          fetchCover(QUARTERLY_COVER_PROMPT, "quarterly-silver-bili").catch(() => ""),
+        ]);
+        if (!canceled) {
+          setBiweeklyCover(a);
+          setQuarterlyCover(b);
+          setCoverLoading(false);
+        }
+      } catch {
+        if (!canceled) setCoverLoading(false);
+      }
+    })();
+    return () => { canceled = true; };
+  }, []);
+
+  const handleDownloadBiweekly = () => {
+    if (!biweeklyHiddenRef.current) return;
+    exportSampleAsPdf(
+      biweeklyHiddenRef.current,
+      `战略半月刊样本-AI短剧大揭秘-${Date.now()}.pdf`,
+      downloadPdfMutation,
+      setBiweeklyLoading,
+    );
+  };
+
+  const handleDownloadQuarterly = () => {
+    if (!quarterlyHiddenRef.current) return;
+    exportSampleAsPdf(
+      quarterlyHiddenRef.current,
+      `尊享私人订制样本-奶奶追凡修-${Date.now()}.pdf`,
+      downloadPdfMutation,
+      setQuarterlyLoading,
+    );
+  };
 
   return (
-    <section
-      style={{
-        maxWidth: 1100,
-        margin: "0 auto",
-        padding: "80px 24px",
-      }}
-    >
-      {/* 标题区 */}
-      <div style={{ textAlign: "center", marginBottom: 56 }}>
-        <div
-          style={{
-            display: "inline-block",
-            fontSize: 11,
-            letterSpacing: 4,
-            color: "#c8a000",
-            background: "rgba(200,160,0,0.08)",
-            border: "1px solid rgba(200,160,0,0.2)",
-            padding: "4px 16px",
-            marginBottom: 20,
-            fontFamily: "sans-serif",
-          }}
-        >
-          免费试读
+    <section style={{ maxWidth: 1200, margin: "0 auto", padding: "56px 24px" }}>
+      {/* 标题 */}
+      <div style={{ textAlign: "center", marginBottom: 36 }}>
+        <div style={{ display: "inline-block", fontSize: 11, letterSpacing: "0.30em", color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", padding: "5px 18px", marginBottom: 18, fontWeight: 800, borderRadius: 99 }}>
+          免费试读 · 卡布奇諾级商务质感
         </div>
-        <h2
-          style={{
-            fontSize: 32,
-            fontWeight: 800,
-            color: "#fff",
-            margin: "0 0 12px",
-            lineHeight: 1.3,
-          }}
-        >
+        <h2 style={{ fontSize: 34, fontWeight: 900, color: "#3d2c14", margin: "0 0 12px", lineHeight: 1.3 }}>
           下载样本报告，感受
-          <span style={{ color: "#c8a000" }}>战略级</span>
+          <span style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 65%, rgba(216,162,58,0.35) 65%)", padding: "0 6px" }}>
+            战略级
+          </span>
           内容质感
         </h2>
-        <p
-          style={{
-            fontSize: 15,
-            color: "rgba(255,255,255,0.5)",
-            maxWidth: 520,
-            margin: "0 auto",
-            lineHeight: 1.7,
-          }}
-        >
-          两份真实样本，带水印试读。完整版订阅后解锁全部内容与专属定制服务。
+        <p style={{ fontSize: 15, color: "rgba(61,44,20,0.70)", maxWidth: 640, margin: "0 auto", lineHeight: 1.8, fontWeight: 500 }}>
+          两份按 <strong style={{ color: "#7a5410" }}>Gemini Deep Research Pro</strong> 接地数据 + Gemini 3.1 Pro 智能合成的真实样本，覆盖个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划五大模块。
+          <br />
+          点击「下载试读版」可获得无打印对话框的真实 PDF（由谷歌云 Puppeteer 服务渲染）。
         </p>
+      </div>
+
+      {/* 上传/生成入口提示卡 */}
+      <div
+        onClick={() => navigate("/god-view")}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          padding: "18px 24px",
+          marginBottom: 32,
+          borderRadius: 14,
+          background: "linear-gradient(135deg,#fffaf0 0%,#f5ecda 100%)",
+          border: "1px solid rgba(168,118,27,0.35)",
+          boxShadow: "0 8px 22px rgba(122,84,16,0.10)",
+          cursor: "pointer",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 12px 32px rgba(168,118,27,0.20)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 8px 22px rgba(122,84,16,0.10)"; }}
+      >
+        <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.32)" }}>
+          <Sparkles size={22} color="#fff7df" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
+            想为自己的课题生成一份专属半月刊？
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(61,44,20,0.75)", lineHeight: 1.65 }}>
+            前往 <strong style={{ color: "#7a5410" }}>「AI 上帝视角」</strong>页面（god-view），把您的研究主题（不限领域，AI 短剧、银发赛道、电竞、健身、宠物等都行）填进输入框，800 点起即可发起一份覆盖五大模块、字数 5500-7000 字的精简版半月刊；点 5400 即可订阅半年 12 期。
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+          填课题生成
+          <ArrowRight size={14} />
+        </div>
       </div>
 
       {/* 卡片区 */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: 28,
-        }}
-      >
-        {/* 半月刊卡片 */}
-        <div
-          style={{
-            background: "linear-gradient(135deg, #0e0c00 0%, #1a1500 100%)",
-            border: "1px solid rgba(200,160,0,0.25)",
-            borderRadius: 12,
-            padding: "32px 28px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 8,
-                background: "rgba(200,160,0,0.12)",
-                border: "1px solid rgba(200,160,0,0.3)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 20,
-              }}
-            >
-              📊
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: "rgba(200,160,0,0.6)", letterSpacing: 2, fontFamily: "sans-serif" }}>
-                BIWEEKLY · 第8期
-              </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                战略半月刊（样本）
-              </div>
-            </div>
-          </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 28 }}>
+        {/* 半月刊 */}
+        <SampleCard
+          accentColor="#a8761b"
+          tag="BIWEEKLY · 战略半月刊"
+          edition="第 9 期"
+          title="AI 短剧大揭秘"
+          subtitle="一秒钟脑补三集，这届年轻人为什么戒不掉？"
+          coverUrl={biweeklyCover}
+          coverLoading={coverLoading}
+          highlights={[
+            "5 张数据表（市场规模 / 五平台对比 / 能力雷达 / 产品矩阵 / 30 天行动计划）",
+            "6 套分析框架（政经社技 / 五力模型 / 波士顿矩阵 / SO-WO-ST-WT / 蓝海画布 / SMART）",
+            "覆盖五大模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）",
+          ]}
+          loading={biweeklyLoading}
+          onDownload={handleDownloadBiweekly}
+          buttonLabel="↓ 下载半月刊试读版（PDF）"
+        />
 
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-            主题：<span style={{ color: "rgba(200,160,0,0.85)" }}>医美/皮肤科赛道 2026 精准破局手册</span>
-            <br />
-            含：市场规模趋势、四平台数据对比、蓝海机会矩阵（节选）
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              fontSize: 12,
-              color: "rgba(255,255,255,0.4)",
-            }}
-          >
-            <div>✓ 五年市场规模趋势数据</div>
-            <div>✓ 四平台医美账号横向对比</div>
-            <div>✓ 蓝海机会矩阵前3名（完整版12个）</div>
-            <div style={{ color: "rgba(200,160,0,0.4)" }}>🔒 差异化定位公式（订阅解锁）</div>
-          </div>
-
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "sans-serif" }}>
-            共 47 页 · 出刊：2026年4月28日
-          </div>
-
-          <button
-            onClick={downloadBiweekly}
-            style={{
-              marginTop: 4,
-              padding: "13px 0",
-              background: "linear-gradient(90deg, #c8a000, #f0c800)",
-              border: "none",
-              borderRadius: 8,
-              color: "#0a0800",
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: "pointer",
-              letterSpacing: 1,
-              transition: "opacity 0.2s",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = "0.88")}
-            onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-          >
-            ↓ 下载试读版
-          </button>
-        </div>
-
-        {/* 季度定制卡片 */}
-        <div
-          style={{
-            background: "linear-gradient(135deg, #08000e 0%, #130020 100%)",
-            border: "1px solid rgba(180,100,255,0.2)",
-            borderRadius: 12,
-            padding: "32px 28px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-            position: "relative",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              top: 14,
-              right: 14,
-              fontSize: 10,
-              color: "#c8a000",
-              background: "rgba(200,160,0,0.1)",
-              border: "1px solid rgba(200,160,0,0.25)",
-              padding: "2px 10px",
-              borderRadius: 20,
-              fontFamily: "sans-serif",
-              letterSpacing: 1,
-            }}
-          >
-            专属定制
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 8,
-                background: "rgba(180,100,255,0.12)",
-                border: "1px solid rgba(180,100,255,0.25)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 20,
-              }}
-            >
-              🎯
-            </div>
-            <div>
-              <div style={{ fontSize: 11, color: "rgba(180,100,255,0.6)", letterSpacing: 2, fontFamily: "sans-serif" }}>
-                QUARTERLY · 专属定制
-              </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: "#fff" }}>
-                尊享季度私人订制（样本）
-              </div>
-            </div>
-          </div>
-
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", lineHeight: 1.7 }}>
-            主题：<span style={{ color: "rgba(180,100,255,0.85)" }}>知识博主 × 个人IP孵化专属路线图</span>
-            <br />
-            含：竞争力雷达评分、四平台协同矩阵、90天里程碑（节选）
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              fontSize: 12,
-              color: "rgba(255,255,255,0.4)",
-            }}
-          >
-            <div>✓ 六维度竞争力雷达对标分析</div>
-            <div>✓ 四平台2025年算法解码与协同矩阵</div>
-            <div>✓ 90天战术里程碑前3条（完整10条）</div>
-            <div style={{ color: "rgba(200,160,0,0.4)" }}>🔒 专属1v1咨询通道（订阅解锁）</div>
-          </div>
-
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontFamily: "sans-serif" }}>
-            共 52 页 · 出刊：2026年4月28日
-          </div>
-
-          <button
-            onClick={downloadQuarterly}
-            style={{
-              marginTop: 4,
-              padding: "13px 0",
-              background: "linear-gradient(90deg, #7c3aed, #a855f7)",
-              border: "none",
-              borderRadius: 8,
-              color: "#fff",
-              fontWeight: 800,
-              fontSize: 14,
-              cursor: "pointer",
-              letterSpacing: 1,
-              transition: "opacity 0.2s",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = "0.88")}
-            onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-          >
-            ↓ 下载试读版
-          </button>
-        </div>
+        {/* 季度定制 */}
+        <SampleCard
+          accentColor="#6b4423"
+          tag="QUARTERLY · 尊享私人订制"
+          edition="季度定制"
+          title="88 岁奶奶追凡修"
+          subtitle="银发族银幕审美的算法蓝海"
+          coverUrl={quarterlyCover}
+          coverLoading={coverLoading}
+          highlights={[
+            "8 张数据表（含个人能力雷达、五平台对比、定价对标、五段漏斗）",
+            "5 年生涯规划 + 3 条弯道超车窗口 + 3 条必须放弃的旧思维",
+            "覆盖五大模块 · 字数 12000+ 字（完整版）",
+          ]}
+          highlight
+          loading={quarterlyLoading}
+          onDownload={handleDownloadQuarterly}
+          buttonLabel="↓ 下载尊享版试读样本（PDF）"
+        />
       </div>
 
       {/* 底部说明 */}
-      <div
-        style={{
-          textAlign: "center",
-          marginTop: 32,
-          fontSize: 12,
-          color: "rgba(255,255,255,0.25)",
-          lineHeight: 1.8,
-        }}
-      >
-        试读版带水印，仅供参考。订阅后可下载完整无水印版本及历史期刊档案库。
-        <br />
-        如浏览器弹出打印对话框，请选择"另存为PDF"即可保存到本地。
+      <div style={{ textAlign: "center", marginTop: 28, fontSize: 12, color: "rgba(61,44,20,0.55)", lineHeight: 1.8, fontWeight: 500 }}>
+        样本含水印，仅供品鉴 · 完整版无水印且包含所有数据表 / 框架 / 行动清单 · PDF 由谷歌云专业 Puppeteer 服务渲染，**不会再出现打印对话框**。
       </div>
+
+      {/* 隐藏渲染容器（导出时取这两个 div 的 outerHTML 作为 PDF 源） */}
+      <HiddenSampleReport
+        markdown={BIWEEKLY_MARKDOWN}
+        containerRef={biweeklyHiddenRef}
+        cover={biweeklyCover}
+        watermark={`试读 · sample-${Date.now()}`}
+        edition="第 9 期"
+        topic={BIWEEKLY_TOPIC}
+      />
+      <HiddenSampleReport
+        markdown={QUARTERLY_MARKDOWN}
+        containerRef={quarterlyHiddenRef}
+        cover={quarterlyCover}
+        watermark={`试读 · sample-${Date.now()}`}
+        edition="季度定制"
+        topic={QUARTERLY_TOPIC}
+      />
     </section>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 卡片组件
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SampleCard({
+  accentColor,
+  tag,
+  edition,
+  title,
+  subtitle,
+  coverUrl,
+  coverLoading,
+  highlights,
+  highlight,
+  loading,
+  onDownload,
+  buttonLabel,
+}: {
+  accentColor: string;
+  tag: string;
+  edition: string;
+  title: string;
+  subtitle: string;
+  coverUrl: string;
+  coverLoading: boolean;
+  highlights: string[];
+  highlight?: boolean;
+  loading: boolean;
+  onDownload: () => void;
+  buttonLabel: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "linear-gradient(180deg,#fffaf0 0%,#f5ecda 100%)",
+        border: `1px solid ${highlight ? "rgba(107,68,35,0.55)" : "rgba(168,118,27,0.30)"}`,
+        borderRadius: 18,
+        padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        gap: 0,
+        boxShadow: "0 6px 24px rgba(122,84,16,0.12)",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      {highlight && (
+        <div style={{ position: "absolute", top: 18, right: 18, zIndex: 5, padding: "4px 12px", borderRadius: 99, background: accentColor, color: "#fff7df", fontSize: 10, fontWeight: 800, letterSpacing: "0.10em" }}>
+          专属定制
+        </div>
+      )}
+
+      {/* 封面图区域 3:4 */}
+      <div style={{ position: "relative", width: "100%", paddingTop: "120%", background: "linear-gradient(160deg,#3d2c14,#1c1407)", overflow: "hidden" }}>
+        {coverUrl ? (
+          <img
+            src={coverUrl}
+            alt={title}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+          />
+        ) : coverLoading ? (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "#fff7df" }}>
+            <Loader2 size={28} className="animate-spin" />
+            <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>Nano Banana Pro 正在生成封面…</div>
+          </div>
+        ) : (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,247,223,0.75)" }}>
+            <Crown size={42} />
+          </div>
+        )}
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 22px 18px", background: "linear-gradient(to top, rgba(28,20,7,0.92) 0%, transparent 100%)" }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.20em", color: "rgba(255,247,223,0.85)", marginBottom: 4 }}>{tag} · {edition}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: "#fff7df", lineHeight: 1.25 }}>{title}</div>
+          <div style={{ fontSize: 12, color: "rgba(255,247,223,0.78)", marginTop: 4, fontWeight: 500 }}>{subtitle}</div>
+        </div>
+      </div>
+
+      {/* 信息区 */}
+      <div style={{ padding: "20px 24px 22px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+          {highlights.map((h, i) => (
+            <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 13, color: "rgba(61,44,20,0.85)", lineHeight: 1.65, fontWeight: 500 }}>
+              <span style={{ flex: "0 0 auto", marginTop: 6, width: 6, height: 6, borderRadius: 99, background: accentColor }} />
+              <span>{h}</span>
+            </li>
+          ))}
+        </ul>
+
+        <button
+          onClick={onDownload}
+          disabled={loading}
+          style={{
+            marginTop: 6,
+            padding: "13px 0",
+            background: loading ? "rgba(168,118,27,0.30)" : `linear-gradient(135deg,${accentColor},#7a5410)`,
+            border: "none",
+            borderRadius: 10,
+            color: "#fff7df",
+            fontWeight: 900,
+            fontSize: 14,
+            cursor: loading ? "not-allowed" : "pointer",
+            letterSpacing: "0.04em",
+            boxShadow: loading ? "none" : "0 6px 20px rgba(168,118,27,0.30)",
+            transition: "all 0.2s",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+          onMouseEnter={(e) => { if (!loading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { if (!loading) (e.currentTarget as HTMLElement).style.transform = "none"; }}
+        >
+          {loading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
+          {loading ? "正在生成 PDF…（约 30 秒）" : buttonLabel}
+        </button>
+      </div>
+    </div>
   );
 }
