@@ -209,7 +209,7 @@ async function generateDeepResearch(
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     tools: [
       { googleSearch: {} },
-      { deepResearch: { complexity: opts?.complexity ?? "comprehensive" } },
+      // deepResearch 不是合法 tool 名（Google API 返回 400），深度研究能力由模型本身内置
     ],
     generationConfig: {
       thinkingConfig: { includeThoughts: opts?.includeThoughts ?? true },
