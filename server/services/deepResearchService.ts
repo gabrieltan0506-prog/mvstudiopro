@@ -345,6 +345,7 @@ async function executeApprovedResearch(
   planInteractionId: string,
   feedback: string | undefined,
   onInteractionId?: (id: string) => Promise<void>,
+  overrideInput?: string,
 ): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
@@ -354,10 +355,12 @@ async function executeApprovedResearch(
     "X-Goog-Api-Client": "genai-node/deep-research",
   };
 
-  const finalCommand = feedback?.trim()
-    ? `计划已收到，请依据以下用户反馈调整后立即开始执行最大深度（Maximum comprehensiveness）的综合研究：
+  const finalCommand = overrideInput?.trim()
+    ? overrideInput.trim()
+    : feedback?.trim()
+      ? `计划已收到，请依据以下用户反馈调整后立即开始执行最大深度（Maximum comprehensiveness）的综合研究：
 ${feedback.trim()}`
-    : "计划完美，请立即开始执行最大深度（Maximum comprehensiveness）的综合研究，进行最深层次的全网交叉验证。";
+      : "计划完美，请立即开始执行最大深度（Maximum comprehensiveness）的综合研究，进行最深层次的全网交叉验证。";
 
   const release = await acquireRateGate("deep-research-execute");
   let interactionId: string;
@@ -569,7 +572,7 @@ export async function getUserHolisticContext(userId: string): Promise<{
 
 // ── Fly 磁盘 Job 结构 ────────────────────────────────────────────────────────
 
-export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized";
+export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized" | "platform_ip_matrix" | "competitor_radar" | "vip_baseline" | "vip_monthly";
 
 export interface DeepResearchJob {
   jobId: string;
@@ -605,6 +608,10 @@ export interface DeepResearchJob {
   planFeedback?: string;
   /** Execute 阶段产生的接地数据（harvested.text），便于断线恢复 */
   harvestedText?: string;
+  /** 可选：覆盖 executeApprovedResearch 的 input（VIP 月度更新场景：传月度新数据） */
+  executeOverrideInput?: string;
+  /** 可选：任务完成后的回填钩子（如 VIP 档案需回填 baseInteractionId） */
+  onCompletedHook?: { kind: "vip_base" | "vip_monthly"; ownerId: string; vipId: string };
   /** 用户上传的补充资料：文字说明 + 文件（已存 GCS，注入阶段 A Deep Research） */
   supplementaryText?: string;
   supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>;
@@ -824,6 +831,17 @@ export async function createDeepResearchJob(
   creditsUsed = 0,
   productType: DeepResearchProductType = "magazine_single",
   supplementary?: { supplementaryText?: string; supplementaryFiles?: DeepResearchJob["supplementaryFiles"] },
+  /** 进阶选项：用于 VIP 月度更新等场景（预设 planInteractionId 跳过 plan 阶段，覆盖 execute input） */
+  advanced?: {
+    /** 预填 planInteractionId（VIP 月度更新：上一次执行返回的 interactionId） */
+    planInteractionId?: string;
+    /** 覆盖 execute 阶段的 input（VIP 场景：传月度新数据） */
+    executeOverrideInput?: string;
+    /** 任务完成回填钩子 */
+    onCompletedHook?: DeepResearchJob["onCompletedHook"];
+    /** 直接以 running 状态启动（跳过 plan 审批 UI，VIP 场景用） */
+    skipPlanApproval?: boolean;
+  },
 ): Promise<{ jobId: string; dbRecordId?: number }> {
   const jobId = `dr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -836,13 +854,17 @@ export async function createDeepResearchJob(
     userId,
     topic,
     productType,
-    status: "pending",
+    // skipPlanApproval=true 直接 running（跳过 collaborative_planning，用 previous_interaction_id 续接）
+    status: advanced?.skipPlanApproval ? "running" : "pending",
     progress: "🚀 任务已派发，等待算力节点…",
     createdAt: new Date().toISOString(),
     creditsUsed,
     attemptCount: 1,
     ...(supplementary?.supplementaryText ? { supplementaryText: supplementary.supplementaryText } : {}),
     ...(supplementary?.supplementaryFiles?.length ? { supplementaryFiles: supplementary.supplementaryFiles } : {}),
+    ...(advanced?.planInteractionId ? { planInteractionId: advanced.planInteractionId } : {}),
+    ...(advanced?.executeOverrideInput ? { executeOverrideInput: advanced.executeOverrideInput } : {}),
+    ...(advanced?.onCompletedHook ? { onCompletedHook: advanced.onCompletedHook } : {}),
   };
   await writeJob(job);
 
@@ -1136,6 +1158,7 @@ ${job.topic}
           const latest = (await readJob(jobId)) ?? job;
           await writeJob({ ...latest, interactionId: executeId } as any);
         },
+        jobNow.executeOverrideInput,
       );
       // 持久化接地数据，便于断线恢复时跳过执行
       const afterExec = (await readJob(jobId)) ?? job;
@@ -1433,6 +1456,27 @@ ${job.topic}
         await recordMagazineGenerated(job.userId, job.topic ?? "");
       } catch (e: any) {
         console.warn("[deepResearch] magazine schedule 记录失败:", e?.message);
+      }
+    }
+
+    // ── VIP 档案：回填 interactionId（建档 / 月度更新场景） ──────────────────
+    if (job.onCompletedHook?.kind === "vip_base" || job.onCompletedHook?.kind === "vip_monthly") {
+      const finalJob = (await readJob(jobId)) ?? job;
+      const finalInteractionId = finalJob.interactionId; // execute 阶段返回的 id，将作为下一次月度更新的 previous_interaction_id
+      if (finalInteractionId) {
+        try {
+          const hook = job.onCompletedHook;
+          const store = await import("./vipProfileStore");
+          if (hook.kind === "vip_base") {
+            await store.attachBaseInteractionId(hook.ownerId, hook.vipId, finalInteractionId);
+            console.log(`[deepResearch] 🌱 VIP 建档完成 vipId=${hook.vipId} baseInteractionId=${finalInteractionId}`);
+          } else {
+            await store.attachUpdateInteractionId(hook.ownerId, hook.vipId, jobId, finalInteractionId);
+            console.log(`[deepResearch] 🔁 VIP 月度更新完成 vipId=${hook.vipId} jobId=${jobId} newInteractionId=${finalInteractionId}`);
+          }
+        } catch (e: any) {
+          console.warn("[deepResearch] VIP 档案回填失败:", e?.message);
+        }
       }
     }
 
