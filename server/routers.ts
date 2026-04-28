@@ -5579,17 +5579,20 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       .input(z.object({
         topic: z.string().min(5).max(1000),
         isFirstTime: z.boolean().optional(),
+        productType: z.enum(["deep_report", "magazine_single", "magazine_sub", "personalized"]).optional(),
+        isBundlePromo: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
-        const COST_FULL = 4900;
-        const COST_FIRST = 4000;
-        const cost = input.isFirstTime ? COST_FIRST : COST_FULL;
+        const { calcGodViewPrice } = await import("./services/billingService");
+        const productType = input.productType ?? "deep_report";
+        const { price: cost } = calcGodViewPrice(productType, !!input.isFirstTime, !!input.isBundlePromo);
 
         // 1. 扣费
         let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
         try {
-          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `AI上帝视角全息研报（${cost}点）`);
+          const { label: billingLabel } = calcGodViewPrice(productType, !!input.isFirstTime, !!input.isBundlePromo);
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `${billingLabel}（${cost}点）`);
         } catch (e: any) {
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
         }

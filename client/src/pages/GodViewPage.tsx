@@ -4,17 +4,49 @@ import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } fr
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
-const GOD_VIEW_FIRST_KEY = "mvs-godview-first-used";
 const SUPERVISOR_KEY = "mvs-supervisor-access";
-const COST_FIRST = 4000;
-const COST_FULL = 4900;
+
+// ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
+type ProductType = "deep_report" | "magazine_single" | "magazine_sub" | "personalized";
+
+const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
+  deep_report:     "mvs-godview-first-used",
+  magazine_single: "mvs-magazine-first-used",
+  magazine_sub:    "mvs-magsub-first-used",
+  personalized:    "mvs-personalized-first-used",
+};
+
+const PRODUCTS: Array<{
+  id: ProductType;
+  label: string;
+  price: number;
+  firstPrice?: number;
+  tag?: string;
+  desc: string;
+  color: string;
+}> = [
+  { id: "deep_report",     label: "全景行業戰報",   price: 4900, firstPrice: 4000, tag: "首次優惠",  desc: "萬字商業白皮書 · 異步重算力推演",            color: "#f5c842" },
+  { id: "magazine_single", label: "戰略半月刊",      price: 800,  firstPrice: 720,  tag: "首購九折",  desc: "當月賽道趨勢報告 · 單期購買",                color: "#a78bfa" },
+  { id: "magazine_sub",    label: "半年訂閱 (12期)", price: 6000,                   tag: "最超值",    desc: "6 個月持續情報陪伴 · 尊貴長線戰略",          color: "#34d399" },
+  { id: "personalized",    label: "個性化大洗牌",    price: 3000, firstPrice: 2700, tag: "首購九折",  desc: "與歷史快照對比 · 哈佛醫師級二次進化分析",    color: "#f97316" },
+];
+
+function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
+  if (isFirst && product.firstPrice !== undefined) return product.firstPrice;
+  return product.price;
+}
 
 export default function GodViewPage() {
   const [, navigate] = useLocation();
   const [topic, setTopic] = useState("");
   const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [isFirst, setIsFirst] = useState(!localStorage.getItem(GOD_VIEW_FIRST_KEY));
+
+  const [selectedProduct, setSelectedProduct] = useState<ProductType>("deep_report");
+  const [isBundlePromo, setIsBundlePromo] = useState(false);
+
+  const currentProduct = PRODUCTS.find((p) => p.id === selectedProduct)!;
+  const [isFirst, setIsFirst] = useState(() => !localStorage.getItem(PRODUCT_FIRST_KEYS[selectedProduct]));
 
   // supervisor debug
   const [isSupervisor, setIsSupervisor] = useState(false);
@@ -40,12 +72,13 @@ export default function GodViewPage() {
     return () => clearInterval(t);
   }, [launchTime]);
 
-  const cost = isFirst ? COST_FIRST : COST_FULL;
+  const cost = calcPrice(currentProduct, isBundlePromo ? false : isFirst);
 
   const launchMutation = trpc.deepResearch.launch.useMutation({
     onSuccess: () => {
-      if (!localStorage.getItem(GOD_VIEW_FIRST_KEY)) {
-        localStorage.setItem(GOD_VIEW_FIRST_KEY, "1");
+      const firstKey = PRODUCT_FIRST_KEYS[selectedProduct];
+      if (!localStorage.getItem(firstKey)) {
+        localStorage.setItem(firstKey, "1");
         setIsFirst(false);
       }
       setPhase("dispatched");
@@ -56,14 +89,20 @@ export default function GodViewPage() {
     },
   });
 
+  const handleProductChange = (id: ProductType) => {
+    setSelectedProduct(id);
+    setIsFirst(!localStorage.getItem(PRODUCT_FIRST_KEYS[id]));
+    setIsBundlePromo(false);
+  };
+
   const handleLaunch = () => {
     if (!topic.trim()) { toast.error("请输入研究课题"); return; }
-    const costStr = cost.toLocaleString();
-    if (!window.confirm(`启动「AI 上帝视角」将扣除 ${costStr} 点${isFirst ? "（首次优惠价）" : ""}，战报约需 15-20 分钟，任务派发后可关闭页面，到「我的战报」查看结果，确定执行？`)) return;
+    const discount = isBundlePromo ? "（滿月老用戶雙本促銷）" : isFirst && currentProduct.firstPrice !== undefined ? "（首購優惠價）" : "";
+    if (!window.confirm(`啟動「${currentProduct.label}」將扣除 ${cost.toLocaleString()} 點${discount}，確定執行？`)) return;
     setPhase("launching");
     setLaunchTime(new Date());
     setElapsedSec(0);
-    launchMutation.mutate({ topic, isFirstTime: isFirst });
+    launchMutation.mutate({ topic, isFirstTime: isFirst, productType: selectedProduct, isBundlePromo });
   };
 
   const toggleVoice = useCallback(async () => {
@@ -186,6 +225,46 @@ export default function GodViewPage() {
           </div>
         </div>
 
+        {/* ── 定價矩陣 ── */}
+        {(phase === "idle" || phase === "launching") && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 20 }}>
+            {PRODUCTS.map((p) => {
+              const isSelected = selectedProduct === p.id;
+              const pIsFirst = !localStorage.getItem(PRODUCT_FIRST_KEYS[p.id]);
+              const displayPrice = calcPrice(p, pIsFirst);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => handleProductChange(p.id)}
+                  style={{
+                    textAlign: "left", padding: "16px 18px", borderRadius: 16, cursor: "pointer",
+                    background: isSelected ? `rgba(${p.id === "deep_report" ? "180,130,0" : p.id === "magazine_single" ? "120,80,200" : p.id === "magazine_sub" ? "30,160,100" : "200,100,20"},0.12)` : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${isSelected ? p.color : "rgba(255,255,255,0.10)"}`,
+                    boxShadow: isSelected ? `0 0 20px ${p.color}25` : "none",
+                    transition: "all 0.2s",
+                    position: "relative", overflow: "hidden",
+                  }}
+                >
+                  {p.tag && (
+                    <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: p.color, background: `${p.color}20`, border: `1px solid ${p.color}50`, borderRadius: 99, padding: "1px 6px", letterSpacing: "0.05em" }}>
+                      {p.tag}
+                    </span>
+                  )}
+                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? p.color : "rgba(255,255,255,0.5)", marginBottom: 4 }}>{p.label}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: isSelected ? p.color : "rgba(255,255,255,0.7)", lineHeight: 1 }}>
+                    {displayPrice.toLocaleString()}
+                    <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 3 }}>點</span>
+                    {pIsFirst && p.firstPrice !== undefined && (
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textDecoration: "line-through", marginLeft: 6 }}>{p.price.toLocaleString()}</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.30)", marginTop: 6, lineHeight: 1.4 }}>{p.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
           <div style={{ background: "rgba(180,130,0,0.05)", border: "1px solid rgba(180,130,0,0.22)", borderRadius: 20, padding: 28 }}>
@@ -222,18 +301,33 @@ export default function GodViewPage() {
               </button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
-              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", margin: 0 }}>
-                ⏱ 异步重算力推演，约 15-20 分钟，派发后可关闭页面到「我的战报」查看
-              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", margin: 0 }}>
+                  ⏱ 異步重算力推演，約 15-30 分鐘，派發後可關閉頁面到「我的戰報」查看
+                </p>
+                {selectedProduct === "magazine_single" && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={isBundlePromo}
+                      onChange={(e) => setIsBundlePromo(e.target.checked)}
+                      style={{ accentColor: "#f5c842" }}
+                    />
+                    滿月老用戶專享：兩本 800 點特惠（需在平台超過 30 天）
+                  </label>
+                )}
+              </div>
               <button
                 onClick={handleLaunch}
                 disabled={!topic.trim() || phase === "launching"}
                 style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(180,130,0,0.08)" : "linear-gradient(135deg,#c8a000,#8a6200)", border: "1px solid rgba(180,130,0,0.5)", color: (!topic.trim() || phase === "launching") ? "rgba(245,200,80,0.3)" : "#050300", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 0 20px rgba(200,160,0,0.30)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
               >
                 {phase === "launching" ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
-                {phase === "launching" ? "正在派发任务…" : `💎 启动战略深潜（${cost.toLocaleString()}点）`}
-                {isFirst && phase !== "launching" && (
-                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次优惠</span>
+                {phase === "launching"
+                  ? "正在派發任務…"
+                  : `💎 啟動 ${currentProduct.label}（${cost.toLocaleString()} 點）`}
+                {isFirst && currentProduct.firstPrice !== undefined && phase !== "launching" && (
+                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次優惠</span>
                 )}
               </button>
             </div>
