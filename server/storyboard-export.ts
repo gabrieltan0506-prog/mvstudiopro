@@ -296,12 +296,12 @@ export async function exportToPDF(
   }
 
   // Music Info
-  fontBold(14).text("音樂信息", { underline: true });
+  fontBold(14).text("音乐信息", { underline: true });
   fontRegular(12);
   doc.text(`BPM: ${storyboard.musicInfo.bpm}`);
-  doc.text(`情感基調: ${storyboard.musicInfo.emotion}`);
-  doc.text(`音樂風格: ${storyboard.musicInfo.style}`);
-  doc.text(`調性: ${storyboard.musicInfo.key}`);
+  doc.text(`情感基调: ${storyboard.musicInfo.emotion}`);
+  doc.text(`音乐风格: ${storyboard.musicInfo.style}`);
+  doc.text(`调性: ${storyboard.musicInfo.key}`);
   doc.moveDown();
 
   // Scenes
@@ -335,7 +335,7 @@ export async function exportToPDF(
         doc.moveDown();
       } catch (error) {
         console.error(`Failed to load image for scene ${scene.sceneNumber}:`, error);
-        fontRegular(10).text("[图片加載失敗]", { align: "center" });
+        fontRegular(10).text("[图片加载失败]", { align: "center" });
         doc.moveDown();
       }
     }
@@ -348,7 +348,7 @@ export async function exportToPDF(
     fontRegular(11).text(scene.cameraMovement);
     doc.moveDown();
 
-    fontBold(14).text("情緒氛圍:");
+    fontBold(14).text("情绪氛围:");
     fontRegular(11).text(scene.mood);
     doc.moveDown();
 
@@ -510,7 +510,7 @@ export async function exportToWord(
   children.push(
     new Paragraph({
       children: [
-        new TextRun({ text: "音樂信息", bold: true, size: 28, font: "Microsoft YaHei" }),
+        new TextRun({ text: "音乐信息", bold: true, size: 28, font: "Microsoft YaHei" }),
       ],
       spacing: { before: 200, after: 100 },
     })
@@ -518,9 +518,9 @@ export async function exportToWord(
 
   const musicInfoItems = [
     `BPM: ${storyboard.musicInfo.bpm}`,
-    `情感基調: ${storyboard.musicInfo.emotion}`,
-    `音樂風格: ${storyboard.musicInfo.style}`,
-    `調性: ${storyboard.musicInfo.key}`,
+    `情感基调: ${storyboard.musicInfo.emotion}`,
+    `音乐风格: ${storyboard.musicInfo.style}`,
+    `调性: ${storyboard.musicInfo.key}`,
   ];
   for (const item of musicInfoItems) {
     children.push(
@@ -585,7 +585,7 @@ export async function exportToWord(
         console.error(`[Word] Failed to load image for scene ${scene.sceneNumber}:`, error);
         children.push(
           new Paragraph({
-            children: [new TextRun({ text: "[图片加載失敗]", italics: true, color: "999999", font: "Microsoft YaHei" })],
+            children: [new TextRun({ text: "[图片加载失败]", italics: true, color: "999999", font: "Microsoft YaHei" })],
             alignment: AlignmentType.CENTER,
             spacing: { after: 200 },
           })
@@ -597,7 +597,7 @@ export async function exportToWord(
     const details = [
       { label: "场景描述", value: scene.description },
       { label: "镜头运动", value: scene.cameraMovement },
-      { label: "情緒氛圍", value: scene.mood },
+      { label: "情绪氛围", value: scene.mood },
       { label: "视觉元素", value: scene.visualElements.join("、") },
     ];
 
@@ -693,12 +693,12 @@ export async function exportToWord(
     const { key: wordKey } = await storagePut(wordFileName, buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
     const { url: wordDownloadUrl } = await storageGet(wordKey);
     console.log("[StoryboardExport] Word generated:", { key: wordKey, url: wordDownloadUrl, watermark: addWatermark });
-    return { url: wordDownloadUrl, message: addWatermark ? "Word 文檔已生成（含水印）！升級專业版可移除水印。" : "Word 文檔已生成！" };
+    return { url: wordDownloadUrl, message: addWatermark ? "Word 文档已生成（含水印）！升级专业版可移除水印。" : "Word 文档已生成！" };
   } catch (error) {
     console.warn("[StoryboardExport] Word fallback to data URL:", error);
     return {
       url: `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${buffer.toString("base64")}`,
-      message: addWatermark ? "Word 文檔已生成（含水印）！升級專业版可移除水印。" : "Word 文檔已生成！",
+      message: addWatermark ? "Word 文档已生成（含水印）！升级专业版可移除水印。" : "Word 文档已生成！",
     };
   }
 }

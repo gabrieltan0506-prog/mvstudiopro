@@ -222,7 +222,7 @@ function buildPremiumRemixBrief(input: BuildPremiumRemixInput) {
       primaryTitleExecution?.videoPlan,
       input.growthHandoff?.storyboardPrompt,
       decisionFramework?.mainPathExecution,
-      "按开头钩子、动作解释、证据抬信任、结尾单一行动引导四段推进",
+      "按开头钩子、动作解释、证据擡信任、结尾单一行动引导四段推进",
     ]).join("；"),
     hook: uniqueLines([
       assetAdaptation?.firstHook,
@@ -336,14 +336,14 @@ function buildOverviewFromEvidence(input: BuildPremiumRemixInput, brief: ReturnT
     .join("；");
 
   return {
-    sourceSummary: `这次二次创作不是照搬原片，而是抽离它“结果前置、动作解释、证据抬信任、结尾只留一个行动”的成交结构，再改写成符合当前人设与业务目标的新版本。原片最值得借的不是题材本身，而是它如何在前 8 秒内建立可信度、如何用镜头和信息密度推动用户继续看下去。`,
+    sourceSummary: `这次二次创作不是照搬原片，而是抽离它“结果前置、动作解释、证据擡信任、结尾只留一个行动”的成交结构，再改写成符合当前人设与业务目标的新版本。原片最值得借的不是题材本身，而是它如何在前 8 秒内创建可信度、如何用镜头和信息密度推动用户继续看下去。`,
     visualDnaSummary: `${brief.visual || analysis.visualSummary || "保留原视频的高完成度景别节奏和可信口播氛围"}。画面上优先保留单人出镜、近中景推进、干净背景和证据插入，不做多人物戏剧化表演，也不做廉价冲突感。`,
-    contentRebuildSummary: `${decisionFramework?.mainPathExecution || brief.structure || "内容重构遵循开头钩子、动作解释、证据抬信任、结尾收动作四段结构"}。${titleExecution?.videoPlan ? `具体执行上参考成长营建议：${titleExecution.videoPlan}。` : ""}${businessSummary ? `这次还会把后台数据里最强的商业判断折进文案：${businessSummary}` : ""}`,
+    contentRebuildSummary: `${decisionFramework?.mainPathExecution || brief.structure || "内容重构遵循开头钩子、动作解释、证据擡信任、结尾收动作四段结构"}。${titleExecution?.videoPlan ? `具体执行上参考成长营建议：${titleExecution.videoPlan}。` : ""}${businessSummary ? `这次还会把后台数据里最强的商业判断折进文案：${businessSummary}` : ""}`,
     personaFit: `${brief.persona || "当前账号适合走高可信单人专业表达"}。二次创作不做炫技复刻，而是把参考视频的结构翻译成“你本人为什么值得相信、你的方法为什么值得执行、你的结尾为什么值得行动”的商业表达。`,
     performanceDirection: `演绎上维持克制、可信、专业，但每个镜头都要承担不同任务：开头先压问题和结果，中段讲一个具体动作或判断，第三段给证据与材料，最后只留一个行动引导。${platformSummary ? `平台落地优先考虑：${platformSummary}。` : ""}`,
     languageExpression: analysis.languageExpression || `口播必须走短句、结果句前置、动作句紧跟、证据句补刀的路线。开头不要先做背景交代，先把用户最在意的问题或结论砸出来；中段只讲一个方法，不要三四个要点并列；结尾只给一个动作，别把咨询、私信、预约同时塞进去。`,
     emotionalExpression: analysis.emotionalExpression || `情绪推进不能全程平。前 2 秒先制造“这个问题就在你身上”的压力感，中段把压力切成“我告诉你怎么处理”的可执行感，第三段用证据带来“这不是空话”的信任感，结尾再收成“现在行动就可以减少损失”的确定感。`,
-    cameraEmotionTension: analysis.cameraEmotionTension || `镜头张力必须跟情绪任务绑定：镜头 1 用中近景或轻推近制造压迫感；镜头 2 用半身和手势动作把方法讲清；镜头 3 切证据、材料、局部特写抬高可信度；镜头 4 回到稳定中景收束，引导行动。不要四个镜头全都只是站着说话。`,
+    cameraEmotionTension: analysis.cameraEmotionTension || `镜头张力必须跟情绪任务绑定：镜头 1 用中近景或轻推近制造压迫感；镜头 2 用半身和手势动作把方法讲清；镜头 3 切证据、材料、局部特写擡高可信度；镜头 4 回到稳定中景收束，引导行动。不要四个镜头全都只是站着说话。`,
     bgmAnalysis: analysis.bgmAnalysis || `BGM 要服务成交而不是抢口播。前 2 秒给轻脉冲或呼吸感底噪，让钩子有压迫感；中段保持稳定节拍，支持方法解释；证据段稍微增加层次和空间感，给观众“这件事更真实”的质地；结尾往收束走，不要突然煽情或炸场。`,
     musicRecommendation: analysis.musicRecommendation || `适合偏 premium knowledge / medical wellness / high-trust consulting 风格的配乐。建议低中速节奏、轻鼓点、空气感 pad、少量钢琴或拨弦，避免 EDM、大鼓史诗、流行舞曲和会抢走普通话口播的高频旋律。`,
     sunoPrompt: analysis.sunoPrompt || "Premium trust-building commercial soundtrack for a single-expert short video, restrained tempo around 88-96 BPM, subtle pulse, soft piano, warm ambient pad, light percussion, understated Chinese tonal texture, designed to support Mandarin voiceover, no aggressive drop, no pop chorus, elegant and high-conviction.",
@@ -556,7 +556,7 @@ function rebuildInterpolationTrack(
   return {
     plan: {
       title: "32秒关键帧插值",
-      summary: "用 5 个关键节点锁住起承转合：开头钩子、方法展开、证据抬信任、行动前收束、最终 CTA，避免插值轨继续复读总述。",
+      summary: "用 5 个关键节点锁住起承转合：开头钩子、方法展开、证据擡信任、行动前收束、最终 CTA，避免插值轨继续复读总述。",
       whyItWorks: "节点直接从分镜反推，每一帧都绑定明确的商业任务和画面变化，能明显减少主体漂移和文案重复。",
     },
     nodes: [
@@ -700,7 +700,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
   const sceneD = keyFrames[3];
   const openingHook = brief.hook || assetAdaptation?.firstHook || primaryTitleExecution?.openingHook || primaryAngle?.hook || "前 2 秒先抛最扎心的问题和最直接的结果。";
   const structureLine = brief.structure || assetAdaptation?.structure || primaryTitleExecution?.videoPlan || growthHandoff?.storyboardPrompt || "按问题、动作、证据、行动引导四段推进。";
-  const proofLine = brief.proof || growthHandoff?.brief || "加入案例、证据、前后对比或资料细节，抬高可信度。";
+  const proofLine = brief.proof || growthHandoff?.brief || "加入案例、证据、前后对比或资料细节，擡高可信度。";
   const callToAction = brief.cta || assetAdaptation?.callToAction || growthHandoff?.businessGoal || "只保留一个行动引导，导向咨询、预约或私信关键词。";
   const visualBase = `${personaContext}；${visualSummary}；${structureLine}`;
 
@@ -714,7 +714,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
     languageExpression: input.analysis.languageExpression || `语言表达必须走“问题先砸下来、方法只讲一个、结果直接翻译成用户收益”的路线。避免知识点堆砌，句子要短，结果句要靠前。`,
     emotionalExpression: input.analysis.emotionalExpression || `情绪要从“专业克制”升级成“克制但有压力感与结果释放感”。开头让用户感到问题正在发生，中段给解释，结尾给安心与行动。`,
     cameraEmotionTension: input.analysis.cameraEmotionTension || `镜头情绪张力用近景钩子、中景动作解释、局部证据特写、结尾轻推近收动作四段推进，不能全程同一个景别。`,
-    bgmAnalysis: input.analysis.bgmAnalysis || `配乐不要抢口播。用低频稳定、节拍轻推进、带一点空气感的现代商业底乐，前 2 秒留出钩子空间，中后段逐渐抬起可信度和收束感。`,
+    bgmAnalysis: input.analysis.bgmAnalysis || `配乐不要抢口播。用低频稳定、节拍轻推进、带一点空气感的现代商业底乐，前 2 秒留出钩子空间，中后段逐渐擡起可信度和收束感。`,
     musicRecommendation: input.analysis.musicRecommendation || `适合现代 wellness / premium knowledge / consulting 风格配乐，轻鼓点、柔和 pad、钢琴或拨弦细节，速度中低，避免热血 EDM、大片式史诗鼓点和过于煽情的弦乐。`,
     sunoPrompt: input.analysis.sunoPrompt || "Premium wellness commercial soundtrack, warm ambient pulse, soft piano, subtle percussion, calm confidence, modern feminine energy, supports Mandarin voiceover, no aggressive drops, around 92 BPM.",
     characterAnchors: [
@@ -773,7 +773,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         framing: "特写与局部切换",
         cameraMovement: "局部特写切换",
         lighting: "高对比但干净",
-        pacingRole: "抬信任和可信度",
+        pacingRole: "擡信任和可信度",
         sceneDescription: sceneC?.whatShows || "切到局部特写、案例细节或前后对比。",
         onScreenText: sceneC?.commercialUse || "这里放前后对比、案例或服务场景",
         voiceover: sceneC?.fix || growthHandoff?.brief || "告诉用户为什么这个方案可信。",
@@ -820,7 +820,7 @@ function buildFallbackRemix(input: BuildPremiumRemixInput) {
         whyItWorks: "关键帧锚定能有效避免 Veo 在长段生成里的主体漂移和风格污染，也能让过渡更贴合成交逻辑。",
       },
       nodes: [
-        { nodeId: "A", label: "起始状态", prompt: `${visualBase} 开场镜头，单人出镜，干净背景，建立信任，直接抛问题。` },
+        { nodeId: "A", label: "起始状态", prompt: `${visualBase} 开场镜头，单人出镜，干净背景，创建信任，直接抛问题。` },
         { nodeId: "M1", label: "过渡一", prompt: `${visualBase} 加入动作示范或资料画面，突出“怎么做”。` },
         { nodeId: "M2", label: "过渡二", prompt: `${visualBase} 引入结果证据、案例细节或前后对比，强化商业可信度。` },
         { nodeId: "M3", label: "过渡三", prompt: `${visualBase} 准备收束，人物视线和手势导向最后的行动引导。` },
@@ -994,7 +994,7 @@ export async function buildPremiumRemixPlan(input: BuildPremiumRemixInput) {
     "4. 所有 veoPrompt 都必须强调单主体，禁止多人同框正面镜头，禁止宠物和动物造成主体污染。",
     "5. loopTrack 必须适合 4 个 8 秒延展段；interpolationTrack 必须输出 5 个关键节点 A/M1/M2/M3/B。",
     "6. 文案与分镜必须可直接用于商业短视频重制，而不是泛泛而谈。",
-    "7. 不允许使用“建立人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
+    "7. 不允许使用“创建人物和问题”“展开动作示范和解释”“加入证据和局部特写”“收束行动引导”这类抽象模板句作为最终内容，必须写成具体场景、具体动作、具体台词目标。",
     "8. 必须尽量复用输入里的 titleExecutions、assetAdaptation、growthHandoff、关键帧、时间点改法，而不是重新发明一套空泛模板。",
     "8.1 如果 dataEvidence 里已经有 decisionFramework / platformRecommendations / businessInsights / growthPlan / referenceExamples，你必须把它们当成上游定论，再转译成二次创作。",
     "9. 如果用户上下文里有职业、人设、服装、场景、道具要求，必须写进角色锚定和 referencePrompt。",

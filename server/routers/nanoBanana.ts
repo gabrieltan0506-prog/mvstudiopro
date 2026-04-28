@@ -16,7 +16,7 @@ import { storagePut } from "../storage";
 import { deductNbpCredits, checkNbpCapacity, getUserPlan, deductCredits } from "../credits";
 import { PLANS, CREDIT_COSTS } from "../plans";
 
-// generateNbpImage 已遷移至 Vertex AI（generateGeminiImage），不再使用 Gemini API Key。
+// generateNbpImage 已迁移至 Vertex AI（generateGeminiImage），不再使用 Gemini API Key。
 
 // ─── 添加水印 ──────────────────────────────────────
 async function addWatermark(imageBuffer: Buffer, _mimeType: string): Promise<Buffer> {

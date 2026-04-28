@@ -136,7 +136,7 @@ type KuaishouCreatorSeed = {
 const KUAISHOU_CREATOR_SEEDS: KuaishouCreatorSeed[] = [
   { userId: "3x3t4yubwineeyc", name: "居家种草", keyword: "种草" },
   { userId: "3x44js8xyu3q7a9", name: "添添种草", keyword: "种草" },
-  { userId: "3xqyfwg9w7seies", name: "種草", keyword: "种草" },
+  { userId: "3xqyfwg9w7seies", name: "种草", keyword: "种草" },
 ];
 
 type CachedTrendItem = {

@@ -301,7 +301,7 @@ function buildStoryboardFromScript(script: string, fallbackPrompt: string) {
 
 function buildFallbackScript(prompt: string): string {
   return [
-    `开场：${prompt}，建立世界观与主要冲突。`,
+    `开场：${prompt}，创建世界观与主要冲突。`,
     "中段：角色在高压环境中推进目标，镜头切换强调速度与张力。",
     "结尾：冲突爆发后出现反转，留下可延展的情绪尾音。",
   ].join("\n");

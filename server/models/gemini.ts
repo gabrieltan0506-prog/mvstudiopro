@@ -64,7 +64,7 @@ export async function generateScriptWithGemini(input: {
 
 function buildFallbackScript(prompt: string, targetWords: number) {
   const sceneLines = [
-    `Scene 1: 开场建立世界观，主题围绕“${prompt}”。`,
+    `Scene 1: 开场创建世界观，主题围绕“${prompt}”。`,
     "Scene 2: 主角进入冲突，节奏加速，镜头快速切换。",
     "Scene 3: 中段推进任务，角色关系变化，情绪拉升。",
     "Scene 4: 冲突爆发，视觉强刺激，给出关键反转。",

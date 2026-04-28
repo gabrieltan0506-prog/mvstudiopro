@@ -230,7 +230,7 @@ export function ModelViewer({
             rel="noopener noreferrer"
             className="mt-3 inline-flex items-center gap-1.5 bg-cyan-400 text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-cyan-300 transition-colors"
           >
-            下载 OBJ 文件
+            下载 OBJ 文档
           </a>
         )}
       </div>

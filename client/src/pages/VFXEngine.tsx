@@ -44,7 +44,7 @@ const PLATFORMS = [
     bestTime: "周一至周五 20:00-22:00",
     format: "竖屏 9:16 | 1-3分钟",
     audience: "30-55岁",
-    tips: ["社交裂变是内核", "正能量内容更易传播", "朋友圈分享带动播放"],
+    tips: ["社交裂变是核心", "正能量内容更易传播", "朋友圈分享带动播放"],
   },
 ];
 
@@ -142,7 +142,7 @@ export default function VFXEngine() {
 
       const captionStyles: Record<string, string> = {
         xiaohongshu: `这支视频真的太绝了！${mvDescription || "每一帧都是视觉盛宴"}✨\n\n${template ? `用${template.label}的方式呈现，` : ""}从构图到色彩都经过精心设计，看完整个人都被治愈了～\n\n💡 创作心得：好的视频不只是画面好看，更要能触动人心。\n\n📌 收藏这条，下次创作时参考！`,
-        bilibili: `【${mvTitle || "视频创作"}】${mvDescription || "从零到一的视觉创作之旅"}\n\n${template ? `本期以「${template.label}」为主题，` : ""}带大家深入了解视频制作的每一个环节。\n\n⏰ 时间轴：\n00:00 开场\n00:15 内核片段\n00:30 幕后解析\n\n🎵 BGM 信息见评论区置顶\n\n如果喜欢的话，一键三连支持一下吧！`,
+        bilibili: `【${mvTitle || "视频创作"}】${mvDescription || "从零到一的视觉创作之旅"}\n\n${template ? `本期以「${template.label}」为主题，` : ""}带大家深入了解视频制作的每一个环节。\n\n⏰ 时间轴：\n00:00 开场\n00:15 核心片段\n00:30 幕后解析\n\n🎵 BGM 信息见评论区置顶\n\n如果喜欢的话，一键三连支持一下吧！`,
         douyin: `${mvDescription || "这个视频你一定没见过"}👀\n${template ? `#${template.label} ` : ""}每一秒都是惊喜！\n\n看到最后有彩蛋🎁`,
         channels: `分享一支用心制作的视频 🎬\n\n${mvDescription || "音乐与视觉的完美融合"}，${template ? `以「${template.label}」的风格呈现，` : ""}希望能带给大家一些美好的感受。\n\n创作不易，感谢每一位观看和分享的朋友 🙏`,
       };

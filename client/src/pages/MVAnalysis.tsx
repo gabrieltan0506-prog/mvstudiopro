@@ -537,7 +537,7 @@ const PLATFORM_SUPPORT_ACTIVITY_FALLBACK: Record<(typeof CORE_PLATFORM_LABELS)[n
 const PLATFORM_SUPPORT_SIGNAL_FALLBACK: Record<(typeof CORE_PLATFORM_LABELS)[number], string> = {
   抖音: "优先走结果前置和动作演示，适合用短视频先验证停留、评论和门店转化。",
   小红书: "优先走图文收藏和搜索承接，再把跑通的主题拆成短视频版本。",
-  "B站": "优先走方法拆解和复盘长视频，先建立信任，再延展成系列内容。",
+  "B站": "优先走方法拆解和复盘长视频，先创建信任，再延展成系列内容。",
   快手: "优先走真实口播和生活场景表达，适合同城服务与直播联动放大。",
 };
 
@@ -576,7 +576,7 @@ const PLATFORM_GRAPHIC_ANALYSIS_PROFILE: Record<(typeof CORE_PLATFORM_LABELS)[nu
   },
   "B站": {
     contentForm: "中长视频主发，图文负责方法拆解和系列目录",
-    noteType: "信任建立型方法图文",
+    noteType: "信任创建型方法图文",
     valueMode: "先积累专业信任、系列更新和搜索长尾，再做服务或课程承接",
     structure: [
       "封面先写方法结论或常见误区，明确这是给谁看的。",
@@ -673,7 +673,7 @@ function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => resolve(String(event.target?.result || ""));
-    reader.onerror = () => reject(new Error("文件读取失败"));
+    reader.onerror = () => reject(new Error("文档读取失败"));
     reader.readAsDataURL(file);
   });
 }
@@ -862,8 +862,8 @@ function inferVideoGoal(platformNames: string[]) {
   const text = platformNames.join(" ");
   if (/抖音|快手|头条/.test(text)) return "视频首发更适合直接转化，前 2 秒必须先给最扎心的问题、结果或价格反差。";
   if (/小红书/.test(text)) return "视频首发更适合放大共鸣与信任，画面要明显优于图文，不能只是长口播。";
-  if (/B站/.test(text)) return "视频首发更适合做完整讲解与信任建立，要把方法、误区和结果讲成一个完整结构。";
-  return "视频首发更适合用镜头、动作和结果对比建立信任，再承接后续行动。";
+  if (/B站/.test(text)) return "视频首发更适合做完整讲解与信任创建，要把方法、误区和结果讲成一个完整结构。";
+  return "视频首发更适合用镜头、动作和结果对比创建信任，再承接后续行动。";
 }
 
 function buildGraphicNoteDetail(
@@ -874,12 +874,12 @@ function buildGraphicNoteDetail(
   const names = platformNames.join("、");
   const isXhs = platformNames.includes("小红书");
   const isVideoPlatform = platformNames.some((item) => /抖音|快手|头条/.test(item));
-  const noteType = isXhs ? "搜索承接型种草图文" : isVideoPlatform ? "转化承接型图文" : "信任建立型图文";
+  const noteType = isXhs ? "搜索承接型种草图文" : isVideoPlatform ? "转化承接型图文" : "信任创建型图文";
   const reason = isXhs
     ? "这类内容更适合先让用户收藏、搜索和私信，所以图文不是简单复述视频，而是把痛点、动作、前后对比和门店承接讲透。"
     : isVideoPlatform
       ? "这类图文更适合作为短视频后的承接页，重点是把价格、适合谁、解决什么问题和真实对比写得足够直白。"
-      : "这类图文更适合承接解释和信任建立，让用户在看完视频后进一步理解专业判断。";
+      : "这类图文更适合承接解释和信任创建，让用户在看完视频后进一步理解专业判断。";
   const structure = graphicPlan || "第一页只写最痛的问题或最直接的结果，第二页写谁最需要，第三到四页给动作和前后对比，第五页给证据，第六页只留一个行动。";
   return {
     noteType,
@@ -941,10 +941,10 @@ function normalizeText(text: string) {
 function mapAnalysisError(error: unknown) {
   const message = replaceTerms(String((error as any)?.message || ""));
   if (message.includes("Unexpected end of JSON input") || message.includes("Failed to fetch") || message.includes("502")) {
-    return "视频预处理失败，请重试或更换文件。";
+    return "视频预处理失败，请重试或更换文档。";
   }
   if (message.includes("frame") || message.includes("抽取")) {
-    return "关键帧提取失败，已跳过视频深度分析，请重试或更换文件。";
+    return "关键帧提取失败，已跳过视频深度分析，请重试或更换文档。";
   }
   return message || "分析失败，请稍后再试";
 }
@@ -1307,20 +1307,20 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
     return [
       {
         id: "prepare",
-        label: isVideo ? "校验视频文件" : "校验文档内容",
+        label: isVideo ? "校验视频文档" : "校验文档内容",
         detail: isVideo ? "正在确认视频格式、时长与上传可用性。" : "正在确认文档格式、大小与可解析性。",
         status: uploadProgress >= 8 ? "done" : "active",
       },
       {
         id: "transfer",
         label: "上传到分析队列",
-        detail: isVideo ? "正在把原始文件送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入模型分析入口。",
+        detail: isVideo ? "正在把原始文档送入分析入口，并持续同步字节进度。" : "正在整理文档内容并送入模型分析入口。",
         status: uploadProgress >= 8 ? "active" : "pending",
       },
       {
         id: "handoff",
         label: "创建分析任务",
-        detail: "文件就绪后会立即创建任务，开始进入模型工作流。",
+        detail: "文档就绪后会立即创建任务，开始进入模型工作流。",
         status: uploadProgress >= 96 ? "active" : "pending",
       },
     ];
@@ -1358,7 +1358,7 @@ function buildProcessingSteps(inputKind: InputKind | null, uploadStage: UploadSt
       {
         id: "extract",
         label: "抽取关键信息",
-        detail: "正在读取文档中的核心观点、结构与可成交线索。",
+        detail: "正在读取文件中的核心观点、结构与可成交线索。",
         status: currentAnalyzeStep > 0 ? "done" : "active",
       },
       {
@@ -1882,7 +1882,7 @@ export default function MVAnalysisPage() {
       /\.docx$/i.test(file.name);
 
     if (!isVideo && !isDocument) {
-      setError("请上传图文档案（Word、PDF）或 MP4 视频文件");
+      setError("请上传图文档案（Word、PDF）或 MP4 视频文档");
       return;
     }
 
@@ -1920,7 +1920,7 @@ export default function MVAnalysisPage() {
         setUploadStage("idle");
         setUploadProgress(100);
       } catch (fileError: any) {
-        setError(fileError.message || "文件读取失败");
+        setError(fileError.message || "文档读取失败");
         setUploadStage("error");
       }
     })();
@@ -1981,7 +1981,7 @@ export default function MVAnalysisPage() {
             })
           : await (async () => {
               if (!selectedFile) {
-                throw new Error("请先选择视频文件");
+                throw new Error("请先选择视频文档");
               }
               let signed;
               try {
@@ -2316,7 +2316,7 @@ export default function MVAnalysisPage() {
     // 移除脚本
     clone.querySelectorAll("script").forEach((n) => n.remove());
 
-    // 移除影片元素（src 可能非常大）
+    // 移除视频元素（src 可能非常大）
     clone.querySelectorAll("video, audio").forEach((n) => n.remove());
 
     // 移除 iframe
@@ -2333,13 +2333,13 @@ export default function MVAnalysisPage() {
       }
     });
 
-    // 移除 blob: URL（影片缩图等）
+    // 移除 blob: URL（视频缩图等）
     clone.querySelectorAll("[src]").forEach((el) => {
       const src = el.getAttribute("src") || "";
       if (src.startsWith("blob:")) el.removeAttribute("src");
     });
 
-    // 移除互动性较强但 PDF 不需要的元件（上传区、input、按钮群）
+    // 移除互动性较强但 PDF 不需要的组件（上传区、input、按钮群）
     clone.querySelectorAll('input, textarea, [data-pdf-exclude="true"]').forEach((n) => n.remove());
 
     const base = document.createElement("base");
@@ -2633,7 +2633,7 @@ export default function MVAnalysisPage() {
         detail: positioningRows[0]?.action || "先说用户现在卡在哪里。",
       },
       {
-        label: "建立信任",
+        label: "创建信任",
         value: Math.max(22, Math.round((commercialTracks[0]?.fit || dashboardScoreAverage) * 0.82)),
         detail: contentAnalysisRows[0]?.action || "先让用户愿意继续看和收藏。",
       },
@@ -3123,7 +3123,7 @@ export default function MVAnalysisPage() {
             <textarea
               value={researchInput}
               onChange={(e) => setResearchInput(e.target.value)}
-              placeholder="粘贴竞品链接、爆款标题、账号描述或内容截图文字…"
+              placeholder="粘贴竞品链接、爆款标题、账号描述或内容截图文本…"
               rows={5}
               className="w-full resize-none rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white placeholder-white/25 outline-none focus:border-[#a78bfa]/40"
             />
@@ -3319,7 +3319,7 @@ export default function MVAnalysisPage() {
                     <div className="flex min-h-[220px] flex-col items-center justify-center rounded-[24px] border border-white/10 bg-black/30 px-6 text-center">
                       {inputKind === "document" ? <FileUp className="h-12 w-12 text-[#ffb37f]" /> : <Film className="h-12 w-12 text-[#ffb37f]" />}
                       <div className="mt-4 text-xl font-bold text-white">
-                        {inputKind === "document" ? "文档已就绪" : "视频文件已就绪"}
+                        {inputKind === "document" ? "文档已就绪" : "视频文档已就绪"}
                       </div>
                       <p className="mt-2 text-sm leading-7 text-white/60">
                         {inputKind === "document"
@@ -3332,7 +3332,7 @@ export default function MVAnalysisPage() {
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-2">
                         <FileUp className="h-4 w-4 text-[#ffb37f]" />
-                        {fileName || "未命名文件"}
+                        {fileName || "未命名文档"}
                       </span>
                       <span>{(fileSize / (1024 * 1024)).toFixed(1)} MB</span>
                     </div>
@@ -3468,7 +3468,7 @@ export default function MVAnalysisPage() {
                     />
                   </div>
                 </div>
-                <p className="mt-1.5 text-[11px] text-white/30">🎤 支援 Chrome、Edge、Safari 瀏覽器</p>
+                <p className="mt-1.5 text-[11px] text-white/30">🎤 支持 Chrome、Edge、Safari 浏览器</p>
               </div>
 
               <div className="mt-5">
@@ -3628,7 +3628,7 @@ export default function MVAnalysisPage() {
                   <div>健康检查时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.serviceHealth?.checkedAt || ""))}</div>
                   <div>运行模式：{String(growthSystemStatusQuery.data?.runtimeControl?.mode || "auto")}</div>
                   <div>模式更新时间：{formatShanghaiDateTime(String(growthSystemStatusQuery.data?.runtimeControl?.updatedAt || ""))}</div>
-                  <div>文件类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
+                  <div>文档类型：{String(debugInfo?.mimeType || fileMimeType || "-")}</div>
                   <div>文件名：{String(debugInfo?.fileName || fileName || "-")}</div>
                   <div>邮件配置可用：{String(growthSystemStatusQuery.data?.smtp?.configured ?? "-")}</div>
                   <div>邮件接收人：{String(growthSystemStatusQuery.data?.targetEmail || "-")}</div>
@@ -3644,7 +3644,7 @@ export default function MVAnalysisPage() {
                   <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/15 p-4 text-xs text-white/75">
                     <div className="text-xs uppercase tracking-[0.16em] text-cyan-100">视频链路 Debug</div>
                     <div className="mt-3 space-y-2 leading-6">
-                      <div>1. 选择文件：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
+                      <div>1. 选择文档：{String((debugInfo as any)?.videoPipeline?.selectedFile?.name || fileName || "-")} / {String((debugInfo as any)?.videoPipeline?.selectedFile?.size || fileSize || "-")} bytes</div>
                       <div>2. 上传：{String((debugInfo as any)?.videoPipeline?.upload?.status || "idle")} / 进度 {String((debugInfo as any)?.videoPipeline?.upload?.progress ?? uploadProgress ?? "-")}%</div>
                       <div>3. 上传结果：GCS {String((debugInfo as any)?.videoPipeline?.upload?.gcsUri || "-")} / URL {String((debugInfo as any)?.videoPipeline?.upload?.url || "-")} / Key {String((debugInfo as any)?.videoPipeline?.upload?.key || "-")}</div>
                       <div>4. 派发模式：{String((debugInfo as any)?.videoPipeline?.mode || "job")} / 路由 {String((debugInfo as any)?.videoPipeline?.dispatch?.route || "-")}</div>
@@ -3850,7 +3850,7 @@ export default function MVAnalysisPage() {
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 开始回填：{formatShanghaiDateTime(String(item.startedAt || sectionData.startedAt || ""))}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 下次回填：{formatShanghaiDateTime(String(item.nextRunAt || sectionData.nextRunAt || ""))}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 当前量：{String(item.currentTotal || 0)}</div>
-                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 新增：{String(item.addedCount || 0)}</div>
+                          <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 添加：{String(item.addedCount || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 合并：{String(item.mergedCount || 0)}</div>
                           <div>{String(item.platformLabel || getPlatformLabel(item.platform))} 平台停滞轮数：{String(item.plateauCount || 0)}</div>
                           <div className="md:col-span-2">{String(item.platformLabel || getPlatformLabel(item.platform))} 错误：{String(item.error || "-")}</div>
@@ -4092,7 +4092,7 @@ export default function MVAnalysisPage() {
                   </div>
                 )}
         {(() => {
-          // ——— 共用选题卡片渲染函式（带 slice 上限）———
+          // ——— 共用选题卡片渲染函数（带 slice 上限）———
           type TopicItem = {
             title: string;
             formatType?: "VIDEO" | "IMAGE_TEXT";
@@ -4703,7 +4703,7 @@ export default function MVAnalysisPage() {
                             </div>
                             <div className="mt-4 rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm leading-7 text-white/78">
                               <div className="text-xs uppercase tracking-[0.16em] text-white/45">适合的赛道</div>
-                              <div className="mt-2">{replaceTerms(activity?.potentialTrack || "优先走痛点解决、结果对比、专业信任建立这类高转化赛道。")}</div>
+                              <div className="mt-2">{replaceTerms(activity?.potentialTrack || "优先走痛点解决、结果对比、专业信任创建这类高转化赛道。")}</div>
                             </div>
                             {activity?.supportActivities?.length ? (
                               <div className="mt-4 rounded-2xl border border-[#9df6c0]/15 bg-[rgba(157,246,192,0.06)] px-4 py-3 text-sm leading-7 text-white/78">

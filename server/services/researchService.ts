@@ -181,7 +181,7 @@ ${platformContext}
   console.log(`[researchService] Stage 2 Gemini 3.1 Pro 启动`);
   const stage2Raw = await generate(
     "gemini-3.1-pro-preview",
-    `你是整合了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
+    `你是集成了哈佛商学院竞争战略与${label}平台算法的顶级IP策略师，同时担任多模态视听导演。
 
 【竞品扫描报告（Stage 1）】
 ${stage1Raw}

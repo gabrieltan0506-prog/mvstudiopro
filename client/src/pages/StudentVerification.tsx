@@ -194,7 +194,7 @@ export default function StudentVerificationScreen() {
             <div className="bg-gradient-to-r from-primary to-primary/80 rounded-2xl p-6 mb-6">
               <h2 className="text-2xl font-bold text-background mb-4">学生专享优惠</h2>
               <div className="space-y-3">
-                <div className="flex items-start"><span className="text-background mr-2">✓</span><p className="text-sm text-background flex-1">视频 PK 评分、分镜脚本、虚拟偶像生成等内核功能</p></div>
+                <div className="flex items-start"><span className="text-background mr-2">✓</span><p className="text-sm text-background flex-1">视频 PK 评分、分镜脚本、虚拟偶像生成等核心功能</p></div>
                 <div className="flex items-start"><span className="text-background mr-2">✓</span><p className="text-sm text-background flex-1">免费试用 2 天，无需付款信息</p></div>
                 <div className="flex items-start"><span className="text-background mr-2">✓</span><p className="text-sm text-background flex-1">订阅方案：半年 ¥138 或一年 ¥268</p></div>
                 <div className="flex items-start"><span className="text-background mr-2">✓</span><p className="text-sm text-background flex-1">优先客服支持</p></div>
@@ -209,7 +209,7 @@ export default function StudentVerificationScreen() {
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>开始免费试用</AlertDialogTitle>
-                    <AlertDialogDescription>您将获得 2 天免费试用，包含视频 PK 评分、2D/3D 偶像生成、720P 视频生成等内核功能。试用期内功能有限，升级订阅可解锁更多。</AlertDialogDescription>
+                    <AlertDialogDescription>您将获得 2 天免费试用，包含视频 PK 评分、2D/3D 偶像生成、720P 视频生成等核心功能。试用期内功能有限，升级订阅可解锁更多。</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>再看看</AlertDialogCancel>

@@ -262,7 +262,7 @@ export async function notifyGrowthCollectionUpdate(params: {
     `[Growth Trend Scheduler ${MAIL_DIGEST_INTERVAL_MINUTES}分钟汇总]\n` +
     `最新触发平台：${params.platform}\n` +
     `最新抓取时间：${params.collectedAt}\n` +
-    `最新新增数量：${params.addedCount}\n` +
+    `最新添加数量：${params.addedCount}\n` +
     `最新合并数量：${params.mergedCount}\n` +
     `该平台当前总样本数：${params.itemCount}\n` +
     `当前 live 调度频率：${params.frequencyLabel}\n` +
@@ -278,7 +278,7 @@ export async function notifyGrowthCollectionUpdate(params: {
     `<p><strong>汇总窗口：</strong>${MAIL_DIGEST_INTERVAL_MINUTES} 分钟</p>` +
     `<p><strong>最新触发平台：</strong>${params.platform}</p>` +
     `<p><strong>抓取时间：</strong>${params.collectedAt}</p>` +
-    `<p><strong>本次新增：</strong>${params.addedCount}</p>` +
+    `<p><strong>本次添加：</strong>${params.addedCount}</p>` +
     `<p><strong>本次合并：</strong>${params.mergedCount}</p>` +
     `<p><strong>该平台当前总样本数：</strong>${params.itemCount}</p>` +
     `<p><strong>下次计划抓取：</strong>${params.nextRunAt}</p>` +

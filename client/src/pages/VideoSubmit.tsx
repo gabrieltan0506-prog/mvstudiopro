@@ -216,7 +216,7 @@ export default function VideoSubmit() {
 
   const handleFinalSubmit = async () => {
     if (!videoTitle.trim()) { setError("请输入视频标题"); return; }
-    if (!videoBase64) { setError("请上传视频文件"); return; }
+    if (!videoBase64) { setError("请上传视频文档"); return; }
     if (!thumbnailBase64) { setError("请上传视频封面"); return; }
     if (platformEntries.some(p => !p.videoLink || !p.screenshotBase64)) { setError("请完善所有平台信息，包括链接和截图"); return; }
     if (!licenseAgreed) { setError("请阅读并同意授权协议"); return; }
@@ -305,7 +305,7 @@ export default function VideoSubmit() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="p-6 bg-[#1C1C1E] border border-white/10 rounded-lg">
-                <h2 className="text-xl font-semibold text-white mb-4">视频文件</h2>
+                <h2 className="text-xl font-semibold text-white mb-4">视频文档</h2>
                 <button onClick={() => handleFilePick('video/*', (base64, file) => { setVideoBase64(base64); setVideoUrl(URL.createObjectURL(file)); })} className="w-full h-40 border-2 border-dashed border-white/20 rounded-lg flex items-center justify-center hover:border-white/40 transition-colors">
                     {videoUrl ? <video src={videoUrl} className="h-full w-full object-contain rounded-lg" /> : <div className="text-center text-white/60"><Upload className="mx-auto h-8 w-8 mb-2" />点击上传视频</div>}
                 </button>

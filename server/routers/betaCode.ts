@@ -21,7 +21,7 @@ function generateCode(): string {
   return `${part(4)}-${part(4)}-${part(4)}`;
 }
 
-/** 確保表存在（PostgreSQL 語法） */
+/** 确保表存在（PostgreSQL 语法） */
 async function ensureBetaTables(db: NonNullable<Awaited<ReturnType<typeof getDb>>>) {
   try {
     await db.execute(sql`
@@ -71,16 +71,16 @@ export const betaCodeRouter = router({
 
       await ensureBetaTables(db);
 
-      // supervisor token 直接通過
+      // supervisor token 直接通过
       const tokenOk = isSupervisorToken(input.supervisorToken);
 
       if (!tokenOk) {
-        // 需要登入 session
+        // 需要登录 session
         const userId = (ctx as any).user?.id;
-        if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入或提供 supervisor token" });
+        if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录或提供 supervisor token" });
         const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
         if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
-          throw new TRPCError({ code: "FORBIDDEN", message: `僅 Supervisor / Admin 可生成邀請碼` });
+          throw new TRPCError({ code: "FORBIDDEN", message: `仅 Supervisor / Admin 可生成邀请码` });
         }
       }
 
@@ -113,10 +113,10 @@ export const betaCodeRouter = router({
           }
         }
         if (!inserted) {
-          // 所有嘗試均失敗 → 拋出明確錯誤，讓前端看到問題
+          // 所有尝试均失败 → 抛出明确错误，让前端看到问题
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: `邀請碼寫入失敗（${lastErr}）——請確認數據庫表已建立`,
+            message: `邀请码写入失败（${lastErr}）——请确认数据库表已创建`,
           });
         }
       }
@@ -185,7 +185,7 @@ export const betaCodeRouter = router({
       return {
         success: true,
         creditsAwarded: codeRow.credits,
-        message: `成功兌換 ${codeRow.credits} Credits！可立即使用創作者成長營、平台趨勢分析、節點工作流等功能。`,
+        message: `成功兑换 ${codeRow.credits} Credits！可立即使用创作者成长营、平台趋势分析、节点工作流等功能。`,
       };
     }),
 
@@ -200,7 +200,7 @@ export const betaCodeRouter = router({
     const tokenOk = isSupervisorToken(input?.supervisorToken);
     if (!tokenOk) {
       const userId = (ctx as any).user?.id;
-      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "請先登入" });
+      if (!userId) throw new TRPCError({ code: "UNAUTHORIZED", message: "请先登录" });
       const [userRow] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
       if (!hasUnlimitedAccess({ role: userRow?.role, email: userRow?.email })) {
         throw new TRPCError({ code: "FORBIDDEN", message: "仅 Supervisor 可查看" });

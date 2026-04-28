@@ -631,7 +631,7 @@ async function runVisualFirstPass(params: {
 
 规则：
 1. 只能依据给你的关键帧做判断。
-2. 必须判断开头画面是否足够抓人、人物/场景是否建立信任、画面风格是否统一、是否存在可直接转化的演示证据。
+2. 必须判断开头画面是否足够抓人、人物/场景是否创建信任、画面风格是否统一、是否存在可直接转化的演示证据。
 3. keyFrames 至少返回 4 条，时间点必须回 mm:ss。
 4. 每条 keyFrame 都要回答：这帧展示了什么、可用于什么商业表达、问题是什么、怎么修。
 
@@ -826,7 +826,7 @@ function buildLegacyFieldsFromStrategist(parsed: any) {
       : premiumTopics.slice(0, 4).map((item) => ({
           title: item.title || "二次创作方向",
           scenario: premiumSummary || "把原视频改造成更有情绪张力和商业承接的版本。",
-          whyItFits: reverseEngineering.commercialLogic || "这条方向更容易建立信任并承接成交动作。",
+          whyItFits: reverseEngineering.commercialLogic || "这条方向更容易创建信任并承接成交动作。",
           brands: [],
           execution: item.contentBrief || "把人物、灯光、场景和结果镜头重组成更能停留的脚本。",
           hook: reverseEngineering.hookStrategy || "先抛最刺痛的问题或结果。",
@@ -1046,7 +1046,7 @@ async function runDeepDivePass(params: {
 模式：${mode === "REMIX" ? "实战爆款 · 二次创作" : "商业成长营"}
 用户业务背景（必须严格对齐，禁止忽略）：${businessGoal}
 
-【排版禁令：禁止文字墙】
+【排版禁令：禁止文本墙】
 所有长文必须 Markdown 条列（- ）与 **加粗**；段落间空行。禁止「暂无」「待补充」。禁止「请建议」「您可以」等软弱语气。
 平台仅限【抖音、快手、小红书、B站】，严禁「视频号」。
 
@@ -1065,9 +1065,9 @@ async function runDeepDivePass(params: {
 2. actionableTopics：恰好 3 个「本周就能拍」的即时改编选题。每个选题必须：
    - title：10字以内、带情绪张力的选题标题（禁止泛泛如「职场感悟」）
    - contentBrief：必须分三段，用 **加粗** 标出段落名：
-     **【开场钩子（前3秒口播）】**：直接写出可说的具体文字（不是描述，是台词）
+     **【开场钩子（前3秒口播）】**：直接写出可说的具体文本（不是描述，是台词）
      **【核心论述与拍摄思路】**：选题逻辑、拍摄手法、情绪推进
-     **【结尾行动召唤】**：引导观众点赞/留言/关注的收尾文字
+     **【结尾行动召唤】**：引导观众点赞/留言/关注的收尾文本
    - businessInsight：引流品（品名+定价+获客方式）→ 利润品（品名+客单价）→ 转化路径（3步骤），不少于 300 字
    - directorExecution.storyboard：恰好 5-6 条，每条严格格式：「[景别][时长] 画面描述 | 口播：「...」 | 情绪：...」
 
@@ -1091,7 +1091,7 @@ async function runDeepDivePass(params: {
    - contentBrief：必须分三段，用 **加粗** 标出段落名：
      **【开场钩子（前3秒口播）】**：直接写出可说的具体台词（不是描述镜头，是可直接读出的话）
      **【核心论述与拍摄思路】**：选题逻辑、情绪推进方式、如何借鉴原片
-     **【结尾行动召唤】**：引导观众留言/关注/私信的具体收尾文字
+     **【结尾行动召唤】**：引导观众留言/关注/私信的具体收尾文本
    - businessInsight：引流品（品名+定价区间+获客平台）→ 利润品（品名+客单价）→ 转化路径（3步骤），不少于 300 字
    - directorExecution.storyboard：恰好 5-6 条，每条严格格式：「[景别][时长] 画面描述 | 口播：「...」 | 情绪：...」
 
@@ -1368,7 +1368,7 @@ async function runDeepDivePass(params: {
         ...withPremium,
         ...buildLegacyFieldsFromStrategist(withPremium),
       };
-      break; // 成功，跳出重試迴圈
+      break; // 成功，跳出重试循环
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const isRateLimit =
@@ -1382,7 +1382,7 @@ async function runDeepDivePass(params: {
         await new Promise<void>((resolve) => setTimeout(resolve, _delayMs));
         _delayMs *= 2;
       } else {
-        console.error("[Vertex AI] Strategist LLM 呼叫失敗:", err);
+        console.error("[Vertex AI] Strategist LLM 调用失败:", err);
         throw err;
       }
     }
@@ -1610,7 +1610,7 @@ export async function analyzeVideo(params: {
       // 如果是二次创作（REMIX）模式，强制将所有可能导致 UI 重复渲染的字段物理清空
       const analysisMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
       if (analysisMode === "REMIX") {
-        // 診斷陣列全部清空
+        // 诊断数组全部清空
         deepDive.keyFrames = [];
         deepDive.visualRisks = [];
         deepDive.strengths = [];
@@ -1628,7 +1628,7 @@ export async function analyzeVideo(params: {
         deepDive.bgmAnalysis = "";
         deepDive.musicRecommendation = "";
         deepDive.sunoPrompt = "";
-        // premiumContent 文字欄位全部清空，防止前端二次渲染
+        // premiumContent 文本字段全部清空，防止前端二次渲染
         if (deepDive.premiumContent) {
           const pc = deepDive.premiumContent as {
             summary?: string;

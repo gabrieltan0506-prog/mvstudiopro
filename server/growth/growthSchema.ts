@@ -257,7 +257,7 @@ function buildBeautyFashionTopicTemplates(context: string) {
       key: "sun_protection",
       matchers: ["防晒", "户外", "赛场", "阳光", "汗", "持妆"],
       title: "从高强度户外场景切入防晒与持妆痛点",
-      rationale: "户外运动画面天然强化了出汗、暴晒、脱妆这些真实痛点，比空讲产品更容易建立信任。",
+      rationale: "户外运动画面天然强化了出汗、暴晒、脱妆这些真实痛点，比空讲产品更容易创建信任。",
       executionHint: "先抛一个具体痛点，再给一套防晒 / 底妆 / 补妆组合建议。",
       commercialAngle: `${intent} 更适合功能护肤、防晒、底妆和随身补妆产品。`,
     },
@@ -290,7 +290,7 @@ function buildGenericTopicTemplates(context: string, industryTemplate: GrowthInd
       key: "case_breakdown",
       matchers: keywords,
       title: `把「${head}」讲成案例拆解，而不是泛分享`,
-      rationale: "案例化表达更容易同时建立可信度和成交意图。",
+      rationale: "案例化表达更容易同时创建可信度和成交意图。",
       executionHint: `按“结果 -> 关键步骤 -> 常见误区”组织，不再平铺过程。优先展示：${industryTemplate.trustAsset}`,
       commercialAngle: `${intent} 更适合接${industryTemplate.primaryConversion}。`,
     },
@@ -357,7 +357,7 @@ function inferCarryRule(collection?: PlatformTrendCollection) {
     return "更适合把案例、结果和服务页放在主承接位，放大转发扩散。";
   }
   return avgLikes >= Math.max(avgComments, avgShares, 1) * 1.4
-    ? "适合先用结果和案例建立信任，再把单一路径转化动作收紧。"
+    ? "适合先用结果和案例创建信任，再把单一路径转化动作收紧。"
     : "承接动作要尽量单一，先把主问题讲透，再推进后续转化。";
 }
 
@@ -1029,7 +1029,7 @@ function buildPlatformRecommendations(
       return {
         name: PLATFORM_LABELS[platform],
         reason: signals.longVideoFirst
-          ? `B站更适合把这条内容讲完整，尤其是方法、案例、复盘和幕后拆解。这里不是简单“多发一个平台”，而是把同一内容升级成更长尾、更能建立信任的版本。`
+          ? `B站更适合把这条内容讲完整，尤其是方法、案例、复盘和幕后拆解。这里不是简单“多发一个平台”，而是把同一内容升级成更长尾、更能创建信任的版本。`
           : `如果你要把这条内容继续放大，B站适合承接“为什么这样做、踩了什么坑、如何复用”的后续版，不适合只上传短版切片。`,
         action: `做 1 版 60 到 120 秒复盘或案例拆解视频：先讲结果，再讲步骤和误区，最后告诉用户可以继续看哪一版内容。${signals.serviceDriven ? "如果你卖的是咨询、课程或服务，就把案例结果和方法论说透。" : "如果你做的是内容增长，就重点讲结构、节奏和可复制的方法。"} 注意避免：${watchouts}`,
         playbook: "发 B 站复盘版：标题直接讲结果或案例主题，视频先给结论，再拆步骤、误区和可复用方法，结尾引导用户看下一条延展内容。",
@@ -1117,7 +1117,7 @@ function buildExecutionCopy(
     return `封面先写「${title}」。正文不要空讲概念，直接按“什么人最需要 -> 为什么会出现这个问题 -> 一套可执行做法 -> 常见误区 -> 现在先做什么”展开。第二屏就把 ${industryTemplate.painPoint} 讲透，第三到四屏用真实动作、前后对比或案例图把信任立住，让 ${audience} 看完愿意收藏和转发。${visualCue ? `可直接借用这组画面证据：${visualCue}。` : ""}${openingHook ? `开头提示：${openingHook}` : ""}`.trim();
   }
   if (mode === "长视频") {
-    return `视频开头直接抛出「${title}」，前 10 秒先讲结果和适合谁，中段拆 3 个关键判断或案例，后段补方法和误区，最后只收一个动作。镜头上要优先保留人物特写、动作示范、结果对比和可信证据，不要被空镜头拖慢节奏。重点不是泛分享，而是把 ${industryTemplate.trustAsset} 讲成能建立信任的完整版本。${visualCue ? `最该保留的视觉证据是：${visualCue}。` : ""}${openingHook ? `开场可直接用：${openingHook}` : ""}`.trim();
+    return `视频开头直接抛出「${title}」，前 10 秒先讲结果和适合谁，中段拆 3 个关键判断或案例，后段补方法和误区，最后只收一个动作。镜头上要优先保留人物特写、动作示范、结果对比和可信证据，不要被空镜头拖慢节奏。重点不是泛分享，而是把 ${industryTemplate.trustAsset} 讲成能创建信任的完整版本。${visualCue ? `最该保留的视觉证据是：${visualCue}。` : ""}${openingHook ? `开场可直接用：${openingHook}` : ""}`.trim();
   }
   return `短视频直接用「${title}」做前两秒钩子，立刻点出 ${industryTemplate.painPoint} 和结果承诺。主体只留 2 到 3 个证据镜头或动作，中段别解释过长，镜头顺序按“痛点 -> 动作 -> 结果”推进，结尾统一导向一个行动。${visualCue ? `这条视频最该借用的视觉证据是：${visualCue}。` : ""}${openingHook ? `开场建议：${openingHook}` : ""}`.trim();
 }
@@ -1169,7 +1169,7 @@ function buildTitleExecutions(
         presentationMode === "图文"
           ? `这条更适合图文首发，因为用户需要快速看懂“适合谁、怎么做、为什么有效”，而不是先听长口播。首发跑通后再拆视频。`
           : presentationMode === "长视频"
-            ? `这条更适合视频，因为它需要通过口播节奏、动作示范和前后对比来建立信任，单纯图文不够承接。`
+            ? `这条更适合视频，因为它需要通过口播节奏、动作示范和前后对比来创建信任，单纯图文不够承接。`
             : `这条更适合短视频，因为结论够集中，冲突够明确，前 2 秒就能把用户拉住。`,
       graphicPlan,
       videoPlan,
@@ -1304,7 +1304,7 @@ function buildPlatformActivities(
       : platform === "douyin"
         ? `有潜力赛道：强开场结果流、口播解决方案流、前后对比和场景演示流。`
         : platform === "bilibili"
-          ? `有潜力赛道：案例拆解、方法复盘、系列教程、专业信任建立。`
+          ? `有潜力赛道：案例拆解、方法复盘、系列教程、专业信任创建。`
           : platform === "kuaishou"
             ? `有潜力赛道：真实口播、直给解决方案、直播前置种草、线下服务承接。`
             : `有潜力赛道：结论前置、实用信息密度高、能被继续分发的内容。`;
@@ -1314,7 +1314,7 @@ function buildPlatformActivities(
         : platform === "douyin"
           ? "深层优化：把视频前两秒改成结论句或痛点句，中段只留 2 到 3 个有效镜头，字幕必须同步说人群和结果，结尾只留一个评论词或预约动作。"
           : platform === "bilibili"
-            ? "深层优化：把当前素材升级成 60 到 120 秒复盘版，讲清为什么有效、哪些人适合、常见误区和改法，用连续更新建立信任。"
+            ? "深层优化：把当前素材升级成 60 到 120 秒复盘版，讲清为什么有效、哪些人适合、常见误区和改法，用连续更新创建信任。"
             : platform === "kuaishou"
               ? "深层优化：去掉绕弯表达，改成生活场景口播和真实示范，优先讲值不值、适不适合、怎么做更省事，再接直播或私域。"
               : "深层优化：先把一个核心问题讲透，再决定是否延展成系列，不要把多个商业方向混在同一条里。";
@@ -1642,7 +1642,7 @@ function buildDashboardConsole(params: {
         persona: `已经意识到「${industryTemplate.painPoint}」的人`,
         conversionGoal: `从“知道问题”推进到「${topTrack?.name || "主承接"}」`,
         preferredPlatform: platformRecommendations[1]?.name || topPlatform,
-        trigger: "用案例、对比和误区拆解建立信任，而不是泛讲观点",
+        trigger: "用案例、对比和误区拆解创建信任，而不是泛讲观点",
         action: topTrack?.nextStep || "先用单一路径验证转化动作。",
         stages: buildFunnelStages(
           Math.max(76, (topTrack?.fit || readiness) + 6),

@@ -46,7 +46,7 @@ export default function ActorStudioShell(props: Props) {
           gap: 16,
         }}
       >
-        <Card title="1. 角色输入" subtitle="上传人物图，建立角色基准">
+        <Card title="1. 角色输入" subtitle="上传人物图，创建角色基准">
           <div style={{ display: "grid", gap: 12 }}>
             <button style={btnStyle}>上传人物图</button>
             <div style={hintStyle}>后续将接统一上传模块与角色 ID 锁定。</div>

@@ -1125,7 +1125,7 @@ export const videoSubmissionRouter = router({
       };
     }),
 
-  /** 上传文档（视频、截屏、身份证照片等） */
+  /** 上传文件（视频、截屏、身份证照片等） */
   uploadFile: protectedProcedure
     .input(
       z.object({

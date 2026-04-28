@@ -35,7 +35,7 @@ export function registerSpeechApiRoutes(app: Express) {
     const outPath = path.join(process.cwd(), `out_${id}.wav`);
 
     try {
-      // 1. 将前端传来的文件（WebM / MP4 均可）写入临时文件
+      // 1. 将前端传来的文档（WebM / MP4 均可）写入临时文件
       fs.writeFileSync(inPath, req.file.buffer);
 
       // 2. FFmpeg 强制转成单声道 48000Hz 标准 WAV
@@ -63,7 +63,7 @@ export function registerSpeechApiRoutes(app: Express) {
           .join("\n")
           .trim() ?? "";
 
-      console.log(`[GCP Speech] FFmpeg 转档识别成功，文字: "${transcription}"`);
+      console.log(`[GCP Speech] FFmpeg 转档识别成功，文本: "${transcription}"`);
       res.status(200).json({ text: transcription });
 
     } catch (error) {

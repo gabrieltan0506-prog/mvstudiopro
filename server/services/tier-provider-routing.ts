@@ -43,9 +43,9 @@ export function shouldApplyWatermarkForTier(tier: UserTier): boolean {
 }
 
 /**
- * 精細化水印判斷：僅試用包（trial199）帳號才需要加水印。
- * 只要曾有任何正式加值包（non-trial199 靜態付款審核通過，或 Stripe 正式購買），
- * 即視為付費用戶，不加水印。
+ * 精细化水印判断：仅试用包（trial199）帐号才需要加水印。
+ * 只要曾有任何正式加值包（non-trial199 静态付款审核通过，或 Stripe 正式购买），
+ * 即视为付费用户，不加水印。
  */
 export async function resolveWatermark(userId: number, isAdminUser: boolean): Promise<boolean> {
   const tier = await resolveUserTier(userId, isAdminUser);
@@ -55,7 +55,7 @@ export async function resolveWatermark(userId: number, isAdminUser: boolean): Pr
   const db = await getDb();
   if (!db) return true;
 
-  // 靜態付款：是否有任何非 trial199 的審核通過訂單
+  // 静态付款：是否有任何非 trial199 的审核通过订单
   const [staticRow] = await db
     .select({ n: count() })
     .from(paymentSubmissions)
@@ -68,7 +68,7 @@ export async function resolveWatermark(userId: number, isAdminUser: boolean): Pr
     );
   if (Number(staticRow?.n ?? 0) > 0) return false;
 
-  // Stripe 購買：source="purchase" 且有 stripePaymentIntentId（Stripe 僅開放 small/medium/large，非 trial）
+  // Stripe 购买：source="purchase" 且有 stripePaymentIntentId（Stripe 仅开放 small/medium/large，非 trial）
   const [stripeRow] = await db
     .select({ n: count() })
     .from(creditTransactions)
@@ -81,7 +81,7 @@ export async function resolveWatermark(userId: number, isAdminUser: boolean): Pr
     );
   if (Number(stripeRow?.n ?? 0) > 0) return false;
 
-  // 僅 trial199 或免費帳號 → 加水印
+  // 仅 trial199 或免费帐号 → 加水印
   return true;
 }
 

@@ -338,7 +338,7 @@ export default function ThreeDStudioPage() {
                       />
                     </div>
 
-                    <h3 className="mb-2 text-lg font-bold">导出 3D 模型文件</h3>
+                    <h3 className="mb-2 text-lg font-bold">导出 3D 模型文档</h3>
                     <p className="mb-4 text-sm text-gray-400">下载后可直接导入 Blender、Unity、Unreal Engine 等 3D 软件</p>
 
                     <div className="grid gap-4 md:grid-cols-2">

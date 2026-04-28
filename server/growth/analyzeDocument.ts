@@ -32,7 +32,7 @@ function buildFallbackDocumentAnalysis(text: string, context: string) {
   const normalized = text.trim();
   const summary = normalized
     ? `文档已提取到可分析正文，当前更适合围绕清晰结构、商业定位和平台适配来输出成长营报告。`
-    : "文档正文提取有限，当前报告基于文件主题和业务背景做保守分析。";
+    : "文档正文提取有限，当前报告基于文档主题和业务背景做保守分析。";
   const isCommercial = /品牌|招商|服务|客户|案例|转化/.test(`${normalized}\n${context}`);
   const isEducation = /课程|教学|培训|教程|知识|方法/.test(`${normalized}\n${context}`);
 
@@ -84,7 +84,7 @@ export async function analyzeDocument(params: {
           `业务背景：${params.context?.trim() || "未提供"}`,
           extractedPreview
             ? `已抽取正文（节选）：\n${extractedPreview}`
-            : "未能稳定抽取正文，请结合文件本身和业务背景理解。",
+            : "未能稳定抽取正文，请结合文档本身和业务背景理解。",
         ].join("\n\n"),
       },
     ];

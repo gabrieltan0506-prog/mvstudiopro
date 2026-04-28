@@ -1258,13 +1258,13 @@ export default function WorkflowNodes() {
       <div className="space-y-4">
         <div className="rounded-2xl border border-primary/30 bg-primary/10 p-4">
           <div className="mb-2 text-sm font-semibold text-white">语音实验室</div>
-          <div className="mb-3 text-sm text-white/70">直接输入文字生成语音，不依赖 scene、storyboard 或 script。</div>
+          <div className="mb-3 text-sm text-white/70">直接输入文本生成语音，不依赖 scene、storyboard 或 script。</div>
           <div className="relative mb-3">
             <textarea
               value={voiceLabText}
               onChange={(e) => setVoiceLabText(e.target.value)}
               rows={4}
-              placeholder="直接输入你要测试的旁白文字"
+              placeholder="直接输入你要测试的旁白文本"
               className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white"
             />
             <div className="absolute right-3 top-3">
@@ -1334,7 +1334,7 @@ export default function WorkflowNodes() {
                   value={manualVoiceText}
                   onChange={(e) => setSceneVoiceTextMap((prev) => ({ ...prev, [key]: e.target.value }))}
                   rows={4}
-                  placeholder="直接输入你要生成的旁白文字"
+                  placeholder="直接输入你要生成的旁白文本"
                   className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white"
                 />
                 <div className="absolute right-3 top-3">

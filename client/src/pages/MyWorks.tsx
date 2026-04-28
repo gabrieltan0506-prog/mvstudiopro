@@ -133,7 +133,7 @@ export default function MyWorks() {
           <Download className="h-4 w-4 mt-0.5 flex-shrink-0" />
           <div>
             <span className="font-semibold">重要提醒：</span>
-            视频文件有过期时限，请尽快下载保存到本地。
+            视频文档有过期时限，请尽快下载保存到本地。
             图片、脚本与分析快照已永久保存在本页面。
           </div>
         </div>

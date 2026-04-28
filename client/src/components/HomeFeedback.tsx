@@ -118,7 +118,7 @@ export default function HomeFeedback() {
             >
               <MessageSquare size={40} style={{ color: "#8cefff", margin: "0 auto 16px" }} />
               <p style={{ fontSize: 15, color: "rgba(200,191,231,0.8)", margin: "0 0 20px" }}>
-                登入后即可提交回馈并获得积分奖励
+                登录后即可提交回馈并获得积分奖励
               </p>
               <a
                 href="/auth"
@@ -135,7 +135,7 @@ export default function HomeFeedback() {
                   textDecoration: "none",
                 }}
               >
-                立即登入 <ArrowRight size={16} />
+                立即登录 <ArrowRight size={16} />
               </a>
             </div>
           ) : (

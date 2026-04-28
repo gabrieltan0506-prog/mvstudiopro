@@ -96,7 +96,7 @@ export async function removeBackground(imageUrl: string): Promise<string> {
 
     if (!outputUrl) {
       console.error("[BiRefNet] No output image URL in response:", JSON.stringify(data, null, 2));
-      throw new Error("去背景失敗：未返回有效的图片");
+      throw new Error("去背景失败：未返回有效的图片");
     }
 
     console.log(`[BiRefNet] Background removed in ${timeTaken}s. Output: ${outputUrl.substring(0, 80)}`);
@@ -135,7 +135,7 @@ async function ensureAccessibleUrl(imageUrl: string): Promise<string> {
     console.log(`[Hunyuan3D] 图片大小: ${sizeMB.toFixed(2)} MB, 类型: ${contentType}`);
 
     if (sizeMB > 6) {
-      console.log("[Hunyuan3D] 文件较大，使用 fal.storage.upload...");
+      console.log("[Hunyuan3D] 文档较大，使用 fal.storage.upload...");
       const blob = new Blob([buffer], { type: contentType });
       const falUrl = await fal.storage.upload(blob);
       console.log("[Hunyuan3D] 已上传到 fal.ai storage:", falUrl);
@@ -220,7 +220,7 @@ export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DT
 
     if (!glbUrl) {
       console.error("[Hunyuan3D] 返回数据结构:", JSON.stringify(data, null, 2));
-      throw new Error("3D 模型生成失败：未返回有效的模型文件");
+      throw new Error("3D 模型生成失败：未返回有效的模型文档");
     }
 
     console.log(`[Hunyuan3D] ${tier} generation completed in ${timeTaken.toFixed(1)}s. Formats: ${availableFormats.join(", ")}`);

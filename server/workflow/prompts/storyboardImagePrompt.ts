@@ -17,7 +17,7 @@ export function buildStoryboardImagePrompt(input: {
     "角色身份在所有分镜中保持一致",
     "保持同一张脸",
     "保持同一套服装",
-    "保持同一髮型",
+    "保持同一发型",
     String(input.scenePrompt || "").trim(),
     `环境：${String(input.environment || "").trim()}`,
     `角色：${String(input.character || "").trim()}`,

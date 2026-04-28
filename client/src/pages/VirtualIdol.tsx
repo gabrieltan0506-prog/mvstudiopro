@@ -333,7 +333,7 @@ export default function VirtualIdol() {
                   虚拟偶像生成
                 </h2>
                 <p className="text-sm text-white/40 mt-2 leading-relaxed">
-                  创建属于你的虚拟偶像。选择风格、性别，并用文字描述你的想法。
+                  创建属于你的虚拟偶像。选择风格、性别，并用文本描述你的想法。
                 </p>
               </div>
 

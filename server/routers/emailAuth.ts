@@ -129,7 +129,7 @@ export const emailAuthRouter = router({
       };
     }),
 
-  /** 郵箱驗證登入用戶是否已設置密碼（用於個人中心引導） */
+  /** 邮箱验证登录用户是否已设置密码（用于个人中心引导） */
   hasLoginPassword: protectedProcedure.query(async ({ ctx }) => {
     const database = await getDb();
     if (!database) return { hasPassword: false as const };
@@ -140,9 +140,9 @@ export const emailAuthRouter = router({
   }),
 
   /**
-   * 設置或修改登錄密碼。
-   * - 尚未在 email_auth 建檔（僅郵箱驗證碼註冊）：只需 newPassword。
-   * - 已有密碼：必須提供 currentPassword。
+   * 设置或修改登录密码。
+   * - 尚未在 email_auth 建档（仅邮箱验证码注册）：只需 newPassword。
+   * - 已有密码：必须提供 currentPassword。
    */
   setLoginPassword: protectedProcedure
     .input(
@@ -173,13 +173,13 @@ export const emailAuthRouter = router({
         return { ok: true as const, created: true as const };
       }
 
-      // 若用戶提供了原密碼，先做驗證（可選）；若未提供，允許已登入用戶直接覆蓋
+      // 若用户提供了原密码，先做验证（可选）；若未提供，允许已登录用户直接覆盖
       if (input.currentPassword?.length) {
         if (hashPassword(input.currentPassword) !== auth.passwordHash) {
           throw new TRPCError({ code: "UNAUTHORIZED", message: "原密码不正确" });
         }
       }
-      // 已通過 session 身份認證，允許直接設定新密碼
+      // 已通过 session 身份认证，允许直接设置新密码
       await database.update(emailAuth).set({ passwordHash: hashNew }).where(eq(emailAuth.email, email));
       return { ok: true as const, created: false as const };
     }),

@@ -1,7 +1,7 @@
 /**
- * 戰略智庫核心引擎 — AI 上帝視角
- * 支持三種產品類型：magazine_single / magazine_sub / personalized
- * 異步脫機運行，結果雙寫：Fly 持久卷（斷點恢復）+ Neon DB（研報中心展示）
+ * 战略智库核心引擎 — AI 上帝视角
+ * 支持三种产品类型：magazine_single / magazine_sub / personalized
+ * 异步脱机运行，结果双写：Fly 持久卷（断点恢复）+ Neon DB（研报中心展示）
  */
 import fs from "fs/promises";
 import path from "path";
@@ -88,7 +88,7 @@ function buildTrendSvg(data: {
   const toX = (i: number) => PAD.left + i * xStep;
   const toY = (v: number) => PAD.top + chartH - (v / 100) * chartH;
 
-  // 水平网格线（卡布奇諾配色）
+  // 水平网格线（卡布奇诺配色）
   const gridLines = [0, 25, 50, 75, 100].map((v) => {
     const y = toY(v);
     return `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(122,84,16,0.18)" stroke-width="1"/>
@@ -594,8 +594,8 @@ export async function runDeepResearchAsync(jobId: string) {
 - 历史竞品调研快照：${holistic.competitorSnapshots.length ? holistic.competitorSnapshots.map((s) => `\n  · [${s.date}|${s.platform}] ${s.positioning}`).join("") : "（用户首次调研竞品）"}
 `.trim();
 
-    // ── 個性化分析：抓取歷史戰報做縱向對比 ──────────────────────────────────
-    let historyContext = "此用户尚无历史分析记录，本次将作为基线快照建立。";
+    // ── 个性化分析：抓取历史战报做纵向对比 ──────────────────────────────────
+    let historyContext = "此用户尚无历史分析记录，本次将作为基线快照创建。";
     if (productType === "personalized") {
       const snapshots = await getUserReportSnapshots(job.userId);
       if (snapshots.length > 0) {
@@ -788,9 +788,9 @@ ${harvested.sources.length > 0 ? "【参考来源】\n" + harvested.sources.slic
     // 半月刊（magazine_single / magazine_sub）的「精简版长度规范」——跟个性化版同标准，但字数与表格减半
     const HALF_LENGTH_RULES = `
 【半月刊精简版字数规范 · 强制执行】
-- 全文字数严格控制在 5500-7000 字（个性化版的一半）
+- 全字数严格控制在 5500-7000 字（个性化版的一半）
 - 表格数量 5-6 张（个性化版的一半）
-- 每章正文字数 400-700 字（个性化版要求 800-1200 字）
+- 每章正字数 400-700 字（个性化版要求 800-1200 字）
 - 每章末尾「执行风险提醒」段落字数压缩到 40-60 字（个性化版 80 字）
 - 框架使用：仍要至少使用 4 套不同分析框架（个性化版 6 套），不得仅用一种
 - 表格强制覆盖：能力雷达 / 平台对比 / 产品矩阵 / 五段漏斗 / 30 天行动计划 五张核心表

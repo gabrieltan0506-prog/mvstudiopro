@@ -792,7 +792,7 @@ export default function PlatformPage() {
       const sig0 = getSignal(0, platformDashboard.headline || "先收口成一个明确方向", platformDashboard.subheadline || "先把最容易拿到反馈的平台和切口做透。");
       const sig1 = getSignal(1, platformDashboard.platformMenu?.[0]?.platform || "先做当前优先平台", platformDashboard.platformMenu?.[0]?.whyNow || "先做最容易拿到正反馈的平台版本。");
       
-      // Task 1: 彻底物理消灭"电商带货"幽灵 — 严格的 Skeleton 状态，不显示任何兜底文字
+      // Task 1: 彻底物理消灭"电商带货"幽灵 — 严格的 Skeleton 状态，不显示任何兜底文本
       const sig2 = isContentLoading
         ? { isLoadingSkeleton: true, value: "正在推演专属商业变现路径...", detail: "深度定制，请稍候。" }
         : getSignal(2, "先收口一个可承接方向", "把内容先做成有人愿意继续咨询或收藏的版本。");
@@ -1066,7 +1066,7 @@ export default function PlatformPage() {
   );
 
   const personaSummary = useMemo(
-    () => cleanUserCopy(platformDashboard?.personaSummary || "", "把专业身份和中国文化审美结合成一个更容易建立信任的IP入口。"),
+    () => cleanUserCopy(platformDashboard?.personaSummary || "", "把专业身份和中国文化审美结合成一个更容易创建信任的IP入口。"),
     [platformDashboard],
   );
 
@@ -1269,7 +1269,7 @@ export default function PlatformPage() {
       toast.success(`✅ 已上传 ${file.name}`);
     } catch (err: any) {
       setQaUploadStatus("error");
-      toast.error(err.message || "文件上传失败");
+      toast.error(err.message || "文档上传失败");
     } finally {
       setIsUploadingQaFile(false);
     }

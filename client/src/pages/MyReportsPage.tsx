@@ -228,7 +228,7 @@ export default function MyReportsPage() {
     <div
       style={{
         minHeight: "100vh",
-        // 与 god-view 同款：卡布奇諾深焙渐变（奶泡米色 → 焦糖核心 → 深拿铁底）
+        // 与 god-view 同款：卡布奇诺深焙渐变（奶泡米色 → 焦糖核心 → 深拿铁底）
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
           radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
@@ -376,7 +376,7 @@ export default function MyReportsPage() {
                   {hiddenExportPayload.title}
                 </h1>
                 <div style={{ marginTop: 14, fontSize: 13, opacity: 0.85, lineHeight: 1.7 }}>
-                  Deep Research Pro Preview · 全网检索 + 思维链推理 · 卡布奇諾级商务质感
+                  Deep Research Pro Preview · 全网检索 + 思维链推理 · 卡布奇诺级商务质感
                 </div>
               </div>
             </div>

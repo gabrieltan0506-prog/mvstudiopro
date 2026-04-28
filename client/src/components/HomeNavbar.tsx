@@ -247,7 +247,7 @@ export default function HomeNavbar() {
                         textAlign: "left",
                       }}
                     >
-                      登出
+                      退出登录
                     </button>
                   </div>
                 </div>

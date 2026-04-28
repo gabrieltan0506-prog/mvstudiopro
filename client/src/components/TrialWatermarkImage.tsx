@@ -10,7 +10,7 @@ interface TrialWatermarkImageProps {
 
 /**
  * 试用包图片：
- * - 叠加对角线水印文字
+ * - 叠加对角线水印文本
  * - 右键禁止另存
  * - CSS 拖曳禁止
  */

@@ -92,10 +92,10 @@ function ensureYtdlpCookiesFile(): string | null {
   try {
     fs.writeFileSync(tmpFile, lines.join('\n') + '\n', { mode: 0o600 });
     cachedCookiesFilePath = tmpFile;
-    console.log(`[videoParser] 🍪 yt-dlp cookies 文件已生成: ${tmpFile}`);
+    console.log(`[videoParser] 🍪 yt-dlp cookies 文档已生成: ${tmpFile}`);
     return tmpFile;
   } catch (err) {
-    console.warn('[videoParser] 写 yt-dlp cookies 文件失败:', err);
+    console.warn('[videoParser] 写 yt-dlp cookies 文档失败:', err);
     return null;
   }
 }
@@ -299,7 +299,7 @@ async function parseYoutubeViaYtdlp(url: string): Promise<ParsedVideo> {
     ],
   };
 
-  // 带 cookie 时，yt-dlp 用专门的 cookies 文件（绕过数据中心 IP 风控）
+  // 带 cookie 时，yt-dlp 用专门的 cookies 文档（绕过数据中心 IP 风控）
   const cookiesFile = ensureYtdlpCookiesFile();
   if (cookiesFile) {
     extraArgs.cookies = cookiesFile;
@@ -340,7 +340,7 @@ async function parseYoutubeViaYtdlp(url: string): Promise<ParsedVideo> {
   };
 }
 
-// ── 对外接口 ──────────────────────────────────────────────────────────────────
+// ── 对外置口 ──────────────────────────────────────────────────────────────────
 export async function parseVideoUrl(url: string): Promise<ParsedVideo> {
   const isYoutube = /youtube\.com|youtu\.be/i.test(url);
 
@@ -348,14 +348,14 @@ export async function parseVideoUrl(url: string): Promise<ParsedVideo> {
     const videoId = extractYoutubeId(url);
     if (!videoId) throw new Error('无法解析 YouTube 视频 ID，请检查链接格式');
 
-    // 主通道：youtubei.js (INNERTUBE 直连，无 cookie)
+    // 主信道：youtubei.js (INNERTUBE 直连，无 cookie)
     try {
       return await parseYoutubeViaInnertube(videoId);
     } catch (innertubeErr) {
       const msg = innertubeErr instanceof Error ? innertubeErr.message : String(innertubeErr);
       console.log(`[videoParser] Innertube 全军覆没，回退 yt-dlp：${msg.slice(0, 120)}`);
 
-      // 兜底通道：yt-dlp 多 player_client
+      // 兜底信道：yt-dlp 多 player_client
       try {
         return await parseYoutubeViaYtdlp(url);
       } catch (ytdlpErr) {
@@ -399,13 +399,13 @@ export async function checkYtdlpHealth(): Promise<{
   version: string;
   message: string;
 }> {
-  // 用 youtubei.js 测试 YouTube 主通道（Rick Astley 那条永远在线）
+  // 用 youtubei.js 测试 YouTube 主信道（Rick Astley 那条永远在线）
   try {
     const res = await parseYoutubeViaInnertube('dQw4w9WgXcQ');
     return {
       ok: !!res.title,
       version: 'youtubei.js v17',
-      message: res.title ? 'YouTube INNERTUBE 通道正常' : '通道异常',
+      message: res.title ? 'YouTube INNERTUBE 信道正常' : '信道异常',
     };
   } catch (err: unknown) {
     return {

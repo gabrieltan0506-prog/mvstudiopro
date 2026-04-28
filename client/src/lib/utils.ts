@@ -22,7 +22,7 @@ export function formatDateGMT8(date: Date | string | null | undefined, opts?: { 
   });
 }
 
-/** 取得目前 GMT+8 时间的本地化日期字串，用于标题 */
+/** 取得目前 GMT+8 时间的本地化日期字符串，用于标题 */
 export function nowDateLabelGMT8(): string {
   return new Date().toLocaleDateString("zh-CN", {
     timeZone: TZ,
