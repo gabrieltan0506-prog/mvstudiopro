@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { ChevronLeft, Plus, X, Radar } from "lucide-react";
+import { ChevronLeft, Plus, X, Radar, Flame } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
+import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 
 const PRESET_DIMENSIONS = ["数据", "创意", "商业模式", "用户画像", "内容工业化能力", "IP 衍生品深度", "合规风险"];
 
@@ -22,6 +23,24 @@ export default function CompetitorRadarPage() {
   ]);
   const [dimensions, setDimensions] = useState<string[]>(["数据", "创意", "商业模式", "用户画像"]);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
+  const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
+  const [painPointFromHandoff, setPainPointFromHandoff] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    const h = readAndClearAgentHandoff("competitor_radar");
+    if (h) {
+      setHandoffPrefill(h);
+      setSupplementaryPrefill(formatHandoffAsPainPoint(h));
+      setPainPointFromHandoff(`基于 ${h.platformLabel} 实时爆款「${h.title}」做高密度差异化对比，找出可降维打击的突破口`);
+      const platformLabel = h.platformLabel === "B 站" ? "B 站" : h.platformLabel;
+      setBenchmarks((prev) => {
+        const head: BenchmarkRow = { platform: platformLabel, handle: h.title.slice(0, 80), notes: "实时爆款（trendStore 派发）" };
+        return [head, ...prev.filter((b) => !(b.platform === platformLabel && !b.handle))];
+      });
+      toast.success(`已从 ${h.platformLabel} 实时爆款派发到雷达`);
+    }
+  }, []);
 
   const launchMutation = trpc.agent.launchCompetitorRadar.useMutation({
     onSuccess: (res) => {
@@ -53,6 +72,7 @@ export default function CompetitorRadarPage() {
     await launchMutation.mutateAsync({
       benchmarks: filled.map((b) => ({ platform: b.platform.trim(), handle: b.handle.trim(), notes: b.notes?.trim() || undefined })),
       focusDimensions: dimensions,
+      painPoint: painPointFromHandoff,
       supplementaryText: text.trim() || undefined,
       supplementaryFiles: files.length ? files : undefined,
     });
@@ -78,6 +98,21 @@ export default function CompetitorRadarPage() {
             </p>
           </div>
         </div>
+
+        {!activeJobId && handoffPrefill && (
+          <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 12, background: "linear-gradient(135deg, rgba(157,220,255,0.10), rgba(73,230,255,0.06))", border: "1px solid rgba(157,220,255,0.35)", display: "flex", alignItems: "center", gap: 10 }}>
+            <Flame size={16} style={{ color: "#9ddcff", flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#9ddcff" }}>已从 {handoffPrefill.platformLabel} 实时爆款派发到雷达</div>
+              <div style={{ fontSize: 11, color: "rgba(245,235,210,0.65)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {handoffPrefill.title}
+              </div>
+            </div>
+            <button onClick={() => { setHandoffPrefill(null); setSupplementaryPrefill(""); setPainPointFromHandoff(undefined); }} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 6, color: "#d6a861", cursor: "pointer" }}>
+              清空预填
+            </button>
+          </div>
+        )}
 
         {!activeJobId && (
           <div style={{ background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.22)", borderRadius: 16, padding: "26px 28px" }}>
@@ -157,6 +192,7 @@ export default function CompetitorRadarPage() {
                 textRequired={false}
                 hint="约 5-10 分钟生成研究计划，审批后 30-60 分钟交付高密度竞争分析"
                 maxLen={4000}
+                initialText={supplementaryPrefill}
               />
             </div>
           </div>

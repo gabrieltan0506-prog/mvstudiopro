@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -447,6 +448,11 @@ export default function GodViewPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* ── 实时趋势 · 一键深潜（4 平台爆款 → IP 矩阵 / 雷达） ── */}
+        <div style={{ marginBottom: 24 }}>
+          <TrendingHotspotsWidget />
         </div>
 
         {/* ── 半月刊 10 天提醒卡片 ── */}

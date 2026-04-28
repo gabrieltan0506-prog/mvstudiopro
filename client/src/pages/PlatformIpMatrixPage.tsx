@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { ChevronLeft, Plus, X, Layers } from "lucide-react";
+import { ChevronLeft, Plus, X, Layers, Flame } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
+import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 
 const DEFAULT_PLATFORMS = ["抖音", "小红书", "B 站", "快手", "视频号", "微博"];
 
@@ -23,6 +24,18 @@ export default function PlatformIpMatrixPage() {
   ]);
   const [topicDirection, setTopicDirection] = useState("");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
+  const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
+
+  useEffect(() => {
+    const h = readAndClearAgentHandoff("platform_ip_matrix");
+    if (h) {
+      setHandoffPrefill(h);
+      setTopicDirection(h.title);
+      setSupplementaryPrefill(formatHandoffAsPainPoint(h));
+      toast.success(`已从 ${h.platformLabel} 实时爆款预填话题方向`);
+    }
+  }, []);
 
   const launchMutation = trpc.agent.launchPlatformIpMatrix.useMutation({
     onSuccess: (res) => {
@@ -80,6 +93,22 @@ export default function PlatformIpMatrixPage() {
             </p>
           </div>
         </div>
+
+        {/* 实时趋势预填提示 banner */}
+        {!activeJobId && handoffPrefill && (
+          <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 12, background: "linear-gradient(135deg, rgba(255,209,102,0.10), rgba(255,138,76,0.06))", border: "1px solid rgba(255,209,102,0.35)", display: "flex", alignItems: "center", gap: 10 }}>
+            <Flame size={16} style={{ color: "#ffc77f", flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#ffd166" }}>已从 {handoffPrefill.platformLabel} 实时爆款派发</div>
+              <div style={{ fontSize: 11, color: "rgba(245,235,210,0.65)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {handoffPrefill.title}
+              </div>
+            </div>
+            <button onClick={() => { setHandoffPrefill(null); setSupplementaryPrefill(""); setTopicDirection(""); }} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 6, color: "#d6a861", cursor: "pointer" }}>
+              清空预填
+            </button>
+          </div>
+        )}
 
         {/* 任务派发区 */}
         {!activeJobId && (
@@ -149,6 +178,7 @@ export default function PlatformIpMatrixPage() {
                 textRequired={false}
                 hint="一次性派发，约 5-10 分钟生成研究计划，审批后开始 30-60 分钟深潜"
                 maxLen={4000}
+                initialText={supplementaryPrefill}
               />
             </div>
           </div>

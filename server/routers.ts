@@ -5634,6 +5634,20 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         });
       }),
 
+    /** 4 平台实时热点（结构化逐条），供前端 widget 显示「一键深潜」按钮 */
+    listTrendHotspots: protectedProcedure
+      .input(z.object({
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).optional(),
+        topN: z.number().int().min(3).max(15).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { listFreshTrendItems } = await import("./services/commanderPromptBuilder");
+        return listFreshTrendItems({
+          platforms: input?.platforms as any,
+          topN: input?.topN,
+        });
+      }),
+
     /** 多平台 IP 矩阵 · 跨界爆款脚本 */
     launchPlatformIpMatrix: protectedProcedure
       .input(z.object({

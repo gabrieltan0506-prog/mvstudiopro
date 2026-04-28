@@ -110,6 +110,76 @@ export async function loadFreshPlatformBriefing(opts?: {
   }
 }
 
+/** 给前端「实时趋势 · 一键深潜」widget 用：返回结构化的逐条热点列表 */
+export interface TrendHotspotEntry {
+  platform: GrowthPlatform;
+  platformLabel: string;
+  id: string;
+  title: string;
+  url?: string;
+  hotValue?: number;
+  views?: number;
+  likes?: number;
+  comments?: number;
+  tags: string[];
+  industryLabels: string[];
+  collectedAt: string;
+  windowDays: number;
+}
+
+export async function listFreshTrendItems(opts?: {
+  platforms?: GrowthPlatform[];
+  topN?: number;
+}): Promise<{ entries: TrendHotspotEntry[]; coveredPlatforms: GrowthPlatform[]; meta: string }> {
+  const platforms = opts?.platforms?.length ? opts.platforms : DEFAULT_PLATFORMS;
+  const topN = opts?.topN ?? 5;
+
+  try {
+    const store = await readTrendStoreForPlatforms(platforms, { preferDerivedFiles: true });
+    const entries: TrendHotspotEntry[] = [];
+    const covered: GrowthPlatform[] = [];
+
+    for (const platform of platforms) {
+      const collection = store.collections?.[platform];
+      if (!collection || !collection.items?.length) continue;
+      covered.push(platform);
+
+      const ranked = [...collection.items].sort((a, b) => {
+        const ah = Number(a.hotValue || 0) + Number(a.views || 0) / 1000 + Number(a.likes || 0) / 100;
+        const bh = Number(b.hotValue || 0) + Number(b.views || 0) / 1000 + Number(b.likes || 0) / 100;
+        return bh - ah;
+      });
+
+      for (const item of ranked.slice(0, topN)) {
+        entries.push({
+          platform,
+          platformLabel: PLATFORM_LABELS[platform] || platform,
+          id: item.id,
+          title: item.title,
+          url: item.url,
+          hotValue: item.hotValue,
+          views: item.views,
+          likes: item.likes,
+          comments: item.comments,
+          tags: (item.tags || []).slice(0, 4),
+          industryLabels: (item.industryLabels || []).slice(0, 3),
+          collectedAt: collection.collectedAt,
+          windowDays: collection.windowDays,
+        });
+      }
+    }
+
+    return {
+      entries,
+      coveredPlatforms: covered,
+      meta: covered.length === 0 ? "no_data" : `已加载 ${covered.length} 个平台 / 共 ${entries.length} 条`,
+    };
+  } catch (e: any) {
+    console.warn("[commanderPromptBuilder] listFreshTrendItems 失败:", e?.message);
+    return { entries: [], coveredPlatforms: [], meta: "error" };
+  }
+}
+
 // ── 系统硬编码的 c 输出格式 + f 必须交付的产出（卡布奇诺黑金质感模板） ────
 const OUTPUT_FORMAT_BASE = `【输出格式 · 卡布奇诺黑金质感 Markdown · 不得低于以下标准】
 1. 全文严格简体中文（除专有名词外不得出现英文术语）
