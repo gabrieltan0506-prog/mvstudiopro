@@ -245,15 +245,8 @@ async function generateDeepResearch(
       continue;
     }
     if (!res.ok) {
-      if (i === retries) {
-        // 兜底：尝试用 gemini-3-pro-preview（无 deepResearch 工具，但仍然带 googleSearch）
-        console.warn(`[deepResearch] ${DEEP_RESEARCH_MODEL} ${res.status}，降级到 gemini-3-pro-preview + googleSearch`);
-        const fallback = await generateGroundedFallback("gemini-3-pro-preview", prompt).catch(() => null);
-        if (fallback) return fallback;
-        throw new Error(`${DEEP_RESEARCH_MODEL} ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-      }
-      await sleep(8000);
-      continue;
+      // 不降级——失败就抛出，由上层 failJobAndRefund 退积分
+      throw new Error(`深度研究引擎返回异常（${res.status}），积分将原路退回。请稍后重试。`);
     }
 
     // 解析输出：text 段 + thoughts 段（思维链）
@@ -282,30 +275,7 @@ async function generateDeepResearch(
     return { text: text.trim(), thoughts: thoughts.trim() || undefined, sources };
   }
 
-  return { text: "", sources: [] };
-}
-
-/** 兜底：当 deep-research-pro-preview 不可用时，降级到 gemini-3-pro-preview + googleSearch */
-async function generateGroundedFallback(model: string, prompt: string): Promise<GroundedResult> {
-  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const body = JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    tools: [{ googleSearch: {} }],
-    generationConfig: { temperature: 0.55, maxOutputTokens: 65536 },
-  });
-  const release = await acquireRateGate(`fallback-${model}`);
-  try {
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(720_000) });
-    const json: any = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(`${model} ${res.status}`);
-    const cand = json?.candidates?.[0];
-    const text = String(cand?.content?.parts?.[0]?.text || "");
-    const chunks = (cand?.groundingMetadata || cand?.grounding_metadata)?.groundingChunks || [];
-    const sources: GroundedResult["sources"] = chunks.map((c: any) => ({ title: String(c?.web?.title || c?.web?.uri || ""), url: String(c?.web?.uri || "") })).filter((s: any) => s.url);
-    return { text, sources };
-  } finally { release(); }
+  throw new Error("深度研究引擎重试已耗尽，积分将原路退回。请稍后重试。");
 }
 
 /** @deprecated 旧接口 · 转发到新的 Deep Research 调用器（保持向下兼容） */
@@ -736,8 +706,30 @@ export async function runDeepResearchAsync(jobId: string) {
   // ── Heartbeat ticker：worker 在跑期间，每 30s 自动刷一次 lastHeartbeatAt。
   //    这样即使没有阶段更新，重启时也能区分「在跑但慢」和「进程已死」。
   const heartbeatTimer = setInterval(() => { void bumpHeartbeat(jobId); }, HEARTBEAT_TICK_MS);
-  // 进程退出时不要让 ticker 阻塞退出
   if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
+
+  // ── 15 分钟存活检查哨（Watchdog）
+  // 如果 15 分钟后 heartbeat 静止超过 3 分钟（说明 worker 已死/卡死），
+  // 立刻标 failed + 退积分，无需等到 30 分钟硬超时才发现。
+  const WATCHDOG_TRIGGER_MS = 15 * 60 * 1000;
+  const WATCHDOG_STALE_THRESHOLD_MS = 3 * 60 * 1000;
+  const watchdogTimer = setTimeout(async () => {
+    try {
+      const current = await readJob(jobId);
+      if (!current) return;
+      if (current.status === "completed" || current.status === "awaiting_review" || current.status === "failed") return;
+      const lastBeat = current.lastHeartbeatAt ? new Date(current.lastHeartbeatAt).getTime() : 0;
+      const staleSec = Math.floor((Date.now() - lastBeat) / 1000);
+      console.log(`[deepResearch] 🐕 Watchdog 15min 检查：jobId=${jobId} status=${current.status} heartbeat_stale=${staleSec}s`);
+      if (lastBeat === 0 || (Date.now() - lastBeat) > WATCHDOG_STALE_THRESHOLD_MS) {
+        console.warn(`[deepResearch] 🐕 Watchdog 判断任务疑似卡死（${staleSec}s 无心跳），标记 failed 并退积分`);
+        await failJobAndRefund(current, "15分钟内无心跳，任务疑似卡死，已自动退积分", "⚠️ 深潜超时：15 分钟内未收到进度信号，积分已原路退回");
+      }
+    } catch (e: any) {
+      console.warn(`[deepResearch] 🐕 Watchdog 检查异常：${e?.message}`);
+    }
+  }, WATCHDOG_TRIGGER_MS);
+  if (typeof watchdogTimer.unref === "function") watchdogTimer.unref();
 
   const stages = [
     "📡 突破信息茧房，全网检索行业论文与商业数据…",
@@ -902,13 +894,8 @@ ${job.topic}
     }
 
     if (!harvested.text || harvested.text.length < 400) {
-      // 兜底：降级到 gemini-3-pro-preview（不带 deepResearch 工具，但仍带 googleSearch + 限流）
-      try {
-        const fallback = await generateGroundedFallback("gemini-3-pro-preview", harvestPrompt);
-        harvested = fallback;
-      } catch {
-        harvested.text = "（外部数据检索受限，本次推演主要依赖模型内部知识与用户基线数据）";
-      }
+      // 不降级——内容不足即视为失败，抛出让上层退积分
+      throw new Error("深度研究引擎返回内容不足（可能被过滤或网络中断），积分将原路退回。请稍后重试。");
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -1206,5 +1193,6 @@ ${job.topic}
     );
   } finally {
     clearInterval(heartbeatTimer);
+    clearTimeout(watchdogTimer);
   }
 }

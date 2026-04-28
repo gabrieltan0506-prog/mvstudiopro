@@ -413,33 +413,9 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 已派发：任务接收确认 ── */}
+        {/* ── 已派发：沉浸式推演过程清单 ── */}
         {phase === "dispatched" && (
-          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#fffaf0,#f5ecda)", borderRadius: 20, border: "1px solid rgba(168,118,27,0.30)", boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 6px 24px rgba(22,163,74,0.30)", fontSize: 32 }}>✅</div>
-            <h2 style={{ fontSize: 24, fontWeight: 900, color: "#3d2c14", marginBottom: 12 }}>
-              全景战报任务已成功派发
-            </h2>
-            <p style={{ color: "rgba(61,44,20,0.75)", fontSize: 14.5, lineHeight: 1.9, maxWidth: 560, margin: "0 auto 32px", fontWeight: 500 }}>
-              专属智能研究集群已接收指令并开始推演。由于涉及全网海量检索与万字逻辑推演，<br />
-              此过程预计需要 <strong style={{ color: "#7a5410" }}>15 到 30 分钟</strong>。<br />
-              <strong style={{ color: "#3d2c14" }}>您现在可以安心关闭此页面</strong>，战报生成后可在「战略作品快照库」中查阅。
-            </p>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-              <button
-                onClick={() => navigate("/my-reports")}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(168,118,27,0.35)" }}
-              >
-                <Sparkles size={16} />前往「战略作品快照库」查看进度
-              </button>
-              <button
-                onClick={() => { setPhase("idle"); setTopic(""); }}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.35)", color: "#7a5410", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
-              >
-                再发起一个新课题
-              </button>
-            </div>
-          </div>
+          <DeductionTimeline elapsedSec={elapsedSec} topic={topic} onNavigate={() => navigate("/my-reports")} onReset={() => { setPhase("idle"); setTopic(""); }} />
         )}
 
         {/* ── 启动失败 ── */}
@@ -598,6 +574,158 @@ export default function GodViewPage() {
           50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}
         }
       `}</style>
+    </div>
+  );
+}
+
+// ─── 推演过程清单（前端时间轴动画，后端跑期间展示） ──────────────────────────
+const DEDUCTION_STEPS: Array<{ triggerSec: number; icon: string; text: string; subtext?: string }> = [
+  { triggerSec: 0,    icon: "🔌", text: "已接入全球情报网络节点，初始化推演环境" },
+  { triggerSec: 12,   icon: "📡", text: "正在调阅 2026 Q1-Q2 行业核心财报与市场数据" },
+  { triggerSec: 40,   icon: "🔍", text: "正在扫描四平台头部创作者账号矩阵", subtext: "小红书 · 抖音 · 哔哩哔哩 · 快手" },
+  { triggerSec: 80,   icon: "📊", text: "正在提取高变现率内容的底层逻辑与流量结构" },
+  { triggerSec: 130,  icon: "🧩", text: "正在分析竞品定位缺口与蓝海机会窗口" },
+  { triggerSec: 190,  icon: "🎯", text: "正在建构差异化战略定位模型与品牌声量矩阵" },
+  { triggerSec: 260,  icon: "🔬", text: "正在进行多维数据交叉验证，核实矛盾节点" },
+  { triggerSec: 340,  icon: "🧠", text: "正在推演商业变现路径与私域转化漏斗" },
+  { triggerSec: 430,  icon: "📝", text: "正在撰写核心战略洞察与 90 天行动清单" },
+  { triggerSec: 530,  icon: "📈", text: "正在生成趋势数据图表与可视化方案" },
+  { triggerSec: 640,  icon: "✍️",  text: "正在组织万字商业白皮书章节结构与逻辑链" },
+  { triggerSec: 760,  icon: "🔎", text: "正在进行最终数据核实与全文逻辑校验" },
+  { triggerSec: 900,  icon: "⏳", text: "推演深度超出预期（属正常范围）", subtext: "正在处理更大规模数据节点，请继续等候" },
+  { triggerSec: 1080, icon: "📋", text: "正在整合引用来源与参考知识库注释" },
+  { triggerSec: 1320, icon: "🏁", text: "即将完成最终校对，报告即将出炉" },
+  { triggerSec: 1620, icon: "🕐", text: "战略深潜接近尾声，正在生成最终输出" },
+];
+
+function DeductionTimeline({
+  elapsedSec,
+  topic,
+  onNavigate,
+  onReset,
+}: {
+  elapsedSec: number;
+  topic: string;
+  onNavigate: () => void;
+  onReset: () => void;
+}) {
+  const visibleSteps = DEDUCTION_STEPS.filter((s) => s.triggerSec <= elapsedSec);
+  const currentStep = visibleSteps[visibleSteps.length - 1];
+  const progressPct = Math.min(100, (elapsedSec / 1800) * 100);
+  const elapsed = elapsedSec >= 60
+    ? `${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`
+    : `${elapsedSec} 秒`;
+
+  return (
+    <div style={{ animation: "fadeIn 0.5s ease" }}>
+      {/* 顶部状态卡 */}
+      <div style={{ background: "linear-gradient(135deg,#0a0a0a,#0f0b04)", border: "1px solid rgba(200,160,0,0.25)", borderRadius: 20, padding: "28px 32px 24px", marginBottom: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+        {/* 雷达脉冲图标 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+          <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
+            <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(200,160,0,0.12)", animation: "godview-mic-pulse 1.8s ease-in-out infinite" }} />
+            <div style={{ position: "absolute", inset: 6, borderRadius: "50%", background: "rgba(200,160,0,0.18)", animation: "godview-mic-pulse 1.8s ease-in-out infinite 0.4s" }} />
+            <div style={{ position: "absolute", inset: 13, borderRadius: "50%", background: "linear-gradient(135deg,#c8a000,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+              🛰️
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <p style={{ color: "#c8a000", fontWeight: 900, fontSize: 16, margin: "0 0 4px", letterSpacing: "0.02em" }}>
+              全景战报深度推演中
+            </p>
+            <p style={{ color: "rgba(200,160,0,0.55)", fontSize: 12, margin: 0, fontFamily: "monospace" }}>
+              已运行 {elapsed} · 预计 15–30 分钟完成
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>DEPTH SCAN</p>
+            <p style={{ color: "#c8a000", fontSize: 18, fontWeight: 900, fontFamily: "monospace" }}>
+              {progressPct.toFixed(1)}%
+            </p>
+          </div>
+        </div>
+
+        {/* 进度条 */}
+        <div style={{ height: 4, background: "rgba(200,160,0,0.12)", borderRadius: 2, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ height: "100%", width: `${progressPct}%`, background: "linear-gradient(90deg,#7a5410,#c8a000,#f5c842)", borderRadius: 2, transition: "width 1s linear", boxShadow: "0 0 8px rgba(200,160,0,0.5)" }} />
+        </div>
+
+        {/* 当前课题 */}
+        <div style={{ background: "rgba(200,160,0,0.06)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 8, padding: "8px 14px" }}>
+          <span style={{ color: "rgba(200,160,0,0.45)", fontSize: 10, fontWeight: 700, fontFamily: "monospace" }}>RESEARCH TOPIC  </span>
+          <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 13, fontWeight: 600 }}>{topic || "—"}</span>
+        </div>
+      </div>
+
+      {/* 推演步骤时间轴 */}
+      <div style={{ background: "linear-gradient(180deg,#080604,#0c0a04)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 16, padding: "20px 24px", marginBottom: 16 }}>
+        <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", margin: "0 0 16px", fontFamily: "monospace" }}>
+          ▶ LIVE INTELLIGENCE FEED
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          {DEDUCTION_STEPS.map((step, idx) => {
+            const isDone = step.triggerSec < elapsedSec && step !== currentStep;
+            const isCurrent = step === currentStep;
+            const isFuture = step.triggerSec > elapsedSec;
+            return (
+              <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", opacity: isFuture ? 0.18 : 1, transition: "opacity 0.8s ease" }}>
+                {/* 时间轴竖线 + 节点 */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
+                    background: isDone ? "rgba(0,200,80,0.12)" : isCurrent ? "rgba(200,160,0,0.18)" : "rgba(255,255,255,0.04)",
+                    border: isDone ? "1px solid rgba(0,200,80,0.3)" : isCurrent ? "1px solid rgba(200,160,0,0.4)" : "1px solid rgba(255,255,255,0.08)",
+                    boxShadow: isCurrent ? "0 0 12px rgba(200,160,0,0.3)" : "none",
+                    animation: isCurrent ? "godview-mic-pulse 2s ease-in-out infinite" : "none",
+                  }}>
+                    {isDone ? "✓" : step.icon}
+                  </div>
+                  {idx < DEDUCTION_STEPS.length - 1 && (
+                    <div style={{ width: 1, flex: 1, minHeight: 16, background: isDone ? "rgba(0,200,80,0.2)" : "rgba(200,160,0,0.08)", margin: "3px 0" }} />
+                  )}
+                </div>
+                {/* 文字 */}
+                <div style={{ paddingTop: 4, paddingBottom: 12 }}>
+                  <p style={{
+                    margin: "0 0 2px",
+                    fontSize: 13,
+                    fontWeight: isCurrent ? 700 : isDone ? 500 : 400,
+                    color: isDone ? "rgba(0,220,80,0.7)" : isCurrent ? "#f5c842" : "rgba(200,160,0,0.35)",
+                    transition: "color 0.5s ease",
+                  }}>
+                    {isDone && <span style={{ marginRight: 6, color: "rgba(0,220,80,0.6)", fontSize: 11 }}>DONE</span>}
+                    {step.text}
+                    {isCurrent && <span style={{ marginLeft: 8, animation: "blink 1s step-end infinite", color: "#f5c842" }}>|</span>}
+                  </p>
+                  {step.subtext && !isFuture && (
+                    <p style={{ margin: 0, fontSize: 11, color: isCurrent ? "rgba(245,200,80,0.55)" : "rgba(0,220,80,0.4)" }}>{step.subtext}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 底部操作按钮 */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <button
+          onClick={onNavigate}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 24px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 4px 18px rgba(168,118,27,0.35)" }}
+        >
+          <Sparkles size={14} />前往「战略作品快照库」查看
+        </button>
+        <button
+          onClick={onReset}
+          style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 20px", borderRadius: 12, background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.3)", color: "rgba(200,160,0,0.7)", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+        >
+          再发起一个新课题
+        </button>
+      </div>
+
+      <p style={{ color: "rgba(200,160,0,0.35)", fontSize: 11, textAlign: "center", marginTop: 14 }}>
+        您现在可以安心关闭此页面 · 战报生成后将保存至「战略作品快照库」
+      </p>
     </div>
   );
 }
