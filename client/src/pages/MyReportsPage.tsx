@@ -1,11 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, Crown, RefreshCw, FileText, Clock, CheckCircle,
-  XCircle, Loader2, Download, Book, Sparkles, FileDown,
+  XCircle, Loader2, Download, Book, Sparkles, FileDown, Pencil,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
+import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -18,8 +19,12 @@ interface Report {
   status: string;
   progress?: string;
   reportMarkdown?: string | null;
+  draftMarkdown?: string | null;
+  draftReadyAt?: string | null;
+  publishedAt?: string | null;
   error?: string | null;
   jobId?: string | null;
+  productType?: string | null;
   creditsUsed: number;
   createdAt: string;
   coverUrl?: string | null;
@@ -32,7 +37,13 @@ interface Report {
 export default function MyReportsPage() {
   const [, navigate] = useLocation();
   const [selectedReport, setSelectedReport] = useState<{ title: string; markdown: string } | null>(null);
+  const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  // 一键下载（卡片级）：当前正在导出哪一份的 ID
+  const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
+  // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
+  const [hiddenExportPayload, setHiddenExportPayload] = useState<{ title: string; markdown: string; coverUrl?: string | null } | null>(null);
+  const hiddenExportRef = useRef<HTMLDivElement>(null);
 
   const { data, isLoading, refetch, isFetching } = trpc.deepResearch.myReports.useQuery(undefined, {
     refetchInterval: (data) => {
@@ -44,9 +55,12 @@ export default function MyReportsPage() {
   const reports = (data?.reports ?? []) as Report[];
 
   // GCS pdf-worker（与 MVAnalysis 共用同一个端点）
+  const pdfFileNameRef = useRef<string>("战略战报.pdf");
   const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
     onSuccess: (result) => {
       setIsExporting(false);
+      setDownloadingCardId(null);
+      setHiddenExportPayload(null);
       if (!result.pdfBase64) {
         toast.error("PDF 生成成功但内容为空，请重试");
         return;
@@ -57,8 +71,7 @@ export default function MyReportsPage() {
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = blobUrl;
-        const safeTitle = (selectedReport?.title || "战略战报").replace(/[\\/:*?"<>|]/g, "");
-        a.download = `战略战报-${safeTitle.slice(0, 25)}-${Date.now()}.pdf`;
+        a.download = pdfFileNameRef.current;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -70,9 +83,54 @@ export default function MyReportsPage() {
     },
     onError: (err) => {
       setIsExporting(false);
+      setDownloadingCardId(null);
+      setHiddenExportPayload(null);
       toast.error(err.message || "PDF 导出失败");
     },
   });
+
+  // 卡片级一键下载（不进入阅读模式，直接渲染到隐藏容器后导出）
+  const handleDownloadFromCard = useCallback((report: Report) => {
+    const md = report.reportMarkdown || report.draftMarkdown || "";
+    if (!md) { toast.error("内容尚未生成"); return; }
+    const safe = (report.lighthouseTitle || report.title || "战略战报").replace(/[\\/:*?"<>|]/g, "");
+    pdfFileNameRef.current = `战略战报-${safe.slice(0, 25)}-${Date.now()}.pdf`;
+    setDownloadingCardId(report.id);
+    setHiddenExportPayload({ title: report.lighthouseTitle || report.title, markdown: md, coverUrl: report.coverUrl });
+
+    // 等下一帧让隐藏容器渲染完成后再抽 HTML 发送
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!hiddenExportRef.current) {
+        toast.error("渲染器尚未准备好，请稍后重试");
+        setDownloadingCardId(null);
+        setHiddenExportPayload(null);
+        return;
+      }
+
+      const clone = document.documentElement.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("script").forEach((n) => n.remove());
+      clone.querySelectorAll("video, audio, iframe").forEach((n) => n.remove());
+      clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+
+      // 只保留隐藏导出容器内的内容
+      const cloneBody = clone.querySelector("body");
+      if (cloneBody) {
+        cloneBody.innerHTML = "";
+        const wrapper = document.createElement("div");
+        wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100vh;";
+        wrapper.innerHTML = hiddenExportRef.current!.innerHTML;
+        cloneBody.appendChild(wrapper);
+      }
+
+      const base = document.createElement("base");
+      base.href = window.location.origin + "/";
+      clone.querySelector("head")?.prepend(base);
+
+      const html = "<!DOCTYPE html>" + clone.outerHTML;
+      setIsExporting(true);
+      downloadPdfMutation.mutate({ html });
+    }));
+  }, [downloadPdfMutation]);
 
   const handleDownloadPdf = useCallback(() => {
     // 克隆当前页面 DOM，剥离不必要内容，发送到 GCS pdf-worker
@@ -96,10 +154,12 @@ export default function MyReportsPage() {
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);
 
+    const safeTitle = (selectedReport?.title || "战略战报").replace(/[\\/:*?"<>|]/g, "");
+    pdfFileNameRef.current = `战略战报-${safeTitle.slice(0, 25)}-${Date.now()}.pdf`;
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsExporting(true);
     downloadPdfMutation.mutate({ html: htmlContent });
-  }, [downloadPdfMutation]);
+  }, [downloadPdfMutation, selectedReport]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -111,6 +171,21 @@ export default function MyReportsPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // ─── 编辑模式（草稿审核工作台） ─────────────────────────────────────────────
+  if (editingReport) {
+    const initialMd = editingReport.draftMarkdown || editingReport.reportMarkdown || "";
+    return (
+      <ReportEditor
+        recordId={editingReport.id}
+        initialMarkdown={initialMd}
+        title={editingReport.lighthouseTitle || editingReport.title}
+        status={editingReport.status as any}
+        onClose={() => { setEditingReport(null); refetch(); }}
+        onAfterPublish={() => { refetch(); }}
+      />
+    );
+  }
 
   // ─── 阅读模式（含 PDF 导出按钮，按钮自身在 PDF 中会被剥离） ──────────────────
   if (selectedReport) {
@@ -150,10 +225,33 @@ export default function MyReportsPage() {
 
   // ─── 研报库主页 ────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 35%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif", position: "relative", overflow: "hidden" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        // 与 god-view 同款：卡布奇諾深焙渐变（奶泡米色 → 焦糖核心 → 深拿铁底）
+        background: `
+          radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
+          radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
+          linear-gradient(180deg,
+            #ede1c5 0%,
+            #ddc59c 22%,
+            #c9a878 48%,
+            #b08c5a 72%,
+            #8e6c45 92%,
+            #7a5e3f 100%
+          )
+        `,
+        fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "10%", right: "10%", width: 500, height: 500, borderRadius: "50%", background: "radial-gradient(circle,rgba(168,118,27,0.18) 0%,transparent 65%)", filter: "blur(80px)" }} />
-        <div style={{ position: "absolute", bottom: "15%", left: "5%", width: 350, height: 350, borderRadius: "50%", background: "radial-gradient(circle,rgba(122,84,16,0.12) 0%,transparent 65%)", filter: "blur(60px)" }} />
+        <div style={{ position: "absolute", top: "-15%", left: "50%", transform: "translateX(-50%)", width: 1100, height: 700, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,247,224,0.55) 0%,transparent 70%)", filter: "blur(70px)" }} />
+        <div style={{ position: "absolute", top: "10%", right: "8%", width: 540, height: 540, borderRadius: "50%", background: "radial-gradient(circle,rgba(216,162,58,0.32) 0%,rgba(168,118,27,0.18) 35%,transparent 70%)", filter: "blur(85px)" }} />
+        <div style={{ position: "absolute", bottom: "12%", left: "5%", width: 420, height: 420, borderRadius: "50%", background: "radial-gradient(circle,rgba(74,54,33,0.38) 0%,rgba(122,84,16,0.20) 35%,transparent 70%)", filter: "blur(75px)" }} />
+        {/* 微噪点（咖啡粉颗粒质感） */}
+        <div style={{ position: "absolute", inset: 0, opacity: 0.25, mixBlendMode: "overlay", backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.30  0 0 0 0 0.20  0 0 0 0 0.10  0 0 0 0.45 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")" }} />
       </div>
 
       <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.90)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
@@ -211,15 +309,40 @@ export default function MyReportsPage() {
         )}
 
         {!isLoading && reports.length > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 24 }}>
-            {reports.map((report) => (
-              <ReportCoverCard
-                key={report.id}
-                report={report}
-                onRead={() => setSelectedReport({ title: report.lighthouseTitle || report.title, markdown: report.reportMarkdown! })}
-              />
-            ))}
-          </div>
+          <>
+            {/* 待审核草稿优先排在最前面 */}
+            {reports.some((r) => r.status === "awaiting_review") && (
+              <div style={{ marginBottom: 24, padding: "14px 18px", borderRadius: 14, background: "linear-gradient(135deg,rgba(217,119,6,0.10),rgba(168,118,27,0.08))", border: "1px dashed rgba(217,119,6,0.50)", display: "flex", alignItems: "center", gap: 12 }}>
+                <Pencil size={18} color="#d97706" />
+                <div style={{ fontSize: 13, color: "#3d2c14", fontWeight: 700, lineHeight: 1.65 }}>
+                  您有 <strong style={{ color: "#d97706" }}>{reports.filter((r) => r.status === "awaiting_review").length}</strong> 份草稿待主编审核 ·
+                  请在出刊前完成增删素材、AI 助手润色与最终核校。
+                  <span style={{ marginLeft: 8, fontSize: 11.5, color: "rgba(61,44,20,0.65)", fontWeight: 600 }}>（出刊后才会进入正式作品库，可下载无水印 PDF）</span>
+                </div>
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 24 }}>
+              {[...reports]
+                .sort((a, b) => {
+                  const order: Record<string, number> = { awaiting_review: 0, processing: 1, completed: 2, failed: 3 };
+                  return (order[a.status] ?? 9) - (order[b.status] ?? 9);
+                })
+                .map((report) => (
+                  <ReportCoverCard
+                    key={report.id}
+                    report={report}
+                    isDownloading={downloadingCardId === report.id}
+                    onRead={() => {
+                      const md = report.reportMarkdown || report.draftMarkdown || "";
+                      if (!md) { toast.error("内容尚未生成"); return; }
+                      setSelectedReport({ title: report.lighthouseTitle || report.title, markdown: md });
+                    }}
+                    onEdit={() => setEditingReport(report)}
+                    onDownload={() => handleDownloadFromCard(report)}
+                  />
+                ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -228,17 +351,51 @@ export default function MyReportsPage() {
         @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
         @keyframes shimmer { 0%{background-position:-200% 0}100%{background-position:200% 0} }
       `}</style>
+
+      {/* 隐藏的 PDF 渲染容器：卡片一键下载时把内容写到这里再发到 pdf-worker */}
+      <div ref={hiddenExportRef} data-pdf-exclude="true" style={{ position: "fixed", left: "-99999px", top: 0, width: 1100, pointerEvents: "none" }}>
+        {hiddenExportPayload && (
+          <div>
+            {/* 简洁封面页（占满 A4 半页）*/}
+            <div style={{
+              position: "relative",
+              height: 980,
+              borderRadius: 18,
+              overflow: "hidden",
+              border: "1px solid rgba(122,84,16,0.30)",
+              background: hiddenExportPayload.coverUrl ? `url(${hiddenExportPayload.coverUrl}) center / cover no-repeat` : "linear-gradient(160deg,#3d2c14,#1c1407)",
+              marginBottom: 20,
+            }}>
+              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(28,20,7,0.10) 0%,rgba(28,20,7,0.55) 60%,rgba(28,20,7,0.85) 100%)" }} />
+              <div style={{ position: "absolute", top: 32, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
+                <div style={{ fontSize: 13, letterSpacing: "0.30em", fontWeight: 700 }}>MV STUDIO PRO · STRATEGIC INTELLIGENCE</div>
+                <div style={{ fontSize: 11, marginTop: 6, opacity: 0.85 }}>{new Date().toLocaleDateString("zh-CN")} · 出品</div>
+              </div>
+              <div style={{ position: "absolute", bottom: 64, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
+                <h1 style={{ fontSize: 38, fontWeight: 900, lineHeight: 1.25, margin: 0, textShadow: "0 4px 18px rgba(0,0,0,0.45)" }}>
+                  {hiddenExportPayload.title}
+                </h1>
+                <div style={{ marginTop: 14, fontSize: 13, opacity: 0.85, lineHeight: 1.7 }}>
+                  Deep Research Pro Preview · 全网检索 + 思维链推理 · 卡布奇諾级商务质感
+                </div>
+              </div>
+            </div>
+            <ReportRenderer markdown={hiddenExportPayload.markdown} padding="40px 56px" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ─── 封面卡片组件 ──────────────────────────────────────────────────────────────
 
-function ReportCoverCard({ report, onRead }: { report: Report; onRead: () => void }) {
+function ReportCoverCard({ report, onRead, onEdit, onDownload, isDownloading }: { report: Report; onRead: () => void; onEdit: () => void; onDownload: () => void; isDownloading?: boolean }) {
   const statusMap: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
-    processing: { icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />, label: "推演中…", color: "#d97706" },
-    completed:  { icon: <CheckCircle size={11} />, label: "已完成", color: "#16a34a" },
-    failed:     { icon: <XCircle size={11} />,     label: "生成失败", color: "#dc2626" },
+    processing:        { icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />, label: "推演中…", color: "#d97706" },
+    awaiting_review:   { icon: <Pencil size={11} />,        label: "待审核",   color: "#d97706" },
+    completed:         { icon: <CheckCircle size={11} />,   label: "已出刊",   color: "#16a34a" },
+    failed:            { icon: <XCircle size={11} />,       label: "生成失败", color: "#dc2626" },
   };
   const s = statusMap[report.status] ?? statusMap.processing;
 
@@ -329,16 +486,64 @@ function ReportCoverCard({ report, onRead }: { report: Report; onRead: () => voi
           )}
         </div>
 
+        {/* 已出刊：阅览 / 下载 PDF / 修订 */}
         {report.status === "completed" && report.reportMarkdown && (
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <button
-              onClick={onRead}
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "10px 0", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 800, fontSize: 12, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 12px rgba(168,118,27,0.25)" }}
+              onClick={onDownload}
+              disabled={isDownloading}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
+              onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+            >
+              {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
+              {isDownloading ? "正在生成 PDF…" : "下载富图文 PDF"}
+            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                onClick={onRead}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}
+              >
+                <FileText size={11} />全息阅览
+              </button>
+              <button
+                onClick={onEdit}
+                title="重新修订"
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
+              >
+                <Pencil size={11} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 待审核草稿：审核工作台 + 快速预览 + 草稿 PDF */}
+        {report.status === "awaiting_review" && (report.draftMarkdown || report.reportMarkdown) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <button
+              onClick={onEdit}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: "linear-gradient(135deg,#d97706,#b45309)", border: "1px solid rgba(217,119,6,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 12px rgba(217,119,6,0.30)" }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
             >
-              <FileText size={12} />全息阅览
+              <Pencil size={12} />进入审核工作台
             </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                onClick={() => onRead()}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", borderRadius: 8, background: "rgba(122,84,16,0.06)", border: "1px solid rgba(122,84,16,0.20)", color: "#7a5410", fontWeight: 700, fontSize: 11, cursor: "pointer" }}
+              >
+                <FileText size={11} />快速预览
+              </button>
+              <button
+                onClick={onDownload}
+                disabled={isDownloading}
+                title="下载草稿 PDF（请在阅览中确认水印提示）"
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(217,119,6,0.10)", border: "1px solid rgba(217,119,6,0.30)", color: "#d97706", fontWeight: 800, fontSize: 11, cursor: isDownloading ? "not-allowed" : "pointer" }}
+              >
+                {isDownloading ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
+              </button>
+            </div>
           </div>
         )}
 

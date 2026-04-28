@@ -9,6 +9,60 @@ import path from "path";
 const REPORT_DIR = "/data/growth/deep-research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Deep Research Pro Preview · 全局 1 RPM 限流闸门
+// ─────────────────────────────────────────────────────────────────────────────
+// 设计：用磁盘上的 JSON 锁文件 + 进程内 Promise 串行链 双重保险。
+// - 进程内：所有 await acquireRateGate() 串行排队，前一个未释放后一个不会执行
+// - 磁盘上：跨进程协调，保证多个 Fly 实例间也是 1 RPM
+// API 限制：gemini-deep-research-pro-preview 严格 1 次/分钟，超额会被封禁
+//
+// 使用：const release = await acquireRateGate("deep-research"); try { ... } finally { release(); }
+
+const RATE_GATE_FILE = "/data/growth/deep-research-rate-gate.json";
+const RATE_GATE_INTERVAL_MS = 60_000; // 1 RPM = 60 秒间隔
+let processGateChain: Promise<void> = Promise.resolve();
+
+interface RateGateState { lastCallAt: number; }
+
+async function readRateGateState(): Promise<RateGateState> {
+  try {
+    const raw = await fs.readFile(RATE_GATE_FILE, "utf-8");
+    return JSON.parse(raw) as RateGateState;
+  } catch { return { lastCallAt: 0 }; }
+}
+async function writeRateGateState(s: RateGateState): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(RATE_GATE_FILE), { recursive: true });
+    await fs.writeFile(RATE_GATE_FILE, JSON.stringify(s));
+  } catch (e: any) { console.warn("[deepResearch] rate gate write failed:", e?.message); }
+}
+
+/** 申请一次 Deep Research API 调用许可（1 RPM）。返回的函数必须在 finally 中调用以释放许可。 */
+async function acquireRateGate(label = "deep-research"): Promise<() => void> {
+  let releaseChain: () => void = () => {};
+  const ticket = new Promise<void>((resolve) => { releaseChain = resolve; });
+  const prev = processGateChain;
+  processGateChain = processGateChain.then(() => ticket);
+
+  // 等待前一个调用从进程内队列释放
+  await prev;
+
+  // 跨进程：检查磁盘 lastCallAt
+  const state = await readRateGateState();
+  const elapsed = Date.now() - state.lastCallAt;
+  if (state.lastCallAt > 0 && elapsed < RATE_GATE_INTERVAL_MS) {
+    const waitMs = RATE_GATE_INTERVAL_MS - elapsed + 500; // +500ms 缓冲
+    console.log(`[deepResearch] 🚦 [${label}] 距上次调用 ${Math.round(elapsed / 1000)}s，等待 ${Math.round(waitMs / 1000)}s 满足 1 RPM 限制`);
+    await sleep(waitMs);
+  }
+
+  // 立刻把当前时间戳写入磁盘，让其他进程看到
+  await writeRateGateState({ lastCallAt: Date.now() });
+
+  return () => releaseChain(); // 释放进程内队列
+}
+
 // ── 四平台 7 天趋势 SVG 折线图生成器 ────────────────────────────────────────
 function buildTrendSvg(data: {
   dates: string[];
@@ -120,66 +174,141 @@ async function generate(model: string, prompt: string, retries = 2, opts?: { tem
 }
 
 /**
- * Google 搜索接地（grounding）调用：让模型在真实可检索的最新网络数据上推理。
- * 对应 gemini-2.5-pro / gemini-3.1-pro-preview 的 deep research 行为。
+ * Deep Research Pro Preview · 顶级商业智库引擎调用器
+ * - 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，严禁降级）
+ * - 工具：googleSearch（实时全网检索）+ deepResearch（comprehensive 深度推理）
+ * - 推理：thinkingConfig.includeThoughts=true（开启思维链）
+ * - 限速：API 严格 1 RPM，全部调用走 acquireRateGate() 串行排队
+ *
+ * 输出包含：
+ * - text：最终回答正文
+ * - thoughts：思维链（被前端折叠显示在「AI 战略推演过程」区块）
+ * - sources：Google 搜索接地的来源链接
  */
 interface GroundedResult {
   text: string;
+  thoughts?: string;
   sources: Array<{ title: string; url: string; snippet?: string }>;
 }
 
-async function generateGrounded(model: string, prompt: string, retries = 2): Promise<GroundedResult> {
+const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
+
+async function generateDeepResearch(
+  prompt: string,
+  opts?: { complexity?: "comprehensive" | "moderate" | "quick"; retries?: number; temperature?: number; topP?: number; maxTokens?: number; includeThoughts?: boolean },
+): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const retries = opts?.retries ?? 2;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEEP_RESEARCH_MODEL}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    // 关键：开启 Google Search 接地，让模型对最近 2 年真实数据进行检索
-    tools: [{ googleSearch: {} }],
+    // 2026 专属扩展：全网实时检索 + 深度推理（最深层级）
+    tools: [
+      { googleSearch: {} },
+      { deepResearch: { complexity: opts?.complexity ?? "comprehensive" } },
+    ],
     generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: 65536,
+      thinkingConfig: { includeThoughts: opts?.includeThoughts ?? true }, // 强制开启思维链
+      temperature: opts?.temperature ?? 0.7,
+      topP: opts?.topP ?? 0.95,
+      maxOutputTokens: opts?.maxTokens ?? 65536,
     },
   });
 
   for (let i = 0; i <= retries; i++) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      signal: AbortSignal.timeout(720_000),
-    });
-    const json: any = await res.json().catch(() => ({}));
+    // 关键：全局限流闸门（1 RPM），多用户并发也只能串行
+    const release = await acquireRateGate(`deep-research#${i + 1}`);
+    let res: Response | undefined;
+    let json: any = {};
+    try {
+      console.log(`[deepResearch] 🧠 调用 ${DEEP_RESEARCH_MODEL}（complexity=${opts?.complexity ?? "comprehensive"}），prompt ${prompt.length} 字`);
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(900_000), // Deep Research 单次 3-10 分钟，给到 15 分钟兜底
+      });
+      json = await res.json().catch(() => ({}));
+    } finally {
+      release(); // 立即释放进程内队列（磁盘 lastCallAt 已经写好，下一个会等够 60s）
+    }
+
+    if (!res) continue;
+
     if (res.status === 429 && i < retries) {
-      console.log(`[deepResearch] grounded 429, retry in ${10 * (i + 1)}s`);
-      await sleep(10000 * (i + 1));
+      console.log(`[deepResearch] 429（速率限制），${30 * (i + 1)}s 后重试…`);
+      await sleep(30000 * (i + 1));
       continue;
     }
     if (!res.ok) {
-      // 接地失败时降级：去掉 tools 重试一次
       if (i === retries) {
-        console.warn(`[deepResearch] grounded ${model} ${res.status}, fallback to plain`);
-        const text = await generate(model, prompt, 0).catch(() => "");
-        return { text, sources: [] };
+        // 兜底：尝试用 gemini-3-pro-preview（无 deepResearch 工具，但仍然带 googleSearch）
+        console.warn(`[deepResearch] ${DEEP_RESEARCH_MODEL} ${res.status}，降级到 gemini-3-pro-preview + googleSearch`);
+        const fallback = await generateGroundedFallback("gemini-3-pro-preview", prompt).catch(() => null);
+        if (fallback) return fallback;
+        throw new Error(`${DEEP_RESEARCH_MODEL} ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
       }
       await sleep(8000);
       continue;
     }
+
+    // 解析输出：text 段 + thoughts 段（思维链）
     const cand = json?.candidates?.[0];
-    const text = String(cand?.content?.parts?.[0]?.text || "");
+    const parts: any[] = cand?.content?.parts || [];
+    let text = "";
+    let thoughts = "";
+    for (const p of parts) {
+      const t = String(p?.text || "");
+      if (!t) continue;
+      // Gemini 思维链通常会被标记为 thought=true
+      if (p?.thought === true || p?.thoughtSignature) thoughts += t + "\n";
+      else text += t;
+    }
+
+    // 解析接地来源
     const grounding = cand?.groundingMetadata || cand?.grounding_metadata || {};
     const chunks = grounding?.groundingChunks || grounding?.grounding_chunks || [];
     const sources: GroundedResult["sources"] = [];
     for (const c of chunks) {
       const web = c?.web;
-      if (web?.uri) {
-        sources.push({ title: String(web.title || web.uri), url: String(web.uri), snippet: undefined });
-      }
+      if (web?.uri) sources.push({ title: String(web.title || web.uri), url: String(web.uri), snippet: undefined });
     }
-    return { text, sources };
+
+    console.log(`[deepResearch] ✅ ${DEEP_RESEARCH_MODEL} 返回：${text.length} 字正文 / ${thoughts.length} 字思维链 / ${sources.length} 个接地来源`);
+    return { text: text.trim(), thoughts: thoughts.trim() || undefined, sources };
   }
+
   return { text: "", sources: [] };
+}
+
+/** 兜底：当 deep-research-pro-preview 不可用时，降级到 gemini-3-pro-preview + googleSearch */
+async function generateGroundedFallback(model: string, prompt: string): Promise<GroundedResult> {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const body = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    tools: [{ googleSearch: {} }],
+    generationConfig: { temperature: 0.55, maxOutputTokens: 65536 },
+  });
+  const release = await acquireRateGate(`fallback-${model}`);
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(720_000) });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`${model} ${res.status}`);
+    const cand = json?.candidates?.[0];
+    const text = String(cand?.content?.parts?.[0]?.text || "");
+    const chunks = (cand?.groundingMetadata || cand?.grounding_metadata)?.groundingChunks || [];
+    const sources: GroundedResult["sources"] = chunks.map((c: any) => ({ title: String(c?.web?.title || c?.web?.uri || ""), url: String(c?.web?.uri || "") })).filter((s: any) => s.url);
+    return { text, sources };
+  } finally { release(); }
+}
+
+/** @deprecated 旧接口 · 转发到新的 Deep Research 调用器（保持向下兼容） */
+async function generateGrounded(_model: string, prompt: string): Promise<GroundedResult> {
+  return generateDeepResearch(prompt);
 }
 
 // ── Neon DB 辅助 ────────────────────────────────────────────────────────────
@@ -330,9 +459,11 @@ export interface DeepResearchJob {
   topic: string;
   productType?: DeepResearchProductType;
   dbRecordId?: number;
-  status: "pending" | "running" | "completed" | "failed";
+  // 状态机：pending（排队）→ running（生成中）→ awaiting_review（草稿待主编审核）→ completed（已出刊） / failed
+  status: "pending" | "running" | "awaiting_review" | "completed" | "failed";
   progress?: string;
-  reportMarkdown?: string;
+  reportMarkdown?: string;   // 出刊后的最终版（出刊前为空）
+  draftMarkdown?: string;    // 草稿版（生成完成后写入）
   error?: string;
   createdAt: string;
   completedAt?: string;
@@ -542,322 +673,240 @@ export async function runDeepResearchAsync(jobId: string) {
       }
     }
 
-    const prompt = productType === "personalized"
-      ? `你是由哈佛医师、顶尖商业战略顾问与四大平台资深运营专家组成的个性化智库。
-${DATA_TABLE_RULES}
-【任务：哈佛医师级私人订制 · 深潜分析】
+    // ═════════════════════════════════════════════════════════════════════════
+    // 阶段 A：Deep Research Pro Preview · 全网检索 + 深度推理 + 思维链
+    // 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，1 RPM 严格限速）
+    // 工具：googleSearch（实时检索）+ deepResearch{complexity: "comprehensive"}（最深推理）
+    // 配置：thinkingConfig.includeThoughts=true（开启思维链）
+    // ═════════════════════════════════════════════════════════════════════════
+    await updateProgress(stages[1]);
 
-【本次分析课题】
-${job.topic}
-
-【用户历史分析快照】（需与以下历史记录进行深度对比，明确指出战略转向）
-${historyContext}
-
-【输出结构要求】（严格遵守，每章不少于 500 字）
-
-# 一、历史战略复盘（数据对比看板）
-
-> 与过去记录进行量化对比，找出失效打法与新机会。
-
-| 维度 | 历史策略 | 当前市场现状 | 变化幅度 | 建议动作 |
-|------|---------|------------|---------|---------|
-| 内容形式 | … | … | … | … |
-| 变现路径 | … | … | … | … |
-| 目标平台 | … | … | … | … |
-| 粉丝增长速度 | … | … | … | … |
-| 竞争强度 | … | … | … | … |
-
-需要立即放弃的三个旧有思维（附原因与替代方案）：
-1. …
-2. …
-3. …
-
-📊 数据速查
-| 指标 | 历史基准 | 当前均值 | 差距 |
-|------|---------|---------|-----|
-| … | … | … | … |
-
-# 二、现状 X 光诊断（竞争力雷达）
-
-| 能力维度 | 用户评分(1-10) | 行业头部均值 | 差距 | 优先补强顺序 |
-|---------|-------------|-----------|-----|------------|
-| 内容生产力 | … | … | … | … |
-| 选题命中率 | … | … | … | … |
-| 私域转化率 | … | … | … | … |
-| 商业变现效率 | … | … | … | … |
-| 粉丝粘性 | … | … | … | … |
-| 跨平台协同 | … | … | … | … |
-
-📊 数据速查
-| 核心短板 | 当前数值 | 目标数值 | 修复周期 |
-|---------|---------|---------|---------|
-| … | … | … | … |
-
-# 三、10 大战术里程碑（可执行路线图）
-
-| 编号 | 战术目标 | 完成时限 | 所需资源 | 预期量化效果 | 成功判断标准 |
-|-----|---------|---------|---------|------------|------------|
-| T1 | … | 第1-2周 | … | … | … |
-| T2 | … | 第3-4周 | … | … | … |
-| T3 | … | 第5-6周 | … | … | … |
-| T4 | … | 第7-8周 | … | … | … |
-| T5 | … | 第9-10周 | … | … | … |
-| T6 | … | 第11-12周 | … | … | … |
-| T7 | … | 第13周 | … | … | … |
-| T8 | … | 第14周 | … | … | … |
-| T9 | … | 第15周 | … | … | … |
-| T10 | … | 第16周 | … | … | … |
-
-# 四、四平台协同矩阵（2025年算法解码）
-
-| 平台 | 当前月活(亿) | 推荐算法核心逻辑 | 最佳内容形式 | 最佳发布时段 | 变现路径 | 客单价区间 |
-|-----|------------|--------------|-----------|-----------|---------|---------|
-| 小红书 | … | … | … | … | … | … |
-| 抖音 | … | … | … | … | … | … |
-| B站 | … | … | … | … | … | … |
-| 快手 | … | … | … | … | … | … |
-
-跨平台协同引流路径图（用文字拓扑描述）：
-> 小红书种草 → 抖音放大 → B站沉淀 → 快手下沉
-
-📊 数据速查
-| 平台 | 本赛道平均涨粉速度 | 头部账号月收入区间 | 流量成本 |
-|-----|----------------|----------------|--------|
-| … | … | … | … |
-
-# 五、商业转化漏斗（ROI 最大化公式）
-
-## 转化漏斗数据
-
-| 阶段 | 转化率行业均值 | 头部账号转化率 | 优化杠杆 |
-|-----|-------------|-------------|---------|
-| 曝光→点击 | …% | …% | … |
-| 点击→关注 | …% | …% | … |
-| 关注→私域 | …% | …% | … |
-| 私域→成交 | …% | …% | … |
-| 成交→复购 | …% | …% | … |
-
-## 定价策略对标
-
-| 产品类型 | 建议定价区间 | 竞品均价 | 溢价空间 | 推荐定价理由 |
-|---------|-----------|---------|---------|-----------|
-| 引流品 | … | … | … | … |
-| 主力品 | … | … | … | … |
-| 高端品 | … | … | … | … |
-
-📊 数据速查
-| 指标 | 目标值 | 实现路径 |
-|-----|-------|---------|
-| 月销售额 | ¥… | … |
-| 粉丝变现率 | …% | … |
-| 复购率 | …% | … |
-
-# 六、内容灵魂注入（差异化人设公式）
-
-内容差异化矩阵：
-| 维度 | 头部玩家做法 | 本账号差异化方向 | 预期效果 |
-|-----|-----------|--------------|---------|
-| 人设标签 | … | … | … |
-| 内容调性 | … | … | … |
-| 视觉风格 | … | … | … |
-| 互动方式 | … | … | … |
-| 专业背书 | … | … | … |
-
-# 七、90天行动白皮书
-
-| 阶段 | 时间 | 核心任务 | KPI目标 | 关键动作清单 |
-|-----|-----|---------|--------|-----------|
-| 重启期 | 第1-30天 | … | 涨粉…人，变现¥… | … |
-| 爆发期 | 第31-60天 | … | 涨粉…人，变现¥… | … |
-| 收割期 | 第61-90天 | … | 涨粉…人，变现¥… | … |
-
-要求：用哈佛医师般的严谨、外科手术般的精确，每一个数字都要有依据，让读者读完立刻有颠覆认知的冲动。`
-      : `你是一个由哈佛商学院战略顾问、顶尖社媒运营专家和行业数据分析师组成的商业智库团队。
-${DATA_TABLE_RULES}
-【任务：${dateStr} 战略半月刊 · 最新赛道趋势深度解析】
+    const harvestPrompt = `你是一位顶级行业数据研究员，正在为一份高级商务白皮书做基础数据搜集。
 
 【研究课题】
 ${job.topic}
 
-【输出结构要求】（严格遵守以下章节结构，每章不少于 500 字）
+【任务】
+基于 Google 搜索接地，针对以下 12 个具体问题，给出尽可能精确的数字与来源（覆盖近 2 年，特别是 2024、2025 与 2026 年第 1 季度）。每个回答必须包含：
+- 具体数字（不要写"较高""较多"）
+- 来源平台/媒体/报告名
+- 时间区间标注
 
-# 一、行业全景扫描（宏观趋势与市场规模）
+请逐条作答，每条 80-160 字：
 
-## 市场规模与增速
+1. 课题所在赛道在中国大陆的总市场规模（2023、2024、2025E、2026F）以及年复合增长率
+2. 课题所在赛道在小红书、抖音、哔哩哔哩、快手、视频号 5 个平台的活跃创作者数与月度内容量级
+3. 头部账号（粉丝 100 万以上）的典型月度收入区间，及其收入构成（广告、自营、知识付费、直播、商单的占比）
+4. 该赛道用户画像：核心年龄段、性别比、城市层级、月均可支配收入、消费决策周期
+5. 近 2 年该赛道前 3 个最具影响力的爆款案例：账号名、爆款内容形式、单条最高数据、关键时间点
+6. 平台算法层面的最新变化（2025 年下半年至 2026 年第 1 季度）：限流规则、流量倾斜、商单审核
+7. 该赛道在小红书的笔记互动率、抖音的完播率、哔哩哔哩的三连率行业均值与头部均值
+8. 该赛道私域留存指标：单粉获取成本、私域转化率、首购客单价、年度复购率
+9. 上下游产业链关键环节（供应商、平台、广告主、KOL 服务商）的当前动态
+10. 已经在该赛道折戟的失败案例至少 3 个：失败原因、损失规模、可借鉴的教训
+11. 国际同类赛道（北美/日韩/东南亚）的对标案例与营收量级
+12. 监管与政策风险：近 2 年相关法规变化、合规红线、灰色地带
 
-| 年份 | 市场规模 | YoY增速 | 关键驱动事件 |
-|-----|---------|--------|-----------|
-| 2023 | … | …% | … |
-| 2024 | … | …% | … |
-| 2025E | … | …% | … |
-| 2026F | … | …% | … |
+【格式】
+请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
-## SWOT 战略矩阵
+    let harvested: GroundedResult = { text: "", sources: [] };
+    try {
+      harvested = await generateDeepResearch(harvestPrompt, {
+        complexity: "comprehensive",
+        temperature: 0.7,
+        topP: 0.95,
+        includeThoughts: true,
+        maxTokens: 65536,
+      });
+      console.log(`[deepResearch] 🎯 Deep Research Pro Preview 完成：${harvested.text.length} 字正文 / ${harvested.thoughts?.length || 0} 字思维链 / ${harvested.sources.length} 个接地来源`);
+    } catch (e: any) {
+      console.warn("[deepResearch] Deep Research 调用失败:", e?.message);
+    }
 
-| | 优势(S) | 劣势(W) |
-|--|--------|--------|
-| **机会(O)** | SO战略：… | WO战略：… |
-| **威胁(T)** | ST战略：… | WT战略：… |
+    if (!harvested.text || harvested.text.length < 400) {
+      // 兜底：降级到 gemini-3-pro-preview（不带 deepResearch 工具，但仍带 googleSearch + 限流）
+      try {
+        const fallback = await generateGroundedFallback("gemini-3-pro-preview", harvestPrompt);
+        harvested = fallback;
+      } catch {
+        harvested.text = "（外部数据检索受限，本次推演主要依赖模型内部知识与用户基线数据）";
+      }
+    }
 
-## 细分赛道机会热力图
-
-| 细分赛道 | 市场空间 | 竞争强度 | 变现难度 | 综合评分 | 建议 |
-|---------|---------|---------|---------|---------|-----|
-| … | … | 高/中/低 | 高/中/低 | …/10 | 进入/观望/回避 |
-| … | … | … | … | … | … |
-| … | … | … | … | … | … |
-
-📊 数据速查
-| 关键指标 | 数值 | 数据来源 |
-|---------|-----|---------|
-| 赛道总规模 | ¥… | … |
-| 年增速 | …% | … |
-| 头部集中度CR5 | …% | … |
-
-# 二、用户心理图谱（高转化底层逻辑）
-
-## 目标人群画像
-
-| 维度 | 核心用户群A | 核心用户群B | 潜力用户群C |
-|-----|-----------|-----------|-----------|
-| 年龄段 | … | … | … |
-| 性别比 | … | … | … |
-| 月均可支配收入 | ¥… | ¥… | ¥… |
-| 核心痛点 | … | … | … |
-| 核心欲望 | … | … | … |
-| 内容消费时段 | … | … | … |
-| 决策周期 | … | … | … |
-
-## 消费决策触发器
-
-| 触发因子 | 权重占比 | 激活方式 | 典型文案钩子 |
-|---------|---------|---------|-----------|
-| … | …% | … | "…" |
-| … | …% | … | "…" |
-| … | …% | … | "…" |
-
-📊 数据速查
-| 用户行为指标 | 行业均值 | 头部账号 |
-|-----------|---------|---------|
-| 单视频平均观看时长 | …s | …s |
-| 内容→关注转化率 | …% | …% |
-| 评论互动率 | …% | …% |
-
-# 三、四平台头部玩家拆解（变现链路全解剖）
-
-## 平台基础数据对比（2025年）
-
-| 平台 | 月活用户 | 本赛道创作者数 | 赛道头部粉丝量级 | 平均CPM | 主要变现形式 |
-|-----|---------|-------------|--------------|--------|-----------|
-| 小红书 | …亿 | …万 | …万 | ¥… | … |
-| 抖音 | …亿 | …万 | …万 | ¥… | … |
-| B站 | …亿 | …万 | …万 | ¥… | … |
-| 快手 | …亿 | …万 | …万 | ¥… | … |
-
-## 头部账号变现模式解剖
-
-| 账号类型 | 粉丝规模 | 月均收入 | 主要收入来源占比 | 内容更新频率 | 爆款公式 |
-|---------|---------|---------|--------------|-----------|---------|
-| 超头部(500万+) | 500万+ | ¥…万 | 广告…%/自营…%/知识…% | …次/周 | … |
-| 腰部(50-500万) | 50-500万 | ¥…万 | … | …次/周 | … |
-| 新锐(10-50万) | 10-50万 | ¥…万 | … | …次/周 | … |
-
-📊 数据速查
-| 对标指标 | 目标值 | 实现时限 |
-|---------|-------|---------|
-| 粉丝量 | …万 | …个月 |
-| 月收入 | ¥… | …个月 |
-| 爆款命中率 | …% | … |
-
-# 四、差异化破局方案（降维打击战术）
-
-## 蓝海机会矩阵
-
-| 未被满足的需求 | 当前供给缺口 | 目标用户规模 | 变现潜力 | 进入难度 |
-|-------------|-----------|-----------|---------|---------|
-| … | … | …万人 | 高/中/低 | 高/中/低 |
-| … | … | …万人 | … | … |
-| … | … | …万人 | … | … |
-
-## 内容矩阵规划
-
-| 内容类型 | 发布占比 | 发布频率 | 目标效果 | 参考标杆 |
-|---------|---------|---------|---------|---------|
-| 引流爆款 | …% | …次/周 | 涨粉 | … |
-| 专业深度 | …% | …次/周 | 建立信任 | … |
-| 变现转化 | …% | …次/周 | 直接成交 | … |
-| 互动维护 | …% | …次/周 | 提升粘性 | … |
-
-📊 数据速查
-| 差异化维度 | 竞争对手 | 本账号定位 |
-|----------|---------|---------|
-| … | … | … |
-
-# 五、商业变现路径（PMF 最短路径）
-
-## 分阶段变现路线图
-
-| 成长阶段 | 粉丝规模 | 预计周期 | 主要变现方式 | 月收入预估 | 核心动作 |
-|---------|---------|---------|-----------|---------|---------|
-| 冷启动期 | 0-1000 | …个月 | … | ¥…-… | … |
-| 成长期 | 0.1-5万 | …个月 | … | ¥…-… | … |
-| 加速期 | 5-20万 | …个月 | … | ¥…-… | … |
-| 成熟期 | 20-100万 | …个月 | … | ¥…万+ | … |
-
-## 私域变现漏斗
-
-| 漏斗层级 | 典型转化率 | 优化关键点 |
-|---------|---------|---------|
-| 曝光→关注 | …% | … |
-| 关注→私域 | …% | … |
-| 私域→首购 | …% | … |
-| 首购→复购 | …% | … |
-
-📊 数据速查
-| 变现指标 | 行业中位数 | 头部账号 | 90天目标 |
-|---------|---------|---------|---------|
-| 粉丝变现率 | …% | …% | …% |
-| 客单价 | ¥… | ¥… | ¥… |
-| 月复购率 | …% | …% | …% |
-
-# 六、30天冲刺行动手册
-
-| 时间段 | 核心主题 | 每日必做动作 | 阶段KPI | 成功标准 |
-|-------|---------|-----------|-------|---------|
-| 第1-7天 | 账号冷启动 | … | 发布…条，涨粉…人 | … |
-| 第8-14天 | 爆款复制 | … | 发布…条，涨粉…人 | … |
-| 第15-21天 | 私域搭建 | … | 导流…人入私域 | … |
-| 第22-30天 | 商业化初测 | … | 成交¥…，复购率…% | … |
-
-# 七、核武级战略总结
-
-## 三大核心洞察
-
-> 每条洞察必须附一个具体数据点支撑
-
-1. **洞察一**：…（数据：…）
-2. **洞察二**：…（数据：…）
-3. **洞察三**：…（数据：…）
-
-## 90天里程碑目标
-
-| 里程碑 | 时间节点 | 量化目标 | 验证方式 |
-|-------|---------|---------|---------|
-| M1 | 第30天 | 粉丝…人，发布…条 | … |
-| M2 | 第60天 | 粉丝…人，月收入¥… | … |
-| M3 | 第90天 | 粉丝…人，月收入¥… | … |
-
-> 💡 下一步：订制专属"尊享季度私人订制"分析，解锁与您历史数据的深度对比和个性化战略大升级。
-
-要求：每个数字必须真实可查，每个表格必须完整填写，不得留空或用"待定"代替。语言专业有力，让读者读完立刻有付诸行动的冲动。`;
-
-    await updateProgress(stages[1]);
-    await sleep(2000);
+    // ═════════════════════════════════════════════════════════════════════════
+    // 阶段 B：合成 · Gemini 3.1 Pro Preview 深度报告
+    // ═════════════════════════════════════════════════════════════════════════
     await updateProgress(stages[2]);
 
-    const reportMarkdown = await generate("gemini-2.5-pro", prompt);
+    // 个性化签名：把课题哈希 + 用户基线 + 当下时间组成"千人千面"种子，强迫每份报告差异化
+    const personalSeed = `${job.userId}|${job.topic}|${holistic.totalCreations}|${dateStr}`;
 
-    if (!reportMarkdown || reportMarkdown.length < 500) {
+    const FRAMEWORKS = `
+【强制使用 6 套以上分析框架 · 杜绝单一 SWOT】
+1. 优劣势机会威胁矩阵（SWOT 的中文化版本：内部优势 / 内部劣势 / 外部机会 / 外部威胁，并交叉给出 SO/WO/ST/WT 四套战略）
+2. 五力模型（迈克尔·波特：现有竞争 / 潜在进入者 / 替代品 / 供方议价 / 买方议价）
+3. 政治经济社会技术分析（PEST 的中文化：政策法规 / 经济环境 / 社会文化 / 技术演进）
+4. SMART 目标拆解法（具体 / 可衡量 / 可达成 / 相关性 / 时限性）—— 用于 90 天目标
+5. 用户增长漏斗（获取—激活—留存—收入—推荐 五段）
+6. 波士顿矩阵（明星 / 现金牛 / 问题 / 瘦狗）—— 用于产品矩阵分类
+7. 麦肯锡七要素（战略 / 结构 / 系统 / 共同价值观 / 风格 / 员工 / 技能）—— 可选用于组织能力诊断
+8. 蓝海战略画布（消除 / 减少 / 增加 / 创造 四象限）—— 用于差异化破局
+9. 第一性原理拆解 —— 用于商业变现路径推演
+10. 决策树（条件 → 分支 → 终点）—— 用于关键战术分叉点
+全文至少使用其中 6 套以上，禁止全部用 SWOT 一种。`;
+
+    const CHART_RULES = `
+【可视化与表格强制规范 · 不得低于 5 张】
+全文必须包含至少：
+- 6 张完整 Markdown 表格（前端会自动把数值列衍生成柱状图 / 折线图 / 雷达图）
+- 1 张时间序列表（年/季度推演）→ 自动出折线图
+- 1 张多维能力评分表（6 维以上）→ 自动出雷达图
+- 1 张分项对比表（4 个平台或 4 个产品）→ 自动出柱状图
+- 每张表必须有真实数据（来自下方接地数据）和「数据来源」列
+- 表格之间用文字小结串联，不要堆叠表格
+注意：所有数值必须直接源自「外部接地数据」或「用户基线」，禁止凭空捏造。`;
+
+    const sharedSetup = `
+${LANG_RULES}
+${DATA_TABLE_RULES}
+${FRAMEWORKS}
+${CHART_RULES}
+${PERSONA_HIGHLIGHT_RULES}
+
+【千人千面定制化保证】
+个性化种子：${personalSeed}
+此种子保证不同用户/课题/时间得到的内容完全不一样。请把以下信息揉合进分析的视角与举例：
+${userBaseline}
+
+【外部接地数据（来自 Google 搜索 · 近 2 年真实信息）】
+${harvested.text}
+
+${harvested.sources.length > 0 ? "【参考来源】\n" + harvested.sources.slice(0, 25).map((s, i) => `${i + 1}. ${s.title} — ${s.url}`).join("\n") : ""}
+`.trim();
+
+    // 半月刊（magazine_single / magazine_sub）的「精简版长度规范」——跟个性化版同标准，但字数与表格减半
+    const HALF_LENGTH_RULES = `
+【半月刊精简版字数规范 · 强制执行】
+- 全文字数严格控制在 5500-7000 字（个性化版的一半）
+- 表格数量 5-6 张（个性化版的一半）
+- 每章正文字数 400-700 字（个性化版要求 800-1200 字）
+- 每章末尾「执行风险提醒」段落字数压缩到 40-60 字（个性化版 80 字）
+- 框架使用：仍要至少使用 4 套不同分析框架（个性化版 6 套），不得仅用一种
+- 表格强制覆盖：能力雷达 / 平台对比 / 产品矩阵 / 五段漏斗 / 30 天行动计划 五张核心表
+`;
+
+    const prompt = productType === "personalized"
+      ? `你是哈佛医师 + 顶尖商业战略顾问 + 四大平台资深运营专家组成的「全息个性化智库」。请输出一份字数不少于 12000 字、表格不少于 8 张的高端商务白皮书。
+
+${sharedSetup}
+
+【本次分析课题】
+${job.topic}
+
+【用户历次战报对比基线】
+${historyContext}
+
+【输出结构要求 · 必须严格遵守章节顺序与名称】
+
+# 一、个人亮点提取（基于您真实账户行为的 X 光）
+- 用 5 段加粗洞察 + 1 个「定位锚点一句话」总结此用户区别于市场的差异化身份
+- 配 1 张「能力雷达表」（6 维：内容生产 / 选题判断 / 用户洞察 / 商业敏感 / 私域转化 / 跨界协同），分别给出用户分（来自基线）与行业头部均值
+- 末尾以「📊 数据速查」表格汇总：累计创作数、累计积分投入、最强项、最弱项、专属定位锚点
+
+# 二、平台赛道全景（千人千面的赛道地图）
+- 必须覆盖小红书 / 抖音 / 哔哩哔哩 / 快手 / 视频号 5 个平台
+- 配 1 张「平台对比表」（月活、算法侧重、最佳内容形式、最佳发布时段、客单价区间、本人适配度评分）
+- 配 1 张「赛道趋势表」（2024 / 2025 / 2026 三年的市场规模、复合增长率、关键驱动事件）
+- 配 1 张「波士顿矩阵分类」（把候选赛道分成明星 / 现金牛 / 问题 / 瘦狗）
+- 用「五力模型」拆解最推荐赛道的竞争格局
+- 末尾「📊 数据速查」三列表
+
+# 三、产品矩阵设计（高客单价金字塔）
+- 必须给出引流品 → 主力品 → 高端旗舰三层产品的具体形态、定价区间、毛利率、目标用户
+- 配 1 张「产品矩阵表」（产品名 / 形态 / 价格 / 周期 / 毛利率 / 目标用户 / 转化期望）
+- 配 1 张「定价对标表」（与赛道竞品均价对比，给出溢价空间和理由）
+- 用「蓝海战略画布」给出消除 / 减少 / 增加 / 创造 四象限改动建议
+
+# 四、商业成长与变现路径（投入产出比最大化）
+- 必须用「获取—激活—留存—收入—推荐」五段漏斗，给出每段当下转化率、行业头部值、优化杠杆
+- 配 1 张「五段漏斗表」（阶段 / 现状 / 行业头部 / 90 天目标 / 杠杆动作）
+- 配 1 张「分阶段变现路线图」（冷启动 / 成长 / 加速 / 成熟，每段配预计周期、主要收入、月收入预估）
+- 末尾「📊 数据速查」（月销售额目标 / 单粉获取成本 / 用户终身价值 / 投入产出比）
+
+# 五、生涯规划（5 年战略弓与箭）
+- 必须用「SMART 目标拆解」给出 1 年、3 年、5 年三个里程碑
+- 配 1 张「生涯规划表」（时间 / 角色定位 / 关键能力跃迁 / 资产规模 / 风险防御）
+- 给出 3 条「弯道超车机会窗口」与对应的具体动作
+- 给出 3 条「必须立刻放弃的旧思维」并解释替代方案
+
+# 六、历史战略复盘（与你过去战报的纵向对比）
+- 配 1 张「历史 vs 当下对比表」（维度 / 历史策略 / 当前市场 / 变化幅度 / 建议动作）
+- 用「第一性原理」分析为什么旧打法已经失效
+- 至少给出 3 条「需立即下线的旧动作」
+
+# 七、十大战术里程碑（16 周可执行路线图）
+- 配 1 张「10 大战术里程碑表」（编号 / 战术目标 / 完成时限 / 所需资源 / 预期量化效果 / 成功判断标准）
+- 用「决策树」描绘第 8 周和第 12 周的关键分叉点
+
+# 八、核武级总结（必须铭刻于心的三大真相）
+- 给出 3 条由数据驱动的核心洞察，每条附 1 个具体数据点
+- 给出一句话品牌口号（中文 16 字内）
+- 给出 90 天里程碑表（粉丝数 / 私域用户 / 变现金额 / 内容资产 / 商业验证）
+
+要求：每个数字必须直接源自上方「外部接地数据」或「用户基线」。语言克制专业，避免任何空话与煽动。每个章节末尾必须有一段不少于 80 字的「执行风险提醒」。`
+      : `你是哈佛商学院战略顾问 + 顶尖社媒运营专家 + 行业数据分析师组成的「商业智库团队」。请输出一份字数严格控制在 5500-7000 字、表格 5-6 张的精简版商务白皮书《${dateStr} 战略半月刊》。
+
+${sharedSetup}
+
+${HALF_LENGTH_RULES}
+
+【研究课题】
+${job.topic}
+
+【输出结构要求 · 七章精简版，章节内必须包含五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）】
+
+# 一、行业全景扫描（宏观趋势 + 监管变化）
+- 配 1 张「市场规模与增速表」（2024/2025E/2026F 三列：规模、增速、关键驱动事件）
+- 用「政治经济社会技术分析」200 字内拆解外部环境
+- 用「五力模型」150 字内诊断竞争格局
+- 末尾「📊 数据速查」三列表
+
+# 二、个人亮点提取 + 平台赛道全景（合并章节 · 千人千面的差异化身份与赛道地图）
+- 必须利用上方「用户当下数据库基线」给出 3 条加粗洞察 + 一句话「定位锚点」
+- 配 1 张「能力雷达表」（6 维评分 vs 行业头部）
+- 配 1 张「五平台对比表」（小红书 / 抖音 / 哔哩哔哩 / 快手 / 视频号 五行：月活、算法侧重、最佳内容形式、最佳发布时段、本人适配度评分、推荐顺位）
+- 用「波士顿矩阵」一段话把候选赛道分类（明星 / 现金牛 / 问题 / 瘦狗）
+
+# 三、用户心理图谱（高转化底层逻辑）
+- 简短描述目标人群：年龄段、月均可支配收入、决策周期、核心欲望
+- 配 1 张「消费决策触发器表」（触发因子 / 权重 / 激活方式 / 典型钩子文案，4 行）
+
+# 四、头部玩家拆解（爆款公式与变现链路）
+- 配 1 张「头部账号变现模式解剖表」（超头部 / 腰部 / 新锐 三档：粉丝规模、月均收入、收入构成、爆款公式）
+- 给出 2 个真实头部账号的具体爆款案例（来自上方接地数据）
+
+# 五、产品矩阵设计 + 商业变现路径（合并章节）
+- 配 1 张「产品矩阵 + 五段漏斗融合表」（引流品 / 主力品 / 高端旗舰 三行 × 价格 / 客群 / 五段漏斗目标转化率 六列）
+- 用「蓝海战略画布」150 字内给出消除 / 减少 / 增加 / 创造 四象限改动
+- 末尾「📊 数据速查」（月销售额目标 / 单粉获取成本 / 用户终身价值 / 投入产出比）
+
+# 六、生涯规划 + 30 天冲刺行动手册（合并章节）
+- 用「SMART 目标拆解」给出 1 年、3 年里程碑（每条 50 字内）
+- 配 1 张「30 天周计划表」（第 1-7 / 8-14 / 15-21 / 22-30 天，每段：核心主题、每日必做动作、阶段达成指标、成功判断标准）
+
+# 七、核武级总结
+- 3 条由数据驱动的核心洞察 + 一句话品牌口号 + 90 天三大里程碑（粉丝 / 私域 / 变现金额）
+
+要求：
+1. 总字数严格控制在 5500-7000 字之间，**超过 7500 字视为不合格**
+2. 每个数字直接源自上方「外部接地数据」或「用户基线」
+3. 每章末尾 40-60 字的「执行风险提醒」（半月刊的精简版要求，比尊享版短一半）
+4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;
+
+    const reportMarkdown = await generate("gemini-3.1-pro-preview", prompt, 2, { temperature: 0.55, maxTokens: 65536 });
+
+    if (!reportMarkdown || reportMarkdown.length < 1500) {
       throw new Error("战报内容过短，可能生成失败");
     }
 
@@ -899,10 +948,19 @@ ${job.topic}
       console.warn("[deepResearch] 封面图生成失败，跳过");
     }
 
-    // 3. 注入趋势图（半月刊专属，插在报告正文前）
-    const finalReportMarkdown = trendChartBlock
-      ? trendChartBlock + reportMarkdown
-      : reportMarkdown;
+    // 3. 报告头部 banner（封面卡 + 个性化签名） + 趋势图 + 报告正文 + 思维链 + 来源
+    const reportHeader = `# ${lighthouseTitle}\n\n> 📅 出品日期：${dateStr} · 个性化种子：\`${personalSeed.slice(0, 32)}…\`\n> 🔍 数据来源：Google 搜索接地（近 2 年） + 您的账户基线 ${holistic.totalCreations} 条创作记录\n> 🧠 推演引擎：Gemini Deep Research Pro Preview · 全网检索 + 思维链推理 + 综合最深层级\n\n---\n\n`;
+
+    // 思维链折叠区块（放在报告末尾，PDF 中也会被渲染成可读区块）
+    const thoughtsBlock = harvested.thoughts && harvested.thoughts.length > 200
+      ? `\n\n---\n\n# 附录：AI 战略推演过程（思维链）\n\n> 以下是 Deep Research Pro Preview 在生成本份白皮书时的推演路径，提升智库透明度。\n\n${harvested.thoughts.split("\n").map((l) => l.trim() ? "> " + l : ">").join("\n")}\n`
+      : "";
+
+    const sourcesFooter = harvested.sources.length > 0
+      ? `\n\n---\n\n# 附录：参考来源（来自 Google 搜索接地）\n\n${harvested.sources.slice(0, 30).map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join("\n")}\n`
+      : "";
+
+    const finalReportMarkdown = reportHeader + (trendChartBlock || "") + reportMarkdown + thoughtsBlock + sourcesFooter;
 
     // 4. 摘要（取正文开头 200 字，去除 Markdown 符号）
     const summary = reportMarkdown.replace(/#{1,6}\s/g, "").replace(/[*`>_\-|]/g, "").trim().slice(0, 200) + "…";
@@ -910,20 +968,22 @@ ${job.topic}
     // 5. 耗时（分钟）
     const duration = ((Date.now() - taskStartMs) / 1000 / 60).toFixed(1);
 
-    // ── 完成：写 Fly 磁盘 ─────────────────────────────────────────────────────
+    // ── 草稿生成完成：状态进入 awaiting_review（等待主编人工审核） ─────────────
     const latest = (await readJob(jobId)) ?? job;
     const doneMsg = productType === "personalized"
-      ? "✅ 尊享季度私人订制分析完成，您的专属战略已就绪"
-      : "✅ 战略半月刊生成完毕，可在下方查阅";
+      ? "📝 尊享私人订制草稿已生成，请进入「战略作品快照库」审核增删后正式出刊"
+      : "📝 战略半月刊草稿已生成，请进入「战略作品快照库」审核增删后正式出刊";
     await writeJob({
       ...latest,
-      status: "completed",
+      status: "awaiting_review",
       progress: doneMsg,
+      // 草稿 markdown 也写到 fly 磁盘，但区分字段：保留 reportMarkdown 字段以兼容老前端，draftMarkdown 才是审核工作台读取的字段
       reportMarkdown: finalReportMarkdown,
+      draftMarkdown: finalReportMarkdown,
       completedAt: new Date().toISOString(),
-    });
+    } as any);
 
-    // ── 完成：写 Neon DB（含封面、摘要、灯塔标题）────────────────────────────
+    // ── 草稿生成完成：写 Neon DB（status: awaiting_review，markdown 写入 metadata.draftMarkdown）
     if (latest.dbRecordId) {
       try {
         const { db, userCreations } = await getDbAndSchema();
@@ -934,13 +994,16 @@ ${job.topic}
             jobId,
             productType,
             progress: doneMsg,
-            reportMarkdown: finalReportMarkdown,
+            // 关键：reportMarkdown 字段留空（出刊后才填入），draftMarkdown 存草稿
+            reportMarkdown: null,
+            draftMarkdown: finalReportMarkdown,
+            draftReadyAt: new Date().toISOString(),
             lighthouseTitle,
             summary,
             duration,
           };
           const setPayload: Record<string, unknown> = {
-            status: "completed",
+            status: "awaiting_review",
             title: lighthouseTitle.slice(0, 120),
             metadata: JSON.stringify(metaPayload),
             updatedAt: new Date(),
@@ -949,11 +1012,11 @@ ${job.topic}
           await db.update(userCreations).set(setPayload).where(eq(userCreations.id, latest.dbRecordId));
         }
       } catch (e: any) {
-        console.warn("[deepResearch] DB 写入完成状态失败:", e?.message);
+        console.warn("[deepResearch] DB 写入草稿状态失败:", e?.message);
       }
     }
 
-    console.log(`[deepResearch] ✅ 任务 ${jobId} 完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
+    console.log(`[deepResearch] ✅ 草稿 ${jobId} 已就绪（待审核），字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
 
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
