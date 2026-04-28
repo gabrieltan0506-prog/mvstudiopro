@@ -195,134 +195,120 @@ interface GroundedResult {
 
 const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 
+// ─── Interactions API（Deep Research Agent 专用） ─────────────────────────────
+// Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
+// generateContent 会直接返回 400，不可使用。
+const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/interactions";
+const DEEP_RESEARCH_AGENT_NAME = "deep-research-pro-preview-12-2025";
+const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
+const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
+
+/**
+ * 调用 Deep Research Agent（Interactions API + background polling）。
+ * @param onInteractionId - 拿到 interactionId 后的回调，用于持久化到 Job 文件以便断线恢复
+ */
 async function generateDeepResearch(
   prompt: string,
-  opts?: { complexity?: "comprehensive" | "moderate" | "quick"; retries?: number; temperature?: number; topP?: number; maxTokens?: number; includeThoughts?: boolean },
+  opts?: { complexity?: string; temperature?: number; topP?: number; maxTokens?: number; includeThoughts?: boolean },
+  onInteractionId?: (id: string) => Promise<void>,
 ): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
-  const retries = opts?.retries ?? 2;
-  // 全局 v1beta 端点，不加 location（global = 最优路由），Fly.io 已迁至 iad 降低延迟
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEEP_RESEARCH_MODEL}:generateContent?key=${apiKey}`;
-  const body = JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    tools: [
-      { googleSearch: {} },
-      // deepResearch 不是合法 tool 名（Google API 返回 400），深度研究能力由模型本身内置
-    ],
-    generationConfig: {
-      thinkingConfig: { includeThoughts: opts?.includeThoughts ?? true },
-      temperature: opts?.temperature ?? 0.7,
-      topP: opts?.topP ?? 0.95,
-      maxOutputTokens: opts?.maxTokens ?? 65536,
-    },
-  });
+  const apiHeaders = {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+    "X-Goog-Api-Client": "genai-node/deep-research",
+  };
 
-  for (let i = 0; i <= retries; i++) {
-    const release = await acquireRateGate(`deep-research#${i + 1}`);
+  // ── Step 1：提交任务（立即返回 interaction.id） ──────────────────────────────
+  const release = await acquireRateGate("deep-research-create");
+  let interactionId: string;
+  try {
+    console.log(`[deepResearch] 🚀 PID=${process.pid} 提交 Agent 任务，promptLen=${prompt.length}`);
+    const createRes = await fetch(INTERACTIONS_BASE, {
+      method: "POST",
+      headers: apiHeaders,
+      body: JSON.stringify({
+        input: prompt,
+        agent: DEEP_RESEARCH_AGENT_NAME,
+        background: true,
+      }),
+    });
+    const rawCreate = await createRes.text();
+    let createJson: any = {};
+    try { createJson = JSON.parse(rawCreate); } catch { /* ignore */ }
 
-    // 用 AbortController 手动管理 30 分钟超时，避免 AbortSignal.timeout 的 Node.js 兼容问题
-    const controller = new AbortController();
-    const hardTimeoutHandle = setTimeout(() => {
-      controller.abort(new Error("30min_hard_timeout"));
-    }, 1_800_000);
-
-    let res: Response | undefined;
-    let rawText = "";
-    let json: any = {};
-
-    try {
-      console.log(`[deepResearch] 🧠 PID=${process.pid} attempt=${i + 1}/${retries + 1} model=${DEEP_RESEARCH_MODEL} promptLen=${prompt.length}`);
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          // Google 官方推荐头：让骨干网正确识别 Deep Research 客户端类型
-          "X-Goog-Api-Client": "genai-node/deep-research",
-        },
-        body,
-        signal: controller.signal,
-      });
-      rawText = await res.text();
-      try { json = JSON.parse(rawText); } catch { json = {}; }
-    } catch (fetchErr: any) {
-      console.error(`[deepResearch] ❌ PID=${process.pid} fetch层异常 attempt=${i + 1}：${fetchErr?.name} / ${fetchErr?.message}`);
-      if (fetchErr?.cause) console.error(`[deepResearch]   cause：`, fetchErr.cause);
-      if (i < retries) { await sleep(8000); continue; }
-      throw new Error(`网络连接异常（${fetchErr?.name}: ${fetchErr?.message}），积分将原路退回。`);
-    } finally {
-      clearTimeout(hardTimeoutHandle);
-      release();
+    if (!createRes.ok) {
+      console.error(`[deepResearch] ❌ create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
+      const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
+      throw new Error(`Deep Research Agent 提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
     }
 
-    const status = res.status;
-    console.log(`[deepResearch] PID=${process.pid} HTTP ${status} rawLen=${rawText.length}字`);
+    interactionId = createJson?.id;
+    if (!interactionId) {
+      console.error(`[deepResearch] ❌ 未返回 interaction.id，响应：${rawCreate.slice(0, 1000)}`);
+      throw new Error("Deep Research Agent 未返回任务 ID，积分将退回。");
+    }
+    console.log(`[deepResearch] ✅ PID=${process.pid} interaction 已创建：${interactionId}`);
+  } finally {
+    release();
+  }
 
-    if (status === 429 && i < retries) {
-      console.log(`[deepResearch] 429 速率限制，${30 * (i + 1)}s 后重试`);
-      await sleep(30000 * (i + 1));
+  // 持久化 interactionId，服务重启后可恢复轮询
+  if (onInteractionId) {
+    try { await onInteractionId(interactionId); } catch { /* 非阻断 */ }
+  }
+
+  // ── Step 2：轮询直到完成 / 失败 / 超时 ──────────────────────────────────────
+  const pollStart = Date.now();
+  let lastStatus = "in_progress";
+
+  while (Date.now() - pollStart < MAX_POLL_MS) {
+    await sleep(POLL_INTERVAL_MS);
+
+    const elapsed = Math.round((Date.now() - pollStart) / 1000);
+    let pollJson: any = {};
+    try {
+      const pollRes = await fetch(`${INTERACTIONS_BASE}/${interactionId}`, { headers: apiHeaders });
+      const rawPoll = await pollRes.text();
+      try { pollJson = JSON.parse(rawPoll); } catch { /* ignore */ }
+
+      if (!pollRes.ok) {
+        console.error(`[deepResearch] ❌ poll HTTP ${pollRes.status} elapsed=${elapsed}s：${rawPoll.slice(0, 1000)}`);
+        throw new Error(`Deep Research 轮询失败（HTTP ${pollRes.status}），积分将退回。`);
+      }
+    } catch (fetchErr: any) {
+      // 网络抖动：只记录，下次循环继续重试
+      console.warn(`[deepResearch] ⚠️ poll fetch 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
       continue;
     }
 
-    if (!res.ok) {
-      // 把 Google 原始响应体全部打印出来，暴露真实原因
-      console.error(`[deepResearch] ❌ HTTP ${status} 原始响应：${rawText.slice(0, 2000)}`);
-      const errDetail = json?.error?.message || json?.error?.status || rawText.slice(0, 300);
-      throw new Error(`深度研究引擎 HTTP ${status}（${errDetail}），积分将原路退回。`);
+    lastStatus = pollJson?.status ?? "unknown";
+    console.log(`[deepResearch] 🔍 PID=${process.pid} poll interactionId=${interactionId} status=${lastStatus} elapsed=${elapsed}s`);
+
+    if (lastStatus === "failed") {
+      const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
+      console.error(`[deepResearch] ❌ Agent 失败：${errMsg}`);
+      throw new Error(`Deep Research Agent 执行失败（${errMsg}），积分将退回。`);
     }
 
-    // ── 安全过滤检查（promptFeedback.blockReason）
-    const blockReason = json?.promptFeedback?.blockReason;
-    if (blockReason) {
-      console.error(`[deepResearch] ❌ Google 安全策略拦截 blockReason=${blockReason}，完整 promptFeedback：`, JSON.stringify(json?.promptFeedback));
-      throw new Error(`课题被 Google 安全策略拦截（${blockReason}），请修改课题后重试，积分将退回。`);
+    if (lastStatus === "completed") {
+      const outputs: any[] = pollJson?.outputs || [];
+      const text = String(outputs[outputs.length - 1]?.text || "").trim();
+
+      if (!text || text.length < 400) {
+        console.error(`[deepResearch] ❌ 完成但正文不足（${text.length}字），响应：${JSON.stringify(pollJson).slice(0, 3000)}`);
+        throw new Error(`Deep Research Agent 完成但内容不足（${text.length}字），积分将退回。`);
+      }
+
+      console.log(`[deepResearch] ✅ PID=${process.pid} 完成 interactionId=${interactionId} ${text.length}字 elapsed=${elapsed}s`);
+      return { text, sources: [] };
     }
-
-    const cand = json?.candidates?.[0];
-    const finishReason = cand?.finishReason ?? "UNKNOWN";
-
-    if (!cand) {
-      console.error(`[deepResearch] ❌ 无候选结果，完整响应（前3000字）：${rawText.slice(0, 3000)}`);
-      throw new Error(`深度研究引擎未返回候选内容（finishReason=none），积分将退回。`);
-    }
-
-    if (finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
-      console.error(`[deepResearch] ❌ 异常终止 finishReason=${finishReason}，候选：${JSON.stringify(cand).slice(0, 1000)}`);
-      throw new Error(`深度研究引擎异常终止（${finishReason}），积分将退回。请稍后重试。`);
-    }
-
-    // ── 解析正文 + 思维链
-    const parts: any[] = cand?.content?.parts || [];
-    let text = "";
-    let thoughts = "";
-    for (const p of parts) {
-      const t = String(p?.text || "");
-      if (!t) continue;
-      if (p?.thought === true || p?.thoughtSignature) thoughts += t + "\n";
-      else text += t;
-    }
-
-    if (!text || text.length < 400) {
-      console.error(`[deepResearch] ❌ 正文过短（${text.length}字）finishReason=${finishReason}`);
-      console.error(`[deepResearch] 完整响应（前4000字）：${rawText.slice(0, 4000)}`);
-      throw new Error(`深度研究引擎返回正文不足（${text.length} 字，finishReason=${finishReason}），积分将退回。`);
-    }
-
-    // ── 接地来源
-    const grounding = cand?.groundingMetadata || cand?.grounding_metadata || {};
-    const chunks = grounding?.groundingChunks || grounding?.grounding_chunks || [];
-    const sources: GroundedResult["sources"] = [];
-    for (const c of chunks) {
-      const web = c?.web;
-      if (web?.uri) sources.push({ title: String(web.title || web.uri), url: String(web.uri), snippet: undefined });
-    }
-
-    console.log(`[deepResearch] ✅ PID=${process.pid} ${text.length}字正文 / ${thoughts.length}字思维链 / ${sources.length}个接地来源`);
-    return { text: text.trim(), thoughts: thoughts.trim() || undefined, sources };
+    // status === "in_progress" → 继续等待
   }
 
-  throw new Error("深度研究引擎重试已耗尽，积分将原路退回。请稍后重试。");
+  throw new Error(`Deep Research Agent 超过 60 分钟未完成（interactionId=${interactionId}），积分将退回。`);
 }
 
 /** @deprecated 旧接口 · 转发到新的 Deep Research 调用器（保持向下兼容） */
@@ -496,6 +482,8 @@ export interface DeepResearchJob {
   attemptCount?: number;
   /** 启动任务时实际扣除的积分（用于失败时退款）。0 = 管理员/免费，无需退款。 */
   creditsUsed?: number;
+  /** Google Interactions API 返回的 interaction ID，用于断线恢复轮询（无需重跑） */
+  interactionId?: string;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -926,15 +914,16 @@ ${job.topic}
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
-    // 直接 await，不吞错——真实 Google 错误（blockReason / finishReason / HTTP 状态）会原样抛出
-    const harvested: GroundedResult = await generateDeepResearch(harvestPrompt, {
-      complexity: "comprehensive",
-      temperature: 0.7,
-      topP: 0.95,
-      includeThoughts: true,
-      maxTokens: 65536,
-    });
-    console.log(`[deepResearch] 🎯 PID=${process.pid} Deep Research 完成：${harvested.text.length}字正文 / ${harvested.thoughts?.length || 0}字思维链 / ${harvested.sources.length}个接地来源`);
+    // 传入回调：拿到 interactionId 后立即持久化到 Job 文件，服务重启后可恢复轮询
+    const harvested: GroundedResult = await generateDeepResearch(
+      harvestPrompt,
+      { complexity: "comprehensive", temperature: 0.7, topP: 0.95, includeThoughts: true, maxTokens: 65536 },
+      async (interactionId) => {
+        const latest = (await readJob(jobId)) ?? job;
+        await writeJob({ ...latest, interactionId } as any);
+      },
+    );
+    console.log(`[deepResearch] 🎯 PID=${process.pid} Deep Research 完成：${harvested.text.length}字正文 / ${harvested.sources.length}个接地来源`);
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 B：合成 · Gemini 3.1 Pro Preview 深度报告
