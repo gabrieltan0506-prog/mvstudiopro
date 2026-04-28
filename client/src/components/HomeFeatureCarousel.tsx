@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown } from "lucide-react";
+import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown } from "lucide-react";
 
 // ─── 固定置顶卡片（竞品分析，永久显示） ───────────────────────────────
 const PINNED_CARD = {
@@ -22,8 +22,82 @@ const PINNED_CARD = {
 const CAROUSEL_CARDS = [
   {
     isNew: true,
-    date: "2026/04/26",
+    date: "2026/04/28",
     tag: "今日上线",
+    title: "战略智库三档套餐",
+    subtitle: "战略半月刊 · 半年订阅 · 尊享季度私人订制",
+    desc: "全新战略智库产品线正式上线！战略半月刊单期 800 点（首购 720），半年订阅 6000 点（首购 5400），尊享季度私人订制 3000 点（首购 2700）。购买即享首购九折专属优惠。",
+    pills: ["半月刊 800点", "半年订阅 6000点", "私人订制 3000点", "首购九折"],
+    icon: Crown,
+    accentColor: "#f5c842",
+    glowColor: "rgba(245,200,80,0.20)",
+    borderColor: "rgba(245,200,80,0.40)",
+    bgGradient: "linear-gradient(135deg, rgba(245,200,80,0.10) 0%, rgba(200,160,0,0.04) 100%)",
+    href: "/god-view",
+  },
+  {
+    isNew: true,
+    date: "2026/04/28",
+    tag: "今日上线",
+    title: "尊享季度私人订制",
+    subtitle: "与历史数据深度对比 · 哈佛医师级二次进化分析",
+    desc: "AI 自动调取您的历史分析快照，与当前课题进行「大洗牌」对比，输出专属战略升级方案。含10大可执行里程碑、竞争力雷达评分、四平台协同矩陣与完整数据表格。",
+    pills: ["历史数据对比", "10大里程碑", "竞争力雷达", "3000点"],
+    icon: Star,
+    accentColor: "#f97316",
+    glowColor: "rgba(249,115,22,0.20)",
+    borderColor: "rgba(249,115,22,0.38)",
+    bgGradient: "linear-gradient(135deg, rgba(249,115,22,0.10) 0%, rgba(249,115,22,0.03) 100%)",
+    href: "/god-view",
+  },
+  {
+    isNew: true,
+    date: "2026/04/28",
+    tag: "今日上线",
+    title: "战报数据图表全面升级",
+    subtitle: "强制输出真实数据表格 · 四平台对比矩陣 · 转化漏斗",
+    desc: "每份战略报告现在强制包含：市场规模4年增速表、四平台CPM/月活对比、头部玩家变现模式解剖、商业转化漏斗转化率、90天里程碑量化目标。每章末附「数据速查」汇总表，所有数字均需真实可查。",
+    pills: ["数据速查表", "平台对比矩阵", "转化漏斗", "里程碑量化"],
+    icon: BarChart2,
+    accentColor: "#34d399",
+    glowColor: "rgba(52,211,153,0.18)",
+    borderColor: "rgba(52,211,153,0.30)",
+    bgGradient: "linear-gradient(135deg, rgba(52,211,153,0.08) 0%, rgba(52,211,153,0.02) 100%)",
+    href: "/god-view",
+  },
+  {
+    isNew: true,
+    date: "2026/04/28",
+    tag: "今日上线",
+    title: "试读版 PDF 免费下载",
+    subtitle: "战略半月刊 & 私人订制精华样本 · 全版水印保护",
+    desc: "首页新增免费试读区！战略半月刊「医美赛道」样本与私人订制「知识博主」样本，含真实数据表格与部分精华内容，全版水印保护，一键打印保存为 PDF。",
+    pills: ["免费试读", "真实数据表格", "PDF 下载", "水印保护"],
+    icon: FileDown,
+    accentColor: "#a78bfa",
+    glowColor: "rgba(167,139,250,0.18)",
+    borderColor: "rgba(167,139,250,0.30)",
+    bgGradient: "linear-gradient(135deg, rgba(167,139,250,0.08) 0%, rgba(167,139,250,0.02) 100%)",
+  },
+  {
+    isNew: true,
+    date: "2026/04/28",
+    tag: "今日上线",
+    title: "我的战报快照库升级",
+    subtitle: "封面图 + 灯塔标题 + 摘要 · 全新四栏卡片展示",
+    desc: "「我的战报」全面升级！每份报告展示 Nano Banana Pro 生成的艺术封面（3:4 比例）、AI 燈塔标题、内容摘要与生成耗时，一键全息阅览或下载 Markdown 原文。",
+    pills: ["艺术封面", "灯塔标题", "全息阅览", "Markdown 下载"],
+    icon: BookOpen,
+    accentColor: "#38bdf8",
+    glowColor: "rgba(56,189,248,0.18)",
+    borderColor: "rgba(56,189,248,0.28)",
+    bgGradient: "linear-gradient(135deg, rgba(56,189,248,0.07) 0%, rgba(56,189,248,0.02) 100%)",
+    href: "/my-reports",
+  },
+  {
+    isNew: false,
+    date: "2026/04/27",
+    tag: "昨日上线",
     title: "语音输入功能升级",
     subtitle: "说话即可输入 · 支持 Chrome、Edge、Safari",
     desc: "全面支持三大浏览器！录音结束后 AI 自动识别中文并填入输入框，无需手动打字，创作效率大幅提升。",
@@ -36,9 +110,9 @@ const CAROUSEL_CARDS = [
     bgGradient: "linear-gradient(135deg, rgba(251,146,60,0.10) 0%, rgba(251,146,60,0.03) 100%)",
   },
   {
-    isNew: true,
+    isNew: false,
     date: "2026/04/26",
-    tag: "今日上线",
+    tag: "功能亮点",
     title: "我的作品中心",
     subtitle: "历史分析永久留存 · 一键分享",
     desc: "每次创作者分析与平台趋势报告自动保存为专属页面，附带可复制链接，随时回顾或分享给团队成员。",
@@ -224,18 +298,20 @@ export default function HomeFeatureCarousel() {
                   <Crown size={24} color="#fff" />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 10, fontWeight: 900, color: "#0a0600", background: "linear-gradient(90deg,#f5c842,#c8a000)", borderRadius: 99, padding: "3px 10px", letterSpacing: "0.08em", textTransform: "uppercase" }}>👑 VIP 专享 · 算力巅峰</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(239,68,68,0.9)", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 99, padding: "2px 8px" }}>首次 4000 点</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(167,139,250,0.9)", background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", borderRadius: 99, padding: "2px 8px" }}>半月刊 800点起</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(52,211,153,0.9)", background: "rgba(52,211,153,0.10)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 99, padding: "2px 8px" }}>私人订制 3000点</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(245,200,80,0.8)", background: "rgba(245,200,80,0.08)", border: "1px solid rgba(245,200,80,0.2)", borderRadius: 99, padding: "2px 8px" }}>首购九折</span>
                   </div>
                   <h3 style={{ fontSize: 22, fontWeight: 900, background: "linear-gradient(90deg,#f5c842,#ffd878,#c8a000)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: "0 0 8px", letterSpacing: "-0.01em" }}>
-                    AI 上帝视角：全景行业战报
+                    AI 上帝视角战略智库
                   </h3>
                   <p style={{ color: "rgba(245,218,150,0.65)", fontSize: 13, lineHeight: 1.75, margin: "0 0 14px", maxWidth: 680 }}>
-                    停止在信息泥潭中盲目试错。「核武级商业智库」，具备极限算力，深入全网解剖社媒爆款底层逻辑与头部变现链路，为您输出一份降维打击的<strong style={{ color: "#f5c842" }}>【专属商业战报】</strong>。穿透赛道迷雾，锁定商业胜率，从宏观趋势前瞻到微观私域留存，交付极具深度的商业全景图鉴。
+                    停止在信息泥潭中盲目试错。三档产品覆盖所有需求：<strong style={{ color: "#a78bfa" }}>战略半月刊</strong>追踪最新赛道趋势，<strong style={{ color: "#34d399" }}>半年订阅</strong>享持续战略陪伴，<strong style={{ color: "#f97316" }}>尊享季度私人订制</strong>与历史数据深度对比实现「二次进化」。全系报告强制含真实数据表格与四平台对比矩陣。
                   </p>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    {["宏观趋势前瞻", "竞品变现拆解", "30天行动清单", "私域留存路径"].map((t) => (
+                    {["宏观趋势前瞻", "竞品变现拆解", "数据图表佐证", "私域留存路径"].map((t) => (
                       <span key={t} style={{ fontSize: 11, fontWeight: 700, color: "rgba(245,200,80,0.7)", background: "rgba(180,130,0,0.12)", border: "1px solid rgba(180,130,0,0.28)", borderRadius: 99, padding: "3px 10px" }}>{t}</span>
                     ))}
                     <span style={{ marginLeft: "auto", fontSize: 12, color: "rgba(255,255,255,0.4)", fontStyle: "italic" }}>异步推演 · 约 15-20 分钟</span>

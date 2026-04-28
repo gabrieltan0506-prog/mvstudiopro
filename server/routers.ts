@@ -5579,13 +5579,13 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       .input(z.object({
         topic: z.string().min(5).max(1000),
         isFirstTime: z.boolean().optional(),
-        productType: z.enum(["deep_report", "magazine_single", "magazine_sub", "personalized"]).optional(),
+        productType: z.enum(["magazine_single", "magazine_sub", "personalized"]).optional(),
         isBundlePromo: z.boolean().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
         const { calcGodViewPrice } = await import("./services/billingService");
-        const productType = input.productType ?? "deep_report";
+        const productType = input.productType ?? "magazine_single";
         const { price: cost } = calcGodViewPrice(productType, !!input.isFirstTime, !!input.isBundlePromo);
 
         // 1. 扣费
@@ -5605,7 +5605,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         let dbRecordId: number | undefined;
         try {
           const { createDeepResearchJob, runDeepResearchAsync } = await import("./services/deepResearchService");
-          const result = await createDeepResearchJob(String(userId), input.topic, deductResult.source === "admin" ? 0 : cost);
+          const result = await createDeepResearchJob(String(userId), input.topic, deductResult.source === "admin" ? 0 : cost, productType);
           jobId = result.jobId;
           dbRecordId = result.dbRecordId;
           // fire-and-forget：异步执行，不阻塞响应

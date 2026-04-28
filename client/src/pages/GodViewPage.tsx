@@ -7,10 +7,9 @@ import { toast } from "sonner";
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
 // ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
-type ProductType = "deep_report" | "magazine_single" | "magazine_sub" | "personalized";
+type ProductType = "magazine_single" | "magazine_sub" | "personalized";
 
 const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
-  deep_report:     "mvs-godview-first-used",
   magazine_single: "mvs-magazine-first-used",
   magazine_sub:    "mvs-magsub-first-used",
   personalized:    "mvs-personalized-first-used",
@@ -25,10 +24,9 @@ const PRODUCTS: Array<{
   desc: string;
   color: string;
 }> = [
-  { id: "deep_report",     label: "全景行業戰報",   price: 4900, firstPrice: 4000, tag: "首次優惠",  desc: "萬字商業白皮書 · 異步重算力推演",            color: "#f5c842" },
-  { id: "magazine_single", label: "戰略半月刊",      price: 800,  firstPrice: 720,  tag: "首購九折",  desc: "當月賽道趨勢報告 · 單期購買",                color: "#a78bfa" },
-  { id: "magazine_sub",    label: "半年訂閱 (12期)", price: 6000, firstPrice: 5400, tag: "首購九折",   desc: "6 個月持續情報陪伴 · 尊貴長線戰略",          color: "#34d399" },
-  { id: "personalized",    label: "個性化大洗牌",    price: 3000, firstPrice: 2700, tag: "首購九折",  desc: "與歷史快照對比 · 哈佛醫師級二次進化分析",    color: "#f97316" },
+  { id: "magazine_single", label: "战略半月刊",      price: 800,  firstPrice: 720,  tag: "首购九折",  desc: "当月赛道趋势报告 · 单期购买",              color: "#a78bfa" },
+  { id: "magazine_sub",    label: "半年订阅 (12期)", price: 6000, firstPrice: 5400, tag: "首购九折",  desc: "6 个月持续情报陪伴 · 尊贵长线战略",        color: "#34d399" },
+  { id: "personalized",    label: "尊享季度私人订制", price: 3000, firstPrice: 2700, tag: "首购九折",  desc: "与历史快照对比 · 哈佛医师级二次进化分析",  color: "#f97316" },
 ];
 
 function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
@@ -42,11 +40,11 @@ export default function GodViewPage() {
   const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
-  const [selectedProduct, setSelectedProduct] = useState<ProductType>("deep_report");
+  const [selectedProduct, setSelectedProduct] = useState<ProductType>("magazine_single");
   const [isBundlePromo, setIsBundlePromo] = useState(false);
 
   const currentProduct = PRODUCTS.find((p) => p.id === selectedProduct)!;
-  const [isFirst, setIsFirst] = useState(() => !localStorage.getItem(PRODUCT_FIRST_KEYS[selectedProduct]));
+  const [isFirst, setIsFirst] = useState(() => !localStorage.getItem(PRODUCT_FIRST_KEYS["magazine_single"]));
 
   // supervisor debug
   const [isSupervisor, setIsSupervisor] = useState(false);
@@ -97,8 +95,8 @@ export default function GodViewPage() {
 
   const handleLaunch = () => {
     if (!topic.trim()) { toast.error("请输入研究课题"); return; }
-    const discount = isBundlePromo ? "（滿月老用戶雙本促銷）" : isFirst && currentProduct.firstPrice !== undefined ? "（首購優惠價）" : "";
-    if (!window.confirm(`啟動「${currentProduct.label}」將扣除 ${cost.toLocaleString()} 點${discount}，確定執行？`)) return;
+    const discount = isBundlePromo ? "（满月老用户双本促销）" : isFirst && currentProduct.firstPrice !== undefined ? "（首购优惠价）" : "";
+    if (!window.confirm(`启动「${currentProduct.label}」将扣除 ${cost.toLocaleString()} 点${discount}，确定执行？`)) return;
     setPhase("launching");
     setLaunchTime(new Date());
     setElapsedSec(0);
@@ -303,7 +301,7 @@ export default function GodViewPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", margin: 0 }}>
-                  ⏱ 異步重算力推演，約 15-30 分鐘，派發後可關閉頁面到「我的戰報」查看
+                  ⏱ 异步重算力推演，约 15-30 分钟，派发后可关闭页面到「我的战报」查看
                 </p>
                 {selectedProduct === "magazine_single" && (
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
@@ -313,7 +311,7 @@ export default function GodViewPage() {
                       onChange={(e) => setIsBundlePromo(e.target.checked)}
                       style={{ accentColor: "#f5c842" }}
                     />
-                    滿月老用戶專享：兩本 800 點特惠（需在平台超過 30 天）
+                    满月老用户专享：两本 800 点特惠（需在平台超过 30 天）
                   </label>
                 )}
               </div>
@@ -324,10 +322,10 @@ export default function GodViewPage() {
               >
                 {phase === "launching" ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
                 {phase === "launching"
-                  ? "正在派發任務…"
-                  : `💎 啟動 ${currentProduct.label}（${cost.toLocaleString()} 點）`}
+                  ? "正在派发任务…"
+                  : `💎 启动 ${currentProduct.label}（${cost.toLocaleString()} 点）`}
                 {isFirst && currentProduct.firstPrice !== undefined && phase !== "launching" && (
-                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次優惠</span>
+                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次优惠</span>
                 )}
               </button>
             </div>

@@ -13,6 +13,7 @@ import HomeRedeemCode from "../components/HomeRedeemCode";
 import HomeInviteApply from "../components/HomeInviteApply";
 import HomeChangelog from "../components/HomeChangelog";
 import HomeFeatureCarousel from "../components/HomeFeatureCarousel";
+import SampleReportDownload from "../components/SampleReportDownload";
 
 // 以下 section 在正式版开放前暂时隐藏
 // import HomeWorkflow from "../components/HomeWorkflow";
@@ -47,6 +48,8 @@ export default function HomePage() {
       <HomeTools />
 
       <HomeShowcase />
+
+      <SampleReportDownload />
 
       <HomePricing />
 
