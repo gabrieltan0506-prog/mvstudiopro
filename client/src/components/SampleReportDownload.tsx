@@ -6,6 +6,65 @@ import { Loader2, FileDown, ArrowRight, Crown, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 品牌 Logo & 水印（内联 SVG，PDF/网页通用，无外部依赖）
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 工具：把 SVG 字符串转成 data URI（兼容中文）
+function svgToDataUri(svg: string): string {
+  const compact = svg.replace(/\s+/g, " ").replace(/>\s+</g, "><").trim();
+  // base64 兼容 unicode
+  const utf8 = unescape(encodeURIComponent(compact));
+  return `data:image/svg+xml;base64,${typeof btoa !== "undefined" ? btoa(utf8) : ""}`;
+}
+
+// 主 Logo —— 用于封面页顶部（深色背景 + 浅色字 + 金色咖啡豆图标）
+// 设计：六边形外框 = 战略框架 · 内部咖啡豆 = 卡布奇諾品味 · 右侧 MVStudioPro 字标
+const BRAND_LOGO_DARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="50" viewBox="0 0 260 50">
+  <defs>
+    <linearGradient id="hexg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#d8a23a"/>
+      <stop offset="100%" stop-color="#7a5410"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(2, 2)">
+    <path d="M22 2 L40 12 V32 L22 42 L4 32 V12 Z" fill="url(#hexg)" stroke="#f0c984" stroke-width="1.4"/>
+    <ellipse cx="22" cy="22" rx="7.5" ry="11" fill="#fff7df" opacity="0.95"/>
+    <path d="M22 12 V32" stroke="#3e2a1c" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+  <text x="52" y="24" font-family="'Playfair Display', 'Times New Roman', serif" font-size="18" font-weight="700" fill="#fff7df" letter-spacing="0.3">MVStudio<tspan font-weight="900" fill="#f0c984">Pro</tspan></text>
+  <text x="52" y="40" font-family="'Helvetica Neue', sans-serif" font-size="8" font-weight="700" fill="rgba(255,247,223,0.78)" letter-spacing="2.4">STRATEGIC INTELLIGENCE · MVSTUDIOPRO.COM</text>
+</svg>`;
+
+// 浅色版 Logo —— 用于网页可见区域（卡布奇諾米色背景 + 深色字）
+const BRAND_LOGO_LIGHT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="50" viewBox="0 0 260 50">
+  <defs>
+    <linearGradient id="hexgL" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#a8761b"/>
+      <stop offset="100%" stop-color="#3e2a1c"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(2, 2)">
+    <path d="M22 2 L40 12 V32 L22 42 L4 32 V12 Z" fill="url(#hexgL)" stroke="#c9a878" stroke-width="1.4"/>
+    <ellipse cx="22" cy="22" rx="7.5" ry="11" fill="#fff7df" opacity="0.95"/>
+    <path d="M22 12 V32" stroke="#3e2a1c" stroke-width="1.5" stroke-linecap="round"/>
+  </g>
+  <text x="52" y="24" font-family="'Playfair Display', 'Times New Roman', serif" font-size="18" font-weight="700" fill="#3e2a1c" letter-spacing="0.3">MVStudio<tspan font-weight="900" fill="#7a5410">Pro</tspan></text>
+  <text x="52" y="40" font-family="'Helvetica Neue', sans-serif" font-size="8" font-weight="700" fill="#7a5410" letter-spacing="2.4">STRATEGIC INTELLIGENCE · MVSTUDIOPRO.COM</text>
+</svg>`;
+
+// 对角水印 —— 用于 PDF body 平铺（每页都会出现），半透明咖啡色，不抢内容
+const WATERMARK_TILE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="540" height="300" viewBox="0 0 540 300">
+  <g transform="rotate(-26 270 150)" opacity="0.075">
+    <text x="270" y="135" font-family="'Playfair Display', Georgia, serif" font-size="36" font-weight="700" fill="#7a5410" text-anchor="middle">MVStudioPro</text>
+    <text x="270" y="172" font-family="'Helvetica Neue', sans-serif" font-size="13" font-weight="700" fill="#7a5410" text-anchor="middle" letter-spacing="4">MVSTUDIOPRO.COM · 试读样本</text>
+  </g>
+</svg>`;
+
+const BRAND_LOGO_DARK_URI = svgToDataUri(BRAND_LOGO_DARK_SVG);
+const BRAND_LOGO_LIGHT_URI = svgToDataUri(BRAND_LOGO_LIGHT_SVG);
+const WATERMARK_TILE_URI = svgToDataUri(WATERMARK_TILE_SVG);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 试读版 Markdown 内容（卡布奇諾色调 · 富图文 · 配五大必选模块）
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -316,13 +375,36 @@ function exportSampleAsPdf(
   clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
 
   // 把所有 body 子节点清空，只保留报告容器（用 innerHTML 取子节点，避免 fixed 定位被带进去）
+  // 关键：wrapper 的 background 叠加对角文字水印（SVG 平铺），puppeteer 渲染 PDF 时每页都会出现
   const cloneBody = clone.querySelector("body");
   if (cloneBody) {
     cloneBody.innerHTML = "";
     const wrapper = document.createElement("div");
-    wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100vh;";
+    wrapper.style.cssText = `
+      padding: 24px;
+      background-color: #f7ede0;
+      background-image: url('${WATERMARK_TILE_URI}');
+      background-repeat: repeat;
+      background-size: 540px 300px;
+      min-height: 100vh;
+    `;
     wrapper.innerHTML = containerEl.innerHTML;
     cloneBody.appendChild(wrapper);
+  }
+
+  // 保险：注入 @page 规则确保 PDF 打印背景，并给 body 也叠一层水印兜底
+  const headEl = clone.querySelector("head");
+  if (headEl) {
+    const watermarkStyle = document.createElement("style");
+    watermarkStyle.textContent = `
+      @page { margin: 0; }
+      html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body {
+        background-image: url('${WATERMARK_TILE_URI}');
+        background-repeat: repeat;
+      }
+    `;
+    headEl.appendChild(watermarkStyle);
   }
 
   const base = document.createElement("base");
@@ -441,9 +523,12 @@ function HiddenSampleReport({
         }}
       >
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(28,20,7,0.12) 0%,rgba(28,20,7,0.55) 60%,rgba(28,20,7,0.85) 100%)" }} />
-        <div style={{ position: "absolute", top: 32, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
-          <div style={{ fontSize: 13, letterSpacing: "0.30em", fontWeight: 700 }}>MV STUDIO PRO · STRATEGIC INTELLIGENCE</div>
-          <div style={{ fontSize: 11, marginTop: 6, opacity: 0.85 }}>{edition} · 2026 年 4 月 28 日</div>
+        <div style={{ position: "absolute", top: 32, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <img src={BRAND_LOGO_DARK_URI} alt="MVStudioPro" style={{ height: 50, display: "block", filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.45))" }} />
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, letterSpacing: "0.20em", fontWeight: 700, opacity: 0.92 }}>{edition}</div>
+            <div style={{ fontSize: 10, marginTop: 4, opacity: 0.75, letterSpacing: "0.10em" }}>2026 · APR · 28</div>
+          </div>
         </div>
         <div style={{ position: "absolute", bottom: 80, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
           <div
@@ -480,6 +565,15 @@ function HiddenSampleReport({
       <div style={{ marginTop: 24, padding: "20px 28px", borderRadius: 14, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", textAlign: "center" }}>
         <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: "0.05em" }}>🔒 完整版还有 32+ 页深度内容</div>
         <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>包含全部 8 张数据表、12 套钩子模板、私域转化 SOP、品牌商单话术、监管合规清单</div>
+      </div>
+
+      {/* 末页签名条（带 logo） */}
+      <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid rgba(122,84,16,0.22)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+        <img src={BRAND_LOGO_LIGHT_URI} alt="MVStudioPro" style={{ height: 44, display: "block" }} />
+        <div style={{ textAlign: "right", color: "#7a5410", fontFamily: "'PingFang SC', sans-serif" }}>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.18em" }}>POWERED BY MVSTUDIOPRO.COM</div>
+          <div style={{ fontSize: 10, marginTop: 4, opacity: 0.7 }}>{watermark} · 仅供品鉴 · 转载请标注来源</div>
+        </div>
       </div>
     </div>
   );
@@ -545,6 +639,11 @@ export default function SampleReportDownload() {
 
   return (
     <section style={{ maxWidth: 1200, margin: "0 auto", padding: "56px 24px" }}>
+      {/* 品牌 Logo 头条 */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 22 }}>
+        <img src={BRAND_LOGO_LIGHT_URI} alt="MVStudioPro · Strategic Intelligence" style={{ height: 54, display: "block", filter: "drop-shadow(0 4px 12px rgba(122,84,16,0.18))" }} />
+      </div>
+
       {/* 标题 */}
       <div style={{ textAlign: "center", marginBottom: 36 }}>
         <div style={{ display: "inline-block", fontSize: 11, letterSpacing: "0.30em", color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", padding: "5px 18px", marginBottom: 18, fontWeight: 800, borderRadius: 99 }}>
