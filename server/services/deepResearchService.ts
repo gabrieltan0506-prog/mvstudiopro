@@ -310,7 +310,7 @@ ${job.topic}
     let lighthouseTitle = job.topic;
     try {
       const titleText = await generate(
-        "gemini-2.5-flash",
+        "gemini-3.1-pro-preview",
         `针对课题《${job.topic}》，生成一个哈佛商业评论风格的灯塔标题（不超过 20 字，不含引号和标点符号以外的特殊字符）。仅输出标题本身。`,
       );
       if (titleText.trim().length > 0) lighthouseTitle = titleText.trim().slice(0, 40);
