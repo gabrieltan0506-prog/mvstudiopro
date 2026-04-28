@@ -25,28 +25,26 @@ function buildTrendSvg(data: {
   const xStep = chartW / (days - 1);
 
   const platforms = [
-    { key: "xiaohongshu" as const, label: "小红书", color: "#f43f5e" },
-    { key: "douyin"      as const, label: "抖音",   color: "#a78bfa" },
-    { key: "bilibili"    as const, label: "B站",    color: "#38bdf8" },
-    { key: "kuaishou"    as const, label: "快手",   color: "#4ade80" },
+    { key: "xiaohongshu" as const, label: "小红书", color: "#b6364c" },
+    { key: "douyin"      as const, label: "抖音",   color: "#7a5410" },
+    { key: "bilibili"    as const, label: "哔哩哔哩", color: "#2160a0" },
+    { key: "kuaishou"    as const, label: "快手",   color: "#1f7a52" },
   ];
 
   const toX = (i: number) => PAD.left + i * xStep;
   const toY = (v: number) => PAD.top + chartH - (v / 100) * chartH;
 
-  // 水平网格线
+  // 水平网格线（卡布奇諾配色）
   const gridLines = [0, 25, 50, 75, 100].map((v) => {
     const y = toY(v);
-    return `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>
-<text x="${PAD.left - 6}" y="${y + 4}" font-size="9" fill="rgba(255,255,255,0.3)" text-anchor="end">${v}</text>`;
+    return `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + chartW}" y2="${y}" stroke="rgba(122,84,16,0.18)" stroke-width="1"/>
+<text x="${PAD.left - 6}" y="${y + 4}" font-size="9" fill="rgba(74,54,33,0.6)" text-anchor="end">${v}</text>`;
   }).join("\n");
 
-  // X 轴日期标签
   const xLabels = data.dates.map((d, i) =>
-    `<text x="${toX(i)}" y="${PAD.top + chartH + 16}" font-size="9" fill="rgba(255,255,255,0.35)" text-anchor="middle">${d}</text>`
+    `<text x="${toX(i)}" y="${PAD.top + chartH + 16}" font-size="9" fill="rgba(74,54,33,0.65)" text-anchor="middle">${d}</text>`
   ).join("\n");
 
-  // 每条折线 + 填充区域
   const lines = platforms.map(({ key, color }) => {
     const vals = data[key];
     const pts = vals.map((v, i) => `${toX(i)},${toY(v)}`).join(" ");
@@ -54,25 +52,30 @@ function buildTrendSvg(data: {
     return `
 <defs>
   <linearGradient id="grad-${key}" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+    <stop offset="0%" stop-color="${color}" stop-opacity="0.30"/>
     <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
   </linearGradient>
 </defs>
 <polygon points="${pts} ${areaBase}" fill="url(#grad-${key})"/>
-<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3" fill="${color}" stroke="#0a0700" stroke-width="1.5"/>`).join("")}`;
+<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3.5" fill="${color}" stroke="#fffaf0" stroke-width="1.5"/>`).join("")}`;
   }).join("\n");
 
-  // 图例
   const legend = platforms.map(({ label, color }, i) =>
-    `<rect x="${PAD.left + i * 155}" y="14" width="10" height="10" rx="3" fill="${color}"/>
-<text x="${PAD.left + i * 155 + 14}" y="23" font-size="11" fill="rgba(255,255,255,0.75)">${label}</text>`
+    `<rect x="${PAD.left + i * 155}" y="14" width="11" height="11" rx="3" fill="${color}"/>
+<text x="${PAD.left + i * 155 + 16}" y="24" font-size="11" font-weight="700" fill="#3d2c14">${label}</text>`
   ).join("\n");
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="font-family:system-ui,sans-serif">
-  <rect width="${W}" height="${H}" rx="12" fill="#0e0900"/>
-  <rect width="${W}" height="${H}" rx="12" fill="none" stroke="rgba(180,130,0,0.25)" stroke-width="1"/>
-  <text x="${W / 2}" y="12" font-size="10" fill="rgba(245,200,80,0.5)" text-anchor="middle">📊 ${topic} · 四平台7天热度趋势指数（0-100）</text>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="font-family:'PingFang SC',system-ui,sans-serif">
+  <defs>
+    <linearGradient id="bg-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fffaf0"/>
+      <stop offset="100%" stop-color="#f5ecda"/>
+    </linearGradient>
+  </defs>
+  <rect width="${W}" height="${H}" rx="12" fill="url(#bg-grad)"/>
+  <rect width="${W}" height="${H}" rx="12" fill="none" stroke="rgba(122,84,16,0.30)" stroke-width="1"/>
+  <text x="${W / 2}" y="12" font-size="10" font-weight="700" fill="#7a5410" text-anchor="middle">📊 ${topic} · 四平台 7 天热度趋势指数（0-100）</text>
   ${legend}
   ${gridLines}
   ${xLabels}
@@ -83,15 +86,18 @@ ${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3" fill="${color}
   return `\n\n> 📈 **四平台 7 天趋势监控**（热度指数 0-100，100 为最热）\n\n<img src="data:image/svg+xml;base64,${b64}" width="680" alt="四平台7天趋势图" style="border-radius:12px;margin:8px 0"/>\n\n`;
 }
 
-/** 直接 HTTP 调用 Gemini API */
-async function generate(model: string, prompt: string, retries = 2): Promise<string> {
+/** 直接 HTTP 调用 Gemini API（普通模式） */
+async function generate(model: string, prompt: string, retries = 2, opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.5, maxOutputTokens: 65536 },
+    generationConfig: {
+      temperature: opts?.temperature ?? 0.5,
+      maxOutputTokens: opts?.maxTokens ?? 65536,
+    },
   });
 
   for (let i = 0; i <= retries; i++) {
@@ -99,7 +105,7 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
-      signal: AbortSignal.timeout(600_000), // 10 分钟超时
+      signal: AbortSignal.timeout(600_000),
     });
     const json: any = await res.json().catch(() => ({}));
     if (res.status === 429 && i < retries) {
@@ -111,6 +117,69 @@ async function generate(model: string, prompt: string, retries = 2): Promise<str
     return String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "");
   }
   return "";
+}
+
+/**
+ * Google 搜索接地（grounding）调用：让模型在真实可检索的最新网络数据上推理。
+ * 对应 gemini-2.5-pro / gemini-3.1-pro-preview 的 deep research 行为。
+ */
+interface GroundedResult {
+  text: string;
+  sources: Array<{ title: string; url: string; snippet?: string }>;
+}
+
+async function generateGrounded(model: string, prompt: string, retries = 2): Promise<GroundedResult> {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const body = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    // 关键：开启 Google Search 接地，让模型对最近 2 年真实数据进行检索
+    tools: [{ googleSearch: {} }],
+    generationConfig: {
+      temperature: 0.4,
+      maxOutputTokens: 65536,
+    },
+  });
+
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(720_000),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (res.status === 429 && i < retries) {
+      console.log(`[deepResearch] grounded 429, retry in ${10 * (i + 1)}s`);
+      await sleep(10000 * (i + 1));
+      continue;
+    }
+    if (!res.ok) {
+      // 接地失败时降级：去掉 tools 重试一次
+      if (i === retries) {
+        console.warn(`[deepResearch] grounded ${model} ${res.status}, fallback to plain`);
+        const text = await generate(model, prompt, 0).catch(() => "");
+        return { text, sources: [] };
+      }
+      await sleep(8000);
+      continue;
+    }
+    const cand = json?.candidates?.[0];
+    const text = String(cand?.content?.parts?.[0]?.text || "");
+    const grounding = cand?.groundingMetadata || cand?.grounding_metadata || {};
+    const chunks = grounding?.groundingChunks || grounding?.grounding_chunks || [];
+    const sources: GroundedResult["sources"] = [];
+    for (const c of chunks) {
+      const web = c?.web;
+      if (web?.uri) {
+        sources.push({ title: String(web.title || web.uri), url: String(web.uri), snippet: undefined });
+      }
+    }
+    return { text, sources };
+  }
+  return { text: "", sources: [] };
 }
 
 // ── Neon DB 辅助 ────────────────────────────────────────────────────────────
@@ -175,7 +244,7 @@ async function dbUpdateRecord(
 }
 
 /** 抓取用户历史研报快照（供个性化分析「大洗牌」对比使用） */
-export async function getUserReportSnapshots(userId: string): Promise<Array<{ date: string; title: string; summary: string }>> {
+export async function getUserReportSnapshots(userId: string): Promise<Array<{ date: string; title: string; summary: string; topic: string }>> {
   try {
     const { db, userCreations } = await getDbAndSchema();
     if (!db) return [];
@@ -185,18 +254,69 @@ export async function getUserReportSnapshots(userId: string): Promise<Array<{ da
       .from(userCreations)
       .where(and(eq(userCreations.userId, Number(userId)), eq(userCreations.type, "deep_research_report"), eq(userCreations.status, "completed")))
       .orderBy(desc(userCreations.createdAt))
-      .limit(5);
+      .limit(8);
     return rows.map((r) => {
       let meta: any = {};
       try { meta = JSON.parse(r.metadata || "{}"); } catch {}
       return {
         date: r.createdAt.toLocaleDateString("zh-CN"),
-        title: r.title || meta.topic || "无标题",
-        summary: meta.summary || meta.reportMarkdown?.slice(0, 100) || "",
+        title: r.title || meta.lighthouseTitle || meta.topic || "无标题",
+        topic: meta.topic || r.title || "",
+        summary: meta.summary || meta.reportMarkdown?.slice(0, 200) || "",
       };
     });
   } catch {
     return [];
+  }
+}
+
+/** 抓取用户其他平台调研快照与历史作品聚合，用于个性化分析的"全息基线" */
+export async function getUserHolisticContext(userId: string): Promise<{
+  totalCreations: number;
+  byType: Record<string, number>;
+  recentTopics: string[];
+  competitorSnapshots: Array<{ date: string; platform: string; positioning: string }>;
+  totalCreditsSpent: number;
+}> {
+  const empty = { totalCreations: 0, byType: {}, recentTopics: [], competitorSnapshots: [], totalCreditsSpent: 0 };
+  try {
+    const { db, userCreations } = await getDbAndSchema();
+    if (!db) return empty;
+    const { eq, and, desc } = await import("drizzle-orm");
+    const rows = await db
+      .select()
+      .from(userCreations)
+      .where(and(eq(userCreations.userId, Number(userId))))
+      .orderBy(desc(userCreations.createdAt))
+      .limit(80);
+
+    const byType: Record<string, number> = {};
+    const recentTopics: string[] = [];
+    const competitorSnapshots: Array<{ date: string; platform: string; positioning: string }> = [];
+    let totalCreditsSpent = 0;
+
+    for (const r of rows) {
+      const t = String(r.type || "");
+      byType[t] = (byType[t] || 0) + 1;
+      totalCreditsSpent += Number(r.creditsUsed || 0);
+      let meta: any = {};
+      try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+      if (t === "deep_research_report") {
+        const topic = String(meta.topic || r.title || "").trim();
+        if (topic && recentTopics.length < 8) recentTopics.push(topic);
+      }
+      if (t === "research_snapshot" && competitorSnapshots.length < 6) {
+        competitorSnapshots.push({
+          date: r.createdAt.toLocaleDateString("zh-CN"),
+          platform: String(meta.platform || "未知"),
+          positioning: String(meta.positioning?.coreIdentity || meta.positioning?.summary || "").slice(0, 120),
+        });
+      }
+    }
+
+    return { totalCreations: rows.length, byType, recentTopics, competitorSnapshots, totalCreditsSpent };
+  } catch {
+    return empty;
   }
 }
 
@@ -332,24 +452,63 @@ export async function runDeepResearchAsync(jobId: string) {
     const productType = job.productType ?? "magazine_single";
     const dateStr = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long" });
 
-    // ── 個性化分析：先抓取歷史快照做對比 ──────────────────────────────────────
-    let historyContext = "此用戶尚無歷史分析記錄。";
+    // ── 用户全息基线（个人亮点提取的真实数据基础） ──────────────────────────
+    const holistic = await getUserHolisticContext(job.userId);
+    const userBaseline = `
+【用户当下数据库基线 · 真实账户行为，禁止脱离这些数据空想】
+- 累计创作记录数：${holistic.totalCreations} 条
+- 创作类型分布：${Object.entries(holistic.byType).map(([k, v]) => `${k}=${v}条`).join("，") || "暂无"}
+- 累计积分投入：${holistic.totalCreditsSpent} 点（反映用户对哪些方向最重视）
+- 近期研究课题（最多 8 条，按时间倒序）：${holistic.recentTopics.length ? holistic.recentTopics.map((t, i) => `\n  ${i + 1}. ${t}`).join("") : "（用户首次发起，无历史）"}
+- 历史竞品调研快照：${holistic.competitorSnapshots.length ? holistic.competitorSnapshots.map((s) => `\n  · [${s.date}|${s.platform}] ${s.positioning}`).join("") : "（用户首次调研竞品）"}
+`.trim();
+
+    // ── 個性化分析：抓取歷史戰報做縱向對比 ──────────────────────────────────
+    let historyContext = "此用户尚无历史分析记录，本次将作为基线快照建立。";
     if (productType === "personalized") {
       const snapshots = await getUserReportSnapshots(job.userId);
       if (snapshots.length > 0) {
         historyContext = snapshots
-          .map((s) => `[${s.date}] 課題：${s.title}　摘要：${s.summary}`)
-          .join("\n");
+          .map((s, i) => `[第${i + 1}次 · ${s.date}]\n  课题：${s.title}\n  摘要：${s.summary.slice(0, 240)}`)
+          .join("\n\n");
       }
     }
 
+    const LANG_RULES = `
+【语言强制规范 · 违规即不合格】
+1. 全文 100% 简体中文，禁止出现任何英文术语；如必须引用，括号内附简体中文解释，如「关键绩效指标（KPI）」必须改写为「核心达成指标」
+2. 不得使用以下英文/拼音词：AIDA、SWOT、KPI、CRM、SOP、ROI、CAC、LTV、CPC、CPM、ARPU、UGC、PGC、PMF、Phygital、FOMO、Aha Moment、Lead Magnet、Hook、Punchline、Pain Point、Niche、Persona、Slogan
+   · AIDA → 注意力—兴趣—欲望—行动 四步漏斗
+   · SWOT → 优劣势—机会威胁 矩阵
+   · KPI → 核心达成指标
+   · CAC → 单粉获取成本
+   · LTV → 用户终身价值
+   · CPM → 千次曝光成本
+   · ROI → 投入产出比
+   · FOMO → 错失焦虑
+   · Hook → 钩子
+   · Slogan → 品牌口号
+   · Persona → 人物画像
+3. 平台名一律使用：小红书 / 抖音 / 哔哩哔哩 / 快手 / 视频号 / 公众号 / 微信私域，不得简写为 B站、Xhs、Dy 等
+4. 数字一律使用阿拉伯数字 + 中文单位（如 1500 万、12.5%、3.2 亿）
+`;
+
     const DATA_TABLE_RULES = `
-【数据与图表强制规范】（全文必须严格执行，否则视为输出不合格）
-1. 每个章节必须包含至少 1 个完整 Markdown 表格，表格须有真实数值（增长率/用户量/转化率/单价等）
-2. 平台对比必须以表格形式呈现，覆盖小红书/抖音/B站/快手四平台
-3. 所有数据须标注参考时间区间（如：2025Q1、2024年全年等）
-4. 核心指标必须给出具体数字，禁止使用"较高""较低""显著"等模糊表述
-5. 每章结尾用"📊 数据速查"小节，用表格汇总本章关键数字
+【数据与图表强制规范 · 高级商务白皮书标准】
+1. 每个章节必须包含至少 1 个完整的 Markdown 表格，表头与首列粗体，数值列不得留空
+2. 平台对比必须覆盖：小红书 / 抖音 / 哔哩哔哩 / 快手 四平台，每平台至少 5 项指标
+3. 所有数据必须标注参考时间区间（例：2025 年第 1 季度、2024 全年、2026 年第 1 季度截至当月）
+4. 核心指标必须给出具体数字，禁止使用「较高」「较低」「显著」「相当」「不少」等模糊表述
+5. 每章结尾以「📊 数据速查」小节用一个三列表格汇总本章关键数字（指标 / 数值 / 数据来源）
+6. 关键论断必须以「根据 XX 平台 2025Q1 数据：……」「以 XX 头部账号近 30 天为例：……」的句式呈现，杜绝凭空判断
+7. 重点结论用「**……**」加粗（前端会自动高亮为咖啡金色），全文重点加粗段落不少于 12 处
+`;
+
+    const PERSONA_HIGHLIGHT_RULES = `
+【个人亮点提取 · 必须基于用户真实数据】
+- 必须从「用户当下数据库基线」中找出 5 条独属于此用户的差异化亮点，每条配 1 个具体数据证据（例：「累计在小红书赛道发起 4 次研究，远高于抖音 1 次，说明用户对图文社区的下沉度强于短视频」）
+- 不得给出「您很努力」「您很有潜力」这种空话
+- 必须提炼 1 个用户专属「定位锚点」——能用一句话总结此用户区别于市场的最强不可替代性
 `;
 
     // ── 半月刊专属：四平台 7 天趋势图（Gemini 生成数据 → SVG 折线图）─────────

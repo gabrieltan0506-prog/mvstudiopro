@@ -37,22 +37,49 @@ export async function parseVideoUrl(url: string) {
 }
 
 async function runParse(url: string) {
-  const output = await (youtubedl as unknown as (...args: unknown[]) => Promise<Record<string, unknown>>)(url, {
+  // 检测平台，YouTube 需要用 iOS/Android 客户端绕过机器人验证
+  const isYoutube = /youtube\.com|youtu\.be/i.test(url);
+  const isBilibili = /bilibili\.com|b23\.tv/i.test(url);
+
+  const extraArgs: Record<string, unknown> = {
     dumpSingleJson: true,
     noCheckCertificates: true,
     noWarnings: true,
     preferFreeFormats: true,
     addHeader: [
       'referer:https://www.google.com/',
-      'user-agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
     ],
-  });
+  };
+
+  if (isYoutube) {
+    // 伪装为 iOS 客户端，绕过 YouTube 机器人检测（无需登录 cookies）
+    extraArgs['extractor-args'] = 'youtube:player_client=ios,web';
+    // 选取最佳画质但不超过 1080p，避免合并流失败
+    extraArgs['format'] = 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4][height<=1080]/best';
+  }
+
+  if (isBilibili) {
+    extraArgs['addHeader'] = [
+      'referer:https://www.bilibili.com/',
+      'user-agent:Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+    ];
+  }
+
+  const output = await (youtubedl as unknown as (...args: unknown[]) => Promise<Record<string, unknown>>)(url, extraArgs);
 
   const formats = (output.formats as Array<Record<string, unknown>> | undefined) ?? [];
+  const requestedDownloads = output.requested_downloads as Array<Record<string, unknown>> | undefined;
+
+  // 优先取 requested_downloads（yt-dlp 已选择的最终格式）
   const videoUrl =
+    (requestedDownloads?.[0]?.url as string | undefined) ||
     (output.url as string | undefined) ||
-    ((output.requested_downloads as Array<Record<string, unknown>> | undefined)?.[0]?.url as string | undefined) ||
-    (formats.find((f) => f.vcodec !== 'none' && f.ext === 'mp4')?.url as string | undefined) ||
+    // mp4 且含视频流
+    (formats.find((f) => f.vcodec !== 'none' && f.acodec !== 'none' && f.ext === 'mp4')?.url as string | undefined) ||
+    // 任意含视频流
+    (formats.find((f) => f.vcodec !== 'none' && f.acodec !== 'none')?.url as string | undefined) ||
+    // 最高清晰度（可能是无声视频流，作为兜底）
     (formats[formats.length - 1]?.url as string | undefined);
 
   if (!videoUrl) {

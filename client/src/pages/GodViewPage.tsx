@@ -165,31 +165,31 @@ export default function GodViewPage() {
   }, [isRecording]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(160deg,#050300 0%,#0a0600 40%,#0e0800 70%,#060400 100%)", fontFamily: "'Inter',sans-serif", position: "relative", overflow: "hidden" }}>
-      {/* 黑金光晕 */}
+    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 35%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif", position: "relative", overflow: "hidden" }}>
+      {/* 卡布奇诺暖金光晕 */}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "5%", left: "10%", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle,rgba(180,130,0,0.12) 0%,transparent 65%)", filter: "blur(80px)", animation: "godview-float 18s ease-in-out infinite" }} />
-        <div style={{ position: "absolute", bottom: "10%", right: "5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle,rgba(140,90,0,0.10) 0%,transparent 65%)", filter: "blur(60px)", animation: "godview-float 22s ease-in-out infinite reverse" }} />
+        <div style={{ position: "absolute", top: "5%", left: "10%", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle,rgba(168,118,27,0.16) 0%,transparent 65%)", filter: "blur(80px)", animation: "godview-float 18s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", bottom: "10%", right: "5%", width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle,rgba(122,84,16,0.14) 0%,transparent 65%)", filter: "blur(60px)", animation: "godview-float 22s ease-in-out infinite reverse" }} />
       </div>
 
       {/* 顶部导航 */}
-      <div style={{ borderBottom: "1px solid rgba(180,130,0,0.20)", background: "rgba(5,3,0,0.95)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50 }}>
-        <button onClick={() => navigate("/")} style={{ color: "rgba(245,200,80,0.5)", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
+      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
+        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
           <ChevronLeft size={16} />首页
         </button>
-        <span style={{ color: "rgba(245,200,80,0.2)" }}>/</span>
-        <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 13, fontWeight: 700 }}>AI 上帝视角</span>
+        <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
+        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800 }}>AI 上帝视角</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
           <button
             onClick={() => navigate("/my-reports")}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "linear-gradient(135deg,rgba(200,160,0,0.20),rgba(138,98,0,0.15))", border: "1px solid rgba(180,130,0,0.45)", color: "#f5c842", fontSize: 12, fontWeight: 800, cursor: "pointer", transition: "all 0.2s" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "linear-gradient(135deg,#c8a000,#8a6200)"; (e.currentTarget as HTMLElement).style.color = "#050300"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "linear-gradient(135deg,rgba(200,160,0,0.20),rgba(138,98,0,0.15))"; (e.currentTarget as HTMLElement).style.color = "#f5c842"; }}
+            style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontSize: 12, fontWeight: 900, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 14px rgba(168,118,27,0.32)" }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 22px rgba(168,118,27,0.55)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 14px rgba(168,118,27,0.32)"; }}
           >
-            <Crown size={13} />我的战报
+            <Crown size={13} />战略作品快照库
           </button>
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#f5c842", background: "rgba(180,130,0,0.15)", border: "1px solid rgba(180,130,0,0.4)", borderRadius: 99, padding: "3px 10px" }}>
-            👑 VIP 专享
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7a5410", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 99, padding: "4px 12px" }}>
+            👑 至尊专享
           </span>
         </div>
       </div>
@@ -197,29 +197,64 @@ export default function GodViewPage() {
       <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
         {/* 页面标题 */}
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-            <div style={{ width: 52, height: 52, borderRadius: 16, background: "linear-gradient(135deg,#c8a000,#8a6200)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 30px rgba(200,160,0,0.35)" }}>
-              <Crown size={26} color="#fff" />
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
+            <div style={{ width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)" }}>
+              <Crown size={28} color="#fff7df" />
             </div>
-            <div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, background: "linear-gradient(90deg,#f5c842,#ffd878,#c8a000)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: 0, letterSpacing: "-0.02em" }}>
+            <div style={{ textAlign: "left" }}>
+              <h1 style={{ fontSize: 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
                 AI 上帝视角
               </h1>
-              <p style={{ color: "rgba(245,200,80,0.55)", fontSize: 13, margin: 0, letterSpacing: "0.15em", textTransform: "uppercase" }}>
+              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: 13, margin: "4px 0 0", letterSpacing: "0.10em", fontWeight: 700 }}>
                 全景行业战报 · 旗舰级商业智库
               </p>
             </div>
           </div>
-          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 14, maxWidth: 600, margin: "0 auto", lineHeight: 1.8 }}>
-            停止在信息泥潭中盲目试错。派遣专属 AI 研究集群，独占极限算力，全网深度检索与逻辑推演，
-            为您交付降维打击的<strong style={{ color: "rgba(245,200,80,0.8)" }}>全景行业战报</strong>。
+          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: 15, maxWidth: 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
+            停止在信息泥潭中盲目试错。派遣专属智能研究集群，独占极限算力，全网深度检索与逻辑推演，
+            为您交付降维打击的<strong style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 70%, rgba(216,162,58,0.30) 70%)", padding: "0 3px" }}>全景行业战报</strong>。
             穿透赛道迷雾，锁定商业胜率。
           </p>
-          <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
             {["宏观趋势前瞻", "竞品变现拆解", "私域留存策略", "30天行动清单"].map((t) => (
-              <span key={t} style={{ fontSize: 11, fontWeight: 700, color: "rgba(245,200,80,0.6)", background: "rgba(180,130,0,0.10)", border: "1px solid rgba(180,130,0,0.25)", borderRadius: 99, padding: "4px 12px" }}>{t}</span>
+              <span key={t} style={{ fontSize: 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: "5px 14px" }}>{t}</span>
             ))}
+          </div>
+        </div>
+
+        {/* 战略作品快照库 · 醒目入口卡 */}
+        <div
+          onClick={() => navigate("/my-reports")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            padding: "16px 22px",
+            marginBottom: 24,
+            borderRadius: 14,
+            background: "linear-gradient(135deg,#fffaf0 0%,#f5ecda 100%)",
+            border: "1px solid rgba(168,118,27,0.30)",
+            boxShadow: "0 6px 20px rgba(122,84,16,0.10)",
+            cursor: "pointer",
+            transition: "all 0.2s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.65)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 30px rgba(168,118,27,0.20)"; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.30)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 20px rgba(122,84,16,0.10)"; (e.currentTarget as HTMLElement).style.transform = "none"; }}
+        >
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.30)" }}>
+            <Crown size={20} color="#fff7df" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
+              战略作品快照库 · 历史战报一键直达
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.5 }}>
+              所有已生成的全景战报、个性化分析与半月刊都在此沉淀，支持<strong style={{ color: "#7a5410" }}>富图文 PDF 一键下载</strong>，包含个人亮点、平台赛道、产品矩阵、商业变现、生涯规划五大模块。
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+            进入快照库 →
           </div>
         </div>
 
@@ -236,27 +271,27 @@ export default function GodViewPage() {
                   onClick={() => handleProductChange(p.id)}
                   style={{
                     textAlign: "left", padding: "16px 18px", borderRadius: 16, cursor: "pointer",
-                    background: isSelected ? `rgba(${p.id === "magazine_single" ? "120,80,200" : p.id === "magazine_sub" ? "30,160,100" : "200,100,20"},0.12)` : "rgba(255,255,255,0.03)",
-                    border: `1.5px solid ${isSelected ? p.color : "rgba(255,255,255,0.10)"}`,
-                    boxShadow: isSelected ? `0 0 20px ${p.color}25` : "none",
+                    background: isSelected ? "linear-gradient(135deg,#fffaf0,#f5ecda)" : "rgba(255,250,240,0.55)",
+                    border: `1.5px solid ${isSelected ? p.color : "rgba(168,118,27,0.25)"}`,
+                    boxShadow: isSelected ? `0 6px 22px ${p.color}30` : "0 2px 8px rgba(122,84,16,0.06)",
                     transition: "all 0.2s",
                     position: "relative", overflow: "hidden",
                   }}
                 >
                   {p.tag && (
-                    <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: p.color, background: `${p.color}20`, border: `1px solid ${p.color}50`, borderRadius: 99, padding: "1px 6px", letterSpacing: "0.05em" }}>
+                    <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: "#fff", background: p.color, borderRadius: 99, padding: "2px 8px", letterSpacing: "0.05em" }}>
                       {p.tag}
                     </span>
                   )}
-                  <div style={{ fontSize: 12, fontWeight: 700, color: isSelected ? p.color : "rgba(255,255,255,0.5)", marginBottom: 4 }}>{p.label}</div>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: isSelected ? p.color : "rgba(255,255,255,0.7)", lineHeight: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: isSelected ? p.color : "#7a5410", marginBottom: 6 }}>{p.label}</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: isSelected ? p.color : "#3d2c14", lineHeight: 1 }}>
                     {displayPrice.toLocaleString()}
-                    <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 3 }}>點</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 3 }}>点</span>
                     {pIsFirst && p.firstPrice !== undefined && (
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", textDecoration: "line-through", marginLeft: 6 }}>{p.price.toLocaleString()}</span>
+                      <span style={{ fontSize: 10, color: "rgba(61,44,20,0.45)", textDecoration: "line-through", marginLeft: 6, fontWeight: 600 }}>{p.price.toLocaleString()}</span>
                     )}
                   </div>
-                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.30)", marginTop: 6, lineHeight: 1.4 }}>{p.desc}</div>
+                  <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", marginTop: 8, lineHeight: 1.5, fontWeight: 500 }}>{p.desc}</div>
                 </button>
               );
             })}
@@ -265,8 +300,8 @@ export default function GodViewPage() {
 
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
-          <div style={{ background: "rgba(180,130,0,0.05)", border: "1px solid rgba(180,130,0,0.22)", borderRadius: 20, padding: 28 }}>
-            <p style={{ fontSize: 12, color: "rgba(245,200,80,0.5)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>
+          <div style={{ background: "linear-gradient(135deg,#fffaf0,#f5ecda)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 20, padding: 28, boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
+            <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 10 }}>
               输入研究课题
             </p>
             <div style={{ position: "relative" }}>
@@ -274,22 +309,22 @@ export default function GodViewPage() {
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 rows={5}
-                placeholder="请描述您要研究的赛道或课题，例如：2026年小红书形体美学与心血管健康赛道的商业模式、头部变现路径与差异化破局策略…"
-                style={{ width: "100%", padding: "14px 16px", paddingRight: 52, borderRadius: 12, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(180,130,0,0.25)", color: "#fff", fontSize: 14, lineHeight: 1.7, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(245,200,80,0.5)"; }}
-                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(180,130,0,0.25)"; }}
+                placeholder="请描述您要研究的赛道或课题，例如：2026 年小红书形体美学与心血管健康赛道的商业模式、头部变现路径与差异化破局策略…"
+                style={{ width: "100%", padding: "14px 16px", paddingRight: 52, borderRadius: 12, background: "#fff", border: "1px solid rgba(168,118,27,0.35)", color: "#1c1407", fontSize: 14.5, lineHeight: 1.75, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "#a8761b"; }}
+                onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(168,118,27,0.35)"; }}
                 disabled={phase === "launching"}
               />
               <button
                 onClick={toggleVoice}
                 disabled={isTranscribing || phase === "launching"}
-                title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题（Gemini 转录）"}
+                title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题"}
                 style={{
                   position: "absolute", top: 10, right: 10,
-                  width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: isRecording ? "rgba(239,68,68,0.18)" : isTranscribing ? "rgba(251,191,36,0.12)" : "rgba(180,130,0,0.10)",
-                  border: isRecording ? "1px solid rgba(239,68,68,0.5)" : isTranscribing ? "1px solid rgba(251,191,36,0.4)" : "1px solid rgba(180,130,0,0.3)",
-                  color: isRecording ? "#ef4444" : isTranscribing ? "#fbbf24" : "rgba(245,200,80,0.55)",
+                  width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isRecording ? "rgba(220,38,38,0.10)" : isTranscribing ? "rgba(217,119,6,0.10)" : "rgba(168,118,27,0.12)",
+                  border: isRecording ? "1px solid rgba(220,38,38,0.5)" : isTranscribing ? "1px solid rgba(217,119,6,0.4)" : "1px solid rgba(168,118,27,0.4)",
+                  color: isRecording ? "#dc2626" : isTranscribing ? "#d97706" : "#7a5410",
                   cursor: isTranscribing || phase === "launching" ? "not-allowed" : "pointer",
                   transition: "all 0.2s",
                   animation: isRecording ? "godview-mic-pulse 1.2s ease-in-out infinite" : "none",
@@ -300,16 +335,16 @@ export default function GodViewPage() {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", margin: 0 }}>
-                  ⏱ 异步重算力推演，约 15-30 分钟，派发后可关闭页面到「我的战报」查看
+                <p style={{ fontSize: 12, color: "rgba(61,44,20,0.60)", margin: 0, fontWeight: 600 }}>
+                  ⏱ 异步重算力推演，约 15-30 分钟，派发后可关闭页面到「战略作品快照库」查看
                 </p>
                 {selectedProduct === "magazine_single" && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.45)", cursor: "pointer" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(61,44,20,0.70)", cursor: "pointer", fontWeight: 600 }}>
                     <input
                       type="checkbox"
                       checked={isBundlePromo}
                       onChange={(e) => setIsBundlePromo(e.target.checked)}
-                      style={{ accentColor: "#f5c842" }}
+                      style={{ accentColor: "#a8761b" }}
                     />
                     满月老用户专享：两本 800 点特惠（需在平台超过 30 天）
                   </label>
@@ -318,14 +353,14 @@ export default function GodViewPage() {
               <button
                 onClick={handleLaunch}
                 disabled={!topic.trim() || phase === "launching"}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 28px", borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(180,130,0,0.08)" : "linear-gradient(135deg,#c8a000,#8a6200)", border: "1px solid rgba(180,130,0,0.5)", color: (!topic.trim() || phase === "launching") ? "rgba(245,200,80,0.3)" : "#050300", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 0 20px rgba(200,160,0,0.30)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 30px", borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(168,118,27,0.20)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: (!topic.trim() || phase === "launching") ? "rgba(61,44,20,0.45)" : "#fff7df", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 6px 22px rgba(168,118,27,0.40)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
               >
                 {phase === "launching" ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
                 {phase === "launching"
                   ? "正在派发任务…"
-                  : `💎 启动 ${currentProduct.label}（${cost.toLocaleString()} 点）`}
+                  : `启动 ${currentProduct.label}（${cost.toLocaleString()} 点）`}
                 {isFirst && currentProduct.firstPrice !== undefined && phase !== "launching" && (
-                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#ef4444", color: "#fff", borderRadius: 99, padding: "1px 6px" }}>首次优惠</span>
+                  <span style={{ position: "absolute", top: -10, right: -6, fontSize: 9, fontWeight: 900, background: "#dc2626", color: "#fff", borderRadius: 99, padding: "2px 8px" }}>首次优惠</span>
                 )}
               </button>
             </div>
@@ -334,26 +369,26 @@ export default function GodViewPage() {
 
         {/* ── 已派发：任务接收确认 ── */}
         {phase === "dispatched" && (
-          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease" }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 0 40px rgba(22,163,74,0.35)", fontSize: 32 }}>✅</div>
-            <h2 style={{ fontSize: 24, fontWeight: 900, color: "#f5c842", marginBottom: 12 }}>
+          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#fffaf0,#f5ecda)", borderRadius: 20, border: "1px solid rgba(168,118,27,0.30)", boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 6px 24px rgba(22,163,74,0.30)", fontSize: 32 }}>✅</div>
+            <h2 style={{ fontSize: 24, fontWeight: 900, color: "#3d2c14", marginBottom: 12 }}>
               全景战报任务已成功派发
             </h2>
-            <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, lineHeight: 1.9, maxWidth: 540, margin: "0 auto 32px" }}>
-              专属 AI 研究集群已接收指令并开始推演。由于涉及全网海量检索与万字逻辑推演，<br />
-              此过程预计需要 <strong style={{ color: "#f5c842" }}>15 到 30 分钟</strong>。<br />
-              <strong style={{ color: "rgba(255,255,255,0.75)" }}>您现在可以安心关闭此页面</strong>，战报生成后可在「我的战报」中查阅。
+            <p style={{ color: "rgba(61,44,20,0.75)", fontSize: 14.5, lineHeight: 1.9, maxWidth: 560, margin: "0 auto 32px", fontWeight: 500 }}>
+              专属智能研究集群已接收指令并开始推演。由于涉及全网海量检索与万字逻辑推演，<br />
+              此过程预计需要 <strong style={{ color: "#7a5410" }}>15 到 30 分钟</strong>。<br />
+              <strong style={{ color: "#3d2c14" }}>您现在可以安心关闭此页面</strong>，战报生成后可在「战略作品快照库」中查阅。
             </p>
             <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
               <button
                 onClick={() => navigate("/my-reports")}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#c8a000,#8a6200)", border: "none", color: "#050300", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 0 20px rgba(200,160,0,0.30)" }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(168,118,27,0.35)" }}
               >
-                <Sparkles size={16} />前往「我的战报」查看进度
+                <Sparkles size={16} />前往「战略作品快照库」查看进度
               </button>
               <button
                 onClick={() => { setPhase("idle"); setTopic(""); }}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(180,130,0,0.08)", border: "1px solid rgba(180,130,0,0.3)", color: "rgba(245,200,80,0.7)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.35)", color: "#7a5410", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
               >
                 再发起一个新课题
               </button>
@@ -363,9 +398,9 @@ export default function GodViewPage() {
 
         {/* ── 启动失败 ── */}
         {phase === "failed" && (
-          <div style={{ padding: "20px 24px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <p style={{ color: "#f87171", fontSize: 13, margin: 0 }}>❌ {errorMsg} · 积分已退回</p>
-            <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 12, cursor: "pointer" }}>
+          <div style={{ padding: "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700 }}>❌ {errorMsg} · 积分已退回</p>
+            <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
               <RotateCcw size={12} />重试
             </button>
           </div>
