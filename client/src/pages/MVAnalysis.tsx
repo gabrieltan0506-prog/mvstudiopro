@@ -69,6 +69,7 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import VoiceInputButton from "@/components/VoiceInputButton";
+import VideoParserWidget from "@/components/VideoParserWidget";
 
 type AnalysisResult = {
   mode?: "GROWTH" | "REMIX";
@@ -3285,6 +3286,12 @@ export default function MVAnalysisPage() {
                   ))}
                 </div>
               </div>
+              {isRemixMode && (
+                <div style={{ marginBottom: 20 }}>
+                  <VideoParserWidget />
+                </div>
+              )}
+
               {!selectedFile ? (
                 <button
                   onClick={handleSelectFile}

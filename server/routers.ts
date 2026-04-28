@@ -1515,6 +1515,18 @@ export const appRouter = router({
   suno: sunoRouter,
   creations: creationsRouter,
   workflow: workflowRouter,
+  videoParser: router({
+    parse: protectedProcedure
+      .input(z.object({ url: z.string().url() }))
+      .mutation(async ({ input }) => {
+        const { parseVideoUrl } = await import('./services/videoParserService.js');
+        return parseVideoUrl(input.url);
+      }),
+    checkHealth: protectedProcedure.query(async () => {
+      const { checkYtdlpHealth } = await import('./services/videoParserService.js');
+      return checkYtdlpHealth();
+    }),
+  }),
   // phoneOtp: phoneOtpRouter, // 暂不上线，等短信服务开通后取消注释
   auth: router({
     me: publicProcedure.query((opts) => opts.ctx.user),

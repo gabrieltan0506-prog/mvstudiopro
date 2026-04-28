@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown } from "lucide-react";
+import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown, Zap } from "lucide-react";
 
 // ─── 固定置顶卡片（竞品分析，永久显示） ───────────────────────────────
 const PINNED_CARD = {
@@ -20,6 +20,21 @@ const PINNED_CARD = {
 
 // ─── 轮播功能动态（不含固定卡片） ───────────────────────────────────
 const CAROUSEL_CARDS = [
+  {
+    isNew: true,
+    date: "2026/04/28",
+    tag: "今日上线",
+    title: "万能素材解析引擎",
+    subtitle: "YouTube · 抖音 · 快手 · 小红书 · B站 · 本地化yt-dlp",
+    desc: "二创功能重大升级！无需第三方API，yt-dlp引擎全本地运行，支持全球数千个视频平台。输入URL一键解析并下载原画无水印素材，解析失败自动更新引擎，数据安全100%自主掌控。",
+    pills: ["YouTube", "抖音/快手", "小红书", "B站", "本地化引擎"],
+    icon: Zap,
+    accentColor: "#22d3ee",
+    glowColor: "rgba(34,211,238,0.18)",
+    borderColor: "rgba(34,211,238,0.30)",
+    bgGradient: "linear-gradient(135deg, rgba(34,211,238,0.08) 0%, rgba(34,211,238,0.02) 100%)",
+    href: "/analysis",
+  },
   {
     isNew: true,
     date: "2026/04/28",
