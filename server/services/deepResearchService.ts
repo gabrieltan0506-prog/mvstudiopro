@@ -204,151 +204,229 @@ const DEEP_RESEARCH_AGENT_NAME = "deep-research-max-preview-04-2026";
 const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
 const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
 
-/**
- * 调用 Deep Research Max Agent（Interactions API + background polling）。
- * - agent_config.visualization="auto" → Agent 可自动生成图表
- * - agent_config.thinking_summaries="auto" → 开启思维链日志
- * - 支持多模态 input：可直接传图片(uri)和文档(uri+mime_type)
- * @param files 用户上传的补充文件（已存 GCS），直接作为 multimodal input 传给 Agent
- * @param onInteractionId 拿到 interactionId 后的回调，用于持久化以便断线恢复
- */
-async function generateDeepResearch(
+const SYSTEM_INSTRUCTION_BASE =
+  "[系统背景设定] 当前时间为 2026 年。你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的高端商业智库 Agent。" +
+  "请进行最深层次的全网交叉验证，覆盖近 2 年（2024-2026）真实数据，输出严格简体中文，禁止任何英文术语，产出具备卡布奇诺级商务质感的战略白皮书。";
+
+/** 构建 multimodal input：纯文本 prompt 或 [text, image, document, ...] */
+function buildInteractionInput(
   prompt: string,
-  files?: Array<{ type: "image" | "pdf"; url: string; mimeType: string; name: string }>,
+  files?: Array<{ type: "image" | "pdf"; url: string; mimeType: string }>,
+): string | any[] {
+  if (!files?.length) return prompt;
+  const parts: any[] = [{ type: "text", text: prompt }];
+  for (const f of files) {
+    if (f.type === "image") parts.push({ type: "image", uri: f.url });
+    else parts.push({ type: "document", uri: f.url, mime_type: f.mimeType });
+  }
+  return parts;
+}
+
+/** 通用轮询：从已创建的 interaction 拉结果。返回 outputs 数组 */
+async function pollInteraction(
+  interactionId: string,
+  apiHeaders: Record<string, string>,
+  maxMs: number,
+  abortSignal?: AbortSignal,
+): Promise<any[]> {
+  const pollStart = Date.now();
+  while (Date.now() - pollStart < maxMs) {
+    if (abortSignal?.aborted) {
+      throw new Error(`Deep Research 已中止（interactionId=${interactionId}）`);
+    }
+    await sleep(POLL_INTERVAL_MS);
+    const elapsed = Math.round((Date.now() - pollStart) / 1000);
+    let pollJson: any = {};
+    try {
+      const pollRes = await fetch(`${INTERACTIONS_BASE}/${interactionId}`, {
+        headers: apiHeaders,
+        signal: abortSignal,
+      });
+      const rawPoll = await pollRes.text();
+      try { pollJson = JSON.parse(rawPoll); } catch { /* ignore */ }
+      if (!pollRes.ok) {
+        console.error(`[deepResearch] ❌ poll HTTP ${pollRes.status} elapsed=${elapsed}s：${rawPoll.slice(0, 1000)}`);
+        throw new Error(`Deep Research 轮询失败（HTTP ${pollRes.status}），积分将退回。`);
+      }
+    } catch (fetchErr: any) {
+      if (fetchErr?.name === "AbortError") throw fetchErr;
+      console.warn(`[deepResearch] ⚠️ poll fetch 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
+      continue;
+    }
+    const status = pollJson?.status ?? "unknown";
+    console.log(`[deepResearch] 🔍 PID=${process.pid} interactionId=${interactionId} status=${status} elapsed=${elapsed}s`);
+    if (status === "failed") {
+      const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
+      throw new Error(`Deep Research Agent 失败（${errMsg}），积分将退回。`);
+    }
+    if (status === "completed") {
+      return (pollJson?.outputs || []) as any[];
+    }
+    // status === "in_progress" → 继续
+  }
+  throw new Error(`Deep Research 超时未完成（interactionId=${interactionId}）`);
+}
+
+/**
+ * 阶段 0：请求 Deep Research Max 生成「研究计划」（Collaborative Planning）
+ * - collaborative_planning: true → Agent 不立即开搜，先返回计划供用户审核
+ * - 通常 2-5 分钟返回，最多 15 分钟
+ * @returns { planText, planInteractionId } - planInteractionId 用于下一阶段 previous_interaction_id
+ */
+async function requestResearchPlan(
+  prompt: string,
+  files?: Array<{ type: "image" | "pdf"; url: string; mimeType: string }>,
   onInteractionId?: (id: string) => Promise<void>,
-): Promise<GroundedResult> {
+): Promise<{ planText: string; planInteractionId: string }> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
-
   const apiHeaders = {
     "Content-Type": "application/json",
     "x-goog-api-key": apiKey,
     "X-Goog-Api-Client": "genai-node/deep-research",
   };
 
-  // 构建 multimodal input：文本 + 文件（图片 / 文档）
-  const inputParts: any[] = [{ type: "text", text: prompt }];
-  if (files?.length) {
-    for (const f of files) {
-      if (f.type === "image") {
-        inputParts.push({ type: "image", uri: f.url });
-      } else {
-        inputParts.push({ type: "document", uri: f.url, mime_type: f.mimeType });
-      }
-    }
-  }
-  const input = inputParts.length === 1 ? prompt : inputParts;
-
-  // ── Step 1：提交任务（立即返回 interaction.id） ──────────────────────────────
-  const release = await acquireRateGate("deep-research-create");
+  const release = await acquireRateGate("deep-research-plan");
   let interactionId: string;
   try {
-    console.log(`[deepResearch] 🚀 PID=${process.pid} 提交 Max Agent，promptLen=${prompt.length} files=${files?.length ?? 0}`);
+    console.log(`[deepResearch] 📋 PID=${process.pid} 请求计划 promptLen=${prompt.length} files=${files?.length ?? 0}`);
     const createRes = await fetch(INTERACTIONS_BASE, {
       method: "POST",
       headers: apiHeaders,
       body: JSON.stringify({
-        input,
         agent: DEEP_RESEARCH_AGENT_NAME,
+        input: buildInteractionInput(prompt, files),
         background: true,
+        system_instruction: SYSTEM_INSTRUCTION_BASE,
         agent_config: {
           type: "deep-research",
-          thinking_summaries: "auto",  // 开启思维链，可在进度日志中看到推演步骤
-          visualization: "auto",       // Agent 自动生成图表/图形
+          collaborative_planning: true, // ← 关键：先出计划
+          thinking_summaries: "auto",
+          visualization: "auto",
         },
       }),
     });
     const rawCreate = await createRes.text();
     let createJson: any = {};
     try { createJson = JSON.parse(rawCreate); } catch { /* ignore */ }
-
     if (!createRes.ok) {
-      console.error(`[deepResearch] ❌ create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
+      console.error(`[deepResearch] ❌ plan create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
       const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
-      throw new Error(`Deep Research Agent 提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
+      throw new Error(`Deep Research 计划提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
     }
-
     interactionId = createJson?.id;
-    if (!interactionId) {
-      console.error(`[deepResearch] ❌ 未返回 interaction.id，响应：${rawCreate.slice(0, 1000)}`);
-      throw new Error("Deep Research Agent 未返回任务 ID，积分将退回。");
-    }
-    console.log(`[deepResearch] ✅ PID=${process.pid} interaction 已创建：${interactionId}`);
+    if (!interactionId) throw new Error("Deep Research 计划阶段未返回 interactionId");
+    console.log(`[deepResearch] ✅ PID=${process.pid} plan interaction 已创建：${interactionId}`);
   } finally {
     release();
   }
 
-  // 持久化 interactionId，服务重启后可恢复轮询
-  if (onInteractionId) {
-    try { await onInteractionId(interactionId); } catch { /* 非阻断 */ }
+  if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
+
+  const PLAN_MAX_MS = 15 * 60 * 1000; // 计划阶段 15 分钟上限
+  const outputs = await pollInteraction(interactionId, apiHeaders, PLAN_MAX_MS);
+  const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
+  const planText = String(textOut?.text || "").trim();
+  if (!planText || planText.length < 50) {
+    throw new Error(`Deep Research 计划返回内容为空（${planText.length}字）`);
   }
-
-  // ── Step 2：轮询直到完成 / 失败 / 超时 ──────────────────────────────────────
-  const pollStart = Date.now();
-  let lastStatus = "in_progress";
-
-  while (Date.now() - pollStart < MAX_POLL_MS) {
-    await sleep(POLL_INTERVAL_MS);
-
-    const elapsed = Math.round((Date.now() - pollStart) / 1000);
-    let pollJson: any = {};
-    try {
-      const pollRes = await fetch(`${INTERACTIONS_BASE}/${interactionId}`, { headers: apiHeaders });
-      const rawPoll = await pollRes.text();
-      try { pollJson = JSON.parse(rawPoll); } catch { /* ignore */ }
-
-      if (!pollRes.ok) {
-        console.error(`[deepResearch] ❌ poll HTTP ${pollRes.status} elapsed=${elapsed}s：${rawPoll.slice(0, 1000)}`);
-        throw new Error(`Deep Research 轮询失败（HTTP ${pollRes.status}），积分将退回。`);
-      }
-    } catch (fetchErr: any) {
-      console.warn(`[deepResearch] ⚠️ poll fetch 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
-      continue;
-    }
-
-    lastStatus = pollJson?.status ?? "unknown";
-    console.log(`[deepResearch] 🔍 PID=${process.pid} poll interactionId=${interactionId} status=${lastStatus} elapsed=${elapsed}s`);
-
-    if (lastStatus === "failed") {
-      const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
-      console.error(`[deepResearch] ❌ Agent 失败：${errMsg}`);
-      throw new Error(`Deep Research Agent 执行失败（${errMsg}），积分将退回。`);
-    }
-
-    if (lastStatus === "completed") {
-      const outputs: any[] = pollJson?.outputs || [];
-
-      // 提取文本正文（最后一个 text output）
-      const textOutput = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
-      const text = String(textOutput?.text || "").trim();
-
-      if (!text || text.length < 400) {
-        console.error(`[deepResearch] ❌ 完成但正文不足（${text.length}字），响应：${JSON.stringify(pollJson).slice(0, 3000)}`);
-        throw new Error(`Deep Research Agent 完成但内容不足（${text.length}字），积分将退回。`);
-      }
-
-      // 捕获 Agent 自动生成的图表（base64 图片）→ 嵌入报告
-      const imageOutputs = outputs.filter((o: any) => o.type === "image" && o.data);
-      let chartMarkdown = "";
-      if (imageOutputs.length > 0) {
-        chartMarkdown = "\n\n## 📊 Agent 生成图表\n\n" + imageOutputs.map((o: any, i: number) =>
-          `![图表 ${i + 1}](data:image/png;base64,${o.data})\n`
-        ).join("\n");
-        console.log(`[deepResearch] 📊 捕获到 ${imageOutputs.length} 张 Agent 生成图表`);
-      }
-
-      console.log(`[deepResearch] ✅ PID=${process.pid} 完成 interactionId=${interactionId} ${text.length}字 charts=${imageOutputs.length} elapsed=${elapsed}s`);
-      return { text: text + chartMarkdown, sources: [] };
-    }
-    // status === "in_progress" → 继续等待
-  }
-
-  throw new Error(`Deep Research Agent 超过 60 分钟未完成（interactionId=${interactionId}），积分将退回。`);
+  console.log(`[deepResearch] ✅ 计划已生成 ${planText.length}字`);
+  return { planText, planInteractionId: interactionId };
 }
 
-/** @deprecated 旧接口 · 转发到新的 Deep Research 调用器（保持向下兼容） */
+/**
+ * 阶段 1：审批计划并启动正式深潛执行
+ * - 用 previous_interaction_id 续接计划阶段
+ * - collaborative_planning: false → Agent 立即执行
+ * - AbortController 60 分钟硬超时
+ * @returns 最终接地数据 + 嵌入的 Agent 生成图表 markdown
+ */
+async function executeApprovedResearch(
+  planInteractionId: string,
+  feedback: string | undefined,
+  onInteractionId?: (id: string) => Promise<void>,
+): Promise<GroundedResult> {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+  const apiHeaders = {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey,
+    "X-Goog-Api-Client": "genai-node/deep-research",
+  };
+
+  const finalCommand = feedback?.trim()
+    ? `计划已收到，请依据以下用户反馈调整后立即开始执行最大深度（Maximum comprehensiveness）的综合研究：
+${feedback.trim()}`
+    : "计划完美，请立即开始执行最大深度（Maximum comprehensiveness）的综合研究，进行最深层次的全网交叉验证。";
+
+  const release = await acquireRateGate("deep-research-execute");
+  let interactionId: string;
+  try {
+    console.log(`[deepResearch] 🚀 PID=${process.pid} 执行批准的研究 previous=${planInteractionId} feedbackLen=${feedback?.length ?? 0}`);
+    const createRes = await fetch(INTERACTIONS_BASE, {
+      method: "POST",
+      headers: apiHeaders,
+      body: JSON.stringify({
+        agent: DEEP_RESEARCH_AGENT_NAME,
+        input: finalCommand,
+        previous_interaction_id: planInteractionId,
+        background: true,
+        agent_config: {
+          type: "deep-research",
+          collaborative_planning: false, // ← 关键：跳过计划，直接执行
+          thinking_summaries: "auto",
+          visualization: "auto",
+        },
+      }),
+    });
+    const rawCreate = await createRes.text();
+    let createJson: any = {};
+    try { createJson = JSON.parse(rawCreate); } catch { /* ignore */ }
+    if (!createRes.ok) {
+      console.error(`[deepResearch] ❌ execute create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
+      const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
+      throw new Error(`Deep Research 执行提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
+    }
+    interactionId = createJson?.id;
+    if (!interactionId) throw new Error("Deep Research 执行阶段未返回 interactionId");
+    console.log(`[deepResearch] ✅ PID=${process.pid} execute interaction 已创建：${interactionId}`);
+  } finally {
+    release();
+  }
+
+  if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
+
+  // 1 小时硬超时（AbortController 自动 abort）
+  const abortController = new AbortController();
+  const hardTimeout = setTimeout(() => abortController.abort(), MAX_POLL_MS);
+  try {
+    const outputs = await pollInteraction(interactionId, apiHeaders, MAX_POLL_MS, abortController.signal);
+    const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
+    const text = String(textOut?.text || "").trim();
+    if (!text || text.length < 400) {
+      console.error(`[deepResearch] ❌ 完成但正文不足（${text.length}字）`);
+      throw new Error(`Deep Research 完成但内容不足（${text.length}字），积分将退回。`);
+    }
+    // 捕获 Agent 原生生成的图表
+    const imageOutputs = outputs.filter((o: any) => o.type === "image" && o.data);
+    let chartMarkdown = "";
+    if (imageOutputs.length > 0) {
+      chartMarkdown = "\n\n## 📊 Agent 生成图表\n\n" + imageOutputs.map((o: any, i: number) =>
+        `![图表 ${i + 1}](data:image/png;base64,${o.data})\n`
+      ).join("\n");
+      console.log(`[deepResearch] 📊 捕获到 ${imageOutputs.length} 张 Agent 生成图表`);
+    }
+    console.log(`[deepResearch] ✅ 执行完成 ${text.length}字 charts=${imageOutputs.length}`);
+    return { text: text + chartMarkdown, sources: [] };
+  } finally {
+    clearTimeout(hardTimeout);
+  }
+}
+
+/** @deprecated 旧接口 · plan + execute 一站式（保持向下兼容） */
 async function generateGrounded(_model: string, prompt: string): Promise<GroundedResult> {
-  return generateDeepResearch(prompt, undefined);
+  const { planInteractionId } = await requestResearchPlan(prompt);
+  return executeApprovedResearch(planInteractionId, undefined);
 }
 
 // ── Neon DB 辅助 ────────────────────────────────────────────────────────────
@@ -500,7 +578,7 @@ export interface DeepResearchJob {
   productType?: DeepResearchProductType;
   dbRecordId?: number;
   // 状态机：pending（排队）→ running（生成中）→ awaiting_review（草稿待主编审核）→ completed（已出刊） / failed
-  status: "pending" | "running" | "awaiting_review" | "completed" | "failed";
+  status: "pending" | "planning" | "awaiting_plan_approval" | "running" | "awaiting_review" | "completed" | "failed";
   progress?: string;
   reportMarkdown?: string;   // 出刊后的最终版（出刊前为空）
   draftMarkdown?: string;    // 草稿版（生成完成后写入）
@@ -517,8 +595,16 @@ export interface DeepResearchJob {
   attemptCount?: number;
   /** 启动任务时实际扣除的积分（用于失败时退款）。0 = 管理员/免费，无需退款。 */
   creditsUsed?: number;
-  /** Google Interactions API 返回的 interaction ID，用于断线恢复轮询（无需重跑） */
+  /** Google Interactions API 返回的当前阶段 interaction ID（plan 或 execute） */
   interactionId?: string;
+  /** Plan 阶段返回的 interactionId（执行阶段用 previous_interaction_id 续接） */
+  planInteractionId?: string;
+  /** Plan 阶段 Agent 提出的研究计划文本（待用户审核） */
+  planText?: string;
+  /** 用户审核计划时填入的反馈（如「不要看快手数据」） */
+  planFeedback?: string;
+  /** Execute 阶段产生的接地数据（harvested.text），便于断线恢复 */
+  harvestedText?: string;
   /** 用户上传的补充资料：文字说明 + 文件（已存 GCS，注入阶段 A Deep Research） */
   supplementaryText?: string;
   supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>;
@@ -769,10 +855,47 @@ export async function createDeepResearchJob(
   return { jobId, dbRecordId };
 }
 
+/**
+ * 用户批准计划后，接力跑「执行 + 报告合成」剩余阶段
+ * - 把状态改回 running（让 watchdog 正确判断）+ 写入 planFeedback
+ * - 重新调用 runDeepResearchAsync：内部判断已有 planInteractionId → 走 execute 路径
+ */
+export async function approvePlan(jobId: string, feedback?: string): Promise<void> {
+  const job = await readJob(jobId);
+  if (!job) throw new Error("任务不存在");
+  if (job.status !== "awaiting_plan_approval") {
+    throw new Error(`任务当前状态 ${job.status}，无法批准计划`);
+  }
+  if (!job.planInteractionId) {
+    throw new Error("缺少计划数据，无法继续执行");
+  }
+  await writeJob({
+    ...job,
+    status: "running",
+    planFeedback: feedback?.trim() || undefined,
+    progress: "✅ 计划已批准，正在重新启动 Deep Research Max 进入深潛阶段…",
+  } as any);
+  // fire-and-forget；runDeepResearchAsync 内部会判断 planInteractionId 已存在 → 跳过 plan 阶段
+  setImmediate(() => {
+    runDeepResearchAsync(jobId).catch((e) =>
+      console.error(`[approvePlan] runDeepResearchAsync 失败 jobId=${jobId}：`, e?.message),
+    );
+  });
+}
+
 /** 异步执行全景战报（fire-and-forget，不阻塞响应） */
 export async function runDeepResearchAsync(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return;
+
+  // ── 安全闸：awaiting_plan_approval 状态下用户还没批准，worker 不应运行
+  // （recoverOrphanedJobs 不会捞这个状态，但防御性兜底）
+  if (job.status === "awaiting_plan_approval") {
+    console.log(`[deepResearch] ⏸ jobId=${jobId} 处于 awaiting_plan_approval，跳过 worker 启动`);
+    return;
+  }
+  // 已完成/已失败：不允许重复执行
+  if (job.status === "completed" || job.status === "failed") return;
 
   // 注册 SIGTERM 钩子（幂等，仅首次有效）
   ensureShutdownHook();
@@ -793,7 +916,7 @@ export async function runDeepResearchAsync(jobId: string) {
     try {
       const current = await readJob(jobId);
       if (!current) return;
-      if (current.status === "completed" || current.status === "awaiting_review" || current.status === "failed") return;
+      if (current.status === "completed" || current.status === "awaiting_review" || current.status === "awaiting_plan_approval" || current.status === "failed") return;
       const lastBeat = current.lastHeartbeatAt ? new Date(current.lastHeartbeatAt).getTime() : 0;
       const staleSec = Math.floor((Date.now() - lastBeat) / 1000);
       console.log(`[deepResearch] 🐕 Watchdog 15min 检查：jobId=${jobId} status=${current.status} heartbeat_stale=${staleSec}s`);
@@ -972,15 +1095,56 @@ ${job.topic}
       await updateProgress(`📎 已附加 ${suppFiles.length} 个补充文件，正在启动 Deep Research Max…`);
     }
 
-    // 传入回调：拿到 interactionId 后立即持久化到 Job 文件，服务重启后可恢复轮询
-    const harvested: GroundedResult = await generateDeepResearch(
-      harvestPrompt,
-      suppFiles.length ? suppFiles : undefined,
-      async (interactionId) => {
-        const latest = (await readJob(jobId)) ?? job;
-        await writeJob({ ...latest, interactionId } as any);
-      },
-    );
+    // ── Interactions API 三阶段：根据 job.status 决定走哪条路径 ────────────────
+    let harvested: GroundedResult;
+    const jobNow = (await readJob(jobId)) ?? job;
+    const needPlan = !jobNow.planInteractionId;          // 没 planId → 走 plan 阶段
+    const needExecute = !jobNow.harvestedText;           // 没接地数据 → 需要 execute
+
+    if (needPlan) {
+      // ── Phase A1：请求计划（Collaborative Planning） ────────────────────────
+      await updateProgress("📋 正在生成研究计划，等待您审核…");
+      await writeJob({ ...jobNow, status: "planning" } as any);
+      const { planText, planInteractionId } = await requestResearchPlan(
+        harvestPrompt,
+        suppFiles.length ? suppFiles : undefined,
+        async (planId) => {
+          const latest = (await readJob(jobId)) ?? job;
+          await writeJob({ ...latest, interactionId: planId, planInteractionId: planId, status: "planning" } as any);
+        },
+      );
+      const latest = (await readJob(jobId)) ?? job;
+      await writeJob({
+        ...latest,
+        status: "awaiting_plan_approval",
+        planText,
+        planInteractionId,
+        progress: "📋 研究计划已生成，请前往「上帝视角」审核计划并批准开始深潛",
+      } as any);
+      console.log(`[deepResearch] ⏸ 等待用户审核计划（jobId=${jobId}, planLen=${planText.length}）`);
+      return; // worker 退出，等 approvePlan mutation 触发重新调用
+    }
+
+    if (needExecute) {
+      // ── Phase A2：用户已批准，执行深潛（previous_interaction_id + collaborative_planning=false） ──
+      await updateProgress("🚀 正在启动 Deep Research Max 深潛（最长 60 分钟）…");
+      await writeJob({ ...jobNow, status: "running" } as any);
+      harvested = await executeApprovedResearch(
+        jobNow.planInteractionId!,
+        jobNow.planFeedback,
+        async (executeId) => {
+          const latest = (await readJob(jobId)) ?? job;
+          await writeJob({ ...latest, interactionId: executeId } as any);
+        },
+      );
+      // 持久化接地数据，便于断线恢复时跳过执行
+      const afterExec = (await readJob(jobId)) ?? job;
+      await writeJob({ ...afterExec, harvestedText: harvested.text } as any);
+    } else {
+      // 已有缓存的接地数据（断线恢复场景），直接进入 Phase B
+      harvested = { text: jobNow.harvestedText!, sources: [] };
+      console.log(`[deepResearch] ♻️ 复用已缓存的接地数据 ${harvested.text.length}字`);
+    }
     console.log(`[deepResearch] 🎯 PID=${process.pid} Deep Research 完成：${harvested.text.length}字正文 / ${harvested.sources.length}个接地来源`);
 
     // ═════════════════════════════════════════════════════════════════════════
