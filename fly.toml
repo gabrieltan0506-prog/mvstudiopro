@@ -72,7 +72,7 @@ primary_region = 'iad'  # 弗吉尼亚，Google AI 骨干网络最低延迟节�
   GROWTH_TOUTIAO_AUTHOR_LIMIT = '4'
   GROWTH_TOUTIAO_PROFILE_PAGES = '2'
   GROWTH_SCHEDULER_STALE_FORCE_RUN_MS = '1200000'
-  GCS_PDF_EXPORT_BUCKET = 'mv-studio-pro-user-uploads-255451353515'
+  GCS_PDF_EXPORT_BUCKET = 'mv-studio-pro-vertex-video-temp'
   PUPPETEER_EXECUTABLE_PATH = '/usr/bin/chromium'
 
 [deploy]
