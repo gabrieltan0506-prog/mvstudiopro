@@ -203,18 +203,16 @@ async function generateDeepResearch(
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
   const retries = opts?.retries ?? 2;
-  // 使用全局 v1beta 端点，不加 location 参数（留空 = global，最优路由由 Google 决定）
-  // Fly.io 节点已定向 iad/ord，与 Google AI 骨干网络延迟最低
+  // 全局 v1beta 端点，不加 location（global = 最优路由），Fly.io 已迁至 iad 降低延迟
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEEP_RESEARCH_MODEL}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    // 2026 专属扩展：全网实时检索 + 深度推理（最深层级）
     tools: [
       { googleSearch: {} },
       { deepResearch: { complexity: opts?.complexity ?? "comprehensive" } },
     ],
     generationConfig: {
-      thinkingConfig: { includeThoughts: opts?.includeThoughts ?? true }, // 强制开启思维链
+      thinkingConfig: { includeThoughts: opts?.includeThoughts ?? true },
       temperature: opts?.temperature ?? 0.7,
       topP: opts?.topP ?? 0.95,
       maxOutputTokens: opts?.maxTokens ?? 65536,
@@ -222,49 +220,96 @@ async function generateDeepResearch(
   });
 
   for (let i = 0; i <= retries; i++) {
-    // 关键：全局限流闸门（1 RPM），多用户并发也只能串行
     const release = await acquireRateGate(`deep-research#${i + 1}`);
+
+    // 用 AbortController 手动管理 30 分钟超时，避免 AbortSignal.timeout 的 Node.js 兼容问题
+    const controller = new AbortController();
+    const hardTimeoutHandle = setTimeout(() => {
+      controller.abort(new Error("30min_hard_timeout"));
+    }, 1_800_000);
+
     let res: Response | undefined;
+    let rawText = "";
     let json: any = {};
+
     try {
-      console.log(`[deepResearch] 🧠 调用 ${DEEP_RESEARCH_MODEL}（complexity=${opts?.complexity ?? "comprehensive"}），prompt ${prompt.length} 字`);
+      console.log(`[deepResearch] 🧠 PID=${process.pid} attempt=${i + 1}/${retries + 1} model=${DEEP_RESEARCH_MODEL} promptLen=${prompt.length}`);
       res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          // Google 官方推荐头：让骨干网正确识别 Deep Research 客户端类型
+          "X-Goog-Api-Client": "genai-node/deep-research",
+        },
         body,
-        signal: AbortSignal.timeout(1_800_000), // Deep Research 单次容忍 30 分钟硬超时
+        signal: controller.signal,
       });
-      json = await res.json().catch(() => ({}));
+      rawText = await res.text();
+      try { json = JSON.parse(rawText); } catch { json = {}; }
+    } catch (fetchErr: any) {
+      console.error(`[deepResearch] ❌ PID=${process.pid} fetch层异常 attempt=${i + 1}：${fetchErr?.name} / ${fetchErr?.message}`);
+      if (fetchErr?.cause) console.error(`[deepResearch]   cause：`, fetchErr.cause);
+      if (i < retries) { await sleep(8000); continue; }
+      throw new Error(`网络连接异常（${fetchErr?.name}: ${fetchErr?.message}），积分将原路退回。`);
     } finally {
-      release(); // 立即释放进程内队列（磁盘 lastCallAt 已经写好，下一个会等够 60s）
+      clearTimeout(hardTimeoutHandle);
+      release();
     }
 
-    if (!res) continue;
+    const status = res.status;
+    console.log(`[deepResearch] PID=${process.pid} HTTP ${status} rawLen=${rawText.length}字`);
 
-    if (res.status === 429 && i < retries) {
-      console.log(`[deepResearch] 429（速率限制），${30 * (i + 1)}s 后重试…`);
+    if (status === 429 && i < retries) {
+      console.log(`[deepResearch] 429 速率限制，${30 * (i + 1)}s 后重试`);
       await sleep(30000 * (i + 1));
       continue;
     }
+
     if (!res.ok) {
-      // 不降级——失败就抛出，由上层 failJobAndRefund 退积分
-      throw new Error(`深度研究引擎返回异常（${res.status}），积分将原路退回。请稍后重试。`);
+      // 把 Google 原始响应体全部打印出来，暴露真实原因
+      console.error(`[deepResearch] ❌ HTTP ${status} 原始响应：${rawText.slice(0, 2000)}`);
+      const errDetail = json?.error?.message || json?.error?.status || rawText.slice(0, 300);
+      throw new Error(`深度研究引擎 HTTP ${status}（${errDetail}），积分将原路退回。`);
     }
 
-    // 解析输出：text 段 + thoughts 段（思维链）
+    // ── 安全过滤检查（promptFeedback.blockReason）
+    const blockReason = json?.promptFeedback?.blockReason;
+    if (blockReason) {
+      console.error(`[deepResearch] ❌ Google 安全策略拦截 blockReason=${blockReason}，完整 promptFeedback：`, JSON.stringify(json?.promptFeedback));
+      throw new Error(`课题被 Google 安全策略拦截（${blockReason}），请修改课题后重试，积分将退回。`);
+    }
+
     const cand = json?.candidates?.[0];
+    const finishReason = cand?.finishReason ?? "UNKNOWN";
+
+    if (!cand) {
+      console.error(`[deepResearch] ❌ 无候选结果，完整响应（前3000字）：${rawText.slice(0, 3000)}`);
+      throw new Error(`深度研究引擎未返回候选内容（finishReason=none），积分将退回。`);
+    }
+
+    if (finishReason !== "STOP" && finishReason !== "MAX_TOKENS") {
+      console.error(`[deepResearch] ❌ 异常终止 finishReason=${finishReason}，候选：${JSON.stringify(cand).slice(0, 1000)}`);
+      throw new Error(`深度研究引擎异常终止（${finishReason}），积分将退回。请稍后重试。`);
+    }
+
+    // ── 解析正文 + 思维链
     const parts: any[] = cand?.content?.parts || [];
     let text = "";
     let thoughts = "";
     for (const p of parts) {
       const t = String(p?.text || "");
       if (!t) continue;
-      // Gemini 思维链通常会被标记为 thought=true
       if (p?.thought === true || p?.thoughtSignature) thoughts += t + "\n";
       else text += t;
     }
 
-    // 解析接地来源
+    if (!text || text.length < 400) {
+      console.error(`[deepResearch] ❌ 正文过短（${text.length}字）finishReason=${finishReason}`);
+      console.error(`[deepResearch] 完整响应（前4000字）：${rawText.slice(0, 4000)}`);
+      throw new Error(`深度研究引擎返回正文不足（${text.length} 字，finishReason=${finishReason}），积分将退回。`);
+    }
+
+    // ── 接地来源
     const grounding = cand?.groundingMetadata || cand?.grounding_metadata || {};
     const chunks = grounding?.groundingChunks || grounding?.grounding_chunks || [];
     const sources: GroundedResult["sources"] = [];
@@ -273,7 +318,7 @@ async function generateDeepResearch(
       if (web?.uri) sources.push({ title: String(web.title || web.uri), url: String(web.uri), snippet: undefined });
     }
 
-    console.log(`[deepResearch] ✅ ${DEEP_RESEARCH_MODEL} 返回：${text.length} 字正文 / ${thoughts.length} 字思维链 / ${sources.length} 个接地来源`);
+    console.log(`[deepResearch] ✅ PID=${process.pid} ${text.length}字正文 / ${thoughts.length}字思维链 / ${sources.length}个接地来源`);
     return { text: text.trim(), thoughts: thoughts.trim() || undefined, sources };
   }
 
@@ -881,24 +926,15 @@ ${job.topic}
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
-    let harvested: GroundedResult = { text: "", sources: [] };
-    try {
-      harvested = await generateDeepResearch(harvestPrompt, {
-        complexity: "comprehensive",
-        temperature: 0.7,
-        topP: 0.95,
-        includeThoughts: true,
-        maxTokens: 65536,
-      });
-      console.log(`[deepResearch] 🎯 Deep Research Pro Preview 完成：${harvested.text.length} 字正文 / ${harvested.thoughts?.length || 0} 字思维链 / ${harvested.sources.length} 个接地来源`);
-    } catch (e: any) {
-      console.warn("[deepResearch] Deep Research 调用失败:", e?.message);
-    }
-
-    if (!harvested.text || harvested.text.length < 400) {
-      // 不降级——内容不足即视为失败，抛出让上层退积分
-      throw new Error("深度研究引擎返回内容不足（可能被过滤或网络中断），积分将原路退回。请稍后重试。");
-    }
+    // 直接 await，不吞错——真实 Google 错误（blockReason / finishReason / HTTP 状态）会原样抛出
+    const harvested: GroundedResult = await generateDeepResearch(harvestPrompt, {
+      complexity: "comprehensive",
+      temperature: 0.7,
+      topP: 0.95,
+      includeThoughts: true,
+      maxTokens: 65536,
+    });
+    console.log(`[deepResearch] 🎯 PID=${process.pid} Deep Research 完成：${harvested.text.length}字正文 / ${harvested.thoughts?.length || 0}字思维链 / ${harvested.sources.length}个接地来源`);
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 B：合成 · Gemini 3.1 Pro Preview 深度报告
