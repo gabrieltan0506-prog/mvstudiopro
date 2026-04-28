@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
-import { Loader2, FileDown, ArrowRight, Crown, Sparkles } from "lucide-react";
-import { toast } from "sonner";
+import { ArrowRight, Crown, Sparkles } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 品牌 Logo & 水印（内联 SVG，PDF/网页通用，无外部依赖）
@@ -359,291 +357,181 @@ const QUARTERLY_MARKDOWN = `# 88 岁奶奶熬夜追凡修 · 银发审美的算�
 > 🔒 **试读版到此为止**——完整版还包含：12 个真实银发头部账号拆解、银发用户行为数据库、训练营完整课程大纲、品牌商单谈判模板等共 52 页内容。`;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 富图文 PDF 导出（复用 GCS pdf-worker，与作品库同款）
+// 此组件不再生成/下载 PDF。
+// 历史方案：浏览器 → Fly Singapore → Vercel/Cloud Run（美国 puppeteer）→
+//          → 5MB+ PDF 回传 → 国内用户跨境再下，体感 ≥ 30 秒（用户等不动）。
+// 新方案：在线阅读 modal（点击卡片打开全屏阅读，水印层覆盖防截图）。
 // ─────────────────────────────────────────────────────────────────────────────
 
-function exportSampleAsPdf(
-  containerEl: HTMLElement,
-  fileName: string,
-  downloadPdfMutation: ReturnType<typeof trpc.mvAnalysis.downloadAnalysisPdf.useMutation>,
-  setLoading: (b: boolean) => void,
-) {
-  // 把当前文档克隆 → 替换 body 内容为单纯的报告容器（避免页面其他内容混进来）
-  const clone = document.documentElement.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("script").forEach((n) => n.remove());
-  clone.querySelectorAll("video, audio, iframe").forEach((n) => n.remove());
-  clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
-
-  // 把所有 body 子节点清空，只保留报告容器（用 innerHTML 取子节点，避免 fixed 定位被带进去）
-  // 关键水印策略：
-  //   1) wrapper 的 background-image 平铺 SVG（背景层兜底，但依赖 puppeteer printBackground）
-  //   2) 在 wrapper 内撒大量真实 DOM 元素（logo + 对角文字）做绝对定位 —— 不依赖任何打印配置
-  //      puppeteer 自动分页时，每个页位置都会自然包含撒在该位置的水印元素，每页 ≥ 4 个 logo + ≥ 12 个文字水印
-  const cloneBody = clone.querySelector("body");
-  if (cloneBody) {
-    cloneBody.innerHTML = "";
-
-    // 用源容器 scrollHeight 作 wrapper 高度（contentLayer 没插入页面，无 layout，必须用源 containerEl）
-    // +200 buffer 确保末尾签名条也能被水印覆盖；最少 2000px 兜底（极短内容也至少 2 页水印）
-    const estimatedHeight = Math.max(containerEl.scrollHeight + 200, 2000);
-
-    const wrapper = document.createElement("div");
-    wrapper.style.cssText = `
-      padding: 24px;
-      background-color: #f7ede0;
-      background-image: url('${WATERMARK_TILE_URI}');
-      background-repeat: repeat;
-      background-size: 540px 300px;
-      min-height: ${estimatedHeight}px;
-      position: relative;
-      overflow: visible;
-    `;
-
-    // 内容层（在底层，水印覆盖在它上面）
-    const contentLayer = document.createElement("div");
-    contentLayer.style.cssText = "position: relative; z-index: 1;";
-    contentLayer.innerHTML = containerEl.innerHTML;
-    wrapper.appendChild(contentLayer);
-
-    // 水印层（z-index 高于内容，覆盖在所有元素之上；用 opacity 让内容透出）
-    // 关键修正（why "no watermark" before）：水印 z-index < 内容（封面图 / 卡片是不透明的）→
-    // 水印被完全盖住。修复后置顶 + 显著提高 opacity；不用 mix-blend-mode 因为某些 chrome
-    // headless 版本对它支持不完整，会导致 PDF 输出与浏览器看到的不一致。
-    const watermarkLayer = document.createElement("div");
-    watermarkLayer.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: ${estimatedHeight}px;
-      pointer-events: none;
-      z-index: 9999;
-      overflow: hidden;
-    `;
-
-    // —— Logo 矩阵（3 列 × N 行，每页约 4-6 个）—— 半透明金色 logo
-    // logo 间距：水平 ~360px、垂直 ~480px。1100px 宽页 / 360 ≈ 3 列；1500px 高页 / 480 ≈ 3 行 → 单页 9 个
-    const logoSpacingX = 360;
-    const logoSpacingY = 480;
-    const logoStartX = 80;
-    const logoStartY = 240;
-    const logoCols = Math.ceil(1100 / logoSpacingX);
-    const logoRows = Math.ceil(estimatedHeight / logoSpacingY);
-    for (let row = 0; row < logoRows; row++) {
-      for (let col = 0; col < logoCols; col++) {
-        // 偶数行偏移半个间距，错落分布更高级
-        const offsetX = row % 2 === 0 ? 0 : logoSpacingX / 2;
-        const x = logoStartX + col * logoSpacingX + offsetX;
-        const y = logoStartY + row * logoSpacingY;
-        const logo = document.createElement("img");
-        // LIGHT 版（深咖啡色字 + 金色图标）在浅色咖啡背景 + 白卡片上对比度更高，
-        // 配合 multiply 混合模式，在深色封面图区域也仍然可见。
-        logo.src = BRAND_LOGO_LIGHT_URI;
-        logo.alt = "MVStudioPro";
-        logo.style.cssText = `
-          position: absolute;
-          left: ${x}px;
-          top: ${y}px;
-          width: 180px;
-          height: auto;
-          opacity: 0.22;
-          transform: rotate(-22deg);
-          pointer-events: none;
-          user-select: none;
-        `;
-        watermarkLayer.appendChild(logo);
-      }
-    }
-
-    // —— 文字水印矩阵（4 列 × N 行，更密更不抢戏）—— 半透明深咖啡文字
-    const textSpacingX = 280;
-    const textSpacingY = 200;
-    const textStartX = 30;
-    const textStartY = 100;
-    const textCols = Math.ceil(1100 / textSpacingX);
-    const textRows = Math.ceil(estimatedHeight / textSpacingY);
-    const watermarkPhrases = [
-      "MVStudioPro · 试读版",
-      "MVSTUDIOPRO.COM",
-      "MVStudioPro · 仅供品鉴",
-      "STRATEGIC INTELLIGENCE",
-    ];
-    for (let row = 0; row < textRows; row++) {
-      for (let col = 0; col < textCols; col++) {
-        const offsetX = row % 2 === 1 ? textSpacingX / 2 : 0;
-        const x = textStartX + col * textSpacingX + offsetX;
-        const y = textStartY + row * textSpacingY;
-        const txt = document.createElement("div");
-        txt.textContent = watermarkPhrases[(row + col) % watermarkPhrases.length];
-        txt.style.cssText = `
-          position: absolute;
-          left: ${x}px;
-          top: ${y}px;
-          font-family: 'Playfair Display', Georgia, 'PingFang SC', serif;
-          font-size: ${(row + col) % 4 === 0 ? 22 : 16}px;
-          font-weight: 800;
-          color: #4a3621;
-          opacity: 0.20;
-          letter-spacing: 1.4px;
-          transform: rotate(-26deg);
-          white-space: nowrap;
-          pointer-events: none;
-          user-select: none;
-          text-shadow: 0 0 1px rgba(74,54,33,0.25);
-        `;
-        watermarkLayer.appendChild(txt);
-      }
-    }
-
-    wrapper.appendChild(watermarkLayer);
-    cloneBody.appendChild(wrapper);
-  }
-
-  // 保险：注入 @page 规则确保 PDF 打印背景，并给 body 也叠一层水印兜底
-  const headEl = clone.querySelector("head");
-  if (headEl) {
-    const watermarkStyle = document.createElement("style");
-    watermarkStyle.textContent = `
-      @page { margin: 0; }
-      html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      body {
-        background-image: url('${WATERMARK_TILE_URI}');
-        background-repeat: repeat;
-      }
-    `;
-    headEl.appendChild(watermarkStyle);
-  }
-
-  const base = document.createElement("base");
-  base.href = window.location.origin + "/";
-  clone.querySelector("head")?.prepend(base);
-
-  const html = "<!DOCTYPE html>" + clone.outerHTML;
-  setLoading(true);
-  downloadPdfMutation.mutate(
-    { html },
-    {
-      onSuccess: (result) => {
-        setLoading(false);
-        if (!result.pdfBase64) {
-          toast.error("PDF 生成成功但内容为空，请重试");
-          return;
-        }
-        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast.success("PDF 已开始下载");
-      },
-      onError: (err) => {
-        setLoading(false);
-        toast.error(err.message || "PDF 导出失败");
-      },
-    },
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// 封面图：调用 Nano Banana Pro（Gemini 3 Pro Image），结果缓存到 localStorage
+// 封面图：直接使用 client/public 下的静态图片
 //
-// 历史 bug：v3 之前的实现只接受 `data:` 开头的缓存值，但 Vertex 实际返回的是
-// GCS HTTPS 链接，导致缓存命中率为 0，每次首页加载都重新生成 → 烧算力。
-// v4 方案：缓存 `{url, ts}` JSON，TTL 30 天，URL 类型不限（data:/https:）。
-// 缓存 key 用稳定的 sample 标识，prompt 改动也不会触发重新生成（除非改 key）。
+// 历史血泪：原方案每次加载首页都调 Nano Banana Pro 生成（5MB+ data URI 写入
+// localStorage 触发 QuotaExceeded 静默失败 → 缓存永远命中不了 → 每个用户每次
+// 刷新都烧算力）。封面是固定样本，没必要每次重新生成 —— 直接预生成两张图
+// 提交进仓库，永远 0 算力消耗。
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COVER_CACHE_PREFIX = "mvs-sample-cover-v4-";
-const COVER_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
-
-const BIWEEKLY_COVER_PROMPT = `Premium luxury Chinese business magazine cover, vertical 3:4 portrait composition, cappuccino cream and warm coffee gold tones (no pure black), elegant modern typography reading "AI 短剧" in stylish Chinese, several softly glowing smartphone screens floating mid-air showing dramatic AI-generated short drama scenes (sword fights, romance, fantasy), warm golden hour lighting with cappuccino latte color palette, subtle film grain, sophisticated editorial photography style, high-end Bloomberg-Businessweek meets Vogue China aesthetic, no text watermark`;
-
-const QUARTERLY_COVER_PROMPT = `Premium warm magazine cover, vertical 3:4 portrait, cappuccino cream and golden honey tones (avoid pure black), tender editorial photograph of a kind 88-year-old Chinese grandmother in cozy traditional armchair under warm lamp, holding a tablet that displays a stylized Chinese xianxia immortal cultivation animation scene with golden flying sword, wrinkles full of warmth, soft window light at dusk, oolong tea cup beside her, sophisticated Chinese editorial photography aesthetic similar to The New Yorker meets National Geographic, dignified and emotional, no text watermark`;
-
-interface CoverCacheEntry {
-  url: string;
-  ts: number;
-}
-
-function readCoverFromCache(cacheKey: string): string | null {
-  try {
-    const raw = localStorage.getItem(COVER_CACHE_PREFIX + cacheKey);
-    if (!raw) return null;
-    const entry = JSON.parse(raw) as CoverCacheEntry;
-    if (!entry?.url || typeof entry.ts !== "number") return null;
-    if (Date.now() - entry.ts > COVER_CACHE_TTL_MS) return null;
-    return entry.url;
-  } catch {
-    return null;
-  }
-}
-
-function writeCoverToCache(cacheKey: string, url: string) {
-  if (!url) return;
-  try {
-    const entry: CoverCacheEntry = { url, ts: Date.now() };
-    localStorage.setItem(COVER_CACHE_PREFIX + cacheKey, JSON.stringify(entry));
-  } catch {}
-}
-
-async function fetchCover(prompt: string, cacheKey: string): Promise<string> {
-  const cached = readCoverFromCache(cacheKey);
-  if (cached) return cached;
-
-  const res = await fetch("/api/google?op=nanoImage", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      tier: "pro",
-      aspectRatio: "3:4",
-      imageSize: "2K",
-      model: "gemini-3-pro-image-preview",
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  const imageUrl = String(data?.imageUrl || "");
-  if (imageUrl) writeCoverToCache(cacheKey, imageUrl);
-  return imageUrl;
-}
+const BIWEEKLY_COVER_URL = "/sample-covers/biweekly-ai-shortform.png";
+const QUARTERLY_COVER_URL = "/sample-covers/quarterly-silver-bili.png";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 隐藏渲染器：把 Markdown 渲染成 HTML 后，传给 pdf-worker
+// 在线阅读 modal：全屏覆盖，渲染 markdown，叠加防截图水印层。
+// 关键设计：
+//   1) 内层是 ReportRenderer 渲染的 markdown
+//   2) 外层 absolute fixed 撒大量半透明 logo + 文字水印
+//   3) 关闭按钮右上角 / Esc 关闭
+//   4) 用户可滚动阅读，但截图必带水印
 // ─────────────────────────────────────────────────────────────────────────────
 
-function HiddenSampleReport({
+function OnlineSampleReader({
+  open,
+  onClose,
   markdown,
-  containerRef,
   cover,
   watermark,
   edition,
   topic,
+  tag,
 }: {
+  open: boolean;
+  onClose: () => void;
   markdown: string;
-  containerRef: React.RefObject<HTMLDivElement | null>;
   cover: string;
   watermark: string;
   edition: string;
   topic: string;
+  tag: string;
 }) {
+  // Esc 关闭 + 锁滚
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
   return (
     <div
-      ref={containerRef}
+      onClick={onClose}
       style={{
         position: "fixed",
-        left: "-99999px",
-        top: 0,
-        width: 1100,
-        background: "#f7ede0",
-        padding: 24,
+        inset: 0,
+        zIndex: 9000,
+        background: "rgba(20, 14, 6, 0.78)",
+        backdropFilter: "blur(8px)",
+        overflowY: "auto",
+        padding: "40px 16px",
       }}
     >
-      {/* 杂志封面页 */}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "relative",
+          maxWidth: 920,
+          margin: "0 auto",
+          background: "#f7ede0",
+          borderRadius: 18,
+          boxShadow: "0 30px 80px rgba(0,0,0,0.55)",
+          overflow: "hidden",
+        }}
+      >
+        {/* 关闭按钮 */}
+        <button
+          onClick={onClose}
+          aria-label="关闭"
+          style={{
+            position: "fixed",
+            top: 22,
+            right: 22,
+            zIndex: 9999,
+            width: 44,
+            height: 44,
+            borderRadius: 99,
+            border: "none",
+            background: "rgba(20,14,6,0.85)",
+            color: "#fff7df",
+            fontSize: 22,
+            fontWeight: 700,
+            cursor: "pointer",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+          }}
+        >
+          ✕
+        </button>
+
+        {/* 全文水印层（覆盖整个 modal 内容，对角平铺） */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 50,
+            overflow: "hidden",
+          }}
+        >
+          {Array.from({ length: 60 }).map((_, idx) => {
+            const row = Math.floor(idx / 4);
+            const col = idx % 4;
+            const offsetX = row % 2 === 0 ? 0 : 50;
+            return (
+              <div
+                key={`wm-${idx}`}
+                style={{
+                  position: "absolute",
+                  left: `${col * 28 - 5 + (offsetX / 100) * 28}%`,
+                  top: `${row * 8 + 3}%`,
+                  transform: "rotate(-26deg)",
+                  fontFamily: "'Playfair Display', Georgia, 'PingFang SC', serif",
+                  fontSize: 16,
+                  fontWeight: 800,
+                  color: "rgba(74, 54, 33, 0.18)",
+                  letterSpacing: "0.20em",
+                  whiteSpace: "nowrap",
+                  userSelect: "none",
+                }}
+              >
+                MVSTUDIOPRO.COM · 试读
+              </div>
+            );
+          })}
+          {Array.from({ length: 12 }).map((_, idx) => {
+            const row = Math.floor(idx / 3);
+            const col = idx % 3;
+            return (
+              <img
+                key={`wm-logo-${idx}`}
+                src={BRAND_LOGO_LIGHT_URI}
+                alt=""
+                style={{
+                  position: "absolute",
+                  left: `${col * 38 + 8}%`,
+                  top: `${row * 28 + 12}%`,
+                  width: "24%",
+                  opacity: 0.10,
+                  transform: "rotate(-22deg)",
+                  pointerEvents: "none",
+                  userSelect: "none",
+                }}
+                draggable={false}
+              />
+            );
+          })}
+        </div>
+
+        {/* 真实内容（z-index 高于水印？不——水印 z=50，内容 z=auto；实际希望水印**叠在文字上**才能防截图，
+            所以水印必须 z 高于内容。把内容包一层 z=10，水印 z=50 → 水印盖在文字上但 opacity=0.18 仍可读） */}
+        <div style={{ position: "relative", zIndex: 10 }}>
+          {/* 杂志封面页 */}
       <div
         style={{
           position: "relative",
@@ -677,7 +565,7 @@ function HiddenSampleReport({
               marginBottom: 18,
             }}
           >
-            BIWEEKLY · 战略半月刊
+            {tag}
           </div>
           <h1 style={{ fontSize: 44, fontWeight: 900, lineHeight: 1.25, margin: 0, textShadow: "0 4px 18px rgba(0,0,0,0.45)" }}>
             {topic}
@@ -692,23 +580,27 @@ function HiddenSampleReport({
         </div>
       </div>
 
-      {/* 报告正文 */}
-      <ReportRenderer markdown={markdown} padding="40px 56px" />
+          {/* 报告正文 */}
+          <ReportRenderer markdown={markdown} padding="40px 56px" />
 
-      {/* 解锁提示 */}
-      <div style={{ marginTop: 24, padding: "20px 28px", borderRadius: 14, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", textAlign: "center" }}>
-        <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: "0.05em" }}>🔒 完整版还有 32+ 页深度内容</div>
-        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>包含全部 8 张数据表、12 套钩子模板、私域转化 SOP、品牌商单话术、监管合规清单</div>
-      </div>
+          {/* 解锁提示 */}
+          <div style={{ marginTop: 24, padding: "20px 28px", borderRadius: 14, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", textAlign: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: "0.05em" }}>🔒 完整版还有 32+ 页深度内容</div>
+            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>包含全部 8 张数据表、12 套钩子模板、私域转化 SOP、品牌商单话术、监管合规清单</div>
+          </div>
 
-      {/* 末页签名条（带 logo） */}
-      <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid rgba(122,84,16,0.22)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-        <img src={BRAND_LOGO_LIGHT_URI} alt="MVStudioPro" style={{ height: 44, display: "block" }} />
-        <div style={{ textAlign: "right", color: "#7a5410", fontFamily: "'PingFang SC', sans-serif" }}>
-          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.18em" }}>POWERED BY MVSTUDIOPRO.COM</div>
-          <div style={{ fontSize: 10, marginTop: 4, opacity: 0.7 }}>{watermark} · 仅供品鉴 · 转载请标注来源</div>
+          {/* 末页签名条（带 logo） */}
+          <div style={{ marginTop: 28, paddingTop: 22, borderTop: "1px solid rgba(122,84,16,0.22)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, padding: "22px 24px 24px" }}>
+            <img src={BRAND_LOGO_LIGHT_URI} alt="MVStudioPro" style={{ height: 44, display: "block" }} />
+            <div style={{ textAlign: "right", color: "#7a5410", fontFamily: "'PingFang SC', sans-serif" }}>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.18em" }}>POWERED BY MVSTUDIOPRO.COM</div>
+              <div style={{ fontSize: 10, marginTop: 4, opacity: 0.7 }}>{watermark} · 仅供品鉴 · 转载请标注来源</div>
+            </div>
+          </div>
         </div>
+        {/* /真实内容 */}
       </div>
+      {/* /modal panel */}
     </div>
   );
 }
@@ -719,75 +611,7 @@ function HiddenSampleReport({
 
 export default function SampleReportDownload() {
   const [, navigate] = useLocation();
-  const [biweeklyCover, setBiweeklyCover] = useState<string>("");
-  const [quarterlyCover, setQuarterlyCover] = useState<string>("");
-  const [coverLoading, setCoverLoading] = useState(true);
-  const [biweeklyLoading, setBiweeklyLoading] = useState(false);
-  const [quarterlyLoading, setQuarterlyLoading] = useState(false);
-
-  const biweeklyHiddenRef = useRef<HTMLDivElement>(null);
-  const quarterlyHiddenRef = useRef<HTMLDivElement>(null);
-
-  const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation();
-
-  // 页面挂载时异步生成两张封面（带缓存）。
-  // ref guard 双重防护：
-  //  1. localStorage 缓存命中（v4 修复后真正生效）→ 直接返回 url，不调 API
-  //  2. coverFetchedRef 防 React Strict Mode 在 dev 下双重 mount 触发并发 API 调用
-  const coverFetchedRef = useRef(false);
-
-  useEffect(() => {
-    if (coverFetchedRef.current) return;
-    coverFetchedRef.current = true;
-
-    // 同步预读 cache（命中即立刻 setState，不留 loading 闪烁）
-    const cachedA = readCoverFromCache("biweekly-ai-shortform");
-    const cachedB = readCoverFromCache("quarterly-silver-bili");
-    if (cachedA) setBiweeklyCover(cachedA);
-    if (cachedB) setQuarterlyCover(cachedB);
-    if (cachedA && cachedB) {
-      setCoverLoading(false);
-      return;
-    }
-
-    let canceled = false;
-    (async () => {
-      try {
-        const [a, b] = await Promise.all([
-          cachedA ? Promise.resolve(cachedA) : fetchCover(BIWEEKLY_COVER_PROMPT, "biweekly-ai-shortform").catch(() => ""),
-          cachedB ? Promise.resolve(cachedB) : fetchCover(QUARTERLY_COVER_PROMPT, "quarterly-silver-bili").catch(() => ""),
-        ]);
-        if (!canceled) {
-          if (!cachedA) setBiweeklyCover(a);
-          if (!cachedB) setQuarterlyCover(b);
-          setCoverLoading(false);
-        }
-      } catch {
-        if (!canceled) setCoverLoading(false);
-      }
-    })();
-    return () => { canceled = true; };
-  }, []);
-
-  const handleDownloadBiweekly = () => {
-    if (!biweeklyHiddenRef.current) return;
-    exportSampleAsPdf(
-      biweeklyHiddenRef.current,
-      `战略半月刊样本-AI短剧大揭秘-${Date.now()}.pdf`,
-      downloadPdfMutation,
-      setBiweeklyLoading,
-    );
-  };
-
-  const handleDownloadQuarterly = () => {
-    if (!quarterlyHiddenRef.current) return;
-    exportSampleAsPdf(
-      quarterlyHiddenRef.current,
-      `尊享私人订制样本-奶奶追凡修-${Date.now()}.pdf`,
-      downloadPdfMutation,
-      setQuarterlyLoading,
-    );
-  };
+  const [reading, setReading] = useState<"biweekly" | "quarterly" | null>(null);
 
   return (
     <section
@@ -926,16 +750,14 @@ export default function SampleReportDownload() {
           edition="第 9 期"
           title="AI 短剧大揭秘"
           subtitle="一秒钟脑补三集，这届年轻人为什么戒不掉？"
-          coverUrl={biweeklyCover}
-          coverLoading={coverLoading}
+          coverUrl={BIWEEKLY_COVER_URL}
           highlights={[
             "5 张数据表（市场规模 / 五平台对比 / 能力雷达 / 产品矩阵 / 30 天行动计划）",
             "6 套分析框架（政经社技 / 五力模型 / 波士顿矩阵 / SO-WO-ST-WT / 蓝海画布 / SMART）",
             "覆盖五大模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）",
           ]}
-          loading={biweeklyLoading}
-          onDownload={handleDownloadBiweekly}
-          buttonLabel="↓ 下载半月刊试读版（PDF）"
+          onOpen={() => setReading("biweekly")}
+          buttonLabel="📖 在线阅读全文（带水印）"
         />
 
         {/* 季度定制 */}
@@ -945,17 +767,15 @@ export default function SampleReportDownload() {
           edition="季度定制"
           title="88 岁奶奶追凡修"
           subtitle="银发族银幕审美的算法蓝海"
-          coverUrl={quarterlyCover}
-          coverLoading={coverLoading}
+          coverUrl={QUARTERLY_COVER_URL}
           highlights={[
             "8 张数据表（含个人能力雷达、五平台对比、定价对标、五段漏斗）",
             "5 年生涯规划 + 3 条弯道超车窗口 + 3 条必须放弃的旧思维",
             "覆盖五大模块 · 字数 12000+ 字（完整版）",
           ]}
           highlight
-          loading={quarterlyLoading}
-          onDownload={handleDownloadQuarterly}
-          buttonLabel="↓ 下载尊享版试读样本（PDF）"
+          onOpen={() => setReading("quarterly")}
+          buttonLabel="📖 在线阅读全文（带水印）"
         />
       </div>
 
@@ -970,28 +790,33 @@ export default function SampleReportDownload() {
           fontWeight: 500,
         }}
       >
-        样本含水印，仅供品鉴 · 完整版无水印且包含所有数据表 / 框架 / 行动清单 · PDF 由谷歌云专业
-        Puppeteer 服务渲染，<strong style={{ color: "rgba(240, 201, 132, 0.80)" }}>
-          不会再出现打印对话框
-        </strong>。
+        样本含水印，仅供品鉴 · 完整版无水印且包含所有数据表 / 框架 / 行动清单 ·
+        <strong style={{ color: "rgba(240, 201, 132, 0.80)" }}>
+          点击卡片即可在线阅读
+        </strong>，不下载 PDF（避免国内跨境带宽体感卡顿）。
       </div>
 
-      {/* 隐藏渲染容器（导出时取这两个 div 的 outerHTML 作为 PDF 源） */}
-      <HiddenSampleReport
+      {/* 在线阅读 modal —— 半月刊 */}
+      <OnlineSampleReader
+        open={reading === "biweekly"}
+        onClose={() => setReading(null)}
         markdown={BIWEEKLY_MARKDOWN}
-        containerRef={biweeklyHiddenRef}
-        cover={biweeklyCover}
-        watermark={`试读 · sample-${Date.now()}`}
+        cover={BIWEEKLY_COVER_URL}
+        watermark="试读样本"
         edition="第 9 期"
         topic={BIWEEKLY_TOPIC}
+        tag="BIWEEKLY · 战略半月刊"
       />
-      <HiddenSampleReport
+      {/* 在线阅读 modal —— 季度尊享 */}
+      <OnlineSampleReader
+        open={reading === "quarterly"}
+        onClose={() => setReading(null)}
         markdown={QUARTERLY_MARKDOWN}
-        containerRef={quarterlyHiddenRef}
-        cover={quarterlyCover}
-        watermark={`试读 · sample-${Date.now()}`}
+        cover={QUARTERLY_COVER_URL}
+        watermark="试读样本"
         edition="季度定制"
         topic={QUARTERLY_TOPIC}
+        tag="QUARTERLY · 尊享私人订制"
       />
     </section>
   );
@@ -1008,11 +833,9 @@ function SampleCard({
   title,
   subtitle,
   coverUrl,
-  coverLoading,
   highlights,
   highlight,
-  loading,
-  onDownload,
+  onOpen,
   buttonLabel,
 }: {
   accentColor: string;
@@ -1021,11 +844,9 @@ function SampleCard({
   title: string;
   subtitle: string;
   coverUrl: string;
-  coverLoading: boolean;
   highlights: string[];
   highlight?: boolean;
-  loading: boolean;
-  onDownload: () => void;
+  onOpen: () => void;
   buttonLabel: string;
 }) {
   return (
@@ -1059,11 +880,6 @@ function SampleCard({
             alt={title}
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
           />
-        ) : coverLoading ? (
-          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "#fff7df" }}>
-            <Loader2 size={28} className="animate-spin" />
-            <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>正在生成封面…</div>
-          </div>
         ) : (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,247,223,0.75)" }}>
             <Crown size={42} />
@@ -1150,31 +966,29 @@ function SampleCard({
         </ul>
 
         <button
-          onClick={onDownload}
-          disabled={loading}
+          onClick={onOpen}
           style={{
             marginTop: 6,
             padding: "13px 0",
-            background: loading ? "rgba(168,118,27,0.30)" : `linear-gradient(135deg,${accentColor},#7a5410)`,
+            background: `linear-gradient(135deg,${accentColor},#7a5410)`,
             border: "none",
             borderRadius: 10,
             color: "#fff7df",
             fontWeight: 900,
             fontSize: 14,
-            cursor: loading ? "not-allowed" : "pointer",
+            cursor: "pointer",
             letterSpacing: "0.04em",
-            boxShadow: loading ? "none" : "0 6px 20px rgba(168,118,27,0.30)",
+            boxShadow: "0 6px 20px rgba(168,118,27,0.30)",
             transition: "all 0.2s",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             gap: 8,
           }}
-          onMouseEnter={(e) => { if (!loading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-          onMouseLeave={(e) => { if (!loading) (e.currentTarget as HTMLElement).style.transform = "none"; }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
         >
-          {loading ? <Loader2 size={14} className="animate-spin" /> : <FileDown size={14} />}
-          {loading ? "正在生成 PDF…（约 30 秒）" : buttonLabel}
+          {buttonLabel}
         </button>
       </div>
     </div>
