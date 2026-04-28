@@ -484,9 +484,9 @@ export interface DeepResearchJob {
   creditsUsed?: number;
   /** Google Interactions API 返回的 interaction ID，用于断线恢复轮询（无需重跑） */
   interactionId?: string;
-  /** 用户上传的补充资料：文字说明 + 文件（base64，注入阶段 A Deep Research） */
+  /** 用户上传的补充资料：文字说明 + 文件（已存 GCS，注入阶段 A Deep Research） */
   supplementaryText?: string;
-  supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; data: string }>;
+  supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -920,7 +920,7 @@ ${job.topic}
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
-    // ── 注入用户补充资料（文字 + 图片描述），放在 harvestPrompt 末尾
+    // ── 注入用户补充资料（文字 + 文件内容，通过 GCS URI 调用 Gemini）
     if (job.supplementaryText || job.supplementaryFiles?.length) {
       const suppParts: string[] = [];
       if (job.supplementaryText) {
@@ -930,42 +930,43 @@ ${job.topic}
         const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
         for (const f of job.supplementaryFiles) {
           try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            // 通过 fileData（GCS URI）传给 Gemini，避免传输大 base64
+            const filePart = { fileData: { mimeType: f.mimeType, fileUri: f.gcsUri } };
             if (f.type === "image") {
-              // 用 Gemini vision 描述图片内容，注入为文字
-              const visionUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-              const vRes = await fetch(visionUrl, {
+              const vRes = await fetch(geminiUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   contents: [{ role: "user", parts: [
                     { text: "请用中文详细描述这张图片的核心内容，包括所有文字、数据、图表、人物、品牌信息。输出纯文本，不用 Markdown。" },
-                    { inlineData: { mimeType: f.mimeType, data: f.data } },
+                    filePart,
                   ]}],
                   generationConfig: { maxOutputTokens: 2048 },
                 }),
                 signal: AbortSignal.timeout(30_000),
               });
               const vJson = await vRes.json().catch(() => ({}));
-              const desc = vJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              const desc = String(vJson?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
               if (desc) suppParts.push(`【用户上传图片「${f.name}」内容】\n${desc}`);
+              else console.warn(`[deepResearch] 图片「${f.name}」描述为空，HTTP ${vRes.status}`);
             } else if (f.type === "pdf") {
-              // PDF 也用 Gemini 提取关键内容
-              const pdfUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-              const pRes = await fetch(pdfUrl, {
+              const pRes = await fetch(geminiUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   contents: [{ role: "user", parts: [
                     { text: "请提取这份文档的所有核心内容：数据、观点、结论、人名、品牌、日期。输出纯文本，不用 Markdown，按原文结构组织。" },
-                    { inlineData: { mimeType: f.mimeType, data: f.data } },
+                    filePart,
                   ]}],
                   generationConfig: { maxOutputTokens: 4096 },
                 }),
                 signal: AbortSignal.timeout(60_000),
               });
               const pJson = await pRes.json().catch(() => ({}));
-              const pText = pJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              const pText = String(pJson?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
               if (pText) suppParts.push(`【用户上传文档「${f.name}」内容】\n${pText}`);
+              else console.warn(`[deepResearch] PDF「${f.name}」提取为空，HTTP ${pRes.status}`);
             }
           } catch (e: any) {
             console.warn(`[deepResearch] 补充文件「${f.name}」处理失败：${e?.message}`);

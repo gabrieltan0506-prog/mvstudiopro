@@ -121,4 +121,43 @@ uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
   }
 });
 
+// ── 半月刊补充资料上传 → GCS，返回公开 HTTPS URL + gs:// URI ──────────────────
+const MAGAZINE_SUPP_BUCKET = "mv-studio-pro-user-uploads-255451353515";
+const MAGAZINE_SUPP_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+
+uploadRouter.post("/api/magazine/upload", async (req: any, res: any) => {
+  try {
+    const request = new Request("http://local/upload", {
+      method: req.method,
+      headers: req.headers as HeadersInit,
+      body: req,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+
+    const formData = await request.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) return res.status(400).json({ error: "No file found" });
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    if (!buffer.length) return res.status(400).json({ error: "Empty file" });
+    if (buffer.length > MAGAZINE_SUPP_MAX_BYTES) return res.status(413).json({ error: "File too large (max 10MB)" });
+
+    const filename = file.name || "attachment";
+    const ext = filename.includes(".") ? filename.split(".").pop()! : "bin";
+    const mimeType = file.type || "application/octet-stream";
+    const objectName = `magazine-supplements/${Date.now()}-${nanoid(8)}.${ext}`;
+
+    const { gcsUri } = await uploadBufferToGcs({ objectName, buffer, contentType: mimeType, bucket: MAGAZINE_SUPP_BUCKET });
+    const { getPublicGcsHttpsUrl } = await import("./services/gcs");
+    const url = getPublicGcsHttpsUrl(gcsUri);
+
+    console.log(`[magazine/upload] ${filename} → ${gcsUri} (${buffer.length} bytes)`);
+    return res.json({ url, gcsUri, mimeType, name: filename });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err || "Upload failed");
+    console.error("[magazine/upload] error:", msg);
+    return res.status(500).json({ error: msg });
+  }
+});
+
 export default uploadRouter;

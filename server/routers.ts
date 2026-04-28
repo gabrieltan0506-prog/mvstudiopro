@@ -5594,12 +5594,14 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         productType: z.enum(["magazine_single", "magazine_sub", "personalized"]).optional(),
         isBundlePromo: z.boolean().optional(),
         // 半月刊补充资料（注入阶段 A Deep Research prompt）
+        // 文件已上传到 GCS，这里传 URL 而非 base64
         supplementaryText: z.string().max(8000).optional(),
         supplementaryFiles: z.array(z.object({
           name: z.string().max(200),
           type: z.enum(["image", "pdf"]),
           mimeType: z.string().max(100),
-          data: z.string().max(4_000_000), // base64, max ~3MB
+          url: z.string().url().max(1000),    // 公开 HTTPS URL
+          gcsUri: z.string().max(500),         // gs://bucket/path
         })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {

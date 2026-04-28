@@ -48,26 +48,35 @@ export default function GodViewPage() {
 
   // ── 补充资料（半月刊专属）
   const [suppText, setSuppText] = useState("");
-  const [suppFiles, setSuppFiles] = useState<Array<{ name: string; type: "image" | "pdf"; mimeType: string; data: string }>>([]);
+  const [suppFiles, setSuppFiles] = useState<Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>>([]);
   const [suppExpanded, setSuppExpanded] = useState(false);
+  const [suppUploading, setSuppUploading] = useState(false);
   const suppFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSuppFileAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSuppFileAdd = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
+    if (e.target) e.target.value = "";
     const MAX = 5;
     const remaining = MAX - suppFiles.length;
-    files.slice(0, remaining).forEach((file) => {
-      const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // 去掉 data:xxx;base64, 前缀
-        const base64 = result.split(",")[1] || "";
-        setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, data: base64 }]);
-      };
-      reader.readAsDataURL(file);
-    });
-    if (e.target) e.target.value = "";
+    if (!remaining) return;
+    setSuppUploading(true);
+    try {
+      for (const file of files.slice(0, remaining)) {
+        const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/magazine/upload", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          toast.error(`上传「${file.name}」失败：${err?.error || res.status}`);
+          continue;
+        }
+        const data = await res.json();
+        setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, url: data.url, gcsUri: data.gcsUri }]);
+      }
+    } finally {
+      setSuppUploading(false);
+    }
   };
 
   // supervisor debug
@@ -459,16 +468,22 @@ export default function GodViewPage() {
                     </div>
                     {/* 文件上传 */}
                     <div>
-                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 3MB）</p>
+                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 10MB）</p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {suppFiles.map((f, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.2)", borderRadius: 8, fontSize: 12, color: "#7a5410" }}>
                             <span>{f.type === "image" ? "🖼️" : "📄"}</span>
-                            <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                            <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>{f.name}</span>
+                            <span style={{ fontSize: 10, opacity: 0.5 }}>✓</span>
                             <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2 }}>×</button>
                           </div>
                         ))}
-                        {suppFiles.length < 5 && (
+                        {suppUploading && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: "rgba(168,118,27,0.04)", border: "1px dashed rgba(168,118,27,0.3)", borderRadius: 8, fontSize: 12, color: "#a87020" }}>
+                            <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⏳</span> 上传中…
+                          </div>
+                        )}
+                        {suppFiles.length < 5 && !suppUploading && (
                           <button
                             onClick={() => suppFileInputRef.current?.click()}
                             style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: "rgba(168,118,27,0.06)", border: "1px dashed rgba(168,118,27,0.35)", borderRadius: 8, cursor: "pointer", color: "#a87020", fontSize: 12, fontWeight: 600 }}
