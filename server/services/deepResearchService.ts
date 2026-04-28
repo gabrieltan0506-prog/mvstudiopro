@@ -152,7 +152,7 @@ async function generate(model: string, prompt: string, retries = 2, opts?: { tem
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: opts?.temperature ?? 0.5,
-      maxOutputTokens: opts?.maxTokens ?? 65536,
+      ...(opts?.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
     },
   });
 
@@ -982,7 +982,7 @@ ${job.topic}
     // 传入回调：拿到 interactionId 后立即持久化到 Job 文件，服务重启后可恢复轮询
     const harvested: GroundedResult = await generateDeepResearch(
       harvestPrompt,
-      { complexity: "comprehensive", temperature: 0.7, topP: 0.95, includeThoughts: true, maxTokens: 65536 },
+      { complexity: "comprehensive", temperature: 0.7, topP: 0.95, includeThoughts: true },
       async (interactionId) => {
         const latest = (await readJob(jobId)) ?? job;
         await writeJob({ ...latest, interactionId } as any);
@@ -1160,7 +1160,7 @@ ${job.topic}
 3. 每章末尾 40-60 字的「执行风险提醒」（半月刊的精简版要求，比尊享版短一半）
 4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;
 
-    const reportMarkdown = await generate("gemini-3.1-pro-preview", prompt, 2, { temperature: 0.55, maxTokens: 65536 });
+    const reportMarkdown = await generate("gemini-3.1-pro-preview", prompt, 2, { temperature: 0.55 });
 
     if (!reportMarkdown || reportMarkdown.length < 1500) {
       throw new Error("战报内容过短，可能生成失败");
