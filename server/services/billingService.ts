@@ -12,8 +12,9 @@ export const GODVIEW_PRICING = {
   magazine_single: 800,
   magazine_single_first: 720,   // 800 * 0.9
 
-  /** 半年訂閱（12 期）— 固定 6000，無折扣 */
+  /** 半年訂閱（12 期）— 首購九折 5400 / 後續 6000 */
   magazine_sub: 6000,
+  magazine_sub_first: 5400,     // 6000 * 0.9
 
   /** 尊貴個性化大洗牌 — 首購九折 2700 / 後續 3000 */
   personalized: 3000,
@@ -62,7 +63,10 @@ export function calcGodViewPrice(
       };
 
     case "magazine_sub":
-      return { price: GODVIEW_PRICING.magazine_sub, label: "戰略半月刊半年訂閱（12期·尊貴陪伴）" };
+      return {
+        price: isFirstTime ? GODVIEW_PRICING.magazine_sub_first : GODVIEW_PRICING.magazine_sub,
+        label: `戰略半月刊半年訂閱（12期·${isFirstTime ? "首購九折" : "尊貴陪伴"}）`,
+      };
 
     case "personalized":
       return {

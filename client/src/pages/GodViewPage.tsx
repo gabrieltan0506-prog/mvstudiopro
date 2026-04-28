@@ -27,7 +27,7 @@ const PRODUCTS: Array<{
 }> = [
   { id: "deep_report",     label: "全景行業戰報",   price: 4900, firstPrice: 4000, tag: "首次優惠",  desc: "萬字商業白皮書 · 異步重算力推演",            color: "#f5c842" },
   { id: "magazine_single", label: "戰略半月刊",      price: 800,  firstPrice: 720,  tag: "首購九折",  desc: "當月賽道趨勢報告 · 單期購買",                color: "#a78bfa" },
-  { id: "magazine_sub",    label: "半年訂閱 (12期)", price: 6000,                   tag: "最超值",    desc: "6 個月持續情報陪伴 · 尊貴長線戰略",          color: "#34d399" },
+  { id: "magazine_sub",    label: "半年訂閱 (12期)", price: 6000, firstPrice: 5400, tag: "首購九折",   desc: "6 個月持續情報陪伴 · 尊貴長線戰略",          color: "#34d399" },
   { id: "personalized",    label: "個性化大洗牌",    price: 3000, firstPrice: 2700, tag: "首購九折",  desc: "與歷史快照對比 · 哈佛醫師級二次進化分析",    color: "#f97316" },
 ];
 
