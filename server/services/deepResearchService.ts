@@ -226,6 +226,21 @@ function buildInteractionInput(
   return parts;
 }
 
+/**
+ * deep-research-max-preview-04-2026 不再支持 `system_instruction` 字段
+ * （API 返回 400：「Please include any specific instructions in the 'input' prompt instead」）
+ * 把系统指令以「全局指令 + 用户课题」结构拼进 input，等价于过去的 system_instruction 行为。
+ */
+function composePromptWithSystemInstruction(userPrompt: string): string {
+  return `【全局系统指令 · 必须遵守】
+${DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION}
+
+---
+
+【用户课题】
+${userPrompt}`;
+}
+
 /** 通用轮询：从已创建的 interaction 拉结果。返回 outputs 数组 */
 async function pollInteraction(
   interactionId: string,
@@ -299,9 +314,9 @@ async function requestResearchPlan(
       headers: apiHeaders,
       body: JSON.stringify({
         agent: DEEP_RESEARCH_AGENT_NAME,
-        input: buildInteractionInput(prompt, files),
+        // 系统指令必须拼进 input（agent 不接受 system_instruction 字段）
+        input: buildInteractionInput(composePromptWithSystemInstruction(prompt), files),
         background: true,
-        system_instruction: DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION,
         agent_config: {
           type: "deep-research",
           collaborative_planning: true, // ← 关键：先出计划
