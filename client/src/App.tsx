@@ -35,6 +35,9 @@ const ResearchPage = lazy(() => import("./pages/ResearchPage"));
 const GodViewPage = lazy(() => import("./pages/GodViewPage"));
 const MyReportsPage = lazy(() => import("./pages/MyReportsPage"));
 const SupervisorDeepResearchPage = lazy(() => import("./pages/SupervisorDeepResearchPage"));
+const PlatformIpMatrixPage = lazy(() => import("./pages/PlatformIpMatrixPage"));
+const CompetitorRadarPage = lazy(() => import("./pages/CompetitorRadarPage"));
+const VipTrackerPage = lazy(() => import("./pages/VipTrackerPage"));
 
 function PageLoader() {
   return (
@@ -87,6 +90,9 @@ function Router() {
         <Route path={"/god-view"} component={GodViewPage} />
         <Route path={"/my-reports"} component={MyReportsPage} />
         <Route path={"/supervisor/deep-research"} component={SupervisorDeepResearchPage} />
+        <Route path={"/agent/platform-ip-matrix"} component={PlatformIpMatrixPage} />
+        <Route path={"/agent/competitor-radar"} component={CompetitorRadarPage} />
+        <Route path={"/agent/vip-tracker"} component={VipTrackerPage} />
         <Route path={"/login"} component={Login} />
 
         <Route path={"/404"} component={NotFound} />

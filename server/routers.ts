@@ -5585,6 +5585,239 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
   }),
 
+  /**
+   * 三大 Agent 场景（基于 Deep Research Max + Interactions API stateful flow）
+   *   1) platformIpMatrix · 多平台 IP 矩阵 · 跨界爆款脚本
+   *   2) competitorRadar  · 竞品/赛道雷达
+   *   3) vipTracker       · VIP 客户身心抗衰追踪（stateful，previous_interaction_id 续接）
+   * 共用前端组件 AgentInputPanel：文字 + 图片/PDF 上传 + 语音输入
+   */
+  agent: router({
+    /** 指挥官档案 · 战略边界 + 核心资产（一次性设定，所有场景自动注入） */
+    getCommanderProfile: protectedProcedure.query(async ({ ctx }) => {
+      const { readCommanderProfile } = await import("./services/commanderProfileStore");
+      const profile = await readCommanderProfile(String(ctx.user.id));
+      return profile ?? {
+        strategicBoundary: "",
+        coreAssets: "",
+        outputFormatPreferences: "",
+        notes: "",
+        updatedAt: "",
+      };
+    }),
+
+    /** 保存/更新指挥官档案 */
+    saveCommanderProfile: protectedProcedure
+      .input(z.object({
+        strategicBoundary: z.string().max(4000).optional(),
+        coreAssets: z.string().max(4000).optional(),
+        outputFormatPreferences: z.string().max(2000).optional(),
+        notes: z.string().max(2000).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { writeCommanderProfile } = await import("./services/commanderProfileStore");
+        const next = await writeCommanderProfile(String(ctx.user.id), input);
+        return next;
+      }),
+
+    /** 平台趋势数据预览（让用户在派发前能看到将注入什么爆款数据） */
+    previewPlatformBriefing: protectedProcedure
+      .input(z.object({
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).optional(),
+        topN: z.number().int().min(3).max(20).optional(),
+      }))
+      .query(async ({ input }) => {
+        const { loadFreshPlatformBriefing } = await import("./services/commanderPromptBuilder");
+        return loadFreshPlatformBriefing({
+          platforms: input.platforms as any,
+          topN: input.topN,
+        });
+      }),
+
+    /** 4 平台实时热点（结构化逐条），供前端 widget 显示「一键深潜」按钮 */
+    listTrendHotspots: protectedProcedure
+      .input(z.object({
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).optional(),
+        topN: z.number().int().min(3).max(15).optional(),
+      }).optional())
+      .query(async ({ input }) => {
+        const { listFreshTrendItems } = await import("./services/commanderPromptBuilder");
+        return listFreshTrendItems({
+          platforms: input?.platforms as any,
+          topN: input?.topN,
+        });
+      }),
+
+    /** 多平台 IP 矩阵 · 跨界爆款脚本 */
+    launchPlatformIpMatrix: protectedProcedure
+      .input(z.object({
+        topicDirection: z.string().min(2).max(2000),
+        accounts: z.array(z.object({
+          platform: z.string().min(1).max(40),
+          handle: z.string().min(1).max(120),
+          notes: z.string().max(200).optional(),
+        })).max(20).default([]),
+        supplementaryText: z.string().max(8000).optional(),
+        outputFormatOverride: z.string().max(2000).optional(),
+        supplementaryFiles: z.array(z.object({
+          name: z.string(),
+          type: z.enum(["image", "pdf"]),
+          mimeType: z.string(),
+          url: z.string().url(),
+          gcsUri: z.string(),
+        })).max(5).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
+        return launchPlatformIpMatrix({
+          userId: String(ctx.user.id),
+          text: input.topicDirection,
+          topicDirection: input.topicDirection,
+          accounts: input.accounts,
+          supplementaryText: input.supplementaryText,
+          outputFormatOverride: input.outputFormatOverride,
+          supplementaryFiles: input.supplementaryFiles,
+        });
+      }),
+
+    /** 竞品/赛道雷达 */
+    launchCompetitorRadar: protectedProcedure
+      .input(z.object({
+        benchmarks: z.array(z.object({
+          platform: z.string().min(1).max(40),
+          handle: z.string().min(1).max(120),
+          notes: z.string().max(200).optional(),
+        })).max(20).default([]),
+        focusDimensions: z.array(z.string().max(40)).max(12).default([]),
+        painPoint: z.string().max(2000).optional(),
+        outputFormatOverride: z.string().max(2000).optional(),
+        supplementaryText: z.string().max(8000).optional(),
+        supplementaryFiles: z.array(z.object({
+          name: z.string(),
+          type: z.enum(["image", "pdf"]),
+          mimeType: z.string(),
+          url: z.string().url(),
+          gcsUri: z.string(),
+        })).max(5).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { launchCompetitorRadar } = await import("./services/agentScenarios");
+        return launchCompetitorRadar({
+          userId: String(ctx.user.id),
+          text: input.supplementaryText || "",
+          benchmarks: input.benchmarks,
+          focusDimensions: input.focusDimensions,
+          painPoint: input.painPoint,
+          outputFormatOverride: input.outputFormatOverride,
+          supplementaryText: input.supplementaryText,
+          supplementaryFiles: input.supplementaryFiles,
+        });
+      }),
+
+    /** VIP · 列出当前运营者所有 VIP 档案 */
+    listVipProfiles: protectedProcedure.query(async ({ ctx }) => {
+      const { listVipProfiles } = await import("./services/agentScenarios");
+      return { profiles: await listVipProfiles(String(ctx.user.id)) };
+    }),
+
+    /** VIP · 读取单个档案详情（含历次更新） */
+    getVipProfile: protectedProcedure
+      .input(z.object({ vipId: z.string().min(1) }))
+      .query(async ({ input, ctx }) => {
+        const { getVipProfile } = await import("./services/agentScenarios");
+        const profile = await getVipProfile(String(ctx.user.id), input.vipId);
+        if (!profile) throw new TRPCError({ code: "NOT_FOUND", message: "VIP 档案不存在" });
+        return profile;
+      }),
+
+    /** VIP · 建档（首次基线评估，会走完整 plan→approve→execute 流程） */
+    launchVipBaseline: protectedProcedure
+      .input(z.object({
+        vipName: z.string().min(1).max(80),
+        baselineSummary: z.string().min(20).max(8000),
+        supplementaryText: z.string().max(8000).optional(),
+        supplementaryFiles: z.array(z.object({
+          name: z.string(),
+          type: z.enum(["image", "pdf"]),
+          mimeType: z.string(),
+          url: z.string().url(),
+          gcsUri: z.string(),
+        })).max(5).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { launchVipBaseline } = await import("./services/agentScenarios");
+        return launchVipBaseline({
+          userId: String(ctx.user.id),
+          text: input.baselineSummary,
+          vipName: input.vipName,
+          baselineSummary: input.baselineSummary,
+          supplementaryText: input.supplementaryText,
+          supplementaryFiles: input.supplementaryFiles,
+        });
+      }),
+
+    /** VIP · 月度更新（用 previous_interaction_id 续接 baseline，跳过 plan 阶段） */
+    launchVipMonthlyUpdate: protectedProcedure
+      .input(z.object({
+        vipId: z.string().min(1),
+        monthlyData: z.string().min(20).max(8000),
+        supplementaryText: z.string().max(8000).optional(),
+        supplementaryFiles: z.array(z.object({
+          name: z.string(),
+          type: z.enum(["image", "pdf"]),
+          mimeType: z.string(),
+          url: z.string().url(),
+          gcsUri: z.string(),
+        })).max(5).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { launchVipMonthlyUpdate } = await import("./services/agentScenarios");
+        return launchVipMonthlyUpdate({
+          userId: String(ctx.user.id),
+          text: input.monthlyData,
+          vipId: input.vipId,
+          monthlyData: input.monthlyData,
+          supplementaryText: input.supplementaryText,
+          supplementaryFiles: input.supplementaryFiles,
+        });
+      }),
+
+    /** 列出某场景的所有任务（产品列表 / 历史报告） */
+    listScenarioJobs: protectedProcedure
+      .input(z.object({
+        productType: z.enum(["platform_ip_matrix", "competitor_radar", "vip_baseline", "vip_monthly"]),
+      }))
+      .query(async ({ input, ctx }) => {
+        const { listAgentJobs } = await import("./services/agentScenarios");
+        const items = await listAgentJobs(String(ctx.user.id), input.productType);
+        return { items };
+      }),
+
+    /** 读取单个 job 详情（用于场景内的状态轮询） */
+    getJob: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ input, ctx }) => {
+        const { getJob } = await import("./services/agentScenarios");
+        const job = await getJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
+        return {
+          jobId: job.jobId,
+          status: job.status,
+          progress: job.progress || "",
+          reportMarkdown: job.reportMarkdown || null,
+          planText: job.planText || null,
+          planInteractionId: job.planInteractionId || null,
+          interactionId: job.interactionId || null,
+          error: job.error || null,
+          createdAt: job.createdAt,
+          completedAt: job.completedAt || null,
+          productType: job.productType || null,
+          topic: job.topic,
+        };
+      }),
+  }),
+
   /** AI 上帝视角：全息行业研报 — 脱机异步重算力推演 */
   deepResearch: router({
     launch: protectedProcedure

@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
+import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -388,6 +389,70 @@ export default function GodViewPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
             进入快照库 →
           </div>
+        </div>
+
+        {/* ── Deep Research Max · 三大 Agent 场景入口 ── */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "#7a5410", letterSpacing: "0.04em" }}>
+              👑 Deep Research Max · 高阶 Agent 场景
+            </h3>
+            <span style={{ fontSize: 11, color: "rgba(122,84,16,0.55)" }}>
+              基于 Interactions API · 计划→审批→深潜，支持图片/PDF/语音输入
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            {[
+              {
+                title: "多平台 IP 矩阵",
+                desc: "四平台爆款交叉对比 + 跨界短影音脚本与分镜，开机即录的内容资产",
+                href: "/agent/platform-ip-matrix",
+                icon: "🎬",
+              },
+              {
+                title: "竞品 / 赛道雷达",
+                desc: "对标账号长时间深潜分析，输出可作为「降维打击弹药」的高密度报告",
+                href: "/agent/competitor-radar",
+                icon: "📡",
+              },
+              {
+                title: "VIP 客户身心抗衰",
+                desc: "高净值客户专属档案 · 用 previous_interaction_id 续接，每月动态调整处方",
+                href: "/agent/vip-tracker",
+                icon: "👤",
+              },
+            ].map((c) => (
+              <button
+                key={c.href}
+                onClick={() => navigate(c.href)}
+                style={{
+                  textAlign: "left",
+                  padding: "16px 18px",
+                  borderRadius: 14,
+                  background: "linear-gradient(135deg, rgba(255,248,225,0.95), rgba(255,243,210,0.85))",
+                  border: "1.2px solid rgba(168,118,27,0.32)",
+                  cursor: "pointer",
+                  color: "#3d2c14",
+                  boxShadow: "0 2px 12px rgba(168,118,27,0.10)",
+                  transition: "all 0.18s",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 22px rgba(168,118,27,0.30)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 12px rgba(168,118,27,0.10)"; }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 22 }}>{c.icon}</span>
+                  <span style={{ fontSize: 15, fontWeight: 900, color: "#7a5410" }}>{c.title}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.6 }}>{c.desc}</p>
+                <div style={{ marginTop: 10, fontSize: 11, fontWeight: 800, color: "#a87020" }}>立即派发 →</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── 实时趋势 · 一键深潜（4 平台爆款 → IP 矩阵 / 雷达） ── */}
+        <div style={{ marginBottom: 24 }}>
+          <TrendingHotspotsWidget />
         </div>
 
         {/* ── 半月刊 10 天提醒卡片 ── */}
