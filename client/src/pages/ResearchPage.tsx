@@ -390,7 +390,7 @@ export default function ResearchPage() {
         {result && (
           <div style={{ animation: "fadeIn 0.4s ease" }}>
             {/* PDF 下载栏 */}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+            <div data-pdf-exclude="true" style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
               <button
                 onClick={handleDownloadPdf}
                 disabled={isPdfBusy}

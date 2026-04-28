@@ -3558,7 +3558,7 @@ export default function MVAnalysisPage() {
                 <div className="text-xs text-amber-200/80">平台数据每日更新，本次分析结果基于当前时间点的数据快照。建议立即下载 PDF，系统将同步保留一份快照纪录在您的「我的作品」中。</div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3" data-pdf-exclude="true">
               <div>
                 <div className="text-sm font-semibold text-white">分析页面下载</div>
                 <div className="mt-1 text-xs text-white/50">导出为 PDF，同时保存快照到「我的作品」</div>
