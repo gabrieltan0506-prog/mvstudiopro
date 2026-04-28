@@ -587,14 +587,17 @@ export default function GodViewPage() {
                 {isRecording ? <MicOff size={14} /> : isTranscribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
               </button>
             </div>
-            {/* ── 补充资料区（半月刊专属） ── */}
-            {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub") && (
+            {/* ── 补充资料区（3 类产品共享） ── */}
+            {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub" || selectedProduct === "personalized") && (
               <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
                 <button
                   onClick={() => setSuppExpanded(!suppExpanded)}
                   style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "rgba(168,118,27,0.06)", border: "none", cursor: "pointer", color: "#7a5410", fontSize: 13, fontWeight: 700 }}
                 >
-                  <span>📎 补充资料（可选）— 上传文件或输入背景说明，AI 优先参考</span>
+                  <span>
+                    📎 {selectedProduct === "personalized" ? "客户档案与历史快照（可选）" : "补充资料（可选）"}
+                    {" "}— 上传文件或输入背景说明，AI 优先参考
+                  </span>
                   <span style={{ fontSize: 11, opacity: 0.6 }}>
                     {suppFiles.length > 0 || suppText.trim() ? `已添加 ${suppFiles.length} 个文件${suppText.trim() ? " + 文字说明" : ""}` : "未添加"}
                     {" "}{suppExpanded ? "▲" : "▼"}
@@ -609,14 +612,22 @@ export default function GodViewPage() {
                         value={suppText}
                         onChange={(e) => setSuppText(e.target.value.slice(0, 2000))}
                         rows={4}
-                        placeholder="例如：上期半月刊发布后收到用户反馈，本期重点补充银发创作者的变现路径分析，请着重研究 50 岁以上创作者在哔哩哔哩的粉丝忠诚度数据…"
+                        placeholder={
+                          selectedProduct === "personalized"
+                            ? "例如：本季度新接一位高净值 VIP，男 52 岁，主诉睡眠障碍 + 体态焦虑。希望结合上一季度报告做二次进化分析，重点对比心血管指标与情绪状态变化曲线…"
+                            : "例如：上期半月刊发布后收到用户反馈，本期重点补充银发创作者的变现路径分析，请着重研究 50 岁以上创作者在哔哩哔哩的粉丝忠诚度数据…"
+                        }
                         style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(168,118,27,0.25)", background: "#fff", color: "#1c1407", fontSize: 13, lineHeight: 1.7, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
                       />
                       <p style={{ fontSize: 11, color: "rgba(61,44,20,0.4)", margin: "4px 0 0", textAlign: "right" }}>{suppText.length}/2000</p>
                     </div>
                     {/* 文件上传 */}
                     <div>
-                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 100MB）</p>
+                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>
+                        {selectedProduct === "personalized"
+                          ? "上传客户档案 / 历史快照 / 体检报告 / 私域聊天截图（最多 5 个，PNG/JPG/PDF，每个 ≤ 100MB）"
+                          : "上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 100MB）"}
+                      </p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {suppFiles.map((f, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.2)", borderRadius: 8, fontSize: 12, color: "#7a5410" }}>
