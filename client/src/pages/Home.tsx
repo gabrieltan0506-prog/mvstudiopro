@@ -33,30 +33,34 @@ export default function HomePage() {
 
       <HomeNoticeBar />
 
-      <HomeRedeemCode />
-
-      <HomeInviteApply />
-
       <HomeHero />
 
-      {/* 试读样本 · 醒目位置（紧贴 Hero，让访客一进站就能下载） */}
+      {/* 试读样本 · 紧贴 Hero 正下方（黄金视觉位，让访客一滚屏就能下载） */}
       <SampleReportDownload />
 
+      {/* 核心功能介绍 + 更新日志（试读完看平台能做什么） */}
       <HomeFeatureCarousel />
 
       <HomeChangelog />
 
+      {/* 工具与作品（沉浸式浏览） */}
       <HomeRemixStrip />
 
       <HomeTools />
 
       <HomeShowcase />
 
+      <HomeMyWorks />
+
+      {/* 定价与转化（看完功能再做决策） */}
       <HomePricing />
 
-      <HomeEducation />
+      {/* 兑换邀请码 / 申请邀请码（推到决策点之后） */}
+      <HomeRedeemCode />
 
-      <HomeMyWorks />
+      <HomeInviteApply />
+
+      <HomeEducation />
 
       <HomeFeedback />
 
