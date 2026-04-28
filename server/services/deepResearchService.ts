@@ -6,7 +6,9 @@
 import fs from "fs/promises";
 import path from "path";
 
-const REPORT_DIR = "/data/growth/deep-research";
+// Storage root for job state. Default = Fly persistent volume. Override via env var
+// for local tests / CI smoke tests.
+const REPORT_DIR = process.env.DEEP_RESEARCH_REPORT_DIR || "/data/growth/deep-research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -467,14 +469,61 @@ export interface DeepResearchJob {
   error?: string;
   createdAt: string;
   completedAt?: string;
+  // ── 防中断追踪字段（resilience tracking） ─────────────────────────────────
+  /** 最后一次任意写入时间。worker 心跳：每 30s 自动更新一次。重启时若 heartbeat
+   *  落后超过 RESUME_THRESHOLD 即视为「进程已死」，自动重新拉起或标失败。 */
+  lastHeartbeatAt?: string;
+  /** 当前持有该任务的进程 PID。仅供调试，下面的判定逻辑只看 heartbeat 时间。 */
+  pid?: number;
+  /** 重启次数（attemptCount）。超过 MAX_RESUME_ATTEMPTS 则不再重启，直接 failed + 退款。 */
+  attemptCount?: number;
+  /** 启动任务时实际扣除的积分（用于失败时退款）。0 = 管理员/免费，无需退款。 */
+  creditsUsed?: number;
 }
+
+// ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
+/** Heartbeat 落后多少毫秒视为「进程可能已死，可考虑重新拉起」。Deep Research API
+ *  单次最长 ~10 分钟，期间 updateProgress 会刷 heartbeat；超过 3 分钟没动静意味
+ *  着不是网络慢就是进程死了。 */
+const HEARTBEAT_RESUME_AFTER_MS = 3 * 60 * 1000;
+/** Heartbeat 落后多少毫秒视为「彻底死亡，退款放弃」。包含「重启后再次跑也无果」
+ *  的极端场景；当任务 heartbeat 超过该阈值即直接 failed + refund。 */
+const HEARTBEAT_FAIL_AFTER_MS = 30 * 60 * 1000;
+/** 同一任务被重新拉起的最大次数。超过此值直接 failed + refund，避免毒任务循环消耗
+ *  1 RPM 配额。 */
+const MAX_RESUME_ATTEMPTS = 2;
+/** Worker 内 heartbeat ticker 间隔。每隔此时长写一次 lastHeartbeatAt，让监控能区
+ *  分「在跑但慢」和「进程已死」。 */
+const HEARTBEAT_TICK_MS = 30 * 1000;
 
 async function writeJob(job: DeepResearchJob) {
   await fs.mkdir(REPORT_DIR, { recursive: true });
+  // 自动盖心跳：每次 writeJob 都视为一次活动信号。
+  const stamped: DeepResearchJob = {
+    ...job,
+    lastHeartbeatAt: new Date().toISOString(),
+    pid: job.pid ?? process.pid,
+  };
   await fs.writeFile(
     path.join(REPORT_DIR, `${job.jobId}.json`),
-    JSON.stringify(job, null, 2),
+    JSON.stringify(stamped, null, 2),
   );
+}
+
+/** 仅写一行心跳时间戳（不读旧 job，最小 IO）。供 ticker 使用。 */
+async function bumpHeartbeat(jobId: string) {
+  try {
+    const file = path.join(REPORT_DIR, `${jobId}.json`);
+    const raw = await fs.readFile(file, "utf-8");
+    const job: DeepResearchJob = JSON.parse(raw);
+    // 只在仍处于 running 状态时刷心跳，避免覆盖 completed / failed 终态。
+    if (job.status !== "running") return;
+    job.lastHeartbeatAt = new Date().toISOString();
+    job.pid = process.pid;
+    await fs.writeFile(file, JSON.stringify(job, null, 2));
+  } catch {
+    // 心跳失败不影响主流程
+  }
 }
 
 export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
@@ -486,43 +535,157 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
   }
 }
 
+/** 把任务标记为彻底失败，并退还积分 + 同步 DB。 */
+async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMsg: string) {
+  const file = path.join(REPORT_DIR, `${job.jobId}.json`);
+  const failedJob: DeepResearchJob = {
+    ...job,
+    status: "failed",
+    error: reason,
+    progress: progressMsg,
+    completedAt: new Date().toISOString(),
+  };
+  try { await fs.writeFile(file, JSON.stringify(failedJob, null, 2)); } catch {}
+  if (job.dbRecordId) {
+    try { await dbUpdateRecord(job.dbRecordId, "failed", progressMsg, undefined, reason); } catch {}
+  }
+  // 实际退款：只有在任务确实扣过积分时退（管理员/免费的 creditsUsed=0 跳过）
+  if (typeof job.creditsUsed === "number" && job.creditsUsed > 0) {
+    try {
+      const { refundCredits } = await import("../credits");
+      await refundCredits(Number(job.userId), job.creditsUsed, `上帝视角研报·${reason}·退回 ${job.creditsUsed} 点`);
+      console.log(`[deepResearch] 💰 已退还 ${job.creditsUsed} 点给用户 ${job.userId}（任务 ${job.jobId}）`);
+    } catch (e: any) {
+      console.warn(`[deepResearch] 退款失败 (job=${job.jobId}):`, e?.message);
+    }
+  }
+}
+
+/** 在当前进程内重新拉起一个 running 任务。返回是否拉起成功。 */
+async function relaunchJob(job: DeepResearchJob): Promise<boolean> {
+  const file = path.join(REPORT_DIR, `${job.jobId}.json`);
+  const nextAttempt = (job.attemptCount ?? 1) + 1;
+  if (nextAttempt > MAX_RESUME_ATTEMPTS + 1) {
+    await failJobAndRefund(
+      job,
+      `重启 ${MAX_RESUME_ATTEMPTS} 次仍未完成，停止重试`,
+      `❌ 任务多次重启仍失败，已退回积分 ${job.creditsUsed ?? 0} 点`,
+    );
+    return false;
+  }
+  // 标记进入 running 并打上当前进程 + attempt
+  const resumed: DeepResearchJob = {
+    ...job,
+    status: "running",
+    progress: `🔁 检测到服务重启，第 ${nextAttempt} 次自动重新拉起任务…`,
+    pid: process.pid,
+    attemptCount: nextAttempt,
+    error: undefined,
+  };
+  try { await fs.writeFile(file, JSON.stringify(resumed, null, 2)); } catch {}
+  if (job.dbRecordId) {
+    try { await dbUpdateRecord(job.dbRecordId, "processing", resumed.progress ?? "🔁 任务重新拉起"); } catch {}
+  }
+  // fire-and-forget；任何未捕获异常都会被 runDeepResearchAsync 内部的 try/catch 接住
+  setImmediate(() => {
+    runDeepResearchAsync(job.jobId).catch((e) =>
+      console.warn(`[deepResearch] relaunched job ${job.jobId} crashed:`, e?.message),
+    );
+  });
+  console.log(`[deepResearch] 🔁 重启拉起任务 ${job.jobId}（attempt ${nextAttempt}/${MAX_RESUME_ATTEMPTS + 1}）`);
+  return true;
+}
+
 /**
- * 服务启动时调用：扫描孤儿任务（running 超过 15 分钟）并标记为 failed。
- * 防止机器重启/部署导致任务永远卡在 running 状态。
+ * 服务启动时调用：扫描所有未终态任务，按 heartbeat 滞后程度分级处理：
+ *   * heartbeat 在 3 分钟内：跳过（worker 仍在跑，无需介入）
+ *   * heartbeat 落后 3-30 分钟：进程视为已死，自动重新拉起（最多 MAX_RESUME_ATTEMPTS 次）
+ *   * heartbeat 落后 > 30 分钟：彻底放弃，标 failed + 退款
+ *   * 没有 heartbeat 字段（旧数据）：fallback 到 createdAt 判断
  */
 export async function recoverOrphanedJobs(): Promise<void> {
+  // 启动时也确保 shutdown 钩子注册，这样下次重启前能给 inflight 任务打上「快速重拉」标记
+  ensureShutdownHook();
   try {
     await fs.mkdir(REPORT_DIR, { recursive: true });
     const files = await fs.readdir(REPORT_DIR);
     const now = Date.now();
-    const ORPHAN_THRESHOLD_MS = 15 * 60 * 1000;
+
+    let resumed = 0;
+    let failed = 0;
+    let skipped = 0;
 
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
         const raw = await fs.readFile(path.join(REPORT_DIR, f), "utf-8");
         const job: DeepResearchJob = JSON.parse(raw);
-        if (job.status === "running" || job.status === "pending") {
-          const age = now - new Date(job.createdAt).getTime();
-          if (age > ORPHAN_THRESHOLD_MS) {
-            const failedJob: DeepResearchJob = {
-              ...job,
-              status: "failed",
-              error: "服务重启导致任务中断，积分已退回，请重新发起",
-              progress: "❌ 任务因服务重启中断，积分已退回",
-            };
-            await fs.writeFile(path.join(REPORT_DIR, f), JSON.stringify(failedJob, null, 2));
-            if (job.dbRecordId) {
-              await dbUpdateRecord(job.dbRecordId, "failed", "❌ 任务因服务重启中断，积分已退回", undefined, "服务重启导致任务中断");
-            }
-            console.log(`[deepResearch] 🔄 孤儿任务已标记失败: ${job.jobId}`);
-          }
+        if (job.status !== "running" && job.status !== "pending") continue;
+
+        const lastBeat = job.lastHeartbeatAt
+          ? new Date(job.lastHeartbeatAt).getTime()
+          : new Date(job.createdAt).getTime();
+        const lag = now - lastBeat;
+
+        if (lag < HEARTBEAT_RESUME_AFTER_MS) {
+          // 还有可能其它进程在跑（多实例 / 同实例刚 fork），不要打扰
+          skipped += 1;
+          continue;
         }
+        if (lag > HEARTBEAT_FAIL_AFTER_MS) {
+          await failJobAndRefund(
+            job,
+            `任务超过 ${Math.round(HEARTBEAT_FAIL_AFTER_MS / 60000)} 分钟无心跳`,
+            `❌ 任务长时间无响应，已退回积分 ${job.creditsUsed ?? 0} 点`,
+          );
+          failed += 1;
+          continue;
+        }
+        // 3-30 分钟无心跳：自动重新拉起
+        const ok = await relaunchJob(job);
+        if (ok) resumed += 1;
+        else failed += 1;
       } catch {}
+    }
+
+    if (resumed + failed + skipped > 0) {
+      console.log(`[deepResearch] 🔍 启动恢复扫描完成：重启 ${resumed} · 失败 ${failed} · 跳过 ${skipped}`);
     }
   } catch (e) {
     console.warn("[deepResearch] recoverOrphanedJobs 扫描失败:", e);
   }
+}
+
+// ── Graceful shutdown ───────────────────────────────────────────────────────
+// Fly.io 部署 / 重启时会发 SIGTERM。我们捕获信号并立即把所有「当前进程持有」的
+// running 任务的 heartbeat 时间提前到「3 分钟前」，这样下一个进程启动时
+// recoverOrphanedJobs 会立刻拉起这些任务，而不是等到 3 分钟后才发现进程死了。
+// 这样能把重启造成的「无声卡顿期」从最长 3 分钟压缩到几秒。
+let shutdownHooked = false;
+function ensureShutdownHook() {
+  if (shutdownHooked) return;
+  shutdownHooked = true;
+  const handler = async (sig: string) => {
+    console.log(`[deepResearch] ⚠️  ${sig} received, marking inflight jobs for fast resume…`);
+    try {
+      const files = await fs.readdir(REPORT_DIR).catch(() => [] as string[]);
+      const past = new Date(Date.now() - HEARTBEAT_RESUME_AFTER_MS - 1000).toISOString();
+      for (const f of files) {
+        if (!f.endsWith(".json")) continue;
+        try {
+          const file = path.join(REPORT_DIR, f);
+          const job: DeepResearchJob = JSON.parse(await fs.readFile(file, "utf-8"));
+          if (job.status === "running" && job.pid === process.pid) {
+            job.lastHeartbeatAt = past;
+            await fs.writeFile(file, JSON.stringify(job, null, 2));
+          }
+        } catch {}
+      }
+    } catch {}
+    // 不主动 process.exit；让 Node 自然退出（其他 service 的 shutdown 钩子也能跑）
+  };
+  process.on("SIGTERM", () => { void handler("SIGTERM"); });
+  process.on("SIGINT", () => { void handler("SIGINT"); });
 }
 
 /** 创建任务（同步写入 Fly 磁盘 + Neon DB，立即响应前端） */
@@ -534,6 +697,9 @@ export async function createDeepResearchJob(
 ): Promise<{ jobId: string; dbRecordId?: number }> {
   const jobId = `dr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+  // 确保 SIGTERM 钩子已注册（首次创建任务时启用，无副作用）
+  ensureShutdownHook();
+
   // 先写 Fly 磁盘（保证一定成功）
   const job: DeepResearchJob = {
     jobId,
@@ -543,6 +709,8 @@ export async function createDeepResearchJob(
     status: "pending",
     progress: "🚀 任务已派发，等待算力节点…",
     createdAt: new Date().toISOString(),
+    creditsUsed, // 记录扣费金额，失败时按这个值退回
+    attemptCount: 1,
   };
   await writeJob(job);
 
@@ -560,7 +728,16 @@ export async function runDeepResearchAsync(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return;
 
+  // 注册 SIGTERM 钩子（幂等，仅首次有效）
+  ensureShutdownHook();
+
   const taskStartMs = Date.now();
+
+  // ── Heartbeat ticker：worker 在跑期间，每 30s 自动刷一次 lastHeartbeatAt。
+  //    这样即使没有阶段更新，重启时也能区分「在跑但慢」和「进程已死」。
+  const heartbeatTimer = setInterval(() => { void bumpHeartbeat(jobId); }, HEARTBEAT_TICK_MS);
+  // 进程退出时不要让 ticker 阻塞退出
+  if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
 
   const stages = [
     "📡 突破信息茧房，全网检索行业论文与商业数据…",
@@ -571,7 +748,7 @@ export async function runDeepResearchAsync(jobId: string) {
 
   const updateProgress = async (progress: string, status: "running" | "completed" | "failed" = "running") => {
     const latest = (await readJob(jobId)) ?? job;
-    await writeJob({ ...latest, status, progress });
+    await writeJob({ ...latest, status, progress, pid: process.pid });
     if (latest.dbRecordId) {
       await dbUpdateRecord(latest.dbRecordId, status, progress);
     }
@@ -1021,14 +1198,13 @@ ${job.topic}
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
     const latest = (await readJob(jobId)) ?? job;
-    await writeJob({
-      ...latest,
-      status: "failed",
-      error: err?.message || "未知错误",
-      progress: "❌ 战报生成失败，积分已退回",
-    });
-    if (latest.dbRecordId) {
-      await dbUpdateRecord(latest.dbRecordId, "failed", "❌ 战报生成失败，积分已退回", undefined, err?.message || "未知错误");
-    }
+    // 统一走 failJobAndRefund：写状态、写 DB、退积分
+    await failJobAndRefund(
+      latest,
+      err?.message || "未知错误",
+      `❌ 战报生成失败，已退回积分 ${latest.creditsUsed ?? 0} 点`,
+    );
+  } finally {
+    clearInterval(heartbeatTimer);
   }
 }
