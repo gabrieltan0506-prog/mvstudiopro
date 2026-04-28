@@ -199,17 +199,22 @@ const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 // Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
 // generateContent 会直接返回 400，不可使用。
 const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/interactions";
-const DEEP_RESEARCH_AGENT_NAME = "deep-research-preview-04-2026";
+// Max 版：~160 次搜索 / ~900k token，比标准版更深度全面
+const DEEP_RESEARCH_AGENT_NAME = "deep-research-max-preview-04-2026";
 const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
 const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
 
 /**
- * 调用 Deep Research Agent（Interactions API + background polling）。
- * @param onInteractionId - 拿到 interactionId 后的回调，用于持久化到 Job 文件以便断线恢复
+ * 调用 Deep Research Max Agent（Interactions API + background polling）。
+ * - agent_config.visualization="auto" → Agent 可自动生成图表
+ * - agent_config.thinking_summaries="auto" → 开启思维链日志
+ * - 支持多模态 input：可直接传图片(uri)和文档(uri+mime_type)
+ * @param files 用户上传的补充文件（已存 GCS），直接作为 multimodal input 传给 Agent
+ * @param onInteractionId 拿到 interactionId 后的回调，用于持久化以便断线恢复
  */
 async function generateDeepResearch(
   prompt: string,
-  opts?: { complexity?: string; temperature?: number; topP?: number; maxTokens?: number; includeThoughts?: boolean },
+  files?: Array<{ type: "image" | "pdf"; url: string; mimeType: string; name: string }>,
   onInteractionId?: (id: string) => Promise<void>,
 ): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
@@ -221,18 +226,36 @@ async function generateDeepResearch(
     "X-Goog-Api-Client": "genai-node/deep-research",
   };
 
+  // 构建 multimodal input：文本 + 文件（图片 / 文档）
+  const inputParts: any[] = [{ type: "text", text: prompt }];
+  if (files?.length) {
+    for (const f of files) {
+      if (f.type === "image") {
+        inputParts.push({ type: "image", uri: f.url });
+      } else {
+        inputParts.push({ type: "document", uri: f.url, mime_type: f.mimeType });
+      }
+    }
+  }
+  const input = inputParts.length === 1 ? prompt : inputParts;
+
   // ── Step 1：提交任务（立即返回 interaction.id） ──────────────────────────────
   const release = await acquireRateGate("deep-research-create");
   let interactionId: string;
   try {
-    console.log(`[deepResearch] 🚀 PID=${process.pid} 提交 Agent 任务，promptLen=${prompt.length}`);
+    console.log(`[deepResearch] 🚀 PID=${process.pid} 提交 Max Agent，promptLen=${prompt.length} files=${files?.length ?? 0}`);
     const createRes = await fetch(INTERACTIONS_BASE, {
       method: "POST",
       headers: apiHeaders,
       body: JSON.stringify({
-        input: prompt,
+        input,
         agent: DEEP_RESEARCH_AGENT_NAME,
         background: true,
+        agent_config: {
+          type: "deep-research",
+          thinking_summaries: "auto",  // 开启思维链，可在进度日志中看到推演步骤
+          visualization: "auto",       // Agent 自动生成图表/图形
+        },
       }),
     });
     const rawCreate = await createRes.text();
@@ -279,7 +302,6 @@ async function generateDeepResearch(
         throw new Error(`Deep Research 轮询失败（HTTP ${pollRes.status}），积分将退回。`);
       }
     } catch (fetchErr: any) {
-      // 网络抖动：只记录，下次循环继续重试
       console.warn(`[deepResearch] ⚠️ poll fetch 异常 elapsed=${elapsed}s：${fetchErr?.message}`);
       continue;
     }
@@ -295,15 +317,28 @@ async function generateDeepResearch(
 
     if (lastStatus === "completed") {
       const outputs: any[] = pollJson?.outputs || [];
-      const text = String(outputs[outputs.length - 1]?.text || "").trim();
+
+      // 提取文本正文（最后一个 text output）
+      const textOutput = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
+      const text = String(textOutput?.text || "").trim();
 
       if (!text || text.length < 400) {
         console.error(`[deepResearch] ❌ 完成但正文不足（${text.length}字），响应：${JSON.stringify(pollJson).slice(0, 3000)}`);
         throw new Error(`Deep Research Agent 完成但内容不足（${text.length}字），积分将退回。`);
       }
 
-      console.log(`[deepResearch] ✅ PID=${process.pid} 完成 interactionId=${interactionId} ${text.length}字 elapsed=${elapsed}s`);
-      return { text, sources: [] };
+      // 捕获 Agent 自动生成的图表（base64 图片）→ 嵌入报告
+      const imageOutputs = outputs.filter((o: any) => o.type === "image" && o.data);
+      let chartMarkdown = "";
+      if (imageOutputs.length > 0) {
+        chartMarkdown = "\n\n## 📊 Agent 生成图表\n\n" + imageOutputs.map((o: any, i: number) =>
+          `![图表 ${i + 1}](data:image/png;base64,${o.data})\n`
+        ).join("\n");
+        console.log(`[deepResearch] 📊 捕获到 ${imageOutputs.length} 张 Agent 生成图表`);
+      }
+
+      console.log(`[deepResearch] ✅ PID=${process.pid} 完成 interactionId=${interactionId} ${text.length}字 charts=${imageOutputs.length} elapsed=${elapsed}s`);
+      return { text: text + chartMarkdown, sources: [] };
     }
     // status === "in_progress" → 继续等待
   }
@@ -313,7 +348,7 @@ async function generateDeepResearch(
 
 /** @deprecated 旧接口 · 转发到新的 Deep Research 调用器（保持向下兼容） */
 async function generateGrounded(_model: string, prompt: string): Promise<GroundedResult> {
-  return generateDeepResearch(prompt);
+  return generateDeepResearch(prompt, undefined);
 }
 
 // ── Neon DB 辅助 ────────────────────────────────────────────────────────────
@@ -922,69 +957,25 @@ ${job.topic}
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
 
-    // ── 注入用户补充资料（文字 + 文件内容，通过 GCS URI 调用 Gemini）
-    if (job.supplementaryText || job.supplementaryFiles?.length) {
-      const suppParts: string[] = [];
-      if (job.supplementaryText) {
-        suppParts.push(`【用户补充文字说明】\n${job.supplementaryText}`);
-      }
-      if (job.supplementaryFiles?.length) {
-        const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
-        for (const f of job.supplementaryFiles) {
-          try {
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-            // 通过 fileData（GCS URI）传给 Gemini，避免传输大 base64
-            const filePart = { fileData: { mimeType: f.mimeType, fileUri: f.gcsUri } };
-            if (f.type === "image") {
-              const vRes = await fetch(geminiUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  contents: [{ role: "user", parts: [
-                    { text: "请用中文详细描述这张图片的核心内容，包括所有文字、数据、图表、人物、品牌信息。输出纯文本，不用 Markdown。" },
-                    filePart,
-                  ]}],
-                  generationConfig: { maxOutputTokens: 2048 },
-                }),
-                signal: AbortSignal.timeout(30_000),
-              });
-              const vJson = await vRes.json().catch(() => ({}));
-              const desc = String(vJson?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-              if (desc) suppParts.push(`【用户上传图片「${f.name}」内容】\n${desc}`);
-              else console.warn(`[deepResearch] 图片「${f.name}」描述为空，HTTP ${vRes.status}`);
-            } else if (f.type === "pdf") {
-              const pRes = await fetch(geminiUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  contents: [{ role: "user", parts: [
-                    { text: "请提取这份文档的所有核心内容：数据、观点、结论、人名、品牌、日期。输出纯文本，不用 Markdown，按原文结构组织。" },
-                    filePart,
-                  ]}],
-                  generationConfig: { maxOutputTokens: 4096 },
-                }),
-                signal: AbortSignal.timeout(60_000),
-              });
-              const pJson = await pRes.json().catch(() => ({}));
-              const pText = String(pJson?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-              if (pText) suppParts.push(`【用户上传文档「${f.name}」内容】\n${pText}`);
-              else console.warn(`[deepResearch] PDF「${f.name}」提取为空，HTTP ${pRes.status}`);
-            }
-          } catch (e: any) {
-            console.warn(`[deepResearch] 补充文件「${f.name}」处理失败：${e?.message}`);
-          }
-        }
-      }
-      if (suppParts.length) {
-        harvestPrompt += `\n\n【⭐ 用户补充资料 · 请在研究时重点参考以下信息，优先结合这些内容展开分析】\n${suppParts.join("\n\n")}`;
-        await updateProgress("📎 已注入用户补充资料，正在启动深度检索…");
-      }
+    // ── 注入用户补充文字说明（文件直接以 multimodal 形式传给 Agent，无需预处理）
+    if (job.supplementaryText) {
+      harvestPrompt += `\n\n【⭐ 用户补充文字说明 · 请在研究时重点参考，优先结合这些内容展开分析】\n${job.supplementaryText}`;
+    }
+    const suppFiles = (job.supplementaryFiles ?? []).map(f => ({
+      type: f.type,
+      url: f.url,
+      mimeType: f.mimeType,
+      name: f.name,
+    }));
+    if (suppFiles.length) {
+      harvestPrompt += `\n\n【⭐ 用户上传了 ${suppFiles.length} 个补充文件（图片/文档），Agent 将直接读取其内容，请优先结合这些文件展开分析】`;
+      await updateProgress(`📎 已附加 ${suppFiles.length} 个补充文件，正在启动 Deep Research Max…`);
     }
 
     // 传入回调：拿到 interactionId 后立即持久化到 Job 文件，服务重启后可恢复轮询
     const harvested: GroundedResult = await generateDeepResearch(
       harvestPrompt,
-      { complexity: "comprehensive", temperature: 0.7, topP: 0.95, includeThoughts: true },
+      suppFiles.length ? suppFiles : undefined,
       async (interactionId) => {
         const latest = (await readJob(jobId)) ?? job;
         await writeJob({ ...latest, interactionId } as any);
