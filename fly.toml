@@ -4,7 +4,7 @@
 #
 
 app = 'mvstudiopro'
-primary_region = 'sin'
+primary_region = 'iad'  # 弗吉尼亚，Google AI 骨干网络最低延迟节点（备选：ord 芝加哥）
 
 [build]
 

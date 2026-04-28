@@ -203,6 +203,8 @@ async function generateDeepResearch(
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
   const retries = opts?.retries ?? 2;
+  // 使用全局 v1beta 端点，不加 location 参数（留空 = global，最优路由由 Google 决定）
+  // Fly.io 节点已定向 iad/ord，与 Google AI 骨干网络延迟最低
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${DEEP_RESEARCH_MODEL}:generateContent?key=${apiKey}`;
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
