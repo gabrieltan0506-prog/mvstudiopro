@@ -5593,6 +5593,14 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         isFirstTime: z.boolean().optional(),
         productType: z.enum(["magazine_single", "magazine_sub", "personalized"]).optional(),
         isBundlePromo: z.boolean().optional(),
+        // 半月刊补充资料（注入阶段 A Deep Research prompt）
+        supplementaryText: z.string().max(8000).optional(),
+        supplementaryFiles: z.array(z.object({
+          name: z.string().max(200),
+          type: z.enum(["image", "pdf"]),
+          mimeType: z.string().max(100),
+          data: z.string().max(4_000_000), // base64, max ~3MB
+        })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -5617,7 +5625,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         let dbRecordId: number | undefined;
         try {
           const { createDeepResearchJob, runDeepResearchAsync } = await import("./services/deepResearchService");
-          const result = await createDeepResearchJob(String(userId), input.topic, deductResult.source === "admin" ? 0 : cost, productType);
+          const result = await createDeepResearchJob(
+            String(userId), input.topic, deductResult.source === "admin" ? 0 : cost, productType,
+            { supplementaryText: input.supplementaryText, supplementaryFiles: input.supplementaryFiles },
+          );
           jobId = result.jobId;
           dbRecordId = result.dbRecordId;
           // fire-and-forget：异步执行，不阻塞响应

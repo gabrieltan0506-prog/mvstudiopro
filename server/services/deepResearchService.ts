@@ -484,6 +484,9 @@ export interface DeepResearchJob {
   creditsUsed?: number;
   /** Google Interactions API 返回的 interaction ID，用于断线恢复轮询（无需重跑） */
   interactionId?: string;
+  /** 用户上传的补充资料：文字说明 + 文件（base64，注入阶段 A Deep Research） */
+  supplementaryText?: string;
+  supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; data: string }>;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -699,6 +702,7 @@ export async function createDeepResearchJob(
   topic: string,
   creditsUsed = 0,
   productType: DeepResearchProductType = "magazine_single",
+  supplementary?: { supplementaryText?: string; supplementaryFiles?: DeepResearchJob["supplementaryFiles"] },
 ): Promise<{ jobId: string; dbRecordId?: number }> {
   const jobId = `dr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -714,8 +718,10 @@ export async function createDeepResearchJob(
     status: "pending",
     progress: "🚀 任务已派发，等待算力节点…",
     createdAt: new Date().toISOString(),
-    creditsUsed, // 记录扣费金额，失败时按这个值退回
+    creditsUsed,
     attemptCount: 1,
+    ...(supplementary?.supplementaryText ? { supplementaryText: supplementary.supplementaryText } : {}),
+    ...(supplementary?.supplementaryFiles?.length ? { supplementaryFiles: supplementary.supplementaryFiles } : {}),
   };
   await writeJob(job);
 
@@ -885,7 +891,7 @@ export async function runDeepResearchAsync(jobId: string) {
     // ═════════════════════════════════════════════════════════════════════════
     await updateProgress(stages[1]);
 
-    const harvestPrompt = `你是一位顶级行业数据研究员，正在为一份高级商务白皮书做基础数据搜集。
+    let harvestPrompt = `你是一位顶级行业数据研究员，正在为一份高级商务白皮书做基础数据搜集。
 
 【研究课题】
 ${job.topic}
@@ -913,6 +919,64 @@ ${job.topic}
 
 【格式】
 请输出严格的简体中文，每条以「【数据点 N】」开头。不要任何 Markdown 装饰。`;
+
+    // ── 注入用户补充资料（文字 + 图片描述），放在 harvestPrompt 末尾
+    if (job.supplementaryText || job.supplementaryFiles?.length) {
+      const suppParts: string[] = [];
+      if (job.supplementaryText) {
+        suppParts.push(`【用户补充文字说明】\n${job.supplementaryText}`);
+      }
+      if (job.supplementaryFiles?.length) {
+        const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+        for (const f of job.supplementaryFiles) {
+          try {
+            if (f.type === "image") {
+              // 用 Gemini vision 描述图片内容，注入为文字
+              const visionUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+              const vRes = await fetch(visionUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ role: "user", parts: [
+                    { text: "请用中文详细描述这张图片的核心内容，包括所有文字、数据、图表、人物、品牌信息。输出纯文本，不用 Markdown。" },
+                    { inlineData: { mimeType: f.mimeType, data: f.data } },
+                  ]}],
+                  generationConfig: { maxOutputTokens: 2048 },
+                }),
+                signal: AbortSignal.timeout(30_000),
+              });
+              const vJson = await vRes.json().catch(() => ({}));
+              const desc = vJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              if (desc) suppParts.push(`【用户上传图片「${f.name}」内容】\n${desc}`);
+            } else if (f.type === "pdf") {
+              // PDF 也用 Gemini 提取关键内容
+              const pdfUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+              const pRes = await fetch(pdfUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ role: "user", parts: [
+                    { text: "请提取这份文档的所有核心内容：数据、观点、结论、人名、品牌、日期。输出纯文本，不用 Markdown，按原文结构组织。" },
+                    { inlineData: { mimeType: f.mimeType, data: f.data } },
+                  ]}],
+                  generationConfig: { maxOutputTokens: 4096 },
+                }),
+                signal: AbortSignal.timeout(60_000),
+              });
+              const pJson = await pRes.json().catch(() => ({}));
+              const pText = pJson?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+              if (pText) suppParts.push(`【用户上传文档「${f.name}」内容】\n${pText}`);
+            }
+          } catch (e: any) {
+            console.warn(`[deepResearch] 补充文件「${f.name}」处理失败：${e?.message}`);
+          }
+        }
+      }
+      if (suppParts.length) {
+        harvestPrompt += `\n\n【⭐ 用户补充资料 · 请在研究时重点参考以下信息，优先结合这些内容展开分析】\n${suppParts.join("\n\n")}`;
+        await updateProgress("📎 已注入用户补充资料，正在启动深度检索…");
+      }
+    }
 
     // 传入回调：拿到 interactionId 后立即持久化到 Job 文件，服务重启后可恢复轮询
     const harvested: GroundedResult = await generateDeepResearch(

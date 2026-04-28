@@ -46,6 +46,30 @@ export default function GodViewPage() {
   const currentProduct = PRODUCTS.find((p) => p.id === selectedProduct)!;
   const [isFirst, setIsFirst] = useState(() => !localStorage.getItem(PRODUCT_FIRST_KEYS["magazine_single"]));
 
+  // ── 补充资料（半月刊专属）
+  const [suppText, setSuppText] = useState("");
+  const [suppFiles, setSuppFiles] = useState<Array<{ name: string; type: "image" | "pdf"; mimeType: string; data: string }>>([]);
+  const [suppExpanded, setSuppExpanded] = useState(false);
+  const suppFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSuppFileAdd = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const MAX = 5;
+    const remaining = MAX - suppFiles.length;
+    files.slice(0, remaining).forEach((file) => {
+      const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // 去掉 data:xxx;base64, 前缀
+        const base64 = result.split(",")[1] || "";
+        setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, data: base64 }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    if (e.target) e.target.value = "";
+  };
+
   // supervisor debug
   const [isSupervisor, setIsSupervisor] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -124,7 +148,14 @@ export default function GodViewPage() {
     setPhase("launching");
     setLaunchTime(new Date());
     setElapsedSec(0);
-    launchMutation.mutate({ topic, isFirstTime: isFirst, productType: selectedProduct, isBundlePromo });
+    launchMutation.mutate({
+      topic,
+      isFirstTime: isFirst,
+      productType: selectedProduct,
+      isBundlePromo,
+      ...(suppText.trim() ? { supplementaryText: suppText.trim() } : {}),
+      ...(suppFiles.length ? { supplementaryFiles: suppFiles } : {}),
+    });
   };
 
   // Supervisor 轮询：每 4s 拉一次 job 状态，job 完成/失败后停止
@@ -399,6 +430,60 @@ export default function GodViewPage() {
                 {isRecording ? <MicOff size={14} /> : isTranscribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
               </button>
             </div>
+            {/* ── 补充资料区（半月刊专属） ── */}
+            {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub") && (
+              <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
+                <button
+                  onClick={() => setSuppExpanded(!suppExpanded)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "rgba(168,118,27,0.06)", border: "none", cursor: "pointer", color: "#7a5410", fontSize: 13, fontWeight: 700 }}
+                >
+                  <span>📎 补充资料（可选）— 上传文件或输入背景说明，AI 优先参考</span>
+                  <span style={{ fontSize: 11, opacity: 0.6 }}>
+                    {suppFiles.length > 0 || suppText.trim() ? `已添加 ${suppFiles.length} 个文件${suppText.trim() ? " + 文字说明" : ""}` : "未添加"}
+                    {" "}{suppExpanded ? "▲" : "▼"}
+                  </span>
+                </button>
+                {suppExpanded && (
+                  <div style={{ padding: "14px 16px", background: "rgba(255,250,240,0.5)", display: "flex", flexDirection: "column", gap: 12 }}>
+                    {/* 文字补充 */}
+                    <div>
+                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 6px", fontWeight: 600 }}>文字补充说明（最多 2000 字）</p>
+                      <textarea
+                        value={suppText}
+                        onChange={(e) => setSuppText(e.target.value.slice(0, 2000))}
+                        rows={4}
+                        placeholder="例如：上期半月刊发布后收到用户反馈，本期重点补充银发创作者的变现路径分析，请着重研究 50 岁以上创作者在哔哩哔哩的粉丝忠诚度数据…"
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(168,118,27,0.25)", background: "#fff", color: "#1c1407", fontSize: 13, lineHeight: 1.7, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                      />
+                      <p style={{ fontSize: 11, color: "rgba(61,44,20,0.4)", margin: "4px 0 0", textAlign: "right" }}>{suppText.length}/2000</p>
+                    </div>
+                    {/* 文件上传 */}
+                    <div>
+                      <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 8px", fontWeight: 600 }}>上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 3MB）</p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {suppFiles.map((f, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.2)", borderRadius: 8, fontSize: 12, color: "#7a5410" }}>
+                            <span>{f.type === "image" ? "🖼️" : "📄"}</span>
+                            <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                            <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2 }}>×</button>
+                          </div>
+                        ))}
+                        {suppFiles.length < 5 && (
+                          <button
+                            onClick={() => suppFileInputRef.current?.click()}
+                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: "rgba(168,118,27,0.06)", border: "1px dashed rgba(168,118,27,0.35)", borderRadius: 8, cursor: "pointer", color: "#a87020", fontSize: 12, fontWeight: 600 }}
+                          >
+                            + 添加文件
+                          </button>
+                        )}
+                        <input ref={suppFileInputRef} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" multiple style={{ display: "none" }} onChange={handleSuppFileAdd} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <p style={{ fontSize: 12, color: "rgba(61,44,20,0.60)", margin: 0, fontWeight: 600 }}>
