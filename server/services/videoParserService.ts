@@ -1,4 +1,4 @@
-import youtubedl from 'youtube-dl-exec';
+import { create } from 'youtube-dl-exec';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -10,6 +10,10 @@ const PROJECT_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../..',
 );
+
+// 优先使用系统级 yt-dlp（Docker 部署）；本地开发回退到 npm 包内置二进制
+const YTDLP_BIN = process.env.YOUTUBE_DL_PATH || 'yt-dlp';
+const youtubedl = create(YTDLP_BIN);
 
 export async function parseVideoUrl(url: string) {
   try {
