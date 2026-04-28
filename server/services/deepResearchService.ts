@@ -199,7 +199,7 @@ const DEEP_RESEARCH_MODEL = "gemini-deep-research-pro-preview";
 // Deep Research 是 Agent 而非普通模型，必须通过 Interactions API 调用。
 // generateContent 会直接返回 400，不可使用。
 const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/interactions";
-const DEEP_RESEARCH_AGENT_NAME = "deep-research-pro-preview-12-2025";
+const DEEP_RESEARCH_AGENT_NAME = "deep-research-preview-04-2026";
 const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
 const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
 
