@@ -1,5 +1,5 @@
 /**
- * 第二关：双引擎管线 + 扣费整合测试
+ * 第二关：双引擎管线 + 扣费集成测试
  * 验证: Gemma 4 扫描 → Gemini 3.1 Pro 策略生成
  * 运行: npx tsx scripts/test-2-pipeline.ts
  */

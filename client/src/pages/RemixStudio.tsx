@@ -765,7 +765,7 @@ function MusicPanel(props: { onStateChange: (state: PanelState) => void }) {
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
         <div style={{ maxWidth: 620 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>节点三：音乐生成</div>
-          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>独立生成配乐，后续可以和视频结果一起交给主线做更深的成片整合。</div>
+          <div style={{ ...MUTED_TEXT, marginTop: 6 }}>独立生成配乐，后续可以和视频结果一起交给主线做更深的成片集成。</div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <div style={HEADER_BADGE}>Music</div>

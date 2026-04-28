@@ -73,7 +73,7 @@ function getClipList(statusPayload: Record<string, any>): any[] {
   const resolved = Array.isArray(list) ? list : [];
   if (resolved.length) return resolved;
 
-  // Nuro：扁平 task 物件（status + audio_url），無 songs/data 陣列
+  // Nuro：扁平 task 对象（status + audio_url），无 songs/data 数组
   const st = String(root.status ?? root.state ?? "").trim();
   const hasAudio = Boolean(String(root.audio_url || root.audioUrl || "").trim());
   if (hasAudio || st || root.task_id || root.taskId) {

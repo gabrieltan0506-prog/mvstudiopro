@@ -217,7 +217,7 @@ async function processVideoJob(input: JobEnvelope, timeoutMs: number, userId?: s
     const growthMode = params.mode === "REMIX" ? "REMIX" : "GROWTH";
     const creditAction = growthMode === "REMIX" ? "growthCampRemix" : "growthCampGrowth";
 
-    // 前端可传入 durationSeconds（本地文件上传时可获取），URL 类视频无法提前获取则为 0
+    // 前端可传入 durationSeconds（本地文档上传时可获取），URL 类视频无法提前获取则为 0
     const durationSeconds = typeof params.durationSeconds === "number" ? params.durationSeconds : 0;
 
     // 硬限制：超过 60 分钟直接拒绝
@@ -732,7 +732,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
  *   第 2 阶段：vertex / gemini-2.5-pro，校准趋势信号与平台看板
  *
  * platform_qa：
- *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文件
+ *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文档
  *   finally：始终清理 GCS 临时文件
  */
 async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown; provider?: string }> {

@@ -71,7 +71,7 @@ export const growthPremiumContentTopicSchema = z.object({
   }).default({ storyboard: [], lighting: "", blocking: "", emotionalTension: "" })
 });
 
-/** Vertex / strategist 第二輪專模：欄位全必填，禁止 optional / default 搪塞 */
+/** Vertex / strategist 第二轮专模：字段全必填，禁止 optional / default 搪塞 */
 export const growthPremiumContentTopicLlmSchema = z.object({
   title: z.string(),
   formatType: z.enum(["VIDEO", "IMAGE_TEXT"]),
@@ -85,7 +85,7 @@ export const growthPremiumContentTopicLlmSchema = z.object({
   }),
 });
 
-/** GROWTH 模式：strategist premium 專模輸出（不含 remix 欄位） */
+/** GROWTH 模式：strategist premium 专模输出（不含 remix 字段） */
 export const growthLlmSchema = z.object({
   strategy: z.string(),
   actionableTopics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
@@ -95,7 +95,7 @@ export const growthLlmSchema = z.object({
   musicPrompt: z.string(),
 });
 
-/** REMIX 模式：strategist premium 專模輸出（強制填滿二創欄位） */
+/** REMIX 模式：strategist premium 专模输出（强制填满二创字段） */
 export const remixLlmSchema = z.object({
   actionableTopics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
   topics: z.array(growthPremiumContentTopicLlmSchema).min(3).max(3),
@@ -119,7 +119,7 @@ export const growthPremiumContentSchema = z.object({
   topics: z.array(growthPremiumContentTopicSchema).describe("核心爆款选题").default([]),
   explosiveTopicAnalysis: z.string().describe("选题深度综述分析").default(""),
   musicAndExpressionAnalysis: z.string().describe("表达与配乐分析：BGM 建议与表达技巧").default(""),
-  /** REMIX 必填實質內容；GROWTH 可為 ""。勿用 .optional()，避免模型整段跳過。 */
+  /** REMIX 必填实质内容；GROWTH 可为 ""。勿用 .optional()，避免模型整段跳过。 */
   remixVisualAnalysis: z
     .string()
     .describe(
@@ -175,7 +175,7 @@ export const growthRemixExecutionSchema = z.object({
 });
 
 export const growthAnalysisScoresSchema = z.object({
-  /** 與請求 mode 一致；供前端在刷新 / 匯出 PDF 時還原二創版面。舊資料可缺省，由前端依 remix 欄位推斷。 */
+  /** 与请求 mode 一致；供前端在刷新 / 导出 PDF 时还原二创版面。旧数据可缺省，由前端依 remix 字段推断。 */
   mode: growthAnalysisModeSchema.optional(),
   composition: z.number(),
   color: z.number(),
@@ -853,12 +853,12 @@ export type GrowthPremiumRemix = z.infer<typeof growthPremiumRemixSchema>;
 export type GrowthPremiumRemixAssets = z.infer<typeof growthPremiumRemixAssetsSchema>;
 export type GrowthSnapshot = z.infer<typeof growthSnapshotSchema>;
 
-// 新增導出以便其它模組引用
+// 添加导出以便其它模块引用
 export type GrowthDirectorExecution = z.infer<typeof growthDirectorExecutionSchema>;
 export type GrowthPremiumContentTopic = z.infer<typeof growthPremiumContentTopicSchema>;
 export type GrowthPremiumContent = z.infer<typeof growthPremiumContentSchema>;
 
-/** 成長營分析請求（語意層；實際 tRPC 另含 gcsUri / fileBase64 等上傳欄位） */
+/** 成长营分析请求（语意层；实际 tRPC 另含 gcsUri / fileBase64 等上传字段） */
 export const growthAnalyzeRequestSchema = z.object({
   videoUrl: z.string().optional(),
   businessGoal: z.string().optional(),

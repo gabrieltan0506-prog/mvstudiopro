@@ -239,10 +239,10 @@ export const CREDIT_COSTS = {
   klingLipSync: 60,           // Kling 口型同步消耗 60 credits
 
   // ─── Kling 图片生成 ────────────────────────────
-  klingImageO1_1K: 8,           // Kling O1 1K 图片消耗 8 credits（$0.028/張）
-  klingImageO1_2K: 10,          // Kling O1 2K 图片消耗 10 credits（$0.028/張，高分辨率）
-  klingImageV2_1K: 5,           // Kling V2.1 1K 图片消耗 5 credits（$0.014/張）
-  klingImageV2_2K: 7,           // Kling V2.1 2K 图片消耗 7 credits（$0.014/張，高分辨率）
+  klingImageO1_1K: 8,           // Kling O1 1K 图片消耗 8 credits（$0.028/张）
+  klingImageO1_2K: 10,          // Kling O1 2K 图片消耗 10 credits（$0.028/张，高分辨率）
+  klingImageV2_1K: 5,           // Kling V2.1 1K 图片消耗 5 credits（$0.014/张）
+  klingImageV2_2K: 7,           // Kling V2.1 2K 图片消耗 7 credits（$0.014/张，高分辨率）
 
   // ─── 分镜脚本 AI 改写 ────────────────────────────
   storyboardRewrite: 8,          // AI 改写分镜脚本消耗 8 credits

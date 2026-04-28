@@ -4,7 +4,7 @@ import type { Request, Response, NextFunction } from "express";
  * 简易内存 Rate Limiter
  * 
  * 基于滑动窗口算法，按 IP 地址限制请求频率。
- * 适用於单实例部署；多实例需改用 Redis。
+ * 适用于单实例部署；多实例需改用 Redis。
  */
 
 interface RateLimitEntry {

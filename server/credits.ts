@@ -333,7 +333,7 @@ export async function addCredits(
     })
     .where(eq(creditBalances.userId, userId));
 
-  // 同步更新 users.credits，保持首頁積分顯示一致
+  // 同步更新 users.credits，保持首页积分显示一致
   await db
     .update(users)
     .set({ credits: sql`COALESCE(${users.credits}, 0) + ${amount}` })
@@ -551,7 +551,7 @@ export async function getCreditTransactions(userId: number, limit = 50) {
     .limit(limit);
 }
 
-// ─── 生成失敗時退回已扣除積分（非金流退款）──────────
+// ─── 生成失败时退回已扣除积分（非金流退款）──────────
 export async function refundCredits(
   userId: number,
   amount: number,

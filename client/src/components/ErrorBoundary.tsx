@@ -47,7 +47,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           </div>
           <h2 className="text-2xl font-bold text-[#F7F4EF] mb-3">糟糕！出现错误了</h2>
           <p className="text-base text-[#9B9691] mb-8 leading-6 max-w-md">
-            {this.state.error.message || "应用程序遇到了一个未预期的错误"}
+            {this.state.error.message || "应用进程遇到了一个未预期的错误"}
           </p>
           <button
             className="flex items-center gap-2 bg-[#FF6B35] text-white font-semibold px-6 py-3 rounded-xl hover:bg-orange-600 transition-colors"

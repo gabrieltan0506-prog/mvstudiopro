@@ -145,16 +145,16 @@ export async function sendSimpleMail(params: { to: string; subject: string; text
 }
 
 export async function sendOtpMail(email: string, otp: string): Promise<void> {
-  // 優先使用 Resend HTTP API（不受 SMTP 端口封鎖影響）
+  // 优先使用 Resend HTTP API（不受 SMTP 端口封锁影响）
   if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
     const from = String(process.env.RESEND_FROM);
     console.info(`[mail.otp] resend-http to=${email}`);
     await sendViaResendHttp({
       from,
       to: email,
-      subject: "MVStudioPro 登入驗證碼",
-      text: `您的登入驗證碼是：${otp}。驗證碼 10 分鐘內有效。`,
-      html: `<p>您的登入驗證碼是：<b style="font-size:20px">${otp}</b></p><p>驗證碼 10 分鐘內有效，請勿泄露給他人。</p>`,
+      subject: "MVStudioPro 登录验证码",
+      text: `您的登录验证码是：${otp}。验证码 10 分钟内有效。`,
+      html: `<p>您的登录验证码是：<b style="font-size:20px">${otp}</b></p><p>验证码 10 分钟内有效，请勿泄露给他人。</p>`,
     });
     return;
   }
@@ -169,9 +169,9 @@ export async function sendOtpMail(email: string, otp: string): Promise<void> {
   await transporter.sendMail({
     from: config.from,
     to: email,
-    subject: "MVStudioPro 登入驗證碼",
-    text: `您的登入驗證碼是：${otp}。驗證碼 10 分鐘內有效。`,
-    html: `<p>您的登入驗證碼是：<b style="font-size:20px">${otp}</b></p><p>驗證碼 10 分鐘內有效，請勿泄露給他人。</p>`,
+    subject: "MVStudioPro 登录验证码",
+    text: `您的登录验证码是：${otp}。验证码 10 分钟内有效。`,
+    html: `<p>您的登录验证码是：<b style="font-size:20px">${otp}</b></p><p>验证码 10 分钟内有效，请勿泄露给他人。</p>`,
   });
 }
 
@@ -190,7 +190,7 @@ export async function sendMailWithAttachments(params: {
 }): Promise<void> {
   const attachmentCount = params.attachments?.length || 0;
 
-  // 優先使用 Resend HTTP API
+  // 优先使用 Resend HTTP API
   if (process.env.RESEND_API_KEY && process.env.RESEND_FROM) {
     const from = String(process.env.RESEND_FROM);
     console.info(`[mail.send] resend-http to=${params.to} attachments=${attachmentCount} subject=${params.subject}`);

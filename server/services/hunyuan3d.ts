@@ -132,15 +132,15 @@ async function ensureAccessibleUrl(imageUrl: string): Promise<string> {
     console.log(`[Hunyuan3D] 图片大小: ${sizeMB.toFixed(2)} MB, 类型: ${contentType}`);
 
     if (sizeMB > 6) {
-      // 大文件使用 fal.storage.upload
-      console.log("[Hunyuan3D] 文件较大，使用 fal.storage.upload...");
+      // 大文档使用 fal.storage.upload
+      console.log("[Hunyuan3D] 文档较大，使用 fal.storage.upload...");
       const blob = new Blob([buffer], { type: contentType });
       const falUrl = await fal.storage.upload(blob);
       console.log("[Hunyuan3D] 已上传到 fal.ai storage:", falUrl);
       return falUrl;
     }
 
-    // 小文件直接用 base64 data URI
+    // 小文档直接用 base64 data URI
     const base64 = buffer.toString("base64");
     const mimeType = contentType.includes("png") ? "image/png" : "image/jpeg";
     const dataUri = `data:${mimeType};base64,${base64}`;
@@ -220,10 +220,10 @@ export async function generate3DModel(input: Hunyuan3DInput): Promise<Hunyuan3DT
     if (glbUrl) availableFormats.push("glb");
     if (objUrl) availableFormats.push("obj");
 
-    // 至少要有一个模型文件
+    // 至少要有一个模型文档
     if (!glbUrl && !objUrl) {
       console.error("[Hunyuan3D] 返回数据结构:", JSON.stringify(data, null, 2));
-      throw new Error("3D 模型生成失败：未返回有效的模型文件");
+      throw new Error("3D 模型生成失败：未返回有效的模型文档");
     }
 
     console.log(`[Hunyuan3D] ${tier} generation completed in ${timeTaken.toFixed(1)}s. Formats: ${availableFormats.join(", ")}`);

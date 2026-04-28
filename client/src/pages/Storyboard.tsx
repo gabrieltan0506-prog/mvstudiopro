@@ -1533,7 +1533,7 @@ export default function StoryboardPage() {
                     <FileText className="w-6 h-6 text-red-600" />
                     <div className="ml-3 flex-1">
                       <p className="text-foreground font-semibold">导出 PDF</p>
-                      <p className="text-muted-foreground text-xs mt-0.5">含分镜图片，适合列印和分享</p>
+                      <p className="text-muted-foreground text-xs mt-0.5">含分镜图片，适合打印和分享</p>
                     </div>
                     {exportPDFMutation.isPending && <Loader2 className="w-4 h-4 animate-spin text-primary" />}
                   </button>

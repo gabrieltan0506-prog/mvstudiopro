@@ -159,7 +159,7 @@ export const emailOtpRouter = router({
             await db.update(users).set(roleUpdate).where(eq(users.id, user.id));
           }
         } else {
-          // Create new user - 自動判斷 supervisor/admin 身份
+          // Create new user - 自动判断 supervisor/admin 身份
           const autoRole = isSupervisorEmail(email) ? "supervisor" : "user";
           const [newRow] = await db.insert(users).values({
             openId,

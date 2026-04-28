@@ -1,6 +1,6 @@
 /**
- * 教育合作洽詢路由
- * 用戶填表 → 發送通知 email 到 benjamintan0506@163.com
+ * 教育合作洽询路由
+ * 用户填表 → 发送通知 email 到 benjamintan0506@163.com
  */
 import { z } from "zod";
 import { publicProcedure, router } from "../_core/trpc";
@@ -44,7 +44,7 @@ export const educationRouter = router({
           html,
         });
       } catch (err) {
-        // 郵件失敗不影響用戶端成功提示，僅後端 log
+        // 邮件失败不影响用户端成功提示，仅后端 log
         console.error("[education.inquiry] mail failed:", err);
       }
 

@@ -134,7 +134,7 @@ export default function WechatSticker() {
               <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: "#FFD60A" }}>
                 <span className="font-bold text-base text-black">2</span>
               </div>
-              <h2 className="text-lg font-semibold">添加文字</h2>
+              <h2 className="text-lg font-semibold">添加文本</h2>
               <span className="text-xs text-white/50 bg-white/10 px-2 py-1 rounded-full">可选</span>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -151,7 +151,7 @@ export default function WechatSticker() {
             <input
               type="text"
               className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-base placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-              placeholder="或输入自定义文字（最多10字）"
+              placeholder="或输入自定义文本（最多10字）"
               value={customText}
               onChange={(e) => { setCustomText(e.target.value.slice(0, 10)); setSelectedPhrase(""); }}
               maxLength={10}

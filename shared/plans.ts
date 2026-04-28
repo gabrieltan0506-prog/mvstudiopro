@@ -384,7 +384,7 @@ export const SINGLE_PURCHASE = {
   },
 } as const;
 
-/** 對外用：僅以積分加值包為準的定價展示行（不含單項功能拆價） */
+/** 对外用：仅以积分加值包为准的定价展示行（不含单项功能拆价） */
 export type ProductPackageDisplayRow = {
   category: string;
   name: string;

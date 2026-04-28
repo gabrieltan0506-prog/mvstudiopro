@@ -208,7 +208,7 @@ async function extractFramesAtTimestamps(
   return { framePaths, duration };
 }
 
-// ─── 下载视频到临时文档 ────────────────────────────
+// ─── 下载视频到临时文件 ────────────────────────────
 async function downloadVideo(
   videoUrl: string,
   onProgress?: ProgressCallback
@@ -531,7 +531,7 @@ ${weakInfo}
   };
 }
 
-// ─── 清理临时文档 ──────────────────────────────────
+// ─── 清理临时文件 ──────────────────────────────────
 async function cleanup(paths: string[]) {
   for (const p of paths) {
     try {
@@ -553,7 +553,7 @@ export async function preCheckVideoDuration(
 ): Promise<{ valid: boolean; duration: number; error?: string; strategy?: ScoringStrategy }> {
   let tmpPath = "";
   try {
-    // 下载视频到临时文档
+    // 下载视频到临时文件
     tmpPath = path.join(os.tmpdir(), `mv-precheck-${Date.now()}.mp4`);
     const response = await fetch(videoUrl);
     if (!response.ok) throw new Error(`下载视频失败: ${response.status}`);

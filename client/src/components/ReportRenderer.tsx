@@ -26,10 +26,10 @@ import {
  * - 全部样式内联，方便 html-to-image 截图导出
  */
 
-// 卡布奇諾咖啡色系 · 高级商务调色盘
+// 卡布奇诺咖啡色系 · 高级商务调色盘
 const COLORS = {
-  // 牛奶泡沫白 → 卡布奇諾米黄 → 拿铁焦糖
-  bg: "#f7ede0",          // 卡布奇諾底色（泡沫米色）
+  // 牛奶泡沫白 → 卡布奇诺米黄 → 拿铁焦糖
+  bg: "#f7ede0",          // 卡布奇诺底色（泡沫米色）
   bgDeep: "#ede0c9",      // 焦糖色系
   panel: "#fffaf0",       // 牛奶泡沫白
   panelAlt: "#f5ecda",    // 浅咖啡霜
@@ -146,7 +146,7 @@ function parseMarkdown(md: string): Block[] {
       continue;
     }
 
-    // 有序列表
+    // 有串行表
     if (/^\d+\.\s+/.test(trimmed)) {
       const items: string[] = [];
       while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
@@ -157,7 +157,7 @@ function parseMarkdown(md: string): Block[] {
       continue;
     }
 
-    // 无序列表
+    // 无串行表
     if (/^[-*]\s+/.test(trimmed)) {
       const items: string[] = [];
       while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
@@ -486,7 +486,7 @@ export default function ReportRenderer({
         border: `1px solid ${COLORS.divider}`,
       }}
     >
-      {/* 装饰：顶部卡布奇諾金边书脊 */}
+      {/* 装饰：顶部卡布奇诺金边书脊 */}
       <div
         style={{
           height: 6,

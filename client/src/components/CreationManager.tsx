@@ -278,7 +278,7 @@ export function CreationHistoryPanel({
             {items.some((item: any) => item.type?.includes("video") || item.type?.includes("kling")) && (
               <div className="col-span-full flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300 mb-1">
                 <Download className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                <span>⚠️ 视频文件较大且有过期时限，请及时下载保存到本地。图片和脚本已永久保存在您的作品库中。</span>
+                <span>⚠️ 视频文档较大且有过期时限，请及时下载保存到本地。图片和脚本已永久保存在您的作品库中。</span>
               </div>
             )}
 

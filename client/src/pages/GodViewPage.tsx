@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
-// ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
+// ── 定价配置（与后端 billingService.ts 保持同步）──────────────────────────────
 type ProductType = "magazine_single" | "magazine_sub" | "personalized";
 
 const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
@@ -168,7 +168,7 @@ export default function GodViewPage() {
     <div
       style={{
         minHeight: "100vh",
-        // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
+        // 卡布奇诺深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
           radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
@@ -186,9 +186,9 @@ export default function GodViewPage() {
         overflow: "hidden",
       }}
     >
-      {/* 卡布奇諾暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
+      {/* 卡布奇诺暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        {/* 顶部奶泡高光（让顶端阅读区更明亮，文字更易读）*/}
+        {/* 顶部奶泡高光（让顶端阅读区更明亮，文本更易读）*/}
         <div style={{ position: "absolute", top: "-15%", left: "50%", transform: "translateX(-50%)", width: 1100, height: 700, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,247,224,0.55) 0%,transparent 70%)", filter: "blur(70px)" }} />
         {/* 左上焦糖金光晕 · 慢呼吸动画 */}
         <div style={{ position: "absolute", top: "8%", left: "8%", width: 620, height: 620, borderRadius: "50%", background: "radial-gradient(circle,rgba(216,162,58,0.32) 0%,rgba(168,118,27,0.18) 35%,transparent 70%)", filter: "blur(90px)", animation: "godview-float 18s ease-in-out infinite" }} />
@@ -286,7 +286,7 @@ export default function GodViewPage() {
           </div>
         </div>
 
-        {/* ── 定價矩陣 ── */}
+        {/* ── 定价矩阵 ── */}
         {(phase === "idle" || phase === "launching") && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 20 }}>
             {PRODUCTS.map((p) => {

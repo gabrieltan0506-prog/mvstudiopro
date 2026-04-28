@@ -1,6 +1,6 @@
 /**
  * 第三关：数据分流验证
- * 验证 Fly 本地文件 + Neon DB 快照写入正确
+ * 验证 Fly 本地文档 + Neon DB 快照写入正确
  * 运行: npx tsx scripts/test-3-assets.ts
  */
 import fs from "fs/promises";

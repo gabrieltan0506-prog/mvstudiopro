@@ -137,6 +137,6 @@ export async function downloadGeneratedMusicToFile(
   const detail = tried.length ? `（已尝试 ${tried.length} 个地址）` : "";
   return {
     ok: false,
-    message: `音频下载失败：未获取到有效文件内容${detail}。请检查网络或稍后重试，或尝试用浏览器的「打开链接」在新标签页下载。`,
+    message: `音频下载失败：未获取到有效文档内容${detail}。请检查网络或稍后重试，或尝试用浏览器的「打开链接」在新标签页下载。`,
   };
 }

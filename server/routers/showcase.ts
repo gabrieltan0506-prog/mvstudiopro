@@ -19,7 +19,7 @@ import { avg } from "drizzle-orm";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 
 export const showcaseRouter = router({
-  // ─── 獲取展廳列表 ────────────────────────────
+  // ─── 获取展厅列表 ────────────────────────────
   getAll: publicProcedure
     .input(z.object({
       limit: z.number().min(1).max(100).default(50),
@@ -47,7 +47,7 @@ export const showcaseRouter = router({
             .from(users)
             .where(eq(users.id, v.userId))
             .limit(1);
-          // 獲取平均評分
+          // 获取平均评分
           const ratingResult = await db
             .select({
               avgRating: sql<number>`AVG(${showcaseRatings.rating})`,
@@ -58,7 +58,7 @@ export const showcaseRouter = router({
           return {
             ...v,
             platformLinks: links,
-            creatorName: creator[0]?.name || "匿名用戶",
+            creatorName: creator[0]?.name || "匿名用户",
             avgRating: ratingResult[0]?.avgRating ? Number(ratingResult[0].avgRating).toFixed(1) : null,
             ratingCount: ratingResult[0]?.ratingCount || 0,
           };
@@ -71,7 +71,7 @@ export const showcaseRouter = router({
       return { videos: enriched, total: countResult[0]?.count || 0 };
     }),
 
-  // ─── 用戶評分（1-5 星） ────────────────────────
+  // ─── 用户评分（1-5 星） ────────────────────────
   rateVideo: protectedProcedure
     .input(z.object({
       videoId: z.number(),
@@ -80,7 +80,7 @@ export const showcaseRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("Database not available");
-      // Upsert: 如果已評分則更新，否則插入
+      // Upsert: 如果已评分则更新，否则插入
       const existing = await db
         .select()
         .from(showcaseRatings)
@@ -103,7 +103,7 @@ export const showcaseRouter = router({
           rating: input.rating,
         });
       }
-      // 返回更新後的平均分
+      // 返回更新后的平均分
       const result = await db
         .select({
           avgRating: sql<number>`AVG(${showcaseRatings.rating})`,
@@ -119,7 +119,7 @@ export const showcaseRouter = router({
       };
     }),
 
-  // ─── 獲取用戶對某個视频的評分 ──────────────
+  // ─── 获取用户对某个视频的评分 ──────────────
   getUserRating: protectedProcedure
     .input(z.object({ videoId: z.number() }))
     .query(async ({ ctx, input }) => {

@@ -33,7 +33,7 @@ async function verifyEmailOtp(email: string, otp: string) {
   return r.json();
 }
 
-/** 呼叫 tRPC emailAuth.login mutation（/api/trpc batch 格式） */
+/** 调用 tRPC emailAuth.login mutation（/api/trpc batch 格式） */
 async function loginWithPassword(email: string, password: string) {
   const r = await fetch("/api/trpc/emailAuth.login", {
     method: "POST",
@@ -87,7 +87,7 @@ const btnSecondary: React.CSSProperties = {
   whiteSpace: "nowrap" as const,
 };
 
-// ─── OTP 登入流程 ───────────────────────────────────────────────────────────
+// ─── OTP 登录流程 ───────────────────────────────────────────────────────────
 
 function OtpFlow() {
   const [step, setStep] = useState<OtpStep>("input");
@@ -149,7 +149,7 @@ function OtpFlow() {
     try {
       const res = await verifyEmailOtp(email.trim(), otp.trim());
       if (res.ok) {
-        // 首次登入后导到个人中心，方便设定密码
+        // 首次登录后导到个人中心，方便设定密码
         window.location.href = "/dashboard";
       } else {
         setErr(res.error || "验证失败，请重试");
@@ -272,7 +272,7 @@ function OtpFlow() {
   );
 }
 
-// ─── 邮箱+密码 登入流程 ─────────────────────────────────────────────────────
+// ─── 邮箱+密码 登录流程 ─────────────────────────────────────────────────────
 
 function PasswordFlow() {
   const [email, setEmail] = useState("");

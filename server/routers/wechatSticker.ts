@@ -5,7 +5,7 @@ import { deductCredits, getCredits } from "../credits";
 import { invokeLLM } from "../_core/llm";
 import { generateGeminiImage } from "../gemini-image";
 
-// ─── 情緒分類 ───────────────────────────────────
+// ─── 情绪分类 ───────────────────────────────────
 export const STICKER_EMOTIONS = {
   happy: { label: "开心", emoji: "😄", examples: ["哈哈哈", "太棒了", "好开心"] },
   love: { label: "爱心", emoji: "❤️", examples: ["比心", "爱你", "么么哒"] },
@@ -21,7 +21,7 @@ export const STICKER_EMOTIONS = {
   grateful: { label: "感谢", emoji: "🙏", examples: ["谢谢", "辛苦了", "感恩"] },
 } as const;
 
-// ─── 常用詞語標籤 ───────────────────────────────
+// ─── 常用词语标签 ───────────────────────────────
 export const STICKER_PHRASES = [
   "好的", "收到", "谢谢", "再见", "加油", "没问题",
   "哈哈哈", "666", "太棒了", "不要", "救命", "无语",
@@ -29,7 +29,7 @@ export const STICKER_PHRASES = [
   "恭喜", "我错了", "在吗", "等等", "冲鸭", "摸鱼",
 ] as const;
 
-// ─── 表情風格 ───────────────────────────────────
+// ─── 表情风格 ───────────────────────────────────
 export const STICKER_STYLES = [
   { id: "cute-cartoon", label: "可爱卡通", desc: "圆润线条、大眼睛、Q版风格" },
   { id: "pixel-art", label: "像素风", desc: "复古像素点阵、8-bit 游戏风" },
@@ -42,7 +42,7 @@ export const STICKER_STYLES = [
 ] as const;
 
 export const wechatStickerRouter = router({
-  // 獲取所有情緒和詞語選項
+  // 获取所有情绪和词语选项
   getOptions: protectedProcedure.query(() => {
     return {
       emotions: STICKER_EMOTIONS,
@@ -51,7 +51,7 @@ export const wechatStickerRouter = router({
     };
   }),
 
-  // 生成單個表情包圖片
+  // 生成单个表情包图片
   generate: protectedProcedure
     .input(z.object({
       emotion: z.string(),
@@ -63,7 +63,7 @@ export const wechatStickerRouter = router({
     .mutation(async ({ input, ctx }) => {
       const userId = ctx.user.id;
 
-      // 檢查 Credits（每個表情 3 Credits）
+      // 检查 Credits（每个表情 3 Credits）
       const credits = await getCredits(userId);
       if (credits.totalAvailable < 3) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Credits 不足，生成表情包需要 3 Credits" });
@@ -76,20 +76,20 @@ export const wechatStickerRouter = router({
       const styleDesc = styleData?.desc || "可爱卡通风格";
       const displayText = input.customText || input.phrase || "";
 
-      // 用 LLM 生成精確的圖片 prompt
+      // 用 LLM 生成精确的图片 prompt
       const promptResult = await invokeLLM({
         messages: [
-          { role: "system", content: `你是微信表情包设计专家。根据用户的情绪、文字和风格要求，生成一段英文图片生成 prompt。
+          { role: "system", content: `你是微信表情包设计专家。根据用户的情绪、文本和风格要求，生成一段英文图片生成 prompt。
 要求：
 - 输出纯英文 prompt，不要任何解释
 - 图片尺寸 240x240 像素，正方形
 - 白色或透明背景，适合微信表情包
 - 角色/物体居中，表情夸张生动
 - 风格：${styleDesc}
-- 如果有文字，不要在 prompt 中要求渲染文字（文字会后期叠加）
+- 如果有文本，不要在 prompt 中要求渲染文本（文本会后期叠加）
 - prompt 控制在 80 词以内` },
           { role: "user", content: `情绪：${emotionLabel}
-文字：${displayText || "无"}
+文本：${displayText || "无"}
 风格：${input.style}
 角色描述：${input.characterDesc || "一个可爱的卡通小人"}
 请生成图片 prompt。` },
@@ -99,7 +99,7 @@ export const wechatStickerRouter = router({
 
       const imagePrompt = typeof promptResult === "string" ? promptResult : (promptResult as any)?.text || "";
 
-      // 生成圖片
+      // 生成图片
       const imageResult = await generateGeminiImage({
         prompt: imagePrompt.trim() + ", square 240x240 pixels, white background, sticker style",
         quality: "1k",
@@ -119,7 +119,7 @@ export const wechatStickerRouter = router({
       };
     }),
 
-  // 批量生成一套表情包（8個）
+  // 批量生成一套表情包（8个）
   generateSet: protectedProcedure
     .input(z.object({
       style: z.string().default("cute-cartoon"),
@@ -140,7 +140,7 @@ export const wechatStickerRouter = router({
         });
       }
 
-      // 逐個生成（返回 taskId 讓前端輪詢）
+      // 逐个生成（返回 taskId 让前端轮询）
       return {
         success: true,
         taskId: `sticker-set-${Date.now()}`,

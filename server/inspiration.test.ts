@@ -35,7 +35,7 @@ describe("Inspiration & Remix Features", () => {
       mockInvokeLLM.mockResolvedValueOnce({
         choices: [{
           message: {
-            content: "在一个霓虹闪烁的未来城市中，一位年轻的舞者在雨中起舞。她的每一个动作都带着电子音乐的节拍，周围的全息广告牌映照出她的身影。"
+            content: "在一个霓虹闪烁的未来城市中，一位年轻的舞者在雨中起舞。她的每一个动作都带着电辅音乐的节拍，周围的全息广告牌映照出她的身影。"
           }
         }]
       });

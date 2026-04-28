@@ -995,7 +995,7 @@ function ScriptImageCard({ index, script, platform, platformLabel }: {
     `${platformLabel}平台爆款内容封面图，竖版9:16`,
     script.title ? `主题：${script.title}` : "",
     script.hook ? `视觉钩子：${script.hook.slice(0, 60)}` : "",
-    "高对比度，强情绪感，专业博主风格，无文字",
+    "高对比度，强情绪感，专业博主风格，无文本",
   ].filter(Boolean).join("，");
 
   async function generate() {

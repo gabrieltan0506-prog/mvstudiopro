@@ -90,7 +90,7 @@ export default function Navbar() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => logout()}>
                   <LogOut className="mr-2 h-4 w-4" />
-                  登出
+                  退出登录
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -165,7 +165,7 @@ export default function Navbar() {
                   className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:text-red-300"
                   onClick={() => { logout(); setMobileOpen(false); }}
                 >
-                  登出
+                  退出登录
                 </button>
               ) : (
                 <Button
