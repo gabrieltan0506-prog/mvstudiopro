@@ -5593,6 +5593,47 @@ ${input.lyrics || "（纯音乐，无歌词）"}
    * 共用前端组件 AgentInputPanel：文字 + 图片/PDF 上传 + 语音输入
    */
   agent: router({
+    /** 指挥官档案 · 战略边界 + 核心资产（一次性设定，所有场景自动注入） */
+    getCommanderProfile: protectedProcedure.query(async ({ ctx }) => {
+      const { readCommanderProfile } = await import("./services/commanderProfileStore");
+      const profile = await readCommanderProfile(String(ctx.user.id));
+      return profile ?? {
+        strategicBoundary: "",
+        coreAssets: "",
+        outputFormatPreferences: "",
+        notes: "",
+        updatedAt: "",
+      };
+    }),
+
+    /** 保存/更新指挥官档案 */
+    saveCommanderProfile: protectedProcedure
+      .input(z.object({
+        strategicBoundary: z.string().max(4000).optional(),
+        coreAssets: z.string().max(4000).optional(),
+        outputFormatPreferences: z.string().max(2000).optional(),
+        notes: z.string().max(2000).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { writeCommanderProfile } = await import("./services/commanderProfileStore");
+        const next = await writeCommanderProfile(String(ctx.user.id), input);
+        return next;
+      }),
+
+    /** 平台趋势数据预览（让用户在派发前能看到将注入什么爆款数据） */
+    previewPlatformBriefing: protectedProcedure
+      .input(z.object({
+        platforms: z.array(z.enum(["douyin", "xiaohongshu", "bilibili", "kuaishou", "weixin_channels", "toutiao"])).optional(),
+        topN: z.number().int().min(3).max(20).optional(),
+      }))
+      .query(async ({ input }) => {
+        const { loadFreshPlatformBriefing } = await import("./services/commanderPromptBuilder");
+        return loadFreshPlatformBriefing({
+          platforms: input.platforms as any,
+          topN: input.topN,
+        });
+      }),
+
     /** 多平台 IP 矩阵 · 跨界爆款脚本 */
     launchPlatformIpMatrix: protectedProcedure
       .input(z.object({
@@ -5603,6 +5644,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           notes: z.string().max(200).optional(),
         })).max(20).default([]),
         supplementaryText: z.string().max(8000).optional(),
+        outputFormatOverride: z.string().max(2000).optional(),
         supplementaryFiles: z.array(z.object({
           name: z.string(),
           type: z.enum(["image", "pdf"]),
@@ -5619,6 +5661,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           topicDirection: input.topicDirection,
           accounts: input.accounts,
           supplementaryText: input.supplementaryText,
+          outputFormatOverride: input.outputFormatOverride,
           supplementaryFiles: input.supplementaryFiles,
         });
       }),
@@ -5632,6 +5675,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           notes: z.string().max(200).optional(),
         })).max(20).default([]),
         focusDimensions: z.array(z.string().max(40)).max(12).default([]),
+        painPoint: z.string().max(2000).optional(),
+        outputFormatOverride: z.string().max(2000).optional(),
         supplementaryText: z.string().max(8000).optional(),
         supplementaryFiles: z.array(z.object({
           name: z.string(),
@@ -5648,6 +5693,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           text: input.supplementaryText || "",
           benchmarks: input.benchmarks,
           focusDimensions: input.focusDimensions,
+          painPoint: input.painPoint,
+          outputFormatOverride: input.outputFormatOverride,
           supplementaryText: input.supplementaryText,
           supplementaryFiles: input.supplementaryFiles,
         });

@@ -21,6 +21,8 @@ import {
   appendVipUpdate as storeAppendVipUpdate,
   listVipProfiles as storeListVipProfiles,
 } from "./vipProfileStore";
+import { readCommanderProfile } from "./commanderProfileStore";
+import { buildCommanderPrompt, loadFreshPlatformBriefing } from "./commanderPromptBuilder";
 
 // ── 共享类型 ────────────────────────────────────────────────────────────────
 export type SuppFile = NonNullable<DeepResearchJob["supplementaryFiles"]>[number];
@@ -36,40 +38,40 @@ interface CommonInput {
 export interface PlatformIpInput extends CommonInput {
   /** 待覆盖的平台账号（抖音/小红书/B站/快手/视频号 等） */
   accounts: Array<{ platform: string; handle: string; notes?: string }>;
-  /** 想要做的话题方向 */
+  /** 想要做的话题方向（即 b 痛点场景） */
   topicDirection: string;
+  /** c 输出格式偏好（可选，覆盖系统默认模板） */
+  outputFormatOverride?: string;
 }
 
 export async function launchPlatformIpMatrix(input: PlatformIpInput): Promise<{ jobId: string }> {
-  const accountList = input.accounts.length
-    ? input.accounts.map((a) => `· ${a.platform}：${a.handle}${a.notes ? `（${a.notes}）` : ""}`).join("\n")
-    : "· 未指定具体账号，请按主流四大平台（抖音/小红书/B 站/快手）通用爆款数据展开";
-
   const topic = `[多平台 IP 矩阵 · 跨界爆款脚本] ${input.topicDirection.slice(0, 80)}`;
 
-  const supplementaryText = `
-【场景】多平台内容 IP 矩阵自动驾驶
-【核心目标】基于以下四大平台账号矩阵，结合最新 3/7/15/30 天爆款趋势，给出可立即落地的跨界短影音脚本与分镜方案。
+  // 自动接入 trend DB（4 大平台最新爆款）+ 用户指挥官档案
+  const [briefing, profile] = await Promise.all([
+    loadFreshPlatformBriefing({ topN: 10 }),
+    readCommanderProfile(input.userId),
+  ]);
 
-【账号矩阵】
-${accountList}
-
-【话题方向】
-${input.topicDirection}
-
-【交付物要求】
-1. 四平台数据交叉对比表（粉丝结构、爆款公式、变现路径、流量分配机制）
-2. 趋势热点榜单（近 7-30 天，需包含数据维度：播放/点赞/评论/转发/完播率）
-3. 历史人文 × 健康 × 商业 三轴交叉热点 ≥ 3 个
-4. 完整短影音脚本 ≥ 2 套（含开场 3 秒钩子、分镜表、字幕、BGM 建议、平台分发版本差异说明）
-5. 风险与平台规则提醒（避免触雷词、医疗合规边界、AI 生成内容标识）
-${input.supplementaryText ? `\n【运营者额外补充】\n${input.supplementaryText.trim()}` : ""}
-`.trim();
+  const supplementaryText = buildCommanderPrompt({
+    scenario: "platform_ip_matrix",
+    scenarioTitle: "多平台内容 IP 矩阵自动驾驶 · 跨界爆款脚本",
+    scenarioPayload: {
+      话题方向: input.topicDirection,
+      账号矩阵: input.accounts.map((a) => `${a.platform}: ${a.handle}${a.notes ? `（${a.notes}）` : ""}`),
+    },
+    painPoint: input.topicDirection,
+    freeformSupplementary: input.supplementaryText,
+    profile,
+    platformBriefing: briefing.briefingText,
+    briefingMeta: briefing.meta,
+    outputFormatOverride: input.outputFormatOverride,
+  });
 
   const { jobId } = await createDeepResearchJob(
     input.userId,
     topic,
-    0, // 暂时不扣积分，后续可加
+    0,
     "platform_ip_matrix",
     {
       supplementaryText,
@@ -84,39 +86,41 @@ ${input.supplementaryText ? `\n【运营者额外补充】\n${input.supplementar
 // ── 2. 竞品/赛道雷达（competitor_radar） ───────────────────────────────────
 export interface CompetitorRadarInput extends CommonInput {
   benchmarks: Array<{ platform: string; handle: string; notes?: string }>;
-  focusDimensions: string[]; // 例：["数据","创意","商业模式","用户画像","内容工业化能力"]
+  focusDimensions: string[];
+  /** b 痛点场景（可选；不填则由 focusDimensions 派生） */
+  painPoint?: string;
+  /** c 输出格式偏好 */
+  outputFormatOverride?: string;
 }
 
 export async function launchCompetitorRadar(input: CompetitorRadarInput): Promise<{ jobId: string }> {
-  const benchList = input.benchmarks.length
-    ? input.benchmarks.map((b) => `· ${b.platform}：${b.handle}${b.notes ? `（${b.notes}）` : ""}`).join("\n")
-    : "· 未指定具体对标，请由 Agent 自行筛选 5 个最具威胁性的同赛道头部账号";
-
-  const dimensions = input.focusDimensions.length
+  const dimensionsLabel = input.focusDimensions.length
     ? input.focusDimensions.join(" / ")
     : "数据 / 创意 / 商业模式 / 用户画像 / 内容工业化能力";
 
-  const topic = `[竞品/赛道雷达] 对标 ${input.benchmarks.length || "5+"} 账号 · ${dimensions}`;
+  const topic = `[竞品/赛道雷达] 对标 ${input.benchmarks.length || "5+"} 账号 · ${dimensionsLabel}`;
 
-  const supplementaryText = `
-【场景】竞品 / 赛道雷达深度监控
-【核心目标】对以下对标账号进行长时间深潛分析，输出可作为「降维打击弹药」的高密度竞争分析报告。
+  const [briefing, profile] = await Promise.all([
+    loadFreshPlatformBriefing({ topN: 8 }),
+    readCommanderProfile(input.userId),
+  ]);
 
-【对标账号】
-${benchList}
+  const painPoint = input.painPoint?.trim() || `针对「${dimensionsLabel}」维度，对当前赛道头部对手进行深度差异化对比，找出可降维打击的突破口`;
 
-【关注维度】
-${dimensions}
-
-【交付物要求】
-1. 对标账号能力雷达（≥ 6 个维度，1-10 分制评分）
-2. 优劣势矩阵（SWOT + 五力交叉）
-3. 痛点转化估算表（数据维度 + 商业模式弱点）
-4. 内容工业化能力对比（更新频率、爆款率、IP 衍生品深度）
-5. 我方差异化破局策略（蓝海四象限 + 立即可执行的 30/60/90 天战术）
-6. 风险预警（监管 / 合规 / 流量平台规则变化）
-${input.supplementaryText ? `\n【运营者额外补充】\n${input.supplementaryText.trim()}` : ""}
-`.trim();
+  const supplementaryText = buildCommanderPrompt({
+    scenario: "competitor_radar",
+    scenarioTitle: "竞品 / 赛道雷达 · 高密度差异化分析",
+    scenarioPayload: {
+      对标账号: input.benchmarks.map((b) => `${b.platform}: ${b.handle}${b.notes ? `（${b.notes}）` : ""}`),
+      关注维度: input.focusDimensions,
+    },
+    painPoint,
+    freeformSupplementary: input.supplementaryText,
+    profile,
+    platformBriefing: briefing.briefingText,
+    briefingMeta: briefing.meta,
+    outputFormatOverride: input.outputFormatOverride,
+  });
 
   const { jobId } = await createDeepResearchJob(
     input.userId,
@@ -163,23 +167,24 @@ export async function launchVipBaseline(input: VipBaselineInput): Promise<{ jobI
 
   const topic = `[VIP 客户档案 · ${input.vipName}] 身心抗衰 + 美学重塑基线评估`;
 
-  const supplementaryText = `
-【场景】高净值 VIP 客户首次身心抗衰 + 美学重塑基线评估
-【客户姓名】${input.vipName}
+  // VIP 场景同样接入指挥官档案（医师的核心资产 = 哈佛心血管 + 艺术史等）
+  // 但不需要平台趋势数据（这是个人化健康场景，不是流量场景）
+  const profileNow = await readCommanderProfile(input.userId);
 
-【客户基础画像（顾问录入）】
-${input.baselineSummary.trim()}
-
-【交付物要求】
-1. 当前生理 / 心理 / 美学 / 商业气质综合诊断（多维度评分表）
-2. 近 2 年医学抗衰研究 + 心理疗愈 + 艺术疗愈三轴交叉文献综述
-3. 第一阶段 30/60/90 天身心调整方案（含饮食、运动、睡眠、艺术疗愈、社交场域）
-4. 风险提醒（已知禁忌 / 合规边界）
-5. 后续月度追踪建议指标清单（量化 + 质化）
-
-【声明】这是首次基线档案，所有结论将作为「锚点」用于后续 12 个月的月度动态追踪。
-${input.supplementaryText ? `\n【顾问额外补充】\n${input.supplementaryText.trim()}` : ""}
-`.trim();
+  const supplementaryText = buildCommanderPrompt({
+    scenario: "vip_baseline",
+    scenarioTitle: `高净值 VIP 客户「${input.vipName}」首次身心抗衰 + 美学重塑基线评估`,
+    scenarioPayload: {
+      客户姓名: input.vipName,
+      客户基础画像: input.baselineSummary.trim(),
+      声明: "这是首次基线档案，所有结论将作为锚点用于后续 12 个月的月度动态追踪",
+    },
+    painPoint: `${input.vipName} · 高净值客户首次身心抗衰 + 美学重塑基线评估`,
+    freeformSupplementary: input.supplementaryText,
+    profile: profileNow,
+    platformBriefing: "（VIP 个人化健康场景，无需平台趋势数据。请聚焦近 2 年医学/心理/美学权威文献交叉验证。）",
+    briefingMeta: "vip_no_platform",
+  });
 
   const { jobId } = await createDeepResearchJob(
     input.userId,
