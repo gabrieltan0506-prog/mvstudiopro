@@ -39,11 +39,34 @@ export default function MyReportsPage() {
   const [selectedReport, setSelectedReport] = useState<{ title: string; markdown: string } | null>(null);
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
   const [hiddenExportPayload, setHiddenExportPayload] = useState<{ title: string; markdown: string; coverUrl?: string | null } | null>(null);
   const hiddenExportRef = useRef<HTMLDivElement>(null);
+
+  const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
+    onSuccess: (result) => {
+      setIsExportingBlackGold(false);
+      const url = result?.signedUrl;
+      if (!url) {
+        toast.error("黑金 PDF 已生成但未拿到签名链接，请稍后重试");
+        return;
+      }
+      try {
+        navigator.clipboard?.writeText(url).catch(() => {});
+        window.open(url, "_blank", "noopener,noreferrer");
+        toast.success("黑金 PDF 已生成 · 链接已复制（72 小时签名）");
+      } catch {
+        toast.success("黑金 PDF 已生成，签名链接：" + url);
+      }
+    },
+    onError: (err) => {
+      setIsExportingBlackGold(false);
+      toast.error("黑金 PDF 生成失败：" + err.message);
+    },
+  });
 
   const { data, isLoading, refetch, isFetching } = trpc.deepResearch.myReports.useQuery(undefined, {
     refetchInterval: (data) => {
@@ -198,6 +221,19 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              onClick={() => {
+                if (!selectedReport?.markdown) return;
+                setIsExportingBlackGold(true);
+                exportBlackGoldPdfMutation.mutate({ markdown: selectedReport.markdown });
+              }}
+              disabled={isExportingBlackGold || !selectedReport?.markdown}
+              style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: isExportingBlackGold ? "rgba(0,0,0,0.40)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1px solid #B8860B", color: isExportingBlackGold ? "rgba(184,134,11,0.5)" : "#B8860B", fontSize: 12, fontWeight: 800, cursor: isExportingBlackGold ? "not-allowed" : "pointer", boxShadow: isExportingBlackGold ? "none" : "0 4px 14px rgba(184,134,11,0.35)", transition: "all 0.2s" }}
+              title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
+            >
+              {isExportingBlackGold ? <Loader2 size={13} className="animate-spin" /> : <Crown size={13} />}
+              {isExportingBlackGold ? "正在压制黑金 PDF…" : "导出黑金 PDF"}
+            </button>
             <button
               onClick={handleDownloadPdf}
               disabled={isExporting}
