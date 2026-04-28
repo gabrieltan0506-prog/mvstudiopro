@@ -18,13 +18,15 @@
     "growth:fill-missing-ranges": "node scripts/fill-growth-missing-ranges.mjs",
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs",
-    "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs"
+    "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
+    "pdf:smoke": "tsx scripts/strategic-pdf-smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
     "@aws-sdk/s3-request-presigner": "^3.693.0",
     "@fal-ai/client": "^1.9.3",
     "@google-cloud/speech": "^7.3.0",
+    "@google-cloud/storage": "^7.19.0",
     "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^1.42.0",
     "@hookform/resolvers": "^5.2.2",
@@ -83,6 +85,7 @@
     "jose": "6.1.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.453.0",
+    "marked": "^18.0.2",
     "multer": "^2.1.1",
     "mysql2": "^3.15.0",
     "nanoid": "^5.1.5",
@@ -90,6 +93,7 @@
     "nodemailer": "^8.0.1",
     "pdf-node": "^1.5.0",
     "pdfkit": "^0.17.2",
+    "puppeteer": "^24.42.0",
     "react": "^19.2.1",
     "react-day-picker": "^9.11.1",
     "react-dom": "^19.2.1",

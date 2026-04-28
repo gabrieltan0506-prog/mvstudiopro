@@ -5,6 +5,7 @@
  */
 import fs from "fs/promises";
 import path from "path";
+import { PDF_FORMATTING_PROMPT_SUFFIX } from "./pdfFormattingPrompt";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
 // for local tests / CI smoke tests.
@@ -208,6 +209,9 @@ const SYSTEM_INSTRUCTION_BASE =
   "[系统背景设定] 当前时间为 2026 年。你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的高端商业智库 Agent。" +
   "请进行最深层次的全网交叉验证，覆盖近 2 年（2024-2026）真实数据，输出严格简体中文，禁止任何英文术语，产出具备卡布奇诺级商务质感的战略白皮书。";
 
+/** Deep Research Max（Interactions API）强制附加 PDF 友好 Markdown 契约 */
+const DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION_BASE}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
+
 /** 构建 multimodal input：纯文本 prompt 或 [text, image, document, ...] */
 function buildInteractionInput(
   prompt: string,
@@ -297,7 +301,7 @@ async function requestResearchPlan(
         agent: DEEP_RESEARCH_AGENT_NAME,
         input: buildInteractionInput(prompt, files),
         background: true,
-        system_instruction: SYSTEM_INSTRUCTION_BASE,
+        system_instruction: DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION,
         agent_config: {
           type: "deep-research",
           collaborative_planning: true, // ← 关键：先出计划
@@ -1340,7 +1344,8 @@ ${job.topic}
 3. 每章末尾 40-60 字的「执行风险提醒」（半月刊的精简版要求，比尊享版短一半）
 4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;
 
-    const reportMarkdown = await generate("gemini-3.1-pro-preview", prompt, 2, { temperature: 0.55 });
+    const promptForSynthesis = `${prompt}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
+    const reportMarkdown = await generate("gemini-3.1-pro-preview", promptForSynthesis, 2, { temperature: 0.55 });
 
     if (!reportMarkdown || reportMarkdown.length < 1500) {
       throw new Error("战报内容过短，可能生成失败");
