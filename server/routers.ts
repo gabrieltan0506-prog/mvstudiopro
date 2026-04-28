@@ -5922,6 +5922,44 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return { ok: true, jobId: input.jobId };
       }),
 
+    /**
+     * 黑金智库 PDF：容器内 Puppeteer + marked 原生渲染，上传 GCS，返回 V4 签名下载 URL（无第三方 PDF API）
+     */
+    exportBlackGoldPdf: protectedProcedure
+      .input(z.object({
+        jobId: z.string().min(1).optional(),
+        markdown: z.string().min(80).max(500_000).optional(),
+        signedUrlHours: z.number().int().min(1).max(168).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        let md = input.markdown?.trim();
+        const uid = String(ctx.user.id);
+        if (input.jobId) {
+          const { readJob } = await import("./services/deepResearchService");
+          const job = await readJob(input.jobId);
+          if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+          if (job.userId !== uid) throw new TRPCError({ code: "FORBIDDEN" });
+          if (!job.reportMarkdown?.trim()) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "该任务尚无成品 Markdown，请待报告完成后再导出 PDF" });
+          }
+          md = job.reportMarkdown.trim();
+        }
+        if (!md) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown 或已完成任务的 jobId" });
+        }
+        try {
+          const { createAndUploadPdf } = await import("./services/pdfGenerator");
+          const reportKey = input.jobId || `${uid}-${nanoid(10)}`;
+          return await createAndUploadPdf(reportKey, md, { signedUrlHours: input.signedUrlHours });
+        } catch (e: any) {
+          console.error("[deepResearch.exportBlackGoldPdf]", e?.message, e?.stack);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: e?.message || "PDF 生成失败（请确认容器已安装 Chromium，并配置 GCS 凭证）",
+          });
+        }
+      }),
+
     /** 查询当前用户所有战报（研报中心） */
     /** 主编后台：查看所有用户的研报（仅 supervisor/admin 可访问） */
     supervisorListAll: adminProcedure.query(async () => {

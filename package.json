@@ -18,7 +18,8 @@
     "growth:fill-missing-ranges": "node scripts/fill-growth-missing-ranges.mjs",
     "growth:fetch-status": "node scripts/fetch-growth-status.mjs",
     "growth:verify-monotonic": "node scripts/verify-growth-monotonic.mjs",
-    "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs"
+    "growth:build-backup-manifest": "node scripts/build-growth-backup-manifest.mjs",
+    "pdf:smoke": "tsx scripts/strategic-pdf-smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
