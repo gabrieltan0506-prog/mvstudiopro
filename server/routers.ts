@@ -524,7 +524,7 @@ async function buildPlatformDashboard(params: {
 【绝对禁止输出泛平台画像】
 在生成 platformMenu 的推荐理由（whyNow 等字段）时，绝对禁止写「抖音适合短视频」、「B站适合长视频讲透」、「小红书适合图文」等通用废话。
 你的 positioning 或推荐理由，必须 100% 绑定该用户的 Persona 与专长领域。
-例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能创建极高信任感」这类高度专属的理由。
+例如：如果用户是"爱好中国历史的心脏科医生"，你必须写出「B站更适合你拆解古代『榫卯结构』与『现代心脏支架』的硬核医学科普，能建立极高信任感」这类高度专属的理由。
 
 【强制热点关联与深度四维量化】
 你在输出 platformMenu 的各个平台时，必须提供以下深度指标与分析：
@@ -538,9 +538,9 @@ async function buildPlatformDashboard(params: {
    - 如果结果 >100,000 → 输出 "XXXK+"（例如 850,000 → "850K+"）
    - 如果结果 >10,000 → 输出 具体数字+"万+"（例如 52,000 → "5.2万+"）
    - 如果 medianTraffic45d === 0（无样本）→ 使用 audienceFitScore × 8000 × 1.3 作为代理估算，再格式化
-   禁止输出文本描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
-5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁垒加分5-10)%，最高99%。输出格式："XX%"。
-6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文本描述，只输出量化百分比。
+   禁止输出文字描述（如"流量极大"），禁止输出"XX万"这种没有数字的占位符，只输出包含真实数字的格式化字符串。
+5. ipUniqueness (IP独特性)：从 platformBaselineStats 提取该平台的 competitorDensity（0-1，越高越拥挤），公式：round((1 - competitorDensity) * 100 + 专业壁壘加分5-10)%，最高99%。输出格式："XX%"。
+6. commercialConversion (商业转化率)：从 platformBaselineStats 提取 benchmarkConversionRate，高信任专业人设（医生/专家）给予 1.5x-2.5x 倍数加成。输出格式保留一位小数的百分比字符串如"4.2%"。禁止输出文字描述，只输出量化百分比。
 7. nextMove（建议动作）：必须明确说出「发什么内容」与「如何开头」两件事。禁止写"先发一版内容拿反馈"这种空话。必须写出：具体的内容标题/主题 + 第一句话怎么说。例如：「发布《心脏科医生揭秘：古代『心主神明』竟然是神经科学！》，开头说：『你以为睡不好是脑子累？错了，2000年前的古人早就告诉你：问题可能出在你的心脏上。』」
 
 严格要求：
@@ -555,7 +555,7 @@ async function buildPlatformDashboard(params: {
 注意：contentBlueprints 和 monetizationLanes 不需要输出（留空数组即可）。
 
 【绝对警告 — JSON 输出规范】：
-请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文本！
+请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
 字段为：headline、subheadline、personaSummary、topSignals、platformMenu、hotTopics、contentBlueprints（空数组）、monetizationLanes（空数组）、actionCards、conversationStarters。`,
       },
@@ -862,14 +862,14 @@ async function buildPlatformContent(params: {
 }
 
 【绝对警告 — JSON 输出规范】：
-请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文本！
+请直接且仅输出合法的 JSON 对象，绝对不要包含任何 Markdown 标记（如 \`\`\`json 或 \`\`\`）、前言、结语或解释文字！
 输出的第一个字符必须是 {，最后一个字符必须是 }。如果 JSON 未能完整输出会导致系统崩溃，请确保所有括号都正确关闭。
 
 3. 你给出的「现在就能执行的动作」(以及 executionDetails 和 actionableSteps)，必须是极度具体的「物理级微小行动」。禁止写「制作身份名片」、「锁定文化符号」这种空泛的顾问废话。你必须具体到像这样：「第一步：拿一颗金属螺丝钉和一块木制榫卯，对着镜头录制一段 15 秒的对比短片。」越具体、越反常识越好。
 
 4. 必须极度详细、有落地感，不要泛泛而谈。文案需完美匹配用户人设与专长。在详细脚本与指导设计中，强制融入从 Call 2 (platformMenu) 提取出的 \`trafficBoosters\` 热点或活动要求。${personaConstraint}
 
-【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文本。输出的第一个字符必须是 {，最后一个字符必须是 }。
+【重要】直接输出原始 JSON 对象，不要用 markdown 代码块包裹（不要加 \`\`\`json 或 \`\`\`），不要在 JSON 前后加任何解释文字。输出的第一个字符必须是 {，最后一个字符必须是 }。
 字段为：contentBlueprints（数组，每项含 title/format/hook/copywriting/suitablePlatforms/executionDetails）, monetizationLanes。`,
       },
       {
@@ -1052,7 +1052,7 @@ function buildPlatformFollowUpFallback(params: {
   return platformFollowUpResponseSchema.parse({
     title: "继续往下拆成可执行动作",
     answer: [
-      `先给判断：围绕“${subject}”，这一轮不要把平台、内容形式和商业路径一起铺开，优先从 ${topPlatform?.name || "当前优先平台"} 做一条能创建信任感的内容验证。`,
+      `先给判断：围绕“${subject}”，这一轮不要把平台、内容形式和商业路径一起铺开，优先从 ${topPlatform?.name || "当前优先平台"} 做一条能建立信任感的内容验证。`,
       `为什么：你当前更需要先验证“什么表达最容易让用户记住你”，而不是一上来堆很多泛变现路线。优先内容可以直接用“${topExecution?.title || "把专业身份和文化内容收成一个明确切口"}”，开头先说“${topExecution?.openingHook || "我先给你一个明确判断"}”，主体按“判断 -> 解释 -> 例子 -> 给行动”展开。${topExecution?.presentationMode === "图文" ? `图文写法先用 ${topExecution?.graphicPlan || "封面一句结论，正文三段展开"}。` : `视频拍法先用 ${topExecution?.videoPlan || "先给判断，再讲例子，最后给行动"}。`}`,
       `下一步怎么做：商业承接只先保留 ${topMonetization?.primaryTrack || "一条最贴近你身份的路径"}${secondMonetization ? `，备选是 ${secondMonetization.primaryTrack}` : ""}。先不要把所有变现方式一起上。第一轮只验证“${topMonetization?.callToAction || "用户会不会愿意继续咨询、收藏或私信"}”，看反馈后再决定是否放大。`,
     ].join("\n\n"),
@@ -1683,7 +1683,7 @@ export const appRouter = router({
         mode: growthAnalysisModeSchema.default("GROWTH"),
       }))
       .mutation(async ({ input, ctx }) => {
-        // ── 扣费逻辑：每次分析扣除对应积分 ──────────────────────────────
+        // ── 扣費邏輯：每次分析扣除對應積分 ──────────────────────────────
         if (ctx.user?.id) {
           const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
           if (!isAdminUser) {
@@ -1693,17 +1693,17 @@ export const appRouter = router({
             const creditsInfo = await getCredits(ctx.user.id);
             if (creditsInfo.totalAvailable < cost) {
               throw new Error(
-                `Credits 不足，${mode === "REMIX" ? "二创分析" : "成长营分析"}需要 ${cost} Credits（当前余额：${creditsInfo.totalAvailable}）`
+                `Credits 不足，${mode === "REMIX" ? "二創分析" : "成長營分析"}需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
               );
             }
             await deductCredits(
               ctx.user.id,
               creditKey,
-              `创作者成长营 ${mode} 分析（文档）`
+              `創作者成長營 ${mode} 分析（文件）`
             );
           }
         } else {
-          throw new Error("请先登录，才能使用分析功能");
+          throw new Error("請先登入，才能使用分析功能");
         }
         const result = await analyzeDocument(input);
         return {
@@ -2225,7 +2225,7 @@ export const appRouter = router({
           // 试用包用户不支持趋势续分析
           const isTrial = !isAdminUser && (await resolveWatermark(ctx.user.id, isAdminUser));
           if (isTrial) {
-            throw new Error("试用包不支持趋势续分析，请升级至正式方案后使用。");
+            throw new Error("試用包不支持趋势续分析，请升级至正式方案後使用。");
           }
 
           const drizzleDb = await import("./db").then(m => m.getDb());
@@ -2375,7 +2375,7 @@ export const appRouter = router({
         snapshotSummary: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // ── 扣费：每次平台数据分析扣 platformTrend（50 cr）─────────────────
+        // ── 扣費：每次平台數據分析扣 platformTrend（50 cr）─────────────────
         if (ctx.user?.id) {
           const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
           if (!isAdminUser) {
@@ -2383,13 +2383,13 @@ export const appRouter = router({
             const creditsInfo = await getCredits(ctx.user.id);
             if (creditsInfo.totalAvailable < cost) {
               throw new Error(
-                `Credits 不足，平台数据分析需要 ${cost} Credits（当前余额：${creditsInfo.totalAvailable}）`
+                `Credits 不足，平台數據分析需要 ${cost} Credits（當前餘額：${creditsInfo.totalAvailable}）`
               );
             }
-            await deductCredits(ctx.user.id, "platformTrend", `平台数据分析（${input.windowDays}天窗口）`);
+            await deductCredits(ctx.user.id, "platformTrend", `平台數據分析（${input.windowDays}天窗口）`);
           }
         } else {
-          throw new Error("请先登录，才能使用平台数据分析功能");
+          throw new Error("請先登入，才能使用平台數據分析功能");
         }
 
         const jobId = nanoid(16);
@@ -2550,7 +2550,7 @@ export const appRouter = router({
               analysisDate: input.analysisDate ?? new Date().toISOString(),
               isSnapshot: true,
             },
-            quality: input.analysisType === "growth_camp" ? "成长营分析" : "平台趋势分析",
+            quality: input.analysisType === "growth_camp" ? "成長營分析" : "平台趨勢分析",
             creditsUsed: 0,
             plan,
           });
@@ -2641,7 +2641,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
 - audiencesAndBiz：目标人群与商业方向（2-3条）。格式：{"audience": "人群描述", "bizDirection": "商业方向"}
 - topicExamples：针对排名前三赛道设计选题公式与案例（3-5条）。格式：{"structure": "标题公式", "concept": "内容说明", "realCase": "接地气的真实感文章标题"}
 - trafficSupport：扫描当前平台正在进行的官方流量扶持活动（全局跨平台维度，2-3条）。必须列出具体活动名称，格式：["活动名称：详细说明"]
-- hotFestivals：根据今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
+- hotFestivals：根據今天 ${currentDateStr} 及前后 ${wd} 天范围，指出当下正在爆发或即将到来的节日、节气或社会热点（2-3个）。格式：["节日/热点：简要说明与内容切入角度"]
 
 【绝对警告 — JSON 输出规范】请直接且仅输出合法的 JSON 对象，不要包含任何 Markdown 标记。第一个字符必须是 {，最后一个字符必须是 }。`;
 
@@ -2986,8 +2986,8 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (storage?.lowSpace) {
           anomalies.push({
             level: "critical",
-            title: "磁盘空间过低",
-            message: `Fly /data 剩余 ${storage.freeMb} MB，低于 300 MB 门槛。`,
+            title: "磁碟空間過低",
+            message: `Fly /data 剩餘 ${storage.freeMb} MB，低於 300 MB 門檻。`,
           });
         }
         const effectiveMode = runtimeControl?.mode || "auto";
@@ -3003,7 +3003,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (staleSchedulers.length) {
           anomalies.push({
             level: "critical",
-            title: "Live 调度逾期未推进",
+            title: "Live 排程逾期未推进",
             message: `${staleSchedulers.map((item) => item.platformLabel || getGrowthPlatformMeta(item.platform).label).join("、")} 已超过 5 分钟未按 nextRunAt 启动。`,
           });
         }
@@ -3011,7 +3011,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (schedulerErrors.length) {
           anomalies.push({
             level: "warning",
-            title: "平台抓取出错",
+            title: "平台抓取出錯",
             message: `${schedulerErrors.map((item) => `${item.platformLabel || getGrowthPlatformMeta(item.platform).label}：${String(item.lastError)}`).join("；")}`,
           });
         }
@@ -3019,7 +3019,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         if (failedBackfills.length) {
           anomalies.push({
             level: "warning",
-            title: "回填失败",
+            title: "回填失敗",
             message: failedBackfills.map((item) => String(item?.note || "回填失败")).join("；"),
           });
         }
@@ -3572,7 +3572,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
             };
           }
           
-          // 仅 trial199 / 免费帐号添加水印（管理员及正式加值包用户跳过）
+          // 僅 trial199 / 免費帳號添加水印（管理員及正式加值包用戶跳過）
           let finalUrl = imageResult.data.imageUrl;
           if (await resolveWatermark(userId, isAdminUser)) {
             try {
@@ -3756,7 +3756,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
           await recordCreation({
             userId,
             type: "idol_3d",
-            title: "3D 模型转换",
+            title: "3D 模型轉換",
             outputUrl: result.glbUrl,
             secondaryUrl: result.objUrl ?? undefined,
             thumbnailUrl: result.thumbnailUrl || result.glbUrl,
@@ -3809,7 +3809,7 @@ ${JSON.stringify(platformEvidence, null, 2)}
         const isAdminUser = ctx.user.role === "admin";
         const userTier = await resolveUserTier(userId, isAdminUser);
 
-        // 所有模型都需要 Credits，管理员免费
+        // 所有模型都需要 Credits，管理員免費
         if (!isAdminUser) {
           const { deductCredits, hasEnoughCredits } = await import("./credits");
           const creditKey = input.model === "gpt5" ? "storyboardGpt5" : input.model === "pro" ? "storyboard" : "storyboardFlash";
@@ -4024,7 +4024,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         // Generate preview images for all scenes in parallel
         const sceneImagePromises = storyboardData.scenes.map(async (scene: any) => {
           // Create a detailed prompt for image generation based on scene description
-          // 人物一致性优化：提取主角外观描述并在每个场景中重复使用
+          // 人物一致性優化：提取主角外觀描述并在每个场景中重複使用
           const characterLock = storyboardData.characterDescription || "";
           const refStyleNote = input.referenceStyleDescription ? ` Reference style: ${input.referenceStyleDescription}.` : "";
           const stylePromptMap: Record<string, string> = {
@@ -4039,7 +4039,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
           
           try {
             const imageResult = await generateGeminiImage({ prompt: imagePrompt, quality: "1k" });
-            // 仅 trial199 / 免费帐号添加水印（管理员及正式加值包用户跳过）
+            // 僅 trial199 / 免費帳號添加水印（管理員及正式加值包用戶跳過）
             let finalUrl = imageResult.imageUrl;
             if ((await resolveWatermark(userId, isAdminUser)) && imageResult.imageUrl) {
               try {
@@ -4111,7 +4111,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 
         // 试用包（trial-only / free）不支持任何格式的导出
         if (!isAdminUser && shouldWatermark) {
-          throw new Error("试用包不支持 PDF/Word 导出功能，请升级至正式方案后使用。");
+          throw new Error("試用包不支持 PDF/Word 導出功能，請升級至正式方案後使用。");
         }
 
         if (input.format === "word") {
@@ -4208,7 +4208,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         }
         return { success: true, count: input.storyboardIds.length };
       }),
-    // AI 改写分镜脚本 - 用户提供 3 句话修改意见，AI 重新生成
+    // AI 改写分镜脚本 - 用戶提供 3 句話修改意見，AI 重新生成
     rewrite: protectedProcedure
       .input(z.object({
         originalStoryboard: z.object({
@@ -4241,11 +4241,11 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         const isAdminUser = ctx.user.role === "admin";
         const userTier = await resolveUserTier(userId, isAdminUser);
 
-        // 扣除 Credits（管理员免扣）
+        // 扣除 Credits（管理員免扣）
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < CREDIT_COSTS.storyboardRewrite) {
-            throw new Error(`Credits 不足，AI 改写需要 ${CREDIT_COSTS.storyboardRewrite} Credits`);
+            throw new Error(`Credits 不足，AI 改寫需要 ${CREDIT_COSTS.storyboardRewrite} Credits`);
           }
           await deductCredits(userId, "storyboardRewrite", "AI 改写分镜脚本");
         }
@@ -4253,7 +4253,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         const styleLabels: Record<string, string> = {
           cinematic: "电影感",
           anime: "动漫风",
-          documentary: "纪录片",
+          documentary: "紀錄片",
           realistic: "写实片",
           scifi: "科幻片",
         };
@@ -4277,15 +4277,15 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
 要求：
 1. 保持原有的场景数量（${input.originalStoryboard.scenes.length} 个场景）
 2. 视觉风格：${styleLabels[input.visualStyle] || "电影感"}
-3. 根据用户反馈大幅调整场景描述、镜头运动、情绪氛围和视觉效果
-4. 保持 JSON 格式输出，与原始格式完全一致
-5. 确保改写后的脚本质量更高、更符合用户期望
+3. 根據用戶反饋大幅調整场景描述、镜头运动、情緒氛圍和视覺效果
+4. 保持 JSON 格式輸出，與原始格式完全一致
+5. 確保改寫后的腳本质量更高、更符合用戶期望
 
-输出格式与原始脚本相同的 JSON 结构。`
+輸出格式與原始腳本相同的 JSON 结構。`
                 },
                 {
                   role: "user",
-                  content: `原始分镜脚本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用户修改意见：\n${input.userFeedback}\n\n请根据以上修改意见，重新改写整个分镜脚本。`
+                  content: `原始分镜腳本：\n${JSON.stringify(input.originalStoryboard, null, 2)}\n\n用戶修改意見：\n${input.userFeedback}\n\n请根據以上修改意見，重新改寫整个分镜腳本。`
                 }
               ],
               response_format: { type: "json_object" },
@@ -4309,7 +4309,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         return {
           success: true,
           storyboard: rewrittenData,
-          message: "分镜脚本已根据您的意见重新改写！",
+          message: "分镜腳本已根據您的意見重新改寫！",
           providerUsed: rewriteResult.providerUsed,
           jobId: rewriteResult.jobId,
           data: { storyboard: rewrittenData },
@@ -4400,7 +4400,7 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         };
       }),
 
-    // AI 推荐 BGM 描述 - 使用 Gemini 3.0 Pro 分析分镜内容生成 BGM 描述
+    // AI 推荐 BGM 描述 - 使用 Gemini 3.0 Pro 分析分镜內容生成 BGM 描述
     recommendBGM: protectedProcedure
       .input(z.object({
         storyboard: z.object({
@@ -4428,9 +4428,9 @@ ${input.referenceStyleDescription ? `参考图风格分析：${input.referenceSt
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < CREDIT_COSTS.recommendBGM) {
-            throw new Error(`Credits 不足，AI 推荐 BGM 需要 ${CREDIT_COSTS.recommendBGM} Credits`);
+            throw new Error(`Credits 不足，AI 推薦 BGM 需要 ${CREDIT_COSTS.recommendBGM} Credits`);
           }
-          await deductCredits(userId, "recommendBGM", `AI 推荐 BGM 描述 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
+          await deductCredits(userId, "recommendBGM", `AI 推薦 BGM 描述 (${input.model === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"})`);
         }
 
         const sceneSummary = input.storyboard.scenes.map(s =>
@@ -4480,7 +4480,7 @@ ${sceneSummary}
         };
       }),
 
-    // 参考图风格分析 - 使用 Gemini Vision 分析上传的参考图片
+    // 參考图風格分析 - 使用 Gemini Vision 分析上传的參考图片
     analyzeReferenceImage: protectedProcedure
       .input(z.object({
         imageUrl: z.string().url(),
@@ -4492,9 +4492,9 @@ ${sceneSummary}
         if (!isAdminUser) {
           const creditsInfo = await getCredits(userId);
           if (creditsInfo.totalAvailable < CREDIT_COSTS.referenceImageAnalysis) {
-            throw new Error(`Credits 不足，参考图分析需要 ${CREDIT_COSTS.referenceImageAnalysis} Credits`);
+            throw new Error(`Credits 不足，參考图分析需要 ${CREDIT_COSTS.referenceImageAnalysis} Credits`);
           }
-          await deductCredits(userId, "referenceImageAnalysis", "参考图风格分析 (Gemini Vision)");
+          await deductCredits(userId, "referenceImageAnalysis", "參考图風格分析 (Gemini Vision)");
         }
 
         const response = await invokeLLM({
@@ -4528,7 +4528,7 @@ ${sceneSummary}
         return {
           success: true,
           styleDescription: styleDescription.trim(),
-          message: "参考图风格分析完成！",
+          message: "參考图風格分析完成！",
         };
       }),
   }),
@@ -4804,7 +4804,7 @@ ${sceneSummary}
         // Find the payment submission to get userId
         const submissions = await getPaymentSubmissions("approved", 100);
         const sub = submissions.find(s => s.id === input.id);
-        if (sub) await addCredits(sub.userId, input.creditsToAdd, "payment", "付款审核通过");
+        if (sub) await addCredits(sub.userId, input.creditsToAdd, "payment", "付款審核通過");
       }
       return { success: true };
     }),
@@ -5032,7 +5032,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         await recordCreation({
           userId: ctx.user.id,
           type: "storyboard",
-          title: parsed.title || "分镜脚本",
+          title: parsed.title || "分镜腳本",
           outputUrl: parsed.scenes?.[0]?.previewImageUrl ?? undefined,
           metadata: {
             sceneCount: input.sceneCount,
@@ -5694,6 +5694,32 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }
     }),
 
+    /** Supervisor：查看任意 jobId 的完整 job 文件（含进度日志/错误/心跳） */
+    supervisorJobStatus: adminProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ input }) => {
+        const { readJob } = await import("./services/deepResearchService");
+        const job = await readJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: `Job ${input.jobId} 不存在（文件可能已清理）` });
+        return {
+          jobId: job.jobId,
+          userId: job.userId,
+          status: job.status,
+          progress: job.progress || "",
+          error: job.error || null,
+          createdAt: job.createdAt,
+          completedAt: job.completedAt || null,
+          lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
+          pid: (job as any).pid || null,
+          attemptCount: (job as any).attemptCount ?? 0,
+          creditsUsed: (job as any).creditsUsed ?? 0,
+          topic: job.topic || "",
+          hasMarkdown: !!job.reportMarkdown,
+          markdownLen: job.reportMarkdown?.length ?? 0,
+          dbRecordId: job.dbRecordId || null,
+        };
+      }),
+
     /** 主编奖励：采纳情报并发放 300 点 */
     supervisorReward: adminProcedure
       .input(z.object({ userId: z.number(), reportId: z.number(), credits: z.number().default(300) }))
@@ -5864,7 +5890,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           rewrite: "请用同等字数重写以下段落，保持核心观点不变，但语言更精炼有力，避免任何英文专业名词（必须翻译成简体中文）。直接输出重写后的 markdown，不要任何前后说明。",
           expand: "请在保留原有观点的基础上，扩写以下段落到原长度的 1.6 倍，补充更具体的数据、案例和操作建议。直接输出扩写后的 markdown，不要任何前后说明。",
           shrink: "请把以下段落浓缩到原长度的 60%，保留核心数据与结论，删除冗余表达。直接输出浓缩后的 markdown，不要任何前后说明。",
-          addTable: "请基于以下段落的主题，在段落末尾追加一张包含 4-6 行真实数据的 markdown 表格（必须有数据来源列）。直接输出原段落 + 添加表格的完整 markdown，不要任何前后说明。",
+          addTable: "请基于以下段落的主题，在段落末尾追加一张包含 4-6 行真实数据的 markdown 表格（必须有数据来源列）。直接输出原段落 + 新增表格的完整 markdown，不要任何前后说明。",
           freeform: "请根据以下「主编指令」修改给定段落。如果指令有歧义，按最合理的中文商务白皮书风格处理。直接输出修改后的 markdown，不要任何前后说明。",
         };
 

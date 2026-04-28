@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
-// ── 定价配置（与后端 billingService.ts 保持同步）──────────────────────────────
+// ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
 type ProductType = "magazine_single" | "magazine_sub" | "personalized";
 
 const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
@@ -51,6 +51,8 @@ export default function GodViewPage() {
   const [showDebug, setShowDebug] = useState(false);
   const [launchTime, setLaunchTime] = useState<Date | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  // 当前正在轮询的 jobId（从 launchMutation.data 取出）
+  const [pollingJobId, setPollingJobId] = useState<string | null>(null);
 
   // voice recording
   const [isRecording, setIsRecording] = useState(false);
@@ -73,13 +75,15 @@ export default function GodViewPage() {
   const cost = calcPrice(currentProduct, isBundlePromo ? false : isFirst);
 
   const launchMutation = trpc.deepResearch.launch.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
       const firstKey = PRODUCT_FIRST_KEYS[selectedProduct];
       if (!localStorage.getItem(firstKey)) {
         localStorage.setItem(firstKey, "1");
         setIsFirst(false);
       }
       setPhase("dispatched");
+      // supervisor：拿到 jobId 后立即开始轮询
+      if (data?.jobId) setPollingJobId(data.jobId);
     },
     onError: (err) => {
       setPhase("failed");
@@ -102,6 +106,20 @@ export default function GodViewPage() {
     setElapsedSec(0);
     launchMutation.mutate({ topic, isFirstTime: isFirst, productType: selectedProduct, isBundlePromo });
   };
+
+  // Supervisor 轮询：每 4s 拉一次 job 状态，job 完成/失败后停止
+  const jobStatusQuery = trpc.deepResearch.supervisorJobStatus.useQuery(
+    { jobId: pollingJobId! },
+    {
+      enabled: isSupervisor && !!pollingJobId,
+      refetchInterval: (query) => {
+        const s = query.state.data?.status;
+        if (s === "completed" || s === "failed") return false;
+        return 4000;
+      },
+      retry: false,
+    },
+  );
 
   const toggleVoice = useCallback(async () => {
     if (isRecording) {
@@ -168,7 +186,7 @@ export default function GodViewPage() {
     <div
       style={{
         minHeight: "100vh",
-        // 卡布奇诺深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
+        // 卡布奇諾深焙渐变：顶部奶泡米色 → 中段焦糖核心（最浓郁的质感段）→ 底部深拿铁/摩卡棕
         background: `
           radial-gradient(ellipse 80% 60% at 50% 0%, rgba(255,247,224,0.85) 0%, transparent 60%),
           radial-gradient(ellipse 70% 50% at 100% 100%, rgba(74,54,33,0.20) 0%, transparent 65%),
@@ -186,9 +204,9 @@ export default function GodViewPage() {
         overflow: "hidden",
       }}
     >
-      {/* 卡布奇诺暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
+      {/* 卡布奇諾暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
-        {/* 顶部奶泡高光（让顶端阅读区更明亮，文本更易读）*/}
+        {/* 顶部奶泡高光（让顶端阅读区更明亮，文字更易读）*/}
         <div style={{ position: "absolute", top: "-15%", left: "50%", transform: "translateX(-50%)", width: 1100, height: 700, borderRadius: "50%", background: "radial-gradient(circle,rgba(255,247,224,0.55) 0%,transparent 70%)", filter: "blur(70px)" }} />
         {/* 左上焦糖金光晕 · 慢呼吸动画 */}
         <div style={{ position: "absolute", top: "8%", left: "8%", width: 620, height: 620, borderRadius: "50%", background: "radial-gradient(circle,rgba(216,162,58,0.32) 0%,rgba(168,118,27,0.18) 35%,transparent 70%)", filter: "blur(90px)", animation: "godview-float 18s ease-in-out infinite" }} />
@@ -286,7 +304,7 @@ export default function GodViewPage() {
           </div>
         </div>
 
-        {/* ── 定价矩阵 ── */}
+        {/* ── 定價矩陣 ── */}
         {(phase === "idle" || phase === "launching") && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 20 }}>
             {PRODUCTS.map((p) => {
@@ -437,43 +455,129 @@ export default function GodViewPage() {
         {/* ── Supervisor Debug 面板 ── */}
         {isSupervisor && (
           <div style={{ marginTop: 40 }}>
-            <button
-              onClick={() => setShowDebug(!showDebug)}
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", background: "rgba(0,255,70,0.06)", border: "1px solid rgba(0,255,70,0.2)", borderRadius: 8, cursor: "pointer", color: "rgba(0,255,70,0.7)", fontSize: 11, fontWeight: 700, fontFamily: "monospace", letterSpacing: "0.05em" }}
-            >
-              <Bug size={12} />
-              DEBUG {showDebug ? "▲ 收起" : "▼ 展开"}
-              <span style={{ marginLeft: 4, color: "rgba(0,255,70,0.35)", fontWeight: 400 }}>supervisor only</span>
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", background: "rgba(0,255,70,0.06)", border: "1px solid rgba(0,255,70,0.2)", borderRadius: 8, cursor: "pointer", color: "rgba(0,255,70,0.7)", fontSize: 11, fontWeight: 700, fontFamily: "monospace", letterSpacing: "0.05em" }}
+              >
+                <Bug size={12} />
+                DEBUG {showDebug ? "▲ 收起" : "▼ 展开"}
+                <span style={{ marginLeft: 4, color: "rgba(0,255,70,0.35)", fontWeight: 400 }}>supervisor only</span>
+              </button>
+              {/* 手动输入 jobId 轮询 */}
+              <input
+                placeholder="粘贴 jobId 查询..."
+                defaultValue={pollingJobId || ""}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    if (v) { setPollingJobId(v); setShowDebug(true); }
+                  }
+                }}
+                style={{ flex: 1, maxWidth: 280, background: "rgba(0,0,0,0.5)", border: "1px solid rgba(0,255,70,0.2)", borderRadius: 8, color: "#00ff46", fontSize: 11, fontFamily: "monospace", padding: "6px 12px", outline: "none" }}
+              />
+              {pollingJobId && (
+                <span style={{ fontSize: 10, color: "rgba(0,255,70,0.5)", fontFamily: "monospace" }}>
+                  轮询中 {jobStatusQuery.isFetching ? "⏳" : "✓"} 每 4s
+                </span>
+              )}
+            </div>
 
             {showDebug && (
-              <div style={{ marginTop: 10, background: "#000", border: "1px solid rgba(0,255,70,0.25)", borderRadius: 12, padding: "16px 18px", fontFamily: "monospace", fontSize: 11, color: "#00ff46", animation: "fadeIn 0.2s ease", lineHeight: 1.7 }}>
-                <p style={{ color: "rgba(0,255,70,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 10 }}>▶ GODVIEW DEBUG TERMINAL</p>
+              <div style={{ marginTop: 10, background: "#000", border: "1px solid rgba(0,255,70,0.25)", borderRadius: 12, padding: "18px 20px", fontFamily: "monospace", fontSize: 11, color: "#00ff46", lineHeight: 1.7 }}>
+                <p style={{ color: "rgba(0,255,70,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 12 }}>▶ DEEP RESEARCH DEBUG TERMINAL</p>
 
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+                {/* 基础字段 */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
                   {[
                     { k: "PHASE", v: phase },
-                    { k: "MUTATION", v: launchMutation.isPending ? "⏳ pending" : launchMutation.isSuccess ? "✅ success" : launchMutation.isError ? "❌ error" : "— idle" },
-                    { k: "JOB_ID", v: String((launchMutation.data as any)?.jobId || (launchMutation.data as any)?.id || "—") },
-                    { k: "TOPIC_LEN", v: `${topic.length} chars` },
+                    { k: "JOB_ID", v: pollingJobId || String((launchMutation.data as any)?.jobId || "—") },
                     { k: "LAUNCH_AT", v: launchTime ? launchTime.toLocaleTimeString("zh-CN") : "—" },
                     { k: "ELAPSED", v: launchTime ? `${elapsedSec}s` : "—" },
+                    { k: "CREDITS", v: jobStatusQuery.data?.creditsUsed != null ? `${jobStatusQuery.data.creditsUsed} 点` : "—" },
+                    { k: "ATTEMPT", v: jobStatusQuery.data?.attemptCount != null ? `#${jobStatusQuery.data.attemptCount}` : "—" },
+                    { k: "PID", v: String(jobStatusQuery.data?.pid || "—") },
                   ].map(({ k, v }) => (
-                    <div key={k} style={{ background: "rgba(0,255,70,0.05)", border: "1px solid rgba(0,255,70,0.15)", borderRadius: 6, padding: "5px 10px", minWidth: 120 }}>
-                      <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, margin: "0 0 2px", fontWeight: 700 }}>{k}</p>
+                    <div key={k} style={{ background: "rgba(0,255,70,0.05)", border: "1px solid rgba(0,255,70,0.12)", borderRadius: 6, padding: "4px 10px", minWidth: 100 }}>
+                      <p style={{ color: "rgba(0,255,70,0.35)", fontSize: 9, margin: "0 0 2px", fontWeight: 700 }}>{k}</p>
                       <p style={{ color: "#00ff46", fontSize: 11, margin: 0 }}>{v}</p>
                     </div>
                   ))}
                 </div>
 
-                <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>RAW MUTATION DATA</p>
-                <pre style={{ fontSize: 10, color: "rgba(0,255,70,0.75)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflowY: "auto", margin: 0, lineHeight: 1.6, background: "rgba(0,255,70,0.03)", borderRadius: 6, padding: "10px 12px" }}>
+                {/* Job 状态 + 进度 */}
+                {jobStatusQuery.data && (
+                  <>
+                    {/* 状态徽章 */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                      <span style={{
+                        padding: "3px 12px", borderRadius: 99, fontSize: 11, fontWeight: 800,
+                        background: jobStatusQuery.data.status === "completed" ? "rgba(0,255,70,0.15)"
+                          : jobStatusQuery.data.status === "failed" ? "rgba(255,50,50,0.15)"
+                          : jobStatusQuery.data.status === "running" ? "rgba(0,180,255,0.15)"
+                          : "rgba(200,160,0,0.15)",
+                        color: jobStatusQuery.data.status === "completed" ? "#00ff46"
+                          : jobStatusQuery.data.status === "failed" ? "#ff5050"
+                          : jobStatusQuery.data.status === "running" ? "#00b4ff"
+                          : "#c8a000",
+                        border: `1px solid ${jobStatusQuery.data.status === "completed" ? "rgba(0,255,70,0.3)"
+                          : jobStatusQuery.data.status === "failed" ? "rgba(255,50,50,0.3)"
+                          : jobStatusQuery.data.status === "running" ? "rgba(0,180,255,0.3)"
+                          : "rgba(200,160,0,0.3)"}`,
+                      }}>
+                        {jobStatusQuery.data.status === "running" ? "🔄 运行中" : jobStatusQuery.data.status === "completed" ? "✅ 完成" : jobStatusQuery.data.status === "failed" ? "❌ 失败" : jobStatusQuery.data.status}
+                      </span>
+                      {jobStatusQuery.data.lastHeartbeatAt && (
+                        <span style={{ color: "rgba(0,255,70,0.4)", fontSize: 10 }}>
+                          心跳 {new Date(jobStatusQuery.data.lastHeartbeatAt).toLocaleTimeString("zh-CN")}
+                        </span>
+                      )}
+                      {jobStatusQuery.data.hasMarkdown && (
+                        <span style={{ color: "rgba(0,255,70,0.5)", fontSize: 10 }}>
+                          报告已生成 ({jobStatusQuery.data.markdownLen.toLocaleString()} chars)
+                        </span>
+                      )}
+                    </div>
+
+                    {/* 进度日志（最重要的字段） */}
+                    {jobStatusQuery.data.progress && (
+                      <div style={{ marginBottom: 10 }}>
+                        <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>PROGRESS LOG</p>
+                        <div style={{ background: "rgba(0,255,70,0.04)", border: "1px solid rgba(0,255,70,0.12)", borderRadius: 8, padding: "10px 14px", maxHeight: 200, overflowY: "auto" }}>
+                          {jobStatusQuery.data.progress.split("\n").map((line, i) => (
+                            <div key={i} style={{ color: line.includes("❌") || line.includes("失败") ? "#ff7070" : line.includes("✅") || line.includes("完成") ? "#00ff46" : line.includes("⏳") || line.includes("进行") ? "#00b4ff" : "rgba(0,255,70,0.75)", marginBottom: 2, wordBreak: "break-all" }}>
+                              {line || <span style={{ opacity: 0.2 }}>—</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 错误（失败时） */}
+                    {jobStatusQuery.data.error && (
+                      <div style={{ marginBottom: 10 }}>
+                        <p style={{ color: "rgba(255,80,80,0.6)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>ERROR</p>
+                        <div style={{ background: "rgba(255,50,50,0.06)", border: "1px solid rgba(255,50,50,0.2)", borderRadius: 8, padding: "10px 14px", color: "#ff7070", wordBreak: "break-all" }}>
+                          {jobStatusQuery.data.error}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Launch mutation 原始返回 */}
+                <p style={{ color: "rgba(0,255,70,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6, marginTop: 4 }}>LAUNCH RESPONSE</p>
+                <pre style={{ fontSize: 10, color: "rgba(0,255,70,0.65)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 180, overflowY: "auto", margin: 0, lineHeight: 1.6, background: "rgba(0,255,70,0.03)", borderRadius: 6, padding: "10px 12px" }}>
                   {launchMutation.data
                     ? JSON.stringify(launchMutation.data, null, 2)
                     : launchMutation.error
                       ? JSON.stringify({ error: launchMutation.error.message, code: (launchMutation.error as any)?.data?.code }, null, 2)
-                      : "暂无数据，启动任务后显示"}
+                      : "暂无（任务启动后显示）"}
                 </pre>
+
+                {jobStatusQuery.error && (
+                  <p style={{ color: "#ff7070", fontSize: 10, marginTop: 8 }}>轮询错误：{jobStatusQuery.error.message}</p>
+                )}
               </div>
             )}
           </div>
