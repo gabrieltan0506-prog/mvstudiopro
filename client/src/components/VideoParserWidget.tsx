@@ -49,7 +49,7 @@ export default function VideoParserWidget() {
 
   const isLoading = parseMut.isPending;
 
-  const PLATFORMS = ['YouTube', '抖音', '快手', '小红书', 'B站'];
+  const PLATFORMS = ['抖音', '快手', '小红书', 'B站'];
 
   return (
     <div
@@ -94,7 +94,7 @@ export default function VideoParserWidget() {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="粘贴视频链接（YouTube / 抖音 / 快手 / 小红书 / B站…）"
+          placeholder="粘贴视频链接（抖音 / 快手 / 小红书 / B站…）"
           disabled={isLoading}
           style={{
             flex: 1,
