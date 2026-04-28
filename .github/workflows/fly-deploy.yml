@@ -40,7 +40,11 @@ jobs:
       - name: Build deploy image
         run: docker buildx build --platform linux/amd64 -t "$IMAGE_REF" --push .
       - name: Deploy prebuilt image
-        run: flyctl deploy --image "$IMAGE_REF"
+        # --ha=false：禁止 Fly 在 deploy 时自动繁殖副本机器。
+        #   单机部署 + 持久卷 growth_data（jobs / deep-research 写盘）模式下，多机
+        #   会导致 Launch 落主机、Poll 落副本（找不到 job 文件）这类幻象错误。
+        #   未来要 HA，请先把 Job 状态迁到 Postgres 再去掉这个 flag。
+        run: flyctl deploy --image "$IMAGE_REF" --ha=false
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - name: Fetch post-deploy growth status
