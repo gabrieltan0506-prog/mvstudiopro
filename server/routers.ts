@@ -5661,7 +5661,32 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           error: job.error || null,
           createdAt: job.createdAt,
           completedAt: job.completedAt || null,
+          planText: job.planText || null,
+          planInteractionId: job.planInteractionId || null,
+          interactionId: job.interactionId || null,
         };
+      }),
+
+    /**
+     * 用户审核计划后批准启动深潛执行（Interactions API 第二阶段）
+     * - 写入 planFeedback、状态改回 running
+     * - 触发 runDeepResearchAsync 接力跑剩余阶段
+     */
+    approvePlan: protectedProcedure
+      .input(z.object({
+        jobId: z.string().min(1),
+        feedback: z.string().max(2000).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { readJob, approvePlan } = await import("./services/deepResearchService");
+        const job = await readJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
+        if (job.status !== "awaiting_plan_approval") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `任务当前状态 ${job.status}，无法批准计划` });
+        }
+        await approvePlan(input.jobId, input.feedback);
+        return { ok: true, jobId: input.jobId };
       }),
 
     /** 查询当前用户所有战报（研报中心） */

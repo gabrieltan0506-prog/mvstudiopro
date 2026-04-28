@@ -37,7 +37,7 @@ function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
 export default function GodViewPage() {
   const [, navigate] = useLocation();
   const [topic, setTopic] = useState("");
-  const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "done" | "failed">("idle");
+  const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "awaiting_plan" | "done" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const [selectedProduct, setSelectedProduct] = useState<ProductType>("magazine_single");
@@ -94,18 +94,32 @@ export default function GodViewPage() {
       refetchInterval: (query) => {
         const s = query.state.data?.status;
         if (s === "completed" || s === "awaiting_review" || s === "failed") return false;
+        // 计划审核阶段：用户主导节奏，不需要快速轮询
+        if (s === "awaiting_plan_approval") return 30_000;
         return 20_000;
       },
       retry: false,
     },
   );
-  // 感知完成/失败
+  // 感知完成/失败/等待计划审核
   useEffect(() => {
     const s = jobDoneQuery.data?.status;
     if (!s) return;
     if (s === "completed" || s === "awaiting_review") setPhase("done");
+    if (s === "awaiting_plan_approval") setPhase("awaiting_plan");
+    if (s === "running" || s === "planning" || s === "pending") {
+      // 用户批准后，状态从 awaiting_plan_approval 回到 running → 继续显示进度时间线
+      if (phase === "awaiting_plan") setPhase("dispatched");
+    }
     if (s === "failed") { setPhase("failed"); setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已退回"); }
   }, [jobDoneQuery.data?.status]);
+
+  // 计划批准 mutation
+  const [planFeedback, setPlanFeedback] = useState("");
+  const approvePlanMutation = trpc.deepResearch.approvePlan.useMutation({
+    onSuccess: () => { setPhase("dispatched"); setPlanFeedback(""); },
+    onError: (err) => alert("批准计划失败：" + err.message),
+  });
 
   // ── 半月刊 10 天提醒
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -624,6 +638,47 @@ export default function GodViewPage() {
         {/* ── 已派发：沉浸式推演过程清单 ── */}
         {phase === "dispatched" && (
           <DeductionTimeline elapsedSec={elapsedSec} topic={topic} onNavigate={() => navigate("/my-reports")} onReset={() => { setPhase("idle"); setTopic(""); }} />
+        )}
+
+        {/* ── 计划审核阶段（Interactions API Collaborative Planning） ── */}
+        {phase === "awaiting_plan" && jobDoneQuery.data?.planText && (
+          <div style={{ padding: "24px 28px", background: "linear-gradient(135deg, rgba(168,118,27,0.10) 0%, rgba(122,84,16,0.06) 100%)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 14, boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 22 }}>📋</span>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#a8761b", letterSpacing: "0.04em" }}>研究计划已生成 · 请审核后批准</h3>
+            </div>
+            <p style={{ margin: "0 0 14px", fontSize: 12, color: "rgba(160,140,90,0.85)", lineHeight: 1.7 }}>
+              Deep Research Max Agent 已完成研究计划制定。请审阅以下计划方向，您可以直接批准开始深潛，也可以填写补充意见后再批准（例如：「重点关注小红书数据」「不要分析快手」「补充 IP 衍生品角度」）。
+            </p>
+
+            {/* 计划文本 */}
+            <div style={{ background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", borderRadius: 10, padding: "16px 20px", marginBottom: 16, maxHeight: 360, overflow: "auto" }}>
+              <pre style={{ margin: 0, fontFamily: "'Source Han Serif SC', Georgia, serif", fontSize: 13, lineHeight: 1.85, color: "rgba(245,235,210,0.92)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{jobDoneQuery.data.planText}</pre>
+            </div>
+
+            {/* 反馈框 */}
+            <textarea
+              value={planFeedback}
+              onChange={(e) => setPlanFeedback(e.target.value)}
+              placeholder="（可选）补充意见或调整方向，AI 会按您的反馈调整后再开始深潛..."
+              style={{ width: "100%", minHeight: 80, padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", color: "rgba(245,235,210,0.92)", fontSize: 13, lineHeight: 1.7, resize: "vertical", outline: "none", marginBottom: 14, fontFamily: "inherit" }}
+            />
+
+            {/* 操作按钮 */}
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                onClick={() => approvePlanMutation.mutate({ jobId: pollingJobId!, feedback: planFeedback.trim() || undefined })}
+                disabled={approvePlanMutation.isPending || !pollingJobId}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 26px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: approvePlanMutation.isPending ? "not-allowed" : "pointer", opacity: approvePlanMutation.isPending ? 0.6 : 1, boxShadow: "0 4px 16px rgba(168,118,27,0.30)" }}
+              >
+                {approvePlanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
+                {planFeedback.trim() ? "按反馈调整后开始深潛" : "批准计划 · 开始深潛"}
+              </button>
+              <span style={{ fontSize: 11, color: "rgba(160,140,90,0.65)" }}>
+                批准后 Agent 会立即开始最长 60 分钟的全网深潛，完成后自动进入研报中心
+              </span>
+            </div>
+          </div>
         )}
 
         {/* ── 启动失败 ── */}
