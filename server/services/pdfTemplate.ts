@@ -17,6 +17,7 @@
  */
 
 import { marked } from "marked";
+import { injectChartSvgsIntoMarkdown, type EChartsTheme } from "./echartsServerRender";
 
 marked.setOptions({ gfm: true });
 
@@ -36,10 +37,23 @@ export type PdfCover = {
   abstract?: string;
 };
 
-function parseMarkdownToHtml(markdownContent: string): string {
+function parseMarkdownToHtml(markdownContent: string, style: PdfStyle): string {
   const raw = String(markdownContent || "").trim();
   if (!raw) return "<p>（无正文）</p>";
-  return marked.parse(raw, { async: false }) as string;
+  // ── 图表注入（PDF 路径专用）──────────────────────────────────────────────
+  // 在线 ReportRenderer 通过 recharts 把数值表格自动衍生成柱状图/折线图/雷达图，
+  // PDF 之前没有这一步 → 用户报"PDF 图表空白"。
+  // 现在用服务端 ECharts SSR 把同样的可视化做成静态 SVG，注入到表格之后；
+  // marked 默认透传 raw HTML（含 <svg>），puppeteer 拿到的 HTML 已经是画好的图，
+  // 无需 waitForFunction 等异步运行时。
+  let pre = raw;
+  try {
+    pre = injectChartSvgsIntoMarkdown(raw, { theme: style as EChartsTheme });
+  } catch (e: any) {
+    console.warn("[pdfTemplate] 图表 SSR 注入失败（已降级为不出图）：", e?.message);
+    pre = raw;
+  }
+  return marked.parse(pre, { async: false }) as string;
 }
 
 function enhanceTables(html: string): string {
@@ -328,7 +342,7 @@ export function generateHtmlTemplate(
 ): string {
   const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
   const palette = buildPalette(style);
-  const htmlBody = enhanceTables(parseMarkdownToHtml(markdownContent));
+  const htmlBody = enhanceTables(parseMarkdownToHtml(markdownContent, style));
   const coverHtml = opts?.cover ? buildCoverPage(palette, opts.cover, style) : "";
 
   return `<!DOCTYPE html>
@@ -737,6 +751,37 @@ export function generateHtmlTemplate(
     h2 + figure.scene-figure { margin-top: 18px; }
     /* figure 后紧跟段落：拉开距离让正文呼吸 */
     figure.scene-figure + p { margin-top: 18px; }
+
+    /* ────────────────── 数据可视化图表（ECharts SSR SVG）─────────────
+       与 figure.scene-figure 风格保持一致，但允许更高（数据图比照片密度高）。
+    */
+    figure.chart-figure {
+      margin: 22px auto 18px;
+      padding: 14px 16px 12px;
+      max-width: 100%;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      text-align: center;
+      background: var(--bg-elev);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+    }
+    figure.chart-figure svg {
+      display: block;
+      margin: 0 auto;
+      max-width: 100%;
+      height: auto;
+    }
+    figure.chart-figure figcaption {
+      margin-top: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      line-height: 1.5;
+    }
+    table + figure.chart-figure { margin-top: 12px; }
 
     @media print {
       body {

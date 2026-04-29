@@ -76,7 +76,6 @@ async function generateImageViaGeminiApiKey(opts: {
   return imageUrl;
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Deep Research Pro Preview · 全局 1 RPM 限流闸门
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2142,8 +2141,9 @@ ${job.topic}
 // 设计：
 //   1. 用 LLM 解析报告 → 输出 3-5 个"应用场景 / 人物特色 / 行业生态"画面
 //   2. 每张图带 sectionAnchor（章节标题）+ caption（中文图说）+ imagePrompt（英文）
-//   3. 并行调用 nanoImage 端点（tier=flash，省钱）
-//   4. 按 sectionAnchor 注入到对应章节段落后；找不到锚点则集中放到文末"可视化场景图集"
+//   3. 串行调用 nanoImage 端点（tier=flash，省钱）
+//   4. 按 sectionAnchor 注入到对应章节段落后；3 级 fallback（精确 → 模糊 → 均分），
+//      保证场景图必嵌正文章节，**绝不**进入文末附录（用户反馈：附录陷阱破坏阅读体验）
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SceneIllustration {
@@ -2239,6 +2239,16 @@ async function generateSceneIllustrations(params: {
   const minCount = params.minCount ?? 3;
   const maxCount = params.maxCount ?? 5;
 
+  // ── 0. 提取报告里所有 H1/H2/H3 章节标题，强制 LLM 从这个列表选 sectionAnchor ──
+  // 历史问题（用户痛点："场景图应该在报告里面，不应该单独生成才对"）：
+  //   原本 LLM 自由命名 sectionAnchor，结果跟实际章节（如 `## 一、个人亮点提取`）经常对不上，
+  //   `injectSceneImagesIntoMarkdown` 的 regex 匹配失败 → 全部堆进文末「附录：可视化场景图集」。
+  //   现在改成：让 LLM 必须从下面列出的章节里挑，最大化匹配率。
+  const sectionTitles = extractSectionTitles(params.reportMarkdown);
+  const titleListBlock = sectionTitles.length > 0
+    ? sectionTitles.map((t, i) => `  ${i + 1}. ${t}`).join("\n")
+    : "  （报告未提取出章节，请输出空字符串作 sectionAnchor）";
+
   // ── 1. 用 LLM 抽场景（仅取报告前 12000 字喂给 LLM，避免 prompt 过长） ──
   const reportSnippet = params.reportMarkdown.slice(0, 12000);
   const sceneJsonText = await generate(
@@ -2255,12 +2265,18 @@ async function generateSceneIllustrations(params: {
 4. 至少包含一张"应用场景全景"（例：商场快闪店现场 / 工厂流水线 / 直播间）
 5. 至少包含一张"行业生态画面"（例：跨境物流仓 / 城市地标夜景 / 节庆现场）
 
+【sectionAnchor 强制规范 · 必须遵守】
+- sectionAnchor 字段**必须严格等于以下章节标题之一**（一字不差，包含编号 / 中文 / emoji），不允许自创：
+${titleListBlock}
+- 不允许只写关键词（如「行业全景」「财务模型」），必须复制整行标题
+- 同一章节最多 1 张图，请在不同章节之间均匀分布
+
 【输出格式】
 仅输出严格 JSON，不带任何 markdown / 注释 / 多余文字。结构：
 {
   "scenes": [
     {
-      "sectionAnchor": "章节锚点（必须是报告里出现过的 H1 或 H2 标题文字，让前端能精准找到插入位置）",
+      "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字，作为图片下方的注解",
       "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
       "aspectRatio": "16:9"
@@ -2287,11 +2303,15 @@ ${reportSnippet}`,
       "gemini-3.1-pro-preview",
       `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON（不要 4-5 个），且每个 imagePrompt **必须 ≤ 50 个英文单词**。
 
+【sectionAnchor 强制规范】
+- sectionAnchor **必须严格等于以下章节标题之一**（一字不差），不允许自创：
+${titleListBlock}
+
 【输出格式】严格 JSON，不带任何 markdown / 注释：
 {
   "scenes": [
     {
-      "sectionAnchor": "报告里出现过的 H1 或 H2 标题文字",
+      "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字",
       "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线",
       "aspectRatio": "16:9"
@@ -2378,55 +2398,203 @@ ${reportSnippet.slice(0, 8000)}`,
   return generated.filter((x): x is SceneIllustration => x !== null && Boolean(x.imageUrl));
 }
 
+/** 提取 markdown 里所有 H1/H2/H3 标题（去掉 leading `#`、保留章节文字含编号 / emoji） */
+function extractSectionTitles(markdown: string): string[] {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const titles: string[] = [];
+  for (const line of lines) {
+    const m = /^(#{1,3})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (!m) continue;
+    const text = m[2].trim();
+    if (!text) continue;
+    // 去重 + 跳过本身就是「附录：可视化场景图集」之类的我们生成的章节
+    if (/附录：可视化场景图集/.test(text)) continue;
+    if (!titles.includes(text)) titles.push(text);
+  }
+  return titles;
+}
+
+/** 标题归一化（去 emoji / 编号前缀 / 标点 / 空白），用于模糊匹配 */
+function normalizeTitle(s: string): string {
+  return String(s || "")
+    // emoji（高低代理对）+ ZWJ + VS16；不用 u 标志（tsconfig 没设 target → 默认 ES3 不支持）
+    .replace(/[\uD83C-\uDBFF][\uDC00-\uDFFF]/g, "")
+    .replace(/[\u200d\ufe0f]/g, "")
+    .replace(/^[\s\d一二三四五六七八九十百千万、．\.·\)\(]+/g, "")
+    .replace(/[\s、，,。；;：:！!？?「」『』（）()【】\[\]"'`*_~`#]+/g, "")
+    .toLowerCase();
+}
+
+/** 找两个字符串的最长公共子串长度（轻量 DP） */
+function lcsLen(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const m = a.length;
+  const n = b.length;
+  let prev = new Array(n + 1).fill(0);
+  let cur = new Array(n + 1).fill(0);
+  let best = 0;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        cur[j] = prev[j - 1] + 1;
+        if (cur[j] > best) best = cur[j];
+      } else {
+        cur[j] = 0;
+      }
+    }
+    [prev, cur] = [cur, prev];
+    cur.fill(0);
+  }
+  return best;
+}
+
 /**
- * 把场景图按 sectionAnchor 插入到 markdown 对应章节段落后。
+ * 把场景图按 sectionAnchor 插入到 markdown 对应章节内。
+ *
+ * 用户痛点（已确认 root cause）：
+ *   原本"找不到锚点的图集中放到文末『# 附录：可视化场景图集』"导致用户抱怨：
+ *   "场景图应该在报告里面，不应该单独生成才对"。
+ *
+ * 现在的策略（3 级 fallback，绝不进文末附录）：
+ *   L1 精确：原 regex（H1/H2/H3 + 紧跟段落 + 注入图）
+ *   L2 模糊：用归一化 + LCS（最长公共子串）+ 包含子串匹配，挑相似度最高的章节
+ *   L3 平均分配：剩下的图按章节均匀分配到没图的章节中段（章节内第一段后面）
+ *   L4 兜底：如果上面 3 步都没 hit，把图插到文档第 1 个章节标题之后（**绝对**不再生成附录）
  *
  * 排版审美约束：
  * - 图片用 figure 块（CSS 控制 page-break-inside: avoid，不切页）
  * - caption 用 em + 居中（CSS 在 pdfTemplate 里控制）
  * - 每张图独立一段，前后空行（避免与正文文字粘连）
- * - 找不到锚点的图集中放到文末"# 附录：可视化场景图集"，前面留空两行
  */
 function injectSceneImagesIntoMarkdown(markdown: string, scenes: SceneIllustration[]): string {
+  if (!scenes.length) return markdown;
+
   let out = markdown;
+  const sceneList = scenes.filter((s) => s.imageUrl);
+  if (!sceneList.length) return markdown;
+
+  const buildBlock = (s: SceneIllustration) =>
+    `\n\n<figure class="scene-figure">\n  <img src="${s.imageUrl}" alt="${escapeHtml(s.caption)}" />\n  <figcaption>${escapeHtml(s.caption)}</figcaption>\n</figure>\n\n`;
+
+  // 章节命中状态：title → 是否已经塞过一张（防止同一章节挤多张图）
+  const chapterUsed = new Set<string>();
   const orphans: SceneIllustration[] = [];
 
-  for (const scene of scenes) {
-    if (!scene.imageUrl) continue;
-    const block = `\n\n<figure class="scene-figure">\n  <img src="${scene.imageUrl}" alt="${escapeHtml(scene.caption)}" />\n  <figcaption>${escapeHtml(scene.caption)}</figcaption>\n</figure>\n\n`;
-
-    // 尝试找锚点：## ${anchor}  或  # ${anchor}（允许 emoji / 数字编号前缀）
-    const anchor = scene.sectionAnchor.trim();
+  // ── L1：精确锚点匹配 ────────────────────────────────────────────────
+  for (const scene of sceneList) {
+    const anchor = (scene.sectionAnchor || "").trim();
     if (!anchor) {
       orphans.push(scene);
       continue;
     }
+    if (chapterUsed.has(anchor)) {
+      // 同一章节已有图，转到 L3 均分
+      orphans.push(scene);
+      continue;
+    }
     const safeAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // 匹配：H1 或 H2 标题行 + 紧跟的第一段（直到下一个空行）
     const re = new RegExp(`(^|\\n)(#{1,3}[^\\n]*${safeAnchor}[^\\n]*)\\n([\\s\\S]*?)(\\n\\n|$)`, "i");
     const m = out.match(re);
     if (m) {
-      // 在锚点段落后注入
       const idx = (m.index ?? 0) + m[0].length;
-      out = out.slice(0, idx) + block + out.slice(idx);
+      out = out.slice(0, idx) + buildBlock(scene) + out.slice(idx);
+      chapterUsed.add(anchor);
     } else {
       orphans.push(scene);
     }
   }
 
-  // 孤儿图集中放到文末（在思维链 / 来源附录之前注入）
-  if (orphans.length > 0) {
-    const orphanBlock =
-      `\n\n# 附录：可视化场景图集\n\n` +
-      orphans
-        .map((s) => {
-          if (!s.imageUrl) return "";
-          return `<figure class="scene-figure">\n  <img src="${s.imageUrl}" alt="${escapeHtml(s.caption)}" />\n  <figcaption>${escapeHtml(s.caption)}</figcaption>\n</figure>`;
-        })
-        .filter(Boolean)
-        .join("\n\n");
-    out += orphanBlock;
+  // 重新提取（注入后偏移会变，但章节列表不变；用最初 markdown 的章节列表足够稳）
+  const titles = extractSectionTitles(markdown);
+
+  // ── L2：模糊匹配（LCS / 包含 / 归一化相似度）────────────────────────
+  const stillOrphan: SceneIllustration[] = [];
+  for (const scene of orphans) {
+    const anchor = (scene.sectionAnchor || "").trim();
+    if (!anchor || titles.length === 0) {
+      stillOrphan.push(scene);
+      continue;
+    }
+    const normAnchor = normalizeTitle(anchor);
+    let best: { title: string; score: number } | null = null;
+    for (const t of titles) {
+      if (chapterUsed.has(t)) continue;
+      const normT = normalizeTitle(t);
+      if (!normT || !normAnchor) continue;
+      // 完全包含 / 被包含 → 得满分
+      const contains = normAnchor.includes(normT) || normT.includes(normAnchor);
+      const lcs = lcsLen(normAnchor, normT);
+      const denom = Math.max(normAnchor.length, normT.length, 1);
+      const ratio = lcs / denom;
+      const score = contains ? Math.max(ratio, 0.7) : ratio;
+      if (!best || score > best.score) best = { title: t, score };
+    }
+    if (best && best.score >= 0.45) {
+      const safe = best.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(^|\\n)(#{1,3}[^\\n]*${safe}[^\\n]*)\\n([\\s\\S]*?)(\\n\\n|$)`, "i");
+      const m = out.match(re);
+      if (m) {
+        const idx = (m.index ?? 0) + m[0].length;
+        out = out.slice(0, idx) + buildBlock(scene) + out.slice(idx);
+        chapterUsed.add(best.title);
+        console.log(
+          `[deepResearch][scenes] L2 模糊匹配命中：anchor="${anchor.slice(0, 24)}" → "${best.title.slice(0, 24)}" (score=${best.score.toFixed(2)})`,
+        );
+        continue;
+      }
+    }
+    stillOrphan.push(scene);
   }
+
+  // ── L3：平均分配 — 把剩余图均匀分到尚未配图的章节里 ────────────────────
+  const remainingTitles = titles.filter((t) => !chapterUsed.has(t));
+  for (let i = 0; i < stillOrphan.length; i++) {
+    const scene = stillOrphan[i];
+    const targetTitle = remainingTitles.length > 0
+      ? remainingTitles[i % remainingTitles.length]
+      : titles[i % Math.max(titles.length, 1)] ?? "";
+    if (!targetTitle) {
+      // ── L4 兜底：找文档第 1 个章节，硬塞进去（仍然在正文，不进附录） ──
+      const firstHeadingMatch = out.match(/(^|\n)(#{1,3}[^\n]+)\n/);
+      if (firstHeadingMatch) {
+        const idx = (firstHeadingMatch.index ?? 0) + firstHeadingMatch[0].length;
+        out = out.slice(0, idx) + buildBlock(scene) + out.slice(idx);
+      } else {
+        // 完全没标题：直接塞文档开头
+        out = buildBlock(scene) + out;
+      }
+      console.log(`[deepResearch][scenes] L4 兜底：场景图无可用章节，已塞首章节`);
+      continue;
+    }
+    const safe = targetTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(^|\\n)(#{1,3}[^\\n]*${safe}[^\\n]*)\\n([\\s\\S]*?)(\\n\\n|$)`, "i");
+    const m = out.match(re);
+    if (m) {
+      const idx = (m.index ?? 0) + m[0].length;
+      out = out.slice(0, idx) + buildBlock(scene) + out.slice(idx);
+      console.log(
+        `[deepResearch][scenes] L3 均分注入：场景 "${scene.caption.slice(0, 20)}" → "${targetTitle.slice(0, 20)}"`,
+      );
+      // 保证多个图均匀分布：标记 used，让循环推进到下一章节
+      if (remainingTitles.includes(targetTitle)) {
+        const removeIdx = remainingTitles.indexOf(targetTitle);
+        if (removeIdx >= 0) remainingTitles.splice(removeIdx, 1);
+      }
+    } else {
+      // 第 1 个标题也找不到：兜底到首章节（理论不会走到这里）
+      const firstHeadingMatch = out.match(/(^|\n)(#{1,3}[^\n]+)\n/);
+      if (firstHeadingMatch) {
+        const idx = (firstHeadingMatch.index ?? 0) + firstHeadingMatch[0].length;
+        out = out.slice(0, idx) + buildBlock(scene) + out.slice(idx);
+      } else {
+        out = buildBlock(scene) + out;
+      }
+    }
+  }
+
+  // ── 重要：彻底删除 “# 附录：可视化场景图集” 路径 ───────────────────────
+  // 用户痛点："场景图应该在报告里面，不应该单独生成才对"。
+  // 上面 4 级 fallback 保证：所有场景图都在正文章节里，绝不会出现独立附录章节。
 
   return out;
 }
