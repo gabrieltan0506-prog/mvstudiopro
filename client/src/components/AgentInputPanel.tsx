@@ -81,41 +81,68 @@ export default function AgentInputPanel(props: AgentInputPanelProps) {
     if (e.target) e.target.value = "";
     const remaining = maxFiles - files.length;
     if (!remaining) {
-      toast.error(`最多上传 ${maxFiles} 个文件`);
+      toast.error(`最多只能上传 ${maxFiles} 个文件，请先移除部分文件`);
       return;
     }
+    if (picked.length > remaining) {
+      toast.warning(`本次只能再上传 ${remaining} 个文件，超出部分已忽略`);
+    }
+
     setUploading(true);
+    let okCount = 0;
+    let failCount = 0;
     try {
       for (const file of picked.slice(0, remaining)) {
         const isImage = file.type.startsWith("image/");
         const isPdf = file.type === "application/pdf";
         if (!isImage && !isPdf) {
           toast.error(`「${file.name}」不支持，仅接受图片或 PDF`);
+          failCount++;
           continue;
         }
         if (file.size > 100 * 1024 * 1024) {
-          toast.error(`「${file.name}」超过 100MB 限制`);
+          toast.error(`「${file.name}」超过 100MB 上限（${(file.size / 1024 / 1024).toFixed(1)}MB）`);
+          failCount++;
           continue;
         }
-        const fd = new FormData();
-        fd.append("file", file);
-        const res = await fetch("/api/magazine/upload", { method: "POST", body: fd });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          toast.error(`上传「${file.name}」失败：${err?.error || res.status}`);
-          continue;
+
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+        const tid = toast.loading(`正在上传「${file.name}」（${sizeMB}MB）…`);
+        try {
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch("/api/magazine/upload", { method: "POST", body: fd });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            toast.error(`上传「${file.name}」失败：${err?.error || `HTTP ${res.status}`}`, { id: tid });
+            failCount++;
+            continue;
+          }
+          const data = await res.json();
+          if (!data?.url || !data?.gcsUri) {
+            toast.error(`上传「${file.name}」失败：服务器未返回文件链接`, { id: tid });
+            failCount++;
+            continue;
+          }
+          setFiles((prev) => [
+            ...prev,
+            {
+              name: file.name,
+              type: isImage ? "image" : "pdf",
+              mimeType: file.type,
+              url: data.url,
+              gcsUri: data.gcsUri,
+            },
+          ]);
+          toast.success(`「${file.name}」上传成功（${sizeMB}MB）`, { id: tid });
+          okCount++;
+        } catch (netErr: any) {
+          toast.error(`上传「${file.name}」网络异常：${netErr?.message || "请检查网络后重试"}`, { id: tid });
+          failCount++;
         }
-        const data = await res.json();
-        setFiles((prev) => [
-          ...prev,
-          {
-            name: file.name,
-            type: isImage ? "image" : "pdf",
-            mimeType: file.type,
-            url: data.url,
-            gcsUri: data.gcsUri,
-          },
-        ]);
+      }
+      if (okCount > 1 || (okCount > 0 && failCount > 0)) {
+        toast.success(`本次上传完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`);
       }
     } finally {
       setUploading(false);
