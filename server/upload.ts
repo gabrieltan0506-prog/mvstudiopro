@@ -162,11 +162,35 @@ uploadRouter.post("/api/magazine/upload", async (req: any, res: any) => {
     const objectName = `magazine-supplements/${Date.now()}-${nanoid(8)}.${ext}`;
 
     const { gcsUri } = await uploadBufferToGcs({ objectName, buffer, contentType: mimeType, bucket: MAGAZINE_SUPP_BUCKET });
-    const { getPublicGcsHttpsUrl } = await import("./services/gcs");
-    const url = getPublicGcsHttpsUrl(gcsUri);
 
-    console.log(`[magazine/upload] ${filename} → ${gcsUri} (${buffer.length} bytes)`);
-    return res.json({ url, gcsUri, mimeType, name: filename });
+    // ⚠️ 关键修复（2026-04-29 plan-create 400 "Cannot fetch content from the provided URL"）：
+    //
+    // 旧实现用 getPublicGcsHttpsUrl() 返回 https://storage.googleapis.com/{bucket}/{obj}，
+    // 这要求 bucket 设公开读权限。但 fallback 用的 mv-studio-pro-vertex-video-temp 是
+    // Vertex 临时桶 / 私有桶 → Deep Research API fetch 时 403 → 报 invalid_request。
+    //
+    // 改为 V4 signed read URL（72 小时过期），鉴权放在 query string 里，Deep Research
+    // API 拿到链接直接能 GET，不依赖 bucket public ACL。
+    const { Storage } = await import("@google-cloud/storage");
+    const credsRaw = String(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+    const storage = credsRaw
+      ? (() => {
+          const c = JSON.parse(credsRaw);
+          return new Storage({
+            projectId: c.project_id,
+            credentials: { client_email: c.client_email, private_key: c.private_key },
+          });
+        })()
+      : new Storage();
+    const fileRef = storage.bucket(MAGAZINE_SUPP_BUCKET).file(objectName);
+    const [signedUrl] = await fileRef.getSignedUrl({
+      version: "v4",
+      action: "read",
+      expires: Date.now() + 72 * 60 * 60 * 1000, // 72 小时
+    });
+
+    console.log(`[magazine/upload] ${filename} → ${gcsUri} (${buffer.length} bytes, signed-read 72h)`);
+    return res.json({ url: signedUrl, gcsUri, mimeType, name: filename });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err || "Upload failed");
     console.error("[magazine/upload] error:", msg);

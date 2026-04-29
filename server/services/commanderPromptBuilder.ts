@@ -16,6 +16,7 @@ import { readTrendStoreForPlatforms } from "../growth/trendStore";
 import type { TrendItem } from "../growth/trendCollector";
 import type { GrowthPlatform } from "../../shared/growth";
 import type { CommanderProfile } from "./commanderProfileStore";
+import { selectByGrowthPotential } from "../growth/trendGrowthScoring";
 
 const DEFAULT_PLATFORMS: GrowthPlatform[] = ["douyin", "xiaohongshu", "bilibili", "kuaishou"];
 const PLATFORM_LABELS: Record<string, string> = {
@@ -42,17 +43,20 @@ export interface ScenarioContext {
   topNPerPlatform?: number;
 }
 
-/** 把单条 TrendItem 压成一行紧凑摘要 */
-function formatItem(item: TrendItem): string {
+/** 把单条 ScoredTrendItem 压成一行紧凑摘要（带增长率、行业、breakout）
+ *  ⚠️ 不输出 likes 绝对值（容易被刷 / 历史失真），改用 growthPercentile + 评论密度
+ */
+function formatScoredItem(s: { item: TrendItem; growthPercentile: number; category: string; isBreakout: boolean; commentDensity: number; ageDays: number | null }): string {
   const stats: string[] = [];
-  if (typeof item.hotValue === "number" && item.hotValue > 0) stats.push(`hot=${item.hotValue}`);
-  if (typeof item.views === "number" && item.views > 0) stats.push(`views=${item.views}`);
-  if (typeof item.likes === "number" && item.likes > 0) stats.push(`likes=${item.likes}`);
-  if (typeof item.comments === "number" && item.comments > 0) stats.push(`comments=${item.comments}`);
-  const tags = (item.tags || []).slice(0, 3).join("/");
-  const industry = (item.industryLabels || []).slice(0, 2).join("/");
-  const meta = [stats.join(" "), tags && `#${tags}`, industry && `[${industry}]`].filter(Boolean).join(" · ");
-  return `· ${item.title}${meta ? ` （${meta}）` : ""}`;
+  stats.push(`+${s.growthPercentile}%↑`);
+  if (s.ageDays !== null) stats.push(`${s.ageDays}d新`);
+  if (s.item.comments) stats.push(`comments=${s.item.comments}`);
+  if (s.item.shares) stats.push(`shares=${s.item.shares}`);
+  if (s.commentDensity > 0.005) stats.push(`讨论度高`);
+  if (s.isBreakout) stats.push(`🚀该账号突然爆发`);
+  const tags = (s.item.tags || []).slice(0, 3).join("/");
+  const meta = [stats.join(" "), tags && `#${tags}`, `[${s.category}]`].filter(Boolean).join(" · ");
+  return `· ${s.item.title}${meta ? ` （${meta}）` : ""}`;
 }
 
 /**
@@ -76,17 +80,11 @@ export async function loadFreshPlatformBriefing(opts?: {
       if (!collection || !collection.items?.length) continue;
       covered.push(platform);
 
-      // 按 hotValue / views / likes 综合排序
-      const ranked = [...collection.items].sort((a, b) => {
-        const ah = Number(a.hotValue || 0) + Number(a.views || 0) / 1000 + Number(a.likes || 0) / 100;
-        const bh = Number(b.hotValue || 0) + Number(b.views || 0) / 1000 + Number(b.likes || 0) / 100;
-        return bh - ah;
-      });
-
-      const top = ranked.slice(0, topN);
-      const lines = top.map(formatItem).join("\n");
-      const updatedLine = `（采集时间 ${collection.collectedAt} · source=${collection.source} · windowDays=${collection.windowDays} · 共 ${collection.items.length} 条已有，下列展示前 ${top.length} 热度）`;
-      sections.push(`### ${PLATFORM_LABELS[platform] || platform}\n${updatedLine}\n${lines || "（暂无数据）"}`);
+      // ✨ v4：按"增长潜力"挑（18 天窗口 + 排企业号 + 同账号突然爆发加权 + 强制行业归类）
+      const { selected, debug } = selectByGrowthPotential(collection.items, { topN, windowDays: 18 });
+      const lines = selected.map(formatScoredItem).join("\n");
+      const updatedLine = `（采集时间 ${collection.collectedAt} · 18 天窗口爆款 · 入池 ${collection.items.length} 条 → 过滤后 ${debug.kept} 条 [窗外 ${debug.excluded.outOfWindow} · 无发布时间 ${debug.excluded.noPublishedAt} · 企业号 ${debug.excluded.enterprise}]）`;
+      sections.push(`### ${PLATFORM_LABELS[platform] || platform}\n${updatedLine}\n${lines || "（18 天窗口内无可用爆款）"}`);
     }
 
     if (sections.length === 0) {
@@ -110,21 +108,36 @@ export async function loadFreshPlatformBriefing(opts?: {
   }
 }
 
-/** 给前端「实时趋势 · 一键深潜」widget 用：返回结构化的逐条热点列表 */
+/** 给前端「实时趋势 · 一键深潜」widget 用：返回结构化的逐条热点列表
+ *
+ *  v4 新规则（2026-04-29）：
+ *  - 严格 18 天窗口
+ *  - 排企业号 / 媒体号 / 政务号
+ *  - 同账号纵向"突然爆发"加权
+ *  - 强制行业归类（不再有"待判定"）
+ *  - 不再返回 likes 绝对值，改返回 growthPercentile（+N% 增长率）
+ */
 export interface TrendHotspotEntry {
   platform: GrowthPlatform;
   platformLabel: string;
   id: string;
   title: string;
   url?: string;
-  hotValue?: number;
-  views?: number;
-  likes?: number;
+  /** 增长潜力百分比（0-230，仅同批次内可比） */
+  growthPercentile: number;
+  /** 行业大类（强制非空） */
+  category: string;
+  /** 同账号突然爆发标记（个人创作者从沉睡到爆发） */
+  isBreakout: boolean;
+  /** 距今天数 */
+  ageDays: number | null;
+  /** 评论密度（讨论度，不是曝光度） */
+  commentDensity: number;
   comments?: number;
+  shares?: number;
+  views?: number;
   tags: string[];
-  industryLabels: string[];
   collectedAt: string;
-  windowDays: number;
 }
 
 export async function listFreshTrendItems(opts?: {
@@ -138,33 +151,33 @@ export async function listFreshTrendItems(opts?: {
     const store = await readTrendStoreForPlatforms(platforms, { preferDerivedFiles: true });
     const entries: TrendHotspotEntry[] = [];
     const covered: GrowthPlatform[] = [];
+    const debugSummary: string[] = [];
 
     for (const platform of platforms) {
       const collection = store.collections?.[platform];
       if (!collection || !collection.items?.length) continue;
       covered.push(platform);
 
-      const ranked = [...collection.items].sort((a, b) => {
-        const ah = Number(a.hotValue || 0) + Number(a.views || 0) / 1000 + Number(a.likes || 0) / 100;
-        const bh = Number(b.hotValue || 0) + Number(b.views || 0) / 1000 + Number(b.likes || 0) / 100;
-        return bh - ah;
-      });
+      const { selected, debug } = selectByGrowthPotential(collection.items, { topN, windowDays: 18 });
+      debugSummary.push(`${PLATFORM_LABELS[platform]}: ${collection.items.length}→${debug.kept} (窗外${debug.excluded.outOfWindow}/无时间${debug.excluded.noPublishedAt}/企业号${debug.excluded.enterprise})`);
 
-      for (const item of ranked.slice(0, topN)) {
+      for (const s of selected) {
         entries.push({
           platform,
           platformLabel: PLATFORM_LABELS[platform] || platform,
-          id: item.id,
-          title: item.title,
-          url: item.url,
-          hotValue: item.hotValue,
-          views: item.views,
-          likes: item.likes,
-          comments: item.comments,
-          tags: (item.tags || []).slice(0, 4),
-          industryLabels: (item.industryLabels || []).slice(0, 3),
+          id: s.item.id,
+          title: s.item.title,
+          url: s.item.url,
+          growthPercentile: s.growthPercentile,
+          category: s.category,
+          isBreakout: s.isBreakout,
+          ageDays: s.ageDays,
+          commentDensity: s.commentDensity,
+          comments: s.item.comments,
+          shares: s.item.shares,
+          views: s.item.views,
+          tags: (s.item.tags || []).slice(0, 4),
           collectedAt: collection.collectedAt,
-          windowDays: collection.windowDays,
         });
       }
     }
@@ -172,7 +185,7 @@ export async function listFreshTrendItems(opts?: {
     return {
       entries,
       coveredPlatforms: covered,
-      meta: covered.length === 0 ? "no_data" : `已加载 ${covered.length} 个平台 / 共 ${entries.length} 条`,
+      meta: covered.length === 0 ? "no_data" : `18 天窗口爆款 · ${debugSummary.join(" / ")}`,
     };
   } catch (e: any) {
     console.warn("[commanderPromptBuilder] listFreshTrendItems 失败:", e?.message);
