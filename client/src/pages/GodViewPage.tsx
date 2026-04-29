@@ -4,7 +4,7 @@ import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug, XCi
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
-import { TemplatePicker, TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
+import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
@@ -273,6 +273,48 @@ export default function GodViewPage() {
   useEffect(() => {
     setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
   }, []);
+
+  // ── 跨页面任务持久化：mount 时拉一次 activeJobs，自动恢复运行中的任务 ──
+  // 用户跑深潜任务时跳到 MyReports 或别的页面再回来，进度条 / 取消按钮 /
+  // debug terminal 都还能继续看到（不再每次都得重新点「启动」造成双扣积分）。
+  const activeJobsQuery = trpc.deepResearch.activeJobs.useQuery(undefined, {
+    staleTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+  });
+  useEffect(() => {
+    const jobs = activeJobsQuery.data?.jobs;
+    if (!jobs || jobs.length === 0) return;
+    if (pollingJobId) return; // 已经在轮询，别覆盖
+    if (phase !== "idle") return; // 用户正在 launching/dispatched 等，别打扰
+    const job = jobs[0];
+    console.log("[GodView] 自动恢复运行中任务:", job.jobId, "status=", job.status);
+    setPhase(job.status === "awaiting_plan_approval" ? "awaiting_plan" : "dispatched");
+    setPollingJobId(job.jobId);
+    setTopic(job.topic || "");
+    if (job.productType && (PRODUCTS.find((p) => p.id === job.productType))) {
+      setSelectedProduct(job.productType as ProductType);
+    }
+    // 恢复计时（用 launchedAt 反推）
+    try {
+      const launched = new Date(job.launchedAt);
+      if (!Number.isNaN(launched.getTime())) {
+        setLaunchTime(launched);
+        setElapsedSec(Math.max(0, Math.floor((Date.now() - launched.getTime()) / 1000)));
+      }
+    } catch {}
+    toast.message("已恢复正在跑的深潛任务（无需重新启动）");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJobsQuery.data?.jobs?.length]);
+
+  // 任务进入终态时清理 localStorage 兜底缓存（防止重启后误恢复 ghost job）
+  useEffect(() => {
+    const s = jobDoneQuery?.data?.status;
+    if (s === "completed" || s === "failed" || s === "awaiting_review") {
+      try { localStorage.removeItem("activeJobId_godview"); } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobDoneQuery?.data?.status]);
 
   useEffect(() => {
     if (!launchTime) return;
@@ -830,10 +872,8 @@ export default function GodViewPage() {
           );
         })()}
 
-        {/* ── 大尺寸封面预选 banner（启动前选定，推演完直接套用） */}
-        {(phase === "idle" || phase === "launching") && (
-          <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="pre-launch" />
-        )}
+        {/* 注：模板预选已搬到「战略作品快照库 / 在线阅读」页面 ——
+            用户在出刊后挑封面更直觉，启动深潛前不再让模板抢戏 */}
 
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
@@ -1614,7 +1654,17 @@ function DeductionTimeline({
         </button>
       </div>
 
-      <p style={{ color: "rgba(200,160,0,0.35)", fontSize: 11, textAlign: "center", marginTop: 14 }}>
+      <p
+        style={{
+          color: "rgba(255,235,200,0.92)",
+          fontSize: 14,
+          textAlign: "center",
+          marginTop: 14,
+          fontWeight: 600,
+          letterSpacing: "0.02em",
+          textShadow: "0 1px 2px rgba(0,0,0,0.45)",
+        }}
+      >
         您现在可以安心关闭此页面 · 战报生成后将保存至「战略作品快照库」
       </p>
     </div>

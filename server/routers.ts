@@ -6096,6 +6096,67 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /**
+     * 列出当前用户所有「正在跑」的深潜任务（用于跨页面持久化）。
+     *
+     * 用户跑深潜时跳到 MyReports 或别的页面再回来，GodView 应该自动检测
+     * 还没完成的任务并恢复进度条 / 取消按钮 / debug terminal，避免每次都
+     * 让用户重新点「启动」（双扣积分）。
+     *
+     * 数据来源：paidJobLedger 持久化记录 + readJob 取详细 status。
+     * - 只返 deepResearch taskType 的 active hold
+     * - 二次过滤掉已经 completed/failed 的（hold 文件可能滞后）
+     */
+    activeJobs: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const { listAllActiveJobs } = await import("./services/paidJobLedger");
+        const { readJob } = await import("./services/deepResearchService");
+        const all = await listAllActiveJobs();
+        const userIdStr = String(ctx.user.id);
+        const mine = all.filter(
+          (h) => h.taskType === "deepResearch" && String(h.userId) === userIdStr,
+        );
+
+        const PROGRESS_STATES = new Set([
+          "pending",
+          "planning",
+          "awaiting_plan_approval",
+          "running",
+          "awaiting_review",
+        ]);
+
+        const results: Array<{
+          jobId: string;
+          status: string;
+          progress: string;
+          topic: string;
+          launchedAt: string;
+          productType: string | null;
+        }> = [];
+
+        for (const hold of mine) {
+          const job = await readJob(hold.jobId);
+          if (!job) continue;
+          if (!PROGRESS_STATES.has(job.status)) continue;
+          results.push({
+            jobId: job.jobId,
+            status: job.status,
+            progress: job.progress || "",
+            topic: job.topic || "",
+            launchedAt: job.createdAt,
+            productType: job.productType ?? null,
+          });
+        }
+
+        // 最新的排前面
+        results.sort((a, b) => (a.launchedAt < b.launchedAt ? 1 : -1));
+        return { jobs: results };
+      } catch (e: any) {
+        console.warn("[deepResearch.activeJobs] 查询失败:", e?.message);
+        return { jobs: [] };
+      }
+    }),
+
+    /**
      * 用户审核计划后批准启动深潛执行（Interactions API 第二阶段）
      * - 写入 planFeedback、状态改回 running
      * - 触发 runDeepResearchAsync 接力跑剩余阶段
@@ -6409,16 +6470,19 @@ ${input.lyrics || "（纯音乐，无歌词）"}
     myReports: protectedProcedure.query(async ({ ctx }) => {
       try {
         const { userCreations } = await import("../drizzle/schema-creations");
-        const { eq, and, desc } = await import("drizzle-orm");
+        const { eq, and, desc, ne } = await import("drizzle-orm");
         const database = await db.getDb();
         if (!database) return { reports: [] };
 
+        // 软删除（status="deleted"）的作品不出现在「我的作品库」列表里。
+        // 物理记录保留以便客服恢复 / 事故稽核。
         const rows = await database
           .select()
           .from(userCreations)
           .where(and(
             eq(userCreations.userId, ctx.user.id),
             eq(userCreations.type, "deep_research_report"),
+            ne(userCreations.status, "deleted"),
           ))
           .orderBy(desc(userCreations.createdAt))
           .limit(50);

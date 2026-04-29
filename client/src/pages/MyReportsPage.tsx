@@ -1,14 +1,14 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, Crown, RefreshCw, FileText, Clock, CheckCircle,
-  XCircle, Loader2, Download, Book, Sparkles, FileDown, Pencil,
+  XCircle, Loader2, Download, Book, Sparkles, FileDown, Pencil, Trash2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
 import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
-import { TemplatePicker, TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
+import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -39,20 +39,29 @@ export default function MyReportsPage() {
   const [, navigate] = useLocation();
   const [selectedReport, setSelectedReport] = useState<{ id?: number; title: string; markdown: string } | null>(null);
   const [editingReport, setEditingReport] = useState<Report | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
   const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
+  // 阅读模式 / 全局兜底用的 pdfStyle（默认 spring-mint）
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
+  // 每张卡片独立保存的封面模板选择（reportId → PdfStyleKey）。
+  // 用户点选后立即生效到「下载富图文 PDF」+ 阅读模式。
+  const [selectedStyle, setSelectedStyle] = useState<Record<number, PdfStyleKey>>({});
+  const styleOf = useCallback((reportId: number): PdfStyleKey => {
+    return selectedStyle[reportId] || "spring-mint";
+  }, [selectedStyle]);
+  const setStyleOf = useCallback((reportId: number, next: PdfStyleKey) => {
+    setSelectedStyle((prev) => ({ ...prev, [reportId]: next }));
+  }, []);
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   // 取消任务（卡片级）：当前正在请求取消哪一份的 jobId（防止重复点击）
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
-  // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
-  const [hiddenExportPayload, setHiddenExportPayload] = useState<{ title: string; markdown: string; coverUrl?: string | null } | null>(null);
-  const hiddenExportRef = useRef<HTMLDivElement>(null);
+  // 软删除（卡片级）：当前正在请求删除哪一份的 reportId
+  const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
 
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
     onSuccess: (result) => {
       setIsExportingBlackGold(false);
+      setDownloadingCardId(null);
       const url = result?.signedUrl;
       if (!url) {
         toast.error("黑金 PDF 已生成但未拿到签名链接，请稍后重试");
@@ -61,16 +70,42 @@ export default function MyReportsPage() {
       try {
         navigator.clipboard?.writeText(url).catch(() => {});
         window.open(url, "_blank", "noopener,noreferrer");
-        toast.success("黑金 PDF 已生成 · 链接已复制（72 小时签名）");
+        toast.success("PDF 已生成 · 链接已复制（72 小时签名）");
       } catch {
-        toast.success("黑金 PDF 已生成，签名链接：" + url);
+        toast.success("PDF 已生成，签名链接：" + url);
       }
     },
     onError: (err) => {
       setIsExportingBlackGold(false);
-      toast.error("黑金 PDF 生成失败：" + err.message);
+      setDownloadingCardId(null);
+      toast.error("PDF 生成失败：" + err.message);
     },
   });
+
+  // 软删除：失败 / 已弃置作品的清理入口（仅状态改 deleted，可恢复）
+  const softDeleteMutation = trpc.creations.softDelete.useMutation({
+    onSuccess: () => {
+      setDeletingReportId(null);
+      toast.success("作品已移入回收站（如需恢复请联系客服）");
+      refetch();
+    },
+    onError: (err) => {
+      setDeletingReportId(null);
+      toast.error("删除失败：" + err.message);
+    },
+  });
+
+  const handleSoftDelete = useCallback((report: Report) => {
+    if (deletingReportId) return;
+    const ok = window.confirm(
+      `确定要删除「${report.lighthouseTitle || report.title}」吗？\n\n` +
+        `删除后会从作品库隐藏（软删除，可由客服恢复）。\n` +
+        `失败任务的积分若未返还，请通过「联系客服」处理。`,
+    );
+    if (!ok) return;
+    setDeletingReportId(report.id);
+    softDeleteMutation.mutate({ reportId: report.id });
+  }, [deletingReportId, softDeleteMutation]);
 
   const { data, isLoading, refetch, isFetching } = trpc.deepResearch.myReports.useQuery(undefined, {
     refetchInterval: (data) => {
@@ -115,112 +150,19 @@ export default function MyReportsPage() {
 
   const reports = (data?.reports ?? []) as Report[];
 
-  // GCS pdf-worker（与 MVAnalysis 共用同一个端点）
-  const pdfFileNameRef = useRef<string>("战略战报.pdf");
-  const downloadPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation({
-    onSuccess: (result) => {
-      setIsExporting(false);
-      setDownloadingCardId(null);
-      setHiddenExportPayload(null);
-      if (!result.pdfBase64) {
-        toast.error("PDF 生成成功但内容为空，请重试");
-        return;
-      }
-      try {
-        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = pdfFileNameRef.current;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        toast.success("富图文 PDF 已开始下载");
-      } catch {
-        toast.error("PDF 下载时出错，请重试");
-      }
-    },
-    onError: (err) => {
-      setIsExporting(false);
-      setDownloadingCardId(null);
-      setHiddenExportPayload(null);
-      toast.error(err.message || "PDF 导出失败");
-    },
-  });
-
-  // 卡片级一键下载（不进入阅读模式，直接渲染到隐藏容器后导出）
+  // 卡片级一键下载：直接调用 exportBlackGoldPdf（容器内 Puppeteer 渲染 +
+  // 5 套封面模板生效）。旧的 mvAnalysis 隐藏 DOM 抓取路径已下线。
   const handleDownloadFromCard = useCallback((report: Report) => {
     const md = report.reportMarkdown || report.draftMarkdown || "";
     if (!md) { toast.error("内容尚未生成"); return; }
-    const safe = (report.lighthouseTitle || report.title || "战略战报").replace(/[\\/:*?"<>|]/g, "");
-    pdfFileNameRef.current = `战略战报-${safe.slice(0, 25)}-${Date.now()}.pdf`;
     setDownloadingCardId(report.id);
-    setHiddenExportPayload({ title: report.lighthouseTitle || report.title, markdown: md, coverUrl: report.coverUrl });
-
-    // 等下一帧让隐藏容器渲染完成后再抽 HTML 发送
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!hiddenExportRef.current) {
-        toast.error("渲染器尚未准备好，请稍后重试");
-        setDownloadingCardId(null);
-        setHiddenExportPayload(null);
-        return;
-      }
-
-      const clone = document.documentElement.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll("script").forEach((n) => n.remove());
-      clone.querySelectorAll("video, audio, iframe").forEach((n) => n.remove());
-      clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
-
-      // 只保留隐藏导出容器内的内容
-      const cloneBody = clone.querySelector("body");
-      if (cloneBody) {
-        cloneBody.innerHTML = "";
-        const wrapper = document.createElement("div");
-        wrapper.style.cssText = "padding: 24px; background: #f7ede0; min-height: 100vh;";
-        wrapper.innerHTML = hiddenExportRef.current!.innerHTML;
-        cloneBody.appendChild(wrapper);
-      }
-
-      const base = document.createElement("base");
-      base.href = window.location.origin + "/";
-      clone.querySelector("head")?.prepend(base);
-
-      const html = "<!DOCTYPE html>" + clone.outerHTML;
-      setIsExporting(true);
-      downloadPdfMutation.mutate({ html });
-    }));
-  }, [downloadPdfMutation]);
-
-  const handleDownloadPdf = useCallback(() => {
-    // 克隆当前页面 DOM，剥离不必要内容，发送到 GCS pdf-worker
-    const clone = document.documentElement.cloneNode(true) as HTMLElement;
-
-    clone.querySelectorAll("script").forEach((n) => n.remove());
-    clone.querySelectorAll("video, audio, iframe").forEach((n) => n.remove());
-    clone.querySelectorAll('[class*="print:hidden"]').forEach((n) => n.remove());
-    clone.querySelectorAll("img").forEach((img) => {
-      const src = img.getAttribute("src") || "";
-      if (src.startsWith("data:") && src.length > 51200) img.removeAttribute("src");
+    setIsExportingBlackGold(true);
+    exportBlackGoldPdfMutation.mutate({
+      reportId: report.id,
+      markdown: md,
+      style: styleOf(report.id),
     });
-    clone.querySelectorAll("[src]").forEach((el) => {
-      const src = el.getAttribute("src") || "";
-      if (src.startsWith("blob:")) el.removeAttribute("src");
-    });
-    // 关键：所有标记 data-pdf-exclude 的元素都不出现在 PDF 中
-    clone.querySelectorAll('input, textarea, [data-pdf-exclude="true"]').forEach((n) => n.remove());
-
-    const base = document.createElement("base");
-    base.href = window.location.origin + "/";
-    clone.querySelector("head")?.prepend(base);
-
-    const safeTitle = (selectedReport?.title || "战略战报").replace(/[\\/:*?"<>|]/g, "");
-    pdfFileNameRef.current = `战略战报-${safeTitle.slice(0, 25)}-${Date.now()}.pdf`;
-    const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
-    setIsExporting(true);
-    downloadPdfMutation.mutate({ html: htmlContent });
-  }, [downloadPdfMutation, selectedReport]);
+  }, [exportBlackGoldPdfMutation, styleOf]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -247,6 +189,24 @@ export default function MyReportsPage() {
       />
     );
   }
+
+  // 阅读模式打开时同步 pdfStyle 到该 report 的 selectedStyle
+  // （切换不同 report 进出阅读模式会自动应用各自保存的封面色板）
+  useEffect(() => {
+    if (selectedReport?.id) {
+      const current = styleOf(selectedReport.id);
+      if (current !== pdfStyle) setPdfStyle(current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedReport?.id]);
+
+  // 阅读模式更换 pdfStyle 时同步保存到 selectedStyle map
+  useEffect(() => {
+    if (selectedReport?.id) {
+      setStyleOf(selectedReport.id, pdfStyle);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfStyle]);
 
   // ─── 阅读模式（含 PDF 导出按钮，按钮自身在 PDF 中会被剥离） ──────────────────
   if (selectedReport) {
@@ -309,7 +269,7 @@ export default function MyReportsPage() {
           {/* 醒目大尺寸封面选择栏：5 套封面横铺，一眼可见，选定立即套用 */}
           <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="online" />
 
-          <ReportRenderer markdown={selectedReport.markdown} />
+          <ReportRenderer markdown={selectedReport.markdown} pdfStyle={pdfStyle} />
         </div>
       </div>
     );
@@ -425,6 +385,9 @@ export default function MyReportsPage() {
                     report={report}
                     isDownloading={downloadingCardId === report.id}
                     isCancelling={!!report.jobId && cancellingJobId === report.jobId}
+                    isDeleting={deletingReportId === report.id}
+                    pdfStyle={styleOf(report.id)}
+                    onPdfStyleChange={(next) => setStyleOf(report.id, next)}
                     onRead={() => {
                       const md = report.reportMarkdown || report.draftMarkdown || "";
                       if (!md) { toast.error("内容尚未生成"); return; }
@@ -433,6 +396,7 @@ export default function MyReportsPage() {
                     onEdit={() => setEditingReport(report)}
                     onDownload={() => handleDownloadFromCard(report)}
                     onCancel={() => handleCancelJob(report)}
+                    onSoftDelete={() => handleSoftDelete(report)}
                   />
                 ))}
             </div>
@@ -445,39 +409,6 @@ export default function MyReportsPage() {
         @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
         @keyframes shimmer { 0%{background-position:-200% 0}100%{background-position:200% 0} }
       `}</style>
-
-      {/* 隐藏的 PDF 渲染容器：卡片一键下载时把内容写到这里再发到 pdf-worker */}
-      <div ref={hiddenExportRef} data-pdf-exclude="true" style={{ position: "fixed", left: "-99999px", top: 0, width: 1100, pointerEvents: "none" }}>
-        {hiddenExportPayload && (
-          <div>
-            {/* 简洁封面页（占满 A4 半页）*/}
-            <div style={{
-              position: "relative",
-              height: 980,
-              borderRadius: 18,
-              overflow: "hidden",
-              border: "1px solid rgba(122,84,16,0.30)",
-              background: hiddenExportPayload.coverUrl ? `url(${hiddenExportPayload.coverUrl}) center / cover no-repeat` : "linear-gradient(160deg,#3d2c14,#1c1407)",
-              marginBottom: 20,
-            }}>
-              <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(28,20,7,0.10) 0%,rgba(28,20,7,0.55) 60%,rgba(28,20,7,0.85) 100%)" }} />
-              <div style={{ position: "absolute", top: 32, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
-                <div style={{ fontSize: 13, letterSpacing: "0.30em", fontWeight: 700 }}>MV STUDIO PRO · STRATEGIC INTELLIGENCE</div>
-                <div style={{ fontSize: 11, marginTop: 6, opacity: 0.85 }}>{new Date().toLocaleDateString("zh-CN")} · 出品</div>
-              </div>
-              <div style={{ position: "absolute", bottom: 64, left: 32, right: 32, color: "#fff7df", fontFamily: "'PingFang SC',sans-serif" }}>
-                <h1 style={{ fontSize: 38, fontWeight: 900, lineHeight: 1.25, margin: 0, textShadow: "0 4px 18px rgba(0,0,0,0.45)" }}>
-                  {hiddenExportPayload.title}
-                </h1>
-                <div style={{ marginTop: 14, fontSize: 13, opacity: 0.85, lineHeight: 1.7 }}>
-                  Deep Research Pro Preview · 全网检索 + 思维链推理 · 卡布奇诺级商务质感
-                </div>
-              </div>
-            </div>
-            <ReportRenderer markdown={hiddenExportPayload.markdown} padding="40px 56px" />
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -485,16 +416,21 @@ export default function MyReportsPage() {
 // ─── 封面卡片组件 ──────────────────────────────────────────────────────────────
 
 function ReportCoverCard({
-  report, onRead, onEdit, onDownload, onCancel,
-  isDownloading, isCancelling,
+  report, onRead, onEdit, onDownload, onCancel, onSoftDelete,
+  isDownloading, isCancelling, isDeleting,
+  pdfStyle, onPdfStyleChange,
 }: {
   report: Report;
   onRead: () => void;
   onEdit: () => void;
   onDownload: () => void;
   onCancel: () => void;
+  onSoftDelete: () => void;
   isDownloading?: boolean;
   isCancelling?: boolean;
+  isDeleting?: boolean;
+  pdfStyle: PdfStyleKey;
+  onPdfStyleChange: (next: PdfStyleKey) => void;
 }) {
   const statusMap: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
     processing:        { icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />, label: "推演中…", color: "#d97706" },
@@ -591,18 +527,21 @@ function ReportCoverCard({
           )}
         </div>
 
-        {/* 已出刊：阅览 / 下载 PDF / 修订 */}
+        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 修订 */}
         {report.status === "completed" && report.reportMarkdown && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* 5 套封面模板紧凑选择条：用户挑封面 → 立即套用到下载 */}
+            <CompactStyleSwatches value={pdfStyle} onChange={onPdfStyleChange} />
             <button
               onClick={onDownload}
               disabled={isDownloading}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
               onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+              title="使用所选封面模板生成 PDF（72 小时签名链接）"
             >
               {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
-              {isDownloading ? "正在生成 PDF…" : "下载富图文 PDF"}
+              {isDownloading ? "正在生成 PDF…" : "📥 导出 PDF（套用所选封面）"}
             </button>
             <div style={{ display: "flex", gap: 6 }}>
               <button
@@ -685,9 +624,79 @@ function ReportCoverCard({
           </div>
         )}
         {report.status === "failed" && (
-          <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "6px 0" }}>积分已返还到您的账户</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "4px 0" }}>积分已返还到您的账户</div>
+            <button
+              onClick={onSoftDelete}
+              disabled={isDeleting}
+              title="软删除：从作品库隐藏，但记录保留可恢复"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "8px 0",
+                borderRadius: 9,
+                background: isDeleting ? "rgba(120,120,120,0.15)" : "rgba(220,38,38,0.06)",
+                border: "1px solid rgba(220,38,38,0.30)",
+                color: isDeleting ? "rgba(120,120,120,0.7)" : "#dc2626",
+                fontSize: 11.5,
+                fontWeight: 800,
+                cursor: isDeleting ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+              }}
+            >
+              {isDeleting ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+              {isDeleting ? "删除中…" : "✕ 删除此作品"}
+            </button>
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// 紧凑版 5 套封面模板色块选择（240px 卡片下方专用）
+function CompactStyleSwatches({
+  value,
+  onChange,
+}: {
+  value: PdfStyleKey;
+  onChange: (next: PdfStyleKey) => void;
+}) {
+  const swatches: Array<{ key: PdfStyleKey; label: string; primary: string; accent: string }> = [
+    { key: "spring-mint",     label: "春日薄荷",   primary: "#10B981", accent: "#FB7185" },
+    { key: "neon-tech",       label: "霓虹科技",   primary: "#7C3AED", accent: "#06B6D4" },
+    { key: "sunset-coral",    label: "日落珊瑚",   primary: "#8B5CF6", accent: "#FB923C" },
+    { key: "ocean-fresh",     label: "海蓝清爽",   primary: "#2563EB", accent: "#FACC15" },
+    { key: "business-bright", label: "高端商务亮", primary: "#1F3A5F", accent: "#C9A858" },
+  ];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 6px", borderRadius: 8, background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.16)" }} title="选择 PDF 封面模板">
+      <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(122,84,16,0.65)", letterSpacing: "0.04em", marginRight: 2, flexShrink: 0 }}>封面</span>
+      {swatches.map((s) => {
+        const selected = s.key === value;
+        return (
+          <button
+            key={s.key}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onChange(s.key); }}
+            title={s.label}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 22,
+              borderRadius: 5,
+              border: selected ? `2px solid ${s.accent}` : "1px solid rgba(168,118,27,0.30)",
+              background: `linear-gradient(135deg, ${s.primary} 0%, ${s.primary} 55%, ${s.accent} 100%)`,
+              cursor: "pointer",
+              padding: 0,
+              boxShadow: selected ? `0 0 0 2px ${s.accent}40` : "none",
+              transition: "all 0.15s",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
