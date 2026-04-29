@@ -5898,6 +5898,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           planText: job.planText || null,
           planInteractionId: job.planInteractionId || null,
           interactionId: job.interactionId || null,
+          // 真信号：心跳 / 更新时间，让前端展示真实推演进度
+          updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
+          lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
         };
       }),
 
@@ -5929,12 +5932,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
     exportBlackGoldPdf: protectedProcedure
       .input(z.object({
         jobId: z.string().min(1).optional(),
+        reportId: z.number().int().positive().optional(), // userCreations.id（MyReports 列表用）
         markdown: z.string().min(80).max(500_000).optional(),
         signedUrlHours: z.number().int().min(1).max(168).optional(),
+        // v3：模板选择
+        style: z.enum(["black-gold", "harvard", "quiet-luxury"]).optional(),
+        // v3：封面页（可全部不传，会从 job/dbRecord 自动抓）
+        cover: z.object({
+          imageUrl: z.string().url().optional(),
+          title: z.string().max(200).optional(),
+          subtitle: z.string().max(200).optional(),
+          issue: z.string().max(80).optional(),
+          date: z.string().max(40).optional(),
+          abstract: z.string().max(220).optional(),
+          enabled: z.boolean().optional(), // false 即明确关闭封面页
+        }).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         let md = input.markdown?.trim();
         const uid = String(ctx.user.id);
+
+        // 自动 cover 候选（从 jobId 关联的 dbRecord 取 thumbnailUrl/lighthouseTitle/summary）
+        let autoCoverImage: string | undefined;
+        let autoCoverTitle: string | undefined;
+        let autoCoverAbstract: string | undefined;
+
         if (input.jobId) {
           const { readJob } = await import("./services/deepResearchService");
           const job = await readJob(input.jobId);
@@ -5944,14 +5966,81 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             throw new TRPCError({ code: "BAD_REQUEST", message: "该任务尚无成品 Markdown，请待报告完成后再导出 PDF" });
           }
           md = job.reportMarkdown.trim();
+          if (job.dbRecordId) {
+            try {
+              const { userCreations } = await import("../drizzle/schema-creations");
+              const { eq } = await import("drizzle-orm");
+              const database = await db.getDb();
+              if (database) {
+                const rows = await database.select().from(userCreations).where(eq(userCreations.id, job.dbRecordId)).limit(1);
+                const r = rows[0];
+                if (r) {
+                  autoCoverImage = r.thumbnailUrl || undefined;
+                  let meta: any = {};
+                  try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+                  autoCoverTitle = meta.lighthouseTitle || r.title || undefined;
+                  autoCoverAbstract = meta.summary || undefined;
+                }
+              }
+            } catch (e: any) {
+              console.warn("[exportBlackGoldPdf] failed to load cover from dbRecord:", e?.message);
+            }
+          }
+        } else if (input.reportId) {
+          // MyReports 页直传 reportId
+          try {
+            const { userCreations } = await import("../drizzle/schema-creations");
+            const { eq, and } = await import("drizzle-orm");
+            const database = await db.getDb();
+            if (database) {
+              const rows = await database
+                .select()
+                .from(userCreations)
+                .where(and(eq(userCreations.id, input.reportId), eq(userCreations.userId, ctx.user.id)))
+                .limit(1);
+              const r = rows[0];
+              if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "报告不存在或无权访问" });
+              let meta: any = {};
+              try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+              const fromMeta = String(meta.reportMarkdown || meta.draftMarkdown || "").trim();
+              if (!fromMeta) throw new TRPCError({ code: "BAD_REQUEST", message: "该报告尚未生成 Markdown 内容" });
+              md = fromMeta;
+              autoCoverImage = r.thumbnailUrl || undefined;
+              autoCoverTitle = meta.lighthouseTitle || r.title || undefined;
+              autoCoverAbstract = meta.summary || undefined;
+            }
+          } catch (e: any) {
+            if (e instanceof TRPCError) throw e;
+            console.warn("[exportBlackGoldPdf] reportId lookup failed:", e?.message);
+          }
         }
+
         if (!md) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown 或已完成任务的 jobId" });
+          throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown / jobId / reportId" });
         }
+
+        const style = input.style || "black-gold";
+        // 组装 cover：用户传的优先，缺什么自动补
+        const coverEnabled = input.cover?.enabled !== false; // 默认开
+        const cover = coverEnabled
+          ? {
+              imageUrl: input.cover?.imageUrl || autoCoverImage,
+              title: input.cover?.title || autoCoverTitle || "战略情报报告",
+              subtitle: input.cover?.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE",
+              issue: input.cover?.issue || "战略情报局",
+              date: input.cover?.date || new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }),
+              abstract: input.cover?.abstract || autoCoverAbstract,
+            }
+          : undefined;
+
         try {
           const { createAndUploadPdf } = await import("./services/pdfGenerator");
-          const reportKey = input.jobId || `${uid}-${nanoid(10)}`;
-          return await createAndUploadPdf(reportKey, md, { signedUrlHours: input.signedUrlHours });
+          const reportKey = input.jobId || (input.reportId ? `report-${input.reportId}` : `${uid}-${nanoid(10)}`);
+          return await createAndUploadPdf(reportKey, md, {
+            signedUrlHours: input.signedUrlHours,
+            style,
+            cover,
+          });
         } catch (e: any) {
           console.error("[deepResearch.exportBlackGoldPdf]", e?.message, e?.stack);
           throw new TRPCError({

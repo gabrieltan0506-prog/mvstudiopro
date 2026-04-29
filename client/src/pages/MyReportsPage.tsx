@@ -36,10 +36,11 @@ interface Report {
 
 export default function MyReportsPage() {
   const [, navigate] = useLocation();
-  const [selectedReport, setSelectedReport] = useState<{ title: string; markdown: string } | null>(null);
+  const [selectedReport, setSelectedReport] = useState<{ id?: number; title: string; markdown: string } | null>(null);
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
+  const [pdfStyle, setPdfStyle] = useState<"black-gold" | "harvard" | "quiet-luxury">("black-gold");
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
@@ -221,18 +222,34 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 10, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.40)" }}>
+              <span style={{ fontSize: 11, color: "rgba(122,84,16,0.85)", fontWeight: 700 }}>模板：</span>
+              <select
+                value={pdfStyle}
+                onChange={(e) => setPdfStyle(e.target.value as any)}
+                style={{ background: "transparent", color: "#7a5410", border: "none", fontWeight: 800, fontSize: 12, cursor: "pointer", outline: "none" }}
+              >
+                <option value="black-gold">黑金 · 卡布奇诺</option>
+                <option value="harvard">哈佛红 · 学术权威</option>
+                <option value="quiet-luxury">静奢白 · 水彩典藏</option>
+              </select>
+            </div>
             <button
               onClick={() => {
                 if (!selectedReport?.markdown) return;
                 setIsExportingBlackGold(true);
-                exportBlackGoldPdfMutation.mutate({ markdown: selectedReport.markdown });
+                exportBlackGoldPdfMutation.mutate({
+                  reportId: selectedReport.id,
+                  markdown: selectedReport.markdown,
+                  style: pdfStyle,
+                });
               }}
               disabled={isExportingBlackGold || !selectedReport?.markdown}
               style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: isExportingBlackGold ? "rgba(0,0,0,0.40)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1px solid #B8860B", color: isExportingBlackGold ? "rgba(184,134,11,0.5)" : "#B8860B", fontSize: 12, fontWeight: 800, cursor: isExportingBlackGold ? "not-allowed" : "pointer", boxShadow: isExportingBlackGold ? "none" : "0 4px 14px rgba(184,134,11,0.35)", transition: "all 0.2s" }}
               title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
             >
               {isExportingBlackGold ? <Loader2 size={13} className="animate-spin" /> : <Crown size={13} />}
-              {isExportingBlackGold ? "正在压制黑金 PDF…" : "导出黑金 PDF"}
+              {isExportingBlackGold ? "正在压制 PDF…" : "导出战略 PDF"}
             </button>
             <button
               onClick={handleDownloadPdf}
@@ -371,7 +388,7 @@ export default function MyReportsPage() {
                     onRead={() => {
                       const md = report.reportMarkdown || report.draftMarkdown || "";
                       if (!md) { toast.error("内容尚未生成"); return; }
-                      setSelectedReport({ title: report.lighthouseTitle || report.title, markdown: md });
+                      setSelectedReport({ id: report.id, title: report.lighthouseTitle || report.title, markdown: md });
                     }}
                     onEdit={() => setEditingReport(report)}
                     onDownload={() => handleDownloadFromCard(report)}

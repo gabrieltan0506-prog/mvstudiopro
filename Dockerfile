@@ -8,6 +8,7 @@ RUN apt-get update \
     ffmpeg python3 python3-pip curl \
     chromium \
     fonts-noto-cjk \
+    fonts-noto-color-emoji \
     libnss3 \
     libxss1 \
     libasound2 \

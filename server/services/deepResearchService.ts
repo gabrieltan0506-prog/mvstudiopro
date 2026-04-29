@@ -203,21 +203,86 @@ const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/inte
 // Max 版：~160 次搜索 / ~900k token，比标准版更深度全面
 const DEEP_RESEARCH_AGENT_NAME = "deep-research-max-preview-04-2026";
 const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
-const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
+const MAX_POLL_MS = 90 * 60 * 1000; // 90 分钟（已与 90 分钟上限对齐）
 /**
- * Plan 阶段（collaborative_planning: true）轮询超时上限 = 60 分钟（3600 秒）。
+ * Plan 阶段（collaborative_planning: true）轮询超时上限 = 90 分钟（5400 秒）。
  * 与 MAX_POLL_MS 看齐：Google deep-research-max-preview-04-2026 的 plan 阶段
- * 实测 10–30 分钟，极端复杂课题（多市场 + 多语种 + 法规交叉）可达 40-50 分钟。
- * 60 分钟硬上限覆盖最坏情况，超过即真卡死，自动退积分。
+ * 实测 10–30 分钟，极端复杂课题（多市场 + 多语种 + 法规交叉）可达 60-80 分钟。
+ * 90 分钟硬上限覆盖最坏情况，超过即真卡死，自动退积分。
  */
-const PLAN_MAX_MS = 60 * 60 * 1000;
+const PLAN_MAX_MS = 90 * 60 * 1000;
 
 const SYSTEM_INSTRUCTION_BASE =
   "[系统背景设定] 当前时间为 2026 年。你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的高端商业智库 Agent。" +
   "请进行最深层次的全网交叉验证，覆盖近 2 年（2024-2026）真实数据，输出严格简体中文，禁止任何英文术语，产出具备卡布奇诺级商务质感的战略白皮书。";
 
-/** Deep Research Max（Interactions API）强制附加 PDF 友好 Markdown 契约 */
-const DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION_BASE}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
+/**
+ * 防跑偏：B 端商业战略权重 80%，社媒/UGC 视角权重 20%。
+ * 修补 deep-research-max 在「平台 IP」「内容矩阵」类课题里过度倒向短视频运营技巧的偏差。
+ * 显式要求章节顺序与商业实证（财报、招股书、政策、白皮书、行业研报、上市公司公告优先）。
+ */
+const STRICT_BUSINESS_PROMPT = `
+
+【B 端商业战略 · 严格权重契约（必须遵守）】
+本次任务的输出要素权重为：
+  - 80%：B 端商业战略 / 资本运营 / 行业格局 / 财务模型 / 政策与法规 / 标杆企业战略案例 / 投资并购 / 上下游产业链 / 渠道与分销 / 出海与本地化合规
+  - 20%：消费者洞察 / 内容传播 / 平台运营 / KOL/KOC / 社媒数据
+禁止把任何课题（包括「平台 IP」「内容矩阵」「品牌增长」）写成短视频运营手册或 KOL 推广 Tips。
+所有数据必须能溯源到（按优先级）：
+  1) 上市公司财报 / 招股书 / 经审计公告
+  2) 政府 / 监管机构 / 行业协会公开白皮书
+  3) 头部咨询机构（McKinsey, BCG, Bain, 罗兰贝格, 艾瑞, 易观, QuestMobile, IDC, Gartner）公开研报
+  4) 主流财经媒体（FT, WSJ, Bloomberg, 财新, 第一财经, 36 氪 PRO）深度报道
+  5) 平台官方运营报告（微信公开课、抖音商业大会、小红书 WILL、淘宝 TopTalk）
+若遇见无法溯源的数据，必须显式标注【不确定 · 推断】并给出推断逻辑，禁止伪造来源链接。
+
+【章节强约束】
+报告必须包含以下章节（顺序可调，但不可缺）：
+  ① 战略摘要（含核心结论 / 关键数字 / 不确定性提示）
+  ② 行业格局与竞争态势（市场规模、增速、CR5、关键玩家阵营）
+  ③ 标杆企业战略案例（≥ 3 家，含商业模式、财务数据、近 24 个月战略动作）
+  ④ 政策 / 法规 / 合规风险
+  ⑤ 财务与单位经济模型（CAC / LTV / GMV / Take Rate / 毛利率 / 经营现金流）
+  ⑥ 关键风险与退出路径
+  ⑦ 90 天行动建议（落地动作 + 资源配置 + KPI）
+  ⑧ 附录（数据来源清单 + 不确定性清单 + 术语表）
+`.trim();
+
+/** Deep Research Max（Interactions API）强制附加 PDF 友好 Markdown 契约 + B 端防跑偏权重 */
+const DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION = `${SYSTEM_INSTRUCTION_BASE}\n\n${STRICT_BUSINESS_PROMPT}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
+
+/**
+ * Markdown 清洗：修补 deep-research / gemini-3.1-pro 常见排版瑕疵，
+ * 保证 PDF 渲染时分行、空白、序号、单位的稳定性。
+ *
+ * 修补项：
+ *   - "9.5/10" → "9.5 / 10"（防止被 marked 解释成路径或被 CSS 当作单字符黏死）
+ *   - 全角斜杠 "／" 统一替换为带空格的 " / "
+ *   - 连续 3+ 空行 → 2 空行（避免 PDF 出现整页空白）
+ *   - 行尾空格清理
+ *   - 表格单元格内连续 2+ 空格折叠为 1 个（防止表头列宽爆炸）
+ *   - "（不确定·高/中/低）" 加颜色标记容易识别的占位（H/M/L 转大写空格）
+ */
+export function sanitizeMarkdown(md: string): string {
+  if (!md) return md;
+  let out = md;
+
+  out = out.replace(/(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)/g, "$1 / $2");
+
+  out = out.replace(/／/g, " / ");
+
+  out = out.replace(/[ \t]+\n/g, "\n");
+
+  out = out.replace(/\n{3,}/g, "\n\n");
+
+  out = out.replace(/^(\|.*\|)$/gm, (line) => line.replace(/  +/g, " "));
+
+  out = out.replace(/不确定[·:：]\s*高/g, "不确定 · **高**");
+  out = out.replace(/不确定[·:：]\s*中/g, "不确定 · **中**");
+  out = out.replace(/不确定[·:：]\s*低/g, "不确定 · **低**");
+
+  return out.trim() + "\n";
+}
 
 /** 构建 multimodal input：纯文本 prompt 或 [text, image, document, ...] */
 function buildInteractionInput(
@@ -1545,11 +1610,13 @@ ${job.topic}
 4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;
 
     const promptForSynthesis = `${prompt}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
-    const reportMarkdown = await generate("gemini-3.1-pro-preview", promptForSynthesis, 2, { temperature: 0.55 });
+    const rawReportMarkdown = await generate("gemini-3.1-pro-preview", promptForSynthesis, 2, { temperature: 0.55 });
 
-    if (!reportMarkdown || reportMarkdown.length < 1500) {
+    if (!rawReportMarkdown || rawReportMarkdown.length < 1500) {
       throw new Error("战报内容过短，可能生成失败");
     }
+
+    const reportMarkdown = sanitizeMarkdown(rawReportMarkdown);
 
     await updateProgress(stages[3]);
 
