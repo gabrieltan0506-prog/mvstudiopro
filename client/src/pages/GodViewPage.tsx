@@ -4,7 +4,7 @@ import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } fr
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
-import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
+import { TemplatePicker, TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
@@ -674,56 +674,134 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 定價矩陣 ── */}
-        {(phase === "idle" || phase === "launching") && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 20 }}>
-            {PRODUCTS.map((p) => {
-              const isSelected = selectedProduct === p.id;
-              const pIsFirst = !localStorage.getItem(PRODUCT_FIRST_KEYS[p.id]);
-              const displayPrice = calcPrice(p, pIsFirst);
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => handleProductChange(p.id)}
-                  style={{
-                    textAlign: "left", padding: "16px 18px", borderRadius: 16, cursor: "pointer",
-                    background: isSelected ? "linear-gradient(135deg,#fffaf0,#f5ecda)" : "rgba(255,250,240,0.55)",
-                    border: `1.5px solid ${isSelected ? p.color : "rgba(168,118,27,0.25)"}`,
-                    boxShadow: isSelected ? `0 6px 22px ${p.color}30` : "0 2px 8px rgba(122,84,16,0.06)",
-                    transition: "all 0.2s",
-                    position: "relative", overflow: "hidden",
-                  }}
-                >
-                  {p.tag && (
-                    <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: "#fff", background: p.color, borderRadius: 99, padding: "2px 8px", letterSpacing: "0.05em" }}>
-                      {p.tag}
-                    </span>
-                  )}
-                  <div style={{ fontSize: 12, fontWeight: 800, color: isSelected ? p.color : "#7a5410", marginBottom: 6 }}>{p.label}</div>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: isSelected ? p.color : "#3d2c14", lineHeight: 1 }}>
-                    {displayPrice.toLocaleString()}
-                    <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 3 }}>点</span>
-                    {pIsFirst && p.firstPrice !== undefined && (
-                      <span style={{ fontSize: 10, color: "rgba(61,44,20,0.45)", textDecoration: "line-through", marginLeft: 6, fontWeight: 600 }}>{p.price.toLocaleString()}</span>
-                    )}
+        {/* ── 定價矩陣 ── 普通三款一行 + 企业旗舰款单独占整行（高客单视觉锚点） */}
+        {(phase === "idle" || phase === "launching") && (() => {
+          const renderCard = (p: typeof PRODUCTS[number], opts?: { hero?: boolean }) => {
+            const isSelected = selectedProduct === p.id;
+            const pIsFirst = !localStorage.getItem(PRODUCT_FIRST_KEYS[p.id]);
+            const displayPrice = calcPrice(p, pIsFirst);
+            const hero = !!opts?.hero;
+            return (
+              <button
+                key={p.id}
+                onClick={() => handleProductChange(p.id)}
+                style={{
+                  textAlign: "left",
+                  padding: hero ? "26px 32px" : "16px 18px",
+                  borderRadius: hero ? 22 : 16,
+                  cursor: "pointer",
+                  background: hero
+                    ? (isSelected
+                        ? `linear-gradient(135deg, ${p.color}28, ${p.color}10), linear-gradient(135deg,#1E1B4B 0%,#312E81 60%,#1E1B4B 100%)`
+                        : `linear-gradient(135deg, ${p.color}18, ${p.color}05), linear-gradient(180deg,#1E1B4B 0%,#312E81 100%)`)
+                    : (isSelected ? "linear-gradient(135deg,#fffaf0,#f5ecda)" : "rgba(255,250,240,0.55)"),
+                  border: hero
+                    ? `2px solid ${isSelected ? p.color : `${p.color}66`}`
+                    : `1.5px solid ${isSelected ? p.color : "rgba(168,118,27,0.25)"}`,
+                  boxShadow: hero
+                    ? (isSelected
+                        ? `0 14px 40px ${p.color}55, 0 0 0 4px ${p.color}25 inset`
+                        : `0 10px 30px rgba(99,102,241,0.30)`)
+                    : (isSelected ? `0 6px 22px ${p.color}30` : "0 2px 8px rgba(122,84,16,0.06)"),
+                  transition: "all 0.2s",
+                  position: "relative",
+                  overflow: "hidden",
+                  width: "100%",
+                }}
+              >
+                {/* 角标 */}
+                {p.tag && !hero && (
+                  <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: "#fff", background: p.color, borderRadius: 99, padding: "2px 8px", letterSpacing: "0.05em" }}>
+                    {p.tag}
+                  </span>
+                )}
+                {hero && (
+                  <span style={{ position: "absolute", top: 14, right: 18, fontSize: 10, fontWeight: 900, color: "#FFF", background: `linear-gradient(135deg, ${p.color}, #4F46E5)`, borderRadius: 99, padding: "5px 14px", letterSpacing: "0.16em", boxShadow: `0 4px 14px ${p.color}77` }}>
+                    👑 B 端定制 · 旗舰款
+                  </span>
+                )}
+
+                {hero ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr)", gap: 24, alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.20em", color: "#A5B4FC", marginBottom: 8 }}>
+                        ENTERPRISE FLAGSHIP
+                      </div>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: "#FFF", marginBottom: 10, letterSpacing: "0.02em" }}>
+                        {p.label}
+                      </div>
+                      <div style={{ fontSize: 13, color: "rgba(199,210,254,0.85)", lineHeight: 1.7, fontWeight: 500 }}>
+                        {p.desc}
+                      </div>
+                      <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {["护城河锚定", "高客单转化路径", "合规与定价战略", "私域闭门营变现"].map((tag) => (
+                          <span key={tag} style={{ fontSize: 10, fontWeight: 700, color: "#A5B4FC", background: "rgba(165,180,252,0.12)", border: "1px solid rgba(165,180,252,0.30)", borderRadius: 99, padding: "3px 10px" }}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "rgba(199,210,254,0.65)", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>
+                        {pIsFirst && p.firstPrice !== undefined ? "首购九折" : "标准价"}
+                      </div>
+                      <div style={{ fontSize: 44, fontWeight: 900, color: "#FCD34D", lineHeight: 1, fontFamily: "Georgia, serif" }}>
+                        {displayPrice.toLocaleString()}
+                        <span style={{ fontSize: 14, color: "rgba(252,211,77,0.75)", fontWeight: 700, marginLeft: 4 }}>点</span>
+                      </div>
+                      {pIsFirst && p.firstPrice !== undefined && (
+                        <div style={{ fontSize: 12, color: "rgba(199,210,254,0.55)", textDecoration: "line-through", marginTop: 4, fontWeight: 600 }}>
+                          原价 {p.price.toLocaleString()}
+                        </div>
+                      )}
+                      <div style={{ marginTop: 10, fontSize: 11, color: isSelected ? "#FCD34D" : "rgba(199,210,254,0.65)", fontWeight: 800 }}>
+                        {isSelected ? "✓ 已选中" : "点击选择 →"}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", marginTop: 8, lineHeight: 1.5, fontWeight: 500 }}>{p.desc}</div>
-                </button>
-              );
-            })}
-          </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: isSelected ? p.color : "#7a5410", marginBottom: 6 }}>{p.label}</div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: isSelected ? p.color : "#3d2c14", lineHeight: 1 }}>
+                      {displayPrice.toLocaleString()}
+                      <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 3 }}>点</span>
+                      {pIsFirst && p.firstPrice !== undefined && (
+                        <span style={{ fontSize: 10, color: "rgba(61,44,20,0.45)", textDecoration: "line-through", marginLeft: 6, fontWeight: 600 }}>{p.price.toLocaleString()}</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", marginTop: 8, lineHeight: 1.5, fontWeight: 500 }}>{p.desc}</div>
+                  </>
+                )}
+              </button>
+            );
+          };
+
+          const regular = PRODUCTS.filter((p) => !p.requiresIpProfile);
+          const flagship = PRODUCTS.find((p) => p.requiresIpProfile);
+
+          return (
+            <div style={{ marginBottom: 20 }}>
+              {/* 三张常规产品卡 */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginBottom: 14 }}>
+                {regular.map((p) => renderCard(p))}
+              </div>
+              {/* 旗舰款单独占整行：靛青深色背景 + 大号金色价格，高单价视觉锚点 */}
+              {flagship && renderCard(flagship, { hero: true })}
+            </div>
+          );
+        })()}
+
+        {/* ── 大尺寸封面预选 banner（启动前选定，推演完直接套用） */}
+        {(phase === "idle" || phase === "launching") && (
+          <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="pre-launch" />
         )}
 
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
           <div style={{ background: "linear-gradient(135deg,#fffaf0,#f5ecda)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 20, padding: 28, boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
-              <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", margin: 0 }}>
-                输入研究课题
-              </p>
-              {/* 启动前的封面预选触发器（5 套对比 modal） */}
-              <TemplatePicker compact value={pdfStyle} onChange={setPdfStyle} />
-            </div>
+            <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 10 }}>
+              输入研究课题
+            </p>
             <div style={{ position: "relative" }}>
               <textarea
                 value={topic}

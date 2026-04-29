@@ -597,3 +597,84 @@ export function TemplatePicker({
 }
 
 export const PDF_STYLE_KEYS = ORDER;
+
+// ─── 大尺寸横向 banner（在报告阅读页头下方/上帝视角输入区下方等"显眼位"用） ─
+//   设计目的：用户反馈"右上角小方块谁看得到"，这版直接把 5 张缩略卡铺在外面。
+//   高度约 280px，标题 + 副标题在上方，一眼就明白是干什么的。
+export function TemplateStripBanner({
+  value,
+  onChange,
+  title,
+  subtitle,
+  /** "online" 表示在线阅读模式（不显示底部导出按钮）；"pre-launch" 表示启动前预选 */
+  variant = "online",
+}: {
+  value: PdfStyleKey;
+  onChange: (next: PdfStyleKey) => void;
+  title?: string;
+  subtitle?: string;
+  variant?: "online" | "pre-launch";
+}) {
+  const m = META[value];
+  const p = PALETTES[value];
+
+  return (
+    <div
+      style={{
+        background: `linear-gradient(135deg, rgba(255,250,240,0.92) 0%, rgba(245,236,218,0.88) 100%)`,
+        border: `1.5px solid ${p.accent}55`,
+        borderRadius: 18,
+        padding: "20px 22px 16px",
+        marginBottom: 24,
+        boxShadow: `0 8px 28px rgba(122,84,16,0.10), 0 0 0 4px ${p.coverGold}10`,
+      }}
+    >
+      {/* 头部 */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 22 }}>📄</span>
+            <span style={{ fontSize: 16, fontWeight: 900, color: "#1c1407", letterSpacing: "0.01em" }}>
+              {title || (variant === "online" ? "选择 PDF 封面 · 在线阅读 + 导出立即套用此模板" : "启动前预选战报封面 · 推演完直接套用")}
+            </span>
+          </div>
+          <p style={{ margin: 0, fontSize: 12.5, color: "rgba(61,44,20,0.62)", lineHeight: 1.5 }}>
+            {subtitle || "5 套主题，各有性格 — 点击即可切换。当前选中："}
+            <span style={{ marginLeft: 6, color: p.primary, fontWeight: 800 }}>{m.label}</span>
+            <span style={{ marginLeft: 6, color: "rgba(61,44,20,0.40)" }}>· {m.sub}</span>
+          </p>
+        </div>
+        <div
+          style={{
+            padding: "6px 14px",
+            borderRadius: 999,
+            background: `linear-gradient(135deg, ${p.coverGold}, ${p.accent})`,
+            color: p.coverTextLight ? "#FFF" : "#1c1407",
+            fontSize: 11,
+            fontWeight: 900,
+            letterSpacing: "0.10em",
+            boxShadow: `0 4px 12px ${p.accent}55`,
+            whiteSpace: "nowrap",
+          }}
+        >
+          ✓ 已套用「{m.label}」
+        </div>
+      </div>
+
+      {/* 5 张缩略卡横铺（移动端可横向滑动） */}
+      <div
+        style={{
+          display: "flex",
+          gap: 14,
+          overflowX: "auto",
+          paddingBottom: 10,
+          scrollbarWidth: "thin",
+        }}
+      >
+        {ORDER.map((k) => (
+          <ThumbCard key={k} style={k} selected={k === value} onSelect={() => onChange(k)} />
+        ))}
+      </div>
+    </div>
+  );
+}
