@@ -729,7 +729,7 @@ async function processAudioJob(input: JobEnvelope, timeoutMs: number, userId: st
  *
  * platform_analysis：
  *   第 1 阶段：vertex / gemini-3.1-pro-preview，生成深度内容蓝图
- *   第 2 阶段：vertex / gemini-2.5-pro，校准趋势信号与平台看板
+ *   第 2 阶段：vertex / gemini-3.1-pro-preview，校准趋势信号与平台看板
  *
  * platform_qa：
  *   vertex / gemini-3.1-pro-preview，多模态追问；如有 fileUri 则附带文档
@@ -784,7 +784,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
         contentResult = {};
       }
 
-    // Stage 2: 2.5 Pro — trend calibration + dashboard signals + 3 key metrics
+    // Stage 2: 3.1 Pro — trend calibration + dashboard signals + 3 key metrics
     const stage2SystemInstruction = "你是一位顶尖的平台趋势分析师。根据用户的脚本蓝图与平台快照数据，进行热点数据校准，计算关键指标，输出最终平台看板 JSON。";
       const stage2Response = await invokeLLM({
       provider: "vertex",
@@ -826,7 +826,7 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
           platformDashboard: dashboardResult,
           platformContent: contentResult,
           completedAt: new Date().toISOString(),
-          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-2.5-pro", snapshotDepth: "full" },
+          engines: { stage1: "vertex/gemini-3.1-pro-preview", stage2: "vertex/gemini-3.1-pro-preview", snapshotDepth: "full" },
         },
       };
     }

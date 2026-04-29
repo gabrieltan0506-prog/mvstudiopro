@@ -190,8 +190,8 @@ export default function GodViewPage() {
     onError: (err) => alert("批准计划失败：" + err.message),
   });
 
-  // 战略 PDF 导出 · 4 套模板（quiet-luxury / watercolor / business-bright / business-dark）
-  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("quiet-luxury");
+  // 战略 PDF 导出 · 5 套活泼模板
+  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
     onSuccess: (result) => {
       const url = result?.signedUrl;

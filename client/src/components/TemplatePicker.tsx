@@ -1,16 +1,17 @@
 /**
  * 战略 PDF 模板选择器（带封面 + 内文页缩略预览）
  *
- * 4 套模板与后端 PdfStyle 一一对应，颜色与 buildPalette 严格保持一致；
+ * v4：5 套活泼模板，颜色与 server/services/pdfTemplate.ts buildPalette 严格保持一致；
  * 每张卡片由「封面侧」+「内文一页侧」并排组成，所见即所得。
  */
 import React from "react";
 
 export type PdfStyleKey =
-  | "quiet-luxury"
-  | "watercolor"
-  | "business-bright"
-  | "business-dark";
+  | "spring-mint"
+  | "neon-tech"
+  | "sunset-coral"
+  | "ocean-fresh"
+  | "business-bright";
 
 type Palette = {
   // 内文页配色
@@ -30,44 +31,88 @@ type Palette = {
 };
 
 const PALETTES: Record<PdfStyleKey, Palette> = {
-  "quiet-luxury": {
+  // ① 春日薄荷：薄荷绿 + 樱桃粉
+  "spring-mint": {
     bg: "#FFFFFF",
-    textMain: "#1A1A1A",
+    textMain: "#0F172A",
+    textMuted: "#64748B",
+    primary: "#10B981",
+    accent: "#FB7185",
+    rule: "#D1FAE5",
+    tableHeadBg: "#10B981",
+    tableHeadText: "#FFFFFF",
+    coverBg: "#ECFDF5",
+    coverGradient: `
+      radial-gradient(70% 50% at 18% 18%, rgba(110,231,183,0.55) 0%, rgba(110,231,183,0) 70%),
+      radial-gradient(60% 45% at 85% 25%, rgba(251,113,133,0.40) 0%, rgba(251,113,133,0) 70%),
+      radial-gradient(80% 60% at 80% 90%, rgba(52,211,153,0.40) 0%, rgba(52,211,153,0) 75%),
+      radial-gradient(60% 45% at 15% 95%, rgba(254,205,211,0.55) 0%, rgba(254,205,211,0) 75%),
+      linear-gradient(180deg, #ECFDF5 0%, #FCE7F3 60%, #FFE4E6 100%)
+    `,
+    coverGold: "#FB7185",
+    coverTextLight: true,
+  },
+  // ② 霓虹科技：电光青 + 霓虹紫（深底）
+  "neon-tech": {
+    bg: "#FAFBFF",
+    textMain: "#1E1B4B",
     textMuted: "#6B7280",
-    primary: "#8B6F3D",
-    accent: "#B8A073",
-    rule: "#E8E4DA",
-    tableHeadBg: "#2D2D2D",
-    tableHeadText: "#F5E9C8",
-    coverBg: "#F5F0E8",
+    primary: "#7C3AED",
+    accent: "#06B6D4",
+    rule: "#E9D5FF",
+    tableHeadBg: "#5B21B6",
+    tableHeadText: "#E0F2FE",
+    coverBg: "#1E1B4B",
     coverGradient: `
-      radial-gradient(55% 40% at 80% 12%, rgba(184,160,115,0.18) 0%, rgba(184,160,115,0) 70%),
-      radial-gradient(45% 35% at 18% 88%, rgba(184,160,115,0.14) 0%, rgba(184,160,115,0) 72%),
-      linear-gradient(180deg, #FFFFFF 0%, #FAFAF8 100%)
+      radial-gradient(70% 50% at 100% 0%, rgba(6,182,212,0.45) 0%, rgba(6,182,212,0) 60%),
+      radial-gradient(80% 60% at -10% 110%, rgba(168,85,247,0.40) 0%, rgba(168,85,247,0) 65%),
+      radial-gradient(45% 35% at 50% 50%, rgba(124,58,237,0.30) 0%, rgba(124,58,237,0) 70%),
+      linear-gradient(155deg, #1E1B4B 0%, #312E81 50%, #1E1B4B 100%)
     `,
-    coverGold: "#8B6F3D",
+    coverGold: "#06B6D4",
+    coverTextLight: false,
+  },
+  // ③ 日落珊瑚：珊瑚橘 + 紫罗兰
+  "sunset-coral": {
+    bg: "#FFFAF5",
+    textMain: "#3C1361",
+    textMuted: "#7C5C8B",
+    primary: "#8B5CF6",
+    accent: "#FB923C",
+    rule: "#FED7AA",
+    tableHeadBg: "#7C3AED",
+    tableHeadText: "#FFFFFF",
+    coverBg: "#FFEDD5",
+    coverGradient: `
+      radial-gradient(70% 50% at 25% 20%, rgba(251,146,60,0.55) 0%, rgba(251,146,60,0) 70%),
+      radial-gradient(65% 45% at 78% 75%, rgba(139,92,246,0.50) 0%, rgba(139,92,246,0) 70%),
+      radial-gradient(60% 45% at 50% 100%, rgba(244,114,182,0.50) 0%, rgba(244,114,182,0) 70%),
+      linear-gradient(180deg, #FFEDD5 0%, #FCE7F3 60%, #EDE9FE 100%)
+    `,
+    coverGold: "#8B5CF6",
     coverTextLight: true,
   },
-  watercolor: {
-    bg: "#FBFCFD",
-    textMain: "#1F2A2E",
-    textMuted: "#6E7A82",
-    primary: "#7A8C92",
-    accent: "#C58C6E",
-    rule: "#E4E9EC",
-    tableHeadBg: "#EAF0F4",
-    tableHeadText: "#2B3940",
-    coverBg: "#F2F8F8",
+  // ④ 海蓝清爽：海蓝 + 柠檬黄
+  "ocean-fresh": {
+    bg: "#F8FAFF",
+    textMain: "#0C1A3D",
+    textMuted: "#475569",
+    primary: "#2563EB",
+    accent: "#FACC15",
+    rule: "#DBEAFE",
+    tableHeadBg: "#2563EB",
+    tableHeadText: "#FFFFFF",
+    coverBg: "#DBEAFE",
     coverGradient: `
-      radial-gradient(60% 45% at 75% 18%, rgba(196,225,235,0.85) 0%, rgba(196,225,235,0) 70%),
-      radial-gradient(55% 40% at 25% 30%, rgba(225,238,238,0.75) 0%, rgba(225,238,238,0) 70%),
-      radial-gradient(70% 50% at 30% 78%, rgba(244,206,180,0.78) 0%, rgba(244,206,180,0) 72%),
-      radial-gradient(60% 50% at 70% 88%, rgba(214,182,180,0.75) 0%, rgba(214,182,180,0) 75%),
-      linear-gradient(180deg, #F2F8F8 0%, #FBEFE5 65%, #E8DAD2 100%)
+      radial-gradient(70% 50% at 100% 0%, rgba(37,99,235,0.32) 0%, rgba(37,99,235,0) 60%),
+      radial-gradient(60% 45% at 12% 92%, rgba(56,189,248,0.36) 0%, rgba(56,189,248,0) 70%),
+      radial-gradient(35% 28% at 78% 35%, rgba(250,204,21,0.45) 0%, rgba(250,204,21,0) 75%),
+      linear-gradient(180deg, #DBEAFE 0%, #E0F2FE 100%)
     `,
-    coverGold: "#C58C6E",
+    coverGold: "#FACC15",
     coverTextLight: true,
   },
+  // ⑤ 高端商务亮：海军蓝 + 香槟金（B 端正式挡板，保留）
   "business-bright": {
     bg: "#F8FAFC",
     textMain: "#0F1B2D",
@@ -87,34 +132,17 @@ const PALETTES: Record<PdfStyleKey, Palette> = {
     coverGold: "#C9A858",
     coverTextLight: true,
   },
-  "business-dark": {
-    bg: "#FAFAF7",
-    textMain: "#1A1A1A",
-    textMuted: "#4A4A4A",
-    primary: "#2A2D33",
-    accent: "#E89549",
-    rule: "#D9D5C9",
-    tableHeadBg: "#2A2D33",
-    tableHeadText: "#FFD9A8",
-    coverBg: "#1A1D22",
-    coverGradient: `
-      radial-gradient(80% 60% at 100% 0%, rgba(232,149,73,0.30) 0%, rgba(232,149,73,0) 60%),
-      radial-gradient(70% 55% at 0% 100%, rgba(232,149,73,0.18) 0%, rgba(232,149,73,0) 65%),
-      linear-gradient(155deg, #1A1D22 0%, #2A2D33 60%, #1A1D22 100%)
-    `,
-    coverGold: "#E89549",
-    coverTextLight: false,
-  },
 };
 
 const META: Record<PdfStyleKey, { label: string; sub: string; tag: string; eyebrow: string }> = {
-  "quiet-luxury": { label: "静奢白", sub: "纯白 · 暖琥珀金", tag: "QUIET LUXURY", eyebrow: "GLOBAL STRATEGY" },
-  watercolor: { label: "水彩薄雾", sub: "冷蓝 → 暖橘粉", tag: "WATERCOLOR", eyebrow: "STRATEGIC ATELIER" },
-  "business-bright": { label: "高端商务亮", sub: "海军蓝 · 香槟金", tag: "EXECUTIVE BRIGHT", eyebrow: "BUSINESS PLAN" },
-  "business-dark": { label: "黑色商务夜", sub: "深炭夜景 · 橙金", tag: "EXECUTIVE DARK", eyebrow: "EXECUTIVE BRIEF" },
+  "spring-mint":     { label: "春日薄荷",   sub: "薄荷绿 · 樱桃粉",   tag: "SPRING MINT",      eyebrow: "FRESH STRATEGY" },
+  "neon-tech":       { label: "霓虹科技",   sub: "电光青 · 霓虹紫",   tag: "NEON TECH",        eyebrow: "TECH ADVISORY" },
+  "sunset-coral":    { label: "日落珊瑚",   sub: "珊瑚橘 · 紫罗兰",   tag: "SUNSET CORAL",     eyebrow: "CREATIVE BRIEF" },
+  "ocean-fresh":     { label: "海蓝清爽",   sub: "海蓝 · 柠檬黄",     tag: "OCEAN FRESH",      eyebrow: "OCEAN PLAN" },
+  "business-bright": { label: "高端商务亮", sub: "海军蓝 · 香槟金",   tag: "EXECUTIVE BRIGHT", eyebrow: "BUSINESS PLAN" },
 };
 
-const ORDER: PdfStyleKey[] = ["quiet-luxury", "watercolor", "business-bright", "business-dark"];
+const ORDER: PdfStyleKey[] = ["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"];
 
 // ─── 单张缩略卡（封面 + 内文一页并排） ─────────────────────────────────────────
 function ThumbCard({ style, selected, onSelect }: { style: PdfStyleKey; selected: boolean; onSelect: () => void }) {

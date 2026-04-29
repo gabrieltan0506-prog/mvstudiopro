@@ -16,6 +16,19 @@ export type TrendItem = {
   title: string;
   bucket?: string;
   author?: string;
+  /** 平台 V 认证 / 企业认证 / 蓝V — 任何一种 verify 都置 true（用于过滤投流账号） */
+  authorVerified?: boolean;
+  /** 账号身份分类（让"个人创作者爆发信号"区别于"企业号付费投流"）
+   *  - personal: 个人原生创作者（最值得参考的"自然爆发"信号）
+   *  - creator: 已认证 MCN/达人（中性）
+   *  - enterprise: 企业蓝V/品牌/旗舰店（极易投流，应排除或重度降权）
+   *  - media: 官媒/新闻号（信息流性质，与商业爆款无关，降权）
+   *  - government: 政务号（同上）
+   *  - unknown: 无法判定
+   */
+  accountType?: "personal" | "creator" | "enterprise" | "media" | "government" | "unknown";
+  /** 账号身份判定依据（debug 用，例如 "verify_type=2" / "name_match:旗舰店"） */
+  accountTypeReason?: string;
   url?: string;
   publishedAt?: string;
   likes?: number;

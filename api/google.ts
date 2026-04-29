@@ -282,7 +282,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
 
       const location = (s(process.env.VERTEX_GEMINI_LOCATION) || "global").trim();
-      const model = (s(process.env.VERTEX_GEMINI_MODEL) || "gemini-2.5-pro").trim();
+      const model = (s(process.env.VERTEX_GEMINI_MODEL) || "gemini-3.1-pro-preview").trim();
       const base = baseUrlFor(location);
       const url = `${base}/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
 

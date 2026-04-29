@@ -1,7 +1,7 @@
 /**
  * 竞品调研双引擎服务 — Google AI Studio 版本
  * Stage 1: gemma-4-31b-it  (竞品底层特征扫描)
- * Stage 2: gemini-2.5-pro  (差异化战略处方生成)
+ * Stage 2: gemini-3.1-pro-preview  (差异化战略处方生成)
  *
  * 使用 GEMINI_API_KEY (AI Studio)，不依赖 Vertex AI / GCP 私钥
  * 结合 /data/growth/platform-current/{platform}.current.json 真实平台数据

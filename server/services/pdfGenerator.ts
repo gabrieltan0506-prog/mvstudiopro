@@ -2,8 +2,8 @@
  * 容器内 Puppeteer 压 PDF + GCS 存储 + V4 限时签名下载链接。
  * 不调用任何第三方 PDF SaaS；仅使用本进程 Chromium + @google-cloud/storage。
  *
- * v3 升级（2026-04-29）：
- *   - 接受 style 参数：'quiet-luxury' | 'watercolor' | 'business-bright' | 'business-dark'
+ * v4 升级（2026-04-29）：
+ *   - 接受 style 参数：'spring-mint' | 'neon-tech' | 'sunset-coral' | 'ocean-fresh' | 'business-bright'
  *   - 接受 cover 参数：可选 nanoImage URL → 注入封面页
  *   - 修 CONFIDENTIAL 头眉切残：移除 letter-spacing，margin: 0 + padding 控制
  *   - 第 1 页（封面）跳过 header / footer，封面 100% 满版
@@ -51,30 +51,33 @@ export type CreatePdfResult = {
 
 export type CreatePdfOpts = {
   signedUrlHours?: number;
-  /** 模板：quiet-luxury（静奢白）/ watercolor（水彩薄雾）/ business-bright（商务亮）/ business-dark（商务夜） */
+  /** 模板：spring-mint（薄荷樱桃）/ neon-tech（电光霓虹）/ sunset-coral（珊瑚紫罗兰）/ ocean-fresh（海蓝柠黄）/ business-bright（商务亮） */
   style?: PdfStyle;
   /** 可选封面页：nanoImage 已生成的封面图 URL + 标题摘要 */
   cover?: PdfCover;
 };
 
-/** 头眉/页脚配色（与 v3 四套调色板对齐） */
+/** 头眉/页脚配色（与 v4 五套调色板对齐） */
 function getHeaderFooterColors(style: PdfStyle): {
   primary: string;
   text: string;
   confidential: string;
   muted: string;
 } {
-  if (style === "watercolor") {
-    return { primary: "#7A8C92", text: "#2B3940", confidential: "#A04C4C", muted: "#7E8A92" };
+  if (style === "spring-mint") {
+    return { primary: "#10B981", text: "#0F172A", confidential: "#E11D48", muted: "#64748B" };
   }
-  if (style === "business-bright") {
-    return { primary: "#1F3A5F", text: "#0F1B2D", confidential: "#A52A2A", muted: "#55657A" };
+  if (style === "neon-tech") {
+    return { primary: "#7C3AED", text: "#1E1B4B", confidential: "#F472B6", muted: "#6B7280" };
   }
-  if (style === "business-dark") {
-    return { primary: "#2A2D33", text: "#1A1A1A", confidential: "#E89549", muted: "#4A4A4A" };
+  if (style === "sunset-coral") {
+    return { primary: "#8B5CF6", text: "#3C1361", confidential: "#9F1239", muted: "#7C5C8B" };
   }
-  // quiet-luxury（默认）
-  return { primary: "#8B6F3D", text: "#1A1A1A", confidential: "#A04C4C", muted: "#6B7280" };
+  if (style === "ocean-fresh") {
+    return { primary: "#2563EB", text: "#0C1A3D", confidential: "#B91C1C", muted: "#475569" };
+  }
+  // business-bright（默认 fallback）
+  return { primary: "#1F3A5F", text: "#0F1B2D", confidential: "#A52A2A", muted: "#55657A" };
 }
 
 /**
@@ -94,7 +97,7 @@ export async function createAndUploadPdf(
     .slice(0, 120);
   const hours = Math.min(168, Math.max(1, Number(opts?.signedUrlHours) || 72));
   const expires = Date.now() + hours * 60 * 60 * 1000;
-  const style: PdfStyle = (opts?.style as PdfStyle) || "quiet-luxury";
+  const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
   const colors = getHeaderFooterColors(style);
 
   const htmlContent = generateHtmlTemplate(markdownContent, {

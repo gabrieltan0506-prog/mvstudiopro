@@ -1160,7 +1160,7 @@ async function generateScriptViaPromptBuilder(input: {
     script,
     storyboard,
     provider: "google-vertex",
-    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
+    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview",
   };
 }
 
@@ -1180,7 +1180,7 @@ async function generateScriptOnlyViaPromptBuilder(input: {
   return {
     script,
     provider: "google-vertex",
-    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-2.5-pro").trim() || "gemini-2.5-pro",
+    model: s(process.env.VERTEX_GEMINI_MODEL || "gemini-3.1-pro-preview").trim() || "gemini-3.1-pro-preview",
   };
 }
 
@@ -2217,7 +2217,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const storyboard = getStoryboardDraftFromBody(workflow, b);
       const scriptText = s(b.script || workflow.outputs?.script || workflow.payload?.prompt).trim();
 
-      // ── 用 Gemini 2.5 Pro 生成 Suno 专用 music prompt（与成长营同链路）──
+      // ── 用 Gemini 3.1 Pro 生成 Suno 专用 music prompt（与成长营同链路）──
       let aiMusicPrompt = s(b.musicPrompt).trim(); // 若前端手动传入则直接用
       if (!aiMusicPrompt) {
         const storyboardMoodSummary = (Array.isArray(storyboard) ? storyboard : [])

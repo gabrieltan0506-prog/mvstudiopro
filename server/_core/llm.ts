@@ -238,7 +238,7 @@ const normalizeResponseFormat = ({
 };
 
 const getGeminiModelName = (modelTier: ModelTier | undefined) =>
-  modelTier === "pro" ? "gemini-2.5-pro" : "gemini-2.5-flash";
+  modelTier === "pro" ? "gemini-3.1-pro-preview" : "gemini-2.5-flash";
 
 function hasVertexEnv() {
   return Boolean(
