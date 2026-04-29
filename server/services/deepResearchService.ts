@@ -809,7 +809,7 @@ export async function getUserHolisticContext(userId: string): Promise<{
 
 // ── Fly 磁盘 Job 结构 ────────────────────────────────────────────────────────
 
-export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized" | "platform_ip_matrix" | "competitor_radar" | "vip_baseline" | "vip_monthly";
+export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized" | "enterprise_flagship" | "platform_ip_matrix" | "competitor_radar" | "vip_baseline" | "vip_monthly";
 
 export interface DeepResearchJob {
   jobId: string;

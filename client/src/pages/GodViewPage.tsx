@@ -10,12 +10,13 @@ import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
 // ── 定價配置（與後端 billingService.ts 保持同步）──────────────────────────────
-type ProductType = "magazine_single" | "magazine_sub" | "personalized";
+type ProductType = "magazine_single" | "magazine_sub" | "personalized" | "enterprise_flagship";
 
 const PRODUCT_FIRST_KEYS: Record<ProductType, string> = {
-  magazine_single: "mvs-magazine-first-used",
-  magazine_sub:    "mvs-magsub-first-used",
-  personalized:    "mvs-personalized-first-used",
+  magazine_single:     "mvs-magazine-first-used",
+  magazine_sub:        "mvs-magsub-first-used",
+  personalized:        "mvs-personalized-first-used",
+  enterprise_flagship: "mvs-enterprise-flagship-first-used",
 };
 
 const PRODUCTS: Array<{
@@ -26,10 +27,15 @@ const PRODUCTS: Array<{
   tag?: string;
   desc: string;
   color: string;
+  /** 是否需要 IP 基因（企业 B 端定制款必须） */
+  requiresIpProfile?: boolean;
 }> = [
-  { id: "magazine_single", label: "战略半月刊",      price: 800,  firstPrice: 720,  tag: "首购九折",  desc: "当月赛道趋势报告 · 单期购买",              color: "#a78bfa" },
-  { id: "magazine_sub",    label: "半年订阅 (12期)", price: 6000, firstPrice: 5400, tag: "首购九折",  desc: "6 个月持续情报陪伴 · 尊贵长线战略",        color: "#34d399" },
-  { id: "personalized",    label: "尊享季度私人订制", price: 3000, firstPrice: 2700, tag: "首购九折",  desc: "与历史快照对比 · 哈佛医师级二次进化分析",  color: "#f97316" },
+  { id: "magazine_single",     label: "战略半月刊",        price: 800,  firstPrice: 720,  tag: "首购九折",  desc: "当月赛道趋势报告 · 单期购买",                color: "#a78bfa" },
+  { id: "magazine_sub",        label: "半年订阅 (12期)",   price: 6000, firstPrice: 5400, tag: "首购九折",  desc: "6 个月持续情报陪伴 · 尊贵长线战略",          color: "#34d399" },
+  { id: "personalized",        label: "尊享季度私人订制",   price: 3000, firstPrice: 2700, tag: "首购九折",  desc: "与历史快照对比 · 哈佛医师级二次进化分析",    color: "#f97316" },
+  // ⚠️ B 端旗舰：唯一会触发 IP 基因弹窗的产品
+  // 主理人本人下单的常规三款（半月刊/订阅/私订）已把背景烧进代码，无需弹窗
+  { id: "enterprise_flagship", label: "企业高客单旗舰款",   price: 5000, firstPrice: 4500, tag: "B 端定制",  desc: "为企业客户量身订制 · 必须先注入企业专属 IP 基因（行业身份、护城河、高客单锚点）",  color: "#6366F1", requiresIpProfile: true },
 ];
 
 function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
@@ -264,12 +270,16 @@ export default function GodViewPage() {
 
   const handleLaunch = () => {
     if (!topic.trim()) { toast.error("请输入研究课题"); return; }
-    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
-    if (!isIpProfileReady(ipProfile)) {
+
+    // ── IP 基因拦截规则（2026-04-29 规则）：
+    //    只有「企业高客单旗舰款」(requiresIpProfile=true) 才强制要 IP 基因。
+    //    主理人本人买半月刊 / 半年订阅 / 私人订制时，背景已烧进代码，跳过弹窗。
+    if (currentProduct.requiresIpProfile && !isIpProfileReady(ipProfile)) {
       setShowIpModal(true);
-      toast.message("启动深潜前，请先载入企业专属 IP 基因");
+      toast.message("「企业高客单旗舰款」必须先载入企业专属 IP 基因");
       return;
     }
+
     const discount = isBundlePromo ? "（满月老用户双本促销）" : isFirst && currentProduct.firstPrice !== undefined ? "（首购优惠价）" : "";
     if (!window.confirm(`启动「${currentProduct.label}」将扣除 ${cost.toLocaleString()} 点${discount}，确定执行？`)) return;
     setPhase("launching");
@@ -280,7 +290,9 @@ export default function GodViewPage() {
       isFirstTime: isFirst,
       productType: selectedProduct,
       isBundlePromo,
-      ipProfile,
+      // ⚠️ 只有旗舰款才注入 IP 基因到推演链；其他产品 ipProfile 留空
+      //    避免主理人买半月刊时混入 B 端定制基因
+      ...(currentProduct.requiresIpProfile && isIpProfileReady(ipProfile) ? { ipProfile } : {}),
       ...(suppText.trim() ? { supplementaryText: suppText.trim() } : {}),
       ...(suppFiles.length ? { supplementaryFiles: suppFiles } : {}),
     });
@@ -455,8 +467,9 @@ export default function GodViewPage() {
             ))}
           </div>
 
-          {/* 企业 IP 基因入口（与 PlatformPage 共享 localStorage["ipProfile.v1"]） */}
-          <button
+          {/* 企业 IP 基因入口 — 仅当选中"企业高客单旗舰款"才显示
+              主理人买半月刊/订阅/私订时不需要它，UI 也不出现 */}
+          {currentProduct.requiresIpProfile && <button
             type="button"
             onClick={() => setShowIpModal(true)}
             style={{
@@ -502,7 +515,7 @@ export default function GodViewPage() {
                 {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
               </div>
             </div>
-          </button>
+          </button>}
         </div>
 
         {/* 战略作品快照库 · 醒目入口卡 */}
@@ -737,7 +750,7 @@ export default function GodViewPage() {
               </button>
             </div>
             {/* ── 补充资料区（3 类产品共享） ── */}
-            {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub" || selectedProduct === "personalized") && (
+            {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub" || selectedProduct === "personalized" || selectedProduct === "enterprise_flagship") && (
               <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
                 <button
                   onClick={() => setSuppExpanded(!suppExpanded)}

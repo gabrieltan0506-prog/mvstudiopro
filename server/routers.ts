@@ -5835,7 +5835,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       .input(z.object({
         topic: z.string().min(5).max(1000),
         isFirstTime: z.boolean().optional(),
-        productType: z.enum(["magazine_single", "magazine_sub", "personalized"]).optional(),
+        productType: z.enum(["magazine_single", "magazine_sub", "personalized", "enterprise_flagship"]).optional(),
         isBundlePromo: z.boolean().optional(),
         // 半月刊补充资料（注入阶段 A Deep Research prompt）
         // 文件已上传到 GCS，这里传 URL 而非 base64
