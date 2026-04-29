@@ -34,6 +34,24 @@ export default function SupervisorDeepResearchPage() {
     onSettled: () => setRewardingId(null),
   });
 
+  // ── 维护模式（部署前手动闸门 · 仅 supervisor / admin 可控） ──
+  // ⚠️ 该开关只控制「拦不拦新付费任务」，绝不触碰积分账本 / 支付网关。
+  // 等价 curl（admin token）：
+  //   curl -X POST $HOST/api/trpc/admin.setMaintenance \
+  //     -H 'Content-Type: application/json' \
+  //     -d '{"enabled":true,"note":"DB 切换"}'
+  const maintenanceQuery = trpc.admin.maintenanceState.useQuery(undefined, {
+    enabled: isSupervisor,
+    refetchInterval: 30_000,
+  });
+  const maintenanceMutation = trpc.admin.setMaintenance.useMutation({
+    onSuccess: () => {
+      maintenanceQuery.refetch();
+    },
+    onError: (err) => alert(`❌ 维护模式切换失败：${err.message}`),
+  });
+  const maintenanceState = maintenanceQuery.data;
+
   // 权限拦截
   if (!isSupervisor) {
     return (
@@ -126,6 +144,59 @@ export default function SupervisorDeepResearchPage() {
               <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>{item.label}</div>
             </div>
           ))}
+        </div>
+
+        {/* 维护模式开关：部署前的手动闸门 ─ 仅控制是否拦截新付费任务，绝不触碰积分账本 / 支付网关 */}
+        <div style={{ marginBottom: 32, padding: "18px 22px", background: maintenanceState?.enabled ? "rgba(248,113,113,0.10)" : "rgba(74,222,128,0.06)", border: `1px solid ${maintenanceState?.enabled ? "rgba(248,113,113,0.40)" : "rgba(74,222,128,0.25)"}`, borderRadius: 14 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 16 }}>{maintenanceState?.enabled ? "🚧" : "✅"}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: maintenanceState?.enabled ? "#f87171" : "#4ade80" }}>
+                  维护模式 · {maintenanceState?.enabled ? "已开启 · 拦截新付费任务" : "未开启 · 任务正常运行"}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
+                开启后，新启动的「上帝视角研报 / Agent 场景 / 平台数据分析」会被 503 拦截。
+                已经在跑的任务不受影响（积分账本 / 支付网关一概不碰）。
+              </p>
+              {maintenanceState?.enabled && (
+                <div style={{ marginTop: 8, fontSize: 11.5, color: "#f87171" }}>
+                  开启者：{maintenanceState.enabledBy ?? "?"} · 开启时间：{maintenanceState.enabledAt ? new Date(maintenanceState.enabledAt).toLocaleString("zh-CN") : "?"}
+                  {maintenanceState.reason ? ` · 原因：${maintenanceState.reason}` : ""}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {!maintenanceState?.enabled ? (
+                <button
+                  disabled={maintenanceMutation.isPending}
+                  onClick={() => {
+                    const note = prompt("简要描述维护原因（用于审计 + 用户提示）：", "DB 切换 / 部署预热");
+                    if (note === null) return;
+                    if (!confirm(`确认开启维护模式吗？\n\n之后所有新付费任务（上帝视角研报 / Agent / 平台数据分析）将立即被 503 拦截。\n已经在跑的任务不受影响，绝不触碰积分账本 / 支付网关。`)) return;
+                    maintenanceMutation.mutate({ enabled: true, note: note.slice(0, 500) || undefined });
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px", borderRadius: 10, background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.40)", color: maintenanceMutation.isPending ? "rgba(248,113,113,0.45)" : "#f87171", fontSize: 12.5, fontWeight: 800, cursor: maintenanceMutation.isPending ? "not-allowed" : "pointer" }}
+                >
+                  {maintenanceMutation.isPending ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <AlertTriangle size={13} />}
+                  🚧 进入维护模式
+                </button>
+              ) : (
+                <button
+                  disabled={maintenanceMutation.isPending}
+                  onClick={() => {
+                    if (!confirm("确认退出维护模式吗？\n\n新付费任务将立即恢复可启动。")) return;
+                    maintenanceMutation.mutate({ enabled: false });
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px", borderRadius: 10, background: "rgba(74,222,128,0.12)", border: "1px solid rgba(74,222,128,0.40)", color: maintenanceMutation.isPending ? "rgba(74,222,128,0.45)" : "#4ade80", fontSize: 12.5, fontWeight: 800, cursor: maintenanceMutation.isPending ? "not-allowed" : "pointer" }}
+                >
+                  {maintenanceMutation.isPending ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle size={13} />}
+                  ✅ 退出维护模式
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {isLoading && (

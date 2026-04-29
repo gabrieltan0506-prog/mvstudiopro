@@ -79,12 +79,13 @@ export default function MyReportsPage() {
     },
   });
 
-  // 取消正在跑的研报任务（status=processing） → 服务端会幂等退积分到用户账户
+  // 取消正在跑的研报任务（status=processing）。
+  // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
+  //    系统故障 / 部署中断 / 进程崩溃才会幂等返还。
   const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
     onSuccess: (result) => {
       setCancellingJobId(null);
-      toast.success(result?.message || "已发起取消，积分将立即返还到您的账户");
-      // 立即刷新让卡片状态从 processing 切到 failed（兜底退积分后台异步生效）
+      toast.success(result?.message || "任务已取消（按规则不退还积分）");
       refetch();
     },
     onError: (err) => {
@@ -101,8 +102,11 @@ export default function MyReportsPage() {
     if (cancellingJobId) return; // 防止并发取消
     const ok = window.confirm(
       `确定要取消任务「${report.lighthouseTitle || report.title}」吗？\n\n` +
-        `取消后系统会立即把 ${report.creditsUsed} 积分返还到您的账户。\n` +
-        `已经在 Google 推演的算力无法停止，但您不会被计费。`,
+        `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
+        `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
+        `如因系统故障 / 部署中断导致任务失败，\n` +
+        `积分会自动幂等返还到您的账户。\n\n` +
+        `确认主动取消？（不退还积分）`,
     );
     if (!ok) return;
     setCancellingJobId(report.jobId);
@@ -287,12 +291,9 @@ export default function MyReportsPage() {
               }}
               title="使用所选封面模板生成 PDF · 5 套配色全部生效"
             >
-              {isExportingBlackGold ? <Loader2 size={13} className="animate-spin" /> : <Crown size={13} />}
-              {isExportingBlackGold ? "正在压制 PDF…" : "导出战略 PDF"}
+              {isExportingBlackGold ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
+              {isExportingBlackGold ? "正在压制 PDF…" : "导出 PDF（套用所选封面）"}
             </button>
-            {/* 旧的「下载富图文 PDF」入口走 DOM 克隆 → pdf-worker，不读 pdfStyle，
-                所以无论选哪套封面都是 ReportRenderer 固定的焦糖色样式。已下线。
-                上方「导出战略 PDF」走 Puppeteer + pdfTemplate.ts，5 套封面全部生效。 */}
             {/* Markdown 原文下载（轻量、无样式） */}
             <button
               onClick={handleDownloadMd}
@@ -660,7 +661,7 @@ function ReportCoverCard({
               <button
                 onClick={onCancel}
                 disabled={isCancelling}
-                title="立即取消任务并返还积分到您的账户"
+                title="主动取消任务（不退还积分，防止算力恶意消耗）"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -678,7 +679,7 @@ function ReportCoverCard({
                 }}
               >
                 {isCancelling ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
-                {isCancelling ? "取消中…" : "取消任务并返还积分"}
+                {isCancelling ? "取消中…" : "✕ 取消任务（不退还积分）"}
               </button>
             )}
           </div>

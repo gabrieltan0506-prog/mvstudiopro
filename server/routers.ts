@@ -2375,7 +2375,12 @@ export const appRouter = router({
         snapshotSummary: z.record(z.string(), z.any()).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务 ─────────────────────────────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("平台數據分析");
+
         // ── 扣費：每次平台數據分析扣 platformTrend（50 cr）─────────────────
+        let creditsBilled = 0;
         if (ctx.user?.id) {
           const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
           if (!isAdminUser) {
@@ -2387,12 +2392,33 @@ export const appRouter = router({
               );
             }
             await deductCredits(ctx.user.id, "platformTrend", `平台數據分析（${input.windowDays}天窗口）`);
+            creditsBilled = cost;
           }
         } else {
           throw new Error("請先登入，才能使用平台數據分析功能");
         }
 
         const jobId = nanoid(16);
+
+        // ── paidJobLedger：登记 active hold（runner.ts 失败兜底退积分） ────
+        if (creditsBilled > 0) {
+          const { registerActiveJob } = await import("./services/paidJobLedger");
+          await registerActiveJob({
+            jobId,
+            taskType: "platformAnalysis",
+            userId: ctx.user.id,
+            creditsBilled,
+            action: `平台數據分析（${input.windowDays}天窗口）`,
+            externalApiCostHint: "Gemini 3.1 Pro 双阶段推演",
+            metadata: {
+              windowDays: input.windowDays,
+              requestedPlatforms: input.requestedPlatforms,
+            },
+          }).catch((e: any) => {
+            console.warn(`[platformAnalysis] registerActiveJob 失败（non-fatal）：${e?.message}`);
+          });
+        }
+
         await createJobRecord({
           id: jobId,
           userId: String(ctx.user.id),
@@ -2405,6 +2431,8 @@ export const appRouter = router({
               windowDays: input.windowDays,
               requestedPlatforms: input.requestedPlatforms,
               snapshotSummary: input.snapshotSummary ?? {},
+              // 让 runner 知道这次的 ledger 任务类型，方便结清/退积分
+              _ledger: { taskType: "platformAnalysis", creditsBilled },
             },
           },
         });
@@ -4828,6 +4856,84 @@ ${sceneSummary}
       return { success: true, inviteCode };
     }),
      teamList: adminProcedure.query(async () => getAllTeams()),
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 付费任务运营面板 — paidJobLedger 视图
+    // ──────────────────────────────────────────────────────────────────────
+
+    /** 列出当前所有 active 付费任务（兜底退积分账本 + 部署闸门数据源） */
+    activeJobsList: adminProcedure.query(async () => {
+      const { listAllActiveJobs } = await import("./services/paidJobLedger");
+      const all = await listAllActiveJobs();
+      const now = Date.now();
+      return {
+        count: all.length,
+        jobs: all.map((j) => ({
+          jobId: j.jobId,
+          taskType: j.taskType,
+          userId: j.userId,
+          creditsBilled: j.creditsBilled,
+          action: j.action,
+          chargedAt: j.chargedAt,
+          lastHeartbeatAt: j.lastHeartbeatAt,
+          ageSec: Math.round((now - new Date(j.chargedAt).getTime()) / 1000),
+          heartbeatLagSec: Math.round((now - new Date(j.lastHeartbeatAt).getTime()) / 1000),
+          pid: j.pid ?? null,
+          externalApiCostHint: j.externalApiCostHint ?? null,
+          paused: Boolean(j.holdPausedAt),
+          pausedSince: j.holdPausedAt ?? null,
+          cancelRequested: Boolean(j.cancelRequestedAt),
+          cancelRequestedAt: j.cancelRequestedAt ?? null,
+        })),
+      };
+    }),
+
+    /** 强制取消任意 active 付费任务（管理员紧急按钮）。
+     *  by="admin" → refundReason="user_cancelled" → 仍走幂等退积分。
+     *  与用户主动取消（user_cancelled_no_refund 不退积分）路径区分清楚。 */
+    activeJobsCancel: adminProcedure
+      .input(z.object({ jobId: z.string().min(1), taskType: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const { requestCancel } = await import("./services/paidJobLedger");
+        const r = await requestCancel(input.jobId, input.taskType, "admin");
+        // Deep Research 同时同步 job 文件（admin 路径仍退积分）
+        if (input.taskType === "deepResearch") {
+          try {
+            const { requestCancelDeepResearchJob } = await import("./services/deepResearchService");
+            await requestCancelDeepResearchJob(input.jobId, "admin", "user_cancelled");
+          } catch (e: any) {
+            console.warn("[admin.activeJobsCancel] deep-research sync failed:", e?.message);
+          }
+        }
+        return r;
+      }),
+
+    /** 强制让 reaper 跑一遍（管理员排错用，幂等） */
+    activeJobsReap: adminProcedure
+      .input(z.object({ staleMs: z.number().int().min(0).optional() }).optional())
+      .mutation(async ({ input }) => {
+        const { reapStuckPaidJobs } = await import("./services/paidJobLedger");
+        return await reapStuckPaidJobs({ staleMs: input?.staleMs });
+      }),
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 维护模式（关闭新付费任务入口）
+    // ──────────────────────────────────────────────────────────────────────
+
+    maintenanceState: adminProcedure.query(async () => {
+      const { getMaintenanceState } = await import("./services/maintenanceMode");
+      return await getMaintenanceState();
+    }),
+
+    setMaintenance: adminProcedure
+      .input(z.object({ enabled: z.boolean(), note: z.string().max(500).optional() }))
+      .mutation(async ({ ctx, input }) => {
+        const { enableMaintenance, disableMaintenance } = await import("./services/maintenanceMode");
+        if (input.enabled) {
+          return await enableMaintenance(`admin:${ctx.user.email ?? ctx.user.id}`, input.note);
+        }
+        return await disableMaintenance(`admin:${ctx.user.email ?? ctx.user.id}`);
+      }),
   }),
 
   audioLab: router({
@@ -5668,6 +5774,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务（已经在跑的不受影响） ──────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("多平台 IP 矩阵");
+
         const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
         return launchPlatformIpMatrix({
           userId: String(ctx.user.id),
@@ -5701,6 +5811,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务（已经在跑的不受影响） ──────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("竞品/赛道雷达");
+
         const { launchCompetitorRadar } = await import("./services/agentScenarios");
         return launchCompetitorRadar({
           userId: String(ctx.user.id),
@@ -5745,6 +5859,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务（已经在跑的不受影响） ──────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("VIP 客户建档");
+
         const { launchVipBaseline } = await import("./services/agentScenarios");
         return launchVipBaseline({
           userId: String(ctx.user.id),
@@ -5771,6 +5889,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         })).max(5).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务（已经在跑的不受影响） ──────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("VIP 月度更新");
+
         const { launchVipMonthlyUpdate } = await import("./services/agentScenarios");
         return launchVipMonthlyUpdate({
           userId: String(ctx.user.id),
@@ -5858,6 +5980,11 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         }).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截：开启时拒绝新付费任务（已经在跑的不受影响） ──────
+        // 严令：本拦截仅用 maintenanceMode.flag 判定，绝不触碰积分账本 / 支付网关。
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("上帝视角研报");
+
         const userId = ctx.user.id;
         const { calcGodViewPrice } = await import("./services/billingService");
         const productType = input.productType ?? "magazine_single";
@@ -5904,15 +6031,13 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /**
-     * 用户主动取消任务。立即在 paidJobLedger + job 文件标 cancelRequestedAt。
-     * worker 在下一次 polling / progress tick 时检测到 → 抛 USER_CANCELLED →
-     * 走 failJobAndRefund 幂等退积分。
+     * 用户主动取消任务。立即向 worker 发送 cancel 信号 + 在 paidJobLedger
+     * 标 cancelRequestedAt。worker 在下一次 polling 时检测到 → 抛
+     * USER_CANCELLED → 走 failJobAndRefund。
      *
-     * ⚠️ 文案统一「积分已返还到您的账户」。绝不出现「退款」字样（不能让用户
-     *    误以为是现金/支付网关退款）。
-     *
-     * 注意：Google Interactions API 一旦 background:true 提交，远端会继续跑完，
-     * 我们只能停止本地轮询并立即返还用户积分。这是预期行为。
+     * ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
+     *    系统故障 / 部署中断 / 外部 API 错误 / 进程崩溃等路径仍会幂等退积分。
+     *    文案统一用「不退还积分」，绝不出现「退款」「退现金」字样。
      */
     cancelJob: protectedProcedure
       .input(z.object({ jobId: z.string().min(1) }))
@@ -5925,21 +6050,23 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "BAD_REQUEST", message: "任务已完成，无法取消" });
         }
         if (job.status === "failed") {
-          return {
-            ok: true as const,
-            alreadyCancelled: true,
-            status: job.status,
-            message: "任务此前已失败，积分若有扣费已返还到您的账户",
-          };
+          return { ok: true as const, alreadyCancelled: true, status: job.status, message: "任务此前已失败" };
         }
+        // 用户主动取消 → 默认 user_cancelled_no_refund（不退还积分）
         const result = await requestCancelDeepResearchJob(input.jobId, "user");
+        const noRefund = result.refundReason === "user_cancelled_no_refund";
         return {
           ok: result.ok,
           alreadyCancelled: result.alreadyCancelled,
           status: result.status,
+          refundReason: result.refundReason,
           message: result.alreadyCancelled
-            ? "已记录取消请求，正在等待 worker 停止深潛引擎并将积分返还到您的账户…"
-            : "已发起取消，正在停止深潛引擎，积分将立即返还到您的账户",
+            ? noRefund
+              ? "已记录取消请求，正在停止深潛引擎（按规则不退还积分）…"
+              : "已记录取消请求，正在等待 worker 停止深潛引擎并返还积分…"
+            : noRefund
+              ? "已发起取消，正在停止深潛引擎（按规则不退还积分，防止算力恶意消耗）"
+              : "已发起取消，正在停止深潛引擎并返还积分到您的账户…",
         };
       }),
 
@@ -5965,9 +6092,6 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           // 真信号：心跳 / 更新时间，让前端展示真实推演进度
           updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
           lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
-          // 取消相关：让前端在 status=running/planning 且 cancelRequestedAt=null 时显示「取消任务」按钮
-          cancelRequestedAt: (job as any).cancelRequestedAt || null,
-          cancelRequestedBy: (job as any).cancelRequestedBy || null,
         };
       }),
 
@@ -6089,9 +6213,55 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const style = input.style || "spring-mint";
         // 组装 cover：用户传的优先，缺什么自动补
         const coverEnabled = input.cover?.enabled !== false; // 默认开
+
+        // ⚡ 封面是灵魂：如果旧报告没有 thumbnailUrl（早期 PR 之前生成的、或当时
+        //    nanoImage 调用失败的），导出 PDF 时主动 fallback 再生成一次封面图，
+        //    保证用户每次下载都拿到带杂志大封面的 PDF。
+        let resolvedCoverImage = input.cover?.imageUrl || autoCoverImage;
+        if (coverEnabled && !resolvedCoverImage) {
+          try {
+            const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+            const fallbackTitle = input.cover?.title || autoCoverTitle || "战略情报报告";
+            const coverRes = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prompt: `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${fallbackTitle}`,
+                tier: "flash",
+                aspectRatio: "3:4",
+              }),
+              signal: AbortSignal.timeout(45_000),
+            });
+            if (coverRes.ok) {
+              const coverJson = await coverRes.json();
+              if (coverJson?.imageUrl) {
+                resolvedCoverImage = String(coverJson.imageUrl);
+                console.log(`[exportBlackGoldPdf] cover fallback regenerated for ${input.reportId || input.jobId}`);
+                // 顺手回写到 dbRecord，下次就不用再生成
+                if (input.reportId) {
+                  try {
+                    const { userCreations } = await import("../drizzle/schema-creations");
+                    const { eq } = await import("drizzle-orm");
+                    const database = await db.getDb();
+                    if (database) {
+                      await database.update(userCreations)
+                        .set({ thumbnailUrl: resolvedCoverImage, updatedAt: new Date() })
+                        .where(eq(userCreations.id, input.reportId));
+                    }
+                  } catch (e: any) {
+                    console.warn("[exportBlackGoldPdf] backfill thumbnailUrl failed:", e?.message);
+                  }
+                }
+              }
+            }
+          } catch (e: any) {
+            console.warn("[exportBlackGoldPdf] cover fallback generation failed:", e?.message);
+          }
+        }
+
         const cover = coverEnabled
           ? {
-              imageUrl: input.cover?.imageUrl || autoCoverImage,
+              imageUrl: resolvedCoverImage,
               title: input.cover?.title || autoCoverTitle || "战略情报报告",
               subtitle: input.cover?.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE",
               issue: input.cover?.issue || "战略情报局",
@@ -6381,14 +6551,32 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           .limit(1);
         if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "战报不存在或无权限" });
 
+        // ── 维护模式拦截 ─────────────────────────────────────────────────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("主编工作台 AI 助手");
+
         // 微扣 5 点（AI 助手按次计费）
         const COST = 5;
+        let aiAssistDeduct: Awaited<ReturnType<typeof deductCreditsAmount>> | null = null;
         try {
-          const r = await deductCreditsAmount(ctx.user.id, COST, "aiAssistEditor", `主编工作台AI助手·${input.action}`);
-          if (!r.success) throw new Error(`积分不足，需要 ${COST} 点`);
+          aiAssistDeduct = await deductCreditsAmount(ctx.user.id, COST, "aiAssistEditor", `主编工作台AI助手·${input.action}`);
+          if (!aiAssistDeduct.success) throw new Error(`积分不足，需要 ${COST} 点`);
         } catch (e: any) {
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分不足" });
         }
+
+        // ── 注册 ledger（失败/超时/进程崩溃自动幂等退积分） ─────────────────
+        const { registerActiveJob, refundCreditsOnFailure, unregisterActiveJob } = await import("./services/paidJobLedger");
+        const aiAssistJobId = `aae_${Date.now()}_${nanoid(6)}`;
+        await registerActiveJob({
+          jobId: aiAssistJobId,
+          taskType: "aiAssistEditor",
+          userId: ctx.user.id,
+          creditsBilled: aiAssistDeduct.source === "admin" ? 0 : COST,
+          action: `主编工作台AI助手·${input.action}`,
+          externalApiCostHint: "Gemini 3 Pro Preview",
+          metadata: { recordId: input.recordId, action: input.action },
+        }).catch(() => {});
 
         const ACTION_PROMPT: Record<string, string> = {
           rewrite: "请用同等字数重写以下段落，保持核心观点不变，但语言更精炼有力，避免任何英文专业名词（必须翻译成简体中文）。直接输出重写后的 markdown，不要任何前后说明。",
@@ -6420,17 +6608,20 @@ ${input.blockText}`;
           });
           const json: any = await r.json().catch(() => ({}));
           if (!r.ok) {
-            // 失败退积分
-            try { await refundCredits(ctx.user.id, COST, `主编工作台AI助手·${input.action}·失败退回`); } catch {}
+            await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "external_api_error", `Gemini ${r.status}`).catch(() => {});
             throw new Error(json?.error?.message || `Gemini API ${r.status}`);
           }
           const text = String(json?.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
           if (!text) {
-            try { await refundCredits(ctx.user.id, COST, `主编工作台AI助手·${input.action}·空响应退回`); } catch {}
+            await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "external_api_error", "empty response").catch(() => {});
             throw new Error("AI 未返回内容");
           }
+          // 任务成功 → 标 ledger settled
+          await unregisterActiveJob(aiAssistJobId, "aiAssistEditor", "settled").catch(() => {});
           return { ok: true as const, suggestion: text, creditsCost: COST };
         } catch (e: any) {
+          // 兜底：捕到未知错误也走 ledger 退分（幂等，已退过的 no-op）
+          await refundCreditsOnFailure(aiAssistJobId, "aiAssistEditor", "task_failed", String(e?.message ?? "").slice(0, 200)).catch(() => {});
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "AI 助手调用失败" });
         }
       }),
@@ -6444,6 +6635,10 @@ ${input.blockText}`;
         competitorData: z.string().min(1).max(8000),
       }))
       .mutation(async ({ input, ctx }) => {
+        // ── 维护模式拦截 ───────────────────────────────────────────────────
+        const { assertMaintenanceOff } = await import("./services/maintenanceMode");
+        await assertMaintenanceOff("竞品调研");
+
         const userId = ctx.user.id;
         const COST = 20;
         const PLATFORM_LABEL: Record<string, string> = {
@@ -6462,16 +6657,28 @@ ${input.blockText}`;
           throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${COST} 点，请充值` });
         }
 
+        // 2. 包装到 paidJobLedger：失败 / cancel / 进程崩溃自动幂等退积分
+        const { withLedgerRefundOnFailure } = await import("./services/paidJobLedger");
+        const ledgerJobId = `cr_${Date.now()}_${nanoid(6)}`;
         let strategy: any = null;
-
-        // Stage 1 + 2：调用 AI Studio 双引擎服务
         try {
-          const { runResearch } = await import("./services/researchService");
-          strategy = await runResearch(String(userId), String(input.platform), input.competitorData);
+          strategy = await withLedgerRefundOnFailure(
+            {
+              jobId: ledgerJobId,
+              taskType: "competitorResearch",
+              userId,
+              creditsBilled: deductResult.source === "admin" ? 0 : COST,
+              action: `${label}竞品调研（${COST}点）`,
+              externalApiCostHint: "AI Studio 双引擎调用",
+              metadata: { platform: input.platform },
+            },
+            async () => {
+              const { runResearch } = await import("./services/researchService");
+              return await runResearch(String(userId), String(input.platform), input.competitorData);
+            },
+          );
         } catch (e: any) {
-          // LLM 失败，退回积分
-          try { await refundCredits(userId, COST, `${label}竞品调研·LLM失败·退回`); } catch {}
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，已退回积分" });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已返还到您的账户" });
         }
 
         // Neon 精华快照存储

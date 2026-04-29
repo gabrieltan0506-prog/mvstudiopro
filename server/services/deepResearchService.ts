@@ -887,6 +887,12 @@ export interface DeepResearchJob {
    *  即抛 USER_CANCELLED 进入失败路径，由 paidJobLedger 幂等退积分。 */
   cancelRequestedAt?: string;
   cancelRequestedBy?: "user" | "admin" | "deploy" | "reaper";
+  /** 取消时希望传给 refundCreditsOnFailure 的 reason（默认根据 cancelRequestedBy 推断）：
+   *   - by="user" → "user_cancelled_no_refund"（主动取消不退积分，防恶意刷算力）
+   *   - by="admin" / "reaper" → "user_cancelled"（仍然幂等退积分）
+   *   - by="deploy" → "deploy_killed"（仍然幂等退积分）
+   *  调用方可显式覆盖。 */
+  cancelRefundReason?: PaidJobRefundReason;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -1224,38 +1230,63 @@ export async function createDeepResearchJob(
 /**
  * 用户/管理员主动请求取消任务。立即在 job 文件 + paidJobLedger 都写下
  * cancelRequestedAt，worker 在下一次 polling / progress tick 时检测到即抛
- * USER_CANCELLED → 走 failJobAndRefund 退积分。
+ * USER_CANCELLED → 走 failJobAndRefund，按 refundReason 决定是否真的退积分。
+ *
+ * 商业护栏（防恶意刷算力）：
+ *   * by="user"（用户主动点取消）→ 默认 refundReason="user_cancelled_no_refund"，
+ *     hold 标 settled、creditsRefunded=0、**不**调 refundCredits（积分按规则不退还）。
+ *   * by="admin" / "deploy" / "reaper"（系统故障、部署中断、reaper 兜底）→
+ *     默认 refundReason="user_cancelled"（admin/reaper）/ "deploy_killed"（deploy），
+ *     仍走幂等退积分流程。
+ *   * 调用方可显式覆盖 refundReason 改变这一默认行为。
  *
  * 幂等：重复调用只写一次，再次调用直接返回 alreadyCancelled=true。
  */
 export async function requestCancelDeepResearchJob(
   jobId: string,
   by: "user" | "admin" | "deploy" | "reaper" = "user",
-): Promise<{ ok: boolean; alreadyCancelled: boolean; status: string | null }> {
+  refundReason?: PaidJobRefundReason,
+): Promise<{ ok: boolean; alreadyCancelled: boolean; status: string | null; refundReason: PaidJobRefundReason }> {
   const job = await readJob(jobId);
-  if (!job) return { ok: false, alreadyCancelled: false, status: null };
+  // 默认 refundReason 推断：用户主动 → 不退；其他系统/管理员路径 → 退（保留幂等）
+  const resolvedRefundReason: PaidJobRefundReason =
+    refundReason ??
+    (by === "deploy"
+      ? "deploy_killed"
+      : by === "user"
+        ? "user_cancelled_no_refund"
+        : "user_cancelled");
+  if (!job) return { ok: false, alreadyCancelled: false, status: null, refundReason: resolvedRefundReason };
   // 已经终态，无需取消
   if (job.status === "completed" || job.status === "failed") {
-    return { ok: true, alreadyCancelled: true, status: job.status };
+    return { ok: true, alreadyCancelled: true, status: job.status, refundReason: resolvedRefundReason };
   }
   if (job.cancelRequestedAt) {
     // 已在 ledger 标过；尝试把 ledger 也补上（幂等）
     await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
-    return { ok: true, alreadyCancelled: true, status: job.status };
+    return { ok: true, alreadyCancelled: true, status: job.status, refundReason: job.cancelRefundReason ?? resolvedRefundReason };
   }
   const now = new Date().toISOString();
+  // 主动取消时显示「不退还积分」的进度文案；其他路径仍说「返还积分」
+  const progressMsg =
+    resolvedRefundReason === "user_cancelled_no_refund"
+      ? `🛑 收到取消请求（${by}），按规则不退还积分，正在停止深潛引擎…`
+      : `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`;
   await writeJob({
     ...job,
     cancelRequestedAt: now,
     cancelRequestedBy: by,
-    progress: `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`,
+    cancelRefundReason: resolvedRefundReason,
+    progress: progressMsg,
   });
   if (job.dbRecordId) {
-    try { await dbUpdateRecord(job.dbRecordId, job.status as any, "🛑 收到取消请求，正在停止深潛引擎并返还积分…"); } catch {}
+    try { await dbUpdateRecord(job.dbRecordId, job.status as any, progressMsg); } catch {}
   }
   await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
-  console.log(`[deepResearch] 🛑 cancel requested jobId=${jobId} by=${by} status=${job.status}`);
-  return { ok: true, alreadyCancelled: false, status: job.status };
+  console.log(
+    `[deepResearch] 🛑 cancel requested jobId=${jobId} by=${by} status=${job.status} refundReason=${resolvedRefundReason}`,
+  );
+  return { ok: true, alreadyCancelled: false, status: job.status, refundReason: resolvedRefundReason };
 }
 
 /** 内部使用：在 worker 的关键路径上调，发现取消 → 抛 USER_CANCELLED。 */
@@ -1981,13 +2012,29 @@ ${job.topic}
     const isUserCancel = err?.message === "USER_CANCELLED" || latest.cancelRequestedAt;
 
     if (isUserCancel) {
-      console.log(`[deepResearch] 🛑 任务 ${jobId} 已被用户取消，进入退积分路径`);
+      // 商业护栏（防恶意刷算力）：
+      //   * 用户主动 → cancelRefundReason="user_cancelled_no_refund" → 不退积分
+      //   * 系统/部署/admin/reaper → 仍走幂等退积分（user_cancelled / deploy_killed）
+      const cancelReason: PaidJobRefundReason =
+        latest.cancelRefundReason ??
+        (latest.cancelRequestedBy === "deploy"
+          ? "deploy_killed"
+          : latest.cancelRequestedBy === "user"
+            ? "user_cancelled_no_refund"
+            : "user_cancelled");
+      const userInitiatedNoRefund = cancelReason === "user_cancelled_no_refund";
+      const progressLine = userInitiatedNoRefund
+        ? `🛑 任务已取消（按规则不退还积分，防止恶意消耗算力）`
+        : `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`;
+      console.log(
+        `[deepResearch] 🛑 任务 ${jobId} 已被取消 by=${latest.cancelRequestedBy ?? "?"} refundReason=${cancelReason}`,
+      );
       await failJobAndRefund(
         latest,
-        "用户主动取消任务",
-        `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`,
+        userInitiatedNoRefund ? "用户主动取消任务（不退还积分）" : "用户主动取消任务",
+        progressLine,
         undefined,
-        "user_cancelled",
+        cancelReason,
       );
     } else {
       console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);

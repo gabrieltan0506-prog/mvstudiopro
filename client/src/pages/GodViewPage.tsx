@@ -199,16 +199,16 @@ export default function GodViewPage() {
     onError: (err) => alert("批准计划失败：" + err.message),
   });
 
-  // 取消正在跑 / 等待审核的任务 → 立即把积分返还到用户账户（幂等）
+  // 取消正在跑 / 等待审核的任务
+  // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
+  //    系统故障 / 部署中断 / 进程崩溃才会幂等返还。
   const [isCancellingJob, setIsCancellingJob] = useState(false);
   const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
     onSuccess: (result) => {
       setIsCancellingJob(false);
-      toast.success(result?.message || "已发起取消，积分将立即返还到您的账户");
-      // 状态会被 jobDoneQuery 在下次轮询时同步到 failed → useEffect 会切到 phase=failed
-      // 提前给一点用户反馈：把界面切到 failed
+      toast.success(result?.message || "任务已取消（按规则不退还积分）");
       setPhase("failed");
-      setErrorMsg("任务已取消，积分已返还到您的账户");
+      setErrorMsg("任务已取消（按规则不退还积分）");
     },
     onError: (err) => {
       setIsCancellingJob(false);
@@ -223,14 +223,17 @@ export default function GodViewPage() {
     }
     if (isCancellingJob) return;
     const ok = window.confirm(
-      `确定要取消当前推演任务吗？\n\n` +
-        `取消后系统会立即把您扣除的积分返还到账户。\n` +
-        `已经在 Google 服务器端推演的算力无法停止，但您不会被计费。`,
+      `确定要取消当前推演任务「${(topic || "").slice(0, 30) || "未命名战报"}」吗？\n\n` +
+        `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
+        `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
+        `如因系统故障 / 部署中断导致任务失败，\n` +
+        `积分会自动幂等返还到您的账户。\n\n` +
+        `确认主动取消？（不退还积分）`,
     );
     if (!ok) return;
     setIsCancellingJob(true);
     cancelJobMutation.mutate({ jobId: pollingJobId });
-  }, [pollingJobId, isCancellingJob, cancelJobMutation]);
+  }, [pollingJobId, isCancellingJob, cancelJobMutation, topic]);
 
   // 战略 PDF 导出 · 5 套活泼模板
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
@@ -1051,13 +1054,13 @@ export default function GodViewPage() {
               onNavigate={() => navigate("/my-reports")}
               onReset={() => { setPhase("idle"); setTopic(""); }}
             />
-            {/* 取消任务·返还积分 — 推演中阶段（含 planning / running） */}
+            {/* 取消任务·主动取消不退还积分（防恶意刷算力） — 推演中阶段（含 planning / running） */}
             {pollingJobId && !(jobDoneQuery.data as any)?.cancelRequestedAt && (
               <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
                 <button
                   onClick={handleCancelCurrentJob}
                   disabled={isCancellingJob}
-                  title="立即停止本次推演，积分返还到您的账户（已在 Google 服务器端推演的算力无法退回）"
+                  title="主动取消任务（不退还积分，防止算力恶意消耗）"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1075,13 +1078,13 @@ export default function GodViewPage() {
                   }}
                 >
                   {isCancellingJob ? <Loader2 size={13} className="animate-spin" /> : <XCircle size={13} />}
-                  {isCancellingJob ? "取消中…" : "取消任务并返还积分"}
+                  {isCancellingJob ? "取消中…" : "✕ 取消任务（不退还积分）"}
                 </button>
               </div>
             )}
             {(jobDoneQuery.data as any)?.cancelRequestedAt && (
               <div style={{ marginTop: 18, padding: "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
-                🛑 已发起取消，正在停止深潛引擎并将积分返还到您的账户…
+                🛑 已发起主动取消，正在停止深潛引擎（按规则不退还积分）…
               </div>
             )}
           </>
@@ -1121,12 +1124,12 @@ export default function GodViewPage() {
                 {approvePlanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
                 {planFeedback.trim() ? "按反馈调整后开始深潛" : "批准计划 · 开始深潛"}
               </button>
-              {/* 取消任务·返还积分 — 计划审核阶段 */}
+              {/* 取消任务·主动取消不退还积分（防恶意刷算力） — 计划审核阶段 */}
               {pollingJobId && (
                 <button
                   onClick={handleCancelCurrentJob}
                   disabled={isCancellingJob}
-                  title="放弃本次研究，积分返还到您的账户"
+                  title="主动取消任务（不退还积分，防止算力恶意消耗）"
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -1142,7 +1145,7 @@ export default function GodViewPage() {
                   }}
                 >
                   {isCancellingJob ? <Loader2 size={12} className="animate-spin" /> : <XCircle size={12} />}
-                  {isCancellingJob ? "取消中…" : "取消并返还积分"}
+                  {isCancellingJob ? "取消中…" : "✕ 取消任务（不退还积分）"}
                 </button>
               )}
               <span style={{ fontSize: 11, color: "rgba(160,140,90,0.65)" }}>
