@@ -204,6 +204,13 @@ const INTERACTIONS_BASE = "https://generativelanguage.googleapis.com/v1beta/inte
 const DEEP_RESEARCH_AGENT_NAME = "deep-research-max-preview-04-2026";
 const POLL_INTERVAL_MS = 15_000;     // 15 秒轮询一次
 const MAX_POLL_MS = 60 * 60 * 1000; // 60 分钟（API 硬限制）
+/**
+ * Plan 阶段（collaborative_planning: true）轮询超时上限 = 60 分钟（3600 秒）。
+ * 与 MAX_POLL_MS 看齐：Google deep-research-max-preview-04-2026 的 plan 阶段
+ * 实测 10–30 分钟，极端复杂课题（多市场 + 多语种 + 法规交叉）可达 40-50 分钟。
+ * 60 分钟硬上限覆盖最坏情况，超过即真卡死，自动退积分。
+ */
+const PLAN_MAX_MS = 60 * 60 * 1000;
 
 const SYSTEM_INSTRUCTION_BASE =
   "[系统背景设定] 当前时间为 2026 年。你是国际顶尖商学院战略顾问 + 国内外主流媒体平台资深运营专家 + 顶级 IP 操盘手 + 行业数据分析师组成的高端商业智库 Agent。" +
@@ -241,14 +248,87 @@ ${DEEP_RESEARCH_AGENT_SYSTEM_INSTRUCTION}
 ${userPrompt}`;
 }
 
-/** 通用轮询：从已创建的 interaction 拉结果。返回 outputs 数组 */
+/**
+ * Deep Research API 调用错误 · 携带 HTTP 状态码 / 原始 body / 调用上下文 / stack
+ * 用于把 Google Interactions API 的真实失败原因如实落到 jobError + Supervisor Debug。
+ */
+class DeepResearchApiError extends Error {
+  readonly httpStatus?: number;
+  readonly rawBody?: string;
+  readonly stage: string;
+  readonly interactionId?: string;
+  readonly apiErrorCode?: string;
+  readonly apiErrorMessage?: string;
+
+  constructor(opts: {
+    message: string;
+    stage: string;
+    httpStatus?: number;
+    rawBody?: string;
+    interactionId?: string;
+    apiErrorCode?: string;
+    apiErrorMessage?: string;
+  }) {
+    super(opts.message);
+    this.name = "DeepResearchApiError";
+    this.stage = opts.stage;
+    this.httpStatus = opts.httpStatus;
+    this.rawBody = opts.rawBody;
+    this.interactionId = opts.interactionId;
+    this.apiErrorCode = opts.apiErrorCode;
+    this.apiErrorMessage = opts.apiErrorMessage;
+  }
+
+  /**
+   * 序列化为人类可读的「调试卡片」(SupervisorDebug 直接显示)。
+   * 形如：
+   *   stage:        plan-create
+   *   interactionId: -
+   *   httpStatus:    400
+   *   apiCode:       invalid_request
+   *   apiMessage:    The 'system_instruction' parameter is not supported...
+   *   rawBody:       {...}
+   *   stack:         ...
+   */
+  toDetailString(): string {
+    const lines = [
+      `[Deep Research API 错误]`,
+      `stage         : ${this.stage}`,
+      `interactionId : ${this.interactionId ?? "-"}`,
+      `httpStatus    : ${this.httpStatus ?? "-"}`,
+      `apiCode       : ${this.apiErrorCode ?? "-"}`,
+      `apiMessage    : ${this.apiErrorMessage ?? "-"}`,
+      `message       : ${this.message}`,
+    ];
+    if (this.rawBody) {
+      lines.push(`---raw response body (truncated 4KB) ---`);
+      lines.push(this.rawBody.slice(0, 4096));
+    }
+    if (this.stack) {
+      lines.push(`--- stack ---`);
+      lines.push(this.stack);
+    }
+    return lines.join("\n");
+  }
+}
+
+/** 通用轮询：从已创建的 interaction 拉结果。返回 outputs 数组
+ *
+ * @param onProgress 可选钩子：每次拉到 in_progress 时调用一次，参数是
+ *                  「elapsed 秒数 + 总 maxMs 秒」，便于在调用层把真实
+ *                  等待时长写回 job.progress（用户在前端能看到「已等待
+ *                  N 分 / 通常需 X-Y 分」），不至于盯着写死的 boilerplate
+ *                  以为系统挂了。
+ */
 async function pollInteraction(
   interactionId: string,
   apiHeaders: Record<string, string>,
   maxMs: number,
   abortSignal?: AbortSignal,
+  onProgress?: (elapsedSec: number, maxSec: number) => Promise<void> | void,
 ): Promise<any[]> {
   const pollStart = Date.now();
+  const maxSec = Math.round(maxMs / 1000);
   while (Date.now() - pollStart < maxMs) {
     if (abortSignal?.aborted) {
       throw new Error(`Deep Research 已中止（interactionId=${interactionId}）`);
@@ -265,7 +345,15 @@ async function pollInteraction(
       try { pollJson = JSON.parse(rawPoll); } catch { /* ignore */ }
       if (!pollRes.ok) {
         console.error(`[deepResearch] ❌ poll HTTP ${pollRes.status} elapsed=${elapsed}s：${rawPoll.slice(0, 1000)}`);
-        throw new Error(`Deep Research 轮询失败（HTTP ${pollRes.status}），积分将退回。`);
+        throw new DeepResearchApiError({
+          message: `Deep Research 轮询失败（HTTP ${pollRes.status}: ${pollJson?.error?.message ?? rawPoll.slice(0, 200)}），积分将退回。`,
+          stage: "poll",
+          httpStatus: pollRes.status,
+          rawBody: rawPoll,
+          interactionId,
+          apiErrorCode: pollJson?.error?.code,
+          apiErrorMessage: pollJson?.error?.message,
+        });
       }
     } catch (fetchErr: any) {
       if (fetchErr?.name === "AbortError") throw fetchErr;
@@ -276,14 +364,30 @@ async function pollInteraction(
     console.log(`[deepResearch] 🔍 PID=${process.pid} interactionId=${interactionId} status=${status} elapsed=${elapsed}s`);
     if (status === "failed") {
       const errMsg = pollJson?.error?.message || JSON.stringify(pollJson?.error || {}).slice(0, 300);
-      throw new Error(`Deep Research Agent 失败（${errMsg}），积分将退回。`);
+      throw new DeepResearchApiError({
+        message: `Deep Research Agent 失败（${errMsg}），积分将退回。`,
+        stage: "agent-failed",
+        interactionId,
+        apiErrorCode: pollJson?.error?.code,
+        apiErrorMessage: pollJson?.error?.message,
+        rawBody: JSON.stringify(pollJson, null, 2),
+      });
     }
     if (status === "completed") {
       return (pollJson?.outputs || []) as any[];
     }
+    // status === "in_progress" → 通知调用层刷新真实进度
+    if (onProgress) {
+      try { await onProgress(elapsed, maxSec); } catch { /* 非阻断 */ }
+    }
     // status === "in_progress" → 继续
   }
-  throw new Error(`Deep Research 超时未完成（interactionId=${interactionId}）`);
+  throw new DeepResearchApiError({
+    message: `Deep Research 超时未完成（已等候 ${Math.round(maxMs / 60000)} 分钟，interactionId=${interactionId}）`,
+    stage: "poll-timeout",
+    interactionId,
+    apiErrorMessage: `Polling reached maxMs=${maxMs}ms without status=completed. Last poll: ${POLL_INTERVAL_MS / 1000}s ago. Either the Agent is still running but exceeded our local cap, or the Interaction is stuck on Google's side.`,
+  });
 }
 
 /**
@@ -296,6 +400,7 @@ async function requestResearchPlan(
   prompt: string,
   files?: Array<{ type: "image" | "pdf"; url: string; mimeType: string }>,
   onInteractionId?: (id: string) => Promise<void>,
+  onProgress?: (elapsedSec: number, maxSec: number) => Promise<void> | void,
 ): Promise<{ planText: string; planInteractionId: string }> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
@@ -331,10 +436,24 @@ async function requestResearchPlan(
     if (!createRes.ok) {
       console.error(`[deepResearch] ❌ plan create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
       const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
-      throw new Error(`Deep Research 计划提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
+      throw new DeepResearchApiError({
+        message: `Deep Research 计划提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`,
+        stage: "plan-create",
+        httpStatus: createRes.status,
+        rawBody: rawCreate,
+        apiErrorCode: createJson?.error?.code,
+        apiErrorMessage: createJson?.error?.message,
+      });
     }
     interactionId = createJson?.id;
-    if (!interactionId) throw new Error("Deep Research 计划阶段未返回 interactionId");
+    if (!interactionId) {
+      throw new DeepResearchApiError({
+        message: "Deep Research 计划阶段未返回 interactionId",
+        stage: "plan-create",
+        httpStatus: createRes.status,
+        rawBody: rawCreate,
+      });
+    }
     console.log(`[deepResearch] ✅ PID=${process.pid} plan interaction 已创建：${interactionId}`);
   } finally {
     release();
@@ -342,12 +461,17 @@ async function requestResearchPlan(
 
   if (onInteractionId) { try { await onInteractionId(interactionId); } catch { /* 非阻断 */ } }
 
-  const PLAN_MAX_MS = 15 * 60 * 1000; // 计划阶段 15 分钟上限
-  const outputs = await pollInteraction(interactionId, apiHeaders, PLAN_MAX_MS);
+  // 使用顶部常量 PLAN_MAX_MS（60 分钟），匹配 deep-research-max 实际计划耗时。
+  const outputs = await pollInteraction(interactionId, apiHeaders, PLAN_MAX_MS, undefined, onProgress);
   const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
   const planText = String(textOut?.text || "").trim();
   if (!planText || planText.length < 50) {
-    throw new Error(`Deep Research 计划返回内容为空（${planText.length}字）`);
+    throw new DeepResearchApiError({
+      message: `Deep Research 计划返回内容为空（${planText.length}字）`,
+      stage: "plan-empty-output",
+      interactionId,
+      apiErrorMessage: `Plan completed but text output was empty or too short (${planText.length} chars).`,
+    });
   }
   console.log(`[deepResearch] ✅ 计划已生成 ${planText.length}字`);
   return { planText, planInteractionId: interactionId };
@@ -365,6 +489,7 @@ async function executeApprovedResearch(
   feedback: string | undefined,
   onInteractionId?: (id: string) => Promise<void>,
   overrideInput?: string,
+  onProgress?: (elapsedSec: number, maxSec: number) => Promise<void> | void,
 ): Promise<GroundedResult> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
@@ -407,10 +532,26 @@ ${feedback.trim()}`
     if (!createRes.ok) {
       console.error(`[deepResearch] ❌ execute create HTTP ${createRes.status}：${rawCreate.slice(0, 2000)}`);
       const errMsg = createJson?.error?.message || createJson?.error?.status || rawCreate.slice(0, 300);
-      throw new Error(`Deep Research 执行提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`);
+      throw new DeepResearchApiError({
+        message: `Deep Research 执行提交失败（HTTP ${createRes.status}: ${errMsg}），积分将退回。`,
+        stage: "execute-create",
+        httpStatus: createRes.status,
+        rawBody: rawCreate,
+        interactionId: planInteractionId,
+        apiErrorCode: createJson?.error?.code,
+        apiErrorMessage: createJson?.error?.message,
+      });
     }
     interactionId = createJson?.id;
-    if (!interactionId) throw new Error("Deep Research 执行阶段未返回 interactionId");
+    if (!interactionId) {
+      throw new DeepResearchApiError({
+        message: "Deep Research 执行阶段未返回 interactionId",
+        stage: "execute-create",
+        httpStatus: createRes.status,
+        rawBody: rawCreate,
+        interactionId: planInteractionId,
+      });
+    }
     console.log(`[deepResearch] ✅ PID=${process.pid} execute interaction 已创建：${interactionId}`);
   } finally {
     release();
@@ -422,12 +563,17 @@ ${feedback.trim()}`
   const abortController = new AbortController();
   const hardTimeout = setTimeout(() => abortController.abort(), MAX_POLL_MS);
   try {
-    const outputs = await pollInteraction(interactionId, apiHeaders, MAX_POLL_MS, abortController.signal);
+    const outputs = await pollInteraction(interactionId, apiHeaders, MAX_POLL_MS, abortController.signal, onProgress);
     const textOut = [...outputs].reverse().find((o: any) => !o.type || o.type === "text");
     const text = String(textOut?.text || "").trim();
     if (!text || text.length < 400) {
       console.error(`[deepResearch] ❌ 完成但正文不足（${text.length}字）`);
-      throw new Error(`Deep Research 完成但内容不足（${text.length}字），积分将退回。`);
+      throw new DeepResearchApiError({
+        message: `Deep Research 完成但内容不足（${text.length}字），积分将退回。`,
+        stage: "execute-empty-output",
+        interactionId,
+        apiErrorMessage: `Execute completed but text output was too short (${text.length} chars, need ≥400).`,
+      });
     }
     // 捕获 Agent 原生生成的图表
     const imageOutputs = outputs.filter((o: any) => o.type === "image" && o.data);
@@ -634,6 +780,8 @@ export interface DeepResearchJob {
   /** 用户上传的补充资料：文字说明 + 文件（已存 GCS，注入阶段 A Deep Research） */
   supplementaryText?: string;
   supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>;
+  /** 失败时的结构化错误详情（DeepResearchApiError.toDetailString()）。Supervisor Debug 直接展示。 */
+  errorDetail?: string;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -665,14 +813,20 @@ async function writeJob(job: DeepResearchJob) {
   );
 }
 
-/** 仅写一行心跳时间戳（不读旧 job，最小 IO）。供 ticker 使用。 */
+/** 仅写一行心跳时间戳（不读旧 job，最小 IO）。供 ticker 使用。
+ *
+ *  ⚠️ 关键修复（2026-04-29）：必须在 `running` ＋ `planning` 两种状态下都刷心跳。
+ *  之前只刷 running，导致 worker 进入 Plan 阶段后心跳停滞 → Watchdog 在 15 分钟
+ *  误判「卡死」并把还在 Google 后台正常推演的 Plan 任务杀掉、退积分。这是
+ *  jobId=dr_1777424558978_7fxbgq 等多次失败的真正根因。
+ */
 async function bumpHeartbeat(jobId: string) {
   try {
     const file = path.join(REPORT_DIR, `${jobId}.json`);
     const raw = await fs.readFile(file, "utf-8");
     const job: DeepResearchJob = JSON.parse(raw);
-    // 只在仍处于 running 状态时刷心跳，避免覆盖 completed / failed 终态。
-    if (job.status !== "running") return;
+    // 在所有「worker 仍持有任务」的状态下都要刷心跳，避免覆盖终态。
+    if (job.status !== "running" && job.status !== "planning") return;
     job.lastHeartbeatAt = new Date().toISOString();
     job.pid = process.pid;
     await fs.writeFile(file, JSON.stringify(job, null, 2));
@@ -690,8 +844,10 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
   }
 }
 
-/** 把任务标记为彻底失败，并退还积分 + 同步 DB。 */
-async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMsg: string) {
+/** 把任务标记为彻底失败，并退还积分 + 同步 DB。
+ *  detail：可选的结构化错误详情（DeepResearchApiError.toDetailString()），
+ *  会写入 job.errorDetail 供 Supervisor Debug 与「查看详细原因」UI 展示。 */
+async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMsg: string, detail?: string) {
   const file = path.join(REPORT_DIR, `${job.jobId}.json`);
   const failedJob: DeepResearchJob = {
     ...job,
@@ -699,6 +855,7 @@ async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMs
     error: reason,
     progress: progressMsg,
     completedAt: new Date().toISOString(),
+    errorDetail: detail ?? job.errorDetail,
   };
   try { await fs.writeFile(file, JSON.stringify(failedJob, null, 2)); } catch {}
   if (job.dbRecordId) {
@@ -948,11 +1105,17 @@ export async function runDeepResearchAsync(jobId: string) {
   const heartbeatTimer = setInterval(() => { void bumpHeartbeat(jobId); }, HEARTBEAT_TICK_MS);
   if (typeof heartbeatTimer.unref === "function") heartbeatTimer.unref();
 
-  // ── 15 分钟存活检查哨（Watchdog）
-  // 如果 15 分钟后 heartbeat 静止超过 3 分钟（说明 worker 已死/卡死），
-  // 立刻标 failed + 退积分，无需等到 30 分钟硬超时才发现。
-  const WATCHDOG_TRIGGER_MS = 15 * 60 * 1000;
-  const WATCHDOG_STALE_THRESHOLD_MS = 3 * 60 * 1000;
+  // ── 存活检查哨（Watchdog）
+  // 如果 heartbeat 静止超过 STALE 阈值（说明 worker 已死/卡死），
+  // 立刻标 failed + 退积分，无需等到硬超时才发现。
+  //
+  // ⚠️ 关键修复（2026-04-29）：原本 15 分钟触发 + 3 分钟 stale 阈值，会误杀
+  // 还在 Google 后台正常跑的 Plan/Execute 阶段（Plan 实测 10-30 分钟、复杂题
+  // 可达 60 分钟）。现在改为 30 分钟才触发首次检查，且 stale 阈值放宽到
+  // 8 分钟（对应 30s heartbeat ticker 的 16 倍间隔，足够覆盖 GC / I/O 阻塞），
+  // 同时 planning 状态下 bumpHeartbeat 也会刷心跳，从根本上不会再误杀。
+  const WATCHDOG_TRIGGER_MS = 30 * 60 * 1000;
+  const WATCHDOG_STALE_THRESHOLD_MS = 8 * 60 * 1000;
   const watchdogTimer = setTimeout(async () => {
     try {
       const current = await readJob(jobId);
@@ -960,7 +1123,7 @@ export async function runDeepResearchAsync(jobId: string) {
       if (current.status === "completed" || current.status === "awaiting_review" || current.status === "awaiting_plan_approval" || current.status === "failed") return;
       const lastBeat = current.lastHeartbeatAt ? new Date(current.lastHeartbeatAt).getTime() : 0;
       const staleSec = Math.floor((Date.now() - lastBeat) / 1000);
-      console.log(`[deepResearch] 🐕 Watchdog 15min 检查：jobId=${jobId} status=${current.status} heartbeat_stale=${staleSec}s`);
+      console.log(`[deepResearch] 🐕 Watchdog 30min 检查：jobId=${jobId} status=${current.status} heartbeat_stale=${staleSec}s`);
       if (lastBeat === 0 || (Date.now() - lastBeat) > WATCHDOG_STALE_THRESHOLD_MS) {
         console.warn(`[deepResearch] 🐕 Watchdog 判断任务疑似卡死（${staleSec}s 无心跳），标记 failed 并退积分`);
         await failJobAndRefund(current, "15分钟内无心跳，任务疑似卡死，已自动退积分", "⚠️ 深潜超时：15 分钟内未收到进度信号，积分已原路退回");
@@ -978,12 +1141,32 @@ export async function runDeepResearchAsync(jobId: string) {
     "✍️ 正在撰写万字商业白皮书，请稍候…",
   ];
 
-  const updateProgress = async (progress: string, status: "running" | "completed" | "failed" = "running") => {
+  const updateProgress = async (progress: string, status: "running" | "planning" | "completed" | "failed" = "running") => {
     const latest = (await readJob(jobId)) ?? job;
     await writeJob({ ...latest, status, progress, pid: process.pid });
     if (latest.dbRecordId) {
       await dbUpdateRecord(latest.dbRecordId, status, progress);
     }
+  };
+
+  /**
+   * Plan / Execute 阶段的实时进度回调：每 15 秒被 pollInteraction 调一次。
+   * 每 60 秒刷一次 job.progress，让前端能看到「已等候 N 分 / 通常 X-Y 分 / 上限 Z 分」，
+   * 不会再让人误以为系统挂了。
+   */
+  const makeProgressTicker = (phase: "plan" | "execute") => {
+    let lastWriteAt = 0;
+    return async (elapsedSec: number, maxSec: number) => {
+      const now = Date.now();
+      if (now - lastWriteAt < 60_000) return; // 每 60s 刷一次足够
+      lastWriteAt = now;
+      const elapsedMin = Math.max(1, Math.round(elapsedSec / 60));
+      const maxMin = Math.round(maxSec / 60);
+      const msg = phase === "plan"
+        ? `📋 Plan 推演中：已等候 ${elapsedMin} 分钟（通常 10-30 分钟，上限 ${maxMin} 分钟）…`
+        : `🔬 Deep Research 深潛中：已运行 ${elapsedMin} 分钟（通常 30-50 分钟，上限 ${maxMin} 分钟）…`;
+      await updateProgress(msg, phase === "plan" ? "planning" : "running");
+    };
   };
 
   try {
@@ -1144,7 +1327,7 @@ ${job.topic}
 
     if (needPlan) {
       // ── Phase A1：请求计划（Collaborative Planning） ────────────────────────
-      await updateProgress("📋 正在生成研究计划，等待您审核…");
+      await updateProgress("📋 正在生成研究计划，等待您审核…", "planning");
       await writeJob({ ...jobNow, status: "planning" } as any);
       const { planText, planInteractionId } = await requestResearchPlan(
         harvestPrompt,
@@ -1153,6 +1336,7 @@ ${job.topic}
           const latest = (await readJob(jobId)) ?? job;
           await writeJob({ ...latest, interactionId: planId, planInteractionId: planId, status: "planning" } as any);
         },
+        makeProgressTicker("plan"),
       );
       const latest = (await readJob(jobId)) ?? job;
       await writeJob({
@@ -1178,6 +1362,7 @@ ${job.topic}
           await writeJob({ ...latest, interactionId: executeId } as any);
         },
         jobNow.executeOverrideInput,
+        makeProgressTicker("execute"),
       );
       // 持久化接地数据，便于断线恢复时跳过执行
       const afterExec = (await readJob(jobId)) ?? job;
@@ -1503,11 +1688,19 @@ ${job.topic}
   } catch (err: any) {
     console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
     const latest = (await readJob(jobId)) ?? job;
-    // 统一走 failJobAndRefund：写状态、写 DB、退积分
+    // 如果是结构化的 Deep Research API 错误，把完整 raw body / api code / stack 落盘
+    const detail = err instanceof DeepResearchApiError
+      ? err.toDetailString()
+      : err?.stack
+        ? `${err?.message}\n--- stack ---\n${err.stack}`
+        : undefined;
+    if (detail) console.error(`[deepResearch] 🔬 详细错误:\n${detail}`);
+    // 统一走 failJobAndRefund：写状态、写 DB、退积分 + 结构化详情
     await failJobAndRefund(
       latest,
       err?.message || "未知错误",
       `❌ 战报生成失败，已退回积分 ${latest.creditsUsed ?? 0} 点`,
+      detail,
     );
   } finally {
     clearInterval(heartbeatTimer);

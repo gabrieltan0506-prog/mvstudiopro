@@ -787,11 +787,21 @@ export default function GodViewPage() {
 
         {/* ── 启动失败 ── */}
         {phase === "failed" && (
-          <div style={{ padding: "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700 }}>❌ {errorMsg} · 积分已退回</p>
-            <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              <RotateCcw size={12} />重试
-            </button>
+          <div style={{ padding: "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700 }}>❌ {errorMsg} · 积分已退回</p>
+              <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                <RotateCcw size={12} />重试
+              </button>
+            </div>
+            {(jobDoneQuery.data as any)?.errorDetail && (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: 11, fontWeight: 700 }}>查看详细原因（含 API 响应）</summary>
+                <pre style={{ marginTop: 10, fontSize: 11, color: "#7c2d2d", background: "rgba(220,38,38,0.04)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 280, overflowY: "auto", lineHeight: 1.6 }}>
+                  {(jobDoneQuery.data as any).errorDetail}
+                </pre>
+              </details>
+            )}
           </div>
         )}
 
@@ -903,6 +913,16 @@ export default function GodViewPage() {
                         <div style={{ background: "rgba(255,50,50,0.06)", border: "1px solid rgba(255,50,50,0.2)", borderRadius: 8, padding: "10px 14px", color: "#ff7070", wordBreak: "break-all" }}>
                           {jobStatusQuery.data.error}
                         </div>
+                      </div>
+                    )}
+
+                    {/* 详细错误（含原始 API 响应、stage、http status、stack） */}
+                    {(jobStatusQuery.data as any)?.errorDetail && (
+                      <div style={{ marginBottom: 10 }}>
+                        <p style={{ color: "rgba(255,80,80,0.6)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>ERROR DETAIL · RAW API RESPONSE</p>
+                        <pre style={{ fontSize: 10, color: "#ffb0b0", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 320, overflowY: "auto", margin: 0, lineHeight: 1.6, background: "rgba(255,50,50,0.04)", border: "1px solid rgba(255,50,50,0.18)", borderRadius: 8, padding: "10px 12px" }}>
+                          {(jobStatusQuery.data as any).errorDetail}
+                        </pre>
                       </div>
                     )}
                   </>
