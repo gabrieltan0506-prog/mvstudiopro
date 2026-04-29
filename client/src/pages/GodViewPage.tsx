@@ -717,9 +717,13 @@ export default function GodViewPage() {
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
           <div style={{ background: "linear-gradient(135deg,#fffaf0,#f5ecda)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 20, padding: 28, boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
-            <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 10 }}>
-              输入研究课题
-            </p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+              <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", margin: 0 }}>
+                输入研究课题
+              </p>
+              {/* 启动前的封面预选触发器（5 套对比 modal） */}
+              <TemplatePicker compact value={pdfStyle} onChange={setPdfStyle} />
+            </div>
             <div style={{ position: "relative" }}>
               <textarea
                 value={topic}
@@ -1155,25 +1159,101 @@ export default function GodViewPage() {
   );
 }
 
-// ─── 推演过程清单（前端时间轴动画，后端跑期间展示） ──────────────────────────
-const DEDUCTION_STEPS: Array<{ triggerSec: number; icon: string; text: string; subtext?: string }> = [
-  { triggerSec: 0,    icon: "🔌", text: "已接入全球情报网络节点，初始化推演环境" },
-  { triggerSec: 12,   icon: "📡", text: "正在调阅 2026 Q1-Q2 行业核心财报与市场数据" },
-  { triggerSec: 40,   icon: "🔍", text: "正在扫描四平台头部创作者账号矩阵", subtext: "小红书 · 抖音 · 哔哩哔哩 · 快手" },
-  { triggerSec: 80,   icon: "📊", text: "正在提取高变现率内容的底层逻辑与流量结构" },
-  { triggerSec: 130,  icon: "🧩", text: "正在分析竞品定位缺口与蓝海机会窗口" },
-  { triggerSec: 190,  icon: "🎯", text: "正在建构差异化战略定位模型与品牌声量矩阵" },
-  { triggerSec: 260,  icon: "🔬", text: "正在进行多维数据交叉验证，核实矛盾节点" },
-  { triggerSec: 340,  icon: "🧠", text: "正在推演商业变现路径与私域转化漏斗" },
-  { triggerSec: 430,  icon: "📝", text: "正在撰写核心战略洞察与 90 天行动清单" },
-  { triggerSec: 530,  icon: "📈", text: "正在生成趋势数据图表与可视化方案" },
-  { triggerSec: 640,  icon: "✍️",  text: "正在组织万字商业白皮书章节结构与逻辑链" },
-  { triggerSec: 760,  icon: "🔎", text: "正在进行最终数据核实与全文逻辑校验" },
-  { triggerSec: 900,  icon: "⏳", text: "推演深度超出预期（属正常范围）", subtext: "正在处理更大规模数据节点，请继续等候" },
-  { triggerSec: 1080, icon: "📋", text: "正在整合引用来源与参考知识库注释" },
-  { triggerSec: 1320, icon: "🏁", text: "即将完成最终校对，报告即将出炉" },
-  { triggerSec: 1620, icon: "🕐", text: "战略深潜接近尾声，正在生成最终输出" },
+// ─── 真实阶段时间轴（仅基于后端 status / progress 推进，零模拟） ──────────────
+// 每个阶段对应 deepResearchService.ts 里 updateProgress() 的真实文案：
+//   - pending → 等待入队
+//   - planning（status="planning"）→ 📋 正在生成研究计划…
+//   - dispatched_phase_a（progress 含「Deep Research Max」）→ 🚀 启动深潜
+//   - phase_a_websearch（progress 含「突破信息茧房」）→ stages[0]
+//   - phase_b_platform（progress 含「四平台」）→ stages[1]
+//   - phase_c_cot（progress 含「思维链」或 "CoT"）→ stages[2]
+//   - phase_d_writing（progress 含「白皮书」或「撰写」）→ stages[3]
+//   - completed → ✅ 完成
+// 不再用 elapsedSec 模拟推进——前端不知道后端到哪了，就老实显示"等待下一帧后端心跳"
+type RealPhase = {
+  id: string;
+  /** 在 jobProgress 文本里匹配这些关键词中任意一个，命中 → 视为"已到达本阶段" */
+  matchProgress: RegExp[];
+  /** 如果 jobStatus 等于这些值之一，也算到达 */
+  matchStatus?: string[];
+  icon: string;
+  text: string;
+  subtext?: string;
+};
+
+const REAL_PHASES: RealPhase[] = [
+  {
+    id: "queued",
+    matchProgress: [/^$/], // 默认就是 queued
+    matchStatus: ["pending", "queued", "dispatched"],
+    icon: "🔌",
+    text: "任务已入队，等待 Deep Research 算力节点响应",
+  },
+  {
+    id: "planning",
+    matchProgress: [/计划|plan/i, /审核/, /已附加.*补充文件/],
+    matchStatus: ["planning", "awaiting_plan_approval"],
+    icon: "📋",
+    text: "正在生成研究计划（Collaborative Planning）",
+    subtext: "Deep Research API 第一阶段，~3-8 分钟",
+  },
+  {
+    id: "dispatched",
+    matchProgress: [/启动 Deep Research/i, /🚀/, /深潜/],
+    icon: "🚀",
+    text: "已分发到 Deep Research Max，开始全网检索",
+  },
+  {
+    id: "websearch",
+    matchProgress: [/突破信息茧房/, /全网检索/, /论文.*商业数据/, /已等待.*execute/i],
+    icon: "📡",
+    text: "全网检索行业论文与商业数据",
+    subtext: "Phase A：信息接地（Grounding）",
+  },
+  {
+    id: "platform_scan",
+    matchProgress: [/四平台/, /Top.*博主/, /变现博主/, /爆款底层/],
+    icon: "📊",
+    text: "抓取四平台 Top 变现博主链路与爆款底层逻辑",
+    subtext: "小红书 · 抖音 · 哔哩哔哩 · 快手",
+  },
+  {
+    id: "cot",
+    matchProgress: [/思维链/, /CoT/i, /推演.*战略/, /构建底层商业/],
+    icon: "🧠",
+    text: "构建底层商业思维链（CoT），推演差异化战略",
+  },
+  {
+    id: "writing",
+    matchProgress: [/撰写.*白皮书/, /万字商业/, /组织.*章节/, /✍️/],
+    icon: "✍️",
+    text: "正在撰写万字商业白皮书",
+    subtext: "Phase D：合成与排版，~5-10 分钟",
+  },
+  {
+    id: "completed",
+    matchProgress: [/✅/, /已生成/, /完成/],
+    matchStatus: ["completed"],
+    icon: "🏁",
+    text: "战报生成完成，请进入「战略作品快照库」查阅",
+  },
 ];
+
+/** 根据真实 status + progress 算"当前到了哪一阶段"（返回 index，-1 表示没匹配上） */
+function resolveRealPhaseIndex(status: string | undefined, progress: string | undefined): number {
+  // 先看显式 status
+  for (let i = REAL_PHASES.length - 1; i >= 0; i -= 1) {
+    if (REAL_PHASES[i].matchStatus?.includes(status || "")) return i;
+  }
+  // 再看 progress 文本（从最深阶段往前匹配，命中即返回）
+  if (progress) {
+    for (let i = REAL_PHASES.length - 1; i >= 0; i -= 1) {
+      if (REAL_PHASES[i].matchProgress.some((re) => re.test(progress))) return i;
+    }
+  }
+  // 都没匹配 → 默认在队列中
+  return 0;
+}
 
 function DeductionTimeline({
   elapsedSec,
@@ -1192,15 +1272,19 @@ function DeductionTimeline({
   onNavigate: () => void;
   onReset: () => void;
 }) {
-  // 优先解析后端 progress 字符串里的百分比；否则按 elapsedSec/5400 估算（90 分钟上限）
+  // ✨ 进度百分比：仅有两个来源，且必须如实说明用的是哪一种
+  //   1) jobProgress 文本里如果带 "X%" → 真后端百分比 (REAL PROGRESS)
+  //   2) 否则按"已到第 N 阶段 / 共 8 阶段"算 (PHASE PROGRESS)
+  //   ❌ 已删除"按 elapsedSec/5400 估算 90 分钟上限"那种伪进度——属于欺骗用户
   const pctMatch = (jobProgress || "").match(/(\d+(?:\.\d+)?)\s*%/);
   const realPct = pctMatch ? Math.min(100, parseFloat(pctMatch[1])) : null;
-  const fallbackPct = Math.min(100, (elapsedSec / 5400) * 100);
-  const progressPct = realPct ?? fallbackPct;
 
-  // 时间轴：基于 elapsedSec 推断「至少应该到哪一步」（仅作背景示意，不再喧宾夺主）
-  const visibleSteps = DEDUCTION_STEPS.filter((s) => s.triggerSec <= elapsedSec);
-  const currentStep = visibleSteps[visibleSteps.length - 1];
+  // 真实阶段索引（基于 status + progress 关键词，不基于 elapsedSec）
+  const currentPhaseIndex = resolveRealPhaseIndex(jobStatus, jobProgress);
+  const phasePct = ((currentPhaseIndex + 1) / REAL_PHASES.length) * 100;
+  const progressPct = realPct ?? phasePct;
+  const progressLabel = realPct !== null ? "REAL PROGRESS" : "PHASE PROGRESS";
+
   const elapsed = elapsedSec >= 60
     ? `${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`
     : `${elapsedSec} 秒`;
@@ -1246,11 +1330,16 @@ function DeductionTimeline({
           </div>
           <div style={{ textAlign: "right" }}>
             <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>
-              {realPct !== null ? "REAL PROGRESS" : "ELAPSED"}
+              {progressLabel}
             </p>
             <p style={{ color: "#c8a000", fontSize: 18, fontWeight: 900, fontFamily: "monospace" }}>
               {progressPct.toFixed(1)}%
             </p>
+            {realPct === null && (
+              <p style={{ color: "rgba(200,160,0,0.35)", fontSize: 9, margin: "2px 0 0", fontFamily: "monospace" }}>
+                第 {currentPhaseIndex + 1} / {REAL_PHASES.length} 阶段
+              </p>
+            )}
           </div>
         </div>
 
@@ -1281,18 +1370,20 @@ function DeductionTimeline({
         </div>
       </div>
 
-      {/* 推演步骤时间轴 */}
+      {/* ─── 真实推演阶段时间轴（零模拟，只渲染后端真实 status / progress 推进过的阶段） ───
+            每条阶段对应 deepResearchService.ts 里 updateProgress() 真实文案，
+            判定逻辑 100% 由 status + progress 关键词触发，不依赖 elapsedSec。 */}
       <div style={{ background: "linear-gradient(180deg,#080604,#0c0a04)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 16, padding: "20px 24px", marginBottom: 16 }}>
         <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", margin: "0 0 16px", fontFamily: "monospace" }}>
-          ▶ 推演阶段示意 · 典型时间轴（具体进度以上方真信号为准）
+          ▶ 推演阶段时间轴 · 仅根据后端真信号推进
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          {DEDUCTION_STEPS.map((step, idx) => {
-            const isDone = step.triggerSec < elapsedSec && step !== currentStep;
-            const isCurrent = step === currentStep;
-            const isFuture = step.triggerSec > elapsedSec;
+          {REAL_PHASES.map((step, idx) => {
+            const isDone = idx < currentPhaseIndex;
+            const isCurrent = idx === currentPhaseIndex;
+            const isFuture = idx > currentPhaseIndex;
             return (
-              <div key={idx} style={{ display: "flex", gap: 12, alignItems: "flex-start", opacity: isFuture ? 0.18 : 1, transition: "opacity 0.8s ease" }}>
+              <div key={step.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", opacity: isFuture ? 0.22 : 1, transition: "opacity 0.6s ease" }}>
                 {/* 时间轴竖线 + 节点 */}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
                   <div style={{
@@ -1304,7 +1395,7 @@ function DeductionTimeline({
                   }}>
                     {isDone ? "✓" : step.icon}
                   </div>
-                  {idx < DEDUCTION_STEPS.length - 1 && (
+                  {idx < REAL_PHASES.length - 1 && (
                     <div style={{ width: 1, flex: 1, minHeight: 16, background: isDone ? "rgba(0,200,80,0.2)" : "rgba(200,160,0,0.08)", margin: "3px 0" }} />
                   )}
                 </div>
