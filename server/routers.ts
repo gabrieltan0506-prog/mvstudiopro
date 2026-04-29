@@ -5903,6 +5903,46 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return { ok: true as const, jobId, dbRecordId: dbRecordId ?? null, creditsUsed: deductResult.source === "admin" ? 0 : cost };
       }),
 
+    /**
+     * 用户主动取消任务。立即在 paidJobLedger + job 文件标 cancelRequestedAt。
+     * worker 在下一次 polling / progress tick 时检测到 → 抛 USER_CANCELLED →
+     * 走 failJobAndRefund 幂等退积分。
+     *
+     * ⚠️ 文案统一「积分已返还到您的账户」。绝不出现「退款」字样（不能让用户
+     *    误以为是现金/支付网关退款）。
+     *
+     * 注意：Google Interactions API 一旦 background:true 提交，远端会继续跑完，
+     * 我们只能停止本地轮询并立即返还用户积分。这是预期行为。
+     */
+    cancelJob: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        const { readJob, requestCancelDeepResearchJob } = await import("./services/deepResearchService");
+        const job = await readJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
+        if (job.status === "completed") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "任务已完成，无法取消" });
+        }
+        if (job.status === "failed") {
+          return {
+            ok: true as const,
+            alreadyCancelled: true,
+            status: job.status,
+            message: "任务此前已失败，积分若有扣费已返还到您的账户",
+          };
+        }
+        const result = await requestCancelDeepResearchJob(input.jobId, "user");
+        return {
+          ok: result.ok,
+          alreadyCancelled: result.alreadyCancelled,
+          status: result.status,
+          message: result.alreadyCancelled
+            ? "已记录取消请求，正在等待 worker 停止深潛引擎并将积分返还到您的账户…"
+            : "已发起取消，正在停止深潛引擎，积分将立即返还到您的账户",
+        };
+      }),
+
     status: protectedProcedure
       .input(z.object({ jobId: z.string().min(1) }))
       .query(async ({ input, ctx }) => {
@@ -5925,6 +5965,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           // 真信号：心跳 / 更新时间，让前端展示真实推演进度
           updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
           lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
+          // 取消相关：让前端在 status=running/planning 且 cancelRequestedAt=null 时显示「取消任务」按钮
+          cancelRequestedAt: (job as any).cancelRequestedAt || null,
+          cancelRequestedBy: (job as any).cancelRequestedBy || null,
         };
       }),
 

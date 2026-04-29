@@ -6,6 +6,17 @@
 import fs from "fs/promises";
 import path from "path";
 import { PDF_FORMATTING_PROMPT_SUFFIX } from "./pdfFormattingPrompt";
+import {
+  registerActiveJob,
+  unregisterActiveJob,
+  heartbeatActiveJob,
+  pauseActiveJob,
+  resumeActiveJob,
+  refundCreditsOnFailure,
+  isCancelRequested,
+  requestCancel as ledgerRequestCancel,
+  type PaidJobRefundReason,
+} from "./paidJobLedger";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
 // for local tests / CI smoke tests.
@@ -450,7 +461,13 @@ async function pollInteraction(
     }
     // status === "in_progress" → 通知调用层刷新真实进度
     if (onProgress) {
-      try { await onProgress(elapsed, maxSec); } catch { /* 非阻断 */ }
+      try {
+        await onProgress(elapsed, maxSec);
+      } catch (progressErr: any) {
+        // ── 用户主动取消信号必须冒泡上去（让 worker 走 USER_CANCELLED 退积分） ──
+        if (progressErr?.message === "USER_CANCELLED") throw progressErr;
+        // 其他 progress 错误是非阻断的 UI 写盘失败，继续轮询
+      }
     }
     // status === "in_progress" → 继续
   }
@@ -866,6 +883,10 @@ export interface DeepResearchJob {
   };
   /** 失败时的结构化错误详情（DeepResearchApiError.toDetailString()）。Supervisor Debug 直接展示。 */
   errorDetail?: string;
+  /** 用户/管理员发起的取消请求时间戳（ISO）。worker 在 polling 循环检测到该字段
+   *  即抛 USER_CANCELLED 进入失败路径，由 paidJobLedger 幂等退积分。 */
+  cancelRequestedAt?: string;
+  cancelRequestedBy?: "user" | "admin" | "deploy" | "reaper";
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -914,6 +935,8 @@ async function bumpHeartbeat(jobId: string) {
     job.lastHeartbeatAt = new Date().toISOString();
     job.pid = process.pid;
     await fs.writeFile(file, JSON.stringify(job, null, 2));
+    // 同步刷新 paidJobLedger 心跳，让 admin 端点 / reaper 看到任务还活着
+    await heartbeatActiveJob(jobId, "deepResearch").catch(() => {});
   } catch {
     // 心跳失败不影响主流程
   }
@@ -930,8 +953,18 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
 
 /** 把任务标记为彻底失败，并退还积分 + 同步 DB。
  *  detail：可选的结构化错误详情（DeepResearchApiError.toDetailString()），
- *  会写入 job.errorDetail 供 Supervisor Debug 与「查看详细原因」UI 展示。 */
-async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMsg: string, detail?: string) {
+ *  会写入 job.errorDetail 供 Supervisor Debug 与「查看详细原因」UI 展示。
+ *
+ *  ⚠️ 退积分**只**走 paidJobLedger.refundCreditsOnFailure（幂等 + 仅写积分账本）。
+ *  禁止任何形式的现金退款 / 支付网关调用。文案统一「积分已返还到您的账户」。
+ */
+async function failJobAndRefund(
+  job: DeepResearchJob,
+  reason: string,
+  progressMsg: string,
+  detail?: string,
+  refundReason: PaidJobRefundReason = "task_failed",
+) {
   const file = path.join(REPORT_DIR, `${job.jobId}.json`);
   const failedJob: DeepResearchJob = {
     ...job,
@@ -945,15 +978,29 @@ async function failJobAndRefund(job: DeepResearchJob, reason: string, progressMs
   if (job.dbRecordId) {
     try { await dbUpdateRecord(job.dbRecordId, "failed", progressMsg, undefined, reason); } catch {}
   }
-  // 实际退款：只有在任务确实扣过积分时退（管理员/免费的 creditsUsed=0 跳过）
-  if (typeof job.creditsUsed === "number" && job.creditsUsed > 0) {
-    try {
+  // 退积分 — 经由 paidJobLedger 的幂等门面，重复调用 / 已 settled 自动 no-op
+  try {
+    const result = await refundCreditsOnFailure(
+      job.jobId,
+      "deepResearch",
+      refundReason,
+      `${reason}${detail ? ` · ${detail.slice(0, 200)}` : ""}`,
+    );
+    // ── 兼容老任务（PR 部署前已在跑、没有 ledger hold 文件）：回退到直接积分接口 ──
+    //   只有当 ledger 说 hold 缺失，且 job 自身记录了正数 creditsUsed 时才走这条路。
+    if (result.status === "missing" && typeof job.creditsUsed === "number" && job.creditsUsed > 0) {
       const { refundCredits } = await import("../credits");
-      await refundCredits(Number(job.userId), job.creditsUsed, `上帝视角研报·${reason}·退回 ${job.creditsUsed} 点`);
-      console.log(`[deepResearch] 💰 已退还 ${job.creditsUsed} 点给用户 ${job.userId}（任务 ${job.jobId}）`);
-    } catch (e: any) {
-      console.warn(`[deepResearch] 退款失败 (job=${job.jobId}):`, e?.message);
+      await refundCredits(
+        Number(job.userId),
+        job.creditsUsed,
+        `上帝视角研报·${reason}·积分已返还到您的账户（legacy fallback）`,
+      );
+      console.log(
+        `[deepResearch] 💰 (legacy fallback) 已返还 ${job.creditsUsed} 积分给用户 ${job.userId}（任务 ${job.jobId}）`,
+      );
     }
+  } catch (e: any) {
+    console.warn(`[deepResearch] paidJobLedger.refundCreditsOnFailure 失败 (job=${job.jobId}):`, e?.message);
   }
 }
 
@@ -1150,7 +1197,77 @@ export async function createDeepResearchJob(
     await writeJob({ ...job, dbRecordId });
   }
 
+  // ── paidJobLedger：在持久卷登记一份 active hold 记录 ────────────────────────
+  //   * admin 端点 / pre-deploy-guard / reaper 都会扫这个文件
+  //   * 兜底退积分走 ledger.refundCreditsOnFailure（幂等）
+  await registerActiveJob({
+    jobId,
+    taskType: "deepResearch",
+    userId: Number(userId),
+    creditsBilled: creditsUsed,
+    action: `上帝视角研报·${productType}（${creditsUsed}点）`,
+    externalApiCostHint: "deep-research-max ~$5-15 USD/次",
+    metadata: {
+      topic,
+      productType,
+      dbRecordId,
+      hasSupplementaryFiles: Boolean(supplementary?.supplementaryFiles?.length),
+      hasIpProfile: Boolean(supplementary?.ipProfile),
+    },
+  }).catch((e: any) => {
+    console.warn(`[deepResearch] registerActiveJob 失败（non-fatal）：${e?.message}`);
+  });
+
   return { jobId, dbRecordId };
+}
+
+/**
+ * 用户/管理员主动请求取消任务。立即在 job 文件 + paidJobLedger 都写下
+ * cancelRequestedAt，worker 在下一次 polling / progress tick 时检测到即抛
+ * USER_CANCELLED → 走 failJobAndRefund 退积分。
+ *
+ * 幂等：重复调用只写一次，再次调用直接返回 alreadyCancelled=true。
+ */
+export async function requestCancelDeepResearchJob(
+  jobId: string,
+  by: "user" | "admin" | "deploy" | "reaper" = "user",
+): Promise<{ ok: boolean; alreadyCancelled: boolean; status: string | null }> {
+  const job = await readJob(jobId);
+  if (!job) return { ok: false, alreadyCancelled: false, status: null };
+  // 已经终态，无需取消
+  if (job.status === "completed" || job.status === "failed") {
+    return { ok: true, alreadyCancelled: true, status: job.status };
+  }
+  if (job.cancelRequestedAt) {
+    // 已在 ledger 标过；尝试把 ledger 也补上（幂等）
+    await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
+    return { ok: true, alreadyCancelled: true, status: job.status };
+  }
+  const now = new Date().toISOString();
+  await writeJob({
+    ...job,
+    cancelRequestedAt: now,
+    cancelRequestedBy: by,
+    progress: `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`,
+  });
+  if (job.dbRecordId) {
+    try { await dbUpdateRecord(job.dbRecordId, job.status as any, "🛑 收到取消请求，正在停止深潛引擎并返还积分…"); } catch {}
+  }
+  await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
+  console.log(`[deepResearch] 🛑 cancel requested jobId=${jobId} by=${by} status=${job.status}`);
+  return { ok: true, alreadyCancelled: false, status: job.status };
+}
+
+/** 内部使用：在 worker 的关键路径上调，发现取消 → 抛 USER_CANCELLED。 */
+async function checkCancelledOrThrow(jobId: string): Promise<void> {
+  const job = await readJob(jobId);
+  if (job?.cancelRequestedAt) {
+    throw new Error("USER_CANCELLED");
+  }
+  // 兜底：ledger 上有取消标志但 job 文件还没写到（极端时序）
+  if (await isCancelRequested(jobId, "deepResearch")) {
+    throw new Error("USER_CANCELLED");
+  }
 }
 
 /**
@@ -1173,6 +1290,8 @@ export async function approvePlan(jobId: string, feedback?: string): Promise<voi
     planFeedback: feedback?.trim() || undefined,
     progress: "✅ 计划已批准，正在重新启动 Deep Research Max 进入深潛阶段…",
   } as any);
+  // 解除 ledger 暂停：worker 即将重新接管，reaper 又可以正常监控
+  await resumeActiveJob(jobId, "deepResearch").catch(() => {});
   // fire-and-forget；runDeepResearchAsync 内部会判断 planInteractionId 已存在 → 跳过 plan 阶段
   setImmediate(() => {
     runDeepResearchAsync(jobId).catch((e) =>
@@ -1243,6 +1362,10 @@ export async function runDeepResearchAsync(jobId: string) {
 
   const updateProgress = async (progress: string, status: "running" | "planning" | "completed" | "failed" = "running") => {
     const latest = (await readJob(jobId)) ?? job;
+    // ── 跨进程取消信号检查：如果用户/管理员发起了取消，立即抛错走 fail+refund ──
+    if (latest.cancelRequestedAt && status !== "failed") {
+      throw new Error("USER_CANCELLED");
+    }
     await writeJob({ ...latest, status, progress, pid: process.pid });
     if (latest.dbRecordId) {
       await dbUpdateRecord(latest.dbRecordId, status, progress);
@@ -1253,10 +1376,22 @@ export async function runDeepResearchAsync(jobId: string) {
    * Plan / Execute 阶段的实时进度回调：每 15 秒被 pollInteraction 调一次。
    * 每 60 秒刷一次 job.progress，让前端能看到「已等候 N 分 / 通常 X-Y 分 / 上限 Z 分」，
    * 不会再让人误以为系统挂了。
+   *
+   * 该回调还承担**跨进程取消检测**：如果检测到 cancelRequestedAt，立即抛
+   * USER_CANCELLED → pollInteraction 的 try/catch 会被冒泡到外层 worker 失败路径，
+   * 走 paidJobLedger 幂等退积分。
    */
   const makeProgressTicker = (phase: "plan" | "execute") => {
     let lastWriteAt = 0;
     return async (elapsedSec: number, maxSec: number) => {
+      // 每次 tick 都检查一次取消（仅文件 IO，廉价；最坏 ~15s 后用户能 kill 任务）
+      // 注：Google Interactions API 一旦提交（background:true）就在 Google 侧异步跑，
+      // 我们的 abort 只能停止本地轮询，无法真正退掉那次 Google 算力费。但用户的
+      // 平台积分会立即被 paidJobLedger 幂等返还。
+      const latest = await readJob(jobId);
+      if (latest?.cancelRequestedAt) {
+        throw new Error("USER_CANCELLED");
+      }
       const now = Date.now();
       if (now - lastWriteAt < 60_000) return; // 每 60s 刷一次足够
       lastWriteAt = now;
@@ -1446,6 +1581,8 @@ ${job.topic}
         planInteractionId,
         progress: "📋 研究计划已生成，请前往「上帝视角」审核计划并批准开始深潛",
       } as any);
+      // 暂停 ledger hold：让 reaper 不要因为心跳停滞而误退分（worker 已退出，等用户决策）
+      await pauseActiveJob(jobId, "deepResearch").catch(() => {});
       console.log(`[deepResearch] ⏸ 等待用户审核计划（jobId=${jobId}, planLen=${planText.length}）`);
       return; // worker 退出，等 approvePlan mutation 触发重新调用
     }
@@ -1802,6 +1939,12 @@ ${job.topic}
 
     console.log(`[deepResearch] ✅ 研报 ${jobId} 已完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
 
+    // ── 任务正常完成，结清 paidJobLedger 上的 hold（标 status=settled） ────────
+    //   不退积分（settled ≠ refunded），仅让 reaper / pre-deploy-guard 不再扫到
+    await unregisterActiveJob(jobId, "deepResearch", "settled").catch((e: any) => {
+      console.warn(`[deepResearch] unregisterActiveJob 失败（non-fatal）：${e?.message}`);
+    });
+
     // ── 半月刊：记录最后生成时间，触发 10 天提醒计时 ─────────────────────────
     if (productType === "magazine_single" || productType === "magazine_sub") {
       try {
@@ -1834,22 +1977,39 @@ ${job.topic}
     }
 
   } catch (err: any) {
-    console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
     const latest = (await readJob(jobId)) ?? job;
-    // 如果是结构化的 Deep Research API 错误，把完整 raw body / api code / stack 落盘
-    const detail = err instanceof DeepResearchApiError
-      ? err.toDetailString()
-      : err?.stack
-        ? `${err?.message}\n--- stack ---\n${err.stack}`
-        : undefined;
-    if (detail) console.error(`[deepResearch] 🔬 详细错误:\n${detail}`);
-    // 统一走 failJobAndRefund：写状态、写 DB、退积分 + 结构化详情
-    await failJobAndRefund(
-      latest,
-      err?.message || "未知错误",
-      `❌ 战报生成失败，已退回积分 ${latest.creditsUsed ?? 0} 点`,
-      detail,
-    );
+    const isUserCancel = err?.message === "USER_CANCELLED" || latest.cancelRequestedAt;
+
+    if (isUserCancel) {
+      console.log(`[deepResearch] 🛑 任务 ${jobId} 已被用户取消，进入退积分路径`);
+      await failJobAndRefund(
+        latest,
+        "用户主动取消任务",
+        `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`,
+        undefined,
+        "user_cancelled",
+      );
+    } else {
+      console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
+      // 如果是结构化的 Deep Research API 错误，把完整 raw body / api code / stack 落盘
+      const detail = err instanceof DeepResearchApiError
+        ? err.toDetailString()
+        : err?.stack
+          ? `${err?.message}\n--- stack ---\n${err.stack}`
+          : undefined;
+      if (detail) console.error(`[deepResearch] 🔬 详细错误:\n${detail}`);
+      // 判定 refund reason：API 错 → external_api_error；其他 → task_failed
+      const refundReason: PaidJobRefundReason = err instanceof DeepResearchApiError
+        ? "external_api_error"
+        : "task_failed";
+      await failJobAndRefund(
+        latest,
+        err?.message || "未知错误",
+        `❌ 战报生成失败，${latest.creditsUsed ?? 0} 积分已返还到您的账户`,
+        detail,
+        refundReason,
+      );
+    }
   } finally {
     clearInterval(heartbeatTimer);
     clearTimeout(watchdogTimer);
@@ -1873,6 +2033,79 @@ interface SceneIllustration {
   imageUrl?: string;
   /** 可选 aspect ratio，默认 16:9（横版更适合插入正文） */
   aspectRatio?: "16:9" | "4:3" | "1:1";
+}
+
+/**
+ * 容错解析 generateSceneIllustrations 的 LLM 输出 JSON。
+ *
+ * 失败模式（已在 fly logs 见到）：
+ *   - LLM 输出被 maxOutputTokens 截断 → 末尾字符串没闭合 → JSON.parse 抛
+ *     `Unterminated string in JSON at position N`
+ *
+ * 修复策略：
+ *   1. 去掉 ```json 包装，直接 JSON.parse
+ *   2. 失败 → 找到最后一个完整 `}` 边界，切掉残缺尾部 + 自动补 `]}` 闭合
+ *   3. 失败 → 返回 null（让外层走 retry）
+ *
+ * 注意：此函数保证不抛错，纯返回值。
+ */
+function parseScenesJson(raw: string): { scenes: SceneIllustration[] } | null {
+  if (!raw || !raw.trim()) return null;
+  const cleaned = raw.replace(/^```(?:json)?\s*|\s*```\s*$/g, "").trim();
+
+  // try 1: 严格 parse
+  try {
+    const obj = JSON.parse(cleaned);
+    if (obj && Array.isArray(obj.scenes)) return obj as { scenes: SceneIllustration[] };
+  } catch { /* fall through */ }
+
+  // try 2: 修复被截断的 JSON（兼容 LLM 在 JSON 前后夹的废话 / markdown）
+  //   定位 outer `{`（在 "scenes" key 之前最近的 `{`）→ 扫描到最后一个完整对象 `}`
+  //   → 切片补 `]}` 闭合再 parse
+  try {
+    const sceneKeyIdx = cleaned.indexOf('"scenes"');
+    if (sceneKeyIdx < 0) return null;
+    let outerObjStart = -1;
+    for (let i = sceneKeyIdx; i >= 0; i--) {
+      if (cleaned[i] === "{") { outerObjStart = i; break; }
+    }
+    if (outerObjStart < 0) return null;
+    const arrayStartIdx = cleaned.indexOf("[", sceneKeyIdx);
+    if (arrayStartIdx < 0) return null;
+
+    // 从 arrayStartIdx 之后扫描，记录最后一个对象边界（数组内 depth 由 1→0 时遇到 `}`）
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let lastObjectEnd = -1;
+    for (let i = arrayStartIdx; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) lastObjectEnd = i;
+      }
+    }
+    if (lastObjectEnd <= arrayStartIdx) return null;
+
+    const repaired = cleaned.slice(outerObjStart, lastObjectEnd + 1) + "]}";
+    const obj = JSON.parse(repaired);
+    if (obj && Array.isArray(obj.scenes)) {
+      console.warn(
+        `[deepResearch][scenes] JSON 截断已修复（取最后一个完整对象边界，` +
+          `保留 ${obj.scenes.length} 个场景）`,
+      );
+      return obj as { scenes: SceneIllustration[] };
+    }
+  } catch (e: any) {
+    console.warn(`[deepResearch][scenes] 截断修复也失败: ${e?.message}`);
+  }
+
+  return null;
 }
 
 async function generateSceneIllustrations(params: {
@@ -1909,7 +2142,7 @@ async function generateSceneIllustrations(params: {
     {
       "sectionAnchor": "章节锚点（必须是报告里出现过的 H1 或 H2 标题文字，让前端能精准找到插入位置）",
       "caption": "中文图说，≤ 30 字，作为图片下方的注解",
-      "imagePrompt": "英文 prompt，4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
+      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
       "aspectRatio": "16:9"
     }
   ]
@@ -1918,21 +2151,55 @@ async function generateSceneIllustrations(params: {
 【报告正文】
 ${reportSnippet}`,
     2,
-    { temperature: 0.4, topP: 0.9, maxTokens: 2048 },
+    { temperature: 0.4, topP: 0.9, maxTokens: 30000 },
   );
 
-  let parsed: { scenes: SceneIllustration[] };
-  try {
-    // 容错：去掉 ```json 包装
-    const cleaned = sceneJsonText.replace(/^```(?:json)?\s*|\s*```\s*$/g, "").trim();
-    parsed = JSON.parse(cleaned);
-  } catch (e: any) {
-    console.warn("[deepResearch][scenes] JSON 解析失败:", e?.message, "raw:", sceneJsonText.slice(0, 200));
-    return [];
+  // ── 解析 LLM 输出：先严格 parse，失败则尝试修复 unterminated JSON，
+  //    再失败则发起一次精简 retry，最后兜底返回空数组（仅 warn 不 throw）。
+  let parsed = parseScenesJson(sceneJsonText);
+  if (!parsed || (parsed.scenes ?? []).length < minCount) {
+    const firstSceneCount = parsed?.scenes?.length ?? 0;
+    console.warn(
+      `[deepResearch][scenes] 第 1 次解析仅得 ${firstSceneCount} 个场景，发起精简 retry…`,
+    );
+    // ── retry：明确告诉 LLM 上次输出被截断，仅要 3 个最关键场景 + 缩短 imagePrompt ──
+    const retryText = await generate(
+      "gemini-3.1-pro-preview",
+      `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON（不要 4-5 个），且每个 imagePrompt **必须 ≤ 50 个英文单词**。
+
+【输出格式】严格 JSON，不带任何 markdown / 注释：
+{
+  "scenes": [
+    {
+      "sectionAnchor": "报告里出现过的 H1 或 H2 标题文字",
+      "caption": "中文图说，≤ 30 字",
+      "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线",
+      "aspectRatio": "16:9"
+    }
+  ]
+}
+
+【报告正文（前 8000 字）】
+${reportSnippet.slice(0, 8000)}`,
+      2,
+      { temperature: 0.3, topP: 0.85, maxTokens: 30000 },
+    ).catch((e: any) => {
+      console.warn(`[deepResearch][scenes] retry generate 抛错: ${e?.message}`);
+      return "";
+    });
+    const retryParsed = parseScenesJson(retryText);
+    if (retryParsed && (retryParsed.scenes ?? []).length >= minCount) {
+      parsed = retryParsed;
+    } else {
+      console.warn(
+        `[deepResearch][scenes] retry 后仍仅 ${retryParsed?.scenes?.length ?? 0} 个场景，跳过配图（任务不挂）`,
+      );
+      return [];
+    }
   }
   const scenes = (parsed.scenes || []).slice(0, maxCount);
   if (scenes.length < minCount) {
-    console.warn(`[deepResearch][scenes] LLM 仅返回 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
+    console.warn(`[deepResearch][scenes] 最终仅 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
     return [];
   }
 
