@@ -8,6 +8,7 @@ import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
 import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
+import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ export default function MyReportsPage() {
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
-  const [pdfStyle, setPdfStyle] = useState<"black-gold" | "harvard" | "quiet-luxury">("black-gold");
+  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("quiet-luxury");
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
@@ -222,18 +223,7 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 10, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.40)" }}>
-              <span style={{ fontSize: 11, color: "rgba(122,84,16,0.85)", fontWeight: 700 }}>模板：</span>
-              <select
-                value={pdfStyle}
-                onChange={(e) => setPdfStyle(e.target.value as any)}
-                style={{ background: "transparent", color: "#7a5410", border: "none", fontWeight: 800, fontSize: 12, cursor: "pointer", outline: "none" }}
-              >
-                <option value="black-gold">黑金 · 卡布奇诺</option>
-                <option value="harvard">哈佛红 · 学术权威</option>
-                <option value="quiet-luxury">静奢白 · 水彩典藏</option>
-              </select>
-            </div>
+            <TemplatePicker compact value={pdfStyle} onChange={setPdfStyle} />
             <button
               onClick={() => {
                 if (!selectedReport?.markdown) return;

@@ -3,7 +3,7 @@
  * 不调用任何第三方 PDF SaaS；仅使用本进程 Chromium + @google-cloud/storage。
  *
  * v3 升级（2026-04-29）：
- *   - 接受 style 参数：'black-gold' | 'harvard' | 'quiet-luxury'
+ *   - 接受 style 参数：'quiet-luxury' | 'watercolor' | 'business-bright' | 'business-dark'
  *   - 接受 cover 参数：可选 nanoImage URL → 注入封面页
  *   - 修 CONFIDENTIAL 头眉切残：移除 letter-spacing，margin: 0 + padding 控制
  *   - 第 1 页（封面）跳过 header / footer，封面 100% 满版
@@ -51,41 +51,30 @@ export type CreatePdfResult = {
 
 export type CreatePdfOpts = {
   signedUrlHours?: number;
-  /** 模板：black-gold（黑金）/ harvard（哈佛红）/ quiet-luxury（静奢墨绿） */
+  /** 模板：quiet-luxury（静奢白）/ watercolor（水彩薄雾）/ business-bright（商务亮）/ business-dark（商务夜） */
   style?: PdfStyle;
   /** 可选封面页：nanoImage 已生成的封面图 URL + 标题摘要 */
   cover?: PdfCover;
 };
 
-/** 头眉/页脚配色（与 v3 三套调色板对齐） */
+/** 头眉/页脚配色（与 v3 四套调色板对齐） */
 function getHeaderFooterColors(style: PdfStyle): {
   primary: string;
   text: string;
   confidential: string;
   muted: string;
 } {
-  if (style === "harvard") {
-    return {
-      primary: "#A51C30",
-      text: "#1A1A1A",
-      confidential: "#A51C30",
-      muted: "#777777",
-    };
+  if (style === "watercolor") {
+    return { primary: "#7A8C92", text: "#2B3940", confidential: "#A04C4C", muted: "#7E8A92" };
   }
-  if (style === "quiet-luxury") {
-    return {
-      primary: "#3F5141",
-      text: "#1F2A2E",
-      confidential: "#3F5141",
-      muted: "#777777",
-    };
+  if (style === "business-bright") {
+    return { primary: "#1F3A5F", text: "#0F1B2D", confidential: "#A52A2A", muted: "#55657A" };
   }
-  return {
-    primary: "#9C7A2A",
-    text: "#1F2A44",
-    confidential: "#6E2A2A",
-    muted: "#777777",
-  };
+  if (style === "business-dark") {
+    return { primary: "#2A2D33", text: "#1A1A1A", confidential: "#E89549", muted: "#4A4A4A" };
+  }
+  // quiet-luxury（默认）
+  return { primary: "#8B6F3D", text: "#1A1A1A", confidential: "#A04C4C", muted: "#6B7280" };
 }
 
 /**
@@ -105,7 +94,7 @@ export async function createAndUploadPdf(
     .slice(0, 120);
   const hours = Math.min(168, Math.max(1, Number(opts?.signedUrlHours) || 72));
   const expires = Date.now() + hours * 60 * 60 * 1000;
-  const style: PdfStyle = (opts?.style as PdfStyle) || "black-gold";
+  const style: PdfStyle = (opts?.style as PdfStyle) || "quiet-luxury";
   const colors = getHeaderFooterColors(style);
 
   const htmlContent = generateHtmlTemplate(markdownContent, {

@@ -5936,7 +5936,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         markdown: z.string().min(80).max(500_000).optional(),
         signedUrlHours: z.number().int().min(1).max(168).optional(),
         // v3：模板选择
-        style: z.enum(["black-gold", "harvard", "quiet-luxury"]).optional(),
+        style: z.enum(["quiet-luxury", "watercolor", "business-bright", "business-dark"]).optional(),
         // v3：封面页（可全部不传，会从 job/dbRecord 自动抓）
         cover: z.object({
           imageUrl: z.string().url().optional(),
@@ -6019,7 +6019,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown / jobId / reportId" });
         }
 
-        const style = input.style || "black-gold";
+        const style = input.style || "quiet-luxury";
         // 组装 cover：用户传的优先，缺什么自动补
         const coverEnabled = input.cover?.enabled !== false; // 默认开
         const cover = coverEnabled
