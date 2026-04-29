@@ -419,6 +419,25 @@ async function startServer() {
     import("../services/deepResearchService").then(({ recoverOrphanedJobs }) => {
       recoverOrphanedJobs().catch((e) => console.warn("[deepResearch] recover failed:", e));
     }).catch(() => {});
+    // ── 付费任务持久账本：启动时清扫死任务（进程崩溃 / 部署中断 → 自动幂等退积分） ──
+    //   策略：默认 staleMs = 5 分钟（heartbeat 超过 5 分钟没刷的判定为僵尸任务）。
+    //   对 holdPausedAt 的任务（计划审核停留中）只在超过 30 天硬上限时才退。
+    import("../services/paidJobLedger").then(({ reapStuckPaidJobs }) => {
+      reapStuckPaidJobs()
+        .then((r) => {
+          if (r.refunded > 0 || r.errors > 0 || r.cancelled > 0) {
+            console.warn(
+              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，` +
+                `退积分 ${r.refunded}（含 cancelled ${r.cancelled}），失败 ${r.errors}`,
+            );
+          } else {
+            console.log(
+              `[paidJobLedger] startup reap: 扫描 ${r.scanned}，无需退积分（系统正常）`,
+            );
+          }
+        })
+        .catch((e) => console.warn("[paidJobLedger] startup reap failed:", e?.message));
+    }).catch(() => {});
     if (isGrowthTrendSchedulerDisabled()) {
       console.warn("[growth.scheduler] disabled by DISABLE_GROWTH_TREND_SCHEDULER");
     } else {
@@ -427,6 +446,56 @@ async function startServer() {
       });
     }
   });
+
+  // ── SIGTERM / SIGINT：部署中断或 Ctrl+C 时立刻把所有 active hold 全部退积分 ───
+  //   * Fly/PM2/k8s 关闭进程前会发 SIGTERM
+  //   * 调用 reapStuckPaidJobs({ forceAll: true, reason: "process_killed" }) →
+  //     幂等地把所有还活着的付费任务全部退分（用户不会被部署中断套钱）
+  //   * 只挂一次（避免重复 listener 警告）
+  //   * 超时兜底 10s 后强制 process.exit(0)，防止挂死
+  let shuttingDown = false;
+  const handleShutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.warn(`[server] 收到 ${signal} 信号，开始优雅退出 + 兜底退积分…`);
+    const forceExitTimer = setTimeout(() => {
+      console.warn("[server] 兜底退积分超时（10s），强制退出 process");
+      process.exit(0);
+    }, 10_000);
+    forceExitTimer.unref?.();
+    (async () => {
+      try {
+        const { reapStuckPaidJobs, writeAuditLog } = await import("../services/paidJobLedger");
+        const result = await reapStuckPaidJobs({
+          forceAll: true,
+          reason: "deploy_killed",
+        });
+        await writeAuditLog({
+          event: "shutdown_reap",
+          signal,
+          scanned: result.scanned,
+          refunded: result.refunded,
+          errors: result.errors,
+          cancelled: result.cancelled,
+        }).catch(() => {});
+        if (result.refunded > 0 || result.errors > 0) {
+          console.warn(
+            `[server] ${signal} 扫描 ${result.scanned} 笔付费任务，` +
+              `已幂等退积分 ${result.refunded} 笔，失败 ${result.errors} 笔`,
+          );
+        } else {
+          console.log(`[server] ${signal} 扫描 ${result.scanned} 笔付费任务，无活跃 hold`);
+        }
+      } catch (e: any) {
+        console.error("[server] shutdown reap 失败：", e?.message ?? e);
+      } finally {
+        clearTimeout(forceExitTimer);
+        try { server.close(() => process.exit(0)); } catch { process.exit(0); }
+      }
+    })();
+  };
+  process.once("SIGTERM", () => handleShutdown("SIGTERM"));
+  process.once("SIGINT", () => handleShutdown("SIGINT"));
 }
 
 startServer().catch(console.error);

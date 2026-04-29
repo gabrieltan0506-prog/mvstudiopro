@@ -44,6 +44,8 @@ export default function MyReportsPage() {
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
+  // 取消任务（卡片级）：当前正在请求取消哪一份的 jobId（防止重复点击）
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
   const [hiddenExportPayload, setHiddenExportPayload] = useState<{ title: string; markdown: string; coverUrl?: string | null } | null>(null);
   const hiddenExportRef = useRef<HTMLDivElement>(null);
@@ -76,6 +78,36 @@ export default function MyReportsPage() {
       return hasProcessing ? 30000 : false;
     },
   });
+
+  // 取消正在跑的研报任务（status=processing） → 服务端会幂等退积分到用户账户
+  const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
+    onSuccess: (result) => {
+      setCancellingJobId(null);
+      toast.success(result?.message || "已发起取消，积分将立即返还到您的账户");
+      // 立即刷新让卡片状态从 processing 切到 failed（兜底退积分后台异步生效）
+      refetch();
+    },
+    onError: (err) => {
+      setCancellingJobId(null);
+      toast.error("取消失败：" + err.message);
+    },
+  });
+
+  const handleCancelJob = useCallback((report: Report) => {
+    if (!report.jobId) {
+      toast.error("该报告缺少 jobId，无法取消");
+      return;
+    }
+    if (cancellingJobId) return; // 防止并发取消
+    const ok = window.confirm(
+      `确定要取消任务「${report.lighthouseTitle || report.title}」吗？\n\n` +
+        `取消后系统会立即把 ${report.creditsUsed} 积分返还到您的账户。\n` +
+        `已经在 Google 推演的算力无法停止，但您不会被计费。`,
+    );
+    if (!ok) return;
+    setCancellingJobId(report.jobId);
+    cancelJobMutation.mutate({ jobId: report.jobId });
+  }, [cancelJobMutation, cancellingJobId]);
 
   const reports = (data?.reports ?? []) as Report[];
 
@@ -223,6 +255,7 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {/* 唯一权威下载入口：走 Puppeteer + pdfTemplate.ts（5 套封面模板都生效） */}
             <button
               onClick={() => {
                 if (!selectedReport?.markdown) return;
@@ -234,8 +267,25 @@ export default function MyReportsPage() {
                 });
               }}
               disabled={isExportingBlackGold || !selectedReport?.markdown}
-              style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: isExportingBlackGold ? "rgba(0,0,0,0.40)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1px solid #B8860B", color: isExportingBlackGold ? "rgba(184,134,11,0.5)" : "#B8860B", fontSize: 12, fontWeight: 800, cursor: isExportingBlackGold ? "not-allowed" : "pointer", boxShadow: isExportingBlackGold ? "none" : "0 4px 14px rgba(184,134,11,0.35)", transition: "all 0.2s" }}
-              title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "11px 22px",
+                borderRadius: 12,
+                background: isExportingBlackGold
+                  ? "rgba(0,0,0,0.40)"
+                  : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)",
+                border: "1.5px solid #B8860B",
+                color: isExportingBlackGold ? "rgba(184,134,11,0.5)" : "#B8860B",
+                fontSize: 13,
+                fontWeight: 900,
+                letterSpacing: "0.02em",
+                cursor: isExportingBlackGold ? "not-allowed" : "pointer",
+                boxShadow: isExportingBlackGold ? "none" : "0 6px 20px rgba(184,134,11,0.40)",
+                transition: "all 0.2s",
+              }}
+              title="使用所选封面模板生成 PDF · 5 套配色全部生效"
             >
               {isExportingBlackGold ? <Loader2 size={13} className="animate-spin" /> : <Crown size={13} />}
               {isExportingBlackGold ? "正在压制 PDF…" : "导出战略 PDF"}
@@ -243,6 +293,7 @@ export default function MyReportsPage() {
             {/* 旧的「下载富图文 PDF」入口走 DOM 克隆 → pdf-worker，不读 pdfStyle，
                 所以无论选哪套封面都是 ReportRenderer 固定的焦糖色样式。已下线。
                 上方「导出战略 PDF」走 Puppeteer + pdfTemplate.ts，5 套封面全部生效。 */}
+            {/* Markdown 原文下载（轻量、无样式） */}
             <button
               onClick={handleDownloadMd}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
@@ -372,6 +423,7 @@ export default function MyReportsPage() {
                     key={report.id}
                     report={report}
                     isDownloading={downloadingCardId === report.id}
+                    isCancelling={!!report.jobId && cancellingJobId === report.jobId}
                     onRead={() => {
                       const md = report.reportMarkdown || report.draftMarkdown || "";
                       if (!md) { toast.error("内容尚未生成"); return; }
@@ -379,6 +431,7 @@ export default function MyReportsPage() {
                     }}
                     onEdit={() => setEditingReport(report)}
                     onDownload={() => handleDownloadFromCard(report)}
+                    onCancel={() => handleCancelJob(report)}
                   />
                 ))}
             </div>
@@ -430,7 +483,18 @@ export default function MyReportsPage() {
 
 // ─── 封面卡片组件 ──────────────────────────────────────────────────────────────
 
-function ReportCoverCard({ report, onRead, onEdit, onDownload, isDownloading }: { report: Report; onRead: () => void; onEdit: () => void; onDownload: () => void; isDownloading?: boolean }) {
+function ReportCoverCard({
+  report, onRead, onEdit, onDownload, onCancel,
+  isDownloading, isCancelling,
+}: {
+  report: Report;
+  onRead: () => void;
+  onEdit: () => void;
+  onDownload: () => void;
+  onCancel: () => void;
+  isDownloading?: boolean;
+  isCancelling?: boolean;
+}) {
   const statusMap: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
     processing:        { icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />, label: "推演中…", color: "#d97706" },
     awaiting_review:   { icon: <Pencil size={11} />,        label: "待审核",   color: "#d97706" },
@@ -588,12 +652,39 @@ function ReportCoverCard({ report, onRead, onEdit, onDownload, isDownloading }: 
         )}
 
         {report.status === "processing" && (
-          <div style={{ fontSize: 11, color: "#d97706", textAlign: "center", padding: "8px 0", fontStyle: "italic" }}>
-            约 15-30 分钟，完成后自动更新
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "stretch" }}>
+            <div style={{ fontSize: 11, color: "#d97706", textAlign: "center", padding: "4px 0 0", fontStyle: "italic" }}>
+              约 15-30 分钟，完成后自动更新
+            </div>
+            {report.jobId && (
+              <button
+                onClick={onCancel}
+                disabled={isCancelling}
+                title="立即取消任务并返还积分到您的账户"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "8px 0",
+                  borderRadius: 9,
+                  background: isCancelling ? "rgba(220,38,38,0.30)" : "rgba(220,38,38,0.10)",
+                  border: "1px solid rgba(220,38,38,0.40)",
+                  color: isCancelling ? "rgba(220,38,38,0.60)" : "#dc2626",
+                  fontSize: 11.5,
+                  fontWeight: 800,
+                  cursor: isCancelling ? "not-allowed" : "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                {isCancelling ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
+                {isCancelling ? "取消中…" : "取消任务并返还积分"}
+              </button>
+            )}
           </div>
         )}
         {report.status === "failed" && (
-          <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "6px 0" }}>积分已退回</div>
+          <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "6px 0" }}>积分已返还到您的账户</div>
         )}
       </div>
     </div>

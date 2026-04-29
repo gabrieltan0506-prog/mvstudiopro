@@ -661,6 +661,31 @@ export function TemplateStripBanner({
         </div>
       </div>
 
+      {/* 封面承诺：让用户一眼明白下载会包封面 */}
+      <div
+        style={{
+          marginBottom: 14,
+          padding: "10px 14px",
+          borderRadius: 10,
+          background: `linear-gradient(90deg, ${p.coverGold}15, ${p.accent}10)`,
+          border: `1px dashed ${p.accent}55`,
+          fontSize: 11.5,
+          color: "rgba(61,44,20,0.78)",
+          lineHeight: 1.55,
+          fontWeight: 600,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span style={{ fontSize: 16 }}>✨</span>
+        <span>
+          <b style={{ color: p.primary }}>封面是灵魂</b>。下载 PDF 时会自动把任务时生成的杂志封面图叠到第一页 +
+          套用所选配色。
+          <span style={{ color: "rgba(61,44,20,0.55)" }}>（老报告若没生成过封面图，导出时会临时再生成一次）</span>
+        </span>
+      </div>
+
       {/* 5 张缩略卡横铺（移动端可横向滑动） */}
       <div
         style={{
