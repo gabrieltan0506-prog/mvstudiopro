@@ -122,7 +122,8 @@ export default function GodViewPage() {
     onError: (err) => alert("批准计划失败：" + err.message),
   });
 
-  // 黑金 PDF 导出 · 容器内 Puppeteer 原生渲染 + GCS 签名链接（72h）
+  // 黑金 PDF 导出 · 三套模板（black-gold / harvard / quiet-luxury）
+  const [pdfStyle, setPdfStyle] = useState<"black-gold" | "harvard" | "quiet-luxury">("black-gold");
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
     onSuccess: (result) => {
       const url = result?.signedUrl;
@@ -716,18 +717,31 @@ export default function GodViewPage() {
             <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: 480, margin: "0 auto 32px" }}>
               深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
             </p>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+              {/* 模板选择器 */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: "rgba(0,0,0,0.5)", border: "1px solid rgba(184,134,11,0.35)" }}>
+                <span style={{ fontSize: 12, color: "rgba(184,134,11,0.85)", fontWeight: 700, letterSpacing: 1 }}>模板：</span>
+                <select
+                  value={pdfStyle}
+                  onChange={(e) => setPdfStyle(e.target.value as any)}
+                  style={{ background: "transparent", color: "#B8860B", border: "none", fontWeight: 800, fontSize: 13, cursor: "pointer", outline: "none" }}
+                >
+                  <option value="black-gold" style={{ background: "#1a1a1a", color: "#B8860B" }}>黑金 · 卡布奇诺</option>
+                  <option value="harvard" style={{ background: "#1a1a1a", color: "#B8860B" }}>哈佛红 · 学术权威</option>
+                  <option value="quiet-luxury" style={{ background: "#1a1a1a", color: "#B8860B" }}>静奢白 · 水彩典藏</option>
+                </select>
+              </div>
               <button
                 onClick={() => {
                   if (!pollingJobId) { toast.error("缺少 jobId"); return; }
-                  exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId });
+                  exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId, style: pdfStyle });
                 }}
                 disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
                 style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
                 title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
               >
                 {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
-                {exportBlackGoldPdfMutation.isPending ? "正在压制黑金 PDF…" : "导出黑金 PDF（GCS 签名链接）"}
+                {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（GCS 签名链接）"}
               </button>
               <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
                 <Sparkles size={16} />前往「战略作品快照库」查阅
@@ -739,9 +753,17 @@ export default function GodViewPage() {
           </div>
         )}
 
-        {/* ── 已派发：沉浸式推演过程清单 ── */}
+        {/* ── 已派发：沉浸式推演过程清单（基于 job.status / job.progress 真信号） ── */}
         {phase === "dispatched" && (
-          <DeductionTimeline elapsedSec={elapsedSec} topic={topic} onNavigate={() => navigate("/my-reports")} onReset={() => { setPhase("idle"); setTopic(""); }} />
+          <DeductionTimeline
+            elapsedSec={elapsedSec}
+            topic={topic}
+            jobStatus={jobDoneQuery.data?.status as any}
+            jobProgress={jobDoneQuery.data?.progress as any}
+            jobUpdatedAt={(jobDoneQuery.data as any)?.updatedAt}
+            onNavigate={() => navigate("/my-reports")}
+            onReset={() => { setPhase("idle"); setTopic(""); }}
+          />
         )}
 
         {/* ── 计划审核阶段（Interactions API Collaborative Planning） ── */}
@@ -988,20 +1010,47 @@ const DEDUCTION_STEPS: Array<{ triggerSec: number; icon: string; text: string; s
 function DeductionTimeline({
   elapsedSec,
   topic,
+  jobStatus,
+  jobProgress,
+  jobUpdatedAt,
   onNavigate,
   onReset,
 }: {
   elapsedSec: number;
   topic: string;
+  jobStatus?: "pending" | "planning" | "running" | "awaiting_plan_approval" | "completed" | "failed" | string;
+  jobProgress?: string;
+  jobUpdatedAt?: string | number | null;
   onNavigate: () => void;
   onReset: () => void;
 }) {
+  // 优先解析后端 progress 字符串里的百分比；否则按 elapsedSec/5400 估算（90 分钟上限）
+  const pctMatch = (jobProgress || "").match(/(\d+(?:\.\d+)?)\s*%/);
+  const realPct = pctMatch ? Math.min(100, parseFloat(pctMatch[1])) : null;
+  const fallbackPct = Math.min(100, (elapsedSec / 5400) * 100);
+  const progressPct = realPct ?? fallbackPct;
+
+  // 时间轴：基于 elapsedSec 推断「至少应该到哪一步」（仅作背景示意，不再喧宾夺主）
   const visibleSteps = DEDUCTION_STEPS.filter((s) => s.triggerSec <= elapsedSec);
   const currentStep = visibleSteps[visibleSteps.length - 1];
-  const progressPct = Math.min(100, (elapsedSec / 1800) * 100);
   const elapsed = elapsedSec >= 60
     ? `${Math.floor(elapsedSec / 60)} 分 ${elapsedSec % 60} 秒`
     : `${elapsedSec} 秒`;
+
+  // 心跳新鲜度（多久没收到 progress 更新了）
+  const heartbeatSec = jobUpdatedAt ? Math.max(0, Math.floor((Date.now() - new Date(jobUpdatedAt).getTime()) / 1000)) : null;
+  const heartbeatFresh = heartbeatSec === null ? true : heartbeatSec < 60;
+
+  // 状态标签
+  const statusLabelMap: Record<string, string> = {
+    pending: "排队中",
+    planning: "计划生成中",
+    running: "深潜推演中",
+    awaiting_plan_approval: "等待计划批准",
+    completed: "已完成",
+    failed: "失败",
+  };
+  const statusLabel = (jobStatus && statusLabelMap[jobStatus]) || jobStatus || "运行中";
 
   return (
     <div style={{ animation: "fadeIn 0.5s ease" }}>
@@ -1018,19 +1067,39 @@ function DeductionTimeline({
           </div>
           <div style={{ flex: 1 }}>
             <p style={{ color: "#c8a000", fontWeight: 900, fontSize: 16, margin: "0 0 4px", letterSpacing: "0.02em" }}>
-              全景战报深度推演中
+              全景战报深度推演中 · {statusLabel}
             </p>
             <p style={{ color: "rgba(200,160,0,0.55)", fontSize: 12, margin: 0, fontFamily: "monospace" }}>
-              已运行 {elapsed} · 预计 15–30 分钟完成
+              已运行 {elapsed} · 上限 90 分钟 ·{" "}
+              <span style={{ color: heartbeatFresh ? "rgba(0,220,80,0.85)" : "rgba(239,68,68,0.85)" }}>
+                {heartbeatSec === null ? "等待首次心跳" : `心跳 ${heartbeatSec}s 前`}
+              </span>
             </p>
           </div>
           <div style={{ textAlign: "right" }}>
-            <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>DEPTH SCAN</p>
+            <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>
+              {realPct !== null ? "REAL PROGRESS" : "ELAPSED"}
+            </p>
             <p style={{ color: "#c8a000", fontSize: 18, fontWeight: 900, fontFamily: "monospace" }}>
               {progressPct.toFixed(1)}%
             </p>
           </div>
         </div>
+
+        {/* 后端真信号（job.progress 字符串） */}
+        {jobProgress && (
+          <div style={{ background: "rgba(245,200,80,0.06)", border: "1px solid rgba(245,200,80,0.20)", borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 14, lineHeight: 1, marginTop: 2 }}>📡</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ color: "rgba(245,200,80,0.50)", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.16em", margin: "0 0 4px", fontFamily: "monospace" }}>
+                LIVE BACKEND SIGNAL
+              </p>
+              <p style={{ color: "#f5c842", fontSize: 13, fontWeight: 700, margin: 0, lineHeight: 1.6 }}>
+                {jobProgress}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* 进度条 */}
         <div style={{ height: 4, background: "rgba(200,160,0,0.12)", borderRadius: 2, overflow: "hidden", marginBottom: 16 }}>
@@ -1047,7 +1116,7 @@ function DeductionTimeline({
       {/* 推演步骤时间轴 */}
       <div style={{ background: "linear-gradient(180deg,#080604,#0c0a04)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 16, padding: "20px 24px", marginBottom: 16 }}>
         <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", margin: "0 0 16px", fontFamily: "monospace" }}>
-          ▶ LIVE INTELLIGENCE FEED
+          ▶ 推演阶段示意 · 典型时间轴（具体进度以上方真信号为准）
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {DEDUCTION_STEPS.map((step, idx) => {
