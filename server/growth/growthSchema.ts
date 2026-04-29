@@ -29,6 +29,7 @@ import { getPlatformTemplate } from "./platformTemplates";
 import type { PlatformTrendCollection } from "./trendCollector";
 import { normalizeStringList } from "./trendNormalize";
 import { buildGrowthDataAnalystSummary } from "./growthDataAnalyst";
+import { selectByGrowthPotential } from "./trendGrowthScoring";
 
 export const PLATFORM_LABELS: Record<GrowthPlatform, string> = {
   douyin: "抖音",
@@ -1285,12 +1286,10 @@ function buildPlatformActivities(
     const snapshot = platformSnapshots.find((item) => item.platform === platform);
     const recommendation = platformRecommendations.find((item) => parsePlatformFromRecommendation(item.name) === platform);
     const items = (collection?.items || []).filter((item) => item.contentType !== "topic" && item.bucket !== "douyin_topics");
-    const hotTopics = items
-      .slice()
-      .sort((left, right) => ((right.likes || 0) + (right.views || 0) + (right.comments || 0) * 3) - ((left.likes || 0) + (left.views || 0) + (left.comments || 0) * 3))
-      .slice(0, 4)
-      .map((item) => item.title)
-      .filter(Boolean);
+    // ✨ v4：用增长潜力算法选 hotTopics（18 天窗口 + 排企业号 + 同账号突然爆发 + 强制行业归类）
+    //    替换原"点赞+播放+评论*3"绝对值排行，避免两年前老作品污染
+    const { selected: hotScored } = selectByGrowthPotential(items, { topN: 4, windowDays: 18 });
+    const hotTopics = hotScored.map((s) => s.item.title).filter(Boolean);
     const activityLevel = items.length >= 40 ? "高" : items.length >= 15 ? "中" : "低";
     const suggestedTopics = recommendation?.topicIdeas?.slice(0, 3).map((item) => item.title)
       || snapshot?.sampleTopics?.slice(0, 3)

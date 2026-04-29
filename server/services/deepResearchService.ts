@@ -809,7 +809,7 @@ export async function getUserHolisticContext(userId: string): Promise<{
 
 // ── Fly 磁盘 Job 结构 ────────────────────────────────────────────────────────
 
-export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized" | "platform_ip_matrix" | "competitor_radar" | "vip_baseline" | "vip_monthly";
+export type DeepResearchProductType = "magazine_single" | "magazine_sub" | "personalized" | "enterprise_flagship" | "platform_ip_matrix" | "competitor_radar" | "vip_baseline" | "vip_monthly";
 
 export interface DeepResearchJob {
   jobId: string;
@@ -1679,11 +1679,29 @@ ${job.topic}
       throw new Error("战报内容过短，可能生成失败");
     }
 
-    const reportMarkdown = sanitizeMarkdown(rawReportMarkdown);
+    let reportMarkdown = sanitizeMarkdown(rawReportMarkdown);
 
     await updateProgress(stages[3]);
 
-    // ── 后处理：灯塔标题 + 封面图 + 摘要 + 耗时 ──────────────────────────────
+    // ── 后处理：灯塔标题 + 封面图 + 场景配图 + 摘要 + 耗时 ────────────────
+
+    // 0. 自动场景配图（≥ 3 张）— 用 nano banana 2 (gemini-3.1-flash-image-preview，省钱)
+    //    用户痛点：报告太空泛、纯文字没温度，应用场景需要视觉化
+    //    实现：用 LLM 抽 3-5 个"应用场景 / 人物特色 / 行业生态"画面，并行生图，按章节锚点注入
+    try {
+      const sceneImages = await generateSceneIllustrations({
+        topic: job.topic,
+        reportMarkdown,
+        vercelBaseUrl: String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, ""),
+      });
+      if (sceneImages.length > 0) {
+        reportMarkdown = injectSceneImagesIntoMarkdown(reportMarkdown, sceneImages);
+        console.log(`[deepResearch] 已注入 ${sceneImages.length} 张场景配图（nano banana 2）`);
+      }
+    } catch (e: any) {
+      // 配图失败不阻断主流程
+      console.warn("[deepResearch] 场景配图生成失败（不阻断）：", e?.message);
+    }
 
     // 1. 灯塔标题（Gemini Flash 快速生成）
     let lighthouseTitle = job.topic;
@@ -1836,4 +1854,176 @@ ${job.topic}
     clearInterval(heartbeatTimer);
     clearTimeout(watchdogTimer);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 自动场景配图（≥ 3 张） — nano banana 2 (gemini-3.1-flash-image-preview)
+// ─────────────────────────────────────────────────────────────────────────────
+// 设计：
+//   1. 用 LLM 解析报告 → 输出 3-5 个"应用场景 / 人物特色 / 行业生态"画面
+//   2. 每张图带 sectionAnchor（章节标题）+ caption（中文图说）+ imagePrompt（英文）
+//   3. 并行调用 nanoImage 端点（tier=flash，省钱）
+//   4. 按 sectionAnchor 注入到对应章节段落后；找不到锚点则集中放到文末"可视化场景图集"
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SceneIllustration {
+  sectionAnchor: string;
+  caption: string;
+  imagePrompt: string;
+  imageUrl?: string;
+  /** 可选 aspect ratio，默认 16:9（横版更适合插入正文） */
+  aspectRatio?: "16:9" | "4:3" | "1:1";
+}
+
+async function generateSceneIllustrations(params: {
+  topic: string;
+  reportMarkdown: string;
+  vercelBaseUrl: string;
+  /** 最少 3 张，最多 6 张 */
+  minCount?: number;
+  maxCount?: number;
+}): Promise<SceneIllustration[]> {
+  const minCount = params.minCount ?? 3;
+  const maxCount = params.maxCount ?? 5;
+
+  // ── 1. 用 LLM 抽场景（仅取报告前 12000 字喂给 LLM，避免 prompt 过长） ──
+  const reportSnippet = params.reportMarkdown.slice(0, 12000);
+  const sceneJsonText = await generate(
+    "gemini-3.1-pro-preview",
+    `你是商业杂志的视觉总监。下面是一份课题为《${params.topic}》的战略研报正文（Markdown）。
+
+【任务】
+请从中抽取 ${minCount}-${maxCount} 个最具代表性的"应用场景 / 目标人物特写 / 行业生态画面"，作为本报告的可视化场景图。
+
+【场景挑选规则】
+1. 必须是报告里实际涉及到的具体场景（例：五一假期家庭出游、地铁通勤族刷手机、健身房私教课、跨境电商打包发货中心）
+2. 优先挑能传达情绪 + 故事感 + 品牌调性的画面，避免抽象图表/PPT 风
+3. 至少包含一张"目标用户人物特写"（例：30 岁都市白领女性 / 三代同堂家庭）
+4. 至少包含一张"应用场景全景"（例：商场快闪店现场 / 工厂流水线 / 直播间）
+5. 至少包含一张"行业生态画面"（例：跨境物流仓 / 城市地标夜景 / 节庆现场）
+
+【输出格式】
+仅输出严格 JSON，不带任何 markdown / 注释 / 多余文字。结构：
+{
+  "scenes": [
+    {
+      "sectionAnchor": "章节锚点（必须是报告里出现过的 H1 或 H2 标题文字，让前端能精准找到插入位置）",
+      "caption": "中文图说，≤ 30 字，作为图片下方的注解",
+      "imagePrompt": "英文 prompt，4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
+      "aspectRatio": "16:9"
+    }
+  ]
+}
+
+【报告正文】
+${reportSnippet}`,
+    2,
+    { temperature: 0.4, topP: 0.9, maxTokens: 2048 },
+  );
+
+  let parsed: { scenes: SceneIllustration[] };
+  try {
+    // 容错：去掉 ```json 包装
+    const cleaned = sceneJsonText.replace(/^```(?:json)?\s*|\s*```\s*$/g, "").trim();
+    parsed = JSON.parse(cleaned);
+  } catch (e: any) {
+    console.warn("[deepResearch][scenes] JSON 解析失败:", e?.message, "raw:", sceneJsonText.slice(0, 200));
+    return [];
+  }
+  const scenes = (parsed.scenes || []).slice(0, maxCount);
+  if (scenes.length < minCount) {
+    console.warn(`[deepResearch][scenes] LLM 仅返回 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
+    return [];
+  }
+
+  // ── 2. 并行调用 nanoImage（gemini-3.1-flash-image-preview）生图 ──
+  const generated = await Promise.all(
+    scenes.map(async (scene, i): Promise<SceneIllustration | null> => {
+      try {
+        const res = await fetch(`${params.vercelBaseUrl}/api/google?op=nanoImage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: scene.imagePrompt,
+            tier: "flash", // ⚡ 省钱：用 nano banana 2，不用 pro
+            aspectRatio: scene.aspectRatio || "16:9",
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+        if (!res.ok) {
+          console.warn(`[deepResearch][scenes] 第 ${i + 1} 张失败：${res.status}`);
+          return null;
+        }
+        const j = await res.json();
+        if (!j?.imageUrl) return null;
+        return { ...scene, imageUrl: String(j.imageUrl) };
+      } catch (e: any) {
+        console.warn(`[deepResearch][scenes] 第 ${i + 1} 张异常：${e?.message}`);
+        return null;
+      }
+    }),
+  );
+
+  return generated.filter((x): x is SceneIllustration => x !== null && Boolean(x.imageUrl));
+}
+
+/**
+ * 把场景图按 sectionAnchor 插入到 markdown 对应章节段落后。
+ *
+ * 排版审美约束：
+ * - 图片用 figure 块（CSS 控制 page-break-inside: avoid，不切页）
+ * - caption 用 em + 居中（CSS 在 pdfTemplate 里控制）
+ * - 每张图独立一段，前后空行（避免与正文文字粘连）
+ * - 找不到锚点的图集中放到文末"# 附录：可视化场景图集"，前面留空两行
+ */
+function injectSceneImagesIntoMarkdown(markdown: string, scenes: SceneIllustration[]): string {
+  let out = markdown;
+  const orphans: SceneIllustration[] = [];
+
+  for (const scene of scenes) {
+    if (!scene.imageUrl) continue;
+    const block = `\n\n<figure class="scene-figure">\n  <img src="${scene.imageUrl}" alt="${escapeHtml(scene.caption)}" />\n  <figcaption>${escapeHtml(scene.caption)}</figcaption>\n</figure>\n\n`;
+
+    // 尝试找锚点：## ${anchor}  或  # ${anchor}（允许 emoji / 数字编号前缀）
+    const anchor = scene.sectionAnchor.trim();
+    if (!anchor) {
+      orphans.push(scene);
+      continue;
+    }
+    const safeAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // 匹配：H1 或 H2 标题行 + 紧跟的第一段（直到下一个空行）
+    const re = new RegExp(`(^|\\n)(#{1,3}[^\\n]*${safeAnchor}[^\\n]*)\\n([\\s\\S]*?)(\\n\\n|$)`, "i");
+    const m = out.match(re);
+    if (m) {
+      // 在锚点段落后注入
+      const idx = (m.index ?? 0) + m[0].length;
+      out = out.slice(0, idx) + block + out.slice(idx);
+    } else {
+      orphans.push(scene);
+    }
+  }
+
+  // 孤儿图集中放到文末（在思维链 / 来源附录之前注入）
+  if (orphans.length > 0) {
+    const orphanBlock =
+      `\n\n# 附录：可视化场景图集\n\n` +
+      orphans
+        .map((s) => {
+          if (!s.imageUrl) return "";
+          return `<figure class="scene-figure">\n  <img src="${s.imageUrl}" alt="${escapeHtml(s.caption)}" />\n  <figcaption>${escapeHtml(s.caption)}</figcaption>\n</figure>`;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+    out += orphanBlock;
+  }
+
+  return out;
+}
+
+function escapeHtml(text: string): string {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
