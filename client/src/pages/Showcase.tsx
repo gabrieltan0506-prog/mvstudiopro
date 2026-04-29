@@ -24,12 +24,12 @@ const AI_GALLERY_ITEMS: {
   desc: string;
   icon: React.ElementType;
 }[] = [
-  // Kling 生成
+  // 影视级视频生成
   {
     id: "kling-cinematic",
     title: "暴风雨天台的孤独身影",
     style: "电影感",
-    engine: "Kling V1.5",
+    engine: "影视级视频",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OfYyGiJYGGEyyyaO.jpg",
     desc: "金色夕阳穿透乌云，青橙色调，王家卫风格电影分镜",
@@ -39,7 +39,7 @@ const AI_GALLERY_ITEMS: {
     id: "kling-anime",
     title: "樱花花瓣中的少女",
     style: "动漫风",
-    engine: "Kling V1.5",
+    engine: "影视级视频",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wJFLERjbQmHglxpX.jpg",
     desc: "粉色长发少女被樱花环绕，霓虹色彩，新海诚美学",
@@ -49,7 +49,7 @@ const AI_GALLERY_ITEMS: {
     id: "kling-documentary",
     title: "非洲大草原角马迁徙",
     style: "纪录片",
-    engine: "Kling V1.5",
+    engine: "影视级视频",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/kqzgxoltqOaoIBeB.jpg",
     desc: "BBC 地球脉动级别航拍，金色阳光下尘雾弥漫",
@@ -59,7 +59,7 @@ const AI_GALLERY_ITEMS: {
     id: "kling-realistic",
     title: "上海夜市霓虹街景",
     style: "写实片",
-    engine: "Kling V1.5",
+    engine: "影视级视频",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/HgZpAMNOnPhuOARA.jpg",
     desc: "年轻女性走过夜市，霓虹灯倒映湿路面，街头摄影风格",
@@ -69,18 +69,18 @@ const AI_GALLERY_ITEMS: {
     id: "kling-scifi",
     title: "外星独石与宇航员",
     style: "科幻片",
-    engine: "Kling V1.5",
+    engine: "影视级视频",
     engineColor: "#F59E0B",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/UuptArvXiNFSMyPj.jpg",
     desc: "外星独石漂浮荒凉地表，全息数据流，宇航员检查文物",
     icon: Rocket,
   },
-  // Nano Banana Pro 生成
+  // 高保真图像引擎生成
   {
     id: "nbp-cinematic",
     title: "电影感分镜 — 孤独旅者",
     style: "电影感",
-    engine: "Nano Banana Pro",
+    engine: "高保真图像引擎",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/wBlJrGcAenmdOJzN.jpg",
     desc: "戏剧性光影对比，宽银幕构图，电影级色彩分级",
@@ -90,7 +90,7 @@ const AI_GALLERY_ITEMS: {
     id: "nbp-anime",
     title: "动漫风分镜 — 魔法少女",
     style: "动漫风",
-    engine: "Nano Banana Pro",
+    engine: "高保真图像引擎",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/OJCxsguWVlqtYkGp.jpg",
     desc: "日系动漫视觉语言，鲜艳色彩，光效粒子",
@@ -100,7 +100,7 @@ const AI_GALLERY_ITEMS: {
     id: "nbp-documentary",
     title: "纪录片分镜 — 手工匠人",
     style: "纪录片",
-    engine: "Nano Banana Pro",
+    engine: "高保真图像引擎",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/IlVwTeXIjLZQlCcB.jpg",
     desc: "自然窗光，真实纹理，国家地理风格",
@@ -110,7 +110,7 @@ const AI_GALLERY_ITEMS: {
     id: "nbp-realistic",
     title: "写实片分镜 — 城市街景",
     style: "写实片",
-    engine: "Nano Banana Pro",
+    engine: "高保真图像引擎",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/hOAAujvqBydDLPwF.jpg",
     desc: "极度真人摄影品质，自然光线，街头纪实",
@@ -120,7 +120,7 @@ const AI_GALLERY_ITEMS: {
     id: "nbp-scifi",
     title: "科幻片分镜 — 未来世界",
     style: "科幻片",
-    engine: "Nano Banana Pro",
+    engine: "高保真图像引擎",
     engineColor: "#8B5CF6",
     imageUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663335430453/cvkgbYFVBTswkjqa.jpg",
     desc: "赛博朋克光效，全息界面，未来科技感",
@@ -374,7 +374,7 @@ function AIGallerySection() {
           </div>
           <div>
             <h2 className="text-xl font-bold">AI 风格作品集</h2>
-            <p className="text-sm text-muted-foreground">Kling V1.5 + Nano Banana Pro 引擎生成的分镜风格展示</p>
+            <p className="text-sm text-muted-foreground">影视级视频引擎 + 高保真图像引擎生成的分镜风格展示</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -391,8 +391,8 @@ function AIGallerySection() {
       <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2">
         {[
           { id: "all", label: "全部", icon: ImageIcon },
-          { id: "kling", label: "Kling V1.5", icon: Wand2 },
-          { id: "nbp", label: "Nano Banana Pro", icon: Palette },
+          { id: "kling", label: "影视级视频", icon: Wand2 },
+          { id: "nbp", label: "高保真图像", icon: Palette },
           { id: "电影感", label: "电影感", icon: Film },
           { id: "动漫风", label: "动漫风", icon: Sparkles },
           { id: "纪录片", label: "纪录片", icon: Camera },

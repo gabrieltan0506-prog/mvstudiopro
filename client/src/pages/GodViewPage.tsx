@@ -5,6 +5,7 @@ import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
+import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -148,6 +149,10 @@ export default function GodViewPage() {
   const [showDebug, setShowDebug] = useState(false);
   const [launchTime, setLaunchTime] = useState<Date | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+
+  // 企业 IP 基因（共享 PlatformPage 的 localStorage["ipProfile.v1"]）
+  const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
+  const [showIpModal, setShowIpModal] = useState(false);
   // 当前正在轮询的 jobId（从 launchMutation.data 取出）
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
   // 普通用户轮询：dispatched 后每 20s 检查一次 job 状态
@@ -259,6 +264,12 @@ export default function GodViewPage() {
 
   const handleLaunch = () => {
     if (!topic.trim()) { toast.error("请输入研究课题"); return; }
+    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
+    if (!isIpProfileReady(ipProfile)) {
+      setShowIpModal(true);
+      toast.message("启动深潜前，请先载入企业专属 IP 基因");
+      return;
+    }
     const discount = isBundlePromo ? "（满月老用户双本促销）" : isFirst && currentProduct.firstPrice !== undefined ? "（首购优惠价）" : "";
     if (!window.confirm(`启动「${currentProduct.label}」将扣除 ${cost.toLocaleString()} 点${discount}，确定执行？`)) return;
     setPhase("launching");
@@ -269,6 +280,7 @@ export default function GodViewPage() {
       isFirstTime: isFirst,
       productType: selectedProduct,
       isBundlePromo,
+      ipProfile,
       ...(suppText.trim() ? { supplementaryText: suppText.trim() } : {}),
       ...(suppFiles.length ? { supplementaryFiles: suppFiles } : {}),
     });
@@ -371,6 +383,14 @@ export default function GodViewPage() {
         overflow: "hidden",
       }}
     >
+      {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件） */}
+      <IpProfileModal
+        open={showIpModal}
+        value={ipProfile}
+        onChange={setIpProfile}
+        onClose={() => setShowIpModal(false)}
+      />
+
       {/* 卡布奇諾暖金多层光晕 + 微噪点（提升质感与「咖啡的层次感」）*/}
       <div style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0 }}>
         {/* 顶部奶泡高光（让顶端阅读区更明亮，文字更易读）*/}
@@ -434,6 +454,55 @@ export default function GodViewPage() {
               <span key={t} style={{ fontSize: 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: "5px 14px" }}>{t}</span>
             ))}
           </div>
+
+          {/* 企业 IP 基因入口（与 PlatformPage 共享 localStorage["ipProfile.v1"]） */}
+          <button
+            type="button"
+            onClick={() => setShowIpModal(true)}
+            style={{
+              display: "block",
+              margin: "20px auto 0",
+              maxWidth: 720,
+              width: "100%",
+              padding: "14px 20px",
+              borderRadius: 16,
+              border: isIpProfileReady(ipProfile)
+                ? "1px solid rgba(99,102,241,0.45)"
+                : "1px solid rgba(252,211,77,0.55)",
+              background: isIpProfileReady(ipProfile)
+                ? "linear-gradient(135deg,rgba(79,70,229,0.10),rgba(99,102,241,0.05))"
+                : "rgba(252,211,77,0.10)",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "filter 200ms",
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1.06)"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.filter = "brightness(1)"; }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.22em", color: "#4F46E5", marginBottom: 4 }}>
+                  {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
+                </div>
+                {isIpProfileReady(ipProfile) ? (
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <span style={{ color: "#4F46E5", fontWeight: 700 }}>{ipProfile.industry}</span>
+                    <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
+                    <span style={{ color: "#3d2c14" }}>{ipProfile.advantage}</span>
+                    <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
+                    <span style={{ color: "#a8761b", fontWeight: 700 }}>{ipProfile.flagship}</span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14" }}>
+                    点此校准护城河 / 高客单锚点 → 推演会在 80% 篇幅锁定你的转化路径
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap" }}>
+                {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
+              </div>
+            </div>
+          </button>
         </div>
 
         {/* 战略作品快照库 · 醒目入口卡 */}
@@ -471,14 +540,14 @@ export default function GodViewPage() {
           </div>
         </div>
 
-        {/* ── Deep Research Max · 三大 Agent 场景入口 ── */}
+        {/* ── 战略智库 · 三大 Agent 场景入口 ── */}
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "#7a5410", letterSpacing: "0.04em" }}>
-              👑 Deep Research Max · 高阶 Agent 场景
+              👑 高阶 Agent 场景
             </h3>
             <span style={{ fontSize: 11, color: "rgba(122,84,16,0.55)" }}>
-              基于 Interactions API · 计划→审批→深潜，支持图片/PDF/语音输入
+              计划→审批→深潜，支持图片 / PDF / 语音输入
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
@@ -860,7 +929,7 @@ export default function GodViewPage() {
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#a8761b", letterSpacing: "0.04em" }}>研究计划已生成 · 请审核后批准</h3>
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "rgba(160,140,90,0.85)", lineHeight: 1.7 }}>
-              Deep Research Max Agent 已完成研究计划制定。请审阅以下计划方向，您可以直接批准开始深潛，也可以填写补充意见后再批准（例如：「重点关注小红书数据」「不要分析快手」「补充 IP 衍生品角度」）。
+              战略智库 Agent 已完成研究计划制定。请审阅以下计划方向，您可以直接批准开始深潜，也可以填写补充意见后再批准（例如：「重点关注小红书数据」「不要分析快手」「补充 IP 衍生品角度」）。
             </p>
 
             {/* 计划文本 */}

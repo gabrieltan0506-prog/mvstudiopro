@@ -5810,10 +5810,21 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           planInteractionId: job.planInteractionId || null,
           interactionId: job.interactionId || null,
           error: job.error || null,
+          errorDetail: job.errorDetail || null,
           createdAt: job.createdAt,
           completedAt: job.completedAt || null,
           productType: job.productType || null,
           topic: job.topic,
+          // ── Debug 信息（供 supervisor / 高阶用户排查）──
+          lastHeartbeatAt: job.lastHeartbeatAt || null,
+          pid: typeof job.pid === "number" ? job.pid : null,
+          attemptCount: typeof job.attemptCount === "number" ? job.attemptCount : null,
+          dbRecordId: typeof job.dbRecordId === "number" ? job.dbRecordId : null,
+          creditsUsed: typeof job.creditsUsed === "number" ? job.creditsUsed : null,
+          // 上传文件透传（让前端能确认到底有没有把文件传到后端）
+          supplementaryFiles: Array.isArray(job.supplementaryFiles)
+            ? job.supplementaryFiles.map((f) => ({ name: f.name, type: f.type, mimeType: f.mimeType }))
+            : [],
         };
       }),
   }),
@@ -5836,6 +5847,15 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           url: z.string().url().max(1000),    // 公开 HTTPS URL
           gcsUri: z.string().max(500),         // gs://bucket/path
         })).max(5).optional(),
+        // 企业专属 IP 基因（B 端拦截弹窗，前端 localStorage["ipProfile.v1"]）
+        // 注入到合成阶段 prompt 的 [全局战略预设] 段，让推演锁定高客单转化路径。
+        ipProfile: z.object({
+          industry: z.string().max(200),
+          advantage: z.string().max(400),
+          audience: z.string().max(200),
+          taboos: z.string().max(400).optional(),
+          flagship: z.string().max(400),
+        }).optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const userId = ctx.user.id;
@@ -5862,7 +5882,11 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           const { createDeepResearchJob, runDeepResearchAsync } = await import("./services/deepResearchService");
           const result = await createDeepResearchJob(
             String(userId), input.topic, deductResult.source === "admin" ? 0 : cost, productType,
-            { supplementaryText: input.supplementaryText, supplementaryFiles: input.supplementaryFiles },
+            {
+              supplementaryText: input.supplementaryText,
+              supplementaryFiles: input.supplementaryFiles,
+              ipProfile: input.ipProfile,
+            },
           );
           jobId = result.jobId;
           dbRecordId = result.dbRecordId;

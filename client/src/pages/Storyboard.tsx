@@ -92,21 +92,21 @@ type VisualStyle = "cinematic" | "anime" | "documentary" | "realistic" | "scifi"
 const MODEL_OPTIONS: { value: ModelOption; label: string; desc: string; cost: string; icon: React.ElementType }[] = [
   {
     value: "flash",
-    label: "Gemini 3.0 Flash",
+    label: "极速版",
     desc: "快速生成，适合日常使用",
     cost: "8 Credits",
     icon: Zap,
   },
   {
     value: "gpt5",
-    label: "GPT 5.1",
+    label: "灵感版",
     desc: "更创意的分镜描述与专业建议",
     cost: "20 Credits",
     icon: Crown,
   },
   {
     value: "pro",
-    label: "Gemini 3.0 Pro",
+    label: "旗舰版",
     desc: "最精准的分镜描述与专业分析",
     cost: "15 Credits",
     icon: Crown,
@@ -612,7 +612,7 @@ export default function StoryboardPage() {
           );
           if (matchedPreset) setBgmStylePreset((matchedPreset as any).id);
         }
-        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt5" ? "GPT 5.1" : "Gemini 3.0 Pro"}，5 Credits）`);
+        toast.success(`AI 已推荐 BGM 描述（${recommendBgmModel === "gpt5" ? "灵感版" : "旗舰版"}，5 Credits）`);
         setShowBgmPanel(true);
       }
     } catch (error: any) {
@@ -807,7 +807,7 @@ export default function StoryboardPage() {
                       <X className="w-5 h-5 text-muted-foreground" />
                     </button>
                   </div>
-                  <p className="text-muted-foreground text-sm mb-1">接入 Gemini 大模型，根据描述生成专业脚本</p>
+                  <p className="text-muted-foreground text-sm mb-1">接入旗舰大模型，根据描述生成专业脚本</p>
                   <p className="text-muted-foreground text-sm mb-3">例如：「一对情侣在雨天的东京重逢，从陈旧的咖啡厅开始」</p>
                   <Textarea
                     value={inspirationInput}
@@ -1005,7 +1005,7 @@ export default function StoryboardPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-yellow-500 text-xs mt-1.5">
-                  {selectedModel === "gpt5" ? "GPT 5.1 每次生成消耗 20 Credits" : selectedModel === "pro" ? "Gemini 3.0 Pro 每次生成消耗 15 Credits" : "Gemini 3.0 Flash 每次生成消耗 8 Credits"}
+                  {selectedModel === "gpt5" ? "灵感版 每次生成消耗 20 Credits" : selectedModel === "pro" ? "旗舰版 每次生成消耗 15 Credits" : "极速版 每次生成消耗 8 Credits"}
                 </p>
               </div>
 
@@ -1312,7 +1312,7 @@ export default function StoryboardPage() {
                         {isRecommendingBgm ? "AI 分析分镜中..." : "AI 智能推荐 BGM 描述"}
                       </p>
                       <p className="text-muted-foreground text-sm mt-0.5">
-                        Gemini 3.0 Pro / GPT 5.1 分析分镜内容，自动填入最适合的 BGM 描述（5 Credits）
+                        AI 旗舰版分析分镜内容，自动填入最适合的 BGM 描述（5 Credits）
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1321,8 +1321,8 @@ export default function StoryboardPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="pro">Gemini 3.0 Pro</SelectItem>
-                          <SelectItem value="gpt5">GPT 5.1</SelectItem>
+                          <SelectItem value="pro">旗舰版</SelectItem>
+                          <SelectItem value="gpt5">灵感版</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

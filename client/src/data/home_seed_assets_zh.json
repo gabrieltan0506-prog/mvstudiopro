@@ -3,55 +3,55 @@
     {
       "title": "重庆洪崖洞火锅夜景",
       "imageUrl": "/showcase/hotpot.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "重庆洪崖洞夜景火锅餐厅，热气腾腾的铜锅火锅，红油翻滚，桌上摆满毛肚牛肉蔬菜和啤酒，年轻朋友围桌聊天，江景夜色映在玻璃窗上，城市烟火气十足，电影级灯光，商业摄影构图"
     },
     {
       "title": "上海迪士尼乐园",
       "imageUrl": "/showcase/disney.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "上海迪士尼乐园城堡前游客拍照场景，年轻情侣和朋友自拍，彩色气球和童话城堡背景，阳光明亮，欢乐旅游氛围，真实摄影风格，商业海报级画面"
     },
     {
       "title": "北京故宫博物院",
       "imageUrl": "/showcase/forbiddencity.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "北京故宫博物院展厅，古代青铜器与瓷器在玻璃展柜中展示，暖色博物馆灯光，游客安静参观，红色宫廷建筑背景，文化氛围庄重典雅，纪录片摄影风格"
     },
     {
       "title": "深圳无人机烟花秀",
       "imageUrl": "/showcase/shenzhen.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "深圳华润大厦夜景，无人机灯光秀与烟花同时升空，天空形成科技图案，城市高楼灯光璀璨，人群在广场观看并拍照，现代都市科技氛围，电影级夜景摄影"
     },
     {
       "title": "女团演唱会舞台",
       "imageUrl": "/showcase/concert.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "大型流行音乐演唱会舞台，年轻女团歌手在舞台中央演唱，聚光灯和烟雾灯光效果，观众挥舞荧光棒，舞台灯光绚丽，流行音乐氛围，电影级舞台摄影"
     },
     {
       "title": "咖啡馆下午茶",
       "imageUrl": "/showcase/cafe.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "城市精品咖啡馆下午茶场景，三位职场女性在窗边聊天，桌上摆着咖啡甜点和鲜花，阳光透过落地窗照在桌面，温馨时尚生活方式摄影风格"
     },
     {
       "title": "宠物泳池抓球",
       "imageUrl": "/showcase/dog.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "黑色拉布拉多在泳池游泳叼着网球，画面半水面半水下，阳光照射水面产生折射光影，水花飞溅，宠物运动瞬间抓拍，高速摄影风格"
     },
     {
       "title": "拳击训练对抗",
       "imageUrl": "/showcase/boxing.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "拳击训练馆内，两名拳手戴拳套对练，聚光灯照亮拳击台，汗水飞溅，紧张对抗氛围，体育纪实摄影风格"
     },
     {
       "title": "钢琴演奏现场",
       "imageUrl": "/showcase/piano.jpg",
-      "model": "Nano Banana Pro",
+      "model": "高保真图像引擎",
       "prompt": "音乐厅舞台，一位年轻女钢琴家坐在三角钢琴前演奏，舞台灯光柔和，旁边摆放鲜花，观众席虚化背景，古典音乐氛围浓厚"
     }
   ]

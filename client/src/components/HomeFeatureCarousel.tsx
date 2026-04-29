@@ -100,7 +100,7 @@ const CAROUSEL_CARDS = [
     tag: "今日上线",
     title: "我的战报快照库升级",
     subtitle: "封面图 + 灯塔标题 + 摘要 · 全新四栏卡片展示",
-    desc: "「我的战报」全面升级！每份报告展示 Nano Banana Pro 生成的艺术封面（3:4 比例）、AI 燈塔标题、内容摘要与生成耗时，一键全息阅览或下载 Markdown 原文。",
+    desc: "「我的战报」全面升级！每份报告展示 AI 生成的艺术封面（3:4 比例）、灯塔标题、内容摘要与生成耗时，一键全息阅览或下载 Markdown 原文。",
     pills: ["艺术封面", "灯塔标题", "全息阅览", "Markdown 下载"],
     icon: BookOpen,
     accentColor: "#38bdf8",

@@ -399,6 +399,34 @@ export default function AdminPanel() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {/* 产品包快捷预设（点一下自动填积分 + 备注） */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {[
+                    { id: "trial", title: "💰 单次体验包", price: "560",   credits: "800",   desc: "适合测试水温。可执行 1 次深潜。",   color: "#8cefff" },
+                    { id: "biz",   title: "💼 主力商务包", price: "2,800", credits: "4000",  desc: "锚定企业日常需求。可执行 5 次。",   color: "#ffdd44" },
+                    { id: "org",   title: "👑 机构大户包", price: "8,400", credits: "12000", desc: "针对矩阵号。可执行 15 次。",        color: "#ff7fd5" },
+                  ].map((pkg) => {
+                    const isActive = codeCredits === pkg.credits;
+                    return (
+                      <button
+                        type="button"
+                        key={pkg.id}
+                        onClick={() => { setCodeCredits(pkg.credits); setCodeNote(pkg.title); }}
+                        className={`p-4 rounded-xl border text-left transition cursor-pointer ${
+                          isActive ? "border-white/30 bg-white/[0.07] shadow-[0_0_0_1px_rgba(255,255,255,0.08)]" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+                        }`}
+                      >
+                        <div style={{ color: pkg.color }} className="text-sm font-bold mb-1">{pkg.title}</div>
+                        <div className="text-xl font-black text-white">¥{pkg.price} <span className="text-[10px] text-gray-400">/ {pkg.credits} 分</span></div>
+                        <div className="text-[10px] text-gray-500 mt-2 leading-relaxed">{pkg.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  · 点击产品包自动填入「Credits」与「备注」 · 也可手动调整下面字段。
+                </p>
+
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">生成数量</label>

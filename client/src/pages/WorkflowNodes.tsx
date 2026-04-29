@@ -1392,12 +1392,12 @@ export default function WorkflowNodes() {
         {/* 说明卡 */}
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
           <div className="flex items-center gap-2 font-semibold text-white/90">
-            <span className="rounded-full border border-pink-400/40 bg-pink-400/10 px-2 py-0.5 text-[11px] font-bold text-pink-300">Suno V5.5</span>
-            <span className="rounded-full border border-violet-400/40 bg-violet-400/10 px-2 py-0.5 text-[11px] font-bold text-violet-300">Gemini 2.5 Pro</span>
+            <span className="rounded-full border border-pink-400/40 bg-pink-400/10 px-2 py-0.5 text-[11px] font-bold text-pink-300">AI 配乐</span>
+            <span className="rounded-full border border-violet-400/40 bg-violet-400/10 px-2 py-0.5 text-[11px] font-bold text-violet-300">智能脚本</span>
             自动配乐
           </div>
           <p className="mt-2 leading-relaxed">
-            系统将根据脚本内容，由 Gemini 2.5 Pro 自动生成专业 Music Prompt，再送至 Suno V5.5 合成纯音乐 BGM。
+            系统将根据脚本内容，自动生成专业 Music Prompt，再送至 AI 配乐引擎合成纯音乐 BGM。
             无需手动填写 Prompt，点击「生成配乐」即可。
           </p>
         </div>
@@ -1421,7 +1421,7 @@ export default function WorkflowNodes() {
               value={musicPrompt}
               onChange={(e) => setMusicPrompt(e.target.value)}
               rows={3}
-              placeholder="留空则由 Gemini 自动根据脚本生成…"
+              placeholder="留空则由 AI 自动根据脚本生成…"
               className="w-full rounded-xl border border-white/15 bg-[#0b1020] p-3 pr-12 text-sm text-white placeholder-white/25"
             />
             <div className="absolute right-3 top-3">
