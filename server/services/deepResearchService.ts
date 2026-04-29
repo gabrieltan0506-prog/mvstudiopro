@@ -2035,6 +2035,79 @@ interface SceneIllustration {
   aspectRatio?: "16:9" | "4:3" | "1:1";
 }
 
+/**
+ * 容错解析 generateSceneIllustrations 的 LLM 输出 JSON。
+ *
+ * 失败模式（已在 fly logs 见到）：
+ *   - LLM 输出被 maxOutputTokens 截断 → 末尾字符串没闭合 → JSON.parse 抛
+ *     `Unterminated string in JSON at position N`
+ *
+ * 修复策略：
+ *   1. 去掉 ```json 包装，直接 JSON.parse
+ *   2. 失败 → 找到最后一个完整 `}` 边界，切掉残缺尾部 + 自动补 `]}` 闭合
+ *   3. 失败 → 返回 null（让外层走 retry）
+ *
+ * 注意：此函数保证不抛错，纯返回值。
+ */
+function parseScenesJson(raw: string): { scenes: SceneIllustration[] } | null {
+  if (!raw || !raw.trim()) return null;
+  const cleaned = raw.replace(/^```(?:json)?\s*|\s*```\s*$/g, "").trim();
+
+  // try 1: 严格 parse
+  try {
+    const obj = JSON.parse(cleaned);
+    if (obj && Array.isArray(obj.scenes)) return obj as { scenes: SceneIllustration[] };
+  } catch { /* fall through */ }
+
+  // try 2: 修复被截断的 JSON（兼容 LLM 在 JSON 前后夹的废话 / markdown）
+  //   定位 outer `{`（在 "scenes" key 之前最近的 `{`）→ 扫描到最后一个完整对象 `}`
+  //   → 切片补 `]}` 闭合再 parse
+  try {
+    const sceneKeyIdx = cleaned.indexOf('"scenes"');
+    if (sceneKeyIdx < 0) return null;
+    let outerObjStart = -1;
+    for (let i = sceneKeyIdx; i >= 0; i--) {
+      if (cleaned[i] === "{") { outerObjStart = i; break; }
+    }
+    if (outerObjStart < 0) return null;
+    const arrayStartIdx = cleaned.indexOf("[", sceneKeyIdx);
+    if (arrayStartIdx < 0) return null;
+
+    // 从 arrayStartIdx 之后扫描，记录最后一个对象边界（数组内 depth 由 1→0 时遇到 `}`）
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let lastObjectEnd = -1;
+    for (let i = arrayStartIdx; i < cleaned.length; i++) {
+      const ch = cleaned[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) lastObjectEnd = i;
+      }
+    }
+    if (lastObjectEnd <= arrayStartIdx) return null;
+
+    const repaired = cleaned.slice(outerObjStart, lastObjectEnd + 1) + "]}";
+    const obj = JSON.parse(repaired);
+    if (obj && Array.isArray(obj.scenes)) {
+      console.warn(
+        `[deepResearch][scenes] JSON 截断已修复（取最后一个完整对象边界，` +
+          `保留 ${obj.scenes.length} 个场景）`,
+      );
+      return obj as { scenes: SceneIllustration[] };
+    }
+  } catch (e: any) {
+    console.warn(`[deepResearch][scenes] 截断修复也失败: ${e?.message}`);
+  }
+
+  return null;
+}
+
 async function generateSceneIllustrations(params: {
   topic: string;
   reportMarkdown: string;
@@ -2069,7 +2142,7 @@ async function generateSceneIllustrations(params: {
     {
       "sectionAnchor": "章节锚点（必须是报告里出现过的 H1 或 H2 标题文字，让前端能精准找到插入位置）",
       "caption": "中文图说，≤ 30 字，作为图片下方的注解",
-      "imagePrompt": "英文 prompt，4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
+      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
       "aspectRatio": "16:9"
     }
   ]
@@ -2078,21 +2151,55 @@ async function generateSceneIllustrations(params: {
 【报告正文】
 ${reportSnippet}`,
     2,
-    { temperature: 0.4, topP: 0.9, maxTokens: 2048 },
+    { temperature: 0.4, topP: 0.9, maxTokens: 30000 },
   );
 
-  let parsed: { scenes: SceneIllustration[] };
-  try {
-    // 容错：去掉 ```json 包装
-    const cleaned = sceneJsonText.replace(/^```(?:json)?\s*|\s*```\s*$/g, "").trim();
-    parsed = JSON.parse(cleaned);
-  } catch (e: any) {
-    console.warn("[deepResearch][scenes] JSON 解析失败:", e?.message, "raw:", sceneJsonText.slice(0, 200));
-    return [];
+  // ── 解析 LLM 输出：先严格 parse，失败则尝试修复 unterminated JSON，
+  //    再失败则发起一次精简 retry，最后兜底返回空数组（仅 warn 不 throw）。
+  let parsed = parseScenesJson(sceneJsonText);
+  if (!parsed || (parsed.scenes ?? []).length < minCount) {
+    const firstSceneCount = parsed?.scenes?.length ?? 0;
+    console.warn(
+      `[deepResearch][scenes] 第 1 次解析仅得 ${firstSceneCount} 个场景，发起精简 retry…`,
+    );
+    // ── retry：明确告诉 LLM 上次输出被截断，仅要 3 个最关键场景 + 缩短 imagePrompt ──
+    const retryText = await generate(
+      "gemini-3.1-pro-preview",
+      `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON（不要 4-5 个），且每个 imagePrompt **必须 ≤ 50 个英文单词**。
+
+【输出格式】严格 JSON，不带任何 markdown / 注释：
+{
+  "scenes": [
+    {
+      "sectionAnchor": "报告里出现过的 H1 或 H2 标题文字",
+      "caption": "中文图说，≤ 30 字",
+      "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线",
+      "aspectRatio": "16:9"
+    }
+  ]
+}
+
+【报告正文（前 8000 字）】
+${reportSnippet.slice(0, 8000)}`,
+      2,
+      { temperature: 0.3, topP: 0.85, maxTokens: 30000 },
+    ).catch((e: any) => {
+      console.warn(`[deepResearch][scenes] retry generate 抛错: ${e?.message}`);
+      return "";
+    });
+    const retryParsed = parseScenesJson(retryText);
+    if (retryParsed && (retryParsed.scenes ?? []).length >= minCount) {
+      parsed = retryParsed;
+    } else {
+      console.warn(
+        `[deepResearch][scenes] retry 后仍仅 ${retryParsed?.scenes?.length ?? 0} 个场景，跳过配图（任务不挂）`,
+      );
+      return [];
+    }
   }
   const scenes = (parsed.scenes || []).slice(0, maxCount);
   if (scenes.length < minCount) {
-    console.warn(`[deepResearch][scenes] LLM 仅返回 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
+    console.warn(`[deepResearch][scenes] 最终仅 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
     return [];
   }
 
