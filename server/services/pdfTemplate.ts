@@ -319,8 +319,7 @@ function buildCoverPage(palette: Record<string, string>, cover: PdfCover, style:
         <span class="cover-conf">CONFIDENTIAL · BOARDROOM ONLY</span>
       </div>
     </div>
-  </section>
-  <div class="page-break"></div>`;
+  </section>`;
 }
 
 export function generateHtmlTemplate(
@@ -380,7 +379,8 @@ export function generateHtmlTemplate(
     .cover-page {
       position: relative;
       width: 100%;
-      min-height: 1062px;
+      height: 980px;
+      max-height: 980px;
       color: #fff;
       overflow: hidden;
       page-break-after: always;
@@ -398,7 +398,7 @@ export function generateHtmlTemplate(
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      min-height: 1062px;
+      height: 980px;
       padding: 60px 56px;
     }
     .cover-top {
