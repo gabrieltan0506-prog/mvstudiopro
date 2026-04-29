@@ -181,6 +181,43 @@ export const creationsRouter = router({
     }),
 
   // ═══════════════════════════════════════════════════
+  // Soft delete creation (failed reports cleanup)
+  // ═══════════════════════════════════════════════════
+  // 仅把 status 改为 "deleted"（schema 没有 deletedAt 字段，所以走 status 通道）。
+  // myReports / list 等查询自动按 status != "deleted" 过滤。误删可由客服恢复。
+  // 不物理 delete：保留 metadata 用于事故复盘 / 积分稽核。
+  softDelete: protectedProcedure
+    .input(z.object({ reportId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const database = await db();
+      // ownership 校验：必须是当前用户的记录
+      const [existing] = await database
+        .select()
+        .from(userCreations)
+        .where(and(
+          eq(userCreations.id, input.reportId),
+          eq(userCreations.userId, ctx.user.id),
+        ));
+      if (!existing) {
+        throw new Error("作品不存在或无权限");
+      }
+      if (existing.status === "deleted") {
+        return { success: true, alreadyDeleted: true };
+      }
+      await database
+        .update(userCreations)
+        .set({
+          status: "deleted",
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(userCreations.id, input.reportId),
+          eq(userCreations.userId, ctx.user.id),
+        ));
+      return { success: true, alreadyDeleted: false };
+    }),
+
+  // ═══════════════════════════════════════════════════
   // Favorites Management
   // ═══════════════════════════════════════════════════
 

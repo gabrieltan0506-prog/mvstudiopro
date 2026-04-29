@@ -84,6 +84,12 @@ export type PaidJobRefundReason =
   | "task_timeout"
   | "external_api_error"
   | "user_cancelled"
+  // ★ 商业护栏（防恶意刷算力）：用户主动点「取消」按钮时使用此 reason。
+  // ─ 与 "user_cancelled" 的区别：本枚举值会在 refundCreditsOnFailure 里走
+  //    特殊分支，**hold 标 settled 而非 refunded、creditsRefunded=0、不调
+  //    refundCredits**。商业规则：用户主动取消的任务不退还积分。
+  //    （仅当系统故障 / 部署中断 / 外部 API 错误 / 进程崩溃时才退积分。）
+  | "user_cancelled_no_refund"
   | "deploy_killed"
   | "process_crashed"
   | "manual_admin_refund";
@@ -393,6 +399,37 @@ export async function refundCreditsOnFailure(
     return { refunded: false, creditsRefunded: 0, status: hold.status };
   }
 
+  // ── 用户主动取消 · 商业护栏分支（防恶意刷算力） ────────────────────────
+  //   ⚠️ 严格红线：用户主动点「取消」时**不退还积分**。
+  //   仅把 hold 标 settled（不是 refunded）+ creditsRefunded=0，**绝不调
+  //   refundCredits**（即不写 creditBalances + creditTransactions）。
+  //   系统故障 / 部署中断 / 外部 API 错误 / 进程崩溃等路径仍走下面的常规
+  //   退积分流程；只有 reason="user_cancelled_no_refund" 才进这个早返。
+  //   文案统一「积分按规则不退还」，绝不出现「退款」「退现金」字样。
+  if (reason === "user_cancelled_no_refund") {
+    hold.status = "settled";
+    hold.settledAt = new Date().toISOString();
+    hold.refundedAt = new Date().toISOString();
+    hold.refundReason = reason;
+    hold.refundDetail = detail || "用户主动取消，按规则不退还积分";
+    hold.creditsRefunded = 0; // ← 真的没退，与 settled 状态保持一致
+    await writeHoldFile(file, hold);
+    await appendAuditEntry({
+      ts: new Date().toISOString(),
+      action: "userCancelNoRefund",
+      jobId: hold.jobId,
+      taskType: String(hold.taskType),
+      userId: hold.userId,
+      creditsRefunded: 0,
+      reason,
+      detail: detail || "用户主动取消，按规则不退还积分",
+    }).catch(() => {});
+    console.log(
+      `[paidJobLedger] 🚫 user-cancel-no-refund taskType=${taskType} jobId=${jobId} userId=${hold.userId} credits_NOT_refunded=${hold.creditsBilled}`,
+    );
+    return { refunded: false, creditsRefunded: 0, status: "settled" };
+  }
+
   // ── 标记 refunded 在前，避免并发场景双退 ────────────────────────────────
   hold.status = "refunded";
   hold.refundedAt = new Date().toISOString();
@@ -448,6 +485,49 @@ export async function refundCreditsOnFailure(
     hold.creditsRefunded = undefined;
     await writeHoldFile(file, hold).catch(() => {});
     throw e;
+  }
+}
+
+// ── 同步任务的 try/catch 包装：注册 hold → 跑业务 → 成功 settled / 失败退积分 ──
+
+/**
+ * 把一个**同步**付费任务（譬如一次 LLM 调用）包成「自动注册 hold + 自动结清 / 自动
+ * 退积分」的语义。流程：
+ *   1. registerActiveJob（持久卷写一份 active hold）
+ *   2. 跑用户传入的 work()
+ *   3. 成功 → unregisterActiveJob(..., "settled")，原样返回 work() 结果
+ *   4. 抛错 → refundCreditsOnFailure(reason="task_failed" 默认)，再原样把错误向上重抛
+ *
+ * 默认失败 reason 为 "task_failed"（外部 API 异常等真实故障），调用方可用
+ * `defaultFailReason` 覆盖（譬如 user_cancelled_no_refund 不应在这里出现，那是
+ * 取消链路的事，本 helper 不处理用户主动取消）。
+ *
+ * ⚠️ 严令：本 helper **只**经由 refundCreditsOnFailure 走积分账本，绝不直接
+ * 调 Stripe / Alipay / 微信支付。
+ */
+export async function withLedgerRefundOnFailure<T>(
+  hold: RegisterInput,
+  work: () => Promise<T>,
+  options?: { defaultFailReason?: PaidJobRefundReason },
+): Promise<T> {
+  await registerActiveJob(hold).catch((e: any) => {
+    console.warn(
+      `[paidJobLedger] withLedgerRefundOnFailure registerActiveJob 失败 jobId=${hold.jobId}（non-fatal）：${e?.message}`,
+    );
+  });
+  try {
+    const result = await work();
+    await unregisterActiveJob(hold.jobId, hold.taskType, "settled").catch(() => {});
+    return result;
+  } catch (err: any) {
+    const reason: PaidJobRefundReason = options?.defaultFailReason ?? "task_failed";
+    const detail = String(err?.message ?? err ?? "").slice(0, 500);
+    await refundCreditsOnFailure(hold.jobId, hold.taskType, reason, detail).catch((e: any) => {
+      console.warn(
+        `[paidJobLedger] withLedgerRefundOnFailure refundCreditsOnFailure 失败 jobId=${hold.jobId}：${e?.message}`,
+      );
+    });
+    throw err;
   }
 }
 

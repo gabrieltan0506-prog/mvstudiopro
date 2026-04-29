@@ -24,6 +24,60 @@ const REPORT_DIR = process.env.DEEP_RESEARCH_REPORT_DIR || "/data/growth/deep-re
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 直连 Gemini API key 生图（generativelanguage.googleapis.com，配额 50 RPM）。
+// 端点 :generateContent + responseModalities=["IMAGE"]，与文本生成同一套机制。
+// 用途：
+//   1. 内容场景图（绕开 Vertex 配额限制 + 串行避免 429）
+//   2. 封面图主路径失败时的 fallback
+// Response 含 base64 inlineData → 上传 GCS 拿到 https URL。
+// ─────────────────────────────────────────────────────────────────────────────
+type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+type ImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
+
+async function generateImageViaGeminiApiKey(opts: {
+  prompt: string;
+  aspectRatio?: ImageAspectRatio;
+  model?: ImageModel;
+}): Promise<string> {
+  const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
+  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+  const model: ImageModel = opts.model ?? "gemini-3.1-flash-image-preview";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+      generationConfig: {
+        responseModalities: ["IMAGE"],
+        imageConfig: { aspectRatio: opts.aspectRatio ?? "16:9" },
+      },
+    }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`gemini_api_http_${res.status}: ${errText.slice(0, 200)}`);
+  }
+  const json: any = await res.json();
+  const parts = json?.candidates?.[0]?.content?.parts;
+  const inlineData = Array.isArray(parts)
+    ? parts.find((p: any) => p?.inlineData?.data)?.inlineData
+    : null;
+  if (!inlineData?.data) {
+    throw new Error(`gemini_api_no_image: ${JSON.stringify(json).slice(0, 300)}`);
+  }
+  const buffer = Buffer.from(String(inlineData.data), "base64");
+  const mimeType = String(inlineData.mimeType || "image/png");
+  const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+  const fileKey = `gemini-api-images/${model}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { storagePut } = await import("../storage");
+  const { url: imageUrl } = await storagePut(fileKey, buffer, mimeType);
+  return imageUrl;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Deep Research Pro Preview · 全局 1 RPM 限流闸门
 // ─────────────────────────────────────────────────────────────────────────────
 // 设计：用磁盘上的 JSON 锁文件 + 进程内 Promise 串行链 双重保险。
@@ -887,6 +941,12 @@ export interface DeepResearchJob {
    *  即抛 USER_CANCELLED 进入失败路径，由 paidJobLedger 幂等退积分。 */
   cancelRequestedAt?: string;
   cancelRequestedBy?: "user" | "admin" | "deploy" | "reaper";
+  /** 取消时希望传给 refundCreditsOnFailure 的 reason（默认根据 cancelRequestedBy 推断）：
+   *   - by="user" → "user_cancelled_no_refund"（主动取消不退积分，防恶意刷算力）
+   *   - by="admin" / "reaper" → "user_cancelled"（仍然幂等退积分）
+   *   - by="deploy" → "deploy_killed"（仍然幂等退积分）
+   *  调用方可显式覆盖。 */
+  cancelRefundReason?: PaidJobRefundReason;
 }
 
 // ── 恢复阈值（resilience thresholds） ───────────────────────────────────────
@@ -1224,38 +1284,63 @@ export async function createDeepResearchJob(
 /**
  * 用户/管理员主动请求取消任务。立即在 job 文件 + paidJobLedger 都写下
  * cancelRequestedAt，worker 在下一次 polling / progress tick 时检测到即抛
- * USER_CANCELLED → 走 failJobAndRefund 退积分。
+ * USER_CANCELLED → 走 failJobAndRefund，按 refundReason 决定是否真的退积分。
+ *
+ * 商业护栏（防恶意刷算力）：
+ *   * by="user"（用户主动点取消）→ 默认 refundReason="user_cancelled_no_refund"，
+ *     hold 标 settled、creditsRefunded=0、**不**调 refundCredits（积分按规则不退还）。
+ *   * by="admin" / "deploy" / "reaper"（系统故障、部署中断、reaper 兜底）→
+ *     默认 refundReason="user_cancelled"（admin/reaper）/ "deploy_killed"（deploy），
+ *     仍走幂等退积分流程。
+ *   * 调用方可显式覆盖 refundReason 改变这一默认行为。
  *
  * 幂等：重复调用只写一次，再次调用直接返回 alreadyCancelled=true。
  */
 export async function requestCancelDeepResearchJob(
   jobId: string,
   by: "user" | "admin" | "deploy" | "reaper" = "user",
-): Promise<{ ok: boolean; alreadyCancelled: boolean; status: string | null }> {
+  refundReason?: PaidJobRefundReason,
+): Promise<{ ok: boolean; alreadyCancelled: boolean; status: string | null; refundReason: PaidJobRefundReason }> {
   const job = await readJob(jobId);
-  if (!job) return { ok: false, alreadyCancelled: false, status: null };
+  // 默认 refundReason 推断：用户主动 → 不退；其他系统/管理员路径 → 退（保留幂等）
+  const resolvedRefundReason: PaidJobRefundReason =
+    refundReason ??
+    (by === "deploy"
+      ? "deploy_killed"
+      : by === "user"
+        ? "user_cancelled_no_refund"
+        : "user_cancelled");
+  if (!job) return { ok: false, alreadyCancelled: false, status: null, refundReason: resolvedRefundReason };
   // 已经终态，无需取消
   if (job.status === "completed" || job.status === "failed") {
-    return { ok: true, alreadyCancelled: true, status: job.status };
+    return { ok: true, alreadyCancelled: true, status: job.status, refundReason: resolvedRefundReason };
   }
   if (job.cancelRequestedAt) {
     // 已在 ledger 标过；尝试把 ledger 也补上（幂等）
     await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
-    return { ok: true, alreadyCancelled: true, status: job.status };
+    return { ok: true, alreadyCancelled: true, status: job.status, refundReason: job.cancelRefundReason ?? resolvedRefundReason };
   }
   const now = new Date().toISOString();
+  // 主动取消时显示「不退还积分」的进度文案；其他路径仍说「返还积分」
+  const progressMsg =
+    resolvedRefundReason === "user_cancelled_no_refund"
+      ? `🛑 收到取消请求（${by}），按规则不退还积分，正在停止深潛引擎…`
+      : `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`;
   await writeJob({
     ...job,
     cancelRequestedAt: now,
     cancelRequestedBy: by,
-    progress: `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`,
+    cancelRefundReason: resolvedRefundReason,
+    progress: progressMsg,
   });
   if (job.dbRecordId) {
-    try { await dbUpdateRecord(job.dbRecordId, job.status as any, "🛑 收到取消请求，正在停止深潛引擎并返还积分…"); } catch {}
+    try { await dbUpdateRecord(job.dbRecordId, job.status as any, progressMsg); } catch {}
   }
   await ledgerRequestCancel(jobId, "deepResearch", by).catch(() => {});
-  console.log(`[deepResearch] 🛑 cancel requested jobId=${jobId} by=${by} status=${job.status}`);
-  return { ok: true, alreadyCancelled: false, status: job.status };
+  console.log(
+    `[deepResearch] 🛑 cancel requested jobId=${jobId} by=${by} status=${job.status} refundReason=${resolvedRefundReason}`,
+  );
+  return { ok: true, alreadyCancelled: false, status: job.status, refundReason: resolvedRefundReason };
 }
 
 /** 内部使用：在 worker 的关键路径上调，发现取消 → 抛 USER_CANCELLED。 */
@@ -1852,26 +1937,45 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图（调用 Vercel nanoImage 端点，失败不阻断）
+    // 2. 封面图（双轨制：保留之前成功的 Vertex + 3:4 主路径，失败回退 Gemini API key）
+    //    主路径：Vercel /api/google?op=nanoImage + aspectRatio="3:4"
+    //      → 这是历史上成功的配置（金色西装人物杂志封面就是这个生成的），保留不动。
+    //    Fallback：Gemini API key 直连（generativelanguage.googleapis.com，配额 50 RPM）
+    //      → 主路径返回 4xx/5xx 或缺 imageUrl 时启用，相同 3:4 比例。
+    //    把 catch 的 e.message 打出来，避免再次出现"封面图生成失败"但查不到原因。
     let coverUrl: string | undefined;
+    const coverPrompt = `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${lighthouseTitle}`;
     try {
       const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
-      const coverRes = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
+      const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${lighthouseTitle}`,
-          tier: "flash",
-          aspectRatio: "3:4",
-        }),
+        body: JSON.stringify({ prompt: coverPrompt, tier: "flash", aspectRatio: "3:4" }),
         signal: AbortSignal.timeout(60_000),
       });
-      if (coverRes.ok) {
-        const coverJson = await coverRes.json();
-        if (coverJson?.imageUrl) coverUrl = String(coverJson.imageUrl);
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
       }
-    } catch {
-      console.warn("[deepResearch] 封面图生成失败，跳过");
+      const j: any = await res.json();
+      if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
+      coverUrl = String(j.imageUrl);
+      console.log(`[deepResearch] ✅ 封面图生成成功 via Vertex (3:4)`);
+    } catch (e: any) {
+      console.warn(`[deepResearch] ⚠️ 封面图 Vertex 失败：${e?.message ?? e}，fallback Gemini API key…`);
+      try {
+        coverUrl = await generateImageViaGeminiApiKey({
+          prompt: coverPrompt,
+          aspectRatio: "3:4",
+          model: "gemini-3.1-flash-image-preview",
+        });
+        console.log(`[deepResearch] ✅ 封面图生成成功 via Gemini API key (3:4 fallback)`);
+      } catch (e2: any) {
+        console.warn(`[deepResearch] ⚠️ 封面图 Gemini API key 也失败：${e2?.message ?? e2}`);
+      }
+    }
+    if (!coverUrl) {
+      console.warn("[deepResearch] 双轨封面图生成全部失败，本报告无封面图（不阻断主流程）");
     }
 
     // 3. 报告头部 banner（封面卡 + 个性化签名） + 趋势图 + 报告正文 + 思维链 + 来源
@@ -1981,13 +2085,29 @@ ${job.topic}
     const isUserCancel = err?.message === "USER_CANCELLED" || latest.cancelRequestedAt;
 
     if (isUserCancel) {
-      console.log(`[deepResearch] 🛑 任务 ${jobId} 已被用户取消，进入退积分路径`);
+      // 商业护栏（防恶意刷算力）：
+      //   * 用户主动 → cancelRefundReason="user_cancelled_no_refund" → 不退积分
+      //   * 系统/部署/admin/reaper → 仍走幂等退积分（user_cancelled / deploy_killed）
+      const cancelReason: PaidJobRefundReason =
+        latest.cancelRefundReason ??
+        (latest.cancelRequestedBy === "deploy"
+          ? "deploy_killed"
+          : latest.cancelRequestedBy === "user"
+            ? "user_cancelled_no_refund"
+            : "user_cancelled");
+      const userInitiatedNoRefund = cancelReason === "user_cancelled_no_refund";
+      const progressLine = userInitiatedNoRefund
+        ? `🛑 任务已取消（按规则不退还积分，防止恶意消耗算力）`
+        : `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`;
+      console.log(
+        `[deepResearch] 🛑 任务 ${jobId} 已被取消 by=${latest.cancelRequestedBy ?? "?"} refundReason=${cancelReason}`,
+      );
       await failJobAndRefund(
         latest,
-        "用户主动取消任务",
-        `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`,
+        userInitiatedNoRefund ? "用户主动取消任务（不退还积分）" : "用户主动取消任务",
+        progressLine,
         undefined,
-        "user_cancelled",
+        cancelReason,
       );
     } else {
       console.error(`[deepResearch] ❌ 任务 ${jobId} 失败:`, err?.message);
@@ -2203,33 +2323,57 @@ ${reportSnippet.slice(0, 8000)}`,
     return [];
   }
 
-  // ── 2. 并行调用 nanoImage（gemini-3.1-flash-image-preview）生图 ──
-  const generated = await Promise.all(
-    scenes.map(async (scene, i): Promise<SceneIllustration | null> => {
+  // ── 2. 串行 + Gemini API key 直连生图（绕开 Vertex 配额，50 RPM） ──
+  // 历史问题：原本走 Vercel /api/google?op=nanoImage（Vertex 路径）+ Promise.all 三个
+  // 并发，撞配额导致 429/timeout。现在改：串行 + 用 GEMINI_API_KEY 直连
+  // generativelanguage.googleapis.com，与竞品调研里 Gemma 4 文本生成同一套机制。
+  // 每张之间间隔 500ms 给 rate limiter 缓冲。失败时 fallback Vertex 路径（双轨保底）。
+  const generated: (SceneIllustration | null)[] = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i];
+    const aspectRatio = (scene.aspectRatio || "16:9") as ImageAspectRatio;
+    let imageUrl: string | undefined;
+    // Track 1（主）：Gemini API key 直连
+    try {
+      imageUrl = await generateImageViaGeminiApiKey({
+        prompt: scene.imagePrompt,
+        aspectRatio,
+        model: "gemini-3.1-flash-image-preview",
+      });
+      console.log(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ via Gemini API key`);
+    } catch (e: any) {
+      console.warn(
+        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Gemini API key 失败：${e?.message ?? e}，fallback Vertex…`,
+      );
+      // Track 2（兜底）：Vertex 路径（Vercel /api/google?op=nanoImage）
       try {
         const res = await fetch(`${params.vercelBaseUrl}/api/google?op=nanoImage`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: scene.imagePrompt,
-            tier: "flash", // ⚡ 省钱：用 nano banana 2，不用 pro
-            aspectRatio: scene.aspectRatio || "16:9",
-          }),
+          body: JSON.stringify({ prompt: scene.imagePrompt, tier: "flash", aspectRatio }),
           signal: AbortSignal.timeout(60_000),
         });
-        if (!res.ok) {
-          console.warn(`[deepResearch][scenes] 第 ${i + 1} 张失败：${res.status}`);
-          return null;
+        if (res.ok) {
+          const j: any = await res.json();
+          if (j?.imageUrl) {
+            imageUrl = String(j.imageUrl);
+            console.log(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ via Vertex (fallback)`);
+          }
+        } else {
+          const errText = await res.text().catch(() => "");
+          console.warn(
+            `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex fallback 失败 HTTP ${res.status}: ${errText.slice(0, 200)}`,
+          );
         }
-        const j = await res.json();
-        if (!j?.imageUrl) return null;
-        return { ...scene, imageUrl: String(j.imageUrl) };
-      } catch (e: any) {
-        console.warn(`[deepResearch][scenes] 第 ${i + 1} 张异常：${e?.message}`);
-        return null;
+      } catch (e2: any) {
+        console.warn(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex fallback 抛错: ${e2?.message ?? e2}`);
       }
-    }),
-  );
+    }
+    if (imageUrl) generated.push({ ...scene, imageUrl });
+    else generated.push(null);
+    // 每张之间间隔 500ms 给 rate limiter 缓冲
+    if (i < scenes.length - 1) await sleep(500);
+  }
 
   return generated.filter((x): x is SceneIllustration => x !== null && Boolean(x.imageUrl));
 }
