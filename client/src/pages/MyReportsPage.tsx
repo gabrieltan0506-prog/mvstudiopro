@@ -8,7 +8,7 @@ import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
 import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
-import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
+import { TemplatePicker, TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -223,7 +223,6 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <TemplatePicker compact value={pdfStyle} onChange={setPdfStyle} />
             <button
               onClick={() => {
                 if (!selectedReport?.markdown) return;
@@ -260,6 +259,9 @@ export default function MyReportsPage() {
         </div>
 
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
+          {/* 醒目大尺寸封面选择栏：5 套封面横铺，一眼可见，选定立即套用 */}
+          <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="online" />
+
           <ReportRenderer markdown={selectedReport.markdown} />
         </div>
       </div>
