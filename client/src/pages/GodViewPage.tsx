@@ -59,21 +59,62 @@ export default function GodViewPage() {
     if (e.target) e.target.value = "";
     const MAX = 5;
     const remaining = MAX - suppFiles.length;
-    if (!remaining) return;
+    if (!remaining) {
+      toast.error(`最多只能上传 ${MAX} 个文件，请先移除部分文件`);
+      return;
+    }
+    if (files.length > remaining) {
+      toast.warning(`本次只能再上传 ${remaining} 个文件，超出部分已忽略`);
+    }
+
+    const MAX_BYTES = 100 * 1024 * 1024; // 100MB
+    const ALLOWED = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
+
     setSuppUploading(true);
+    let okCount = 0;
+    let failCount = 0;
     try {
       for (const file of files.slice(0, remaining)) {
-        const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/magazine/upload", { method: "POST", body: formData });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          toast.error(`上传「${file.name}」失败：${err?.error || res.status}`);
+        if (!ALLOWED.includes(file.type)) {
+          toast.error(`「${file.name}」格式不支持（仅 PNG/JPG/WebP/PDF）`);
+          failCount++;
           continue;
         }
-        const data = await res.json();
-        setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, url: data.url, gcsUri: data.gcsUri }]);
+        if (file.size > MAX_BYTES) {
+          toast.error(`「${file.name}」超过 100MB 上限（${(file.size / 1024 / 1024).toFixed(1)}MB）`);
+          failCount++;
+          continue;
+        }
+
+        const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+        const uploadingToast = toast.loading(`正在上传「${file.name}」（${sizeMB}MB）…`);
+        try {
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch("/api/magazine/upload", { method: "POST", body: formData });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            toast.error(`上传「${file.name}」失败：${err?.error || `HTTP ${res.status}`}`, { id: uploadingToast });
+            failCount++;
+            continue;
+          }
+          const data = await res.json();
+          if (!data?.url || !data?.gcsUri) {
+            toast.error(`上传「${file.name}」失败：服务器未返回文件链接`, { id: uploadingToast });
+            failCount++;
+            continue;
+          }
+          setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, url: data.url, gcsUri: data.gcsUri }]);
+          toast.success(`「${file.name}」上传成功（${sizeMB}MB）`, { id: uploadingToast });
+          okCount++;
+        } catch (netErr: any) {
+          toast.error(`上传「${file.name}」网络异常：${netErr?.message || "请检查网络后重试"}`, { id: uploadingToast });
+          failCount++;
+        }
+      }
+      if (okCount > 1 || (okCount > 0 && failCount > 0)) {
+        toast.success(`本次上传完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`);
       }
     } finally {
       setSuppUploading(false);
