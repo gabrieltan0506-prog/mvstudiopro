@@ -240,14 +240,9 @@ export default function MyReportsPage() {
               {isExportingBlackGold ? <Loader2 size={13} className="animate-spin" /> : <Crown size={13} />}
               {isExportingBlackGold ? "正在压制 PDF…" : "导出战略 PDF"}
             </button>
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isExporting}
-              style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: isExporting ? "rgba(122,84,16,0.15)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: isExporting ? "rgba(61,44,20,0.5)" : "#fff7df", fontSize: 12, fontWeight: 800, cursor: isExporting ? "not-allowed" : "pointer", boxShadow: isExporting ? "none" : "0 4px 14px rgba(168,118,27,0.30)", transition: "all 0.2s" }}
-            >
-              {isExporting ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
-              {isExporting ? "正在生成 PDF…" : "下载富图文 PDF"}
-            </button>
+            {/* 旧的「下载富图文 PDF」入口走 DOM 克隆 → pdf-worker，不读 pdfStyle，
+                所以无论选哪套封面都是 ReportRenderer 固定的焦糖色样式。已下线。
+                上方「导出战略 PDF」走 Puppeteer + pdfTemplate.ts，5 套封面全部生效。 */}
             <button
               onClick={handleDownloadMd}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
