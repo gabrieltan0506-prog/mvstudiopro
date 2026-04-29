@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { Resend } from "resend";
+import { readFile } from "node:fs/promises";
 
 type SmtpConfig = {
   host: string;
@@ -115,20 +116,56 @@ async function sendViaResendHttp(params: {
   subject: string;
   text: string;
   html?: string;
-  attachments?: Array<{ filename: string; content?: string | Buffer; contentType?: string }>;
+  attachments?: Array<{
+    filename: string;
+    /** 本地文件绝对路径，会被自动读成 Buffer 上传 */
+    path?: string;
+    /** 直接给内容（Buffer / 字符串），优先于 path */
+    content?: string | Buffer;
+    contentType?: string;
+  }>;
 }): Promise<void> {
   const apiKey = String(process.env.RESEND_API_KEY || "");
   const resend = new Resend(apiKey);
+
+  // Resend HTTP API 要求附件必须有 content（base64/Buffer），path 不会被自动读取。
+  // 这里统一在客户端把 path 读取成 Buffer，对调用方透明。
+  const resolvedAttachments = params.attachments
+    ? await Promise.all(
+        params.attachments.map(async (a) => {
+          let buf: Buffer | undefined;
+          if (a.content instanceof Buffer) buf = a.content;
+          else if (typeof a.content === "string") buf = Buffer.from(a.content);
+          else if (a.path) {
+            try {
+              buf = await readFile(a.path);
+            } catch (err: any) {
+              throw new Error(
+                `Resend attachment read failed: ${a.filename} (${a.path}): ${err?.message || err}`,
+              );
+            }
+          }
+          if (!buf) {
+            throw new Error(
+              `Resend attachment "${a.filename}" missing both content and path`,
+            );
+          }
+          return {
+            filename: a.filename,
+            content: buf,
+            ...(a.contentType ? { contentType: a.contentType } : {}),
+          };
+        }),
+      )
+    : undefined;
+
   const { error } = await resend.emails.send({
     from: params.from,
     to: params.to,
     subject: params.subject,
     text: params.text,
     html: params.html,
-    attachments: params.attachments?.map(a => ({
-      filename: a.filename,
-      content: a.content instanceof Buffer ? a.content : (a.content ? Buffer.from(a.content) : undefined),
-    })),
+    attachments: resolvedAttachments,
   });
   if (error) throw new Error(`Resend API error: ${error.message}`);
 }
