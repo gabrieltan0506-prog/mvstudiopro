@@ -128,6 +128,9 @@ type StrategistRefinement = Partial<Pick<GrowthAnalysisScores,
   | "followUpPrompt"
 >>;
 
+// ⚠️ 模型分层：
+//  · FIRST_PASS = 初次扫描视频帧 / OCR / 抽取（沿用 2.5 Pro，长视频用 3.1 Pro 成本吃不消）
+//  · STRATEGIST = 战略分析阶段（用 3.1 Pro 提升商业洞察质量）
 const GROWTH_CAMP_FIRST_PASS_MODEL = "gemini-2.5-pro";
 const GROWTH_CAMP_STRATEGIST_MODEL = "gemini-3.1-pro-preview";
 type GrowthAnalysisMode = "GROWTH" | "REMIX";

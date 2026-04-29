@@ -1,19 +1,19 @@
 /**
- * 战略情报局 · 智库报告 v3 模板（B 端高端商务风）
+ * 战略情报局 · 智库报告 v4 模板（5 套活泼系 + 商务亮）
  *
  * 与 marked 组合后由 Puppeteer 在容器内 printBackground 出 PDF。
  * 不依赖外网字体 CDN（容器内已装 fonts-noto-cjk + fonts-noto-color-emoji），
  * 避免 networkidle 卡死。
  *
- * 核心修复（v2 → v3）：
- *   1. 四套可选 style：quiet-luxury（静奢白）/ watercolor（水彩薄雾）/ business-bright（商务亮）/ business-dark（商务夜）
- *   2. 修 H1/H2/H3 视觉差异（H2 「★ 胶囊条 + 主色渐变 + 金线」）
- *   3. 修表格列宽崩坏（th nowrap + min-width，td 内 numeric 列右对齐）
- *   4. 修跨页表头丢失（thead display: table-header-group + tr page-break-inside: avoid）
- *   5. 修 emoji 方块（容器装 fonts-noto-color-emoji + 字体栈优先级）
- *   6. 修「9.5/10」类比例排版（service 层调用 sanitizeMarkdown 预处理）
- *   7. 不确定性 / 高中低 / 增减幅度自动彩色徽章
- *   8. 可选封面页（cover.imageUrl 注入 → A4 全屏黑底大图刊物风首页）
+ * v3 → v4：
+ *   ▸ 砍掉焦糖系（quiet-luxury / watercolor / business-dark）— 用户反馈"老气"
+ *   ▸ 5 套新风格：
+ *       ① spring-mint    薄荷绿 + 樱桃粉（清新轻奢）
+ *       ② neon-tech      电光青 + 霓虹紫（B 端科技潮）
+ *       ③ sunset-coral   珊瑚橘 + 紫罗兰（创意品牌策划）
+ *       ④ ocean-fresh    海蓝 + 柠檬黄（商务但不死板）
+ *       ⑤ business-bright 海军蓝 + 香槟金（B 端正式挡板，保留）
+ *   ▸ 审美红线：正文一律浅底深字；表头深底必配浅字（与之前一致）
  */
 
 import { marked } from "marked";
@@ -21,23 +21,18 @@ import { marked } from "marked";
 marked.setOptions({ gfm: true });
 
 export type PdfStyle =
-  | "quiet-luxury"      // ① 静奢白（默认）：纯白 + 暖琥珀金 H1 + 深炭表头
-  | "watercolor"        // ② 水彩薄雾：浅冷蓝 → 暖橘粉，远山轮廓
-  | "business-bright"   // ③ 高端商务亮：白底 + 海军蓝 + 香槟金 + 大字英文 outline
-  | "business-dark";    // ④ 黑色商务深：封面深炭夜景 + 橙金，正文仍浅底（审美红线）
+  | "spring-mint"      // ① 薄荷绿 + 樱桃粉（清新轻奢）
+  | "neon-tech"        // ② 电光青 + 霓虹紫（科技潮玩）
+  | "sunset-coral"     // ③ 珊瑚橘 + 紫罗兰（创意策划）
+  | "ocean-fresh"      // ④ 海蓝 + 柠檬黄（商务清爽）
+  | "business-bright"; // ⑤ 海军蓝 + 香槟金（B 端正式）
 
 export type PdfCover = {
-  /** 封面背景大图 URL（建议 3:4 直版，nanoImage 已 generate） */
   imageUrl?: string;
-  /** 封面主标题（中文，例：亚洲银发经济：抗衰保健品跨境破局战略） */
   title?: string;
-  /** 英文副标题（全大写，例：EXCLUSIVE INSIGHTS · CROSS-BORDER GROWTH IN ASIA） */
   subtitle?: string;
-  /** 期号（例：ISSUE 45） */
   issue?: string;
-  /** 出品日期（例：2026 年 4 月 29 日） */
   date?: string;
-  /** 摘要（封底的一句话引导） */
   abstract?: string;
 };
 
@@ -47,10 +42,7 @@ function parseMarkdownToHtml(markdownContent: string): string {
   return marked.parse(raw, { async: false }) as string;
 }
 
-/** 把表头第一个单元格 / 数字列做语义增强，便于 CSS 锁列宽与右对齐 */
 function enhanceTables(html: string): string {
-  // td/th 内只含数字 + 单位 时，加 .num 类（右对齐 + tabular-nums）
-  // 简单规则：纯数字（含 % / 倍 / 元 / 万 / 亿 / 个 / 天 / 分 等中文单位 / + - .）
   return html.replace(
     /<(td|th)>([\s\S]*?)<\/\1>/g,
     (m, tag: string, inner: string) => {
@@ -63,15 +55,11 @@ function enhanceTables(html: string): string {
       const isHighLow = /^(高|中高|中|中低|低|H|M|L)$/i.test(text);
       const cls: string[] = [];
       if (isNumeric || isPctChange) cls.push("num");
-      if (isPctChange) {
-        cls.push(text.startsWith("-") ? "neg" : "pos");
-      }
+      if (isPctChange) cls.push(text.startsWith("-") ? "neg" : "pos");
       if (isHighLow) {
         cls.push(
-          text === "高" || /^h$/i.test(text)
-            ? "lvl-h"
-            : text === "低" || /^l$/i.test(text)
-              ? "lvl-l"
+          text === "高" || /^h$/i.test(text) ? "lvl-h"
+            : text === "低" || /^l$/i.test(text) ? "lvl-l"
               : "lvl-m",
         );
       }
@@ -81,109 +69,133 @@ function enhanceTables(html: string): string {
 }
 
 /**
- * 4 套调色板（统一约束）：
- *   - 正文页一律白底/极浅底 + 深字（深底配深字 = 不可读，业内大忌）
- *   - 深色调（business-dark）只在封面 / H1 章首横幅 / 表头使用，正文回浅底
+ * 5 套调色板（统一约束）：
+ *   - 正文页一律白底/极浅底 + 深字
+ *   - 深色调只在封面 / H1 章首横幅 / 表头使用，正文回浅底
  *   - 表头深底必配浅字，浅底必配深字，绝不交叉
  */
 function buildPalette(style: PdfStyle): Record<string, string> {
-  // ── ② watercolor · 水彩薄雾（用户参考图：淡冷蓝 → 暖橘粉远山）
-  if (style === "watercolor") {
+  // ── ① spring-mint · 薄荷绿 + 樱桃粉（清新轻奢）
+  if (style === "spring-mint") {
     return {
-      bg: "#FBFCFD",                   // 极淡冷白
-      bgElev: "#FFFFFF",
-      textMain: "#1F2A2E",
-      textMuted: "#6E7A82",
-      primary: "#7A8C92",              // 雾蓝灰（H1 主色）
-      primarySoft: "#A9B7BE",
-      accent: "#C58C6E",               // 暖橘粉赭石（点缀）
-      navy: "#2B3940",
-      rule: "#E4E9EC",
-      rowAlt: "#F4F6F8",
-      tableHeadBg: "#EAF0F4",          // 浅冷蓝雾
-      tableHeadText: "#2B3940",        // 深字（浅底深字 ✅）
-      coverBg: "#F2F8F8",              // 水彩底（浅）
-      coverGold: "#C58C6E",            // 暖赭石点缀
-      h2Bg: "linear-gradient(90deg, #EAF0F4 0%, #F8EDE6 100%)", // 冷→暖薄雾
-      h2Text: "#2B3940",
-      sectionStripe: "#C58C6E",
-      starColor: "#C58C6E",
-      confidential: "#A04C4C",
-    };
-  }
-
-  // ── ③ business-bright · 高端商务亮系（用户参考：白底 + 海军蓝 + 香槟金）
-  if (style === "business-bright") {
-    return {
-      bg: "#F8FAFC",                   // 极冷白
-      bgElev: "#FFFFFF",
-      textMain: "#0F1B2D",             // 深海军黑
-      textMuted: "#55657A",
-      primary: "#1F3A5F",              // 海军蓝（H1）
-      primarySoft: "#3A5A85",
-      accent: "#C9A858",               // 香槟金
-      navy: "#0F1B2D",
-      rule: "#D8E1EC",
-      rowAlt: "#EDF2F7",
-      tableHeadBg: "#1F3A5F",          // 深海军（深底必配浅字 ✅）
+      bg: "#FFFFFF",
+      bgElev: "#F0FDF4",
+      textMain: "#0F172A",
+      textMuted: "#64748B",
+      primary: "#10B981",              // H1：薄荷翡翠
+      primarySoft: "#34D399",
+      accent: "#FB7185",               // 樱桃粉
+      navy: "#064E3B",
+      rule: "#D1FAE5",
+      rowAlt: "#ECFDF5",
+      tableHeadBg: "#10B981",          // 翡翠表头（深底配白字 ✅）
       tableHeadText: "#FFFFFF",
-      coverBg: "#EAF0F6",              // 浅冷蓝白封面
-      coverGold: "#C9A858",
-      h2Bg: "linear-gradient(90deg, #1F3A5F 0%, #2D4A6F 100%)",
-      h2Text: "#FFFFFF",               // 深底白字 ✅
-      sectionStripe: "#C9A858",
-      starColor: "#C9A858",
-      confidential: "#A52A2A",
+      coverBg: "#ECFDF5",
+      coverGold: "#FB7185",            // 樱桃粉作为封面强调
+      h2Bg: "linear-gradient(90deg, #10B981 0%, #34D399 60%, #6EE7B7 100%)",
+      h2Text: "#FFFFFF",
+      sectionStripe: "#FB7185",
+      starColor: "#FB7185",
+      confidential: "#E11D48",
     };
   }
 
-  // ── ④ business-dark · 黑色商务深系（封面深炭 + 橙金 · 正文强制浅底）
-  if (style === "business-dark") {
+  // ── ② neon-tech · 电光青 + 霓虹紫（科技潮玩）
+  if (style === "neon-tech") {
     return {
-      // ⚠️ 正文页 bg 仍用极浅米：审美红线 — 长文档不能深底深字
-      bg: "#FAFAF7",
-      bgElev: "#FFFFFF",
-      textMain: "#1A1A1A",
-      textMuted: "#4A4A4A",
-      primary: "#2A2D33",              // 深炭（H1 文字色）
-      primarySoft: "#4A4D55",
-      accent: "#E89549",               // 橙金（重点强调）
-      navy: "#1A1D22",
-      rule: "#D9D5C9",
-      rowAlt: "#F2EEE5",
-      tableHeadBg: "#2A2D33",          // 深炭表头（深底必配浅字 ✅）
-      tableHeadText: "#FFD9A8",        // 暖米黄
-      coverBg: "#1A1D22",              // 封面深炭夜景
-      coverGold: "#E89549",            // 橙金大字
-      h2Bg: "linear-gradient(90deg, #2A2D33 0%, #1A1D22 100%)", // H2 深炭横幅
-      h2Text: "#E89549",               // 橙金（深底亮字 ✅）
-      sectionStripe: "#E89549",
-      starColor: "#E89549",
-      confidential: "#E89549",
+      bg: "#FAFBFF",                   // 极淡冷白（不刺眼）
+      bgElev: "#F5F3FF",
+      textMain: "#1E1B4B",
+      textMuted: "#6B7280",
+      primary: "#7C3AED",              // 霓虹紫（H1）
+      primarySoft: "#A855F7",
+      accent: "#06B6D4",               // 电光青
+      navy: "#1E1B4B",
+      rule: "#E9D5FF",
+      rowAlt: "#F5F3FF",
+      tableHeadBg: "#5B21B6",          // 深紫表头（深底配白字 ✅）
+      tableHeadText: "#E0F2FE",
+      coverBg: "#1E1B4B",              // 封面深紫夜景
+      coverGold: "#06B6D4",            // 电光青大字
+      h2Bg: "linear-gradient(90deg, #7C3AED 0%, #A855F7 50%, #06B6D4 100%)",
+      h2Text: "#FFFFFF",
+      sectionStripe: "#06B6D4",
+      starColor: "#06B6D4",
+      confidential: "#F472B6",
     };
   }
 
-  // ── ① quiet-luxury · 静奢白（默认）：纯白 + 古铜金标题 + 深炭正文（标题/正文绝不同色）
+  // ── ③ sunset-coral · 珊瑚橘 + 紫罗兰（创意策划）
+  if (style === "sunset-coral") {
+    return {
+      bg: "#FFFAF5",                   // 奶油暖白
+      bgElev: "#FFF7ED",
+      textMain: "#3C1361",             // 深紫文（不用纯黑，更暖）
+      textMuted: "#7C5C8B",
+      primary: "#8B5CF6",              // 紫罗兰
+      primarySoft: "#A78BFA",
+      accent: "#FB923C",               // 珊瑚橘
+      navy: "#3C1361",
+      rule: "#FED7AA",
+      rowAlt: "#FFF1E6",
+      tableHeadBg: "#7C3AED",          // 紫罗兰表头（深底配白字 ✅）
+      tableHeadText: "#FFFFFF",
+      coverBg: "#FFEDD5",
+      coverGold: "#8B5CF6",
+      h2Bg: "linear-gradient(90deg, #FB923C 0%, #F472B6 50%, #8B5CF6 100%)",
+      h2Text: "#FFFFFF",
+      sectionStripe: "#FB923C",
+      starColor: "#FB923C",
+      confidential: "#9F1239",
+    };
+  }
+
+  // ── ④ ocean-fresh · 海蓝 + 柠檬黄（商务清爽）
+  if (style === "ocean-fresh") {
+    return {
+      bg: "#F8FAFF",
+      bgElev: "#EFF6FF",
+      textMain: "#0C1A3D",
+      textMuted: "#475569",
+      primary: "#2563EB",              // 海蓝（H1）
+      primarySoft: "#3B82F6",
+      accent: "#FACC15",                // 柠檬黄（强调）
+      navy: "#0C1A3D",
+      rule: "#DBEAFE",
+      rowAlt: "#EFF6FF",
+      tableHeadBg: "#2563EB",          // 海蓝表头（深底配白字 ✅）
+      tableHeadText: "#FFFFFF",
+      coverBg: "#DBEAFE",
+      coverGold: "#FACC15",
+      h2Bg: "linear-gradient(90deg, #2563EB 0%, #38BDF8 100%)",
+      h2Text: "#FFFFFF",
+      sectionStripe: "#FACC15",
+      starColor: "#FACC15",
+      confidential: "#B91C1C",
+    };
+  }
+
+  // ── ⑤ business-bright · 高端商务亮（B 端正式挡板）
   return {
-    bg: "#FFFFFF",
-    bgElev: "#FAFAF8",
-    textMain: "#1A1A1A",               // 正文：深炭
-    textMuted: "#6B7280",
-    primary: "#8B6F3D",                // H1：暖琥珀金（与正文深炭强对比）
-    primarySoft: "#A88A5C",
-    accent: "#B8A073",                 // H3 / 强调：浅古铜金
-    navy: "#2D2D2D",
-    rule: "#E8E4DA",
-    rowAlt: "#FAF8F2",
-    tableHeadBg: "#2D2D2D",            // 深炭表头（深底必配浅字 ✅）
-    tableHeadText: "#F5E9C8",          // 浅米黄
-    coverBg: "#F5F0E8",
-    coverGold: "#8B6F3D",
-    h2Bg: "linear-gradient(90deg, #2D2D2D 0%, #1A1A1A 100%)", // H2 深炭横幅
-    h2Text: "#F5E9C8",                 // 深底浅字 ✅
-    sectionStripe: "#B8A073",
-    starColor: "#B8A073",
-    confidential: "#A04C4C",
+    bg: "#F8FAFC",
+    bgElev: "#FFFFFF",
+    textMain: "#0F1B2D",
+    textMuted: "#55657A",
+    primary: "#1F3A5F",                // 海军蓝
+    primarySoft: "#3A5A85",
+    accent: "#C9A858",                 // 香槟金
+    navy: "#0F1B2D",
+    rule: "#D8E1EC",
+    rowAlt: "#EDF2F7",
+    tableHeadBg: "#1F3A5F",            // 深海军（深底配白字 ✅）
+    tableHeadText: "#FFFFFF",
+    coverBg: "#EAF0F6",
+    coverGold: "#C9A858",
+    h2Bg: "linear-gradient(90deg, #1F3A5F 0%, #2D4A6F 100%)",
+    h2Text: "#FFFFFF",
+    sectionStripe: "#C9A858",
+    starColor: "#C9A858",
+    confidential: "#A52A2A",
   };
 }
 
@@ -206,76 +218,87 @@ function buildCoverPage(palette: Record<string, string>, cover: PdfCover, style:
     ? String(cover.abstract).slice(0, 110).replace(/</g, "&lt;")
     : "";
 
-  // ── 4 套封面背景层 ──────────────────────────────────────────────
-  // ① quiet-luxury · 静奢白：纯白 + 古铜金细线圆环（极简留白）
-  const quietLuxuryLayer = `
-    radial-gradient(55% 40% at 80% 12%, rgba(184,160,115,0.10) 0%, rgba(184,160,115,0) 70%),
-    radial-gradient(45% 35% at 18% 88%, rgba(184,160,115,0.08) 0%, rgba(184,160,115,0) 72%),
-    linear-gradient(180deg, #FFFFFF 0%, #FAFAF8 100%)
+  // ── 5 套封面背景层 ──────────────────────────────────────────────
+  // ① spring-mint：薄荷淡雾 + 樱桃粉光晕
+  const springMintLayer = `
+    radial-gradient(70% 50% at 18% 18%, rgba(110,231,183,0.55) 0%, rgba(110,231,183,0) 70%),
+    radial-gradient(60% 45% at 85% 25%, rgba(251,113,133,0.40) 0%, rgba(251,113,133,0) 70%),
+    radial-gradient(80% 60% at 80% 90%, rgba(52,211,153,0.40) 0%, rgba(52,211,153,0) 75%),
+    radial-gradient(60% 45% at 15% 95%, rgba(254,205,211,0.55) 0%, rgba(254,205,211,0) 75%),
+    linear-gradient(180deg, #ECFDF5 0%, #FCE7F3 60%, #FFE4E6 100%)
   `;
 
-  // ② watercolor · 水彩薄雾：浅冷蓝雾 + 暖橘粉雾气 + 远山轮廓
-  const watercolorLayer = `
-    radial-gradient(60% 45% at 75% 18%, rgba(196,225,235,0.72) 0%, rgba(196,225,235,0) 70%),
-    radial-gradient(55% 40% at 25% 30%, rgba(225,238,238,0.65) 0%, rgba(225,238,238,0) 70%),
-    radial-gradient(70% 50% at 30% 78%, rgba(244,206,180,0.68) 0%, rgba(244,206,180,0) 72%),
-    radial-gradient(60% 50% at 70% 88%, rgba(214,182,180,0.65) 0%, rgba(214,182,180,0) 75%),
-    radial-gradient(80% 35% at 50% 100%, rgba(180,170,168,0.55) 0%, rgba(180,170,168,0) 80%),
-    linear-gradient(180deg, #F2F8F8 0%, #FBEFE5 65%, #E8DAD2 100%)
+  // ② neon-tech：深紫夜景 + 电光青粒子 + 霓虹紫光晕
+  const neonTechLayer = `
+    radial-gradient(70% 50% at 100% 0%, rgba(6,182,212,0.45) 0%, rgba(6,182,212,0) 60%),
+    radial-gradient(80% 60% at -10% 110%, rgba(168,85,247,0.40) 0%, rgba(168,85,247,0) 65%),
+    radial-gradient(40% 30% at 30% 30%, rgba(244,114,182,0.32) 0%, rgba(244,114,182,0) 75%),
+    radial-gradient(50% 35% at 70% 60%, rgba(6,182,212,0.22) 0%, rgba(6,182,212,0) 70%),
+    linear-gradient(155deg, #0F0728 0%, #1E1B4B 50%, #312E81 100%)
   `;
 
-  // ③ business-bright · 高端商务亮：白底 + 海军蓝弧形 mask + 香槟金 hairline
+  // ③ sunset-coral：粉橘 → 紫罗兰渐变（黄昏感）
+  const sunsetCoralLayer = `
+    radial-gradient(70% 50% at 18% 22%, rgba(251,146,60,0.55) 0%, rgba(251,146,60,0) 70%),
+    radial-gradient(60% 45% at 85% 30%, rgba(244,114,182,0.45) 0%, rgba(244,114,182,0) 70%),
+    radial-gradient(80% 60% at 70% 95%, rgba(139,92,246,0.45) 0%, rgba(139,92,246,0) 75%),
+    radial-gradient(60% 45% at 18% 95%, rgba(252,211,77,0.40) 0%, rgba(252,211,77,0) 75%),
+    linear-gradient(160deg, #FFEDD5 0%, #FBCFE8 50%, #C4B5FD 100%)
+  `;
+
+  // ④ ocean-fresh：天蓝 → 海蓝渐变 + 柠檬黄光晕
+  const oceanFreshLayer = `
+    radial-gradient(70% 50% at 100% 0%, rgba(250,204,21,0.30) 0%, rgba(250,204,21,0) 60%),
+    radial-gradient(80% 60% at -10% 110%, rgba(37,99,235,0.45) 0%, rgba(37,99,235,0) 65%),
+    radial-gradient(35% 28% at 12% 25%, rgba(56,189,248,0.40) 0%, rgba(56,189,248,0) 75%),
+    linear-gradient(180deg, #DBEAFE 0%, #93C5FD 60%, #2563EB 100%)
+  `;
+
+  // ⑤ business-bright：白底 + 海军蓝弧形 mask + 香槟金 hairline
   const businessBrightLayer = `
-    radial-gradient(70% 50% at 100% 0%, rgba(31,58,95,0.10) 0%, rgba(31,58,95,0) 60%),
-    radial-gradient(80% 60% at -10% 110%, rgba(31,58,95,0.14) 0%, rgba(31,58,95,0) 65%),
-    radial-gradient(35% 28% at 12% 25%, rgba(201,168,88,0.18) 0%, rgba(201,168,88,0) 75%),
+    radial-gradient(70% 50% at 100% 0%, rgba(31,58,95,0.18) 0%, rgba(31,58,95,0) 60%),
+    radial-gradient(80% 60% at -10% 110%, rgba(31,58,95,0.22) 0%, rgba(31,58,95,0) 65%),
+    radial-gradient(35% 28% at 12% 25%, rgba(201,168,88,0.30) 0%, rgba(201,168,88,0) 75%),
     linear-gradient(180deg, #F8FAFC 0%, #EAF0F6 100%)
   `;
 
-  // ④ business-dark · 黑色商务深：深炭夜景渐变 + 橙金光晕（仅封面深色）
-  const businessDarkLayer = `
-    radial-gradient(80% 60% at 100% 0%, rgba(232,149,73,0.18) 0%, rgba(232,149,73,0) 60%),
-    radial-gradient(70% 55% at 0% 100%, rgba(232,149,73,0.10) 0%, rgba(232,149,73,0) 65%),
-    radial-gradient(50% 40% at 50% 50%, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0) 70%),
-    linear-gradient(155deg, #1A1D22 0%, #2A2D33 60%, #1A1D22 100%)
-  `;
-
   let bgLayer: string;
-  let isLightCover = false; // 浅底封面要换浅底专用文字配色（避免白字看不见）
+  let isLightCover = false;
 
   if (safeBg) {
-    // 用户上传了封面图，统一加深色 overlay 让标题清晰（business-bright/quiet-luxury 例外用浅 overlay）
-    const overlayMode = style === "business-dark"
-      ? "rgba(0,0,0,0.55)"
-      : (style === "business-bright" || style === "quiet-luxury")
-        ? "rgba(0,0,0,0.35)"
-        : "rgba(0,0,0,0.45)";
+    const overlayMode =
+      style === "neon-tech"
+        ? "rgba(15,7,40,0.55)"
+        : style === "spring-mint" || style === "sunset-coral" || style === "business-bright"
+          ? "rgba(0,0,0,0.30)"
+          : "rgba(0,0,0,0.40)";
     bgLayer = `linear-gradient(180deg, ${overlayMode} 0%, rgba(0,0,0,0.10) 38%, ${overlayMode} 100%), url("${safeBg}") center/cover no-repeat`;
-  } else if (style === "watercolor") {
-    bgLayer = watercolorLayer;
+    isLightCover = style === "spring-mint" || style === "sunset-coral" || style === "business-bright";
+  } else if (style === "spring-mint") {
+    bgLayer = springMintLayer;
     isLightCover = true;
-  } else if (style === "business-bright") {
-    bgLayer = businessBrightLayer;
-    isLightCover = true;
-  } else if (style === "business-dark") {
-    bgLayer = businessDarkLayer;
+  } else if (style === "neon-tech") {
+    bgLayer = neonTechLayer;
     isLightCover = false;
+  } else if (style === "sunset-coral") {
+    bgLayer = sunsetCoralLayer;
+    isLightCover = true;
+  } else if (style === "ocean-fresh") {
+    bgLayer = oceanFreshLayer;
+    isLightCover = false; // 深海蓝底用白字
   } else {
-    // quiet-luxury 默认
-    bgLayer = quietLuxuryLayer;
+    bgLayer = businessBrightLayer;
     isLightCover = true;
   }
 
   const coverTextClass = isLightCover ? "cover-frame cover-frame-light" : "cover-frame";
 
-  // 不同风格用不同的 eyebrow / 装饰文案（让封面有差异化）
-  const eyebrow = style === "business-bright"
-    ? "BUSINESS PLAN"
-    : style === "business-dark"
-      ? "EXECUTIVE BRIEF"
-      : style === "watercolor"
-        ? "STRATEGIC ATELIER"
-        : "GLOBAL STRATEGY"; // quiet-luxury
+  const eyebrow =
+    style === "spring-mint" ? "FRESH STRATEGIC INSIGHT"
+    : style === "neon-tech" ? "FUTURE OPS · TECH BRIEF"
+    : style === "sunset-coral" ? "CREATIVE STRATEGY"
+    : style === "ocean-fresh" ? "OCEAN BUSINESS BRIEF"
+    : "BUSINESS PLAN";
 
   return `
   <section class="cover-page cover-${style}">
@@ -289,11 +312,7 @@ function buildCoverPage(palette: Record<string, string>, cover: PdfCover, style:
         <div class="cover-eyebrow">${eyebrow}</div>
         <h1 class="cover-mega">${safeSubtitle}</h1>
         <h2 class="cover-title">${safeTitle}</h2>
-        ${
-          safeAbstract
-            ? `<p class="cover-abstract">${safeAbstract}</p>`
-            : ""
-        }
+        ${safeAbstract ? `<p class="cover-abstract">${safeAbstract}</p>` : ""}
       </div>
       <div class="cover-bottom">
         <span>MV STUDIO PRO · 战略情报局</span>
@@ -308,7 +327,7 @@ export function generateHtmlTemplate(
   markdownContent: string,
   opts?: { style?: PdfStyle; cover?: PdfCover },
 ): string {
-  const style: PdfStyle = (opts?.style as PdfStyle) || "quiet-luxury";
+  const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
   const palette = buildPalette(style);
   const htmlBody = enhanceTables(parseMarkdownToHtml(markdownContent));
   const coverHtml = opts?.cover ? buildCoverPage(palette, opts.cover, style) : "";
@@ -361,7 +380,7 @@ export function generateHtmlTemplate(
     .cover-page {
       position: relative;
       width: 100%;
-      min-height: 1062px; /* A4 @ 96dpi 高 ~ 1122px，预留 margin */
+      min-height: 1062px;
       color: #fff;
       overflow: hidden;
       page-break-after: always;
@@ -386,12 +405,11 @@ export function generateHtmlTemplate(
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-family: "Noto Sans CJK SC", "Helvetica Neue", sans-serif;
     }
     .cover-pill {
-      background: rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.14);
       backdrop-filter: blur(6px);
-      border: 1px solid rgba(255, 255, 255, 0.20);
+      border: 1px solid rgba(255, 255, 255, 0.22);
       color: #fff;
       padding: 8px 14px;
       border-radius: 999px;
@@ -405,9 +423,7 @@ export function generateHtmlTemplate(
       letter-spacing: 0.18em;
       font-weight: 600;
     }
-    .cover-center {
-      max-width: 86%;
-    }
+    .cover-center { max-width: 86%; }
     .cover-eyebrow {
       color: var(--cover-gold);
       letter-spacing: 0.36em;
@@ -460,36 +476,32 @@ export function generateHtmlTemplate(
       color: #FFE6BE;
       letter-spacing: 0.20em;
     }
-    /* ── 静奢水彩封面专用：浅底用深字 ── */
+    /* ── 浅底封面专用：所有文字换深色 ── */
     .cover-frame-light .cover-pill {
-      background: rgba(255,255,255,0.55);
-      border: 1px solid rgba(63,81,65,0.25);
-      color: #2C3935;
+      background: rgba(255,255,255,0.65);
+      border: 1px solid rgba(15,23,42,0.10);
+      color: ${palette.textMain};
     }
-    .cover-frame-light .cover-issue {
-      color: rgba(44,57,53,0.78);
-    }
-    .cover-frame-light .cover-eyebrow {
-      color: #6B7E62;
-    }
+    .cover-frame-light .cover-issue { color: ${palette.textMuted}; }
+    .cover-frame-light .cover-eyebrow { color: ${palette.primary}; }
     .cover-frame-light .cover-mega {
-      color: #2C3935;
-      text-shadow: 0 6px 28px rgba(255,255,255,0.65);
+      color: ${palette.primary};
+      text-shadow: 0 6px 28px rgba(255,255,255,0.5);
     }
     .cover-frame-light .cover-title {
-      color: #1F2A2E;
+      color: ${palette.textMain};
       text-shadow: none;
     }
     .cover-frame-light .cover-abstract {
-      color: #3F4945;
-      border-left: 2px solid #A89968;
+      color: ${palette.textMain};
+      border-left: 2px solid ${palette.accent};
     }
     .cover-frame-light .cover-bottom {
-      color: rgba(44,57,53,0.78);
-      border-top: 1px solid rgba(63,81,65,0.20);
+      color: ${palette.textMuted};
+      border-top: 1px solid ${palette.rule};
     }
     .cover-frame-light .cover-conf {
-      color: #A51C30; /* 红衬底：让 CONFIDENTIAL 在浅底上醒目 */
+      color: ${palette.confidential};
       letter-spacing: 0.20em;
       font-weight: 800;
     }
@@ -508,7 +520,7 @@ export function generateHtmlTemplate(
       transform: translate(-50%, -50%) rotate(-30deg);
       font-size: 96px;
       font-weight: 800;
-      color: rgba(31, 42, 68, 0.045);
+      color: ${palette.primary}10;
       letter-spacing: 0.18em;
       z-index: 0;
       pointer-events: none;
@@ -524,11 +536,10 @@ export function generateHtmlTemplate(
       letter-spacing: 0.025em;
       line-height: 1.45;
     }
-    /* 章节大标题（一/二/三...）— 大字 + 主色（绝不与正文同色） */
     h1 {
       font-size: 28px;
       font-weight: 900;
-      color: var(--primary);             /* H1 用主色，不再用 text-main 避免和正文同色 */
+      color: var(--primary);
       text-align: left;
       padding: 30px 30px 26px 32px;
       margin: 24px 0 28px;
@@ -543,7 +554,6 @@ export function generateHtmlTemplate(
       page-break-after: avoid;
       break-after: avoid;
     }
-    /* 章节小节（▸ + 主色背景胶囊 + 金线下边） */
     h2 {
       font-size: 19px;
       font-weight: 800;
@@ -568,7 +578,7 @@ export function generateHtmlTemplate(
     h3 {
       font-size: 15.5px;
       font-weight: 800;
-      color: var(--primary);             /* H3 用主色，不再与正文 textMain 同色 */
+      color: var(--primary);
       margin: 24px 0 12px;
       padding-left: 12px;
       border-left: 3px solid var(--accent);
@@ -596,7 +606,7 @@ export function generateHtmlTemplate(
     li { margin: 4px 0; line-height: 1.78; }
     li::marker { color: var(--primary); font-weight: 700; }
 
-    /* ────────────────── 表格 — 修 6 大 bug ────────────────── */
+    /* ────────────────── 表格 ────────────────── */
     table {
       width: 100%;
       border-collapse: collapse;
@@ -606,9 +616,7 @@ export function generateHtmlTemplate(
       box-shadow: 0 1px 0 rgba(0,0,0,0.04);
       table-layout: auto;
     }
-    /* 修跨页表头丢失 */
     thead { display: table-header-group; }
-    /* 修单元格被截断 */
     tr { page-break-inside: avoid; page-break-after: auto; }
     thead th {
       background: var(--th-bg);
@@ -619,8 +627,7 @@ export function generateHtmlTemplate(
       font-size: 12px;
       letter-spacing: 0.05em;
       border-bottom: 2px solid var(--primary);
-      border-right: 1px solid rgba(255,255,255,0.08);
-      /* 修列宽崩坏：表头不允许被竖切 */
+      border-right: 1px solid rgba(255,255,255,0.10);
       white-space: nowrap;
       min-width: 64px;
       vertical-align: middle;
@@ -635,27 +642,23 @@ export function generateHtmlTemplate(
       overflow-wrap: anywhere;
     }
     tbody tr:nth-child(even) td { background-color: var(--row-alt); }
-    /* 数字列右对齐 + 等宽数字 */
     td.num, th.num {
       text-align: right;
       font-variant-numeric: tabular-nums;
       font-feature-settings: "tnum" on;
       white-space: nowrap;
     }
-    /* +/- 百分比染色徽章 */
-    td.num.pos { color: #167B3A; font-weight: 700; }
-    td.num.neg { color: #B5391E; font-weight: 700; }
-    /* 高/中/低 染色徽章 */
+    td.num.pos { color: #15803D; font-weight: 700; }
+    td.num.neg { color: #B91C1C; font-weight: 700; }
     td.lvl-h, td.lvl-m, td.lvl-l {
       text-align: center;
       font-weight: 800;
       letter-spacing: 0.08em;
     }
-    td.lvl-h { color: #fff; background: #167B3A; border-radius: 4px; }
-    td.lvl-m { color: #fff; background: #C9A14A; border-radius: 4px; }
-    td.lvl-l { color: #fff; background: #B5391E; border-radius: 4px; }
+    td.lvl-h { color: #fff; background: #15803D; border-radius: 4px; }
+    td.lvl-m { color: #fff; background: #CA8A04; border-radius: 4px; }
+    td.lvl-l { color: #fff; background: #B91C1C; border-radius: 4px; }
 
-    /* 关键警示 / 引用块（升级为「卡片」）*/
     blockquote {
       border-left: 4px solid var(--primary);
       background: ${palette.primary}10;
@@ -670,7 +673,6 @@ export function generateHtmlTemplate(
     blockquote p { margin: 6px 0; }
     blockquote strong { color: var(--primary); }
 
-    /* 行内 code */
     code {
       background: ${palette.accent}12;
       padding: 1px 6px;
@@ -680,8 +682,8 @@ export function generateHtmlTemplate(
       color: var(--accent);
     }
     pre {
-      background: var(--cover-bg);
-      color: var(--cover-gold);
+      background: ${palette.bgElev};
+      color: ${palette.primary};
       padding: 14px 16px;
       border-radius: 6px;
       border-left: 3px solid var(--primary);

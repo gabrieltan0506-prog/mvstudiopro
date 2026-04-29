@@ -20,8 +20,8 @@ function resolveGrowthCampFinalModel(modelName?: string): string {
     modelName
       || process.env.GROWTH_CAMP_FINAL_MODEL
       || process.env.VERTEX_GROWTH_FINAL_MODEL
-      || "gemini-2.5-pro",
-  ).trim() || "gemini-2.5-pro";
+      || "gemini-3.1-pro-preview",
+  ).trim() || "gemini-3.1-pro-preview";
 }
 
 function truncate(value: string, max = 6000) {

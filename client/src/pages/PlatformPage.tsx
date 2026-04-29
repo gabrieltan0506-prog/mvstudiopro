@@ -431,7 +431,7 @@ export default function PlatformPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: focusPrompt || undefined,
-      modelName: "gemini-2.5-pro",
+      modelName: "gemini-3.1-pro-preview",
       requestedPlatforms: ["douyin", "xiaohongshu", "bilibili", "kuaishou"],
       analysis: EMPTY_ANALYSIS,
       windowDays: selectedWindowDays,

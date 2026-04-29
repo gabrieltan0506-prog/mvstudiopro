@@ -672,7 +672,7 @@ async function buildPlatformDashboard(params: {
 
 /**
  * normalizePlatformContentKeys — Key normalization layer for buildPlatformContent.
- * Gemini 2.5 Pro occasionally renames fields despite the strict JSON key-lock prompt.
+ * Gemini 3.1 Pro occasionally renames fields despite the strict JSON key-lock prompt.
  * This function remaps all documented alias variants to the canonical key names before
  * the Zod schema parse, so drifted responses are recovered gracefully instead of lost.
  *
@@ -5959,8 +5959,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         reportId: z.number().int().positive().optional(), // userCreations.id（MyReports 列表用）
         markdown: z.string().min(80).max(500_000).optional(),
         signedUrlHours: z.number().int().min(1).max(168).optional(),
-        // v3：模板选择
-        style: z.enum(["quiet-luxury", "watercolor", "business-bright", "business-dark"]).optional(),
+        // v4：5 套活泼模板（砍掉焦糖系，仅保留 business-bright）
+        style: z.enum(["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"]).optional(),
         // v3：封面页（可全部不传，会从 job/dbRecord 自动抓）
         cover: z.object({
           imageUrl: z.string().url().optional(),
@@ -6043,7 +6043,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown / jobId / reportId" });
         }
 
-        const style = input.style || "quiet-luxury";
+        const style = input.style || "spring-mint";
         // 组装 cover：用户传的优先，缺什么自动补
         const coverEnabled = input.cover?.enabled !== false; // 默认开
         const cover = coverEnabled

@@ -1683,7 +1683,7 @@ export default function MVAnalysisPage() {
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
       context: context || undefined,
-      modelName: "gemini-2.5-pro",
+      modelName: "gemini-3.1-pro-preview",
       requestedPlatforms: [...FULL_PLATFORM_ORDER],
       analysis: analysis || {
         composition: 0,
@@ -1977,7 +1977,7 @@ export default function MVAnalysisPage() {
               mimeType: fileMimeType || "application/octet-stream",
               fileName,
               context: context || undefined,
-              modelName: "gemini-2.5-pro",
+              modelName: "gemini-3.1-pro-preview",
             })
           : await (async () => {
               if (!selectedFile) {
@@ -2073,7 +2073,7 @@ export default function MVAnalysisPage() {
                   mode: "job",
                   dispatch: {
                     status: "started",
-                    modelName: "gemini-2.5-pro",
+                    modelName: "gemini-3.1-pro-preview",
                     route: "growth_analyze_video",
                   },
                 },
@@ -2090,7 +2090,7 @@ export default function MVAnalysisPage() {
                     mimeType: fileMimeType || "video/mp4",
                     fileName,
                     context: context || undefined,
-                    modelName: "gemini-2.5-pro",
+                    modelName: "gemini-3.1-pro-preview",
                     mode: analysisMode,
                     forceRefresh,
                     durationSeconds: localDurationSeconds > 0 ? localDurationSeconds : undefined,
@@ -2103,7 +2103,7 @@ export default function MVAnalysisPage() {
                   ...(((prev as any)?.videoPipeline || {}) as VideoPipelineDebug),
                   dispatch: {
                     status: "done",
-                    modelName: "gemini-2.5-pro",
+                    modelName: "gemini-3.1-pro-preview",
                     route: "growth_analyze_video",
                   },
                   job: {

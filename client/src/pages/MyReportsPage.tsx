@@ -41,7 +41,7 @@ export default function MyReportsPage() {
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
-  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("quiet-luxury");
+  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   // 一键下载（卡片级）：当前正在导出哪一份的 ID
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   // 隐藏渲染容器 + 当前要导出的报告内容（卡片直接调用，不需要进入阅读模式）
