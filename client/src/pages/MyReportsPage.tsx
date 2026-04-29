@@ -82,6 +82,49 @@ export default function MyReportsPage() {
     },
   });
 
+  // ── HTML 交互版导出（PDF 之外的第二条下载路径） ─────────────────────────
+  // 用户决策："直接讓用戶下載 PDF 跟 HTML 的選項就好，除非檔案很大，超過 10 MB，
+  // 在採用壓縮成 zip 下載。"
+  // - 后端返 dataUrl: data:text/html;base64,... 或 data:application/zip;base64,...
+  // - 前端用 <a download> 触发本地下载（无需 GCS 签名链接）
+  const [htmlDownloadingCardId, setHtmlDownloadingCardId] = useState<number | null>(null);
+  const exportInteractiveHtmlMutation = trpc.creations.exportInteractiveHtml.useMutation({
+    onSuccess: (result) => {
+      setHtmlDownloadingCardId(null);
+      try {
+        const a = document.createElement("a");
+        a.href = result.dataUrl;
+        a.download = result.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        const sizeMb = (result.sizeBytes / 1024 / 1024).toFixed(2);
+        if (result.kind === "zip") {
+          toast.success(`HTML 交互版已下载（${sizeMb} MB → 自动压缩为 zip）`);
+        } else {
+          toast.success(`HTML 交互版已下载（${sizeMb} MB · 含交互图表）`);
+        }
+      } catch (e: any) {
+        toast.error("HTML 已生成但触发下载失败：" + (e?.message || "未知错误"));
+      }
+    },
+    onError: (err) => {
+      setHtmlDownloadingCardId(null);
+      toast.error("HTML 交互版导出失败：" + err.message);
+    },
+  });
+
+  const handleDownloadHtmlFromCard = useCallback((report: Report) => {
+    if (htmlDownloadingCardId) return;
+    setHtmlDownloadingCardId(report.id);
+    toast.info("正在生成 HTML 交互版（≤10 MB 直接下载，>10 MB 自动压缩 zip）…");
+    exportInteractiveHtmlMutation.mutate({
+      creationId: report.id,
+      pdfStyle: styleOf(report.id),
+    });
+    // styleOf 在下面才声明，但 React closure 顺序无影响（runtime read）
+  }, [exportInteractiveHtmlMutation, htmlDownloadingCardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // 软删除：失败 / 已弃置作品的清理入口（仅状态改 deleted，可恢复）
   const softDeleteMutation = trpc.creations.softDelete.useMutation({
     onSuccess: () => {
@@ -219,7 +262,7 @@ export default function MyReportsPage() {
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            {/* 唯一权威下载入口：走 Puppeteer + pdfTemplate.ts（5 套封面模板都生效） */}
+            {/* PDF 静态版：走 Puppeteer + pdfTemplate.ts（5 套封面 + ECharts SSR 静态图表） */}
             <button
               onClick={() => {
                 if (!selectedReport?.markdown) return;
@@ -249,10 +292,46 @@ export default function MyReportsPage() {
                 boxShadow: isExportingBlackGold ? "none" : "0 6px 20px rgba(184,134,11,0.40)",
                 transition: "all 0.2s",
               }}
-              title="使用所选封面模板生成 PDF · 5 套配色全部生效"
+              title="使用所选封面模板生成 PDF · 5 套配色全部生效 · 图表为静态 SVG"
             >
               {isExportingBlackGold ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
-              {isExportingBlackGold ? "正在压制 PDF…" : "导出 PDF（套用所选封面）"}
+              {isExportingBlackGold ? "正在压制 PDF…" : "📥 下载 PDF（静态版）"}
+            </button>
+            {/* HTML 交互版：内联 echarts，浏览器里可交互 */}
+            <button
+              onClick={() => {
+                if (!selectedReport?.id) return;
+                if (htmlDownloadingCardId) return;
+                setHtmlDownloadingCardId(selectedReport.id);
+                toast.info("正在生成 HTML 交互版（≤10 MB 直接下载，>10 MB 自动压缩 zip）…");
+                exportInteractiveHtmlMutation.mutate({
+                  creationId: selectedReport.id,
+                  pdfStyle,
+                });
+              }}
+              disabled={!!htmlDownloadingCardId || !selectedReport?.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "11px 22px",
+                borderRadius: 12,
+                background: htmlDownloadingCardId
+                  ? "rgba(37,99,235,0.30)"
+                  : "linear-gradient(135deg,#1e3a8a 0%,#2563eb 50%,#1e3a8a 100%)",
+                border: "1.5px solid #3b82f6",
+                color: htmlDownloadingCardId ? "rgba(255,255,255,0.7)" : "#f0f9ff",
+                fontSize: 13,
+                fontWeight: 900,
+                letterSpacing: "0.02em",
+                cursor: htmlDownloadingCardId ? "not-allowed" : "pointer",
+                boxShadow: htmlDownloadingCardId ? "none" : "0 6px 20px rgba(37,99,235,0.40)",
+                transition: "all 0.2s",
+              }}
+              title="下载 HTML 交互版（含 echarts，可 hover / 切 legend）；≤10 MB 直下载，>10 MB 自动 zip"
+            >
+              {htmlDownloadingCardId ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {htmlDownloadingCardId ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
             </button>
             {/* Markdown 原文下载（轻量、无样式） */}
             <button
@@ -384,6 +463,7 @@ export default function MyReportsPage() {
                     key={report.id}
                     report={report}
                     isDownloading={downloadingCardId === report.id}
+                    isHtmlDownloading={htmlDownloadingCardId === report.id}
                     isCancelling={!!report.jobId && cancellingJobId === report.jobId}
                     isDeleting={deletingReportId === report.id}
                     pdfStyle={styleOf(report.id)}
@@ -395,6 +475,7 @@ export default function MyReportsPage() {
                     }}
                     onEdit={() => setEditingReport(report)}
                     onDownload={() => handleDownloadFromCard(report)}
+                    onDownloadHtml={() => handleDownloadHtmlFromCard(report)}
                     onCancel={() => handleCancelJob(report)}
                     onSoftDelete={() => handleSoftDelete(report)}
                   />
@@ -416,17 +497,19 @@ export default function MyReportsPage() {
 // ─── 封面卡片组件 ──────────────────────────────────────────────────────────────
 
 function ReportCoverCard({
-  report, onRead, onEdit, onDownload, onCancel, onSoftDelete,
-  isDownloading, isCancelling, isDeleting,
+  report, onRead, onEdit, onDownload, onDownloadHtml, onCancel, onSoftDelete,
+  isDownloading, isHtmlDownloading, isCancelling, isDeleting,
   pdfStyle, onPdfStyleChange,
 }: {
   report: Report;
   onRead: () => void;
   onEdit: () => void;
   onDownload: () => void;
+  onDownloadHtml: () => void;
   onCancel: () => void;
   onSoftDelete: () => void;
   isDownloading?: boolean;
+  isHtmlDownloading?: boolean;
   isCancelling?: boolean;
   isDeleting?: boolean;
   pdfStyle: PdfStyleKey;
@@ -527,7 +610,7 @@ function ReportCoverCard({
           )}
         </div>
 
-        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 修订 */}
+        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订 */}
         {report.status === "completed" && report.reportMarkdown && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {/* 5 套封面模板紧凑选择条：用户挑封面 → 立即套用到下载 */}
@@ -538,10 +621,39 @@ function ReportCoverCard({
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
               onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-              title="使用所选封面模板生成 PDF（72 小时签名链接）"
+              title="使用所选封面模板生成 PDF（72 小时签名链接 · 静态图表）"
             >
               {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
-              {isDownloading ? "正在生成 PDF…" : "📥 导出 PDF（套用所选封面）"}
+              {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF（静态版）"}
+            </button>
+            {/* HTML 交互版：内联 echarts，浏览器里可 hover / 切 legend / 缩放 */}
+            <button
+              onClick={onDownloadHtml}
+              disabled={isHtmlDownloading}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "10px 0",
+                borderRadius: 10,
+                background: isHtmlDownloading
+                  ? "rgba(37,99,235,0.20)"
+                  : "linear-gradient(135deg,#1e3a8a,#2563eb)",
+                border: "1px solid rgba(37,99,235,0.55)",
+                color: "#f0f9ff",
+                fontWeight: 900,
+                fontSize: 12.5,
+                cursor: isHtmlDownloading ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+                boxShadow: isHtmlDownloading ? "none" : "0 4px 14px rgba(37,99,235,0.30)",
+              }}
+              onMouseEnter={(e) => { if (!isHtmlDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+              title="下载交互版 HTML（含 echarts，可 hover / 切 legend）；≤10 MB 直下载，>10 MB 自动压缩 zip"
+            >
+              {isHtmlDownloading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
             </button>
             <div style={{ display: "flex", gap: 6 }}>
               <button

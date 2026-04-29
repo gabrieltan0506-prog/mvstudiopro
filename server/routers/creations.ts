@@ -6,9 +6,11 @@
  * - User favorites/bookmarks management
  * - Retention policy enforcement
  * - Expiry reminders
+ * - Interactive HTML export (单文件离线 + echarts.min.js inline，>10MB 自动 zip)
  */
 
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { userCreations, userFavorites } from "../../drizzle/schema-creations";
@@ -86,6 +88,26 @@ export async function recordCreation(params: {
     expiryReminded: false,
   }).returning({ id: userCreations.id });
   return row?.id ?? 0;
+}
+
+// ─── Filename Sanitizer (HTML/zip 导出用) ───────────────
+//
+// 把 title 里的中英文 / 数字 / 横线 / 下划线保留，其余非法字符（路径分隔、
+// 控制字符、emoji 等）全部替换成 -；最长截到 80。
+function sanitizeFilename(name: string): string {
+  return String(name || "report")
+    // 1) 控制字符 + 路径非法字符（Win/Mac/Linux 公约最严格集）
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*\r\n\t]/g, "-")
+    // 2) emoji（高低代理对）+ ZWJ + VS16，避免文件名乱码
+    //    用 surrogate pair 正则，避免 u 标志（项目 tsconfig 没设 target，默认 ES3 不支持）
+    .replace(/[\uD83C-\uDBFF][\uDC00-\uDFFF]/g, "")
+    .replace(/[\u200d\ufe0f]/g, "")
+    // 3) 空白 → -, 多个 - 折叠成一个，去头尾 .-
+    .replace(/[\s]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 80) || "report";
 }
 
 // ─── Router ───────────────────────────────────────────
@@ -373,6 +395,101 @@ export const creationsRouter = router({
       count: expiring.length,
     };
   }),
+
+  // ═══════════════════════════════════════════════════
+  // 交互版 HTML 导出（PDF 之外的第二条下载路径）
+  // ═══════════════════════════════════════════════════
+  //
+  // 用户决策（原话）：
+  //   "直接讓用戶下載 PDF 跟 HTML 的選項就好，除非檔案很大，超過 10 MB，
+  //   在採用壓縮成 zip 下載。"
+  //
+  // 行为：
+  //   - 取 userCreations 里的 reportMarkdown / title / thumbnail
+  //   - 调 generateInteractiveHtml(...) 生成单文件 HTML（含 inline echarts.min.js）
+  //   - <= 10 MB：直接返 dataUrl: data:text/html;base64,...
+  //   - > 10 MB：jszip 压缩成 zip，返 dataUrl: data:application/zip;base64,...
+  //   - 文件名：${title}-${pdfStyle}-${creationId}.html|.zip （去除非法字符）
+  exportInteractiveHtml: protectedProcedure
+    .input(z.object({
+      creationId: z.number().int().positive(),
+      pdfStyle: z.enum(["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"]).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const database = await db();
+      const [row] = await database
+        .select()
+        .from(userCreations)
+        .where(and(
+          eq(userCreations.id, input.creationId),
+          eq(userCreations.userId, ctx.user.id),
+        ))
+        .limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "作品不存在或无权访问" });
+      let meta: any = {};
+      try { meta = JSON.parse(row.metadata || "{}"); } catch {}
+      const md = String(meta.reportMarkdown || meta.draftMarkdown || "").trim();
+      if (!md) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "该报告尚未生成 Markdown 内容，无法导出 HTML" });
+      }
+      const style = input.pdfStyle || "spring-mint";
+      const title = String(meta.lighthouseTitle || row.title || "战略情报研报").slice(0, 80);
+
+      try {
+        const { generateInteractiveHtml } = await import("../services/htmlReportTemplate");
+        const html = generateInteractiveHtml(md, {
+          style: style as any,
+          documentTitle: title,
+          cover: {
+            imageUrl: row.thumbnailUrl || undefined,
+            title,
+            subtitle: "EXCLUSIVE STRATEGIC INTELLIGENCE",
+            issue: "战略情报局",
+            date: new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }),
+            abstract: meta.summary || undefined,
+          },
+        });
+
+        const sizeBytes = Buffer.byteLength(html, "utf8");
+        const TEN_MB = 10 * 1024 * 1024;
+        const safeName = sanitizeFilename(`${title}-${style}-${input.creationId}`);
+
+        if (sizeBytes <= TEN_MB) {
+          // 直接返 base64 data URL（前端 <a download> 触发下载）
+          const b64 = Buffer.from(html, "utf8").toString("base64");
+          return {
+            kind: "html" as const,
+            filename: `${safeName}.html`,
+            sizeBytes,
+            dataUrl: `data:text/html;charset=utf-8;base64,${b64}`,
+          };
+        }
+
+        // > 10 MB：用 jszip 压缩
+        const JSZip = (await import("jszip")).default;
+        const zip = new JSZip();
+        zip.file(`${safeName}.html`, html);
+        const zipBuf = await zip.generateAsync({
+          type: "nodebuffer",
+          compression: "DEFLATE",
+          compressionOptions: { level: 6 },
+        });
+        const zipB64 = zipBuf.toString("base64");
+        return {
+          kind: "zip" as const,
+          filename: `${safeName}.zip`,
+          sizeBytes,
+          zipBytes: zipBuf.length,
+          dataUrl: `data:application/zip;base64,${zipB64}`,
+        };
+      } catch (e: any) {
+        console.error("[creations.exportInteractiveHtml] 导出失败：", e?.message, e?.stack);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: e?.message || "HTML 交互版导出失败，请稍后重试",
+        });
+      }
+    }),
 
   /** Get creation stats for the user */
   stats: protectedProcedure.query(async ({ ctx }) => {
