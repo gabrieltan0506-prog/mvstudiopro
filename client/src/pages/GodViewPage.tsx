@@ -4,6 +4,7 @@ import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug } fr
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
+import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -50,6 +51,8 @@ export default function GodViewPage() {
   // ── 补充资料（半月刊专属）
   const [suppText, setSuppText] = useState("");
   const [suppFiles, setSuppFiles] = useState<Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>>([]);
+  // inline 上传状态：最近一次上传成功 / 失败的明确字样（toast 之外的兜底，常驻在 chip 区上方）
+  const [lastUploadInfo, setLastUploadInfo] = useState<{ ok: boolean; text: string } | null>(null);
   const [suppExpanded, setSuppExpanded] = useState(false);
   const [suppUploading, setSuppUploading] = useState(false);
   const suppFileInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +63,9 @@ export default function GodViewPage() {
     const MAX = 5;
     const remaining = MAX - suppFiles.length;
     if (!remaining) {
-      toast.error(`最多只能上传 ${MAX} 个文件，请先移除部分文件`);
+      const m = `最多只能上传 ${MAX} 个文件，请先移除部分文件`;
+      toast.error(m);
+      setLastUploadInfo({ ok: false, text: `❌ ${m}` });
       return;
     }
     if (files.length > remaining) {
@@ -76,12 +81,16 @@ export default function GodViewPage() {
     try {
       for (const file of files.slice(0, remaining)) {
         if (!ALLOWED.includes(file.type)) {
-          toast.error(`「${file.name}」格式不支持（仅 PNG/JPG/WebP/PDF）`);
+          const m = `「${file.name}」格式不支持（仅 PNG/JPG/WebP/PDF）`;
+          toast.error(m);
+          setLastUploadInfo({ ok: false, text: `❌ 上传失败：${m}` });
           failCount++;
           continue;
         }
         if (file.size > MAX_BYTES) {
-          toast.error(`「${file.name}」超过 100MB 上限（${(file.size / 1024 / 1024).toFixed(1)}MB）`);
+          const m = `「${file.name}」超过 100MB 上限（${(file.size / 1024 / 1024).toFixed(1)}MB）`;
+          toast.error(m);
+          setLastUploadInfo({ ok: false, text: `❌ 上传失败：${m}` });
           failCount++;
           continue;
         }
@@ -89,32 +98,45 @@ export default function GodViewPage() {
         const type: "image" | "pdf" = file.type.startsWith("image/") ? "image" : "pdf";
         const sizeMB = (file.size / 1024 / 1024).toFixed(1);
         const uploadingToast = toast.loading(`正在上传「${file.name}」（${sizeMB}MB）…`);
+        // chip 区也同步显示「正在上传…」（防止 toast 没渲染时用户看不到）
+        setLastUploadInfo({ ok: true, text: `⏳ 正在上传「${file.name}」（${sizeMB}MB）…` });
         try {
           const formData = new FormData();
           formData.append("file", file);
           const res = await fetch("/api/magazine/upload", { method: "POST", body: formData });
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            toast.error(`上传「${file.name}」失败：${err?.error || `HTTP ${res.status}`}`, { id: uploadingToast });
+            const m = `上传「${file.name}」失败：${err?.error || `HTTP ${res.status}`}`;
+            toast.error(m, { id: uploadingToast });
+            setLastUploadInfo({ ok: false, text: `❌ ${m}` });
             failCount++;
             continue;
           }
           const data = await res.json();
           if (!data?.url || !data?.gcsUri) {
-            toast.error(`上传「${file.name}」失败：服务器未返回文件链接`, { id: uploadingToast });
+            const m = `上传「${file.name}」失败：服务器未返回文件链接`;
+            toast.error(m, { id: uploadingToast });
+            setLastUploadInfo({ ok: false, text: `❌ ${m}` });
             failCount++;
             continue;
           }
           setSuppFiles((prev) => [...prev, { name: file.name, type, mimeType: file.type, url: data.url, gcsUri: data.gcsUri }]);
           toast.success(`「${file.name}」上传成功（${sizeMB}MB）`, { id: uploadingToast });
+          setLastUploadInfo({ ok: true, text: `✅ 上传成功：「${file.name}」（${sizeMB}MB）已存入云端` });
           okCount++;
         } catch (netErr: any) {
-          toast.error(`上传「${file.name}」网络异常：${netErr?.message || "请检查网络后重试"}`, { id: uploadingToast });
+          const msg = netErr?.message || "请检查网络后重试";
+          toast.error(`上传「${file.name}」网络异常：${msg}`, { id: uploadingToast });
+          setLastUploadInfo({ ok: false, text: `❌ 上传失败：「${file.name}」网络异常：${msg}` });
           failCount++;
         }
       }
       if (okCount > 1 || (okCount > 0 && failCount > 0)) {
-        toast.success(`本次上传完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`);
+        const summary = `本次上传完成：成功 ${okCount} 个${failCount ? `，失败 ${failCount} 个` : ""}`;
+        toast.success(summary);
+        setLastUploadInfo({ ok: failCount === 0, text: (failCount === 0 ? "✅ " : "⚠️ ") + summary });
+      } else if (okCount === 0 && failCount === 0) {
+        // 全被前置校验拦掉，已经各自 toast/lastUploadInfo
       }
     } finally {
       setSuppUploading(false);
@@ -163,8 +185,8 @@ export default function GodViewPage() {
     onError: (err) => alert("批准计划失败：" + err.message),
   });
 
-  // 黑金 PDF 导出 · 三套模板（black-gold / harvard / quiet-luxury）
-  const [pdfStyle, setPdfStyle] = useState<"black-gold" | "harvard" | "quiet-luxury">("black-gold");
+  // 战略 PDF 导出 · 4 套模板（quiet-luxury / watercolor / business-bright / business-dark）
+  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("quiet-luxury");
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
     onSuccess: (result) => {
       const url = result?.signedUrl;
@@ -686,12 +708,44 @@ export default function GodViewPage() {
                           ? "上传客户档案 / 历史快照 / 体检报告 / 私域聊天截图（最多 5 个，PNG/JPG/PDF，每个 ≤ 100MB）"
                           : "上传文件（最多 5 个，支持 PNG/JPG/PDF，每个最大 100MB）"}
                       </p>
+                      {/* inline 状态横条：上传成功 / 失败 / 进行中（toast 之外的兜底，绝对可见） */}
+                      {lastUploadInfo && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            padding: "10px 14px",
+                            marginBottom: 10,
+                            borderRadius: 10,
+                            background: lastUploadInfo.ok
+                              ? "rgba(22,163,74,0.10)"
+                              : "rgba(220,38,38,0.10)",
+                            border: lastUploadInfo.ok
+                              ? "1px solid rgba(22,163,74,0.45)"
+                              : "1px solid rgba(220,38,38,0.45)",
+                            color: lastUploadInfo.ok ? "#15803d" : "#b91c1c",
+                            fontSize: 13,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <span>{lastUploadInfo.text}</span>
+                          <button
+                            onClick={() => setLastUploadInfo(null)}
+                            style={{ background: "none", border: "none", color: "inherit", fontSize: 16, cursor: "pointer", lineHeight: 1, opacity: 0.6 }}
+                            aria-label="关闭"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      )}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {suppFiles.map((f, i) => (
-                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.2)", borderRadius: 8, fontSize: 12, color: "#7a5410" }}>
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(22,163,74,0.10)", border: "1px solid rgba(22,163,74,0.30)", borderRadius: 8, fontSize: 12, color: "#15803d" }}>
                             <span>{f.type === "image" ? "🖼️" : "📄"}</span>
                             <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>{f.name}</span>
-                            <span style={{ fontSize: 10, opacity: 0.5 }}>✓</span>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: "#15803d" }}>✓ 已上传</span>
                             <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2 }}>×</button>
                           </div>
                         ))}
@@ -758,20 +812,11 @@ export default function GodViewPage() {
             <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: 480, margin: "0 auto 32px" }}>
               深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
             </p>
+            {/* 模板选择器（带封面 + 内文页缩略预览） */}
+            <div style={{ marginBottom: 18, padding: "16px 20px", borderRadius: 14, background: "rgba(255,250,240,0.06)", border: "1px solid rgba(184,134,11,0.20)" }}>
+              <TemplatePicker value={pdfStyle} onChange={setPdfStyle} />
+            </div>
             <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-              {/* 模板选择器 */}
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: "rgba(0,0,0,0.5)", border: "1px solid rgba(184,134,11,0.35)" }}>
-                <span style={{ fontSize: 12, color: "rgba(184,134,11,0.85)", fontWeight: 700, letterSpacing: 1 }}>模板：</span>
-                <select
-                  value={pdfStyle}
-                  onChange={(e) => setPdfStyle(e.target.value as any)}
-                  style={{ background: "transparent", color: "#B8860B", border: "none", fontWeight: 800, fontSize: 13, cursor: "pointer", outline: "none" }}
-                >
-                  <option value="black-gold" style={{ background: "#1a1a1a", color: "#B8860B" }}>黑金 · 卡布奇诺</option>
-                  <option value="harvard" style={{ background: "#1a1a1a", color: "#B8860B" }}>哈佛红 · 学术权威</option>
-                  <option value="quiet-luxury" style={{ background: "#1a1a1a", color: "#B8860B" }}>静奢白 · 水彩典藏</option>
-                </select>
-              </div>
               <button
                 onClick={() => {
                   if (!pollingJobId) { toast.error("缺少 jobId"); return; }
