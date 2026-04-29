@@ -53,10 +53,10 @@ export default function ActorStudioShell(props: Props) {
           </div>
         </Card>
 
-        <Card title="2. 场景图生成" subtitle="Kling 3.0 / Nano Banana Pro">
+        <Card title="2. 场景图生成" subtitle="高保真图像引擎">
           <div style={{ display: "grid", gap: 12 }}>
             <button style={btnStyle}>生成角色场景图</button>
-            <div style={hintStyle}>后续支持：Kling 2.6（教育）/ Kling 3.0 / Google Flash / Pro。</div>
+            <div style={hintStyle}>后续支持：教育级视频 / 影视级视频 / 极速版 / 旗舰版。</div>
           </div>
         </Card>
 

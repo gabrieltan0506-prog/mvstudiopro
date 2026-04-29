@@ -64,7 +64,7 @@ export function TrendingHotspotsWidget() {
             实时趋势 · 一键深潜
           </div>
           <p className="mt-1 text-xs text-white/55">
-            来自 4 大平台的实时爆款（trendStore），每条都能直接派发给 Deep Research Max 做差异化对比 / 跨界脚本
+            来自 4 大平台的实时爆款（trendStore），每条都能直接派发给战略智库做差异化对比 / 跨界脚本
           </p>
         </div>
         <div className="flex items-center gap-2">

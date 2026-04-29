@@ -39,8 +39,8 @@ export default function HomePlans() {
             <div className="text-4xl text-pink-400 mb-6">¥249</div>
 
             <ul className="text-gray-300 space-y-3 mb-8">
-              <li>Kling 3.0 视频</li>
-              <li>Nano Banana Pro</li>
+              <li>影视级视频</li>
+              <li>高保真图像引擎</li>
               <li>自动音乐匹配</li>
               <li>500 积分</li>
             </ul>

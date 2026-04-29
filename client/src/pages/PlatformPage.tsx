@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReportGeneratorPanel from "@/components/ReportGeneratorPanel";
 import { ImageUpscaleBar } from "@/components/ImageUpscaleBar";
+import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useAuth } from "@/_core/hooks/useAuth";
 import TrialWatermarkImage from "@/components/TrialWatermarkImage";
 import { useIsTrialUser } from "@/_core/hooks/useIsTrialUser";
@@ -539,6 +540,13 @@ export default function PlatformPage() {
     },
     onError: (err) => { setIsDownloadingPdf(false); toast.error(err.message || "PDF 导出失败"); },
   });
+
+  // ── B 端 IP 基因库（拦截弹窗，共享组件 IpProfileModal）─────────────────────
+  // 落地需求：handleAnalyze 启动前必须先填齐 IP 护城河 + 高客单锚点，
+  // 否则弹「靛青色」拦截弹窗，强制用户校准战略预设。
+  // ipProfile 同步写 localStorage(`ipProfile.v1`)，GodView 一键深潜也会读它注入 prompt。
+  const [ipProfile, setIpProfile] = useState<IpProfile>(() => readIpProfile());
+  const [showIpModal, setShowIpModal] = useState(false);
 
   // ── Job polling state ──────────────────────────────────────────────────────
   const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
@@ -1201,6 +1209,12 @@ export default function PlatformPage() {
   }, [immersiveRotatingCards.length, isAnalyzing]);
 
   const handleAnalyze = async () => {
+    // ── B 端拦截：必须先注入 IP 基因库（行业身份 / 优势 / 受众 / 旗舰交付）
+    if (!isIpProfileReady(ipProfile)) {
+      setShowIpModal(true);
+      toast.message("启动战略推演前，请先载入企业专属 IP 基因");
+      return;
+    }
     setAskResult(null);
     setPlatformDashboard(null);
     setDashboardDebug(null);
@@ -1346,6 +1360,15 @@ export default function PlatformPage() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(82,32,165,0.34),transparent_26%),radial-gradient(circle_at_top_right,rgba(25,121,166,0.22),transparent_20%),linear-gradient(180deg,#06030f_0%,#0d0820_24%,#140b2e_100%)] text-[#f7f2ff]">
       <style>{`@keyframes pulseHighlight{0%,95%,100%{box-shadow:none}96%{box-shadow:0 0 0 2px rgba(73,230,255,0.7),0 0 24px rgba(73,230,255,0.3)}98%{box-shadow:0 0 0 3px rgba(127,103,255,0.8),0 0 32px rgba(127,103,255,0.4)}}`}</style>
+
+      {/* B 端 IP 基因库 · 靛青色拦截弹窗（共享组件 IpProfileModal） */}
+      <IpProfileModal
+        open={showIpModal}
+        value={ipProfile}
+        onChange={setIpProfile}
+        onClose={() => setShowIpModal(false)}
+      />
+
       <div className="mx-auto max-w-[1500px] px-4 py-6 md:px-6 md:py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <button
@@ -1426,6 +1449,41 @@ export default function PlatformPage() {
                   </div>
                 ))}
               </div>
+
+              {/* IP 基因库入口（已填则显示战略锚点摘要 + 编辑按钮；未填则提示载入） */}
+              <button
+                type="button"
+                onClick={() => setShowIpModal(true)}
+                className={`mt-5 w-full rounded-2xl border px-5 py-4 text-left transition ${
+                  isIpProfileReady(ipProfile)
+                    ? "border-[#6366F1]/40 bg-[linear-gradient(135deg,rgba(79,70,229,0.18),rgba(99,102,241,0.10))] hover:border-[#818CF8]/60"
+                    : "border-[#FCD34D]/30 bg-[rgba(252,211,77,0.06)] hover:border-[#FCD34D]/60 animate-[pulseHighlight_2.4s_ease-in-out_infinite]"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[#A5B4FC] mb-1">
+                      {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
+                    </div>
+                    {isIpProfileReady(ipProfile) ? (
+                      <div className="text-[13px] leading-6 text-white truncate">
+                        <span className="text-[#A5B4FC]">{ipProfile.industry}</span>
+                        <span className="mx-2 text-white/30">·</span>
+                        <span className="text-white/85">{ipProfile.advantage}</span>
+                        <span className="mx-2 text-white/30">·</span>
+                        <span className="text-[#FCD34D]">{ipProfile.flagship}</span>
+                      </div>
+                    ) : (
+                      <div className="text-[13px] leading-6 text-white/85">
+                        点此校准护城河 / 高客单锚点 → AI 推演会在 80% 篇幅锁定你的转化路径
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-xs font-semibold text-[#A5B4FC] whitespace-nowrap">
+                    {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
+                  </div>
+                </div>
+              </button>
             </div>
 
             <div className="grid gap-4">

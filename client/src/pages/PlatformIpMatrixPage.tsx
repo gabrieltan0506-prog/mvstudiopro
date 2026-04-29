@@ -89,7 +89,7 @@ export default function PlatformIpMatrixPage() {
               多平台内容 IP 矩阵自动驾驶
             </h1>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(160,140,90,0.70)", lineHeight: 1.7 }}>
-              四大平台爆款交叉对比 + 跨界短影音脚本 + 分镜表 · 由 Deep Research Max 一次性交付「开机即录」的内容资产
+              四大平台爆款交叉对比 + 跨界短影音脚本 + 分镜表 · 由战略智库一次性交付「开机即录」的内容资产
             </p>
           </div>
         </div>

@@ -70,7 +70,16 @@ uploadRouter.post("/api/upload-image", async (req, res) => {
 // Platform QA file upload — stores to GCS and returns gs:// fileUri
 // Used by the PlatformPage QA multimodal flow. Files are temporary and
 // deleted by the background QA job after analysis completes.
-const PLATFORM_QA_BUCKET = "mv-studio-pro-user-uploads-255451353515";
+//
+// ⚠️ Bucket 名称走 env：原来写死的 `mv-studio-pro-user-uploads-255451353515`
+// 桶其实不存在（404 / The specified bucket does not exist），导致 GodView 上传失败。
+// 现在按优先级回退：GCS_USER_UPLOAD_BUCKET → GCS_PDF_EXPORT_BUCKET → VERTEX_GCS_BUCKET，
+// 最差情况下复用已经 deploy 在 fly 上的 vertex-video-temp 桶（也是公开读桶）。
+const PLATFORM_QA_BUCKET =
+  process.env.GCS_USER_UPLOAD_BUCKET ||
+  process.env.GCS_PDF_EXPORT_BUCKET ||
+  process.env.VERTEX_GCS_BUCKET ||
+  "mv-studio-pro-vertex-video-temp";
 const PLATFORM_QA_MAX_BYTES = 20 * 1024 * 1024; // 20MB for images/PDFs
 
 uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
@@ -122,7 +131,12 @@ uploadRouter.post("/api/platform/upload", async (req: any, res: any) => {
 });
 
 // ── 半月刊补充资料上传 → GCS，返回公开 HTTPS URL + gs:// URI ──────────────────
-const MAGAZINE_SUPP_BUCKET = "mv-studio-pro-user-uploads-255451353515";
+// 同上：env-driven，fallback 到 fly 上现实存在的 vertex-video-temp 桶。
+const MAGAZINE_SUPP_BUCKET =
+  process.env.GCS_USER_UPLOAD_BUCKET ||
+  process.env.GCS_PDF_EXPORT_BUCKET ||
+  process.env.VERTEX_GCS_BUCKET ||
+  "mv-studio-pro-vertex-video-temp";
 const MAGAZINE_SUPP_MAX_BYTES = 100 * 1024 * 1024; // 100MB
 
 uploadRouter.post("/api/magazine/upload", async (req: any, res: any) => {

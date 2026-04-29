@@ -144,7 +144,12 @@ ${vals.map((v, i) => `<circle cx="${toX(i)}" cy="${toY(v)}" r="3.5" fill="${colo
 }
 
 /** 直接 HTTP 调用 Gemini API（普通模式） */
-async function generate(model: string, prompt: string, retries = 2, opts?: { temperature?: number; maxTokens?: number }): Promise<string> {
+async function generate(
+  model: string,
+  prompt: string,
+  retries = 2,
+  opts?: { temperature?: number; maxTokens?: number; topP?: number; topK?: number },
+): Promise<string> {
   const apiKey = String(process.env.GEMINI_API_KEY || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
@@ -154,6 +159,8 @@ async function generate(model: string, prompt: string, retries = 2, opts?: { tem
     generationConfig: {
       temperature: opts?.temperature ?? 0.5,
       ...(opts?.maxTokens != null ? { maxOutputTokens: opts.maxTokens } : {}),
+      ...(opts?.topP != null ? { topP: opts.topP } : {}),
+      ...(opts?.topK != null ? { topK: opts.topK } : {}),
     },
   });
 
@@ -845,6 +852,18 @@ export interface DeepResearchJob {
   /** 用户上传的补充资料：文字说明 + 文件（已存 GCS，注入阶段 A Deep Research） */
   supplementaryText?: string;
   supplementaryFiles?: Array<{ name: string; type: "image" | "pdf"; mimeType: string; url: string; gcsUri: string }>;
+  /**
+   * 企业专属 IP 基因（B 端拦截弹窗收集）
+   * 注入到 Plan / Execute 的 prompt [全局战略预设] 段，让推演 80% 篇幅锁定
+   * 高客单转化路径、合规与定价战略，避免变成大众视角的"小生意建议"。
+   */
+  ipProfile?: {
+    industry: string;
+    advantage: string;
+    audience: string;
+    taboos?: string;
+    flagship: string;
+  };
   /** 失败时的结构化错误详情（DeepResearchApiError.toDetailString()）。Supervisor Debug 直接展示。 */
   errorDetail?: string;
 }
@@ -979,7 +998,20 @@ async function relaunchJob(job: DeepResearchJob): Promise<boolean> {
  *   * heartbeat 落后 3-30 分钟：进程视为已死，自动重新拉起（最多 MAX_RESUME_ATTEMPTS 次）
  *   * heartbeat 落后 > 30 分钟：彻底放弃，标 failed + 退款
  *   * 没有 heartbeat 字段（旧数据）：fallback 到 createdAt 判断
+ *
+ * ⚠️ 关键修复（2026-04-29 · 7pmm9u 事故）：
+ *   原本只恢复 running / pending 状态。但 deep-research 的 plan 阶段会把 status
+ *   置为 "planning" 等待 Google 那边返回；如果机器恰在此时重启，这个 job 就被跳过，
+ *   永远成为孤儿（前端进度条永远停在「Plan 推演中」），用户拉不出报告，算力费白烧。
+ *   现在 planning 也纳入恢复白名单。
+ *   awaiting_review / awaiting_plan_approval 是等用户决策的状态，不应该恢复。
  */
+const RECOVERABLE_STATUSES = new Set([
+  "running",
+  "pending",
+  "planning",
+]);
+
 export async function recoverOrphanedJobs(): Promise<void> {
   // 启动时也确保 shutdown 钩子注册，这样下次重启前能给 inflight 任务打上「快速重拉」标记
   ensureShutdownHook();
@@ -997,7 +1029,7 @@ export async function recoverOrphanedJobs(): Promise<void> {
       try {
         const raw = await fs.readFile(path.join(REPORT_DIR, f), "utf-8");
         const job: DeepResearchJob = JSON.parse(raw);
-        if (job.status !== "running" && job.status !== "pending") continue;
+        if (!RECOVERABLE_STATUSES.has(job.status as string)) continue;
 
         const lastBeat = job.lastHeartbeatAt
           ? new Date(job.lastHeartbeatAt).getTime()
@@ -1052,7 +1084,9 @@ function ensureShutdownHook() {
         try {
           const file = path.join(REPORT_DIR, f);
           const job: DeepResearchJob = JSON.parse(await fs.readFile(file, "utf-8"));
-          if (job.status === "running" && job.pid === process.pid) {
+          // 关键：必须覆盖所有 RECOVERABLE_STATUSES（含 planning），否则 plan 阶段
+          // 重启就不会被快速恢复，要等到自然心跳过期才恢复（白白延迟几分钟）。
+          if (RECOVERABLE_STATUSES.has(job.status as string) && job.pid === process.pid) {
             job.lastHeartbeatAt = past;
             await fs.writeFile(file, JSON.stringify(job, null, 2));
           }
@@ -1071,7 +1105,7 @@ export async function createDeepResearchJob(
   topic: string,
   creditsUsed = 0,
   productType: DeepResearchProductType = "magazine_single",
-  supplementary?: { supplementaryText?: string; supplementaryFiles?: DeepResearchJob["supplementaryFiles"] },
+  supplementary?: { supplementaryText?: string; supplementaryFiles?: DeepResearchJob["supplementaryFiles"]; ipProfile?: DeepResearchJob["ipProfile"] },
   /** 进阶选项：用于 VIP 月度更新等场景（预设 planInteractionId 跳过 plan 阶段，覆盖 execute input） */
   advanced?: {
     /** 预填 planInteractionId（VIP 月度更新：上一次执行返回的 interactionId） */
@@ -1103,6 +1137,7 @@ export async function createDeepResearchJob(
     attemptCount: 1,
     ...(supplementary?.supplementaryText ? { supplementaryText: supplementary.supplementaryText } : {}),
     ...(supplementary?.supplementaryFiles?.length ? { supplementaryFiles: supplementary.supplementaryFiles } : {}),
+    ...(supplementary?.ipProfile ? { ipProfile: supplementary.ipProfile } : {}),
     ...(advanced?.planInteractionId ? { planInteractionId: advanced.planInteractionId } : {}),
     ...(advanced?.executeOverrideInput ? { executeOverrideInput: advanced.executeOverrideInput } : {}),
     ...(advanced?.onCompletedHook ? { onCompletedHook: advanced.onCompletedHook } : {}),
@@ -1472,12 +1507,31 @@ ${job.topic}
 - 表格之间用文字小结串联，不要堆叠表格
 注意：所有数值必须直接源自「外部接地数据」或「用户基线」，禁止凭空捏造。`;
 
+    // 企业 IP 基因（B 端拦截弹窗收集）注入到 [全局战略预设] 段
+    // 让推演 80% 篇幅锁定高客单转化路径、合规与定价战略，避免变成大众视角的"小生意建议"
+    const ipProfile = job.ipProfile;
+    const STRATEGIC_IP_PRESET = ipProfile
+      ? `
+【全局战略预设 · 企业 IP 基因】
+企业身份：${ipProfile.industry} | 核心优势：${ipProfile.advantage}
+目标受众：${ipProfile.audience}${ipProfile.taboos ? ` | 品牌禁忌：${ipProfile.taboos}` : ""}
+核心转化锚点：${ipProfile.flagship}
+
+【战略纪律】
+请基于上述基因重构大众热点。80% 篇幅必须聚焦于高客单转化路径、合规与定价战略；
+所有举例、产品矩阵、漏斗设计都要围绕「${ipProfile.flagship}」这一旗舰交付反向倒推；
+${ipProfile.taboos ? `严禁触碰品牌禁忌：${ipProfile.taboos}；` : ""}避免将分析降维到大众化、价格战、流量采买等低端打法。
+`.trim()
+      : "";
+
     const sharedSetup = `
 ${LANG_RULES}
 ${DATA_TABLE_RULES}
 ${FRAMEWORKS}
 ${CHART_RULES}
 ${PERSONA_HIGHLIGHT_RULES}
+
+${STRATEGIC_IP_PRESET}
 
 【千人千面定制化保证】
 个性化种子：${personalSeed}
@@ -1610,7 +1664,16 @@ ${job.topic}
 4. 五大必选模块（个人亮点 / 平台赛道 / 产品矩阵 / 商业变现 / 生涯规划）必须全部覆盖，不得遗漏其中任何一个`;
 
     const promptForSynthesis = `${prompt}\n\n${PDF_FORMATTING_PROMPT_SUFFIX}`;
-    const rawReportMarkdown = await generate("gemini-3.1-pro-preview", promptForSynthesis, 2, { temperature: 0.55 });
+    // 合成参数（B 端 V3 锁定）：
+    //   - temperature 0.7：策略生成的逻辑严谨与创意平衡
+    //   - topP 0.95 + topK 40：保留长尾候选词，避免输出过于刻板
+    //   - maxTokens 8192：保证万字长报告输出完整不被截断
+    const rawReportMarkdown = await generate(
+      "gemini-3.1-pro-preview",
+      promptForSynthesis,
+      2,
+      { temperature: 0.7, topP: 0.95, topK: 40, maxTokens: 8192 },
+    );
 
     if (!rawReportMarkdown || rawReportMarkdown.length < 1500) {
       throw new Error("战报内容过短，可能生成失败");
