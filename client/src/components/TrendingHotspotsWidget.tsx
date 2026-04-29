@@ -1,13 +1,18 @@
 /**
- * 实时趋势 · 一键深潜 Widget
+ * 实时趋势 · 一键深潜 Widget（v4）
  *
- * 调用 trpc.agent.listTrendHotspots 拿 4 大平台 top N 爆款，
- * 每条配两个按钮：「→ IP 矩阵」「→ 竞品雷达」，
- * 点击后通过 sessionStorage 把这条数据塞进去，跳到目标场景页。
+ * v3 → v4 重构：
+ *   ⚠️ 不再展示 likes 绝对值（两年前老作品点赞天然多，会误导）
+ *   ✅ 改展示 growthPercentile（+N%↑）+ 行业大类徽章 + ageDays（N 天前）
+ *   ✅ 同账号突然爆发标记 🚀（个人创作者从沉睡到爆发）
+ *   ✅ 评论 / 转发 数据保留（"讨论度 + 传播度" 才是真信号）
+ *
+ *   排序：调用 trpc.agent.listTrendHotspots，后端已用 selectByGrowthPotential
+ *         过滤了 18 天外作品 + 企业号
  */
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Flame, Sparkles, Target, ExternalLink, RefreshCw } from "lucide-react";
+import { Flame, Sparkles, Target, ExternalLink, RefreshCw, TrendingUp, Rocket } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { saveAgentHandoff, type AgentHandoffTarget, type AgentTrendHandoff } from "@/lib/agentHandoff";
 
@@ -24,6 +29,14 @@ const ROUTE_BY_TARGET: Record<AgentHandoffTarget, string> = {
   platform_ip_matrix: "/agent/platform-ip-matrix",
   competitor_radar: "/agent/competitor-radar",
 };
+
+/** 增长率徽章颜色：+200% → 红炽热 / +100% → 橙 / +60% → 金 / 其他 → 绿 */
+function growthBadgeColor(pct: number): string {
+  if (pct >= 180) return "bg-[#ef4444]/20 text-[#fca5a5] border-[#ef4444]/45";
+  if (pct >= 120) return "bg-[#f97316]/20 text-[#fdba74] border-[#f97316]/45";
+  if (pct >= 70) return "bg-[#eab308]/20 text-[#fde047] border-[#eab308]/45";
+  return "bg-[#10b981]/20 text-[#6ee7b7] border-[#10b981]/40";
+}
 
 export function TrendingHotspotsWidget() {
   const [, setLocation] = useLocation();
@@ -45,11 +58,12 @@ export function TrendingHotspotsWidget() {
       platformLabel: item.platformLabel,
       title: item.title,
       url: item.url,
-      hotValue: item.hotValue,
+      // 兼容旧字段：把 growthPercentile 映射到 hotValue 给下游
+      hotValue: item.growthPercentile,
       views: item.views,
-      likes: item.likes,
+      likes: undefined,
       tags: item.tags,
-      industryLabels: item.industryLabels,
+      industryLabels: [item.category],
     };
     saveAgentHandoff(handoff);
     setLocation(ROUTE_BY_TARGET[target]);
@@ -60,11 +74,12 @@ export function TrendingHotspotsWidget() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-base font-semibold text-white">
-            <Flame className="h-4 w-4 text-[#ff8a4c]" />
-            实时趋势 · 一键深潜
+            <TrendingUp className="h-4 w-4 text-[#10b981]" />
+            实时趋势 · 18 天高增长爆款
           </div>
           <p className="mt-1 text-xs text-white/55">
-            来自 4 大平台的实时爆款（trendStore），每条都能直接派发给战略智库做差异化对比 / 跨界脚本
+            严格 18 天窗口 · 排除企业号投流 · 同账号突然爆发优先 · 强制行业归类
+            <span className="ml-1 text-[#10b981]/80">— 不看点赞绝对值，看增长潜力</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -88,7 +103,7 @@ export function TrendingHotspotsWidget() {
         </div>
       </div>
 
-      {/* 平台覆盖徽章 */}
+      {/* 平台覆盖徽章 + 过滤摘要 */}
       {platforms.length > 0 ? (
         <div className="mt-3 flex flex-wrap gap-2">
           {platforms.map((p) => {
@@ -102,7 +117,7 @@ export function TrendingHotspotsWidget() {
               </span>
             );
           })}
-          <span className="text-[10px] text-white/40">{data?.meta}</span>
+          {data?.meta ? <span className="text-[10px] text-white/40">{data.meta}</span> : null}
         </div>
       ) : null}
 
@@ -112,8 +127,8 @@ export function TrendingHotspotsWidget() {
           <div className="py-8 text-center text-sm text-white/50">加载实时趋势中…</div>
         ) : entries.length === 0 ? (
           <div className="py-8 text-center text-sm text-white/50">
-            暂无可用数据。<br />
-            <span className="text-xs text-white/35">trendStore 还未采集到 4 平台数据，等下一轮采集生效后再来。</span>
+            18 天窗口内暂无可用爆款。<br />
+            <span className="text-xs text-white/35">trendStore 还在采集，或当前样本均为窗外 / 企业号；下一轮采集后再来。</span>
           </div>
         ) : (
           <div className="grid gap-2">
@@ -125,23 +140,42 @@ export function TrendingHotspotsWidget() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${PLATFORM_BADGE[item.platform] || "bg-white/10 text-white/70 border-white/20"}`}
-                      >
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${PLATFORM_BADGE[item.platform] || "bg-white/10 text-white/70 border-white/20"}`}>
                         {item.platformLabel}
                       </span>
-                      {item.hotValue ? (
-                        <span className="inline-flex items-center gap-0.5 text-[10px] text-[#ffaf6b]">
-                          <Flame className="h-3 w-3" />
-                          {item.hotValue.toLocaleString()}
+
+                      {/* ✨ 增长率徽章（替换原 hotValue） */}
+                      <span className={`inline-flex items-center gap-0.5 rounded-full border px-2 py-0.5 text-[10px] font-bold ${growthBadgeColor(item.growthPercentile)}`}>
+                        <TrendingUp className="h-2.5 w-2.5" />
+                        +{item.growthPercentile}%
+                      </span>
+
+                      {/* 同账号突然爆发徽章 */}
+                      {item.isBreakout ? (
+                        <span className="inline-flex items-center gap-0.5 rounded-full border border-[#fb7185]/45 bg-[#fb7185]/15 px-2 py-0.5 text-[10px] font-bold text-[#fda4af]">
+                          <Rocket className="h-2.5 w-2.5" />
+                          该账号突然爆发
                         </span>
                       ) : null}
-                      {item.views ? (
-                        <span className="text-[10px] text-white/50">播放 {item.views.toLocaleString()}</span>
+
+                      {/* 行业大类徽章（强制非空，不再有"待判定"） */}
+                      <span className="rounded-full border border-[#a855f7]/40 bg-[#a855f7]/15 px-2 py-0.5 text-[10px] font-medium text-[#d8b4fe]">
+                        {item.category}
+                      </span>
+
+                      {/* 距今天数 */}
+                      {item.ageDays !== null ? (
+                        <span className="text-[10px] text-white/45">{item.ageDays} 天前</span>
                       ) : null}
-                      {item.likes ? (
-                        <span className="text-[10px] text-white/50">赞 {item.likes.toLocaleString()}</span>
+
+                      {/* 评论 / 转发（讨论度 + 传播度） */}
+                      {item.comments ? (
+                        <span className="text-[10px] text-white/55">评论 {item.comments.toLocaleString()}</span>
                       ) : null}
+                      {item.shares ? (
+                        <span className="text-[10px] text-white/55">转发 {item.shares.toLocaleString()}</span>
+                      ) : null}
+
                       {item.url ? (
                         <a
                           href={item.url}
@@ -155,16 +189,11 @@ export function TrendingHotspotsWidget() {
                       ) : null}
                     </div>
                     <div className="mt-2 line-clamp-2 text-sm leading-6 text-white/90">{item.title}</div>
-                    {item.tags.length > 0 || item.industryLabels.length > 0 ? (
+                    {item.tags.length > 0 ? (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {item.tags.slice(0, 3).map((t) => (
+                        {item.tags.slice(0, 4).map((t) => (
                           <span key={t} className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/60">
                             #{t}
-                          </span>
-                        ))}
-                        {item.industryLabels.slice(0, 2).map((t) => (
-                          <span key={t} className="rounded border border-[#9ddcff]/30 bg-[#9ddcff]/10 px-1.5 py-0.5 text-[10px] text-[#9ddcff]">
-                            {t}
                           </span>
                         ))}
                       </div>

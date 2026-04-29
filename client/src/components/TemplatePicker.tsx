@@ -353,7 +353,164 @@ function ThumbCard({ style, selected, onSelect }: { style: PdfStyleKey; selected
   );
 }
 
-// ─── 多卡选择器：横向滑动 ───────────────────────────────────────────────────
+// ─── 全屏对比 Modal（5 套模板并排，所见即所得） ──────────────────────────
+function TemplateModal({
+  open,
+  value,
+  onChange,
+  onClose,
+}: {
+  open: boolean;
+  value: PdfStyleKey;
+  onChange: (next: PdfStyleKey) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = React.useState<PdfStyleKey>(value);
+  React.useEffect(() => {
+    if (open) setDraft(value);
+  }, [open, value]);
+
+  if (!open) return null;
+
+  const m = META[draft];
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(8, 4, 16, 0.78)",
+        backdropFilter: "blur(14px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "32px 24px",
+        overflow: "auto",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(1280px, 100%)",
+          maxHeight: "92vh",
+          background: "linear-gradient(180deg, #FAF6EE 0%, #F2EAD7 100%)",
+          borderRadius: 24,
+          border: "1px solid rgba(184,134,11,0.30)",
+          boxShadow: "0 30px 80px rgba(0,0,0,0.50)",
+          overflow: "auto",
+          padding: "28px 32px 32px",
+          fontFamily: "'PingFang SC','Source Han Sans',Inter,sans-serif",
+        }}
+      >
+        {/* 标题栏 */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 24, marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.18em", color: "#7a5410", marginBottom: 6 }}>
+              📄 选择 PDF 封面模板
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "#1c1407", lineHeight: 1.2 }}>
+              五套主题，各有性格 — 选一套配你的报告气场
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(28,20,7,0.62)", marginTop: 6, fontWeight: 600 }}>
+              当前选中：<span style={{ color: PALETTES[draft].primary, fontWeight: 800 }}>{m.label}</span>
+              <span style={{ color: "rgba(28,20,7,0.40)", marginLeft: 8 }}>· {m.sub}</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              border: "1px solid rgba(28,20,7,0.20)",
+              background: "rgba(255,255,255,0.65)",
+              color: "#1c1407",
+              fontSize: 13,
+              fontWeight: 700,
+              padding: "8px 14px",
+              borderRadius: 10,
+              cursor: "pointer",
+            }}
+          >
+            ✕ 关闭
+          </button>
+        </div>
+
+        {/* 模板网格 */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
+          {ORDER.map((k) => (
+            <ThumbCard key={k} style={k} selected={k === draft} onSelect={() => setDraft(k)} />
+          ))}
+        </div>
+
+        {/* 底部确认条 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "14px 18px",
+            borderRadius: 14,
+            background: "rgba(255,255,255,0.7)",
+            border: "1px solid rgba(184,134,11,0.20)",
+          }}
+        >
+          <div style={{ fontSize: 12, color: "rgba(28,20,7,0.65)" }}>
+            ✓ 选择后会立即应用到导出 PDF 与 Markdown 渲染。每份报告的模板独立保存。
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: "10px 18px",
+                borderRadius: 10,
+                border: "1px solid rgba(28,20,7,0.20)",
+                background: "rgba(255,255,255,0.6)",
+                color: "#1c1407",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onChange(draft);
+                onClose();
+              }}
+              style={{
+                padding: "10px 22px",
+                borderRadius: 10,
+                border: "none",
+                background: `linear-gradient(135deg, ${PALETTES[draft].primary}, ${PALETTES[draft].coverGold})`,
+                color: PALETTES[draft].coverTextLight ? "#FFF" : "#1c1407",
+                fontSize: 13,
+                fontWeight: 900,
+                cursor: "pointer",
+                boxShadow: `0 8px 24px ${PALETTES[draft].accent}55`,
+              }}
+            >
+              使用「{m.label}」
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 多卡选择器：compact 触发器 + 全屏对比 modal ──────────────────────────
 export function TemplatePicker({
   value,
   onChange,
@@ -361,35 +518,59 @@ export function TemplatePicker({
 }: {
   value: PdfStyleKey;
   onChange: (next: PdfStyleKey) => void;
-  /** 紧凑模式：用于卡片层（只显示当前选中 + 切换按钮） */
+  /** 紧凑模式：触发器按钮，点击打开全屏对比 modal */
   compact?: boolean;
 }) {
+  const [open, setOpen] = React.useState(false);
+
   if (compact) {
     const m = META[value];
     const p = PALETTES[value];
-    const next = ORDER[(ORDER.indexOf(value) + 1) % ORDER.length];
     return (
-      <button
-        type="button"
-        onClick={() => onChange(next)}
-        title={`点击切换模板（当前：${m.label}，下一个：${META[next].label}）`}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "4px 8px",
-          borderRadius: 8,
-          border: `1px solid ${p.accent}55`,
-          background: `${p.accent}14`,
-          color: p.primary,
-          fontSize: 11,
-          fontWeight: 800,
-          cursor: "pointer",
-        }}
-      >
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: p.coverGold }} />
-        {m.label}
-      </button>
+      <>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="点击打开全屏模板对比"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 14px",
+            borderRadius: 10,
+            border: `1px solid ${p.accent}66`,
+            background: `linear-gradient(135deg, ${p.coverGold}18, ${p.accent}10)`,
+            color: p.primary,
+            fontSize: 12,
+            fontWeight: 800,
+            cursor: "pointer",
+            boxShadow: `0 2px 10px ${p.accent}22`,
+            transition: "all 0.16s",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>📄</span>
+          <span>选择封面</span>
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: 999,
+              background: `${p.coverGold}33`,
+              color: p.primary,
+              fontSize: 10,
+              fontWeight: 900,
+              letterSpacing: "0.04em",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: p.coverGold }} />
+            {m.label}
+          </span>
+          <span style={{ color: "rgba(0,0,0,0.45)", fontSize: 10, fontWeight: 700 }}>›</span>
+        </button>
+        <TemplateModal open={open} value={value} onChange={onChange} onClose={() => setOpen(false)} />
+      </>
     );
   }
 

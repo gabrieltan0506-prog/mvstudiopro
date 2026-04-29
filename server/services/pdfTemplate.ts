@@ -695,6 +695,49 @@ export function generateHtmlTemplate(
 
     img { max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 
+    /* ────────────────── 自动场景配图（figure + figcaption）─────────────
+       排版审美硬约束：
+       - 图片整块不允许跨页切（page-break-inside: avoid）
+       - 图片不允许撞标题（前后留 28px / 16px 空隙）
+       - 图说居中、淡色、英文 small caps 风格
+       - 圆角 + 阴影 + 主色细边
+       - 最大宽度 100%，最大高度 ~半页（避免一张图独占整页太空）
+    */
+    figure.scene-figure {
+      margin: 28px auto 16px;
+      padding: 0;
+      max-width: 100%;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      text-align: center;
+    }
+    figure.scene-figure img {
+      display: block;
+      margin: 0 auto;
+      max-width: 100%;
+      max-height: 480px;       /* ≈ A4 半页：避免一张图独占整页 */
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid var(--rule);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.10);
+    }
+    figure.scene-figure figcaption {
+      margin-top: 10px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+      line-height: 1.5;
+      font-style: italic;
+      max-width: 90%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    /* H2 + figure 紧邻时：缩短间隙避免空白过大 */
+    h2 + figure.scene-figure { margin-top: 18px; }
+    /* figure 后紧跟段落：拉开距离让正文呼吸 */
+    figure.scene-figure + p { margin-top: 18px; }
+
     @media print {
       body {
         -webkit-print-color-adjust: exact;

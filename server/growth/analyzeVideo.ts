@@ -67,6 +67,29 @@ type SparseFrame = {
   dataUrl: string;
 };
 
+/** BGM（背景音乐）识别结果
+ *
+ *  用户痛点：creator growth camp 只识别口播 / 转写，对原视频 BGM 完全无感。
+ *  实际上 BGM 决定了视频的情绪基调（抖音爆款公式：BGM 选对 = 完播率 +30%）。
+ *  解决：让 Gemini 在做 audio first pass 时一并听 BGM，输出 4 维元数据。
+ */
+export type BgmAnalysis = {
+  /** 是否检测到 BGM（有可能是纯口播视频，也可能 BGM 与人声音量太接近无法分离） */
+  detected: boolean;
+  /** BGM 风格（中文，例：电子舞曲、City Pop、轻奢爵士、国风、抒情钢琴、Lo-fi、Hip-hop、Trap） */
+  style?: string;
+  /** 情绪标签（中文，例：紧迫、温柔、热血、治愈、性感、神秘、轻松） */
+  mood?: string;
+  /** 主要乐器（数组，例：["合成器", "电子鼓", "贝斯"]） */
+  instruments?: string[];
+  /** BPM（每分钟拍数，60-180 区间。⚠️ 模型估算，仅供参考） */
+  bpm?: number;
+  /** 与画面/口播的契合度评估（中文短句，例："BGM 节奏与画面剪辑同步度极高，强化了紧迫感"） */
+  matchWithVisual?: string;
+  /** 商业可用性 / 版权提醒（例："似为流行 hit 改编，商用需替换为版权安全曲" / "原创 / 免版权风险") */
+  copyrightNote?: string;
+};
+
 type AudioFirstPass = {
   valueTier: "high" | "medium" | "low";
   contentSummary: string;
@@ -86,6 +109,8 @@ type AudioFirstPass = {
   }>;
   deepDiveBrief: string;
   transcriptSummary: string;
+  /** BGM 识别（新增） */
+  bgmAnalysis?: BgmAnalysis;
 };
 
 type VisualFirstPass = {
@@ -100,6 +125,8 @@ type VisualFirstPass = {
     commercialUse: string;
     issue: string;
     fix: string;
+    /** 情绪张力（新增）：景别+表情+剪辑节奏带来的情绪推力 */
+    emotionalTension?: string;
   }>;
 };
 
@@ -329,7 +356,29 @@ async function transcribeVideoAudio(audioBuffer: Buffer | null): Promise<string>
   return "";
 }
 
-function buildSparseFrameTimestamps(duration: number) {
+/** 抽帧策略
+ *
+ * - "dense"（旧默认）：intro 4 帧 + middle 4-8 帧 + outro 3 帧；用于"逆向工程"场景，需要密集分析
+ * - "slim"（新 GROWTH/REMIX）：≥ 5 分钟 = 8 帧均匀分布；< 5 分钟 = 10 帧均匀分布
+ *   原因：长视频抽 8 帧足以代表骨架（每 ~37 秒一帧），降 LLM 推理成本
+ *         短视频反而抽 10 帧（密度更高），保证短视频细节抓住
+ */
+type SparseFrameStrategy = "slim" | "dense";
+
+function buildSparseFrameTimestamps(duration: number, strategy: SparseFrameStrategy = "dense") {
+  if (strategy === "slim") {
+    // GROWTH / REMIX：均匀分布，避开开头 1s + 结尾 1s
+    const targetCount = duration >= 300 ? 8 : 10;
+    const start = Math.min(1.0, duration * 0.02);
+    const end = Math.max(duration - 1.0, duration * 0.98);
+    const span = Math.max(0.1, end - start);
+    return Array.from({ length: targetCount }, (_, i) => {
+      const ratio = i / (targetCount - 1); // targetCount ∈ {8, 10}，不会为 1
+      return Number((start + span * ratio).toFixed(2));
+    }).filter((t) => t > 0 && t < duration);
+  }
+
+  // dense（逆向工程保留）
   const intro = [1, 4, 8, 12]
     .filter((second) => second < duration - 0.5)
     .map((second) => Number(second.toFixed(2)));
@@ -357,9 +406,14 @@ function buildSparseFrameTimestamps(duration: number) {
     .sort((a, b) => a - b);
 }
 
-async function extractSparseFramesFromPath(videoPath: string, startSeconds = 0, durationSeconds?: number) {
+async function extractSparseFramesFromPath(
+  videoPath: string,
+  startSeconds = 0,
+  durationSeconds?: number,
+  strategy: SparseFrameStrategy = "dense",
+) {
   const boundedDuration = durationSeconds ?? await getVideoDurationFromPath(videoPath);
-  const timestamps = buildSparseFrameTimestamps(boundedDuration);
+  const timestamps = buildSparseFrameTimestamps(boundedDuration, strategy);
   const frameDir = path.join(
     os.tmpdir(),
     `growth-camp-frames-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -414,6 +468,11 @@ function mergeAudioPasses(chunks: AudioFirstPass[]) {
   }
   const tierScore = { low: 1, medium: 2, high: 3 } as const;
   const bestTier = chunks.slice().sort((left, right) => tierScore[right.valueTier] - tierScore[left.valueTier])[0]?.valueTier || "medium";
+
+  // BGM 合并：取第一段 detected=true 的 chunk（avoid 多段重复噪声）
+  const firstWithBgm = chunks.find((c) => c.bgmAnalysis?.detected);
+  const mergedBgm: BgmAnalysis | undefined = firstWithBgm?.bgmAnalysis ?? chunks[0]?.bgmAnalysis;
+
   return {
     valueTier: bestTier,
     contentSummary: chunks.map((item) => item.contentSummary).filter(Boolean).join("；"),
@@ -425,6 +484,7 @@ function mergeAudioPasses(chunks: AudioFirstPass[]) {
     riskMoments: chunks.flatMap((item) => item.riskMoments).slice(0, 8),
     deepDiveBrief: chunks.map((item) => item.deepDiveBrief).filter(Boolean).join("；"),
     transcriptSummary: chunks.map((item) => item.transcriptSummary).filter(Boolean).join("；"),
+    bgmAnalysis: mergedBgm,
   };
 }
 
@@ -463,7 +523,7 @@ async function runAudioFirstPass(params: {
     messages: [
       {
         role: "system",
-        content: `你是一位短视频内容策略分析师。你现在只做第一阶段“音频优先粗筛”，目标是用更低成本先判断这条视频值不值得深挖。
+        content: `你是一位短视频内容策略分析师 + BGM 音乐人。你现在只做第一阶段“音频优先粗筛”，目标是用更低成本先判断这条视频值不值得深挖。
 
 规则：
 1. 优先依据音频和转写，不要假装看到了完整画面。
@@ -471,6 +531,14 @@ async function runAudioFirstPass(params: {
 3. 所有时间点都必须返回 mm:ss。
 4. creatorSignals 只写对创作者真正有帮助的经营信号，不写空话。
 5. deepDiveBrief 要给第二阶段模型，告诉它应该重点看哪些画面、哪些段落、哪些商业问题。
+6. 【新增 · BGM 识别】请用音乐人耳朵听音轨中的 BGM（背景音乐），即使被人声盖住也要尽力分离判断。输出：
+   - detected: true/false（如果通篇都是干净人声 / 无 BGM 留白，写 false）
+   - style: 风格中文标签（如：City Pop、Lo-fi、电子舞曲、国风、轻奢爵士、抒情钢琴、Hip-hop、Trap）
+   - mood: 情绪关键词（如：紧迫、温柔、热血、治愈、神秘、轻松、性感）
+   - instruments: 主要乐器中文（如：["合成器","电子鼓","贝斯"]）
+   - bpm: 每分钟拍数（数字，60-180）
+   - matchWithVisual: 与口播 / 画面节奏的契合度短句
+   - copyrightNote: 版权风险提醒（"似为流行 hit 改编，商用需替换" 或 "未识别到流行 hit，相对安全"）
 
 只返回 JSON：
 {
@@ -487,7 +555,16 @@ async function runAudioFirstPass(params: {
     { "timestamp": "00:42", "issue": "string", "fix": "string" }
   ],
   "deepDiveBrief": "string",
-  "transcriptSummary": "string"
+  "transcriptSummary": "string",
+  "bgmAnalysis": {
+    "detected": true,
+    "style": "City Pop",
+    "mood": "都市轻松",
+    "instruments": ["合成器","电子鼓","贝斯"],
+    "bpm": 110,
+    "matchWithVisual": "BGM 节奏与镜头切换同步，强化生活惬意感",
+    "copyrightNote": "未识别到流行 hit，相对安全"
+  }
 }`,
       },
       {
@@ -614,6 +691,21 @@ async function runAudioFirstPass(params: {
       : [],
     deepDiveBrief: String(parsed.deepDiveBrief || ""),
     transcriptSummary: String(parsed.transcriptSummary || ""),
+    bgmAnalysis: parsed.bgmAnalysis && typeof parsed.bgmAnalysis === "object"
+      ? {
+          detected: Boolean(parsed.bgmAnalysis.detected),
+          style: parsed.bgmAnalysis.style ? String(parsed.bgmAnalysis.style) : undefined,
+          mood: parsed.bgmAnalysis.mood ? String(parsed.bgmAnalysis.mood) : undefined,
+          instruments: Array.isArray(parsed.bgmAnalysis.instruments)
+            ? parsed.bgmAnalysis.instruments.map(String).slice(0, 6)
+            : undefined,
+          bpm: typeof parsed.bgmAnalysis.bpm === "number" && parsed.bgmAnalysis.bpm > 30 && parsed.bgmAnalysis.bpm < 220
+            ? Math.round(parsed.bgmAnalysis.bpm)
+            : undefined,
+          matchWithVisual: parsed.bgmAnalysis.matchWithVisual ? String(parsed.bgmAnalysis.matchWithVisual) : undefined,
+          copyrightNote: parsed.bgmAnalysis.copyrightNote ? String(parsed.bgmAnalysis.copyrightNote) : undefined,
+        }
+      : undefined,
   };
 }
 
@@ -637,10 +729,15 @@ async function runVisualFirstPass(params: {
 2. 必须判断开头画面是否足够抓人、人物/场景是否创建信任、画面风格是否统一、是否存在可直接转化的演示证据。
 3. keyFrames 至少返回 4 条，时间点必须回 mm:ss。
 4. 每条 keyFrame 都要回答：这帧展示了什么、可用于什么商业表达、问题是什么、怎么修。
+5. 【新增】每条 keyFrame 必须额外评估"情绪张力"：
+   - 人物表情/眼神/微表情（紧张？放松？挑衅？真诚？空洞？）
+   - 镜头景别与运镜带来的情绪推力（特写=亲密；俯拍=压迫；快速推拉=紧迫）
+   - 画面节奏与剪辑切点（停顿=悬念；快剪=兴奋；慢镜=回味）
+6. visualSummary 整段必须含一段"画面整体情绪基调"描述（这与 audio first pass 的口播 + BGM 情绪互为印证）
 
 只返回 JSON：
 {
-  "visualSummary": "string",
+  "visualSummary": "string（必须含一段画面整体情绪基调）",
   "openingFrameAssessment": "string",
   "sceneConsistency": "string",
   "trustSignals": ["string"],
@@ -648,10 +745,11 @@ async function runVisualFirstPass(params: {
   "keyFrames": [
     {
       "timestamp": "00:08",
-      "whatShows": "string",
+      "whatShows": "string（含人物表情/眼神/微表情）",
       "commercialUse": "string",
       "issue": "string",
-      "fix": "string"
+      "fix": "string",
+      "emotionalTension": "string（这一帧的情绪张力——景别+表情+剪辑节奏带来的情绪推力）"
     }
   ]
 }`,
@@ -695,6 +793,7 @@ async function runVisualFirstPass(params: {
           commercialUse: String(item?.commercialUse || ""),
           issue: String(item?.issue || ""),
           fix: String(item?.fix || ""),
+          emotionalTension: item?.emotionalTension ? String(item.emotionalTension) : undefined,
         }))
       : [],
   };
@@ -952,6 +1051,36 @@ function buildStrategistMultimodalUserContent(params: {
   transcript: string;
   sparseFrames: SparseFrame[];
 }) {
+  // ✨ BGM + 口播情绪张力 → 显式提取出来作为高优先级"情绪信号块"，
+  //    不要只埋在 JSON.stringify(audioFirstPass) 里，那样模型很容易忽略
+  //    用户要求：把 BGM 与语言表达情绪张力，喂进【视觉洞察 + 情绪】字段
+  const bgm = params.audioFirstPass.bgmAnalysis;
+  const bgmBlock = bgm?.detected
+    ? [
+        `【BGM（背景音乐）识别 — 必须融入 emotionalArc / emotionalPacing / shootingBlueprint.emotionalTension】`,
+        `· 风格：${bgm.style || "未识别"}`,
+        `· 情绪：${bgm.mood || "未识别"}`,
+        `· 主要乐器：${(bgm.instruments || []).join("、") || "未识别"}`,
+        `· BPM：${bgm.bpm ?? "未识别"}（每分钟拍数，影响剪辑节奏与口播语速）`,
+        `· 与画面契合度：${bgm.matchWithVisual || "未识别"}`,
+        `· 版权风险：${bgm.copyrightNote || "未识别"}`,
+      ].join("\n")
+    : `【BGM（背景音乐）识别】未检测到明显 BGM（可能是纯口播 / 无配乐）。emotionalArc / emotionalPacing 应主要从口播语调与画面节奏判断。`;
+
+  // 口播情绪张力线索：从 priorityMoments + riskMoments 中提取（这些是 audioFirstPass 已经标好的"情绪转折点"）
+  const speechTensionPoints = [
+    ...params.audioFirstPass.priorityMoments.map((p) => `${p.timestamp} 情绪高点：${p.reason}`),
+    ...params.audioFirstPass.riskMoments.map((r) => `${r.timestamp} 情绪低/风险：${r.issue}`),
+  ].slice(0, 8);
+  const speechTensionBlock = [
+    `【口播语言表达 · 情绪张力轨迹 — 必须融入 emotionalArc / emotionalPacing】`,
+    `· 钩子情绪：${params.audioFirstPass.hookSummary || "未识别"}`,
+    `· 受众承诺：${params.audioFirstPass.audiencePromise || "未识别"}`,
+    speechTensionPoints.length
+      ? `· 情绪张力时间轴：\n  - ${speechTensionPoints.join("\n  - ")}`
+      : `· 情绪张力时间轴：暂无明显转折点，请结合 BGM + 画面综合判断`,
+  ].join("\n");
+
   return [
     {
       type: "text" as const,
@@ -961,7 +1090,9 @@ function buildStrategistMultimodalUserContent(params: {
         `视频 GCS 地址：${params.videoGcsUri}`,
         `视频时长：${params.duration.toFixed(1)} 秒`,
         `稀疏关键帧数量：${params.sparseFrameCount}`,
-        `第一阶段音频粗筛结论：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
+        bgmBlock,
+        speechTensionBlock,
+        `第一阶段音频粗筛结论（完整 JSON）：\n${JSON.stringify(params.audioFirstPass, null, 2)}`,
         `第一阶段关键帧视觉初判：\n${JSON.stringify(params.visualFirstPass, null, 2)}`,
         params.transcript
           ? `转写摘录：\n${truncate(params.transcript, 5000)}`
@@ -1044,6 +1175,7 @@ async function runDeepDivePass(params: {
 }) {
   const mode = params.mode;
   const businessGoal = (params.context || "未提供").trim() || "未提供";
+  const bgm = params.audioFirstPass.bgmAnalysis;
   const STRATEGIST_SYSTEM_MAIN = `
 你是顶级商业IP操盘手与大师级导演。
 模式：${mode === "REMIX" ? "实战爆款 · 二次创作" : "商业成长营"}
@@ -1052,6 +1184,13 @@ async function runDeepDivePass(params: {
 【排版禁令：禁止文本墙】
 所有长文必须 Markdown 条列（- ）与 **加粗**；段落间空行。禁止「暂无」「待补充」。禁止「请建议」「您可以」等软弱语气。
 平台仅限【抖音、快手、小红书、B站】，严禁「视频号」。
+
+【情绪与音乐分析 · 强制规则】
+我已在 user message 顶部把【BGM 识别】+【口播语言表达情绪张力轨迹】抽出来给你。在以下三个字段里你必须明确引用这两个信号：
+1. reverseEngineering.emotionalArc：必须写"BGM 风格 ${bgm?.style || "（待识别）"} × 口播语调（开场→高潮→收尾）的情绪张力曲线"，并指出哪一秒是情绪峰值。
+2. remixExecution.emotionalPacing：必须写"BGM BPM ${bgm?.bpm ?? "（未识别）"} 主导剪辑节奏 × 口播停顿/重音/语速节奏"。
+3. remixExecution.shootingBlueprint.emotionalTension：必须把"BGM 情绪基调（${bgm?.mood || "（待识别）"}）+ 口播张力 + 镜头表情/眼神"三者绑在一起描述。
+另外 visualPaletteAndScript / openingFrameAssessment 等"视觉洞察"字段，请同时考虑 BGM 与画面剪辑节奏的同步度（不是只看画面）。
 
 【本轮输出】
 请完整产出 JSON Schema 所要求的评分、reverseEngineering、remixExecution 等字段。不要输出 premiumContent（该区块由下一轮专模单独生成；禁止在 JSON 中加入 premiumContent 键）。
@@ -1568,7 +1707,10 @@ export async function analyzeVideo(params: {
           audioPassChunks.push(audioPass);
         }
 
-        const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration).catch((error) => {
+        // ✨ GROWTH / REMIX 模式用 slim 策略（≥5min=8帧 / <5min=10帧），降本提速
+        //    逆向工程模式（不在此函数内）保留 dense 密集策略
+        const frameStrategy: SparseFrameStrategy = (params.mode === "GROWTH" || params.mode === "REMIX") ? "slim" : "dense";
+        const sparseFrames = await extractSparseFramesFromPath(videoPath, chunk.start, chunk.duration, frameStrategy).catch((error) => {
           console.warn("[growth.analyzeVideo] sparse frame extraction failed:", error);
           throw new VideoAnalysisFailure("frame_extraction", normalizeFailureReason(error));
         });
