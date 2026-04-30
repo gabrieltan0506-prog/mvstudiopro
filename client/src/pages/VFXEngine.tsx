@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { Sparkles, Youtube, Music, Video, Heart, TrendingUp, GraduationCap, Film, Trophy, Handshake, Sun, Cloud, Moon, ArrowLeft, RefreshCw, Settings, Send, Check, Globe, Newspaper, Pencil, Clock, RectangleHorizontal, Copy, CheckCircle, Loader2 } from "lucide-react";
+import { Sparkles, Tv, Music, Video, Heart, TrendingUp, GraduationCap, Film, Trophy, Handshake, Sun, Cloud, Moon, ArrowLeft, RefreshCw, Settings, Send, Check, Globe, Newspaper, Pencil, Clock, RectangleHorizontal, Copy, CheckCircle, Loader2 } from "lucide-react";
 
 /* ===== Platform Data ===== */
 const PLATFORMS = [
@@ -19,7 +19,7 @@ const PLATFORMS = [
   {
     id: "bilibili",
     name: "B站",
-    icon: Youtube,
+    icon: Tv,
     color: "#00A1D6",
     bestTime: "周五/六/日 19:00-22:00",
     format: "横屏 16:9 | 5-15分钟",
