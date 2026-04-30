@@ -783,7 +783,7 @@ export default function GodViewPage() {
                 onClick={() => handleProductChange(p.id)}
                 style={{
                   textAlign: "left",
-                  padding: hero ? "26px 32px" : "16px 18px",
+                  padding: hero ? (isMobile ? "20px 16px" : "26px 32px") : (isMobile ? "14px 12px" : "16px 18px"),
                   borderRadius: hero ? 22 : 16,
                   cursor: "pointer",
                   background: hero
@@ -807,50 +807,50 @@ export default function GodViewPage() {
               >
                 {/* 角标 */}
                 {p.tag && !hero && (
-                  <span style={{ position: "absolute", top: 8, right: 8, fontSize: 9, fontWeight: 900, color: "#fff", background: p.color, borderRadius: 99, padding: "2px 8px", letterSpacing: "0.05em" }}>
+                  <span style={{ position: "absolute", top: 8, right: 8, fontSize: isMobile ? 11 : 9, fontWeight: 900, color: "#fff", background: p.color, borderRadius: 99, padding: "2px 8px", letterSpacing: "0.05em" }}>
                     {p.tag}
                   </span>
                 )}
                 {hero && (
-                  <span style={{ position: "absolute", top: 14, right: 18, fontSize: 10, fontWeight: 900, color: "#FFF", background: `linear-gradient(135deg, ${p.color}, #4F46E5)`, borderRadius: 99, padding: "5px 14px", letterSpacing: "0.16em", boxShadow: `0 4px 14px ${p.color}77` }}>
+                  <span style={{ position: "absolute", top: isMobile ? 10 : 14, right: isMobile ? 10 : 18, fontSize: isMobile ? 11 : 10, fontWeight: 900, color: "#FFF", background: `linear-gradient(135deg, ${p.color}, #4F46E5)`, borderRadius: 99, padding: isMobile ? "4px 10px" : "5px 14px", letterSpacing: isMobile ? "0.10em" : "0.16em", boxShadow: `0 4px 14px ${p.color}77` }}>
                     👑 B 端定制 · 旗舰款
                   </span>
                 )}
 
                 {hero ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr)", gap: 24, alignItems: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.3fr) minmax(0,1fr)", gap: isMobile ? 16 : 24, alignItems: isMobile ? "stretch" : "center" }}>
                     <div>
-                      <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.20em", color: "#A5B4FC", marginBottom: 8 }}>
+                      <div style={{ fontSize: isMobile ? 12 : 11, fontWeight: 900, letterSpacing: isMobile ? "0.10em" : "0.20em", color: "#A5B4FC", marginBottom: 8 }}>
                         ENTERPRISE FLAGSHIP
                       </div>
-                      <div style={{ fontSize: 22, fontWeight: 900, color: "#FFF", marginBottom: 10, letterSpacing: "0.02em" }}>
+                      <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#FFF", marginBottom: 10, letterSpacing: "0.02em" }}>
                         {p.label}
                       </div>
                       <div style={{ fontSize: 13, color: "rgba(199,210,254,0.85)", lineHeight: 1.7, fontWeight: 500 }}>
                         {p.desc}
                       </div>
-                      <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <div style={{ marginTop: isMobile ? 12 : 14, display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {["护城河锚定", "高客单转化路径", "合规与定价战略", "私域闭门营变现"].map((tag) => (
-                          <span key={tag} style={{ fontSize: 10, fontWeight: 700, color: "#A5B4FC", background: "rgba(165,180,252,0.12)", border: "1px solid rgba(165,180,252,0.30)", borderRadius: 99, padding: "3px 10px" }}>
+                          <span key={tag} style={{ fontSize: isMobile ? 11 : 10, fontWeight: 700, color: "#A5B4FC", background: "rgba(165,180,252,0.12)", border: "1px solid rgba(165,180,252,0.30)", borderRadius: 99, padding: isMobile ? "4px 10px" : "3px 10px" }}>
                             {tag}
                           </span>
                         ))}
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 11, color: "rgba(199,210,254,0.65)", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>
+                    <div style={{ textAlign: isMobile ? "left" : "right" }}>
+                      <div style={{ fontSize: isMobile ? 12 : 11, color: "rgba(199,210,254,0.65)", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>
                         {pIsFirst && p.firstPrice !== undefined ? "首购九折" : "标准价"}
                       </div>
-                      <div style={{ fontSize: 44, fontWeight: 900, color: "#FCD34D", lineHeight: 1, fontFamily: "Georgia, serif" }}>
+                      <div style={{ fontSize: isMobile ? 32 : 44, fontWeight: 900, color: "#FCD34D", lineHeight: 1, fontFamily: "Georgia, serif" }}>
                         {displayPrice.toLocaleString()}
-                        <span style={{ fontSize: 14, color: "rgba(252,211,77,0.75)", fontWeight: 700, marginLeft: 4 }}>点</span>
+                        <span style={{ fontSize: isMobile ? 13 : 14, color: "rgba(252,211,77,0.75)", fontWeight: 700, marginLeft: 4 }}>点</span>
                       </div>
                       {pIsFirst && p.firstPrice !== undefined && (
                         <div style={{ fontSize: 12, color: "rgba(199,210,254,0.55)", textDecoration: "line-through", marginTop: 4, fontWeight: 600 }}>
                           原价 {p.price.toLocaleString()}
                         </div>
                       )}
-                      <div style={{ marginTop: 10, fontSize: 11, color: isSelected ? "#FCD34D" : "rgba(199,210,254,0.65)", fontWeight: 800 }}>
+                      <div style={{ marginTop: 10, fontSize: isMobile ? 12 : 11, color: isSelected ? "#FCD34D" : "rgba(199,210,254,0.65)", fontWeight: 800 }}>
                         {isSelected ? "✓ 已选中" : "点击选择 →"}
                       </div>
                     </div>
@@ -858,14 +858,14 @@ export default function GodViewPage() {
                 ) : (
                   <>
                     <div style={{ fontSize: 12, fontWeight: 800, color: isSelected ? p.color : "#7a5410", marginBottom: 6 }}>{p.label}</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: isSelected ? p.color : "#3d2c14", lineHeight: 1 }}>
+                    <div style={{ fontSize: isMobile ? 22 : 24, fontWeight: 900, color: isSelected ? p.color : "#3d2c14", lineHeight: 1 }}>
                       {displayPrice.toLocaleString()}
-                      <span style={{ fontSize: 11, fontWeight: 700, marginLeft: 3 }}>点</span>
+                      <span style={{ fontSize: isMobile ? 12 : 11, fontWeight: 700, marginLeft: 3 }}>点</span>
                       {pIsFirst && p.firstPrice !== undefined && (
-                        <span style={{ fontSize: 10, color: "rgba(61,44,20,0.45)", textDecoration: "line-through", marginLeft: 6, fontWeight: 600 }}>{p.price.toLocaleString()}</span>
+                        <span style={{ fontSize: isMobile ? 11 : 10, color: "rgba(61,44,20,0.45)", textDecoration: "line-through", marginLeft: 6, fontWeight: 600 }}>{p.price.toLocaleString()}</span>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: "rgba(61,44,20,0.65)", marginTop: 8, lineHeight: 1.5, fontWeight: 500 }}>{p.desc}</div>
+                    <div style={{ fontSize: isMobile ? 12 : 11, color: "rgba(61,44,20,0.65)", marginTop: 8, lineHeight: 1.5, fontWeight: 500 }}>{p.desc}</div>
                   </>
                 )}
               </button>
@@ -1682,12 +1682,14 @@ function DeductionTimeline({
       <p
         style={{
           color: "rgba(255,235,200,0.92)",
-          fontSize: 14,
+          fontSize: isMobile ? 13 : 14,
           textAlign: "center",
           marginTop: 14,
           fontWeight: 600,
           letterSpacing: "0.02em",
           textShadow: "0 1px 2px rgba(0,0,0,0.45)",
+          wordBreak: "break-word",
+          padding: isMobile ? "0 12px" : 0,
         }}
       >
         您现在可以安心关闭此页面 · 战报生成后将保存至「战略作品快照库」
@@ -1698,18 +1700,19 @@ function DeductionTimeline({
 
 /** Markdown → 简单 HTML 渲染（轻量，无依赖） */
 function ReportRenderer({ markdown }: { markdown: string }) {
+  const isMobile = useIsMobile();
   const lines = markdown.split("\n");
   return (
-    <div style={{ color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 1.9 }}>
+    <div style={{ color: "rgba(255,255,255,0.82)", fontSize: 14, lineHeight: 1.9, wordBreak: "break-word" }}>
       {lines.map((line, i) => {
         const key = i;
-        if (line.startsWith("# ")) return <h1 key={key} style={{ fontSize: 22, fontWeight: 900, color: "#f5c842", margin: "28px 0 12px", borderBottom: "1px solid rgba(180,130,0,0.25)", paddingBottom: 8 }}>{line.slice(2)}</h1>;
-        if (line.startsWith("## ")) return <h2 key={key} style={{ fontSize: 17, fontWeight: 800, color: "#d4a840", margin: "24px 0 10px", borderLeft: "3px solid #c8a000", paddingLeft: 12 }}>{line.slice(3)}</h2>;
-        if (line.startsWith("### ")) return <h3 key={key} style={{ fontSize: 15, fontWeight: 700, color: "#c09030", margin: "18px 0 8px" }}>{line.slice(4)}</h3>;
-        if (line.startsWith("- ") || line.startsWith("* ")) return <div key={key} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: "#c8a000", flexShrink: 0 }}>•</span><span>{renderInline(line.slice(2))}</span></div>;
-        if (/^\d+\.\s/.test(line)) return <div key={key} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: "#c8a000", minWidth: 20 }}>{line.match(/^\d+/)?.[0]}.</span><span>{renderInline(line.replace(/^\d+\.\s/, ""))}</span></div>;
-        if (line.startsWith("> ")) return <blockquote key={key} style={{ borderLeft: "3px solid #8a6200", paddingLeft: 14, color: "rgba(245,200,80,0.65)", margin: "10px 0", fontStyle: "italic" }}>{renderInline(line.slice(2))}</blockquote>;
-        if (line.startsWith("---") || line.startsWith("===")) return <hr key={key} style={{ border: "none", borderTop: "1px solid rgba(180,130,0,0.2)", margin: "20px 0" }} />;
+        if (line.startsWith("# ")) return <h1 key={key} style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#f5c842", margin: "28px 0 12px", borderBottom: "1px solid rgba(180,130,0,0.25)", paddingBottom: 8 }}>{line.slice(2)}</h1>;
+        if (line.startsWith("## ")) return <h2 key={key} style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: "#d4a840", margin: "24px 0 10px", borderLeft: "3px solid #c8a000", paddingLeft: 12 }}>{line.slice(3)}</h2>;
+        if (line.startsWith("### ")) return <h3 key={key} style={{ fontSize: isMobile ? 14 : 15, fontWeight: 700, color: "#c09030", margin: "18px 0 8px" }}>{line.slice(4)}</h3>;
+        if (line.startsWith("- ") || line.startsWith("* ")) return <div key={key} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: "#c8a000", flexShrink: 0 }}>•</span><span style={{ minWidth: 0, flex: 1 }}>{renderInline(line.slice(2))}</span></div>;
+        if (/^\d+\.\s/.test(line)) return <div key={key} style={{ display: "flex", gap: 8, marginBottom: 4 }}><span style={{ color: "#c8a000", minWidth: 20, flexShrink: 0 }}>{line.match(/^\d+/)?.[0]}.</span><span style={{ minWidth: 0, flex: 1 }}>{renderInline(line.replace(/^\d+\.\s/, ""))}</span></div>;
+        if (line.startsWith("> ")) return <blockquote key={key} style={{ borderLeft: "3px solid #8a6200", paddingLeft: isMobile ? 12 : 14, color: "rgba(245,200,80,0.65)", margin: "10px 0", fontStyle: "italic" }}>{renderInline(line.slice(2))}</blockquote>;
+        if (line.startsWith("---") || line.startsWith("===")) return <hr key={key} style={{ border: "none", borderTop: "1px solid rgba(180,130,0,0.2)", margin: isMobile ? "14px 0" : "20px 0" }} />;
         if (!line.trim()) return <div key={key} style={{ height: 8 }} />;
         return <p key={key} style={{ margin: "4px 0" }}>{renderInline(line)}</p>;
       })}
