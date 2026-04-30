@@ -1509,6 +1509,7 @@ function DeductionTimeline({
   onNavigate: () => void;
   onReset: () => void;
 }) {
+  const isMobile = useIsMobile();
   // ✨ 进度百分比：仅有两个来源，且必须如实说明用的是哪一种
   //   1) jobProgress 文本里如果带 "X%" → 真后端百分比 (REAL PROGRESS)
   //   2) 否则按"已到第 N 阶段 / 共 8 阶段"算 (PHASE PROGRESS)
@@ -1544,36 +1545,38 @@ function DeductionTimeline({
   return (
     <div style={{ animation: "fadeIn 0.5s ease" }}>
       {/* 顶部状态卡 */}
-      <div style={{ background: "linear-gradient(135deg,#0a0a0a,#0f0b04)", border: "1px solid rgba(200,160,0,0.25)", borderRadius: 20, padding: "28px 32px 24px", marginBottom: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+      <div style={{ background: "linear-gradient(135deg,#0a0a0a,#0f0b04)", border: "1px solid rgba(200,160,0,0.25)", borderRadius: 20, padding: isMobile ? "20px 18px 16px" : "28px 32px 24px", marginBottom: 16, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
         {/* 雷达脉冲图标 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
-          <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
-            <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(200,160,0,0.12)", animation: "godview-mic-pulse 1.8s ease-in-out infinite" }} />
-            <div style={{ position: "absolute", inset: 6, borderRadius: "50%", background: "rgba(200,160,0,0.18)", animation: "godview-mic-pulse 1.8s ease-in-out infinite 0.4s" }} />
-            <div style={{ position: "absolute", inset: 13, borderRadius: "50%", background: "linear-gradient(135deg,#c8a000,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
-              🛰️
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "flex-start" : "center", gap: isMobile ? 12 : 16, marginBottom: isMobile ? 16 : 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 12 : 16, width: isMobile ? "100%" : "auto" }}>
+            <div style={{ position: "relative", width: 52, height: 52, flexShrink: 0 }}>
+              <div style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(200,160,0,0.12)", animation: "godview-mic-pulse 1.8s ease-in-out infinite" }} />
+              <div style={{ position: "absolute", inset: 6, borderRadius: "50%", background: "rgba(200,160,0,0.18)", animation: "godview-mic-pulse 1.8s ease-in-out infinite 0.4s" }} />
+              <div style={{ position: "absolute", inset: 13, borderRadius: "50%", background: "linear-gradient(135deg,#c8a000,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>
+                🛰️
+              </div>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ color: "#c8a000", fontWeight: 900, fontSize: isMobile ? 15 : 16, margin: "0 0 4px", letterSpacing: "0.02em", wordBreak: "break-word" }}>
+                全景战报深度推演中 · {statusLabel}
+              </p>
+              <p style={{ color: "rgba(200,160,0,0.55)", fontSize: 12, margin: 0, fontFamily: "monospace", lineHeight: 1.5 }}>
+                已运行 {elapsed} · 上限 90 分钟 ·{" "}
+                <span style={{ color: heartbeatFresh ? "rgba(0,220,80,0.85)" : "rgba(239,68,68,0.85)" }}>
+                  {heartbeatSec === null ? "等待首次心跳" : `心跳 ${heartbeatSec}s 前`}
+                </span>
+              </p>
             </div>
           </div>
-          <div style={{ flex: 1 }}>
-            <p style={{ color: "#c8a000", fontWeight: 900, fontSize: 16, margin: "0 0 4px", letterSpacing: "0.02em" }}>
-              全景战报深度推演中 · {statusLabel}
-            </p>
-            <p style={{ color: "rgba(200,160,0,0.55)", fontSize: 12, margin: 0, fontFamily: "monospace" }}>
-              已运行 {elapsed} · 上限 90 分钟 ·{" "}
-              <span style={{ color: heartbeatFresh ? "rgba(0,220,80,0.85)" : "rgba(239,68,68,0.85)" }}>
-                {heartbeatSec === null ? "等待首次心跳" : `心跳 ${heartbeatSec}s 前`}
-              </span>
-            </p>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>
+          <div style={{ textAlign: isMobile ? "left" : "right", width: isMobile ? "100%" : "auto", display: isMobile ? "flex" : "block", alignItems: isMobile ? "baseline" : undefined, gap: isMobile ? 10 : 0, paddingLeft: isMobile ? 64 : 0 }}>
+            <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, margin: isMobile ? 0 : "0 0 4px", fontFamily: "monospace", fontWeight: 700 }}>
               {progressLabel}
             </p>
-            <p style={{ color: "#c8a000", fontSize: 18, fontWeight: 900, fontFamily: "monospace" }}>
+            <p style={{ color: "#c8a000", fontSize: 18, fontWeight: 900, fontFamily: "monospace", margin: 0 }}>
               {progressPct.toFixed(1)}%
             </p>
             {realPct === null && (
-              <p style={{ color: "rgba(200,160,0,0.35)", fontSize: 9, margin: "2px 0 0", fontFamily: "monospace" }}>
+              <p style={{ color: "rgba(200,160,0,0.35)", fontSize: isMobile ? 11 : 9, margin: isMobile ? 0 : "2px 0 0", fontFamily: "monospace" }}>
                 第 {currentPhaseIndex + 1} / {REAL_PHASES.length} 阶段
               </p>
             )}
@@ -1582,13 +1585,13 @@ function DeductionTimeline({
 
         {/* 后端真信号（job.progress 字符串） */}
         {jobProgress && (
-          <div style={{ background: "rgba(245,200,80,0.06)", border: "1px solid rgba(245,200,80,0.20)", borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ background: "rgba(245,200,80,0.06)", border: "1px solid rgba(245,200,80,0.20)", borderRadius: 10, padding: isMobile ? "10px 12px" : "10px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
             <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 14, lineHeight: 1, marginTop: 2 }}>📡</span>
-            <div style={{ flex: 1 }}>
-              <p style={{ color: "rgba(245,200,80,0.50)", fontSize: 9.5, fontWeight: 800, letterSpacing: "0.16em", margin: "0 0 4px", fontFamily: "monospace" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ color: "rgba(245,200,80,0.50)", fontSize: isMobile ? 11 : 9.5, fontWeight: 800, letterSpacing: isMobile ? "0.10em" : "0.16em", margin: "0 0 4px", fontFamily: "monospace" }}>
                 LIVE BACKEND SIGNAL
               </p>
-              <p style={{ color: "#f5c842", fontSize: 13, fontWeight: 700, margin: 0, lineHeight: 1.6 }}>
+              <p style={{ color: "#f5c842", fontSize: 13, fontWeight: 700, margin: 0, lineHeight: 1.6, wordBreak: "break-word" }}>
                 {jobProgress}
               </p>
             </div>
@@ -1601,17 +1604,17 @@ function DeductionTimeline({
         </div>
 
         {/* 当前课题 */}
-        <div style={{ background: "rgba(200,160,0,0.06)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 8, padding: "8px 14px" }}>
-          <span style={{ color: "rgba(200,160,0,0.45)", fontSize: 10, fontWeight: 700, fontFamily: "monospace" }}>RESEARCH TOPIC  </span>
-          <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 13, fontWeight: 600 }}>{topic || "—"}</span>
+        <div style={{ background: "rgba(200,160,0,0.06)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 8, padding: isMobile ? "8px 12px" : "8px 14px" }}>
+          <span style={{ color: "rgba(200,160,0,0.45)", fontSize: isMobile ? 11 : 10, fontWeight: 700, fontFamily: "monospace" }}>RESEARCH TOPIC  </span>
+          <span style={{ color: "rgba(245,200,80,0.85)", fontSize: 13, fontWeight: 600, wordBreak: "break-word" }}>{topic || "—"}</span>
         </div>
       </div>
 
       {/* ─── 真实推演阶段时间轴（零模拟，只渲染后端真实 status / progress 推进过的阶段） ───
             每条阶段对应 deepResearchService.ts 里 updateProgress() 真实文案，
             判定逻辑 100% 由 status + progress 关键词触发，不依赖 elapsedSec。 */}
-      <div style={{ background: "linear-gradient(180deg,#080604,#0c0a04)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 16, padding: "20px 24px", marginBottom: 16 }}>
-        <p style={{ color: "rgba(200,160,0,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", margin: "0 0 16px", fontFamily: "monospace" }}>
+      <div style={{ background: "linear-gradient(180deg,#080604,#0c0a04)", border: "1px solid rgba(200,160,0,0.15)", borderRadius: 16, padding: isMobile ? "16px 14px" : "20px 24px", marginBottom: 16 }}>
+        <p style={{ color: "rgba(200,160,0,0.4)", fontSize: isMobile ? 11 : 10, fontWeight: 700, letterSpacing: isMobile ? "0.08em" : "0.12em", margin: "0 0 16px", fontFamily: "monospace" }}>
           ▶ 推演阶段时间轴 · 仅根据后端真信号推进
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -1620,7 +1623,7 @@ function DeductionTimeline({
             const isCurrent = idx === currentPhaseIndex;
             const isFuture = idx > currentPhaseIndex;
             return (
-              <div key={step.id} style={{ display: "flex", gap: 12, alignItems: "flex-start", opacity: isFuture ? 0.22 : 1, transition: "opacity 0.6s ease" }}>
+              <div key={step.id} style={{ display: "flex", gap: isMobile ? 10 : 12, alignItems: "flex-start", opacity: isFuture ? 0.22 : 1, transition: "opacity 0.6s ease" }}>
                 {/* 时间轴竖线 + 节点 */}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
                   <div style={{
@@ -1637,20 +1640,21 @@ function DeductionTimeline({
                   )}
                 </div>
                 {/* 文字 */}
-                <div style={{ paddingTop: 4, paddingBottom: 12 }}>
+                <div style={{ paddingTop: 4, paddingBottom: 12, minWidth: 0, flex: 1 }}>
                   <p style={{
                     margin: "0 0 2px",
                     fontSize: 13,
                     fontWeight: isCurrent ? 700 : isDone ? 500 : 400,
                     color: isDone ? "rgba(0,220,80,0.7)" : isCurrent ? "#f5c842" : "rgba(200,160,0,0.35)",
                     transition: "color 0.5s ease",
+                    wordBreak: "break-word",
                   }}>
-                    {isDone && <span style={{ marginRight: 6, color: "rgba(0,220,80,0.6)", fontSize: 11 }}>DONE</span>}
+                    {isDone && <span style={{ marginRight: 6, color: "rgba(0,220,80,0.6)", fontSize: isMobile ? 12 : 11 }}>DONE</span>}
                     {step.text}
                     {isCurrent && <span style={{ marginLeft: 8, animation: "blink 1s step-end infinite", color: "#f5c842" }}>|</span>}
                   </p>
                   {step.subtext && !isFuture && (
-                    <p style={{ margin: 0, fontSize: 11, color: isCurrent ? "rgba(245,200,80,0.55)" : "rgba(0,220,80,0.4)" }}>{step.subtext}</p>
+                    <p style={{ margin: 0, fontSize: isMobile ? 12 : 11, color: isCurrent ? "rgba(245,200,80,0.55)" : "rgba(0,220,80,0.4)", lineHeight: 1.5, wordBreak: "break-word" }}>{step.subtext}</p>
                   )}
                 </div>
               </div>
@@ -1660,16 +1664,16 @@ function DeductionTimeline({
       </div>
 
       {/* 底部操作按钮 */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, flexWrap: "wrap" }}>
         <button
           onClick={onNavigate}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 24px", borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 4px 18px rgba(168,118,27,0.35)" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "13px 24px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "none", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: "pointer", boxShadow: "0 4px 18px rgba(168,118,27,0.35)" }}
         >
           <Sparkles size={14} />前往「战略作品快照库」查看
         </button>
         <button
           onClick={onReset}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 20px", borderRadius: 12, background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.3)", color: "rgba(200,160,0,0.7)", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "13px 20px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "rgba(168,118,27,0.08)", border: "1px solid rgba(168,118,27,0.3)", color: "rgba(200,160,0,0.7)", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
         >
           再发起一个新课题
         </button>
