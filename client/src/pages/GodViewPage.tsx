@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -45,6 +46,7 @@ function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
 
 export default function GodViewPage() {
   const [, navigate] = useLocation();
+  const isMobile = useIsMobile();
   const [topic, setTopic] = useState("");
   const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "awaiting_plan" | "done" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -499,52 +501,54 @@ export default function GodViewPage() {
       </div>
 
       {/* 顶部导航 */}
-      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
-        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
+      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: isMobile ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
+        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700, minHeight: 44, padding: "0 4px" }}>
           <ChevronLeft size={16} />首页
         </button>
         <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
-        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800 }}>AI 上帝视角</span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>AI 上帝视角</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? 6 : 10 }}>
           <button
             onClick={() => navigate("/my-reports")}
-            style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontSize: 12, fontWeight: 900, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 14px rgba(168,118,27,0.32)" }}
+            style={{ display: "flex", alignItems: "center", gap: 7, padding: isMobile ? "10px 12px" : "9px 18px", minHeight: 44, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontSize: 12, fontWeight: 900, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 14px rgba(168,118,27,0.32)", flexShrink: 0 }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 22px rgba(168,118,27,0.55)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 14px rgba(168,118,27,0.32)"; }}
           >
-            <Crown size={13} />战略作品快照库
+            <Crown size={13} />{isMobile ? "快照库" : "战略作品快照库"}
           </button>
-          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7a5410", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 99, padding: "4px 12px" }}>
-            👑 至尊专享
-          </span>
+          {!isMobile && (
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7a5410", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 99, padding: "4px 12px" }}>
+              👑 至尊专享
+            </span>
+          )}
         </div>
       </div>
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
         {/* 页面标题 */}
-        <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)" }}>
-              <Crown size={28} color="#fff7df" />
+        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 14 : 18 }}>
+            <div style={{ width: isMobile ? 44 : 56, height: isMobile ? 44 : 56, borderRadius: isMobile ? 13 : 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)", flexShrink: 0 }}>
+              <Crown size={isMobile ? 22 : 28} color="#fff7df" />
             </div>
             <div style={{ textAlign: "left" }}>
-              <h1 style={{ fontSize: 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
+              <h1 style={{ fontSize: isMobile ? 22 : 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
                 AI 上帝视角
               </h1>
-              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: 13, margin: "4px 0 0", letterSpacing: "0.10em", fontWeight: 700 }}>
+              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: isMobile ? 12 : 13, margin: "4px 0 0", letterSpacing: isMobile ? "0.04em" : "0.10em", fontWeight: 700 }}>
                 全景行业战报 · 旗舰级商业智库
               </p>
             </div>
           </div>
-          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: 15, maxWidth: 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
+          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: isMobile ? 14 : 15, maxWidth: isMobile ? "100%" : 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
             停止在信息泥潭中盲目试错。派遣专属智能研究集群，独占极限算力，全网深度检索与逻辑推演，
             为您交付降维打击的<strong style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 70%, rgba(216,162,58,0.30) 70%)", padding: "0 3px" }}>全景行业战报</strong>。
             穿透赛道迷雾，锁定商业胜率。
           </p>
-          <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", justifyContent: "center", gap: isMobile ? 6 : 10, marginTop: isMobile ? 14 : 20, flexWrap: "wrap" }}>
             {["宏观趋势前瞻", "竞品变现拆解", "私域留存策略", "30天行动清单"].map((t) => (
-              <span key={t} style={{ fontSize: 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: "5px 14px" }}>{t}</span>
+              <span key={t} style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: isMobile ? "4px 10px" : "5px 14px" }}>{t}</span>
             ))}
           </div>
 
@@ -575,11 +579,11 @@ export default function GodViewPage() {
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.22em", color: "#4F46E5", marginBottom: 4 }}>
+                <div style={{ fontSize: isMobile ? 12 : 10, fontWeight: 800, letterSpacing: isMobile ? "0.10em" : "0.22em", color: "#4F46E5", marginBottom: 4 }}>
                   {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
                 </div>
                 {isIpProfileReady(ipProfile) ? (
-                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: isMobile ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis", wordBreak: isMobile ? "break-word" : "normal" }}>
                     <span style={{ color: "#4F46E5", fontWeight: 700 }}>{ipProfile.industry}</span>
                     <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
                     <span style={{ color: "#3d2c14" }}>{ipProfile.advantage}</span>
@@ -592,7 +596,7 @@ export default function GodViewPage() {
                   </div>
                 )}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
               </div>
             </div>
@@ -604,9 +608,10 @@ export default function GodViewPage() {
           onClick={() => navigate("/my-reports")}
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: 16,
-            padding: "16px 22px",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "center",
+            gap: isMobile ? 12 : 16,
+            padding: isMobile ? "14px 16px" : "16px 22px",
             marginBottom: 24,
             borderRadius: 14,
             background: "linear-gradient(135deg,#fffaf0 0%,#f5ecda 100%)",
@@ -618,18 +623,27 @@ export default function GodViewPage() {
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.65)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 30px rgba(168,118,27,0.20)"; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.30)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 20px rgba(122,84,16,0.10)"; (e.currentTarget as HTMLElement).style.transform = "none"; }}
         >
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.30)" }}>
-            <Crown size={20} color="#fff7df" />
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flex: isMobile ? "none" : "0 0 auto" }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.30)" }}>
+              <Crown size={20} color="#fff7df" />
+            </div>
+            {isMobile && (
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", flex: 1 }}>
+                战略作品快照库
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
-              战略作品快照库 · 历史战报一键直达
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
+                战略作品快照库 · 历史战报一键直达
+              </div>
+            )}
             <div style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.5 }}>
               所有已生成的全景战报、个性化分析与半月刊都在此沉淀，支持<strong style={{ color: "#7a5410" }}>富图文 PDF 一键下载</strong>，包含个人亮点、平台赛道、产品矩阵、商业变现、生涯规划五大模块。
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "8px 16px", minHeight: isMobile ? 44 : undefined, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0, width: isMobile ? "100%" : undefined }}>
             进入快照库 →
           </div>
         </div>
