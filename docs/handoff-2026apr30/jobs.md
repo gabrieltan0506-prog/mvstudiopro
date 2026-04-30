@@ -219,6 +219,19 @@ className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 m
 - PDF/HTML 模板预览卡片 → 手机横向 snap scroll
 - 防 iOS double-tap zoom（关键按钮 `touch-action: manipulation`）
 
+### PR-4 触摸热区裁定 backlog（PR-2.2 reviewer 4/30 拍板延期）
+
+PR-2.2 实施补充资料区时，2 处 close `×` 按钮严格 < 44pt 但 reviewer 接受现值，归到 PR-4 统一裁定：
+
+- **L991** `lastUploadInfo` 关闭 × 移动 32×32pt（上传成功/失败横条）
+- **L1007** 文件 chip 删除 × 移动 28×28pt（文件 chip 内嵌）
+
+**reviewer 接受理由**：Apple HIG 允许次要操作 < 44，做 44 会破坏紧凑文件 chip 视觉一致性。
+**PR-4 时裁定方案**（任选其一）：
+1. 保留现值 + 加 `touch-action: manipulation` 防 double-tap zoom
+2. 改 36×36 折中
+3. 改 44×44 + 整体 chip 重排（破坏紧凑视觉，需用户/PM 拍板）
+
 ### PR 4 验收标准
 
 - [ ] iOS Safari 滚动时不再有地址栏跳动导致页面跳
