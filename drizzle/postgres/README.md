@@ -12,7 +12,8 @@
 
 | 文件 | 用途 | PR |
 |------|------|-----|
-| `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（本次） |
+| `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
+| `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（本次） |
 
 ## 应用流程（生产 Neon）
 
@@ -56,6 +57,31 @@ COMMIT;
 ```
 
 > **注意**：所有 SQL 都写了 `IF NOT EXISTS`，理论上重跑无害。但仍建议每次只执行一次，便于审计。
+
+### Step 3 — 应用 0002（PR-3 同步操作）
+
+PR-3 合并前需在 Neon Console 执行以下 SQL（演练 → 正式执行同 Step 1+2 流程）：
+
+```sql
+BEGIN;
+
+ALTER TABLE "enterprise_agent_kb"
+ADD COLUMN IF NOT EXISTS "extractedTextFull" TEXT;
+
+-- 验证
+SELECT column_name, data_type, is_nullable
+  FROM information_schema.columns
+ WHERE table_name = 'enterprise_agent_kb'
+   AND column_name = 'extractedTextFull';
+-- 期望：1 行，data_type=text, is_nullable=YES
+
+COMMIT;
+```
+
+兼容性：
+- 0002 为纯 ADD COLUMN，对已部署 PR-2 代码（不读 extractedTextFull）零影响
+- 默认 NULL，无需 backfill
+- 上线后 PR-3 代码上传新 KB 文件时会同时写 preview + full 两列
 
 ## 跟 drizzle ORM 代码的关系
 
