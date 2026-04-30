@@ -55,6 +55,8 @@ export type CreatePdfOpts = {
   style?: PdfStyle;
   /** 可选封面页：nanoImage 已生成的封面图 URL + 标题摘要 */
   cover?: PdfCover;
+  /** 强制浏览器下载用的文件名（中文 OK，会自动 RFC5987 编码）；不传则用 objectName */
+  downloadFilename?: string;
 };
 
 /** 头眉/页脚配色（与 v4 五套调色板对齐） */
@@ -166,10 +168,20 @@ export async function createAndUploadPdf(
       metadata: { cacheControl: "private, max-age=0" },
     });
 
+    // 构造 Content-Disposition：浏览器收到这个头会强制下载，不会以 PDF 预览方式打开
+    const rawName = (opts?.downloadFilename || `${safeId.split("/").pop() || "report"}.pdf`).trim();
+    const utf8Name = rawName.endsWith(".pdf") ? rawName : `${rawName}.pdf`;
+    // ASCII 兜底（去掉非 ASCII 字符），避免老浏览器解析失败
+    const asciiName = utf8Name.replace(/[^\x20-\x7E]/g, "_") || "report.pdf";
+    const responseDisposition =
+      `attachment; filename="${asciiName.replace(/"/g, "")}"; ` +
+      `filename*=UTF-8''${encodeURIComponent(utf8Name)}`;
+
     const [signedUrl] = await file.getSignedUrl({
       version: "v4",
       action: "read",
       expires,
+      responseDisposition,
     });
 
     const gcsUri = `gs://${bucketName}/${objectName}`;
