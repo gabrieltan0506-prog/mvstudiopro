@@ -132,6 +132,20 @@ export async function createAndUploadPdf(
     cover: coverWithLocalImage,
   });
 
+  // 诊断日志（临时）：用 stderr + [PDFDIAG] 独特前缀，避开 ECharts SSR 噪音
+  const diag = (msg: string) =>
+    process.stderr.write(`[PDFDIAG] ${new Date().toISOString()} ${msg}\n`);
+  const tStart = Date.now();
+  const coverImgLen = coverWithLocalImage?.imageUrl?.length || 0;
+  const coverImgType = !coverWithLocalImage?.imageUrl
+    ? "none"
+    : coverWithLocalImage.imageUrl.startsWith("data:")
+    ? "data-uri"
+    : coverWithLocalImage.imageUrl.startsWith("http")
+    ? "http-url"
+    : "other";
+  diag(`begin reportId=${safeId} style=${style} mdLen=${markdownContent.length} htmlLen=${htmlContent.length} coverLen=${coverImgLen} coverType=${coverImgType}`);
+
   const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim() || undefined;
 
   const browser = await puppeteer.launch({
@@ -155,10 +169,13 @@ export async function createAndUploadPdf(
       waitUntil: opts?.cover?.imageUrl ? "networkidle0" : "domcontentloaded",
       timeout: 120_000,
     });
+    diag(`+${Date.now() - tStart}ms setContent done`);
     // 等 webfont 真的把字形画完，避免封面/标题段还在 fallback 字体时就 paint 成 PDF
     await page.evaluateHandle("document.fonts.ready");
+    diag(`+${Date.now() - tStart}ms fonts.ready done`);
     // 让 ECharts SSR SVG / 章节卡片排版稳定（800ms 在 spring-mint 长报告里有时不够）
     await new Promise((r) => setTimeout(r, 2000));
+    diag(`+${Date.now() - tStart}ms hard wait done`);
 
     // 修 CONFIDENTIAL 切残：letter-spacing: normal + 容器无 margin、padding 控制
     const headerHtml = `
@@ -184,6 +201,7 @@ export async function createAndUploadPdf(
         footerTemplate: footerHtml,
       }),
     );
+    diag(`+${Date.now() - tStart}ms page.pdf done bufSize=${pdfBuffer.length}`);
 
     const bucketName = getPdfExportBucket();
     const objectName = `strategic-reports/${style}/${safeId}.pdf`;
@@ -209,6 +227,7 @@ export async function createAndUploadPdf(
         contentDisposition,
       },
     });
+    diag(`+${Date.now() - tStart}ms gcs.save done`);
 
     // 双保险：v4 signed URL 也带上 responseDisposition；万一对象 metadata 这条路径
     // 在某些边缘场景失效，签名 URL 自身的查询参数会兜住
@@ -218,6 +237,7 @@ export async function createAndUploadPdf(
       expires,
       responseDisposition: contentDisposition,
     });
+    diag(`+${Date.now() - tStart}ms gcs.signedUrl done totalElapsed=${Date.now() - tStart}ms`);
 
     const gcsUri = `gs://${bucketName}/${objectName}`;
 
