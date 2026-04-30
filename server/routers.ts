@@ -6292,25 +6292,59 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             }
           : undefined;
 
-        try {
-          const { createAndUploadPdf } = await import("./services/pdfGenerator");
-          const reportKey = input.jobId || (input.reportId ? `report-${input.reportId}` : `${uid}-${nanoid(10)}`);
-          // 用报告标题作下载文件名，让用户点击就直接落盘到「下载」目录
-          const downloadFilename =
-            (input.cover?.title || autoCoverTitle || "战略情报报告")
-              .replace(/[\\/:*?"<>|]/g, "·")
-              .slice(0, 80) + ".pdf";
-          return await createAndUploadPdf(reportKey, md, {
-            signedUrlHours: input.signedUrlHours,
-            style,
-            cover,
-            downloadFilename,
-          });
-        } catch (e: any) {
-          console.error("[deepResearch.exportBlackGoldPdf]", e?.message, e?.stack);
+        // 用报告标题作下载文件名（去除不安全字符 + 用 Array.from 避免切坏 emoji）
+        const titleSrc = input.cover?.title || autoCoverTitle || "战略情报报告";
+        const safeTitle = Array.from(titleSrc.replace(/[\\/:*?"<>|]/g, "·")).slice(0, 80).join("");
+        const downloadFilename = safeTitle + ".pdf";
+
+        // 走 Cloud Run pdf-worker（跟 mvAnalysis.downloadAnalysisPdf 同套基础设施）：
+        // 1. server 端拼 HTML（保留 generateHtmlTemplate / 5 套配色 / 封面 / ECharts SSR）
+        // 2. POST 给 pdf-worker，pdf-worker 在 Cloud Run 独立机器上跑 puppeteer
+        //    （480s timeout + 30s 硬等待 — 比 fly 内嵌的 120s + 2s 稳健 N 倍）
+        // 3. 拿回 PDF buffer → base64 → 返回客户端 → 客户端 atob → Blob → 触发本地下载
+        // 4. 完全不上 GCS（顺便解决 egress + 文件留痕 + 强制下载三个问题）
+        const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
+        if (!cloudRunUrl) {
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: e?.message || "PDF 生成失败（请确认容器已安装 Chromium，并配置 GCS 凭证）",
+            message: "CLOUD_RUN_PDF_URL 未配置，请联系管理员",
+          });
+        }
+
+        try {
+          const { generateHtmlTemplate } = await import("./services/pdfTemplate");
+          const htmlContent = generateHtmlTemplate(md, { style, cover });
+
+          const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 720_000);
+          try {
+            const res = await fetch(proxyUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ html: htmlContent, token: uid }),
+              signal: controller.signal,
+            });
+            if (!res.ok) {
+              const errBody = await res.text().catch(() => "");
+              throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
+            }
+            const arrayBuffer = await res.arrayBuffer();
+            const pdfBase64 = Buffer.from(arrayBuffer).toString("base64");
+            return {
+              success: true as const,
+              pdfBase64,
+              filename: downloadFilename,
+              style,
+            };
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        } catch (e: any) {
+          console.error("[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:", e?.message, e?.stack);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: e?.message || "PDF 生成失败（pdf-worker 调用异常）",
           });
         }
       }),

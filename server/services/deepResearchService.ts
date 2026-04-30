@@ -1906,9 +1906,10 @@ ${job.topic}
 
     // ── 后处理：灯塔标题 + 封面图 + 场景配图 + 摘要 + 耗时 ────────────────
 
-    // 0. 自动场景配图（≥ 3 张）— 用 nano banana 2 (gemini-3.1-flash-image-preview，省钱)
-    //    用户痛点：报告太空泛、纯文字没温度，应用场景需要视觉化
-    //    实现：用 LLM 抽 3-5 个"应用场景 / 人物特色 / 行业生态"画面，并行生图，按章节锚点注入
+    // 0. 自动场景配图（≥ 5 张，覆盖 4 类）— 用 nano banana 2 (gemini-3.1-flash-image-preview，省钱)
+    //    用户决策（2026-05-01）：报告太空泛、纯文字没温度，配图升到 5-7 张，必须覆盖：
+    //      ① 应用场景  ② 目标人物 / 个人形象  ③ 产品特色  ④ 数据 / 行业生态
+    //    实现：用 LLM 抽 5-7 个画面（强制 4 类全覆盖），串行生图（500ms 间隔），按章节锚点注入正文
     try {
       const sceneImages = await generateSceneIllustrations({
         topic: job.topic,
@@ -1917,7 +1918,14 @@ ${job.topic}
       });
       if (sceneImages.length > 0) {
         reportMarkdown = injectSceneImagesIntoMarkdown(reportMarkdown, sceneImages);
-        console.log(`[deepResearch] 已注入 ${sceneImages.length} 张场景配图（nano banana 2）`);
+        const catBreakdown = sceneImages.reduce<Record<string, number>>((acc, s) => {
+          const k = s.category || "uncategorized";
+          acc[k] = (acc[k] || 0) + 1;
+          return acc;
+        }, {});
+        console.log(
+          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（nano banana 2）·  类别: ${JSON.stringify(catBreakdown)}`,
+        );
       }
     } catch (e: any) {
       // 配图失败不阻断主流程
@@ -2146,6 +2154,18 @@ ${job.topic}
 //      保证场景图必嵌正文章节，**绝不**进入文末附录（用户反馈：附录陷阱破坏阅读体验）
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 场景配图类别。2026-05-01 用户决策：报告配图必须覆盖 4 类「重点突出」画面。
+ *
+ * - "scene"   应用场景：用户使用产品/服务的真实现场（商场快闪、工厂流水线、直播间、家庭客厅等）
+ * - "persona" 目标人物 / 个人形象：目标客群肖像或品牌代言人特写，传达情绪与调性
+ * - "product" 产品特色：产品功能或卖点的视觉化（智能音箱被多人使用、APP 界面被操作、产品包装陈列）
+ * - "data"    数据 / 行业生态：把报告关键数据或洞察「场景化」（不画图表，画现实画面）
+ *
+ * 旧报告无 category 字段，injectSceneImagesIntoMarkdown 不依赖此字段，向后兼容。
+ */
+type SceneCategory = "scene" | "persona" | "product" | "data";
+
 interface SceneIllustration {
   sectionAnchor: string;
   caption: string;
@@ -2153,6 +2173,8 @@ interface SceneIllustration {
   imageUrl?: string;
   /** 可选 aspect ratio，默认 16:9（横版更适合插入正文） */
   aspectRatio?: "16:9" | "4:3" | "1:1";
+  /** 重点画面类别（≥ 5 张图必须 4 类全覆盖；旧数据/向后兼容时为 undefined） */
+  category?: SceneCategory;
 }
 
 /**
@@ -2232,12 +2254,15 @@ async function generateSceneIllustrations(params: {
   topic: string;
   reportMarkdown: string;
   vercelBaseUrl: string;
-  /** 最少 3 张，最多 6 张 */
+  /**
+   * 默认 5-7 张（2026-05-01 用户决策从 3-5 升到 5-7，强制 4 类「重点突出」画面全覆盖）。
+   * 若调用方显式传 minCount < 4 或 maxCount < 4，4 类全覆盖检查会被跳过（保留向后兼容入口）。
+   */
   minCount?: number;
   maxCount?: number;
 }): Promise<SceneIllustration[]> {
-  const minCount = params.minCount ?? 3;
-  const maxCount = params.maxCount ?? 5;
+  const minCount = params.minCount ?? 5;
+  const maxCount = params.maxCount ?? 7;
 
   // ── 0. 提取报告里所有 H1/H2/H3 章节标题，强制 LLM 从这个列表选 sectionAnchor ──
   // 历史问题（用户痛点："场景图应该在报告里面，不应该单独生成才对"）：
@@ -2256,29 +2281,43 @@ async function generateSceneIllustrations(params: {
     `你是商业杂志的视觉总监。下面是一份课题为《${params.topic}》的战略研报正文（Markdown）。
 
 【任务】
-请从中抽取 ${minCount}-${maxCount} 个最具代表性的"应用场景 / 目标人物特写 / 行业生态画面"，作为本报告的可视化场景图。
+请从中抽取 ${minCount}-${maxCount} 个最具代表性的「重点突出画面」作为本报告的可视化配图。**必须覆盖以下 4 类**（每类至少 1 张，越接近 ${maxCount} 张越好）：
+
+1. **scene  · 应用场景**：用户使用产品/服务的真实现场
+   例：商场快闪店现场、家庭客厅亲子互动、地铁通勤族刷手机、健身房私教课、跨境电商打包发货中心、五一家庭出游
+2. **persona · 目标人物 / 个人形象**：目标客群肖像或品牌代言人特写，传达情绪与调性
+   例：30 岁都市白领女性、三代同堂家庭主理人、健身教练、年轻创业者在工作室、Z 世代女生在咖啡馆刷手机
+3. **product · 产品特色**：产品功能或卖点的视觉化（不是 PPT 介绍图，是真实使用画面）
+   例：智能音箱被多人围坐使用、APP 界面被指尖操作的特写、产品包装在精致陈列、新品试穿镜前展示
+4. **data · 数据 / 行业生态**：把报告关键数据或市场洞察「场景化」（**不要画图表/折线**，画现实画面承载数据情绪）
+   例：报告说"30% 用户晚上 10 点后下单" → 画夜里在沙发上举手机下单的人；
+   "618 大促爆单" → 画仓库流水线打包热闹场面；
+   "下沉市场崛起" → 画县城商业街灯火通明现场
 
 【场景挑选规则】
-1. 必须是报告里实际涉及到的具体场景（例：五一假期家庭出游、地铁通勤族刷手机、健身房私教课、跨境电商打包发货中心）
-2. 优先挑能传达情绪 + 故事感 + 品牌调性的画面，避免抽象图表/PPT 风
-3. 至少包含一张"目标用户人物特写"（例：30 岁都市白领女性 / 三代同堂家庭）
-4. 至少包含一张"应用场景全景"（例：商场快闪店现场 / 工厂流水线 / 直播间）
-5. 至少包含一张"行业生态画面"（例：跨境物流仓 / 城市地标夜景 / 节庆现场）
+1. 必须是报告里实际涉及到的具体内容（不要凭空臆造，从正文里找抓手）
+2. 优先挑能传达情绪 + 故事感 + 品牌调性的画面，**杜绝抽象图表 / PPT 模版风 / 数据折线 / 信息图风格**
+3. 4 类覆盖优先于数量：宁可只 5 张但 4 类全有，也不要 7 张全是 scene 类
+4. 同一章节最多 1 张图，请在不同章节之间均匀分布
 
 【sectionAnchor 强制规范 · 必须遵守】
 - sectionAnchor 字段**必须严格等于以下章节标题之一**（一字不差，包含编号 / 中文 / emoji），不允许自创：
 ${titleListBlock}
 - 不允许只写关键词（如「行业全景」「财务模型」），必须复制整行标题
-- 同一章节最多 1 张图，请在不同章节之间均匀分布
+
+【category 字段 · 必须遵守】
+- category 字段值必须严格取以下 4 个英文小写字符串之一："scene" / "persona" / "product" / "data"
+- 不允许写中文或自创类别。
 
 【输出格式】
 仅输出严格 JSON，不带任何 markdown / 注释 / 多余文字。结构：
 {
   "scenes": [
     {
+      "category": "scene" | "persona" | "product" | "data",
       "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字，作为图片下方的注解",
-      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头",
+      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头。data 类不要画图表，要画承载数据情绪的现实画面",
       "aspectRatio": "16:9"
     }
   ]
@@ -2298,10 +2337,20 @@ ${reportSnippet}`,
     console.warn(
       `[deepResearch][scenes] 第 1 次解析仅得 ${firstSceneCount} 个场景，发起精简 retry…`,
     );
-    // ── retry：明确告诉 LLM 上次输出被截断，仅要 3 个最关键场景 + 缩短 imagePrompt ──
+    // ── retry：明确告诉 LLM 上次输出被截断，要 minCount 张 + 缩短 imagePrompt ──
+    //   仍然要求 4 类覆盖（scene/persona/product/data），但允许各类只 1 张
     const retryText = await generate(
       "gemini-3.1-pro-preview",
-      `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON（不要 4-5 个），且每个 imagePrompt **必须 ≤ 50 个英文单词**。
+      `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON，每个 imagePrompt **必须 ≤ 50 个英文单词**。
+
+【4 类覆盖 · 必须遵守】
+${minCount} 张图必须涵盖以下 4 类（每类至少 1 张）：
+- "scene"   应用场景：用户使用产品/服务的真实现场
+- "persona" 目标人物 / 个人形象：客群肖像或代言人
+- "product" 产品特色：产品在被使用 / 陈列的真实画面（不是 PPT）
+- "data"    数据情境：把关键数据画成现实画面（不要画图表）
+
+【category 字段】值必须为 "scene" / "persona" / "product" / "data" 之一（英文小写）。
 
 【sectionAnchor 强制规范】
 - sectionAnchor **必须严格等于以下章节标题之一**（一字不差），不允许自创：
@@ -2311,9 +2360,10 @@ ${titleListBlock}
 {
   "scenes": [
     {
+      "category": "scene" | "persona" | "product" | "data",
       "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字",
-      "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线",
+      "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线（data 类不要画图表）",
       "aspectRatio": "16:9"
     }
   ]
@@ -2342,6 +2392,21 @@ ${reportSnippet.slice(0, 8000)}`,
     console.warn(`[deepResearch][scenes] 最终仅 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
     return [];
   }
+
+  // ── 1.5 类别覆盖诊断（不 reject，仅 warn，方便观察 LLM 是否听话） ────
+  // 用户决策（2026-05-01）：4 类必须全覆盖，但首版以 prompt 强约束 + 日志观察为主。
+  // 如果发现实际命中率低，再升级为「缺类即 retry」。
+  const ALL_CATS: SceneCategory[] = ["scene", "persona", "product", "data"];
+  const catCount: Record<SceneCategory, number> = { scene: 0, persona: 0, product: 0, data: 0 };
+  for (const s of scenes) {
+    const c = s.category;
+    if (c && ALL_CATS.includes(c)) catCount[c] += 1;
+  }
+  const missing = ALL_CATS.filter((c) => catCount[c] === 0);
+  console.log(
+    `[deepResearch][scenes] 类别分布: scene=${catCount.scene} persona=${catCount.persona} product=${catCount.product} data=${catCount.data}` +
+      (missing.length ? `，⚠ 缺类: ${missing.join("/")}` : "，✅ 4 类全覆盖"),
+  );
 
   // ── 2. 串行 + Gemini API key 直连生图（绕开 Vertex 配额，50 RPM） ──
   // 历史问题：原本走 Vercel /api/google?op=nanoImage（Vertex 路径）+ Promise.all 三个
