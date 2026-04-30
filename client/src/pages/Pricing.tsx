@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Loader2, CheckCircle, Coins, ChevronRight,
   Bolt, Zap, Flame, BarChart3, Smile,
+  Briefcase, Crown, Star,
 } from "lucide-react";
 import { CREDIT_TO_CNY } from "@shared/plans";
 import { nanoid } from "nanoid";
@@ -290,6 +291,139 @@ export default function Pricing() {
           </Link>
         </div>
       </div>
+
+      {/* ════════════════════════════════════════════════════════════════
+          企业方案区块（PR-6）
+          视觉：黑底沿用，三档卡片用边框颜色区分（玫红 / 香槟金 / 蓝降饱）
+          边界 2 红线：不引入新色，复用现有色板
+          ════════════════════════════════════════════════════════════════ */}
+      <section className="px-6 pt-12 pb-16 border-t border-white/10 bg-gradient-to-b from-[#0A0A0C] to-[#15080F]">
+        <div className="max-w-6xl mx-auto">
+          {/* 区块标题 */}
+          <div className="text-center mb-10">
+            <span className="inline-block px-3 py-1 text-[11px] font-bold tracking-wider uppercase text-[#FB7185] bg-[#FB7185]/10 border border-[#FB7185]/30 rounded-full mb-4">
+              企业 SaaS · B2B 高客单
+            </span>
+            <h2 className="text-3xl sm:text-4xl font-black text-white mb-3">企业专属智能体定制</h2>
+            <p className="text-sm sm:text-base text-gray-400 max-w-2xl mx-auto leading-relaxed">
+              把您的销冠 SOP、客诉手册、战败分析喂给一个永远在线的战略大脑 ·
+              企业隔离存储 + 用户主动一键删除
+            </p>
+          </div>
+
+          {/* 三档卡片：移动 1 列 / 平板 2 列 / 桌面 3 列 */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+
+            {/* ── Trial 试用版 ── */}
+            <div className="relative bg-[#1A1A1D] rounded-2xl border-2 border-[#FB7185]/50 p-6 flex flex-col">
+              <span className="absolute -top-3 left-6 bg-[#FB7185] text-white text-[11px] font-bold rounded-full px-3 py-0.5">
+                30 天验证起步
+              </span>
+              <div className="flex items-center gap-3 mb-4 mt-2">
+                <div className="w-11 h-11 rounded-xl bg-[#FB7185]/20 border border-[#FB7185]/40 flex items-center justify-center">
+                  <Briefcase size={22} className="text-[#FB7185]" />
+                </div>
+                <span className="text-lg font-bold text-white">Trial 试用版</span>
+              </div>
+              <div className="mb-5">
+                <span className="text-4xl font-black text-white">¥15,000</span>
+                <span className="text-sm text-gray-400 ml-1">/ 30 天</span>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-300 mb-6 flex-1">
+                <li className="flex gap-2"><span className="text-[#FB7185]">✓</span><span>1 个专属 Agent</span></li>
+                <li className="flex gap-2"><span className="text-[#FB7185]">✓</span><span>知识库 ≤ 50 MB</span></li>
+                <li className="flex gap-2"><span className="text-[#FB7185]">✓</span><span>100 次 / 30 天调用配额</span></li>
+                <li className="flex gap-2"><span className="text-[#FB7185]">✓</span><span>共享算力 / 基础部署</span></li>
+                <li className="flex gap-2"><span className="text-[#FB7185]">✓</span><span>企业隔离存储 + 用户主动一键删除</span></li>
+              </ul>
+              <Link href="/enterprise-agent">
+                <a className="block w-full text-center min-h-11 px-4 py-3 bg-[#FB7185] text-white text-sm font-bold rounded-xl hover:bg-[#FB7185]/90 transition no-underline">
+                  立即开始 30 天试用
+                </a>
+              </Link>
+              <p className="text-xs text-[#FB7185]/85 text-center mt-3 font-medium">
+                升级 Pro 时抵扣 50%
+              </p>
+            </div>
+
+            {/* ── Pro 正式版（推荐 · 香槟金） ── */}
+            <div className="relative bg-gradient-to-br from-[#1A1408] to-[#0e0800] rounded-2xl border-2 border-[#c8a000] p-6 flex flex-col shadow-[0_0_40px_rgba(200,160,0,0.18)]">
+              <span className="absolute -top-3 left-6 bg-gradient-to-r from-[#f5c842] to-[#c8a000] text-[#0a0600] text-[11px] font-black rounded-full px-3 py-0.5 tracking-wide">
+                推荐 · 试用客户半价升级
+              </span>
+              <div className="flex items-center gap-3 mb-4 mt-2">
+                <div className="w-11 h-11 rounded-xl bg-[#c8a000]/20 border border-[#c8a000]/40 flex items-center justify-center">
+                  <Crown size={22} className="text-[#f5c842]" />
+                </div>
+                <span className="text-lg font-bold text-white">Pro 正式版</span>
+              </div>
+              <div className="mb-5">
+                <span className="text-4xl font-black text-white">¥50K-200K</span>
+                <span className="text-sm text-gray-400 ml-1">/ 永久使用</span>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-300 mb-6 flex-1">
+                <li className="flex gap-2"><span className="text-[#f5c842]">✓</span><span>多 Agent 并行部署</span></li>
+                <li className="flex gap-2"><span className="text-[#f5c842]">✓</span><span>知识库无上限</span></li>
+                <li className="flex gap-2"><span className="text-[#f5c842]">✓</span><span>专属隔离 GCS bucket</span></li>
+                <li className="flex gap-2"><span className="text-[#f5c842]">✓</span><span>包定制爬虫 / 内部系统接入</span></li>
+                <li className="flex gap-2"><span className="text-[#f5c842]">✓</span><span>企业隔离存储 + 用户主动一键删除</span></li>
+              </ul>
+              <a
+                href="mailto:benjamintan0506@163.com?subject=企业 Agent 正式版咨询"
+                className="block w-full text-center min-h-11 px-4 py-3 bg-gradient-to-r from-[#f5c842] to-[#c8a000] text-[#0a0600] text-sm font-black rounded-xl hover:opacity-90 transition no-underline"
+              >
+                联系商务报价
+              </a>
+            </div>
+
+            {/* ── Retainer 战略伴跑（蓝降饱） ── */}
+            <div className="relative bg-[#1A1A1D] rounded-2xl border-2 p-6 flex flex-col" style={{ borderColor: "rgba(56,189,248,0.45)" }}>
+              <div className="flex items-center gap-3 mb-4 mt-2">
+                <div className="w-11 h-11 rounded-xl bg-[#38bdf8]/15 border border-[#38bdf8]/35 flex items-center justify-center">
+                  <Star size={22} className="text-[#38bdf8]" />
+                </div>
+                <span className="text-lg font-bold text-white">Retainer 战略伴跑</span>
+              </div>
+              <div className="mb-5">
+                <span className="text-4xl font-black text-white">初装费 20%</span>
+                <span className="text-sm text-gray-400 ml-1">/ 年</span>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-300 mb-6 flex-1">
+                <li className="flex gap-2"><span className="text-[#38bdf8]">✓</span><span>算法持续迭代</span></li>
+                <li className="flex gap-2"><span className="text-[#38bdf8]">✓</span><span>Prompt 微调与场景扩展</span></li>
+                <li className="flex gap-2"><span className="text-[#38bdf8]">✓</span><span>专属算力承诺</span></li>
+                <li className="flex gap-2"><span className="text-[#38bdf8]">✓</span><span>季度复盘 + 业务回测</span></li>
+                <li className="flex gap-2"><span className="text-[#38bdf8]">✓</span><span>逐年续约（按 Pro 部署费 20%）</span></li>
+              </ul>
+              <a
+                href="mailto:benjamintan0506@163.com?subject=企业战略伴跑年费咨询"
+                className="block w-full text-center min-h-11 px-4 py-3 bg-[#38bdf8]/15 text-[#38bdf8] text-sm font-bold rounded-xl border border-[#38bdf8]/40 hover:bg-[#38bdf8]/25 transition no-underline"
+              >
+                联系商务咨询
+              </a>
+              <p className="text-xs text-[#38bdf8]/75 text-center mt-3 font-medium">
+                需先购 Pro 后续约
+              </p>
+            </div>
+          </div>
+
+          {/* 底部 CTA + 商务联系方式 */}
+          <div className="text-center mt-10">
+            <Link href="/enterprise-agent">
+              <a className="inline-flex items-center gap-2 px-6 py-3 min-h-11 bg-[#FB7185] text-white text-sm font-bold rounded-xl hover:bg-[#FB7185]/90 transition no-underline">
+                进入企业 Agent 控制台 →
+              </a>
+            </Link>
+            <p className="text-xs text-gray-500 mt-3">
+              正式版 / 战略伴跑请联系{" "}
+              <a href="mailto:benjamintan0506@163.com" className="text-[#FB7185] hover:underline">
+                benjamintan0506@163.com
+              </a>
+              （手动报价）
+            </p>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

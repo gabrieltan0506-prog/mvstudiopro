@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown, Zap } from "lucide-react";
+import { Mic, TrendingUp, Clapperboard, BarChart2, ChevronLeft, ChevronRight, Sparkles, Search, Crown, BookOpen, Star, FileDown, Zap, Briefcase } from "lucide-react";
 
 // ─── 固定置顶卡片（竞品分析，永久显示） ───────────────────────────────
 const PINNED_CARD = {
@@ -22,8 +22,23 @@ const PINNED_CARD = {
 const CAROUSEL_CARDS = [
   {
     isNew: true,
-    date: "2026/04/28",
+    date: "2026/04/30",
     tag: "今日上线",
+    title: "企业专属智能体定制",
+    subtitle: "把您的销冠 SOP / 客诉手册 / 战败分析喂给一个永远在线的战略大脑",
+    desc: "30 天 ¥15,000 试用版起步：1 个专属 Agent + 50 MB 知识库 + 100 次调用，企业隔离存储 + 用户主动一键删除。不满意不升级正式版。",
+    pills: ["¥15,000 起", "30 天试用", "知识库 50MB", "Gemini 3 Pro", "企业隔离存储"],
+    icon: Briefcase,
+    accentColor: "#FB7185",
+    glowColor: "rgba(251,113,133,0.20)",
+    borderColor: "rgba(251,113,133,0.40)",
+    bgGradient: "linear-gradient(135deg, rgba(251,113,133,0.10) 0%, rgba(251,113,133,0.03) 100%)",
+    href: "/enterprise-agent",
+  },
+  {
+    isNew: false,
+    date: "2026/04/28",
+    tag: "本周新版",
     title: "万能素材解析引擎",
     subtitle: "抖音 · 快手 · 小红书 · B站 · 本地化解析",
     desc: "二创功能重大升级！无需第三方API，本地化解析引擎全本地运行，支持主流国内视频平台。输入URL一键解析并下载原画无水印素材，解析失败自动更新引擎，数据安全100%自主掌控。",
