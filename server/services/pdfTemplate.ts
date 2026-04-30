@@ -631,7 +631,7 @@ export function generateHtmlTemplate(
       table-layout: auto;
     }
     thead { display: table-header-group; }
-    tr { page-break-inside: avoid; page-break-after: auto; }
+    tr { page-break-inside: auto; page-break-after: auto; }
     thead th {
       background: var(--th-bg);
       color: var(--th-text);
@@ -790,7 +790,8 @@ export function generateHtmlTemplate(
       }
       h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
       table { page-break-inside: auto; }
-      tr, td, th { page-break-inside: avoid; }
+      tr, td, th { page-break-inside: auto; }
+      blockquote { page-break-inside: auto; }
     }
   </style>
 </head>
