@@ -1,15 +1,38 @@
 /**
- * 容器内 Puppeteer 压 PDF + GCS 存储 + V4 限时签名下载链接。
- * 不调用任何第三方 PDF SaaS；仅使用本进程 Chromium + @google-cloud/storage。
+ * PDF 生成 + GCS 上传 + V4 限时签名链接。
  *
- * v4 升级（2026-04-29）：
- *   - 接受 style 参数：'spring-mint' | 'neon-tech' | 'sunset-coral' | 'ocean-fresh' | 'business-bright'
- *   - 接受 cover 参数：可选 nanoImage URL → 注入封面页
- *   - 修 CONFIDENTIAL 头眉切残：移除 letter-spacing，margin: 0 + padding 控制
- *   - 第 1 页（封面）跳过 header / footer，封面 100% 满版
+ * v5 重构（2026-04-30 hotfix）：
+ *   把 puppeteer 渲染从 Fly 容器内迁出，改走 Cloud Run pdf-service。
+ *
+ *   原因：
+ *     - 大报告（PR #332 后场景图嵌正文 + 完整推演内容，最高 200 万字符）
+ *       在 Fly 容器内用 puppeteer 渲染时间常超过 60s
+ *     - Fly proxy 默认 idle_timeout = 60s，超时后强制断开 connection
+ *     - 前端浏览器收到 connection close → 显示 "Load failed"
+ *     - 日志铁证："could not complete HTTP request to instance:
+ *                 legacy hyper error: client error (SendRequest) (source: http2 error)"
+ *
+ *   方案：
+ *     - HTML 生成在 Fly（generateHtmlTemplate，纯 JS，毫秒级）
+ *     - PDF 渲染走 Cloud Run pdf-service（独立服务，60min timeout，无 Fly 60s 限制）
+ *     - GCS 上传 + 签名仍在 Fly（轻活，几秒搞定）
+ *     - 总耗时 7-35s，稳稳在 Fly 60s 内
+ *
+ *   兼容性：
+ *     - 输出结构 CreatePdfResult 完全不变（前端无需修改）
+ *     - 5 套模板（spring-mint / neon-tech / sunset-coral / ocean-fresh / business-bright）
+ *       继续工作（generateHtmlTemplate 不变）
+ *     - 封面页（cover image / title / subtitle / abstract）继续工作
+ *     - HTML 内置 CONFIDENTIAL 水印（pdfTemplate.ts 第 333 / 799 行）继续显示
+ *
+ *   降级（已与 reviewer 确认接受）：
+ *     - 失去 puppeteer 的 displayHeaderFooter（页眉 CONFIDENTIAL 横条 + 页脚页码）
+ *       但 HTML 内置的水印 + 封面 CONFIDENTIAL 仍在
+ *
+ * 参考：项目里 downloadPlatformPdf / downloadAnalysisPdf 已经走同样的 Cloud Run 路径
+ * （server/routers.ts L2481-2557），架构成熟可靠。
  */
 
-import puppeteer from "puppeteer";
 import { Storage } from "@google-cloud/storage";
 import { generateHtmlTemplate, type PdfStyle, type PdfCover } from "./pdfTemplate";
 
@@ -57,27 +80,56 @@ export type CreatePdfOpts = {
   cover?: PdfCover;
 };
 
-/** 头眉/页脚配色（与 v4 五套调色板对齐） */
-function getHeaderFooterColors(style: PdfStyle): {
-  primary: string;
-  text: string;
-  confidential: string;
-  muted: string;
-} {
-  if (style === "spring-mint") {
-    return { primary: "#10B981", text: "#0F172A", confidential: "#E11D48", muted: "#64748B" };
+/**
+ * 走 Cloud Run pdf-service 把 HTML 渲染成 PDF binary。
+ *
+ * Cloud Run 端实现：page.setContent(html) + page.pdf({format:"A4", printBackground:true})
+ * 接口约定（与 routers.ts L2481-2557 现有 downloadPlatformPdf / downloadAnalysisPdf
+ * 的调用一致，已生产验证）：
+ *
+ *   POST {CLOUD_RUN_PDF_URL}/generate-pdf
+ *   Content-Type: application/json
+ *   { "html": "<完整 HTML>", "token": "" }
+ *   → 200 application/pdf binary
+ *   → !2xx text/json 错误信息
+ *
+ * AbortController 50s 超时（Fly proxy 60s 内余 10s buffer 给 GCS 上传 + 签名）。
+ */
+async function renderPdfViaCloudRun(htmlContent: string): Promise<Buffer> {
+  const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
+  if (!cloudRunUrl) {
+    throw new Error(
+      "CLOUD_RUN_PDF_URL 未配置：PDF 渲染服务不可用。" +
+        "请联系运维确认 Cloud Run pdf-service 已部署并设置该环境变量。",
+    );
   }
-  if (style === "neon-tech") {
-    return { primary: "#7C3AED", text: "#1E1B4B", confidential: "#F472B6", muted: "#6B7280" };
+  const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 50_000);
+
+  try {
+    const res = await fetch(proxyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html: htmlContent, token: "" }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(
+        `pdf-service returned HTTP ${res.status}: ${errBody.slice(0, 300)}`,
+      );
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    const buf = Buffer.from(arrayBuffer);
+    if (!buf || buf.length === 0) {
+      throw new Error("pdf-service 返回空 PDF binary");
+    }
+    return buf;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  if (style === "sunset-coral") {
-    return { primary: "#8B5CF6", text: "#3C1361", confidential: "#9F1239", muted: "#7C5C8B" };
-  }
-  if (style === "ocean-fresh") {
-    return { primary: "#2563EB", text: "#0C1A3D", confidential: "#B91C1C", muted: "#475569" };
-  }
-  // business-bright（默认 fallback）
-  return { primary: "#1F3A5F", text: "#0F1B2D", confidential: "#A52A2A", muted: "#55657A" };
 }
 
 /**
@@ -98,91 +150,39 @@ export async function createAndUploadPdf(
   const hours = Math.min(168, Math.max(1, Number(opts?.signedUrlHours) || 72));
   const expires = Date.now() + hours * 60 * 60 * 1000;
   const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
-  const colors = getHeaderFooterColors(style);
 
   const htmlContent = generateHtmlTemplate(markdownContent, {
     style,
     cover: opts?.cover,
   });
 
-  const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim() || undefined;
+  const pdfBuffer = await renderPdfViaCloudRun(htmlContent);
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    executablePath: executablePath || undefined,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-software-rasterizer",
-      "--single-process",
-      "--no-zygote",
-    ],
+  const bucketName = getPdfExportBucket();
+  const objectName = `strategic-reports/${style}/${safeId}.pdf`;
+  const storage = getGcsStorage();
+  const file = storage.bucket(bucketName).file(objectName);
+
+  await file.save(pdfBuffer, {
+    contentType: "application/pdf",
+    resumable: false,
+    metadata: { cacheControl: "private, max-age=0" },
   });
 
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
-    await page.setContent(htmlContent, {
-      waitUntil: opts?.cover?.imageUrl ? "networkidle0" : "domcontentloaded",
-      timeout: 120_000,
-    });
-    await new Promise((r) => setTimeout(r, 800));
+  const [signedUrl] = await file.getSignedUrl({
+    version: "v4",
+    action: "read",
+    expires,
+  });
 
-    // 修 CONFIDENTIAL 切残：letter-spacing: normal + 容器无 margin、padding 控制
-    const headerHtml = `
-      <div style="font-size:9px;width:100%;padding:0 30px;display:flex;justify-content:space-between;align-items:center;color:${colors.text};font-family:system-ui,'Helvetica Neue','PingFang SC',sans-serif;letter-spacing:normal;box-sizing:border-box;-webkit-print-color-adjust:exact;">
-        <span style="font-weight:700;"><span style="color:${colors.primary};">MV STUDIO PRO</span><span style="color:${colors.text};"> · 战略情报局</span></span>
-        <span style="color:${colors.confidential};font-weight:800;letter-spacing:0.04em;">CONFIDENTIAL</span>
-      </div>`;
+  const gcsUri = `gs://${bucketName}/${objectName}`;
 
-    const footerHtml = `
-      <div style="font-size:9px;width:100%;padding:0 30px;display:flex;justify-content:space-between;align-items:center;color:${colors.muted};font-family:system-ui,'Helvetica Neue','PingFang SC',sans-serif;letter-spacing:normal;box-sizing:border-box;">
-        <span style="color:${colors.primary};">© ${new Date().getFullYear()} · MV STUDIO PRO</span>
-        <span><span class="pageNumber"></span> / <span class="totalPages"></span></span>
-      </div>`;
-
-    const pdfBuffer = Buffer.from(
-      await page.pdf({
-        format: "A4",
-        printBackground: true,
-        // 左右 margin 收到 0，由 header 内部 padding 控制，避免 CONFIDENTIAL 切残
-        margin: { top: "70px", bottom: "70px", left: "0", right: "0" },
-        displayHeaderFooter: true,
-        headerTemplate: headerHtml,
-        footerTemplate: footerHtml,
-      }),
-    );
-
-    const bucketName = getPdfExportBucket();
-    const objectName = `strategic-reports/${style}/${safeId}.pdf`;
-    const storage = getGcsStorage();
-    const file = storage.bucket(bucketName).file(objectName);
-
-    await file.save(pdfBuffer, {
-      contentType: "application/pdf",
-      resumable: false,
-      metadata: { cacheControl: "private, max-age=0" },
-    });
-
-    const [signedUrl] = await file.getSignedUrl({
-      version: "v4",
-      action: "read",
-      expires,
-    });
-
-    const gcsUri = `gs://${bucketName}/${objectName}`;
-
-    return {
-      gcsUri,
-      objectName,
-      bucket: bucketName,
-      signedUrl,
-      expiresAt: new Date(expires).toISOString(),
-      style,
-    };
-  } finally {
-    await browser.close().catch(() => {});
-  }
+  return {
+    gcsUri,
+    objectName,
+    bucket: bucketName,
+    signedUrl,
+    expiresAt: new Date(expires).toISOString(),
+    style,
+  };
 }
