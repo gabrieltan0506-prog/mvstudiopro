@@ -102,9 +102,34 @@ export async function createAndUploadPdf(
   const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
   const colors = getHeaderFooterColors(style);
 
+  // 封面图预下载转 base64 内嵌：fly logs 已证实远程 GCS URL 让 puppeteer
+  // setContent 的 networkidle0 在 120s 内来不及（容器→GCS 慢网），超时后
+  // chrome 把部分 paint 状态硬压成 PDF（封面叠正文 + 中间空白 + 后半截断）。
+  // 预下载后 HTML 里没有任何外链，networkidle0 立刻满足。
+  let coverWithLocalImage = opts?.cover;
+  if (opts?.cover?.imageUrl && /^https?:\/\//.test(opts.cover.imageUrl)) {
+    try {
+      const res = await fetch(opts.cover.imageUrl, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        const ct = res.headers.get("content-type") || "image/jpeg";
+        const dataUri = `data:${ct};base64,${buf.toString("base64")}`;
+        coverWithLocalImage = { ...opts.cover, imageUrl: dataUri };
+        console.log(`[createAndUploadPdf] cover image inlined (${buf.length} bytes)`);
+      } else {
+        console.warn(`[createAndUploadPdf] cover prefetch failed: HTTP ${res.status}`);
+      }
+    } catch (e: any) {
+      console.warn(`[createAndUploadPdf] cover prefetch error: ${e?.message}`);
+      // 失败兜底：不 throw，让 puppeteer 继续尝试用原 URL
+    }
+  }
+
   const htmlContent = generateHtmlTemplate(markdownContent, {
     style,
-    cover: opts?.cover,
+    cover: coverWithLocalImage,
   });
 
   const executablePath = String(process.env.PUPPETEER_EXECUTABLE_PATH || "").trim() || undefined;
@@ -130,7 +155,10 @@ export async function createAndUploadPdf(
       waitUntil: opts?.cover?.imageUrl ? "networkidle0" : "domcontentloaded",
       timeout: 120_000,
     });
-    await new Promise((r) => setTimeout(r, 800));
+    // 等 webfont 真的把字形画完，避免封面/标题段还在 fallback 字体时就 paint 成 PDF
+    await page.evaluateHandle("document.fonts.ready");
+    // 让 ECharts SSR SVG / 章节卡片排版稳定（800ms 在 spring-mint 长报告里有时不够）
+    await new Promise((r) => setTimeout(r, 2000));
 
     // 修 CONFIDENTIAL 切残：letter-spacing: normal + 容器无 margin、padding 控制
     const headerHtml = `
