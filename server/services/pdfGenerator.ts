@@ -166,7 +166,7 @@ export async function createAndUploadPdf(
     const page = await browser.newPage();
     await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 2 });
     await page.setContent(htmlContent, {
-      waitUntil: opts?.cover?.imageUrl ? "networkidle0" : "domcontentloaded",
+      waitUntil: "networkidle0",
       timeout: 120_000,
     });
     diag(`+${Date.now() - tStart}ms setContent done`);

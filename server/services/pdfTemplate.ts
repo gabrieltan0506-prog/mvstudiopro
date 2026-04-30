@@ -790,8 +790,9 @@ export function generateHtmlTemplate(
       }
       h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
       table { page-break-inside: auto; }
-      tr, td, th { page-break-inside: auto; }
+      tr, td, th { page-break-inside: auto; page-break-after: auto; }
       blockquote { page-break-inside: auto; }
+      figure { page-break-inside: avoid; }
     }
   </style>
 </head>
