@@ -892,7 +892,7 @@ export default function GodViewPage() {
 
         {/* ── 输入区 ── */}
         {(phase === "idle" || phase === "launching") && (
-          <div style={{ background: "linear-gradient(135deg,#fffaf0,#f5ecda)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 20, padding: 28, boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
+          <div style={{ background: "linear-gradient(135deg,#fffaf0,#f5ecda)", border: "1px solid rgba(168,118,27,0.30)", borderRadius: 20, padding: isMobile ? 18 : 28, boxShadow: "0 6px 22px rgba(122,84,16,0.10)" }}>
             <p style={{ fontSize: 12, color: "#7a5410", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 10 }}>
               输入研究课题
             </p>
@@ -902,7 +902,7 @@ export default function GodViewPage() {
                 onChange={(e) => setTopic(e.target.value)}
                 rows={5}
                 placeholder="请描述您要研究的赛道或课题，例如：2026 年小红书形体美学与心血管健康赛道的商业模式、头部变现路径与差异化破局策略…"
-                style={{ width: "100%", padding: "14px 16px", paddingRight: 52, borderRadius: 12, background: "#fff", border: "1px solid rgba(168,118,27,0.35)", color: "#1c1407", fontSize: 14.5, lineHeight: 1.75, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
+                style={{ width: "100%", padding: "14px 16px", paddingRight: isMobile ? 56 : 52, borderRadius: 12, background: "#fff", border: "1px solid rgba(168,118,27,0.35)", color: "#1c1407", fontSize: isMobile ? 16 : 14.5, lineHeight: 1.75, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", transition: "border-color 0.2s" }}
                 onFocus={(e) => { e.currentTarget.style.borderColor = "#a8761b"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(168,118,27,0.35)"; }}
                 disabled={phase === "launching"}
@@ -912,8 +912,8 @@ export default function GodViewPage() {
                 disabled={isTranscribing || phase === "launching"}
                 title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题"}
                 style={{
-                  position: "absolute", top: 10, right: 10,
-                  width: 34, height: 34, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                  position: "absolute", top: isMobile ? 6 : 10, right: isMobile ? 6 : 10,
+                  width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: isMobile ? 10 : 8, display: "flex", alignItems: "center", justifyContent: "center",
                   background: isRecording ? "rgba(220,38,38,0.10)" : isTranscribing ? "rgba(217,119,6,0.10)" : "rgba(168,118,27,0.12)",
                   border: isRecording ? "1px solid rgba(220,38,38,0.5)" : isTranscribing ? "1px solid rgba(217,119,6,0.4)" : "1px solid rgba(168,118,27,0.4)",
                   color: isRecording ? "#dc2626" : isTranscribing ? "#d97706" : "#7a5410",
@@ -922,7 +922,7 @@ export default function GodViewPage() {
                   animation: isRecording ? "godview-mic-pulse 1.2s ease-in-out infinite" : "none",
                 }}
               >
-                {isRecording ? <MicOff size={14} /> : isTranscribing ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}
+                {isRecording ? <MicOff size={isMobile ? 18 : 14} /> : isTranscribing ? <Loader2 size={isMobile ? 18 : 14} className="animate-spin" /> : <Mic size={isMobile ? 18 : 14} />}
               </button>
             </div>
             {/* ── 补充资料区（3 类产品共享） ── */}
@@ -930,19 +930,19 @@ export default function GodViewPage() {
               <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
                 <button
                   onClick={() => setSuppExpanded(!suppExpanded)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "rgba(168,118,27,0.06)", border: "none", cursor: "pointer", color: "#7a5410", fontSize: 13, fontWeight: 700 }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "10px 16px", minHeight: isMobile ? 44 : undefined, gap: isMobile ? 8 : 0, background: "rgba(168,118,27,0.06)", border: "none", cursor: "pointer", color: "#7a5410", fontSize: 13, fontWeight: 700, textAlign: "left", flexWrap: isMobile ? "wrap" : "nowrap" }}
                 >
-                  <span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
                     📎 {selectedProduct === "personalized" ? "客户档案与历史快照（可选）" : "补充资料（可选）"}
                     {" "}— 上传文件或输入背景说明，AI 优先参考
                   </span>
-                  <span style={{ fontSize: 11, opacity: 0.6 }}>
+                  <span style={{ fontSize: isMobile ? 12 : 11, opacity: 0.6, flexShrink: 0 }}>
                     {suppFiles.length > 0 || suppText.trim() ? `已添加 ${suppFiles.length} 个文件${suppText.trim() ? " + 文字说明" : ""}` : "未添加"}
                     {" "}{suppExpanded ? "▲" : "▼"}
                   </span>
                 </button>
                 {suppExpanded && (
-                  <div style={{ padding: "14px 16px", background: "rgba(255,250,240,0.5)", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ padding: isMobile ? "12px 14px" : "14px 16px", background: "rgba(255,250,240,0.5)", display: "flex", flexDirection: "column", gap: 12 }}>
                     {/* 文字补充 */}
                     <div>
                       <p style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", margin: "0 0 6px", fontWeight: 600 }}>文字补充说明（最多 2000 字）</p>
@@ -955,9 +955,9 @@ export default function GodViewPage() {
                             ? "例如：本季度新接一位高净值 VIP，男 52 岁，主诉睡眠障碍 + 体态焦虑。希望结合上一季度报告做二次进化分析，重点对比心血管指标与情绪状态变化曲线…"
                             : "例如：上期半月刊发布后收到用户反馈，本期重点补充银发创作者的变现路径分析，请着重研究 50 岁以上创作者在哔哩哔哩的粉丝忠诚度数据…"
                         }
-                        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(168,118,27,0.25)", background: "#fff", color: "#1c1407", fontSize: 13, lineHeight: 1.7, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(168,118,27,0.25)", background: "#fff", color: "#1c1407", fontSize: isMobile ? 16 : 13, lineHeight: 1.7, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
                       />
-                      <p style={{ fontSize: 11, color: "rgba(61,44,20,0.4)", margin: "4px 0 0", textAlign: "right" }}>{suppText.length}/2000</p>
+                      <p style={{ fontSize: isMobile ? 12 : 11, color: "rgba(61,44,20,0.4)", margin: "4px 0 0", textAlign: "right" }}>{suppText.length}/2000</p>
                     </div>
                     {/* 文件上传 */}
                     <div>
@@ -988,10 +988,10 @@ export default function GodViewPage() {
                             fontWeight: 700,
                           }}
                         >
-                          <span>{lastUploadInfo.text}</span>
+                          <span style={{ wordBreak: "break-word", flex: 1, minWidth: 0 }}>{lastUploadInfo.text}</span>
                           <button
                             onClick={() => setLastUploadInfo(null)}
-                            style={{ background: "none", border: "none", color: "inherit", fontSize: 16, cursor: "pointer", lineHeight: 1, opacity: 0.6 }}
+                            style={{ background: "none", border: "none", color: "inherit", fontSize: 16, cursor: "pointer", lineHeight: 1, opacity: 0.6, minWidth: isMobile ? 32 : undefined, minHeight: isMobile ? 32 : undefined, flexShrink: 0 }}
                             aria-label="关闭"
                           >
                             ×
@@ -1000,22 +1000,22 @@ export default function GodViewPage() {
                       )}
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         {suppFiles.map((f, i) => (
-                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(22,163,74,0.10)", border: "1px solid rgba(22,163,74,0.30)", borderRadius: 8, fontSize: 12, color: "#15803d" }}>
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "8px 10px" : "5px 10px", minHeight: isMobile ? 36 : undefined, background: "rgba(22,163,74,0.10)", border: "1px solid rgba(22,163,74,0.30)", borderRadius: 8, fontSize: 12, color: "#15803d" }}>
                             <span>{f.type === "image" ? "🖼️" : "📄"}</span>
-                            <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>{f.name}</span>
-                            <span style={{ fontSize: 11, fontWeight: 800, color: "#15803d" }}>✓ 已上传</span>
-                            <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2 }}>×</button>
+                            <span style={{ maxWidth: isMobile ? 140 : 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>{f.name}</span>
+                            <span style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#15803d" }}>✓ 已上传</span>
+                            <button onClick={() => setSuppFiles((p) => p.filter((_, j) => j !== i))} style={{ background: "none", border: "none", cursor: "pointer", color: "#a87020", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2, minWidth: isMobile ? 28 : undefined, minHeight: isMobile ? 28 : undefined }}>×</button>
                           </div>
                         ))}
                         {suppUploading && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: "rgba(168,118,27,0.04)", border: "1px dashed rgba(168,118,27,0.3)", borderRadius: 8, fontSize: 12, color: "#a87020" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "8px 12px" : "5px 12px", background: "rgba(168,118,27,0.04)", border: "1px dashed rgba(168,118,27,0.3)", borderRadius: 8, fontSize: 12, color: "#a87020" }}>
                             <span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⏳</span> 上传中…
                           </div>
                         )}
                         {suppFiles.length < 5 && !suppUploading && (
                           <button
                             onClick={() => suppFileInputRef.current?.click()}
-                            style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", background: "rgba(168,118,27,0.06)", border: "1px dashed rgba(168,118,27,0.35)", borderRadius: 8, cursor: "pointer", color: "#a87020", fontSize: 12, fontWeight: 600 }}
+                            style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "10px 14px" : "5px 12px", minHeight: isMobile ? 44 : undefined, background: "rgba(168,118,27,0.06)", border: "1px dashed rgba(168,118,27,0.35)", borderRadius: 8, cursor: "pointer", color: "#a87020", fontSize: isMobile ? 13 : 12, fontWeight: 600 }}
                           >
                             + 添加文件
                           </button>
@@ -1028,18 +1028,18 @@ export default function GodViewPage() {
               </div>
             )}
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginTop: 14, gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <p style={{ fontSize: 12, color: "rgba(61,44,20,0.60)", margin: 0, fontWeight: 600 }}>
+                <p style={{ fontSize: 12, color: "rgba(61,44,20,0.60)", margin: 0, fontWeight: 600, lineHeight: 1.6 }}>
                   ⏱ 异步重算力推演，约 15-30 分钟，派发后可关闭页面到「战略作品快照库」查看
                 </p>
                 {selectedProduct === "magazine_single" && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(61,44,20,0.70)", cursor: "pointer", fontWeight: 600 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: isMobile ? 12 : 11, color: "rgba(61,44,20,0.70)", cursor: "pointer", fontWeight: 600, minHeight: isMobile ? 32 : undefined }}>
                     <input
                       type="checkbox"
                       checked={isBundlePromo}
                       onChange={(e) => setIsBundlePromo(e.target.checked)}
-                      style={{ accentColor: "#a8761b" }}
+                      style={{ accentColor: "#a8761b", width: isMobile ? 18 : undefined, height: isMobile ? 18 : undefined, flexShrink: 0 }}
                     />
                     满月老用户专享：两本 800 点特惠（需在平台超过 30 天）
                   </label>
@@ -1048,7 +1048,7 @@ export default function GodViewPage() {
               <button
                 onClick={handleLaunch}
                 disabled={!topic.trim() || phase === "launching"}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "13px 30px", borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(168,118,27,0.20)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: (!topic.trim() || phase === "launching") ? "rgba(61,44,20,0.45)" : "#fff7df", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 6px 22px rgba(168,118,27,0.40)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 24px" : "13px 30px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: (!topic.trim() || phase === "launching") ? "rgba(168,118,27,0.20)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: (!topic.trim() || phase === "launching") ? "rgba(61,44,20,0.45)" : "#fff7df", fontWeight: 900, fontSize: 14, cursor: (!topic.trim() || phase === "launching") ? "not-allowed" : "pointer", boxShadow: (topic.trim() && phase !== "launching") ? "0 6px 22px rgba(168,118,27,0.40)" : "none", transition: "all 0.2s", position: "relative", flexShrink: 0 }}
               >
                 {phase === "launching" ? <Loader2 size={15} className="animate-spin" /> : <Crown size={15} />}
                 {phase === "launching"
