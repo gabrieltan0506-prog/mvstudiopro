@@ -481,17 +481,24 @@ export async function executeAgentQuery(input: {
   );
   if (gateError) throw gateError;
 
-  // ── 4. 加载知识库（PR-2 占位：用 preview，PR-3 升级完整文本） ──
+  // ── 4. 加载知识库（PR-3：优先用 extractedTextFull 完整文本） ───────
+  // 0002 migration 加完 extractedTextFull 列后，所有 PR-3 之后上传的 KB 都
+  // 写满 fullText；旧行（PR-2 期间不可能存在，因 PR-2 没有上传入口）若
+  // 有遗留也 fallback 到 preview，行为优雅降级。
   const kbRows = await db
     .select({
       filename: enterpriseAgentKnowledgeBase.filename,
+      fullText: enterpriseAgentKnowledgeBase.extractedTextFull,
       preview: enterpriseAgentKnowledgeBase.extractedTextPreview,
     })
     .from(enterpriseAgentKnowledgeBase)
     .where(eq(enterpriseAgentKnowledgeBase.agentId, agent.id))
     .orderBy(asc(enterpriseAgentKnowledgeBase.uploadedAt));
   const knowledgeContext = composeKnowledgeContext(
-    kbRows.map((r) => ({ filename: r.filename, text: r.preview })),
+    kbRows.map((r) => ({
+      filename: r.filename,
+      text: r.fullText && r.fullText.trim().length > 0 ? r.fullText : r.preview,
+    })),
   );
   const systemInstruction = buildSystemInstruction(agent.systemCommand, knowledgeContext);
 
@@ -540,21 +547,34 @@ export async function executeAgentQuery(input: {
     throw geminiError!;
   }
 
-  // ── 7. 累计配额（成功才计） ─────────────────────────────────
-  // TODO(配额硬限): assert→+1 之间有 read-then-write race condition，并发可能
-  //   轻微超 quota（最多 ~N 个并发请求超额，N=同一 agent 同时跑的 worker 数）。
-  //   trial 100 次/30 天的语境下可接受。PR-3 起 router 后改成原子化：
-  //     UPDATE enterprise_agents SET callsThisPeriod = callsThisPeriod + 1
-  //     WHERE id = ${agent.id} AND callsThisPeriod < callsQuotaPeriod
-  //     RETURNING callsThisPeriod;
-  //   返回 0 行时把 agent 标记为本次 over-quota 并退出（router 抛 QUOTA_EXHAUSTED）。
-  await db
+  // ── 7. 原子化累计配额（PR-3：兑现 PR-2 留的 TODO） ────────────────
+  // 用 UPDATE WHERE callsThisPeriod < callsQuotaPeriod RETURNING 一步完成
+  // 校验 + +1，避免 PR-2 留下的 read-then-write race。
+  //
+  // 行为：
+  //   - 1 行返回 = 还有配额，本次累计成功
+  //   - 0 行返回 = 罕见竞态（assertAgentExecutable 通过后，并发请求把配额吃完）
+  //                此时 markdown 已经返回给用户，不阻断；仅 warn 记录便于排查
+  const updated = await db
     .update(enterpriseAgents)
     .set({
       callsThisPeriod: sql`${enterpriseAgents.callsThisPeriod} + 1`,
       updatedAt: now,
     })
-    .where(eq(enterpriseAgents.id, agent.id));
+    .where(
+      and(
+        eq(enterpriseAgents.id, agent.id),
+        sql`${enterpriseAgents.callsThisPeriod} < ${enterpriseAgents.callsQuotaPeriod}`,
+      ),
+    )
+    .returning({ callsThisPeriod: enterpriseAgents.callsThisPeriod });
+
+  if (!updated || updated.length === 0) {
+    console.warn(
+      `[enterpriseAgent] executeAgentQuery: quota race detected for agentId=${agent.id}, ` +
+        `markdown returned but callsThisPeriod not incremented (concurrent request consumed last slot)`,
+    );
+  }
 
   return {
     markdown,

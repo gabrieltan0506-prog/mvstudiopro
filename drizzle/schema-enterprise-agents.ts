@@ -112,8 +112,21 @@ export const enterpriseAgentKnowledgeBase = pgTable(
     /** 抽取文本的 SHA-256，用来去重（同一 agent 内不允许重复内容） */
     contentTextHash: varchar("contentTextHash", { length: 64 }),
 
-    /** 抽取文本头 500 字预览（admin 后台验证用） */
+    /** 抽取文本头 500 字预览（admin 后台验证用，executeAgentQuery 不读这一列） */
     extractedTextPreview: text("extractedTextPreview"),
+
+    /**
+     * 抽取出的完整文本 — executeAgentQuery 拼 systemInstruction 时读这一列。
+     *
+     * 设计选择：把全文落 DB 而不是每次 GCS download + 重新 parse，是为了
+     *   1. 调用延迟稳定（DB 单查 < 50ms vs GCS 来回 + strings 抽取 1-3s）
+     *   2. Agent 推演高频调用，不希望叠加 GCS 出口流量
+     *   3. PG TEXT 列上限 1GB，trial 总和 50MB 完全装得下
+     *
+     * 注：PR-3 manual migration `drizzle/postgres/0002_enterprise_agent_kb_full_text.sql`
+     * 把这一列加到生产 Neon。本地 / 单测无需 migration（drizzle-orm 类型已对齐）。
+     */
+    extractedTextFull: text("extractedTextFull"),
 
     uploadedAt: timestamp("uploadedAt").defaultNow().notNull(),
   },
