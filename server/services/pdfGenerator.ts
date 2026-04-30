@@ -162,26 +162,33 @@ export async function createAndUploadPdf(
     const storage = getGcsStorage();
     const file = storage.bucket(bucketName).file(objectName);
 
+    // 构造 Content-Disposition：写到对象 metadata 上后，GCS 永远会在 GET 响应里
+    // 返回这个头，浏览器一定触发下载（比 v4 signed URL 的 responseDisposition 参数更可靠）。
+    // RFC 5987 双 filename：ASCII 兜底 + UTF-8 中文名
+    // 用 Array.from 处理 emoji / surrogate pair，避免 .slice 切坏字符
+    const fallbackBase = safeId.split("/").pop() || "report";
+    const rawName = String(opts?.downloadFilename || `${fallbackBase}.pdf`).trim();
+    const utf8Name = rawName.toLowerCase().endsWith(".pdf") ? rawName : `${rawName}.pdf`;
+    const asciiName = (Array.from(utf8Name).map((c) => (c.charCodeAt(0) <= 0x7E ? c : "_")).join("") || "report.pdf").replace(/"/g, "");
+    const contentDisposition =
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(utf8Name)}`;
+
     await file.save(pdfBuffer, {
       contentType: "application/pdf",
       resumable: false,
-      metadata: { cacheControl: "private, max-age=0" },
+      metadata: {
+        cacheControl: "private, max-age=0",
+        contentDisposition,
+      },
     });
 
-    // 构造 Content-Disposition：浏览器收到这个头会强制下载，不会以 PDF 预览方式打开
-    const rawName = (opts?.downloadFilename || `${safeId.split("/").pop() || "report"}.pdf`).trim();
-    const utf8Name = rawName.endsWith(".pdf") ? rawName : `${rawName}.pdf`;
-    // ASCII 兜底（去掉非 ASCII 字符），避免老浏览器解析失败
-    const asciiName = utf8Name.replace(/[^\x20-\x7E]/g, "_") || "report.pdf";
-    const responseDisposition =
-      `attachment; filename="${asciiName.replace(/"/g, "")}"; ` +
-      `filename*=UTF-8''${encodeURIComponent(utf8Name)}`;
-
+    // 双保险：v4 signed URL 也带上 responseDisposition；万一对象 metadata 这条路径
+    // 在某些边缘场景失效，签名 URL 自身的查询参数会兜住
     const [signedUrl] = await file.getSignedUrl({
       version: "v4",
       action: "read",
       expires,
-      responseDisposition,
+      responseDisposition: contentDisposition,
     });
 
     const gcsUri = `gs://${bucketName}/${objectName}`;
