@@ -67,10 +67,8 @@ className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 m
 ### 关键子任务
 
 1. **Hero 大卡 + 企业旗舰款 Hero** — 手机变上下堆叠，桌面横向
-2. **IP 基因弹窗 modal** — 手机变全屏 modal，桌面居中
-3. **进度时间轴 8 stage** — 横向时间轴在手机上变**纵向 stepper**（一屏装不下 8 个）
-   - 当前 stage 高亮 + 滚到可视
-   - 历史 stage 折叠
+2. ~~**IP 基因弹窗 modal** — 手机变全屏 modal，桌面居中~~ ⚠️ **2026-04-30 事实纠错**：reviewer 实测 `client/src/components/IpProfileModal.tsx`（157 行 / 0 inline style）已用 Tailwind Wrapper 响应式（`fixed inset-0 ... px-4` + `w-full max-w-md`），桌面 `max-w-md` 居中、手机 `w-full px-4` 自动收缩。**子组件本次不动**。仅 GodViewPage L582 的 IP 基因条 trigger（含 `whiteSpace: nowrap` 移动溢出）需在 PR-2.1 顺路修。
+3. ~~**进度时间轴 8 stage** — 横向时间轴在手机上变**纵向 stepper**~~ ⚠️ **2026-04-30 事实纠错**：reviewer 实测 `DeductionTimeline` 组件源码 L1596 已是 `flexDirection: "column"` 竖排，**8 节点不需改结构**。真正的移动端问题在顶卡 L1528 三列 flex（图标｜标题｜百分比），这一处放 PR-2.3 处理。
 4. **表单输入区** — 手机宽度 100%
 5. **取消按钮 / 维护模式 toggle** — 手机适配触摸最小尺寸
 6. **TemplateStripBanner**（如还存在）— 手机变横向 snap scroll
@@ -89,6 +87,56 @@ className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 m
 - [ ] 进度时间轴在手机上可读（不挤成一团）
 - [ ] `npm run check` 0 错
 - [ ] 多张截图（关键 region 各一张）
+
+### 阶段 2 子 PR 拆分（2026-04-30 reviewer 拍板，4 个子 PR）
+
+**事实数据**（reviewer 自检 + agent 自检双方一致）：237 inline style 跨 region 精确分布如下，agent 与 reviewer 偏差均在 ±10% 内。
+
+| 子 PR | 主题 | 包含 region（行号） | inline style |
+|-------|------|-------------------|--------------|
+| **2.1** | 入口区响应式 | 顶栏/标题/快照库 (L457-636=44) + 三大 Agent (L637-695=11) + 趋势容器 (L696-700=1) + 半月刊 (L701-757=14) + 已派发外围 (L1085-1132=3) + 启动失败 (L1198-1217=7) | **80** |
+| **2.2** | 输入流响应式 | 输入区/补充/启动 (L878-1048) | **31** |
+| **2.3** | 任务推演 + 完成 + 审核 | 研报已完成 (L1050-1084=9) + 计划审核 (L1133-1197=12) + DeductionTimeline (L1474-1672=41) | **62** |
+| **2.4** | 视觉锚点 + 长尾 | 定价矩阵 (L758-877=22) + ReportRenderer (L1675-1702=12) | **34** |
+| **PR-2 总计** | — | — | **207**（不含延后的 Supervisor 30）/ 全 237 |
+
+**PR-2.1 内部分 commit 纪律**（reviewer 要求，降低视觉值漏审风险）：
+- commit 1：顶栏 + IP 基因条 trigger + 主标题 + 快照库 banner（L457-636，44 style）
+- commit 2：三大 Agent + 趋势 + 半月刊 + 启动失败 + 已派发外围（36 style）
+- 可选 commit 0（docs）：本 jobs.md 修订前置在 PR-2.1 内
+
+**PR-2.1 量化验收标准**（reviewer 加，避免模糊"小屏可读性"）：
+- 320 / 375 / 414 / 768 四档下不溢出
+- IP 基因条 `whiteSpace: nowrap` 移除，改 `pre-wrap` 或 `break-words`
+- 字号 ≥ 12px（a11y 红线）
+- 点击热区 ≥ 44×44pt
+- 桌面分支 inline style **逐字保留**（颜色 / 渐变 / 阴影绝不动）
+
+**视觉风险红线（4 子 PR 共同）**：
+
+```
+品牌色（hex）   #7a5410 #a8761b #3d2c14 #fff7df #a87020 #d8a23a #c9a878  ← 咖啡 / 焦糖
+              #FCD34D #B8860B #f5c842                                     ← 金色（旗舰 / PDF / 时间轴）
+              #ff8a5b #ff4fb3 #8b5cf6 #6366f1                            ← 紫粉
+渐变       background: linear-gradient(...)                                 ← ~25 处
+阴影       boxShadow: 0 X Y rgba(168,118,27,0.30) 等                       ← ~30 处咖啡色阴影层次
+玻璃质感   backdropFilter: blur(14-16px) + 半透明背景
+字体       fontFamily: Georgia / 'PingFang SC' / Inter
+特色排版   textShadow（DeductionTimeline 黑金）
+```
+
+每子 PR 改动**只能加 className（响应式）+ 拆分布局结构**，**绝不能删 / 改 inline style 里的颜色 / 渐变 / 阴影值**。
+
+---
+
+## ⏳ 已知延后项（不在 PR-2 范围）
+
+### Supervisor Debug 面板（GodViewPage L1218-1358，30 inline style）
+
+- **现状**：admin only（`{isSupervisor && (...)}` 包住），黑底荧光绿 monospace 风格
+- **延后理由**：使用场景 99% 在桌面，手机适配 ROI 极低
+- **何时改 / 由谁改**：PR-4 精修阶段一并清理；如果 supervisor 实际确认永远只在桌面用，可永久 backlog
+- **不动条件**：本面板 30 inline style 在 PR-2.4 完成后是 GodViewPage 内唯一未响应式 region；用户/PM 可决定是否永远不改
 
 ---
 
