@@ -650,15 +650,15 @@ export default function GodViewPage() {
 
         {/* ── 战略智库 · 三大 Agent 场景入口 ── */}
         <div style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
             <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "#7a5410", letterSpacing: "0.04em" }}>
               👑 高阶 Agent 场景
             </h3>
-            <span style={{ fontSize: 11, color: "rgba(122,84,16,0.55)" }}>
+            <span style={{ fontSize: isMobile ? 12 : 11, color: "rgba(122,84,16,0.55)" }}>
               计划→审批→深潜，支持图片 / PDF / 语音输入
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
             {[
               {
                 title: "多平台 IP 矩阵",
@@ -684,7 +684,8 @@ export default function GodViewPage() {
                 onClick={() => navigate(c.href)}
                 style={{
                   textAlign: "left",
-                  padding: "16px 18px",
+                  padding: isMobile ? "14px 14px" : "16px 18px",
+                  minHeight: isMobile ? 44 : undefined,
                   borderRadius: 14,
                   background: "linear-gradient(135deg, rgba(255,248,225,0.95), rgba(255,243,210,0.85))",
                   border: "1.2px solid rgba(168,118,27,0.32)",
@@ -701,7 +702,7 @@ export default function GodViewPage() {
                   <span style={{ fontSize: 15, fontWeight: 900, color: "#7a5410" }}>{c.title}</span>
                 </div>
                 <p style={{ margin: 0, fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.6 }}>{c.desc}</p>
-                <div style={{ marginTop: 10, fontSize: 11, fontWeight: 800, color: "#a87020" }}>立即派发 →</div>
+                <div style={{ marginTop: 10, fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#a87020" }}>立即派发 →</div>
               </button>
             ))}
           </div>
@@ -715,32 +716,32 @@ export default function GodViewPage() {
         {/* ── 半月刊 10 天提醒卡片 ── */}
         {showReminder && reminder && (
           <div style={{ marginBottom: 20, borderRadius: 16, overflow: "hidden", border: "1.5px solid rgba(168,118,27,0.35)", background: "linear-gradient(135deg,rgba(255,248,230,0.95),rgba(255,243,210,0.9))", boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
-            <div style={{ padding: "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 22 }}>🔔</span>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, color: "#7a5410" }}>
+            <div style={{ padding: isMobile ? "12px 14px 8px" : "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 22, flexShrink: 0 }}>🔔</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: "#7a5410", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                     战略半月刊提醒
                     {reminder.daysOverdue != null && reminder.daysOverdue > 0
-                      ? <span style={{ marginLeft: 8, fontSize: 12, color: "#c0392b", background: "rgba(192,57,43,0.1)", padding: "2px 8px", borderRadius: 6 }}>已逾期 {reminder.daysOverdue} 天</span>
-                      : <span style={{ marginLeft: 8, fontSize: 12, color: "#e67e22", background: "rgba(230,126,34,0.1)", padding: "2px 8px", borderRadius: 6 }}>首次提醒</span>
+                      ? <span style={{ fontSize: 12, color: "#c0392b", background: "rgba(192,57,43,0.1)", padding: "2px 8px", borderRadius: 6 }}>已逾期 {reminder.daysOverdue} 天</span>
+                      : <span style={{ fontSize: 12, color: "#e67e22", background: "rgba(230,126,34,0.1)", padding: "2px 8px", borderRadius: 6 }}>首次提醒</span>
                     }
                   </div>
-                  <div style={{ fontSize: 12, color: "rgba(61,44,20,0.6)", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "rgba(61,44,20,0.6)", marginTop: 2, wordBreak: "break-all" }}>
                     已发送提醒至 benjamintan0506@163.com · AI 为您推荐了以下选题
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => dismissReminderMutation.mutate()}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(61,44,20,0.4)", fontSize: 18, lineHeight: 1, padding: "4px 6px" }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(61,44,20,0.4)", fontSize: 18, lineHeight: 1, padding: "4px 6px", minWidth: 44, minHeight: 44, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                 title="忽略本次提醒（10 天后再提醒）"
               >×</button>
             </div>
 
             {/* 选题列表 */}
             {reminder.topics.length > 0 && (
-              <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ padding: isMobile ? "0 14px 12px" : "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {reminder.topics.map((t, i) => (
                   <button
                     key={i}
@@ -751,14 +752,14 @@ export default function GodViewPage() {
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
                     style={{
-                      textAlign: "left", padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(168,118,27,0.2)",
+                      textAlign: "left", padding: isMobile ? "12px 14px" : "10px 14px", minHeight: isMobile ? 44 : undefined, borderRadius: 10, border: "1px solid rgba(168,118,27,0.2)",
                       background: topic === t ? "rgba(168,118,27,0.15)" : "rgba(255,255,255,0.7)",
                       cursor: "pointer", color: "#3d2c14", fontSize: 13, lineHeight: 1.6,
                       transition: "background 0.15s", fontFamily: "inherit",
                     }}
                   >
                     <span style={{ fontWeight: 700, color: "#a87020", marginRight: 6 }}>{i + 1}.</span>{t}
-                    <span style={{ float: "right", fontSize: 11, color: "#a87020", marginTop: 2 }}>点击填入 →</span>
+                    <span style={{ float: "right", fontSize: isMobile ? 12 : 11, color: "#a87020", marginTop: 2 }}>点击填入 →</span>
                   </button>
                 ))}
               </div>
@@ -1110,7 +1111,7 @@ export default function GodViewPage() {
             />
             {/* 取消任务·主动取消不退还积分（防恶意刷算力） — 推演中阶段（含 planning / running） */}
             {pollingJobId && !(jobDoneQuery.data as any)?.cancelRequestedAt && (
-              <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+              <div style={{ marginTop: 18, display: "flex", justifyContent: "center", padding: isMobile ? "0 16px" : 0 }}>
                 <button
                   onClick={handleCancelCurrentJob}
                   disabled={isCancellingJob}
@@ -1118,8 +1119,11 @@ export default function GodViewPage() {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: "center",
                     gap: 8,
-                    padding: "11px 22px",
+                    padding: isMobile ? "12px 18px" : "11px 22px",
+                    minHeight: 44,
+                    width: isMobile ? "100%" : undefined,
                     borderRadius: 11,
                     background: isCancellingJob ? "rgba(220,38,38,0.18)" : "rgba(220,38,38,0.10)",
                     border: "1px solid rgba(220,38,38,0.45)",
@@ -1137,7 +1141,7 @@ export default function GodViewPage() {
               </div>
             )}
             {(jobDoneQuery.data as any)?.cancelRequestedAt && (
-              <div style={{ marginTop: 18, padding: "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
+              <div style={{ marginTop: 18, marginLeft: isMobile ? 16 : 0, marginRight: isMobile ? 16 : 0, padding: isMobile ? "10px 14px" : "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
                 🛑 已发起主动取消，正在停止深潛引擎（按规则不退还积分）…
               </div>
             )}
@@ -1211,16 +1215,16 @@ export default function GodViewPage() {
 
         {/* ── 启动失败 ── */}
         {phase === "failed" && (
-          <div style={{ padding: "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700 }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
-              <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <div style={{ padding: isMobile ? "14px 16px" : "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 10 : 0 }}>
+              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
+              <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "7px 16px", minHeight: isMobile ? 44 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
                 <RotateCcw size={12} />重试
               </button>
             </div>
             {(jobDoneQuery.data as any)?.errorDetail && (
               <details style={{ marginTop: 12 }}>
-                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: 11, fontWeight: 700 }}>查看详细原因（含 API 响应）</summary>
+                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: isMobile ? 12 : 11, fontWeight: 700, padding: "4px 0", minHeight: isMobile ? 32 : undefined }}>查看详细原因（含 API 响应）</summary>
                 <pre style={{ marginTop: 10, fontSize: 11, color: "#7c2d2d", background: "rgba(220,38,38,0.04)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 280, overflowY: "auto", lineHeight: 1.6 }}>
                   {(jobDoneQuery.data as any).errorDetail}
                 </pre>
