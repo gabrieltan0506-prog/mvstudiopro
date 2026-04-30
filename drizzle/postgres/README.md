@@ -14,6 +14,7 @@
 |------|------|-----|
 | `0001_enterprise_agents.sql` | 创建 3 张企业 Agent 表 + 索引 | PR-1（已合并） |
 | `0002_enterprise_agent_kb_full_text.sql` | enterprise_agent_kb 加 `extractedTextFull` 列 | PR-3（本次） |
+| `0003_jobs_status_queued_index.sql` | jobs 表新增 `idx_jobs_queued_created` partial index（修 Neon egress 泄漏） | hotfix/egress-optimization |
 
 ## 应用流程（生产 Neon）
 
@@ -82,6 +83,32 @@ COMMIT;
 - 0002 为纯 ADD COLUMN，对已部署 PR-2 代码（不读 extractedTextFull）零影响
 - 默认 NULL，无需 backfill
 - 上线后 PR-3 代码上传新 KB 文件时会同时写 preview + full 两列
+
+### Step 4 — 应用 0003（hotfix/egress-optimization 同步操作）
+
+0003 只加一个 partial index，**必须用 `CREATE INDEX CONCURRENTLY`** 避免
+锁表；`CONCURRENTLY` 在 PostgreSQL 中**不能出现在 transaction block 里**，
+所以这一条单独跑，不走 BEGIN/COMMIT：
+
+```sql
+-- 直接在 Neon Console SQL Editor 执行（不要包在 BEGIN/COMMIT 里）
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "idx_jobs_queued_created"
+  ON "jobs" ("createdAt")
+  WHERE "status" = 'queued';
+
+-- 验证
+SELECT indexname, indexdef FROM pg_indexes
+ WHERE tablename = 'jobs' AND indexname = 'idx_jobs_queued_created';
+-- 期望：1 行，indexdef 含 "WHERE (status = 'queued'::text)"
+```
+
+兼容性：
+- 0003 只读 partial index，对已部署代码零影响（未建也会 fallback 到 seq_scan）
+- 建完后 worker 下一轮 `claimNextQueuedJob` 即命中 btree，Neon egress
+  从全表扫降到 index-only scan
+
+文件 `0003_jobs_status_queued_index.sql` 里保留了不带 CONCURRENTLY 的版本，
+仅用于本地 docker / dry-run；**生产 Neon 必须用上面的 CONCURRENTLY 命令**。
 
 ## 跟 drizzle ORM 代码的关系
 

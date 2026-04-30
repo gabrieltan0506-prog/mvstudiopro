@@ -63,14 +63,24 @@ export async function getJobById(id: string): Promise<NormalizedJob | null> {
   return null;
 }
 
+// hotfix(egress): jobs 队列每 1s 轮询一次 claimNextQueuedJob。
+// 原实现 `db.select().from(jobs)` 会把 input / output JSONB（常常几十到几百 KB
+// 的 platform 任务载荷）连同全表一起读回 Fly，哪怕 99% 情况下队列是空的。
+// 这里只选 UPDATE 需要的最小列（id, attempts），真实 job 详情由下面的
+// getJobById(next.id) 单独读取——只在确实有可领取的任务时才付一次读 cost。
+// 
+// 不加 FOR UPDATE SKIP LOCKED：目前 Fly 只跑单 worker（见 runner.ts 的
+// workerStarted / processing 互斥），事务语义改动的风险收益不划算，留给后续
+// 多 worker 化时再单独评估。UPDATE 的 WHERE "status" = 'queued' 已经足够
+// 防止同一行被重复 claim。
 export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
   const db = await getDb();
   if (!db) return null;
 
-  let rows: Job[] = [];
+  let candidates: Array<Pick<Job, "id" | "attempts">> = [];
   try {
-    rows = await db
-      .select()
+    candidates = await db
+      .select({ id: jobs.id, attempts: jobs.attempts })
       .from(jobs)
       .where(eq(jobs.status, "queued"))
       .orderBy(asc(jobs.createdAt))
@@ -80,9 +90,9 @@ export async function claimNextQueuedJob(): Promise<NormalizedJob | null> {
     return null;
   }
 
-  if (rows.length === 0) return null;
+  if (candidates.length === 0) return null;
 
-  const next = rows[0];
+  const next = candidates[0];
   try {
     await db
       .update(jobs)

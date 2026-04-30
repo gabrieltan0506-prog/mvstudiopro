@@ -99,7 +99,7 @@ import {
 import { nowShanghaiIso } from "./growth/time";
 import { videoPlatformLinks, videoSubmissions } from "../drizzle/schema";
 import { stripeUsageLogs } from "../drizzle/schema-stripe";
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 const DOUYIN_CREATOR_CENTER_BUCKET_PREFIXES = [
   "douyin_creator_center",
@@ -6323,8 +6323,27 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const { desc } = await import("drizzle-orm");
         const database = await db.getDb();
         if (!database) return { reports: [] };
+        // hotfix(egress): metadata 里塞了 reportMarkdown / draftMarkdown（每份
+        // 50-200 KB），200 行一拉就是几十 MB Neon egress。这里走 PG-side
+        // `jsonb - 'reportMarkdown' - 'draftMarkdown'`，在 Neon 端把大字段
+        // 剥掉再传回 Fly，小字段（lighthouseTitle / summary / progress / jobId /
+        // productType / duration / topic）保持不动。
         const rows = await database
-          .select()
+          .select({
+            id: userCreations.id,
+            userId: userCreations.userId,
+            title: userCreations.title,
+            thumbnailUrl: userCreations.thumbnailUrl,
+            creditsUsed: userCreations.creditsUsed,
+            status: userCreations.status,
+            createdAt: userCreations.createdAt,
+            metadataLean: sql<string>`(
+              CASE
+                WHEN ${userCreations.metadata} IS NULL OR ${userCreations.metadata} = '' THEN '{}'::jsonb
+                ELSE ${userCreations.metadata}::jsonb
+              END - 'reportMarkdown' - 'draftMarkdown'
+            )::text`,
+          })
           .from(userCreations)
           .where((await import("drizzle-orm")).eq(userCreations.type, "deep_research_report"))
           .orderBy(desc(userCreations.createdAt))
@@ -6332,7 +6351,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return {
           reports: rows.map((r) => {
             let meta: any = {};
-            try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+            try { meta = JSON.parse(r.metadataLean || "{}"); } catch {}
             return {
               id: r.id,
               userId: r.userId,
@@ -6341,8 +6360,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               topic: meta.topic || r.title || "",
               status: r.status,
               progress: meta.progress || "",
-              reportMarkdown: meta.reportMarkdown || null,
-              draftMarkdown: meta.draftMarkdown || null,
+              // hotfix(egress): 列表不再回传 markdown 大字段，详情路径单独取
+              reportMarkdown: null,
+              draftMarkdown: null,
               jobId: meta.jobId || null,
               creditsUsed: r.creditsUsed ?? 0,
               createdAt: r.createdAt.toISOString(),
@@ -6443,8 +6463,28 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
         // 软删除（status="deleted"）的作品不出现在「我的作品库」列表里。
         // 物理记录保留以便客服恢复 / 事故稽核。
+        //
+        // hotfix(egress): metadata 里塞了 reportMarkdown / draftMarkdown（每份
+        // 50-200 KB），50 行一拉即若干 MB Neon egress，用户每次打开 MyReports
+        // 都在流量池里挖坑。这里走 PG-side `jsonb - 'reportMarkdown' -
+        // 'draftMarkdown'`，在 Neon 端就剥掉这两个大字段再传 Fly，小字段
+        // （lighthouseTitle / summary / progress / jobId / productType /
+        // duration / draftReadyAt / publishedAt / error / topic）保持不动。
         const rows = await database
-          .select()
+          .select({
+            id: userCreations.id,
+            title: userCreations.title,
+            thumbnailUrl: userCreations.thumbnailUrl,
+            creditsUsed: userCreations.creditsUsed,
+            status: userCreations.status,
+            createdAt: userCreations.createdAt,
+            metadataLean: sql<string>`(
+              CASE
+                WHEN ${userCreations.metadata} IS NULL OR ${userCreations.metadata} = '' THEN '{}'::jsonb
+                ELSE ${userCreations.metadata}::jsonb
+              END - 'reportMarkdown' - 'draftMarkdown'
+            )::text`,
+          })
           .from(userCreations)
           .where(and(
             eq(userCreations.userId, ctx.user.id),
@@ -6457,7 +6497,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         return {
           reports: rows.map((r) => {
             let meta: any = {};
-            try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+            try { meta = JSON.parse(r.metadataLean || "{}"); } catch {}
             return {
               id: r.id,
               title: r.title || meta.lighthouseTitle || meta.topic || "无标题",
@@ -6466,8 +6506,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               // 状态：processing / awaiting_review / completed / failed
               status: r.status,
               progress: meta.progress || "",
-              reportMarkdown: meta.reportMarkdown || null,
-              draftMarkdown: meta.draftMarkdown || null,
+              // hotfix(egress): 列表不再回传 markdown 大字段，详情路径单独取
+              reportMarkdown: null,
+              draftMarkdown: null,
               draftReadyAt: meta.draftReadyAt || null,
               publishedAt: meta.publishedAt || null,
               error: meta.error || null,
