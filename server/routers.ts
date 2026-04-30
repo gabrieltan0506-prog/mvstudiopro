@@ -6315,15 +6315,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           const { generateHtmlTemplate } = await import("./services/pdfTemplate");
           const htmlContent = generateHtmlTemplate(md, { style, cover });
 
+          // 用 Buffer 而不是 string 作 body：undici 处理大 string body 时容易在
+          // TLS 升级 / HTTP/2 frame 切片时崩 "fetch failed"；Buffer 已经是 bytes，
+          // 直接走底层 stream 上传，跳过 string→bytes 转换的中间内存峰值。
+          const bodyJson = JSON.stringify({ html: htmlContent, token: uid });
+          const bodyBuf = Buffer.from(bodyJson, "utf-8");
+
           const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+          const tStart = Date.now();
+          console.log(
+            `[exportBlackGoldPdf] proxy → ${proxyUrl} htmlLen=${htmlContent.length} bodyBytes=${bodyBuf.length} hasCoverImage=${cover?.imageUrl ? "yes(" + (cover.imageUrl.startsWith("data:") ? "data-uri" : "http") + ")" : "no"}`,
+          );
+
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 720_000);
           try {
             const res = await fetch(proxyUrl, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ html: htmlContent, token: uid }),
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": String(bodyBuf.length),
+              },
+              body: bodyBuf,
               signal: controller.signal,
+              // keepalive 关掉以避免连接复用导致的 stale socket（大 body 上传场景）
+              keepalive: false,
             });
             if (!res.ok) {
               const errBody = await res.text().catch(() => "");
@@ -6331,6 +6347,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             }
             const arrayBuffer = await res.arrayBuffer();
             const pdfBase64 = Buffer.from(arrayBuffer).toString("base64");
+            console.log(
+              `[exportBlackGoldPdf] proxy ✅ +${Date.now() - tStart}ms pdfBytes=${arrayBuffer.byteLength} base64Len=${pdfBase64.length}`,
+            );
             return {
               success: true as const,
               pdfBase64,
@@ -6341,10 +6360,19 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             clearTimeout(timeoutId);
           }
         } catch (e: any) {
-          console.error("[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:", e?.message, e?.stack);
+          // undici fetch 抛 "fetch failed" 时，真正的底层错误在 e.cause 里。
+          const cause = e?.cause;
+          const causeMsg = cause?.message || cause?.code || (cause ? String(cause) : "");
+          console.error(
+            "[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:",
+            e?.message,
+            "cause:",
+            causeMsg,
+            e?.stack,
+          );
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: e?.message || "PDF 生成失败（pdf-worker 调用异常）",
+            message: (causeMsg ? `${e?.message} (${causeMsg})` : e?.message) || "PDF 生成失败（pdf-worker 调用异常）",
           });
         }
       }),
