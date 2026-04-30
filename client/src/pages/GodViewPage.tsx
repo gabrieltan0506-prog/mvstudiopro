@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
 import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
+import { useIsMobile } from "@/hooks/useMobile";
 
 const SUPERVISOR_KEY = "mvs-supervisor-access";
 
@@ -45,6 +46,7 @@ function calcPrice(product: typeof PRODUCTS[0], isFirst: boolean): number {
 
 export default function GodViewPage() {
   const [, navigate] = useLocation();
+  const isMobile = useIsMobile();
   const [topic, setTopic] = useState("");
   const [phase, setPhase] = useState<"idle" | "launching" | "dispatched" | "awaiting_plan" | "done" | "failed">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -499,52 +501,54 @@ export default function GodViewPage() {
       </div>
 
       {/* 顶部导航 */}
-      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
-        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700 }}>
+      <div style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: isMobile ? "10px 14px" : "14px 24px", display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
+        <button onClick={() => navigate("/")} style={{ color: "#7a5410", cursor: "pointer", background: "none", border: "none", display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 700, minHeight: 44, padding: "0 4px" }}>
           <ChevronLeft size={16} />首页
         </button>
         <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
-        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800 }}>AI 上帝视角</span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>AI 上帝视角</span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: isMobile ? 6 : 10 }}>
           <button
             onClick={() => navigate("/my-reports")}
-            style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 18px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontSize: 12, fontWeight: 900, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 14px rgba(168,118,27,0.32)" }}
+            style={{ display: "flex", alignItems: "center", gap: 7, padding: isMobile ? "10px 12px" : "9px 18px", minHeight: 44, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontSize: 12, fontWeight: 900, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 14px rgba(168,118,27,0.32)", flexShrink: 0 }}
             onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 22px rgba(168,118,27,0.55)"; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 14px rgba(168,118,27,0.32)"; }}
           >
-            <Crown size={13} />战略作品快照库
+            <Crown size={13} />{isMobile ? "快照库" : "战略作品快照库"}
           </button>
-          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7a5410", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 99, padding: "4px 12px" }}>
-            👑 至尊专享
-          </span>
+          {!isMobile && (
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", color: "#7a5410", background: "rgba(168,118,27,0.15)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 99, padding: "4px 12px" }}>
+              👑 至尊专享
+            </span>
+          )}
         </div>
       </div>
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "40px 24px 80px", position: "relative", zIndex: 2 }}>
+      <div style={{ maxWidth: 860, margin: "0 auto", padding: isMobile ? "24px 16px 60px" : "40px 24px 80px", position: "relative", zIndex: 2 }}>
 
         {/* 页面标题 */}
-        <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
-            <div style={{ width: 56, height: 56, borderRadius: 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)" }}>
-              <Crown size={28} color="#fff7df" />
+        <div style={{ textAlign: "center", marginBottom: isMobile ? 28 : 36 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 14 : 18 }}>
+            <div style={{ width: isMobile ? 44 : 56, height: isMobile ? 44 : 56, borderRadius: isMobile ? 13 : 16, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 26px rgba(122,84,16,0.30)", flexShrink: 0 }}>
+              <Crown size={isMobile ? 22 : 28} color="#fff7df" />
             </div>
             <div style={{ textAlign: "left" }}>
-              <h1 style={{ fontSize: 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
+              <h1 style={{ fontSize: isMobile ? 22 : 30, fontWeight: 900, color: "#3d2c14", margin: 0, letterSpacing: "0.01em" }}>
                 AI 上帝视角
               </h1>
-              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: 13, margin: "4px 0 0", letterSpacing: "0.10em", fontWeight: 700 }}>
+              <p style={{ color: "rgba(122,84,16,0.85)", fontSize: isMobile ? 12 : 13, margin: "4px 0 0", letterSpacing: isMobile ? "0.04em" : "0.10em", fontWeight: 700 }}>
                 全景行业战报 · 旗舰级商业智库
               </p>
             </div>
           </div>
-          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: 15, maxWidth: 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
+          <p style={{ color: "rgba(61,44,20,0.78)", fontSize: isMobile ? 14 : 15, maxWidth: isMobile ? "100%" : 640, margin: "0 auto", lineHeight: 1.85, fontWeight: 500 }}>
             停止在信息泥潭中盲目试错。派遣专属智能研究集群，独占极限算力，全网深度检索与逻辑推演，
             为您交付降维打击的<strong style={{ color: "#7a5410", background: "linear-gradient(180deg, transparent 70%, rgba(216,162,58,0.30) 70%)", padding: "0 3px" }}>全景行业战报</strong>。
             穿透赛道迷雾，锁定商业胜率。
           </p>
-          <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", justifyContent: "center", gap: isMobile ? 6 : 10, marginTop: isMobile ? 14 : 20, flexWrap: "wrap" }}>
             {["宏观趋势前瞻", "竞品变现拆解", "私域留存策略", "30天行动清单"].map((t) => (
-              <span key={t} style={{ fontSize: 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: "5px 14px" }}>{t}</span>
+              <span key={t} style={{ fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#7a5410", background: "rgba(168,118,27,0.12)", border: "1px solid rgba(168,118,27,0.35)", borderRadius: 99, padding: isMobile ? "4px 10px" : "5px 14px" }}>{t}</span>
             ))}
           </div>
 
@@ -575,11 +579,11 @@ export default function GodViewPage() {
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.22em", color: "#4F46E5", marginBottom: 4 }}>
+                <div style={{ fontSize: isMobile ? 12 : 10, fontWeight: 800, letterSpacing: isMobile ? "0.10em" : "0.22em", color: "#4F46E5", marginBottom: 4 }}>
                   {isIpProfileReady(ipProfile) ? "企业 IP 基因（已锁定）" : "尚未载入企业 IP 基因"}
                 </div>
                 {isIpProfileReady(ipProfile) ? (
-                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ fontSize: 13, lineHeight: 1.6, color: "#3d2c14", whiteSpace: isMobile ? "normal" : "nowrap", overflow: "hidden", textOverflow: "ellipsis", wordBreak: isMobile ? "break-word" : "normal" }}>
                     <span style={{ color: "#4F46E5", fontWeight: 700 }}>{ipProfile.industry}</span>
                     <span style={{ margin: "0 8px", color: "rgba(122,84,16,0.45)" }}>·</span>
                     <span style={{ color: "#3d2c14" }}>{ipProfile.advantage}</span>
@@ -592,7 +596,7 @@ export default function GodViewPage() {
                   </div>
                 )}
               </div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap" }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#4F46E5", whiteSpace: "nowrap", flexShrink: 0 }}>
                 {isIpProfileReady(ipProfile) ? "编辑 →" : "载入 →"}
               </div>
             </div>
@@ -604,9 +608,10 @@ export default function GodViewPage() {
           onClick={() => navigate("/my-reports")}
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: 16,
-            padding: "16px 22px",
+            flexDirection: isMobile ? "column" : "row",
+            alignItems: isMobile ? "stretch" : "center",
+            gap: isMobile ? 12 : 16,
+            padding: isMobile ? "14px 16px" : "16px 22px",
             marginBottom: 24,
             borderRadius: 14,
             background: "linear-gradient(135deg,#fffaf0 0%,#f5ecda 100%)",
@@ -618,33 +623,42 @@ export default function GodViewPage() {
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.65)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 10px 30px rgba(168,118,27,0.20)"; (e.currentTarget as HTMLElement).style.transform = "translateY(-2px)"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = "rgba(168,118,27,0.30)"; (e.currentTarget as HTMLElement).style.boxShadow = "0 6px 20px rgba(122,84,16,0.10)"; (e.currentTarget as HTMLElement).style.transform = "none"; }}
         >
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.30)" }}>
-            <Crown size={20} color="#fff7df" />
+          <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 12 : 0, flex: isMobile ? "none" : "0 0 auto" }}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#a8761b,#7a5410)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 4px 14px rgba(168,118,27,0.30)" }}>
+              <Crown size={20} color="#fff7df" />
+            </div>
+            {isMobile && (
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", flex: 1 }}>
+                战略作品快照库
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
-              战略作品快照库 · 历史战报一键直达
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: 15, fontWeight: 900, color: "#3d2c14", marginBottom: 3 }}>
+                战略作品快照库 · 历史战报一键直达
+              </div>
+            )}
             <div style={{ fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.5 }}>
               所有已生成的全景战报、个性化分析与半月刊都在此沉淀，支持<strong style={{ color: "#7a5410" }}>富图文 PDF 一键下载</strong>，包含个人亮点、平台赛道、产品矩阵、商业变现、生涯规划五大模块。
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "8px 16px", minHeight: isMobile ? 44 : undefined, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", color: "#fff7df", fontSize: 12, fontWeight: 900, flexShrink: 0, width: isMobile ? "100%" : undefined }}>
             进入快照库 →
           </div>
         </div>
 
         {/* ── 战略智库 · 三大 Agent 场景入口 ── */}
         <div style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
             <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "#7a5410", letterSpacing: "0.04em" }}>
               👑 高阶 Agent 场景
             </h3>
-            <span style={{ fontSize: 11, color: "rgba(122,84,16,0.55)" }}>
+            <span style={{ fontSize: isMobile ? 12 : 11, color: "rgba(122,84,16,0.55)" }}>
               计划→审批→深潜，支持图片 / PDF / 语音输入
             </span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
             {[
               {
                 title: "多平台 IP 矩阵",
@@ -670,7 +684,8 @@ export default function GodViewPage() {
                 onClick={() => navigate(c.href)}
                 style={{
                   textAlign: "left",
-                  padding: "16px 18px",
+                  padding: isMobile ? "14px 14px" : "16px 18px",
+                  minHeight: isMobile ? 44 : undefined,
                   borderRadius: 14,
                   background: "linear-gradient(135deg, rgba(255,248,225,0.95), rgba(255,243,210,0.85))",
                   border: "1.2px solid rgba(168,118,27,0.32)",
@@ -687,7 +702,7 @@ export default function GodViewPage() {
                   <span style={{ fontSize: 15, fontWeight: 900, color: "#7a5410" }}>{c.title}</span>
                 </div>
                 <p style={{ margin: 0, fontSize: 12, color: "rgba(61,44,20,0.65)", lineHeight: 1.6 }}>{c.desc}</p>
-                <div style={{ marginTop: 10, fontSize: 11, fontWeight: 800, color: "#a87020" }}>立即派发 →</div>
+                <div style={{ marginTop: 10, fontSize: isMobile ? 12 : 11, fontWeight: 800, color: "#a87020" }}>立即派发 →</div>
               </button>
             ))}
           </div>
@@ -701,32 +716,32 @@ export default function GodViewPage() {
         {/* ── 半月刊 10 天提醒卡片 ── */}
         {showReminder && reminder && (
           <div style={{ marginBottom: 20, borderRadius: 16, overflow: "hidden", border: "1.5px solid rgba(168,118,27,0.35)", background: "linear-gradient(135deg,rgba(255,248,230,0.95),rgba(255,243,210,0.9))", boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
-            <div style={{ padding: "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 22 }}>🔔</span>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, color: "#7a5410" }}>
+            <div style={{ padding: isMobile ? "12px 14px 8px" : "14px 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 22, flexShrink: 0 }}>🔔</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 14, color: "#7a5410", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                     战略半月刊提醒
                     {reminder.daysOverdue != null && reminder.daysOverdue > 0
-                      ? <span style={{ marginLeft: 8, fontSize: 12, color: "#c0392b", background: "rgba(192,57,43,0.1)", padding: "2px 8px", borderRadius: 6 }}>已逾期 {reminder.daysOverdue} 天</span>
-                      : <span style={{ marginLeft: 8, fontSize: 12, color: "#e67e22", background: "rgba(230,126,34,0.1)", padding: "2px 8px", borderRadius: 6 }}>首次提醒</span>
+                      ? <span style={{ fontSize: 12, color: "#c0392b", background: "rgba(192,57,43,0.1)", padding: "2px 8px", borderRadius: 6 }}>已逾期 {reminder.daysOverdue} 天</span>
+                      : <span style={{ fontSize: 12, color: "#e67e22", background: "rgba(230,126,34,0.1)", padding: "2px 8px", borderRadius: 6 }}>首次提醒</span>
                     }
                   </div>
-                  <div style={{ fontSize: 12, color: "rgba(61,44,20,0.6)", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "rgba(61,44,20,0.6)", marginTop: 2, wordBreak: "break-all" }}>
                     已发送提醒至 benjamintan0506@163.com · AI 为您推荐了以下选题
                   </div>
                 </div>
               </div>
               <button
                 onClick={() => dismissReminderMutation.mutate()}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(61,44,20,0.4)", fontSize: 18, lineHeight: 1, padding: "4px 6px" }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(61,44,20,0.4)", fontSize: 18, lineHeight: 1, padding: "4px 6px", minWidth: 44, minHeight: 44, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                 title="忽略本次提醒（10 天后再提醒）"
               >×</button>
             </div>
 
             {/* 选题列表 */}
             {reminder.topics.length > 0 && (
-              <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ padding: isMobile ? "0 14px 12px" : "0 18px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
                 {reminder.topics.map((t, i) => (
                   <button
                     key={i}
@@ -737,14 +752,14 @@ export default function GodViewPage() {
                       window.scrollTo({ top: 0, behavior: "smooth" });
                     }}
                     style={{
-                      textAlign: "left", padding: "10px 14px", borderRadius: 10, border: "1px solid rgba(168,118,27,0.2)",
+                      textAlign: "left", padding: isMobile ? "12px 14px" : "10px 14px", minHeight: isMobile ? 44 : undefined, borderRadius: 10, border: "1px solid rgba(168,118,27,0.2)",
                       background: topic === t ? "rgba(168,118,27,0.15)" : "rgba(255,255,255,0.7)",
                       cursor: "pointer", color: "#3d2c14", fontSize: 13, lineHeight: 1.6,
                       transition: "background 0.15s", fontFamily: "inherit",
                     }}
                   >
                     <span style={{ fontWeight: 700, color: "#a87020", marginRight: 6 }}>{i + 1}.</span>{t}
-                    <span style={{ float: "right", fontSize: 11, color: "#a87020", marginTop: 2 }}>点击填入 →</span>
+                    <span style={{ float: "right", fontSize: isMobile ? 12 : 11, color: "#a87020", marginTop: 2 }}>点击填入 →</span>
                   </button>
                 ))}
               </div>
@@ -1096,7 +1111,7 @@ export default function GodViewPage() {
             />
             {/* 取消任务·主动取消不退还积分（防恶意刷算力） — 推演中阶段（含 planning / running） */}
             {pollingJobId && !(jobDoneQuery.data as any)?.cancelRequestedAt && (
-              <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
+              <div style={{ marginTop: 18, display: "flex", justifyContent: "center", padding: isMobile ? "0 16px" : 0 }}>
                 <button
                   onClick={handleCancelCurrentJob}
                   disabled={isCancellingJob}
@@ -1104,8 +1119,11 @@ export default function GodViewPage() {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: "center",
                     gap: 8,
-                    padding: "11px 22px",
+                    padding: isMobile ? "12px 18px" : "11px 22px",
+                    minHeight: 44,
+                    width: isMobile ? "100%" : undefined,
                     borderRadius: 11,
                     background: isCancellingJob ? "rgba(220,38,38,0.18)" : "rgba(220,38,38,0.10)",
                     border: "1px solid rgba(220,38,38,0.45)",
@@ -1123,7 +1141,7 @@ export default function GodViewPage() {
               </div>
             )}
             {(jobDoneQuery.data as any)?.cancelRequestedAt && (
-              <div style={{ marginTop: 18, padding: "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
+              <div style={{ marginTop: 18, marginLeft: isMobile ? 16 : 0, marginRight: isMobile ? 16 : 0, padding: isMobile ? "10px 14px" : "12px 18px", textAlign: "center", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px dashed rgba(220,38,38,0.35)", color: "#dc2626", fontSize: 12.5, fontWeight: 700 }}>
                 🛑 已发起主动取消，正在停止深潛引擎（按规则不退还积分）…
               </div>
             )}
@@ -1197,16 +1215,16 @@ export default function GodViewPage() {
 
         {/* ── 启动失败 ── */}
         {phase === "failed" && (
-          <div style={{ padding: "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700 }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
-              <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <div style={{ padding: isMobile ? "14px 16px" : "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 10 : 0 }}>
+              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
+              <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "7px 16px", minHeight: isMobile ? 44 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
                 <RotateCcw size={12} />重试
               </button>
             </div>
             {(jobDoneQuery.data as any)?.errorDetail && (
               <details style={{ marginTop: 12 }}>
-                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: 11, fontWeight: 700 }}>查看详细原因（含 API 响应）</summary>
+                <summary style={{ cursor: "pointer", color: "#dc2626", fontSize: isMobile ? 12 : 11, fontWeight: 700, padding: "4px 0", minHeight: isMobile ? 32 : undefined }}>查看详细原因（含 API 响应）</summary>
                 <pre style={{ marginTop: 10, fontSize: 11, color: "#7c2d2d", background: "rgba(220,38,38,0.04)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 280, overflowY: "auto", lineHeight: 1.6 }}>
                   {(jobDoneQuery.data as any).errorDetail}
                 </pre>
