@@ -2,8 +2,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { Menu, X, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
-import { useState } from "react";
+import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 const NAV_ITEMS = [
   { label: "创作画布", href: "/workflow-nodes" },
@@ -27,6 +34,13 @@ export default function Navbar() {
     ? [...NAV_ITEMS, { label: "测试台", href: "/test-lab" }]
     : NAV_ITEMS;
 
+  // 路由切换时自动关闭移动菜单（处理浏览器前进/后退、外部跳转回来等场景）
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location]);
+
+  const closeMobile = () => setMobileOpen(false);
+
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
       <div className="container flex h-16 items-center justify-between">
@@ -41,7 +55,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Nav */}
-        <div className="hidden lg:flex items-center gap-0.5">
+        <div className="hidden xl:flex items-center gap-0.5">
           {navItems.map((item) => (
             <Link
               key={item.href}
@@ -57,8 +71,8 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Auth */}
-        <div className="hidden lg:flex items-center gap-3 shrink-0">
+        {/* Auth (desktop) */}
+        <div className="hidden xl:flex items-center gap-3 shrink-0">
           {isAuthenticated && user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -105,81 +119,122 @@ export default function Navbar() {
           )}
         </div>
 
-        {/* Mobile Toggle */}
-        <button
-          className="lg:hidden p-2 text-foreground"
-          onClick={() => setMobileOpen(!mobileOpen)}
-        >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
-      </div>
-
-      {/* Mobile Menu */}
-      {mobileOpen && (
-        <div className="lg:hidden border-t border-border/50 bg-background/95 backdrop-blur-xl max-h-[70vh] overflow-y-auto">
-          <div className="container py-4 space-y-1">
-            <Link
-              href="/"
-              className={`block px-4 py-2.5 rounded-md text-sm font-medium no-underline ${
-                location === "/" ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setMobileOpen(false)}
+        {/* Mobile trigger */}
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
+              aria-expanded={mobileOpen}
+              className="xl:hidden inline-flex items-center justify-center min-h-11 min-w-11 rounded-md text-foreground hover:bg-accent active:scale-95 transition"
             >
-              首页
-            </Link>
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`block px-4 py-2.5 rounded-md text-sm font-medium no-underline ${
-                  location === item.href
-                    ? "text-primary bg-primary/10"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={() => setMobileOpen(false)}
-              >
-                {item.label}
-              </Link>
-            ))}
-            {isAuthenticated && (
-              <div className="pt-2 mt-2 border-t border-border/50 space-y-1">
-                <Link href="/dashboard" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                  个人中心
-                </Link>
-                <Link href="/my-works" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                  📁 我的作品
-                </Link>
-                <Link href="/team" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                  团队管理
-                </Link>
-                {user?.role === "admin" && (
-                  <Link href="/admin" className="block px-4 py-2.5 text-sm text-muted-foreground hover:text-foreground no-underline" onClick={() => setMobileOpen(false)}>
-                    管理后台
-                  </Link>
-                )}
+              <Menu className="h-5 w-5" />
+            </button>
+          </SheetTrigger>
+          <SheetContent side="right" className="w-[85vw] sm:max-w-sm flex flex-col p-0">
+            <SheetTitle className="sr-only">主菜单</SheetTitle>
+            <SheetDescription className="sr-only">站点导航与用户操作</SheetDescription>
+
+            {/* Mobile menu header */}
+            <div className="flex items-center gap-2.5 px-5 pt-5 pb-3 border-b border-border/50">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
+                <Film className="h-5 w-5 text-primary-foreground" />
               </div>
-            )}
-            <div className="pt-2 border-t border-border/50">
-              {isAuthenticated ? (
-                <button
-                  className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:text-red-300"
-                  onClick={() => { logout(); setMobileOpen(false); }}
+              <span className="text-base font-bold tracking-tight text-foreground">
+                MV Studio <span className="text-primary">Pro</span>
+              </span>
+            </div>
+
+            {/* Nav links */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
+              <Link
+                href="/"
+                className={`block px-4 py-3 rounded-md text-sm font-medium no-underline min-h-11 ${
+                  location === "/" ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                }`}
+                onClick={closeMobile}
+              >
+                首页
+              </Link>
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`block px-4 py-3 rounded-md text-sm font-medium no-underline min-h-11 ${
+                    location === item.href
+                      ? "text-primary bg-primary/10"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}
+                  onClick={closeMobile}
                 >
+                  {item.label}
+                </Link>
+              ))}
+
+              {isAuthenticated && (
+                <div className="pt-3 mt-3 border-t border-border/50 space-y-1">
+                  <Link
+                    href="/dashboard"
+                    className="flex items-center gap-2 px-4 py-3 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent no-underline min-h-11"
+                    onClick={closeMobile}
+                  >
+                    <LayoutDashboard className="h-4 w-4" />
+                    个人中心
+                  </Link>
+                  <Link
+                    href="/my-works"
+                    className="flex items-center gap-2 px-4 py-3 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent no-underline min-h-11"
+                    onClick={closeMobile}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    我的作品
+                  </Link>
+                  <Link
+                    href="/team"
+                    className="flex items-center gap-2 px-4 py-3 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent no-underline min-h-11"
+                    onClick={closeMobile}
+                  >
+                    <User className="h-4 w-4" />
+                    团队管理
+                  </Link>
+                  {user?.role === "admin" && (
+                    <Link
+                      href="/admin"
+                      className="flex items-center gap-2 px-4 py-3 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent no-underline min-h-11"
+                      onClick={closeMobile}
+                    >
+                      <Shield className="h-4 w-4" />
+                      管理后台
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer auth action */}
+            <div className="px-4 py-4 border-t border-border/50">
+              {isAuthenticated ? (
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start min-h-11 text-red-500 hover:text-red-400 hover:bg-red-500/10"
+                  onClick={() => { logout(); closeMobile(); }}
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
                   退出登录
-                </button>
+                </Button>
               ) : (
                 <Button
-                  size="sm"
-                  className="w-full bg-primary text-primary-foreground"
+                  size="lg"
+                  className="w-full min-h-11 bg-primary text-primary-foreground hover:bg-primary/90"
                   onClick={() => { window.location.href = getLoginUrl(); }}
                 >
                   登录
                 </Button>
               )}
             </div>
-          </div>
-        </div>
-      )}
+          </SheetContent>
+        </Sheet>
+      </div>
     </nav>
   );
 }
