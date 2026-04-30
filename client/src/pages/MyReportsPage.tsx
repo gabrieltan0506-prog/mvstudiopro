@@ -202,7 +202,6 @@ export default function MyReportsPage() {
     setIsExportingBlackGold(true);
     exportBlackGoldPdfMutation.mutate({
       reportId: report.id,
-      markdown: md,
       style: styleOf(report.id),
     });
   }, [exportBlackGoldPdfMutation, styleOf]);
@@ -269,7 +268,6 @@ export default function MyReportsPage() {
                 setIsExportingBlackGold(true);
                 exportBlackGoldPdfMutation.mutate({
                   reportId: selectedReport.id,
-                  markdown: selectedReport.markdown,
                   style: pdfStyle,
                 });
               }}

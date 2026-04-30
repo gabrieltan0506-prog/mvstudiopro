@@ -6187,7 +6187,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       .input(z.object({
         jobId: z.string().min(1).optional(),
         reportId: z.number().int().positive().optional(), // userCreations.id（MyReports 列表用）
-        markdown: z.string().min(80).max(2_000_000).optional(),
+        markdown: z.string().min(80).optional(),
         signedUrlHours: z.number().int().min(1).max(168).optional(),
         // v4：5 套活泼模板（砍掉焦糖系，仅保留 business-bright）
         style: z.enum(["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"]).optional(),
