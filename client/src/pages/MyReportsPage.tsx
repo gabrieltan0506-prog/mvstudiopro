@@ -59,37 +59,33 @@ export default function MyReportsPage() {
   const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
 
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
+    // 2026-05-01 用户决策：PDF 切到 Cloud Run pdf-worker，server 端 base64 编码 → 客户端 atob → Blob 触发本地下载，不上 GCS
     onSuccess: (result) => {
       setIsExportingBlackGold(false);
       setDownloadingCardId(null);
-      const url = result?.signedUrl;
-      if (!url) {
-        toast.error("黑金 PDF 已生成但未拿到签名链接，请稍后重试");
+      const b64 = result?.pdfBase64;
+      if (!b64) {
+        toast.error("PDF 生成失败：服务端未返回 PDF 数据");
         return;
       }
-      // 直接触发浏览器下载，不依赖剪贴板
-      const a = document.createElement("a");
-      a.href = url;
-      // 取报告标题作文件名，兜底 report.pdf
-      a.download = "";
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast.success(
-        <span>
-          PDF 下载已开始
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ marginLeft: 8, color: "#facc15", textDecoration: "underline" }}
-          >
-            手动打开
-          </a>
-        </span>,
-        { duration: 8000 }
-      );
+      try {
+        const bytes = atob(b64);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        const blob = new Blob([buf], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = result.filename || "report.pdf";
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        toast.success(`PDF 下载已开始（${result.filename || "report.pdf"}）`);
+      } catch (e: any) {
+        toast.error("PDF 下载触发失败：" + (e?.message || "未知错误"));
+      }
     },
     onError: (err) => {
       setIsExportingBlackGold(false);

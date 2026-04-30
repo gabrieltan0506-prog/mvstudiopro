@@ -240,15 +240,30 @@ export default function GodViewPage() {
   // 战略 PDF 导出 · 5 套活泼模板
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
+    // 2026-05-01 用户决策：PDF 切到 Cloud Run pdf-worker，server 端 base64 编码 → 客户端 atob → Blob 触发本地下载，不上 GCS
     onSuccess: (result) => {
-      const url = result?.signedUrl;
-      if (!url) { toast.error("黑金 PDF 已生成但未拿到签名链接"); return; }
+      const b64 = result?.pdfBase64;
+      if (!b64) {
+        toast.error("黑金 PDF 生成失败：服务端未返回 PDF 数据");
+        return;
+      }
       try {
-        navigator.clipboard?.writeText(url).catch(() => {});
-        window.open(url, "_blank", "noopener,noreferrer");
-        toast.success("黑金 PDF 已生成 · 链接已复制（72 小时签名）");
-      } catch {
-        toast.success("黑金 PDF 已生成，签名链接：" + url);
+        const bytes = atob(b64);
+        const buf = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+        const blob = new Blob([buf], { type: "application/pdf" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = result.filename || "report.pdf";
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        toast.success(`黑金 PDF 下载已开始（${result.filename || "report.pdf"}）`);
+      } catch (e: any) {
+        toast.error("黑金 PDF 下载触发失败：" + (e?.message || "未知错误"));
       }
     },
     onError: (err) => toast.error("黑金 PDF 生成失败：" + err.message),
@@ -1082,10 +1097,10 @@ export default function GodViewPage() {
                 }}
                 disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
-                title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
+                title="Cloud Run pdf-worker 渲染 · base64 流回客户端直接下载"
               >
                 {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
-                {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（GCS 签名链接）"}
+                {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（直接下载）"}
               </button>
               <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
                 <Sparkles size={16} />前往「战略作品快照库」查阅
