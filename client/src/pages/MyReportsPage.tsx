@@ -67,13 +67,29 @@ export default function MyReportsPage() {
         toast.error("黑金 PDF 已生成但未拿到签名链接，请稍后重试");
         return;
       }
-      try {
-        navigator.clipboard?.writeText(url).catch(() => {});
-        window.open(url, "_blank", "noopener,noreferrer");
-        toast.success("PDF 已生成 · 链接已复制（72 小时签名）");
-      } catch {
-        toast.success("PDF 已生成，签名链接：" + url);
-      }
+      // 直接触发浏览器下载，不依赖剪贴板
+      const a = document.createElement("a");
+      a.href = url;
+      // 取报告标题作文件名，兜底 report.pdf
+      a.download = "";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.success(
+        <span>
+          PDF 下载已开始
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ marginLeft: 8, color: "#facc15", textDecoration: "underline" }}
+          >
+            手动打开
+          </a>
+        </span>,
+        { duration: 8000 }
+      );
     },
     onError: (err) => {
       setIsExportingBlackGold(false);
