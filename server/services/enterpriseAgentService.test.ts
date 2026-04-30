@@ -1,5 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// 模块级 mock：让 softDeleteAgent 能调通 db 链路。
+// 纯逻辑工具测试不调 getDb，不受影响。
+vi.mock("../db", () => ({
+  getDb: vi.fn(),
+}));
+
+import { getDb } from "../db";
 import {
   ENTERPRISE_AGENT_GEMINI_MODEL,
   EnterpriseAgentError,
@@ -15,6 +22,7 @@ import {
   isAgentTrialExpired,
   parseGeminiResponse,
   shouldResetQuota,
+  softDeleteAgent,
 } from "./enterpriseAgentService";
 
 // ─── jobId 格式 ──────────────────────────────────────────────────────────────
@@ -373,6 +381,146 @@ describe("callGeminiForAgent — mock fetch", () => {
     expect(body.systemInstruction.parts[0].text).toBe("灵魂指令-XYZ");
     expect(body.contents[0].parts[0].text).toBe("用户提问-ABC");
     expect(body.generationConfig.maxOutputTokens).toBeGreaterThanOrEqual(8192);
+  });
+});
+
+// ─── softDeleteAgent — refund 注入调用（与 expireAgent 对齐） ─────────────────
+//
+// 思路：mock `../db.getDb` 返回最小可用的 drizzle stub（只覆盖 select/update
+// 链路），验证 softDeleteAgent 在不同分支下是否正确调用注入的退分函数。
+// 不测真实 db 行为；那是 PR-3 端到端集成测试的职责。
+
+describe("softDeleteAgent — refund 注入", () => {
+  const baseAgent = {
+    id: 7,
+    userId: 42,
+    organizationName: null,
+    agentName: "销冠教练",
+    systemCommand: "...",
+    tier: "trial" as const,
+    status: "active" as const,
+    trialUntil: new Date("2026-05-30T00:00:00Z"),
+    knowledgeBaseQuotaMb: 50,
+    knowledgeBaseUsedMb: 0,
+    callsThisPeriod: 3,
+    callsQuotaPeriod: 100,
+    quotaPeriodStart: new Date("2026-04-30T00:00:00Z"),
+    paidJobLedgerJobId: "enterpriseAgent_7_trial_1714435200000",
+    createdAt: new Date("2026-04-30T00:00:00Z"),
+    updatedAt: new Date("2026-04-30T00:00:00Z"),
+  };
+
+  /** 构造一个最小 drizzle stub：select 返回指定 agent 行，update 直接 resolve */
+  function makeDbStub(selectResult: unknown[]) {
+    return {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve(selectResult),
+          }),
+        }),
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => Promise.resolve(undefined),
+        }),
+      }),
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(getDb).mockReset();
+  });
+
+  it("agent 存在 + paidJobLedgerJobId 存在 → 调注入的 refundCreditsOnFailure", async () => {
+    vi.mocked(getDb).mockResolvedValue(makeDbStub([baseAgent]) as any);
+    const refundSpy = vi.fn().mockResolvedValue({ refunded: false, status: "settled" });
+
+    const out = await softDeleteAgent({
+      agentId: 7,
+      by: "admin",
+      refundCreditsOnFailure: refundSpy,
+    });
+
+    expect(out).toEqual({ ok: true, alreadyDeleted: false });
+    expect(refundSpy).toHaveBeenCalledTimes(1);
+    expect(refundSpy).toHaveBeenCalledWith(
+      "enterpriseAgent_7_trial_1714435200000",
+      "enterpriseAgentTrial",
+      "user_cancelled_no_refund",
+      expect.stringContaining("软删除"),
+    );
+    // by="admin" 时文案含"管理员"
+    expect(String(refundSpy.mock.calls[0]![3])).toContain("管理员");
+  });
+
+  it("by=user 时退分文案不含\"管理员\"", async () => {
+    vi.mocked(getDb).mockResolvedValue(makeDbStub([baseAgent]) as any);
+    const refundSpy = vi.fn().mockResolvedValue({});
+
+    await softDeleteAgent({ agentId: 7, by: "user", refundCreditsOnFailure: refundSpy });
+
+    expect(String(refundSpy.mock.calls[0]![3])).toContain("软删除");
+    expect(String(refundSpy.mock.calls[0]![3])).not.toContain("管理员");
+  });
+
+  it("paidJobLedgerJobId 为 null → 跳过退分（不调注入函数）", async () => {
+    vi.mocked(getDb).mockResolvedValue(
+      makeDbStub([{ ...baseAgent, paidJobLedgerJobId: null }]) as any,
+    );
+    const refundSpy = vi.fn();
+
+    const out = await softDeleteAgent({
+      agentId: 7,
+      by: "user",
+      refundCreditsOnFailure: refundSpy,
+    });
+
+    expect(out.ok).toBe(true);
+    expect(refundSpy).not.toHaveBeenCalled();
+  });
+
+  it("已经 status='deleted' → 提前返回 alreadyDeleted=true，不调退分", async () => {
+    vi.mocked(getDb).mockResolvedValue(
+      makeDbStub([{ ...baseAgent, status: "deleted" }]) as any,
+    );
+    const refundSpy = vi.fn();
+
+    const out = await softDeleteAgent({
+      agentId: 7,
+      by: "admin",
+      refundCreditsOnFailure: refundSpy,
+    });
+
+    expect(out).toEqual({ ok: true, alreadyDeleted: true });
+    expect(refundSpy).not.toHaveBeenCalled();
+  });
+
+  it("退分函数抛错：不影响 softDeleteAgent 返回成功（hold 标记失败仅 warn）", async () => {
+    vi.mocked(getDb).mockResolvedValue(makeDbStub([baseAgent]) as any);
+    const refundSpy = vi.fn().mockRejectedValue(new Error("ledger write fail"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const out = await softDeleteAgent({
+      agentId: 7,
+      by: "user",
+      refundCreditsOnFailure: refundSpy,
+    });
+
+    expect(out).toEqual({ ok: true, alreadyDeleted: false });
+    expect(warnSpy).toHaveBeenCalled();
+    expect(String(warnSpy.mock.calls[0]![0])).toContain("softDelete");
+    warnSpy.mockRestore();
+  });
+
+  it("agent 不存在 → 抛 AGENT_NOT_FOUND，不调退分", async () => {
+    vi.mocked(getDb).mockResolvedValue(makeDbStub([]) as any);
+    const refundSpy = vi.fn();
+
+    await expect(
+      softDeleteAgent({ agentId: 999, by: "user", refundCreditsOnFailure: refundSpy }),
+    ).rejects.toMatchObject({ code: "AGENT_NOT_FOUND" });
+    expect(refundSpy).not.toHaveBeenCalled();
   });
 });
 

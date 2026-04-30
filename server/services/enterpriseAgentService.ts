@@ -367,7 +367,12 @@ export async function createAgent(input: {
       },
     });
   } catch (err) {
-    // 注册失败不回滚 agent —— 调用层可调 attachLedgerHold(agentId) 重试
+    // 注册失败不回滚 agent —— agent 已落库且 status='active' 不影响 db 一致性。
+    // 修复路径（admin 操作）：手工 UPDATE enterprise_agents
+    //   SET paidJobLedgerJobId='enterpriseAgent_${id}_trial_${ts}'
+    //   WHERE id=${inserted.id}
+    // 然后在 /data/active-jobs/enterpriseAgentTrial/ 下手工补建 hold JSON 文件
+    // （结构参考 server/services/paidJobLedger.ts 的 PaidJobHold interface）。
     console.warn(
       `[enterpriseAgent] registerActiveJob failed for agentId=${inserted.id} jobId=${jobId}: ${(err as Error)?.message}`,
     );
@@ -455,14 +460,12 @@ export async function executeAgentQuery(input: {
 
   // ── 2. 周期重置（在闸门校验之前，否则配额耗尽 + 周期已重置会误判） ──
   let effectiveCallsThisPeriod = agent.callsThisPeriod;
-  let effectiveQuotaStart = agent.quotaPeriodStart;
   if (shouldResetQuota(now, agent.quotaPeriodStart)) {
     await db
       .update(enterpriseAgents)
       .set({ callsThisPeriod: 0, quotaPeriodStart: now, updatedAt: now })
       .where(eq(enterpriseAgents.id, agent.id));
     effectiveCallsThisPeriod = 0;
-    effectiveQuotaStart = now;
   }
 
   // ── 3. 状态闸门 ──────────────────────────────────────────────
@@ -538,6 +541,13 @@ export async function executeAgentQuery(input: {
   }
 
   // ── 7. 累计配额（成功才计） ─────────────────────────────────
+  // TODO(配额硬限): assert→+1 之间有 read-then-write race condition，并发可能
+  //   轻微超 quota（最多 ~N 个并发请求超额，N=同一 agent 同时跑的 worker 数）。
+  //   trial 100 次/30 天的语境下可接受。PR-3 起 router 后改成原子化：
+  //     UPDATE enterprise_agents SET callsThisPeriod = callsThisPeriod + 1
+  //     WHERE id = ${agent.id} AND callsThisPeriod < callsQuotaPeriod
+  //     RETURNING callsThisPeriod;
+  //   返回 0 行时把 agent 标记为本次 over-quota 并退出（router 抛 QUOTA_EXHAUSTED）。
   await db
     .update(enterpriseAgents)
     .set({
@@ -623,10 +633,21 @@ export async function expireAgent(input: {
  * 软删除 agent —— 设 status='deleted'。
  * 与硬删不同：保留所有 db 行 + KB 文件 + sessions，便于 90 天合规期内取证。
  * 90 天后由独立清理脚本（不在本 PR 范围）做硬清理。
+ *
+ * 与 expireAgent 一样：删除时把 paidJobLedger hold 标 settled（走
+ * user_cancelled_no_refund 分支，不退款）。这样部署闸门 / reaper 不会再扫到
+ * 这个 hold，audit log 会留一条 userCancelNoRefund 记录便于合规追溯。
  */
 export async function softDeleteAgent(input: {
   agentId: number;
   by: "user" | "admin";
+  /** 注入退分函数便于测试（与 expireAgent 同模式） */
+  refundCreditsOnFailure?: (
+    jobId: string,
+    taskType: string,
+    reason: "user_cancelled_no_refund",
+    detail?: string,
+  ) => Promise<unknown>;
   now?: Date;
 }): Promise<{ ok: boolean; alreadyDeleted: boolean }> {
   const db = await getDb();
@@ -647,6 +668,28 @@ export async function softDeleteAgent(input: {
     .update(enterpriseAgents)
     .set({ status: "deleted", updatedAt: now })
     .where(eq(enterpriseAgents.id, agent.id));
+
+  if (agent.paidJobLedgerJobId) {
+    const refundFn =
+      input.refundCreditsOnFailure ??
+      (async (jobId, taskType, reason, detail) => {
+        const m = await import("./paidJobLedger");
+        return m.refundCreditsOnFailure(jobId, taskType as any, reason, detail);
+      });
+    try {
+      await refundFn(
+        agent.paidJobLedgerJobId,
+        ENTERPRISE_AGENT_TASK_TYPE,
+        "user_cancelled_no_refund",
+        `用户主动${input.by === "admin" ? "管理员" : ""}软删除`,
+      );
+    } catch (err) {
+      // hold 标记失败不影响 agent 已 deleted 的事实；仅打 warn
+      console.warn(
+        `[enterpriseAgent] softDelete: refund failed for ${agent.paidJobLedgerJobId}: ${(err as Error)?.message}`,
+      );
+    }
+  }
 
   console.log(
     `[enterpriseAgent] 🗑 soft-deleted agentId=${agent.id} userId=${agent.userId} by=${input.by}`,
