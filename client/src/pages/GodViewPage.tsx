@@ -1064,33 +1064,33 @@ export default function GodViewPage() {
 
         {/* ── 研报已完成 ── */}
         {phase === "done" && (
-          <div style={{ textAlign: "center", padding: "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#050d02,#081a04)", borderRadius: 20, border: "1px solid rgba(0,200,80,0.25)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+          <div style={{ textAlign: "center", padding: isMobile ? "32px 18px" : "48px 24px", animation: "fadeIn 0.5s ease", background: "linear-gradient(135deg,#050d02,#081a04)", borderRadius: 20, border: "1px solid rgba(0,200,80,0.25)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
             <div style={{ width: 80, height: 80, borderRadius: "50%", background: "linear-gradient(135deg,#16a34a,#15803d)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", boxShadow: "0 8px 32px rgba(22,163,74,0.4)", fontSize: 36 }}>✅</div>
-            <h2 style={{ fontSize: 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 12 }}>战略研报已生成</h2>
-            <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: 480, margin: "0 auto 32px" }}>
+            <h2 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 12 }}>战略研报已生成</h2>
+            <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: isMobile ? "100%" : 480, margin: "0 auto 32px" }}>
               深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
             </p>
             {/* 模板选择器（带封面 + 内文页缩略预览） */}
-            <div style={{ marginBottom: 18, padding: "16px 20px", borderRadius: 14, background: "rgba(255,250,240,0.06)", border: "1px solid rgba(184,134,11,0.20)" }}>
+            <div style={{ marginBottom: 18, padding: isMobile ? "14px 14px" : "16px 20px", borderRadius: 14, background: "rgba(255,250,240,0.06)", border: "1px solid rgba(184,134,11,0.20)" }}>
               <TemplatePicker value={pdfStyle} onChange={setPdfStyle} />
             </div>
-            <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: isMobile ? "stretch" : "center" }}>
               <button
                 onClick={() => {
                   if (!pollingJobId) { toast.error("缺少 jobId"); return; }
                   exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId, style: pdfStyle });
                 }}
                 disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
                 title="容器内 Puppeteer 原生渲染，存 GCS · 72 小时签名链接"
               >
                 {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
                 {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（GCS 签名链接）"}
               </button>
-              <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 28px", borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
+              <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
                 <Sparkles size={16} />前往「战略作品快照库」查阅
               </button>
-              <button onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 24px", borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+              <button onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 24px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
                 再发起一个新课题
               </button>
             </div>
@@ -1150,17 +1150,17 @@ export default function GodViewPage() {
 
         {/* ── 计划审核阶段（Interactions API Collaborative Planning） ── */}
         {phase === "awaiting_plan" && jobDoneQuery.data?.planText && (
-          <div style={{ padding: "24px 28px", background: "linear-gradient(135deg, rgba(168,118,27,0.10) 0%, rgba(122,84,16,0.06) 100%)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 14, boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <div style={{ padding: isMobile ? "18px 16px" : "24px 28px", background: "linear-gradient(135deg, rgba(168,118,27,0.10) 0%, rgba(122,84,16,0.06) 100%)", border: "1px solid rgba(168,118,27,0.40)", borderRadius: 14, boxShadow: "0 4px 24px rgba(168,118,27,0.12)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <span style={{ fontSize: 22 }}>📋</span>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: "#a8761b", letterSpacing: "0.04em" }}>研究计划已生成 · 请审核后批准</h3>
+              <h3 style={{ margin: 0, fontSize: isMobile ? 15 : 16, fontWeight: 900, color: "#a8761b", letterSpacing: "0.04em" }}>研究计划已生成 · 请审核后批准</h3>
             </div>
             <p style={{ margin: "0 0 14px", fontSize: 12, color: "rgba(160,140,90,0.85)", lineHeight: 1.7 }}>
               战略智库 Agent 已完成研究计划制定。请审阅以下计划方向，您可以直接批准开始深潜，也可以填写补充意见后再批准（例如：「重点关注小红书数据」「不要分析快手」「补充 IP 衍生品角度」）。
             </p>
 
             {/* 计划文本 */}
-            <div style={{ background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", borderRadius: 10, padding: "16px 20px", marginBottom: 16, maxHeight: 360, overflow: "auto" }}>
+            <div style={{ background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", borderRadius: 10, padding: isMobile ? "12px 14px" : "16px 20px", marginBottom: 16, maxHeight: isMobile ? 280 : 360, overflow: "auto" }}>
               <pre style={{ margin: 0, fontFamily: "'Source Han Serif SC', Georgia, serif", fontSize: 13, lineHeight: 1.85, color: "rgba(245,235,210,0.92)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{jobDoneQuery.data.planText}</pre>
             </div>
 
@@ -1169,15 +1169,15 @@ export default function GodViewPage() {
               value={planFeedback}
               onChange={(e) => setPlanFeedback(e.target.value)}
               placeholder="（可选）补充意见或调整方向，AI 会按您的反馈调整后再开始深潛..."
-              style={{ width: "100%", minHeight: 80, padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", color: "rgba(245,235,210,0.92)", fontSize: 13, lineHeight: 1.7, resize: "vertical", outline: "none", marginBottom: 14, fontFamily: "inherit" }}
+              style={{ width: "100%", minHeight: 80, padding: "12px 14px", borderRadius: 10, background: "rgba(0,0,0,0.30)", border: "1px solid rgba(168,118,27,0.25)", color: "rgba(245,235,210,0.92)", fontSize: isMobile ? 16 : 13, lineHeight: 1.7, resize: "vertical", outline: "none", marginBottom: 14, fontFamily: "inherit", boxSizing: "border-box" }}
             />
 
             {/* 操作按钮 */}
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10, alignItems: isMobile ? "stretch" : "center", flexWrap: "wrap" }}>
               <button
                 onClick={() => approvePlanMutation.mutate({ jobId: pollingJobId!, feedback: planFeedback.trim() || undefined })}
                 disabled={approvePlanMutation.isPending || !pollingJobId}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 26px", borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: approvePlanMutation.isPending ? "not-allowed" : "pointer", opacity: approvePlanMutation.isPending ? 0.6 : 1, boxShadow: "0 4px 16px rgba(168,118,27,0.30)" }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "12px 26px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 10, background: "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.55)", color: "#fff7df", fontWeight: 900, fontSize: 13, cursor: approvePlanMutation.isPending ? "not-allowed" : "pointer", opacity: approvePlanMutation.isPending ? 0.6 : 1, boxShadow: "0 4px 16px rgba(168,118,27,0.30)" }}
               >
                 {approvePlanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Crown size={14} />}
                 {planFeedback.trim() ? "按反馈调整后开始深潛" : "批准计划 · 开始深潛"}
@@ -1191,8 +1191,11 @@ export default function GodViewPage() {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: "center",
                     gap: 7,
-                    padding: "11px 18px",
+                    padding: isMobile ? "12px 18px" : "11px 18px",
+                    minHeight: isMobile ? 44 : undefined,
+                    width: isMobile ? "100%" : undefined,
                     borderRadius: 10,
                     background: isCancellingJob ? "rgba(220,38,38,0.18)" : "rgba(220,38,38,0.08)",
                     border: "1px solid rgba(220,38,38,0.40)",
@@ -1206,7 +1209,7 @@ export default function GodViewPage() {
                   {isCancellingJob ? "取消中…" : "✕ 取消任务（不退还积分）"}
                 </button>
               )}
-              <span style={{ fontSize: 11, color: "rgba(160,140,90,0.65)" }}>
+              <span style={{ fontSize: isMobile ? 12 : 11, color: "rgba(160,140,90,0.65)", lineHeight: 1.6 }}>
                 批准后 Agent 会立即开始最长 60 分钟的全网深潛，完成后自动进入研报中心
               </span>
             </div>
