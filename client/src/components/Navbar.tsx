@@ -2,7 +2,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { getLoginUrl } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen } from "lucide-react";
+import { Menu, Film, LogOut, User, LayoutDashboard, Shield, ChevronDown, FolderOpen, Briefcase } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   DropdownMenu,
@@ -22,6 +22,7 @@ import {
 const NAV_ITEMS = [
   { label: "创作画布", href: "/workflow-nodes" },
   { label: "创作者成长营", href: "/creator-growth-camp" },
+  { label: "企业 Agent", href: "/enterprise-agent" },
   { label: "套餐", href: "/pricing" },
 ];
 
@@ -94,6 +95,10 @@ export default function Navbar() {
                 <DropdownMenuItem onClick={() => navigate("/team")}>
                   <User className="mr-2 h-4 w-4" />
                   团队管理
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/enterprise-agent")}>
+                  <Briefcase className="mr-2 h-4 w-4" />
+                  我的企业 Agent
                 </DropdownMenuItem>
                 {user.role === "admin" && (
                   <DropdownMenuItem onClick={() => navigate("/admin")}>
@@ -196,6 +201,14 @@ export default function Navbar() {
                   >
                     <User className="h-4 w-4" />
                     团队管理
+                  </Link>
+                  <Link
+                    href="/enterprise-agent"
+                    className="flex items-center gap-2 px-4 py-3 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-accent no-underline min-h-11"
+                    onClick={closeMobile}
+                  >
+                    <Briefcase className="h-4 w-4" />
+                    我的企业 Agent
                   </Link>
                   {user?.role === "admin" && (
                     <Link
