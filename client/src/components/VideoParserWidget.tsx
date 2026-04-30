@@ -40,11 +40,9 @@ export default function VideoParserWidget() {
     if (!trimmed) return;
     setResult(null);
     setError('');
-    // YouTube 在数据中心 IP 上被官方反爬完全封锁（连用户 cookie 也会被主动失效），
-    // 前端直接拦截，给清晰提示，避免用户等十几秒后才看到失败。
     if (/youtube\.com|youtu\.be/i.test(trimmed)) {
       setError(
-        'YouTube 暂不支持：YouTube 已对所有云服务器 IP（含我们）施加严格反爬，cookie 也无法绕过。请改用 B 站 / 抖音 / 快手 / 小红书 链接 —— 这些平台均正常工作。',
+        '该链接所属平台暂不支持，请改用 B 站 / 抖音 / 快手 / 小红书 链接。',
       );
       return;
     }
