@@ -6274,53 +6274,27 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         }
 
         const style = input.style || "spring-mint";
-        // 组装 cover：用户传的优先，缺什么自动补
         const coverEnabled = input.cover?.enabled !== false; // 默认开
 
-        // ⚡ 封面是灵魂：如果旧报告没有 thumbnailUrl（早期 PR 之前生成的、或当时
-        //    nanoImage 调用失败的），导出 PDF 时主动 fallback 再生成一次封面图，
-        //    保证用户每次下载都拿到带杂志大封面的 PDF。
-        let resolvedCoverImage = input.cover?.imageUrl || autoCoverImage;
-        if (coverEnabled && !resolvedCoverImage) {
-          try {
-            const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
-            const fallbackTitle = input.cover?.title || autoCoverTitle || "战略情报报告";
-            const coverRes = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                prompt: `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${fallbackTitle}`,
-                tier: "flash",
-                aspectRatio: "3:4",
-              }),
-              signal: AbortSignal.timeout(45_000),
-            });
-            if (coverRes.ok) {
-              const coverJson = await coverRes.json();
-              if (coverJson?.imageUrl) {
-                resolvedCoverImage = String(coverJson.imageUrl);
-                console.log(`[exportBlackGoldPdf] cover fallback regenerated for ${input.reportId || input.jobId}`);
-                // 顺手回写到 dbRecord，下次就不用再生成
-                if (input.reportId) {
-                  try {
-                    const { userCreations } = await import("../drizzle/schema-creations");
-                    const { eq } = await import("drizzle-orm");
-                    const database = await db.getDb();
-                    if (database) {
-                      await database.update(userCreations)
-                        .set({ thumbnailUrl: resolvedCoverImage, updatedAt: new Date() })
-                        .where(eq(userCreations.id, input.reportId));
-                    }
-                  } catch (e: any) {
-                    console.warn("[exportBlackGoldPdf] backfill thumbnailUrl failed:", e?.message);
-                  }
-                }
-              }
-            }
-          } catch (e: any) {
-            console.warn("[exportBlackGoldPdf] cover fallback generation failed:", e?.message);
-          }
-        }
+        // ── cover.imageUrl 解析 ──────────────────────────────────────
+        // 历史曾在此处对没有 thumbnailUrl 的旧报告调 Vercel
+        // /api/google?op=nanoImage 兜底生成封面图（hotfix 之前）。
+        //
+        // 移除原因（2026-04-30 hotfix #343）：
+        //   ▸ 该 Vercel 端点目前不可达（实测 50s 完全超时无返回）—
+        //     项目主体早已迁移 Fly.io，Vercel 上仅保留静态 SPA bundle，
+        //     server route 失活。
+        //   ▸ 触发兜底后 AbortSignal.timeout(45_000) 强制等满 45 秒，
+        //     叠加 puppeteer 渲染 ~20s + GCS 上传 ~5s，总耗时 70+s
+        //     → 超过 fly proxy 默认 idle_timeout 60s
+        //     → 浏览器 fetch 报 "Load failed"（toast: PDF 生成失败：Load failed）。
+        //   ▸ pdfTemplate.ts buildCoverPage 在 cover.imageUrl 为空时
+        //     已原生支持 5 套渐变背景兜底（spring-mint 樱桃粉、neon-tech
+        //     深紫等），产品体验完全可接受。
+        //
+        // 后续若 Vercel nanoImage 端点恢复可用再考虑加回，并必须把
+        // timeout 缩到 ≤ 5 秒，杜绝拖死整个 PDF 流程。
+        const resolvedCoverImage = input.cover?.imageUrl || autoCoverImage;
 
         const cover = coverEnabled
           ? {
