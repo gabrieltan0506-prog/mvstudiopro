@@ -55,7 +55,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Nav */}
-        <div className="hidden lg:flex items-center gap-0.5">
+        <div className="hidden xl:flex items-center gap-0.5">
           {navItems.map((item) => (
             <Link
               key={item.href}
@@ -72,7 +72,7 @@ export default function Navbar() {
         </div>
 
         {/* Auth (desktop) */}
-        <div className="hidden lg:flex items-center gap-3 shrink-0">
+        <div className="hidden xl:flex items-center gap-3 shrink-0">
           {isAuthenticated && user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -126,7 +126,7 @@ export default function Navbar() {
               type="button"
               aria-label={mobileOpen ? "关闭菜单" : "打开菜单"}
               aria-expanded={mobileOpen}
-              className="lg:hidden inline-flex items-center justify-center min-h-11 min-w-11 rounded-md text-foreground hover:bg-accent active:scale-95 transition"
+              className="xl:hidden inline-flex items-center justify-center min-h-11 min-w-11 rounded-md text-foreground hover:bg-accent active:scale-95 transition"
             >
               <Menu className="h-5 w-5" />
             </button>
