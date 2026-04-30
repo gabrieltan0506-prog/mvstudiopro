@@ -170,3 +170,27 @@ const isMobile = useIsMobile();
 ### 23. **不要承诺已部署的事**
 
 部署有可能跑的是旧 image。**确认 image hash 不同 + 关键日志（如启动 reap）出现，才能说"已部署"**。
+
+---
+
+## 🔴 多组件协调类
+
+### 24. **改 UI 前必须先 grep 同主题组件**
+
+PR-1 第一次提交时只改了 `client/src/components/Navbar.tsx`（185 行 tailwind），但 `Home.tsx` 实际 import 的是 `client/src/components/HomeNavbar.tsx`（277 行纯 inline style，视觉风格完全不同 — 紫粉渐变暗色调）。结果首页响应式根本没动，reviewer 在 Vercel Preview 用 Safari DevTools 看 `data-loc` 才发现。
+
+**教训**：动 UI 文件前必须先全局搜索同主题组件，列出所有候选 + 各自在哪些页面用，确认 PR 范围覆盖所有候选才动手：
+
+```bash
+# 改 navbar 前
+rg -n "import.*Navbar|import.*Header" client/src --type tsx
+
+# 改 sidebar 前
+rg -n "import.*Sidebar|import.*Drawer" client/src --type tsx
+
+# 改 layout 前
+rg -n "import.*Layout|import.*Shell" client/src --type tsx
+```
+
+仓库里同主题组件可能不止一个（HomeNavbar / Navbar / DashboardSidebar / AdminNavbar / MobileHeader 等），别只看名字最贴的那个。光看 `client/src/components/Navbar.tsx` 不够，**用户主要看的入口（首页）import 了哪个文件，那才是必改的**。
+
