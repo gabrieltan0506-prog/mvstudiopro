@@ -32,6 +32,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { marked } from "marked";
 
 import {
@@ -39,6 +40,10 @@ import {
   type EChartsTheme,
   type ExtractedChart,
 } from "./echartsServerRender";
+
+// ESM (package.json type=module) 下没有 __dirname，要用 import.meta.url 反推
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 marked.setOptions({ gfm: true });
 
