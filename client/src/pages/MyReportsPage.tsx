@@ -14,7 +14,7 @@ import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 /** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
-/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
+/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
@@ -348,6 +348,46 @@ export default function MyReportsPage() {
       let html = `<!DOCTYPE html><html lang="zh-CN">${headEl.outerHTML}<body>${fragment.outerHTML}</body></html>`;
       html = optimizePdfSnapshotHtml(html);
       html = injectPdfSnapshotSanitizeIntoHead(html);
+
+      const htmlBytes = new TextEncoder().encode(html).length;
+
+      const runSyncPdfDownload = async () => {
+        setDownloadStage("sync_pdf");
+        downloadStageRef.current = "sync_pdf";
+        toast.info("正在生成 PDF（通常 1～3 分钟），请保持本页打开…", { duration: 10_000 });
+        const result = await downloadAnalysisPdfMutation.mutateAsync({
+          html,
+          token: "myreports-direct=1",
+        });
+        if (!result.pdfBase64) {
+          throw new Error("PDF 内容为空");
+        }
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const fileNameTitle = (pdfAsyncTitleRef.current || "战略情报报告").replace(/[\\/:*?"<>|]/g, "·").slice(0, 80);
+        a.href = blobUrl;
+        a.download = `${fileNameTitle}.pdf`;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 15_000);
+        toast.success(`PDF 已下载（${fileNameTitle}.pdf）`);
+      };
+
+      if (htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES) {
+        try {
+          await runSyncPdfDownload();
+          resetPdfDownloadUi();
+          return;
+        } catch (syncErr: unknown) {
+          const msg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+          console.warn("[MyReports] 同步 PDF 失败，改走云端队列：", msg);
+          toast.message("同步生成受阻，已自动改为云端队列（完成后仍会下载）", { duration: 12_000 });
+        }
+      }
 
       const htmlBytes = new TextEncoder().encode(html).length;
 
