@@ -703,6 +703,7 @@ export default function ReportRenderer({
       }}
     >
       <div
+        data-pdf-accent-bar
         style={{
           height: 6,
           margin: "-44px -56px 30px",
@@ -829,6 +830,11 @@ export default function ReportRenderer({
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
 
         @media print {
+          /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */
+          @page {
+            margin: 0;
+            size: A4 portrait;
+          }
           /* 列印環境淨化：避免外層留白把封面擠到第二頁（與精準快照 #myreports-pdf-root 配合） */
           html, body {
             height: auto !important;
@@ -841,6 +847,21 @@ export default function ReportRenderer({
             margin: 0 !important;
             padding: 0 !important;
             max-width: none !important;
+          }
+          /* 正文「模板」區：螢幕上大內距 + 圓角；PDF 改窄邊距、去陰影，視覺更接近滿版 */
+          [data-report-surface] {
+            padding: 4mm 6mm !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+            width: 100% !important;
+            max-width: none !important;
+            box-sizing: border-box !important;
+          }
+          [data-report-surface] > [data-pdf-accent-bar] {
+            margin: -4mm -6mm 3mm !important;
+            border-radius: 0 !important;
+            height: 5px !important;
           }
 
           /* MyReports 阅读模式外层壳（screen 用 min-height:100vh + 渐变）。
@@ -864,15 +885,18 @@ export default function ReportRenderer({
           figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
           /* 封面單獨一頁：禁止用 99vh 撐滿——在 Chromium page.pdf() 裡 vh 常大於實際 A4
-             可列印高度，整個 figure 會被 break-inside:avoid 推到第 2 頁 → 第 1 頁空白。 */
+             可列印高度。通用 figure/img 的 break-inside:avoid 會在「差一點塞不進首頁」時把整塊封面推到第 2 頁，
+             配合 page-break-after 即成「第 1 頁空白」，故封面與封面圖用 !important 放寬並留 mm 級裕量。 */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: auto !important;
             break-before: auto !important;
             page-break-after: always !important;
             break-after: page !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             height: auto !important;
             min-height: 0 !important;
-            max-height: 272mm !important;
+            max-height: 280mm !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
@@ -883,8 +907,10 @@ export default function ReportRenderer({
           }
           /* 封面圖：以紙張可列印高度為硬上限（A4 約 297mm − 邊距） */
           .cover-page img, .cover-page.cover-image-only img {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             max-width: 100% !important;
-            max-height: 265mm !important;
+            max-height: 275mm !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
