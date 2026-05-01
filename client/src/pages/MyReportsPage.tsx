@@ -17,8 +17,21 @@ const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 /** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
-/** 設為 1 或網址加 ?pdfDebug=1：作品庫 PDF 流程寫入下方診斷面板（僅本機，不送後端） */
+/** 設為 1 或網址加 ?pdfDebug=1：僅內部排錯用；一般客戶不須看到診斷 UI（避免干擾體驗） */
 const MY_REPORTS_PDF_DEBUG_LS = "mvs-myreports-pdf-debug";
+
+function isMyReportsPdfDebugModeEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  if (window.location.search.includes("pdfDebug=1") || window.location.search.includes("pdfDebug=true")) {
+    return true;
+  }
+  try {
+    if (localStorage.getItem(MY_REPORTS_PDF_DEBUG_LS) === "1") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
 function injectPdfSnapshotSanitizeIntoHead(html: string): string {
@@ -234,6 +247,11 @@ export default function MyReportsPage() {
   const [myReportsPdfDebugOpen, setMyReportsPdfDebugOpen] = useState(false);
   const [myReportsPdfDebugLines, setMyReportsPdfDebugLines] = useState<string[]>([]);
   const [myReportsPdfDebugLogging, setMyReportsPdfDebugLogging] = useState(false);
+  /** 與 append 閘門同步，避免 capture 閉包讀到舊的「常駐」false 而丟失 jobId 等行 */
+  const myReportsPdfDebugLoggingRef = useRef(false);
+  useEffect(() => {
+    myReportsPdfDebugLoggingRef.current = myReportsPdfDebugLogging;
+  }, [myReportsPdfDebugLogging]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -252,17 +270,20 @@ export default function MyReportsPage() {
       }
     }
     setMyReportsPdfDebugLogging(on);
+    myReportsPdfDebugLoggingRef.current = on;
     if (on) setMyReportsPdfDebugOpen(true);
   }, []);
 
   const appendMyReportsPdfDebug = useCallback((line: string) => {
-    if (!myReportsPdfDebugLogging && !myReportsPdfDebugSessionRef.current) return;
+    if (!isMyReportsPdfDebugModeEnabled()) return;
+    if (!myReportsPdfDebugLoggingRef.current && !myReportsPdfDebugSessionRef.current) return;
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     setMyReportsPdfDebugLines((prev) => [...prev.slice(-150), `[${ts}] ${line}`]);
-  }, [myReportsPdfDebugLogging]);
+  }, []);
 
-  /** 每次從卡片或閱讀模式點「下載 PDF」時調用：自動開面板 + 清空並種子說明，無需手動開關。 */
+  /** 僅在 ?pdfDebug=1 或已開「常駐记录」時：下載 PDF 自動開面板並種子說明。 */
   const beginMyReportsPdfAutoDebug = useCallback(() => {
+    if (!isMyReportsPdfDebugModeEnabled()) return;
     myReportsPdfDebugSessionRef.current = true;
     setMyReportsPdfDebugOpen(true);
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -278,6 +299,7 @@ export default function MyReportsPage() {
     } catch {
       /* ignore */
     }
+    myReportsPdfDebugLoggingRef.current = true;
     setMyReportsPdfDebugLogging(true);
     setMyReportsPdfDebugOpen(true);
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -294,9 +316,24 @@ export default function MyReportsPage() {
       /* ignore */
     }
     myReportsPdfDebugSessionRef.current = false;
+    myReportsPdfDebugLoggingRef.current = false;
     setMyReportsPdfDebugLogging(false);
     setMyReportsPdfDebugOpen(false);
   }, []);
+
+  /** 異步隊列回來的 jobId 與 capture 非同步：單獨補一行，避免閉包/時序導致面板缺任務 id */
+  useEffect(() => {
+    if (!asyncPdfJobId || !isMyReportsPdfDebugModeEnabled()) return;
+    const id = asyncPdfJobId;
+    const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setMyReportsPdfDebugLines((prev) => {
+      if (prev.some((l) => l.includes(id) && (l.includes("jobId") || l.includes("任务")))) return prev;
+      return [
+        ...prev.slice(-150),
+        `[${ts}] [任务] 异步 PDF 已入队 jobId=${id}（localStorage mvs-godview-pdf-export-job-id · God View DEBUG）`,
+      ];
+    });
+  }, [asyncPdfJobId]);
 
   // ── 下载 PDF：快照 HTML → 若体积 ≤6MB 则同步 downloadAnalysisPdf（与 HTML 一样立刻触发下载）；
   //    否则（或同步失败）走 GCS + queuePdfFromHtml → 轮询 getPdfExportJob → 签名链下载
@@ -639,7 +676,7 @@ export default function MyReportsPage() {
       if (htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES) {
         try {
           await runSyncPdfDownload();
-          appendMyReportsPdfDebug("同步 PDF 完成，已触发浏览器下载");
+          appendMyReportsPdfDebug("同步 PDF 完成，已触发浏览器下载（本路径无队列 jobId）");
           resetPdfDownloadUi();
           return;
         } catch (syncErr: unknown) {
@@ -801,6 +838,8 @@ export default function MyReportsPage() {
   };
 
   const renderMyReportsPdfDebugChrome = () => {
+    if (!isMyReportsPdfDebugModeEnabled()) return null;
+
     const pdfDebugRunActive =
       downloadStage !== "idle" || downloadingCardId !== null || !!asyncPdfJobId;
 
@@ -832,7 +871,7 @@ export default function MyReportsPage() {
             boxShadow: "0 4px 16px rgba(74,54,33,0.18)",
             backdropFilter: "blur(8px)",
           }}
-          title="下载 PDF 时会自动打开并写入步骤；也可选「常驻记录」跨刷新保留。"
+          title="内部排错：?pdfDebug=1 或「常驻记录」。一般用户页面不显示此项。"
         >
           <Bug size={14} />
           PDF诊断
@@ -948,15 +987,13 @@ export default function MyReportsPage() {
                 )}
               </div>
               <div style={{ fontSize: 9, color: "rgba(232,228,220,0.65)", fontWeight: 500, lineHeight: 1.5 }}>
-                给技术支持时请发：本框「复制全部」全文，或整张诊断面板截图；再口头补一句「大概几点、点的哪个下载
-                PDF、最后 Toast 说什么」即可。
+                内部排错用。给技术支持：本框「复制全部」或整面板截图；并补一句时间与最后 Toast。
               </div>
             </div>
             <div style={{ padding: 8, overflow: "auto", flex: 1 }}>
               {myReportsPdfDebugLines.length === 0 ? (
                 <span style={{ color: "rgba(232,228,220,0.55)" }}>
-                  点击「下载 PDF」后会<strong style={{ color: "#fde68a" }}>自动</strong>
-                  打开本面板并写日志。可选「常驻记录」跨刷新保留。不含 Cloud Run / worker 内部日志。
+                  已开启排错模式。点「下载 PDF」时会自动打开并写日志；可选「常驻记录」。不含 worker 内部日志。
                 </span>
               ) : (
                 myReportsPdfDebugLines.map((line, i) => <div key={i}>{line}</div>)
