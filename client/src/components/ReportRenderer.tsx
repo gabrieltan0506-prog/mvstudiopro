@@ -891,7 +891,6 @@ export default function ReportRenderer({
             page-break-before: auto !important;
             break-before: auto !important;
             page-break-after: always !important;
-            break-after: page !important;
             page-break-inside: auto !important;
             break-inside: auto !important;
             height: auto !important;
