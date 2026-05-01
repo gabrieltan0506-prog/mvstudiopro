@@ -14,7 +14,7 @@ import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 /** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
-/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
+/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
@@ -28,7 +28,7 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{margin:0!important;padding:0!important;}
 #myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
-.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:always!important;break-after:page!important;page-break-inside:auto!important;break-inside:auto!important;max-height:280mm!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:always!important;page-break-inside:auto!important;break-inside:auto!important;max-height:280mm!important;}
 .cover-page img,.cover-page.cover-image-only img{page-break-inside:auto!important;break-inside:auto!important;max-height:275mm!important;}
 @page{margin:0;size:A4 portrait;}
 [data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
@@ -37,6 +37,64 @@ html,body{margin:0!important;padding:0!important;}
 </style>`;
   if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);
   return `${strip}${html}`;
+}
+
+/** 快照專用：把封面 <img> 換成 data URL，避免 pdf-worker setContent 後遠端圖失敗 → 高度 0 + page-break 空白首頁 */
+async function embedMyReportsCoverImageInPdfFragment(
+  fragment: HTMLElement,
+  liveCoverImg: HTMLImageElement | null,
+): Promise<void> {
+  const img = fragment.querySelector("figure.cover-page img");
+  if (!(img instanceof HTMLImageElement) || !img.src) return;
+  const raw = img.currentSrc || img.src;
+  if (raw.startsWith("data:")) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, window.location.href);
+  } catch {
+    return;
+  }
+  const sameOrigin = parsed.origin === window.location.origin;
+  try {
+    const res = await fetch(raw, {
+      mode: "cors",
+      credentials: sameOrigin ? "include" : "omit",
+      cache: "force-cache",
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) return;
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(new Error("readAsDataURL failed"));
+      fr.readAsDataURL(blob);
+    });
+    img.src = dataUrl;
+    img.removeAttribute("srcset");
+    return;
+  } catch (e) {
+    console.warn("[MyReports] 封面 fetch 转 data URL 失败，尝试 canvas 内嵌", e);
+  }
+
+  if (
+    liveCoverImg &&
+    liveCoverImg.naturalWidth > 0 &&
+    liveCoverImg.naturalHeight > 0
+  ) {
+    try {
+      const c = document.createElement("canvas");
+      c.width = liveCoverImg.naturalWidth;
+      c.height = liveCoverImg.naturalHeight;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(liveCoverImg, 0, 0);
+      img.src = c.toDataURL("image/jpeg", 0.92);
+      img.removeAttribute("srcset");
+    } catch (e2) {
+      console.warn("[MyReports] 封面 canvas 内嵌失败（可能跨域污染）", e2);
+    }
+  }
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -335,7 +393,6 @@ export default function MyReportsPage() {
         throw new Error("找不到 PDF 快照容器（myreports-pdf-root），请重进阅读模式后再试");
       }
 
-
       // 封面若未 decode 完成，快照裡 naturalHeight=0 → pdf-worker 得到空白首頁 + page-break-after 仍生效
       const coverImg = pdfRoot.querySelector("figure.cover-page img");
       if (coverImg instanceof HTMLImageElement) {
@@ -369,6 +426,17 @@ export default function MyReportsPage() {
         .querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group")
         .forEach((n) => n.remove());
       fragment.querySelectorAll("[class*='sonner']").forEach((n) => n.remove());
+
+      const liveCoverImg = pdfRoot.querySelector("figure.cover-page img");
+      const coverLoadFailed = liveCoverImg instanceof HTMLImageElement && liveCoverImg.naturalWidth === 0;
+      if (coverLoadFailed) {
+        fragment.querySelector("figure.cover-page")?.remove();
+      } else {
+        await embedMyReportsCoverImageInPdfFragment(
+          fragment,
+          liveCoverImg instanceof HTMLImageElement ? liveCoverImg : null,
+        );
+      }
 
       const headEl = document.head.cloneNode(true) as HTMLHeadElement;
       headEl.querySelectorAll("script").forEach((n) => n.remove());
