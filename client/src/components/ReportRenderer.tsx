@@ -855,6 +855,8 @@ export default function ReportRenderer({
             flex-direction: column !important;
             justify-content: center !important;
             align-items: center !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
           /* 封面图按 letterbox 缩放：阅读模式下 inline style 用的是
              aspectRatio: 9/16 + maxWidth: 720 + objectFit: cover，A4 高度
@@ -870,6 +872,7 @@ export default function ReportRenderer({
             border: none !important;
             box-shadow: none !important;
             border-radius: 0 !important;
+            outline: none !important;
           }
         }
       `}</style>
