@@ -5,11 +5,13 @@ import { z } from "zod";
 
 // 给 pdf-worker / 其它大 body fetch 用的自定义 undici dispatcher。
 // undici 默认 headersTimeout=300s，bodyTimeout=300s — 16 MB body 跨云 LB 上传会卡 300s
-// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时都抬到 600s，并强制关闭 keepalive
-// （keepAliveTimeout=1ms 等价于"每个请求一条新连接、立即关"，规避代理 / LB 残留连接问题）。
+// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时都抬到 2000s（跟 Cloud Run
+// pdf-service --timeout=2000 对齐），强制关闭 keepalive 规避 LB 残留连接。
+// 用户决策（2026-05-01）：Deep Research Max 16-25 MB HTML 已成常态，渲染要 5-15 min。
+// Gemini reviewer 建议外圈从 1800s 拉到 2000s — 给 PDF 序列化 + 跨云回传 500s 缓冲。
 const pdfDispatcher = new Agent({
-  headersTimeout: 600_000,
-  bodyTimeout: 600_000,
+  headersTimeout: 2_000_000,
+  bodyTimeout: 2_000_000,
   keepAliveTimeout: 1,
   keepAliveMaxTimeout: 1,
 });
@@ -2505,7 +2507,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 720_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2546,7 +2548,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 720_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -6353,7 +6355,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           );
 
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 720_000);
+          const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
           try {
             const res = await fetch(proxyUrl, {
               method: "POST",

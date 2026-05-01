@@ -1944,60 +1944,64 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次重试
+    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次串行重试
     //    用户决策（2026-05-01）：
-    //      - 之前用 flash 模型 42% 失败率。改用 pro 模型 + 重试，质感更好
-    //        （截图里 EMPIRE/INNOVATIONS/BOUNDLESS 那种带文字杂志封面来自 pro），
-    //        失败率应能压到 <5%。
-    //      - aspectRatio: "9:16" — 标准杂志竖版封面比例
-    //      - 严格不要场景图兜底：场景图是 16:9 横版，硬塞 9:16 竖版卡片会被
-    //        拉伸/裁切，看着比 NULL 还丑。6 次都失败 → 接受 NULL（极少数）。
-    //      - 双轨：Vertex 3 次 + Gemini API key 3 次。
-    let coverUrl: string | undefined;
+    //      - 6 次重试保留（保证质量），但**整段必须异步执行，不能阻塞主流程**。
+    //        用户明确：报告主体生成完即可让用户在「战略作品快照库」看到，
+    //        封面后台慢慢跑（最坏 6 分钟），完成后 fire-and-forget 回写 DB。
+    //      - aspectRatio: "9:16" — 标准杂志竖版
+    //      - 严格不要场景图兜底（场景图是 16:9 横版，硬塞会拉伸）
+    //      - 双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）
+    //      - 单次 timeout 60s（Gemini reviewer 建议从 90s 降下来缩短 worst-case）
     const coverPrompt = `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
+    const coverPromise: Promise<string | undefined> = (async () => {
+      let cover: string | undefined;
 
-    // 主路径 Vertex (tier=pro = Nano Banana Pro)，重试 3 次
-    for (let i = 1; i <= 3 && !coverUrl; i++) {
-      try {
-        const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
-        const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: coverPrompt, tier: "pro", aspectRatio: "3:4" }),
-          signal: AbortSignal.timeout(90_000),
-        });
-        if (!res.ok) {
-          const errText = await res.text().catch(() => "");
-          throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
+      // 主路径 Vertex (tier=pro = Nano Banana Pro)，串行重试 3 次
+      for (let i = 1; i <= 3 && !cover; i++) {
+        try {
+          const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+          const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: coverPrompt, tier: "pro", aspectRatio: "9:16" }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (!res.ok) {
+            const errText = await res.text().catch(() => "");
+            throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
+          }
+          const j: any = await res.json();
+          if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
+          cover = String(j.imageUrl);
+          console.log(`[deepResearch][async-cover] ✅ via Vertex (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
+        } catch (e: any) {
+          console.warn(`[deepResearch][async-cover] ⚠️ Vertex 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
+          if (i < 3) await sleep(2000);
         }
-        const j: any = await res.json();
-        if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
-        coverUrl = String(j.imageUrl);
-        console.log(`[deepResearch] ✅ 封面图生成成功 via Vertex (Nano Banana Pro 3:4)，第 ${i}/3 次尝试`);
-      } catch (e: any) {
-        console.warn(`[deepResearch] ⚠️ 封面图 Vertex 第 ${i}/3 次失败：${e?.message ?? e}`);
-        if (i < 3) await sleep(2000);
       }
-    }
 
-    // Fallback Gemini API key 直连 (Nano Banana Pro)，重试 3 次
-    for (let i = 1; i <= 3 && !coverUrl; i++) {
-      try {
-        coverUrl = await generateImageViaGeminiApiKey({
-          prompt: coverPrompt,
-          aspectRatio: "3:4",
-          model: "gemini-3-pro-image-preview",
-        });
-        console.log(`[deepResearch] ✅ 封面图生成成功 via Gemini API key (Nano Banana Pro 3:4)，第 ${i}/3 次尝试`);
-      } catch (e: any) {
-        console.warn(`[deepResearch] ⚠️ 封面图 Gemini API key 第 ${i}/3 次失败：${e?.message ?? e}`);
-        if (i < 3) await sleep(2000);
+      // Fallback Gemini API key 直连 (Nano Banana Pro)，串行重试 3 次
+      for (let i = 1; i <= 3 && !cover; i++) {
+        try {
+          cover = await generateImageViaGeminiApiKey({
+            prompt: coverPrompt,
+            aspectRatio: "9:16",
+            model: "gemini-3-pro-image-preview",
+          });
+          console.log(`[deepResearch][async-cover] ✅ via Gemini API key (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
+        } catch (e: any) {
+          console.warn(`[deepResearch][async-cover] ⚠️ Gemini API key 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
+          if (i < 3) await sleep(2000);
+        }
       }
-    }
 
-    if (!coverUrl) {
-      console.warn("[deepResearch] 封面 6 次全失败，本报告 thumbnailUrl=NULL（不阻断主流程，可后续手工 backfill）");
-    }
+      if (!cover) {
+        console.warn(`[deepResearch][async-cover] 6 次全失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
+      }
+      return cover;
+    })();
+    // 不 await！主流程立即继续 — 报告先 ready，封面后台慢慢出。
 
     // 3. 报告头部 banner（封面卡 + 个性化签名） + 趋势图 + 报告正文 + 思维链 + 来源
     const reportHeader = `# ${lighthouseTitle}\n\n> 📅 出品日期：${dateStr} · 个性化种子：\`${personalSeed.slice(0, 32)}…\`\n> 🔍 数据来源：Google 搜索接地（近 2 年） + 您的账户基线 ${holistic.totalCreations} 条创作记录\n> 🧠 推演引擎：Gemini Deep Research Pro Preview · 全网检索 + 思维链推理 + 综合最深层级\n\n---\n\n`;
@@ -2054,7 +2058,7 @@ ${job.topic}
             metadata: JSON.stringify(metaPayload),
             updatedAt: new Date(),
           };
-          if (coverUrl) setPayload.thumbnailUrl = coverUrl;
+          // ⚠️ thumbnailUrl 不在主写入里设 — 让 coverPromise 异步完成后再 fire-and-forget UPDATE
           await db.update(userCreations).set(setPayload).where(eq(userCreations.id, latest.dbRecordId));
         }
       } catch (e: any) {
@@ -2062,7 +2066,30 @@ ${job.topic}
       }
     }
 
-    console.log(`[deepResearch] ✅ 研报 ${jobId} 已完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min`);
+    // ── 异步封面回写：等 coverPromise resolve 后单独 UPDATE thumbnailUrl ────────
+    //    不阻塞主流程返回。最坏 6 分钟后 thumbnailUrl 才落地，前端展示时 NULL → 占位图。
+    if (latest.dbRecordId) {
+      const recordId = latest.dbRecordId;
+      void coverPromise.then(async (resolvedCoverUrl) => {
+        if (!resolvedCoverUrl) return; // 6 次全败，保持 NULL
+        try {
+          const { db, userCreations } = await getDbAndSchema();
+          if (!db) return;
+          const { eq } = await import("drizzle-orm");
+          await db
+            .update(userCreations)
+            .set({ thumbnailUrl: resolvedCoverUrl, updatedAt: new Date() })
+            .where(eq(userCreations.id, recordId));
+          console.log(`[deepResearch][async-cover] ✅ thumbnailUrl 已回填 dbRecordId=${recordId} jobId=${jobId}`);
+        } catch (e: any) {
+          console.warn(`[deepResearch][async-cover] thumbnailUrl 回填失败 dbRecordId=${recordId}: ${e?.message}`);
+        }
+      }).catch((e: any) => {
+        console.warn(`[deepResearch][async-cover] coverPromise 抛错 jobId=${jobId}: ${e?.message}`);
+      });
+    }
+
+    console.log(`[deepResearch] ✅ 研报 ${jobId} 已完成，字符数: ${reportMarkdown.length}，耗时 ${duration} min（封面后台异步生成中）`);
 
     // ── 任务正常完成，结清 paidJobLedger 上的 hold（标 status=settled） ────────
     //   不退积分（settled ≠ refunded），仅让 reaper / pre-deploy-guard 不再扫到
