@@ -887,10 +887,12 @@ export default function ReportRenderer({
           /* 封面單獨一頁：禁止用 99vh 撐滿——在 Chromium page.pdf() 裡 vh 常大於實際 A4
              可列印高度。通用 figure/img 的 break-inside:avoid 會在「差一點塞不進首頁」時把整塊封面推到第 2 頁，
              配合 page-break-after 即成「第 1 頁空白」，故封面與封面圖用 !important 放寬並留 mm 級裕量。 */
+          /* 封面不用 page-break-after：0 高封面 + always 會幽靈空白首頁；改由
+             #myreports-pdf-root:has(figure.cover-page) 時讓正文 surface 前換頁 */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: auto !important;
             break-before: auto !important;
-            page-break-after: always !important;
+            page-break-after: auto !important;
             page-break-inside: auto !important;
             break-inside: auto !important;
             height: auto !important;
@@ -917,6 +919,11 @@ export default function ReportRenderer({
             box-shadow: none !important;
             border-radius: 0 !important;
             outline: none !important;
+          }
+
+          #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
+            page-break-before: always !important;
+            break-before: page !important;
           }
 
           /* ── 2026-05-01 window.print() 本地另存 PDF 路径 ──
