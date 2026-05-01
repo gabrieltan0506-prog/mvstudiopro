@@ -2493,7 +2493,9 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
+        // PR #357 决策：所有 PDF 链路 timeout 统一 15 分钟 (900_000 ms)。
+        // 33 分钟版本会让卡死请求白等 30+ 分钟才报错，逼用户重启 fly machine。
+        const timeoutId = setTimeout(() => controller.abort(), 900_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2534,7 +2536,8 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
+        // PR #357 决策：所有 PDF 链路 timeout 统一 15 分钟 (900_000 ms)。
+        const timeoutId = setTimeout(() => controller.abort(), 900_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",

@@ -464,10 +464,11 @@ export default function MyReportsPage() {
         </div>
 
         <div data-report-root style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
-          {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染；用 <img> 让浏览器异步解码，
-              递交 pdf-worker 之前已经在 DOM 里准备好了像素，puppeteer 直接看到完整图片） */}
+          {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染）。
+              `.cover-page.cover-image-only` 类与 ReportRenderer 的 @media print
+              规则配合 → puppeteer 渲染 PDF 时封面强制独占首页，不会跟正文挤一页。 */}
           {coverImageUrl && (
-            <figure style={{ margin: "0 0 28px", padding: 0, textAlign: "center" }}>
+            <figure className="cover-page cover-image-only" style={{ margin: "0 0 28px", padding: 0, textAlign: "center" }}>
               <img
                 src={coverImageUrl}
                 alt={selectedReport.title}
