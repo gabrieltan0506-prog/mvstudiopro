@@ -28,8 +28,9 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{margin:0!important;padding:0!important;}
 #myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
-.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:always!important;page-break-inside:auto!important;break-inside:auto!important;max-height:280mm!important;}
-.cover-page img,.cover-page.cover-image-only img{page-break-inside:auto!important;break-inside:auto!important;max-height:275mm!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:avoid!important;break-before:avoid!important;page-break-after:auto!important;break-after:auto!important;page-break-inside:avoid!important;break-inside:avoid!important;display:block!important;position:relative!important;height:295mm!important;max-height:295mm!important;margin:0!important;padding:0!important;border:none!important;background-color:#fff!important;box-sizing:border-box!important;}
+.cover-page img,.cover-page.cover-image-only img{position:absolute!important;top:50%!important;left:50%!important;transform:translate(-50%,-50%)!important;max-width:100%!important;max-height:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;margin:0!important;padding:0!important;display:block!important;border:none!important;box-shadow:none!important;border-radius:0!important;outline:none!important;}
+#myreports-pdf-root:has(> figure.cover-page) > [data-report-surface]{page-break-before:always!important;break-before:page!important;}
 @page{margin:0;size:A4 portrait;}
 [data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
 [data-report-surface]>[data-pdf-accent-bar]{margin:-4mm -6mm 3mm!important;border-radius:0!important;}
@@ -94,6 +95,20 @@ async function embedMyReportsCoverImageInPdfFragment(
     } catch (e2) {
       console.warn("[MyReports] 封面 canvas 内嵌失败（可能跨域污染）", e2);
     }
+  }
+}
+
+/** 快照裡封面必須已是 data URL，否則 worker 側遠端 URL 常載入失敗 → 幽靈換頁留白 */
+function dropCoverFromPdfFragmentUnlessEmbedded(fragment: HTMLElement): void {
+  const fig = fragment.querySelector("figure.cover-page");
+  if (!fig) return;
+  const img = fig.querySelector("img");
+  const ok =
+    img instanceof HTMLImageElement &&
+    /^data:image\/(png|jpeg|jpg|webp|gif|bmp);base64,/i.test(img.src) &&
+    img.src.length > 512;
+  if (!ok) {
+    fig.remove();
   }
 }
 
@@ -436,6 +451,7 @@ export default function MyReportsPage() {
           fragment,
           liveCoverImg instanceof HTMLImageElement ? liveCoverImg : null,
         );
+        dropCoverFromPdfFragmentUnlessEmbedded(fragment);
       }
 
       const headEl = document.head.cloneNode(true) as HTMLHeadElement;

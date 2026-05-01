@@ -884,39 +884,46 @@ export default function ReportRenderer({
           /* 图片 / 图表 figure 不被中间切断（除非自身就比一页还高） */
           figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面單獨一頁：禁止用 99vh 撐滿——在 Chromium page.pdf() 裡 vh 常大於實際 A4
-             可列印高度。通用 figure/img 的 break-inside:avoid 會在「差一點塞不進首頁」時把整塊封面推到第 2 頁，
-             配合 page-break-after 即成「第 1 頁空白」，故封面與封面圖用 !important 放寬並留 mm 級裕量。 */
+          /* 封面：清掉 figure 預設 margin、避免 print 下 Flex 佈局異常；relative 框 + absolute 置中 */
           .cover-page, .cover-page.cover-image-only {
-            page-break-before: auto !important;
-            break-before: auto !important;
-            page-break-after: always !important;
-            page-break-inside: auto !important;
-            break-inside: auto !important;
-            height: auto !important;
-            min-height: 0 !important;
-            max-height: 280mm !important;
-            display: flex !important;
-            flex-direction: column !important;
-            justify-content: center !important;
-            align-items: center !important;
+            page-break-before: avoid !important;
+            break-before: avoid !important;
+            page-break-after: auto !important;
+            break-after: auto !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            display: block !important;
+            position: relative !important;
+            height: 295mm !important;
+            max-height: 295mm !important;
             margin: 0 !important;
             padding: 0 !important;
+            border: none !important;
+            background-color: #fff !important;
             box-sizing: border-box !important;
           }
-          /* 封面圖：以紙張可列印高度為硬上限（A4 約 297mm − 邊距） */
           .cover-page img, .cover-page.cover-image-only img {
-            page-break-inside: auto !important;
-            break-inside: auto !important;
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
             max-width: 100% !important;
-            max-height: 275mm !important;
+            max-height: 100% !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            display: block !important;
             border: none !important;
             box-shadow: none !important;
             border-radius: 0 !important;
             outline: none !important;
+          }
+
+          #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
+            page-break-before: always !important;
+            break-before: page !important;
           }
 
           /* ── 2026-05-01 window.print() 本地另存 PDF 路径 ──

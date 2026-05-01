@@ -286,7 +286,7 @@ app.post("/generate-pdf", async (req, res) => {
       await page.addStyleTag({
         content: `
           @media print {
-            html, body, * {
+            html, body, html body *:not(img):not(video):not(canvas) {
               font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR",
                 "Noto Serif CJK SC", "Noto Serif CJK JP", serif !important;
             }
