@@ -11,8 +11,29 @@ import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 
+/** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
+const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
+
 /** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
+
+/** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
+function injectPdfSnapshotSanitizeIntoHead(html: string): string {
+  const strip = `<style id="mvs-pdf-snapshot-sanitize">
+/* 強制摘掉各版 Sonner / Toast 與 notifications 區塊（含 fixed 在每頁重複繪製） */
+[data-sonner-toaster],[data-sonner-toast],[data-sonner-toaster] li,
+ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="通知" i],
+[class*="sonner-toast"],.toaster.group,.toaster{display:none!important;visibility:hidden!important;
+height:0!important;width:0!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;}
+@media print{
+html,body{margin:0!important;padding:0!important;}
+#myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;}
+}
+</style>`;
+  if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);
+  return `${strip}${html}`;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -300,16 +321,33 @@ export default function MyReportsPage() {
       }
       await new Promise((r) => setTimeout(r, 2800));
 
-      const clone = document.documentElement.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll("script").forEach((n) => n.remove());
-      clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      // 關閉並移出 DOM：Sonner 為 fixed，不處理會被採進 PDF 且在 Chromium 每頁重複繪製
+      toast.dismiss();
+      await new Promise((r) => setTimeout(r, 400));
 
-      const baseTag = document.createElement("base");
-      baseTag.href = window.location.origin + "/";
-      clone.querySelector("head")?.prepend(baseTag);
+      // 精準快照：只克隆報告容器（封面 + ReportRenderer），不採 documentElement → 不會帶入 Sonner / React root / 導航等
+      const pdfRoot = document.getElementById(MYREPORTS_PDF_SNAPSHOT_ROOT_ID);
+      if (!pdfRoot) {
+        throw new Error("找不到 PDF 快照容器（myreports-pdf-root），请重进阅读模式后再试");
+      }
+      const fragment = pdfRoot.cloneNode(true) as HTMLElement;
+      fragment.querySelectorAll("script").forEach((n) => n.remove());
+      fragment.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+      fragment.querySelectorAll("button").forEach((n) => n.remove());
+      fragment
+        .querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group")
+        .forEach((n) => n.remove());
+      fragment.querySelectorAll("[class*='sonner']").forEach((n) => n.remove());
 
-      let html = "<!DOCTYPE html>" + clone.outerHTML;
+      const headEl = document.head.cloneNode(true) as HTMLHeadElement;
+      headEl.querySelectorAll("script").forEach((n) => n.remove());
+      const baseEl = document.createElement("base");
+      baseEl.href = window.location.origin + "/";
+      headEl.insertBefore(baseEl, headEl.firstChild);
+
+      let html = `<!DOCTYPE html><html lang="zh-CN">${headEl.outerHTML}<body>${fragment.outerHTML}</body></html>`;
       html = optimizePdfSnapshotHtml(html);
+      html = injectPdfSnapshotSanitizeIntoHead(html);
 
       const htmlBytes = new TextEncoder().encode(html).length;
 
@@ -585,7 +623,12 @@ export default function MyReportsPage() {
           </div>
         </div>
 
-        <div data-report-root style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
+        <div
+          id={MYREPORTS_PDF_SNAPSHOT_ROOT_ID}
+          data-report-root
+          data-myreports-read-layout
+          style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}
+        >
           {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染）。
               `.cover-page.cover-image-only` 类与 ReportRenderer 的 @media print
               规则配合 → puppeteer 渲染 PDF 时封面强制独占首页，不会跟正文挤一页。 */}

@@ -8,6 +8,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme={theme as ToasterProps["theme"]}
       className="toaster group"
+      data-pdf-exclude="true"
       // 默认右上角 + 富色（success/error/warning/loading 自带高对比配色）
       // 避免 sonner 默认底部 / 默认主题色和页面背景同色看不见
       position="top-right"
