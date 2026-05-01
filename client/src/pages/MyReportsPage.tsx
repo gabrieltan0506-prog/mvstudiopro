@@ -73,6 +73,12 @@ export default function MyReportsPage() {
   // 2) cloneNode(true) 抓全文档 DOM（recharts 已经把 SVG 画进去），剥 script /
   //    `data-pdf-exclude="true"` 和工具条
   // 3) POST 到 mvAnalysis.downloadPlatformPdf → Cloud Run pdf-worker → base64 → Blob 下载
+  //
+  // @deprecated 2026-05-01 改用 window.print() 本地另存为 PDF（见 handlePrintPdf /
+  //   handlePrintFromReadingMode）。云端 puppeteer 路径对超大报告（25-40MB outerHTML）
+  //   page.setContent 会 14 分钟超时炸（08:17 实测 Navigation timeout 840000ms）。
+  //   保留 mutation hook、状态机、captureAndUploadSnapshot、handleDownloadFromCard、
+  //   handleDownloadFromReadingMode 全部代码不删，便于未来恢复。
   const downloadPlatformPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
     onSuccess: (result) => {
       setDownloadStage("idle");
@@ -253,6 +259,8 @@ export default function MyReportsPage() {
   //   - cloneNode 后剥掉所有 <script> 和 data-pdf-exclude="true" 元素，
   //     避免 puppeteer 在 setContent 时把 React 重渲染清掉已绘制的图表
   //   - 加 <base href> 让 pdf-worker 端的相对 URL 可解析（PlatformPage 同款）
+  //
+  // @deprecated 2026-05-01 改用 window.print() 本地另存为 PDF。函数体保留待恢复。
   const captureAndUploadSnapshot = useCallback(async () => {
     setDownloadStage("snapshotting");
     downloadStageRef.current = "snapshotting";
@@ -297,6 +305,9 @@ export default function MyReportsPage() {
   // 卡片级一键下载：自动进阅读模式 → 等渲染完 → DOM 快照 → 送 pdf-worker。
   // 整个链路与 PlatformPage 完全一致（`document.documentElement.cloneNode(true)` →
   // mvAnalysis.downloadPlatformPdf），是实战验证过的稳定路径。
+  //
+  // @deprecated 2026-05-01 改用 handlePrintPdf（window.print() 本地另存）。函数体
+  //   保留待恢复，按钮 onClick 已不再调本函数。
   const handleDownloadFromCard = useCallback(async (report: Report) => {
     const md = report.reportMarkdown || report.draftMarkdown || "";
     if (!md) { toast.error("内容尚未生成"); return; }
@@ -336,6 +347,9 @@ export default function MyReportsPage() {
   }, [ensureCoverMutation, refetch, styleOf]);
 
   // 阅读模式内的「下载 PDF」按钮：用户已经在 reading mode，先 ensureCover 再快照
+  //
+  // @deprecated 2026-05-01 改用 handlePrintFromReadingMode（window.print() 本地另存）。
+  //   函数体保留待恢复，按钮 onClick 已不再调本函数。
   const handleDownloadFromReadingMode = useCallback(async () => {
     if (!selectedReport?.id) {
       toast.error("阅读模式未就绪");
@@ -363,6 +377,83 @@ export default function MyReportsPage() {
     setDownloadStage("rendering");
     downloadStageRef.current = "rendering";
   }, [ensureCoverMutation, refetch, selectedReport?.id]);
+
+  // ── window.print() 本地另存为 PDF（2026-05-01 取代云端 puppeteer 路径） ──
+  // 桌面端 + 移动端通用：window.print() 用同一个 Chromium 引擎在本地秒级完成，
+  // 零网络成本、零失败率，规避超大 outerHTML POST 给 Cloud Run pdf-worker
+  // 的 14 分钟 page.setContent 超时。用户在原生打印对话框选「另存为 PDF」即可。
+  //
+  // 印刷只显示 [data-report-root] 内容（封面 hero + ReportRenderer），
+  // 工具条 / 卡片 chrome 由 ReportRenderer.tsx 的 @media print 规则隐藏：
+  // [data-pdf-exclude="true"] { display: none !important; }
+  const handlePrintPdf = useCallback(async (report: Report) => {
+    const md = report.reportMarkdown || report.draftMarkdown || "";
+    if (!md) { toast.error("内容尚未生成"); return; }
+    setDownloadingCardId(report.id);
+    autoExitReadingAfterDownloadRef.current = true;
+
+    try {
+      // 1) 缺封面时按需补一张 9:16 杂志封面（mutation 幂等，已有则 NOOP）
+      if (!report.coverUrl) {
+        toast.info("封面尚未生成，正在补一张 9:16 杂志封面…");
+        try {
+          await ensureCoverMutation.mutateAsync({ creationId: report.id });
+          await refetch();
+        } catch (e: any) {
+          // 封面补生失败不阻塞打印：报告主体仍能渲染
+          console.warn("[MyReports.print] ensureCover 失败，PDF 将无封面继续生成：", e?.message);
+        }
+      }
+
+      // 2) 进阅读模式让 ReportRenderer 把完整 DOM（含 recharts SVG）渲出来
+      setPdfStyle(styleOf(report.id));
+      setSelectedReport({
+        id: report.id,
+        title: report.lighthouseTitle || report.title,
+        markdown: md,
+      });
+
+      // 3) 等 React commit + web fonts 解码 + recharts ResponsiveContainer 沉淀
+      await new Promise((r) => setTimeout(r, 100));
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // 4) 触发浏览器原生打印对话框（同步阻塞，用户关闭对话框后才返回）
+      window.print();
+    } catch (err: any) {
+      console.error("[MyReports.print] failed:", err);
+      toast.error("打印准备失败，请重试：" + (err?.message || "未知错误"));
+    } finally {
+      setDownloadingCardId(null);
+      if (autoExitReadingAfterDownloadRef.current) {
+        autoExitReadingAfterDownloadRef.current = false;
+        setSelectedReport(null);
+      }
+    }
+  }, [ensureCoverMutation, refetch, styleOf]);
+
+  // 阅读模式内的「下载 PDF」按钮：用户已经在 reading mode，无需切视图，
+  // 直接等字体 + recharts 沉淀后 print。autoExit 设 false：用户已主动进入
+  // 阅览，打印完不应自动退出。
+  const handlePrintFromReadingMode = useCallback(async () => {
+    if (!selectedReport?.id) {
+      toast.error("阅读模式未就绪");
+      return;
+    }
+    autoExitReadingAfterDownloadRef.current = false;
+    try {
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      window.print();
+    } catch (err: any) {
+      console.error("[MyReports.print/reading] failed:", err);
+      toast.error("打印准备失败，请重试：" + (err?.message || "未知错误"));
+    }
+  }, [selectedReport?.id]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -434,7 +525,7 @@ export default function MyReportsPage() {
               <FileText size={12} />Markdown
             </button>
             <button
-              onClick={() => void handleDownloadFromReadingMode()}
+              onClick={() => void handlePrintFromReadingMode()}
               disabled={isBusy}
               style={{
                 display: "flex",
@@ -452,7 +543,7 @@ export default function MyReportsPage() {
                 cursor: isBusy ? "not-allowed" : "pointer",
                 boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
               }}
-              title="抓取当前阅读模式 DOM 快照，送 Cloud Run pdf-worker 转 PDF（与 PlatformPage 同路径）"
+              title="弹出浏览器原生打印对话框，用户选「另存为 PDF」即可（本地 Chromium 渲染，零网络成本）"
             >
               {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
               {downloadStage === "ensuring-cover" ? "生成封面…" :
@@ -619,7 +710,7 @@ export default function MyReportsPage() {
                       setSelectedReport({ id: report.id, title: report.lighthouseTitle || report.title, markdown: md });
                     }}
                     onEdit={() => setEditingReport(report)}
-                    onDownload={() => void handleDownloadFromCard(report)}
+                    onDownload={() => void handlePrintPdf(report)}
                     onDownloadHtml={() => handleDownloadHtmlFromCard(report)}
                     onCancel={() => handleCancelJob(report)}
                     onSoftDelete={() => handleSoftDelete(report)}
