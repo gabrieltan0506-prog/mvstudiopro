@@ -842,6 +842,8 @@ export default function ReportRenderer({
             margin: 0 !important;
             padding: 0 !important;
             background: #ffffff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           #myreports-pdf-root {
             margin: 0 !important;
@@ -881,10 +883,11 @@ export default function ReportRenderer({
           /* 标题尽量不在页底孤立，强制把标题与下一段绑在一起 */
           h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
 
-          /* 图片 / 图表 figure 不被中间切断（除非自身就比一页还高） */
-          figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
+          /* 图片 / 图表 figure 不被中间切断；封面 figure.cover-page 豁免（避免 ~整頁高
+             + break-inside:avoid 被整塊推到第 2 頁 → PDF 第 1 頁空白） */
+          figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面：清掉 figure 預設 margin、避免 print 下 Flex 佈局異常；relative 框 + absolute 置中 */
+          /* 封面：與快照注入對齊（Gemini 校對：首塊 break-before avoid + position 容器） */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: avoid !important;
             break-before: avoid !important;
@@ -892,38 +895,49 @@ export default function ReportRenderer({
             break-after: auto !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
-            display: block !important;
-            position: relative !important;
-            height: 295mm !important;
-            max-height: 295mm !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
             margin: 0 !important;
             padding: 0 !important;
             border: none !important;
             background-color: #fff !important;
-            box-sizing: border-box !important;
+            width: 100% !important;
+            height: 262mm !important;
+            max-height: 262mm !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+            position: relative !important;
           }
           .cover-page img, .cover-page.cover-image-only img {
-            position: absolute !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
+            position: static !important;
+            display: block !important;
+            flex-shrink: 0 !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             max-width: 100% !important;
             max-height: 100% !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
+            aspect-ratio: auto !important;
             margin: 0 !important;
             padding: 0 !important;
-            display: block !important;
+            transform: none !important;
             border: none !important;
             box-shadow: none !important;
             border-radius: 0 !important;
             outline: none !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
           #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
             page-break-before: always !important;
             break-before: page !important;
+            margin-top: 0 !important;
           }
 
           /* ── 2026-05-01 window.print() 本地另存 PDF 路径 ──
