@@ -23,6 +23,54 @@ import {
 const REPORT_DIR = process.env.DEEP_RESEARCH_REPORT_DIR || "/data/growth/deep-research";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 出版物日期一律用亞洲時間 Asia/Shanghai (GMT+8)，避免服務器預設時區造成偏差 */
+const PUBLICATION_TZ = "Asia/Shanghai";
+
+function formatPublicationDateZhAsia(d = new Date()): string {
+  return d.toLocaleDateString("zh-CN", {
+    timeZone: PUBLICATION_TZ,
+    year: "numeric",
+    month: "long",
+  });
+}
+
+/** 封面角標英文月份縮寫 + 四位年，例如 "MAY 2026" */
+function formatMagazineCoverMonthYearEnAsia(d = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: PUBLICATION_TZ,
+    month: "short",
+    year: "numeric",
+  }).formatToParts(d);
+  const monthRaw = parts.find((p) => p.type === "month")?.value ?? "Jan";
+  const year = parts.find((p) => p.type === "year")?.value ?? String(d.getFullYear());
+  const month = monthRaw.replace(/\./g, "").toUpperCase().slice(0, 3);
+  return `${month} ${year}`;
+}
+
+function buildMagazineCoverImagePrompt(opts: {
+  safeTitle: string;
+  /** 燈塔標題（可能含中文），與 safeTitle 不同時可傳 */
+  displayTitle?: string;
+}): string {
+  const title = String(opts.displayTitle ?? opts.safeTitle).trim();
+  const coverMonthYear = formatMagazineCoverMonthYearEnAsia();
+  const coverZh = formatPublicationDateZhAsia();
+  return (
+    `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
+    `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
+    `Render the report title prominently as elegant gold typography baked directly into the image — ` +
+    `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
+    `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
+    `Topic / title to render: ${opts.safeTitle}\n\n` +
+    `MANDATORY publication dating (Asia/Shanghai UTC+8, generation time — do not invent, do not use training-cutoff years like 2024):\n` +
+    `- Every English date on the cover (footer masthead line, barcode strip, ISSN/issue line, small print) MUST show exactly this month+year: "${coverMonthYear}". ` +
+    `Wrong years (e.g. 2024) or mismatched months are unacceptable.\n` +
+    `- If any Chinese publication date appears on the cover, use this Chinese calendar line: "${coverZh}".\n` +
+    `- Example English footer format: "ISSUE … | ${coverMonthYear}" — keep the separator style but the month+year must be exactly "${coverMonthYear}".\n\n` +
+    `Full title for context (use the gold typography line above as primary): ${title}`
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 直连 Gemini API key 生图（generativelanguage.googleapis.com，配额 50 RPM）。
 // 端点 :generateContent + responseModalities=["IMAGE"]，与文本生成同一套机制。
@@ -787,13 +835,7 @@ export async function ensureCoverForCreation(
     // 关键：要求模型把标题作为金色印刷字直接画进图，因为下载模板里不再叠任何文字
     // （PR #356 / #357 之后，有封面图时模板纯图，不再有 cover-pill / cover-mega 文字层）
     const safeTitle = String(lighthouseTitle || "战略情报报告").trim().slice(0, 60);
-    const prompt =
-      `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
-      `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
-      `Render the report title prominently as elegant gold typography baked directly into the image — ` +
-      `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
-      `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
-      `Topic / title to render: ${safeTitle}`;
+    const prompt = buildMagazineCoverImagePrompt({ safeTitle, displayTitle: lighthouseTitle });
 
     let imageUrl: string | undefined;
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
@@ -1581,7 +1623,7 @@ export async function runDeepResearchAsync(jobId: string) {
     await updateProgress(stages[0]);
 
     const productType = job.productType ?? "magazine_single";
-    const dateStr = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long" });
+    const dateStr = formatPublicationDateZhAsia();
 
     // ── 用户全息基线（个人亮点提取的真实数据基础） ──────────────────────────
     const holistic = await getUserHolisticContext(job.userId);
@@ -2042,7 +2084,10 @@ ${job.topic}
     //      - 严格不要场景图兜底（场景图是 16:9 横版，硬塞会拉伸）
     //      - 双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）
     //      - 单次 timeout 60s（Gemini reviewer 建议从 90s 降下来缩短 worst-case）
-    const coverPrompt = `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
+    const coverPrompt = buildMagazineCoverImagePrompt({
+      safeTitle: String(lighthouseTitle || "战略情报报告").trim().slice(0, 60),
+      displayTitle: lighthouseTitle,
+    });
     const coverPromise: Promise<string | undefined> = (async () => {
       let cover: string | undefined;
 
