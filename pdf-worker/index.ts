@@ -1,5 +1,5 @@
 import express from "express";
-import puppeteer from "puppeteer";
+import puppeteer, { type Page } from "puppeteer";
 import { spawn } from "node:child_process";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -133,6 +133,182 @@ async function compressPdfWithGhostscript(
       unlink(inPath).catch(() => {}),
       unlink(outPath).catch(() => {}),
     ]);
+  }
+}
+
+/** 與 client 端表紙列印規則一致；以 JSON 塞入 evaluate 字串避免 pdf-worker tsconfig 無 DOM lib。 */
+const MYREPORTS_SNAPSHOT_PRINT_CSS = `
+@media print {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #myreports-pdf-root {
+    background: #fff !important;
+  }
+  figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .cover-page img, .cover-page.cover-image-only img {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+  .cover-page, .cover-page.cover-image-only {
+    page-break-before: avoid !important;
+    break-before: avoid !important;
+    page-break-after: auto !important;
+    break-after: auto !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background-color: #fff !important;
+    width: 100% !important;
+    height: 262mm !important;
+    max-height: 262mm !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    position: relative !important;
+  }
+  .cover-page img, .cover-page.cover-image-only img {
+    position: static !important;
+    display: block !important;
+    flex-shrink: 0 !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    width: auto !important;
+    height: auto !important;
+    object-fit: contain !important;
+    aspect-ratio: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    transform: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    outline: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
+    page-break-before: always !important;
+    break-before: page !important;
+    margin-top: 0 !important;
+  }
+}
+`.trim();
+
+/**
+ * 作品庫 DOM 快照：head 裡的全域樣式可能與表紙規則打架。在 body 末尾再寫一層 @media print
+ *（整份文檔最後出現 → !important 同階時優先），並為 cover <img> 補 width/height 以利 page.pdf 繪製。
+ */
+async function applyMyreportsSnapshotPrintGuarantees(page: Page): Promise<void> {
+  await page.evaluate(
+    `(function () {
+      var css = ${JSON.stringify(MYREPORTS_SNAPSHOT_PRINT_CSS)};
+      var STYLE_ID = "mvs-pdf-worker-myreports-print-overrides";
+      if (!document.getElementById(STYLE_ID)) {
+        var el = document.createElement("style");
+        el.id = STYLE_ID;
+        el.textContent = css;
+        document.body.appendChild(el);
+      }
+      document.querySelectorAll("figure.cover-page img").forEach(function (node) {
+        if (!node || node.tagName !== "IMG") return;
+        var img = node;
+        if (img.naturalWidth > 0 && !img.getAttribute("width")) {
+          img.setAttribute("width", String(img.naturalWidth));
+          img.setAttribute("height", String(img.naturalHeight));
+        }
+      });
+    })()`,
+  );
+}
+
+/** page.pdf 直前：只寫 log，協助定位首頁空白（封面 DOM / 圖 intrinsic / 分頁相關計算樣式）。不影響輸出。 */
+async function logMyreportsCoverDiagnosticsBeforePdf(page: Page, reqId: string): Promise<void> {
+  try {
+    const raw = await page.evaluate(
+      `(() => {
+        var root = document.getElementById("myreports-pdf-root");
+        var directCover = root ? root.querySelector(":scope > figure.cover-page") : null;
+        var fig = document.querySelector("figure.cover-page");
+        var img = fig ? fig.querySelector("img") : null;
+        var surface = document.querySelector("[data-report-surface]");
+        var images = Array.prototype.slice.call(document.images);
+        var zeroNat = 0;
+        for (var i = 0; i < images.length; i++) {
+          if (images[i].naturalWidth === 0) zeroNat++;
+        }
+        var surfaceSt = null;
+        try {
+          if (surface) {
+            var cs = getComputedStyle(surface);
+            surfaceSt = { breakBefore: cs.breakBefore, pageBreakBefore: cs.pageBreakBefore };
+          }
+        } catch (e) {
+          surfaceSt = { error: "surface_computed" };
+        }
+        var figSt = null;
+        try {
+          if (fig) {
+            var fcs = getComputedStyle(fig);
+            figSt = {
+              breakBefore: fcs.breakBefore,
+              breakInside: fcs.breakInside,
+              breakAfter: fcs.breakAfter,
+              height: fcs.height,
+              maxHeight: fcs.maxHeight,
+              display: fcs.display,
+            };
+          }
+        } catch (e2) {
+          figSt = { error: "fig_computed" };
+        }
+        var imgNatural = null;
+        if (img && img.tagName === "IMG") {
+          imgNatural = {
+            naturalW: img.naturalWidth,
+            naturalH: img.naturalHeight,
+            complete: img.complete,
+            offsetW: img.offsetWidth,
+            offsetH: img.offsetHeight,
+            widthAttr: img.getAttribute("width"),
+            heightAttr: img.getAttribute("height"),
+            srcPrefix: String(img.getAttribute("src") || img.src || "").slice(0, 80),
+          };
+        }
+        var figBox = fig ? { offsetW: fig.offsetWidth, offsetH: fig.offsetHeight } : null;
+        return JSON.stringify({
+          hasRoot: !!root,
+          directChildCoverFig: !!directCover,
+          coverFigCount: document.querySelectorAll("figure.cover-page").length,
+          imgNatural: imgNatural,
+          figBox: figBox,
+          figComputed: figSt,
+          surfaceBreak: surfaceSt,
+          imagesTotal: images.length,
+          imagesZeroNatural: zeroNat,
+          workerOverrideStyle: !!document.getElementById("mvs-pdf-worker-myreports-print-overrides"),
+          sanitizeStyle: !!document.getElementById("mvs-pdf-snapshot-sanitize"),
+        });
+      })()`,
+    );
+    const d = JSON.parse(String(raw));
+    console.log(`[pdf-worker:${reqId}] DIAG_MYREPORTS_PRE_PDF ${JSON.stringify(d)}`);
+  } catch (err) {
+    console.warn(
+      `[pdf-worker:${reqId}] DIAG_MYREPORTS_PRE_PDF failed: ${(err as Error).message}`,
+    );
   }
 }
 
@@ -294,6 +470,10 @@ app.post("/generate-pdf", async (req, res) => {
         `,
       });
     }
+
+    await applyMyreportsSnapshotPrintGuarantees(page);
+
+    await logMyreportsCoverDiagnosticsBeforePdf(page, reqId);
 
     const pdfTimeout = PAGE_PDF_TIMEOUT_MS;
     const tPdf = Date.now();
