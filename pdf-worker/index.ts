@@ -50,21 +50,25 @@ app.post("/generate-pdf", async (req, res) => {
     // This bypasses auth/state issues entirely — the DOM was already rendered by the user's browser.
     // Scripts were stripped by the frontend so React won't re-render and clear the charts.
     //
-    // 2026-05-01 用户决策：Deep Research Max 16-25 MB HTML 已成常态，原 480s 不够。
-    //   - waitUntil: "networkidle0" → "networkidle2" — 允许 ≤2 个 idle 连接，
-    //     避免某个长 ECharts 内部 XHR 卡住整个 wait
-    //   - timeout 480_000 → 1_500_000 (25 min)，给 16-25 MB 足够渲染时间
-    //   - 显式 await document.fonts.ready —— 确保自定义 Noto Sans CJK 完全落地
-    //     再开始 PDF 生成（之前漏的，PR #350 提过但当时改的是 pdfGenerator 路径）
+    // 2026-05-01 实测验证：
+    //   - networkidle0 在 8.87 MB HTML 下 44s 完成（PR #353 hotfix 验证过）
+    //   - 改 networkidle2 后反而卡死 11+ 分钟无日志（Chrome 内部 favicon.ico 之类
+    //     的 phantom 请求让 idle≤2 永远不满足）→ 退回 networkidle0
+    //   - 800 ms 硬等不够把 2.18 MB base64 PNG 封面解码 + 绘背景 → 拉到 30s
+    //   - timeout 480s 不够 16-25 MB 的 Deep Research Max → 拉到 1500s
+    //   - document.fonts.ready 用 page.evaluate 而不是 evaluateHandle（后者不 auto-await Promise）
     await page.setContent(html, {
-      waitUntil: "networkidle2",
+      waitUntil: "networkidle0",
       timeout: 1_500_000,
     });
 
     // 等所有自定义字体加载完毕 — 避免 PDF 里出现字体 fallback / 方块字
-    await page.evaluateHandle("document.fonts.ready");
+    // 用字符串 page.evaluate 避免 pdf-worker tsconfig 没 lib.dom 的编译错
+    // 注意：page.evaluate 字符串形式会自动 await 表达式如果是 Promise
+    await page.evaluate("document.fonts.ready");
 
-    // Extra wait for CSS transitions and ECharts SVG layout to fully settle
+    // Extra wait for base64 image decode + CSS transitions + ECharts SVG layout to fully settle
+    // 30s 是给 2 MB+ base64 cover image 解码 + 绘背景的留量（800ms 不够，封面渲染不出来）
     await new Promise((r) => setTimeout(r, 30_000));
 
     const pdfBuffer = await page.pdf({
