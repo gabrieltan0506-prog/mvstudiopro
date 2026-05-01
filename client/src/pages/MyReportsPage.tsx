@@ -340,16 +340,24 @@ export default function MyReportsPage() {
       if (coverImg instanceof HTMLImageElement) {
         if (!coverImg.complete || coverImg.naturalWidth === 0) {
           await new Promise<void>((resolve) => {
-            const done = () => resolve();
-            coverImg.addEventListener("load", done, { once: true });
-            coverImg.addEventListener("error", done, { once: true });
-            setTimeout(done, 12_000);
+            let finished = false;
+            const finish = () => {
+              if (finished) return;
+              finished = true;
+              window.clearTimeout(timeoutId);
+              coverImg.removeEventListener("load", finish);
+              coverImg.removeEventListener("error", finish);
+              resolve();
+            };
+            const timeoutId = window.setTimeout(finish, 8_000);
+            coverImg.addEventListener("load", finish);
+            coverImg.addEventListener("error", finish);
           });
         }
         try {
           await coverImg.decode();
-        } catch {
-          // decode 失敗不阻斷；後續仍靠 worker 端 wait
+        } catch (e) {
+          console.warn("[MyReports] 封面图 decode 失败，将降级交由 PDF Worker 处理", e);
         }
       }
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
