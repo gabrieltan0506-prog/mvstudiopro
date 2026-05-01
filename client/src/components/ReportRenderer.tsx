@@ -881,32 +881,39 @@ export default function ReportRenderer({
           /* 标题尽量不在页底孤立，强制把标题与下一段绑在一起 */
           h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
 
-          /* 图片 / 图表 figure 不被中间切断（除非自身就比一页还高） */
-          figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
+          /* 图片 / 图表 figure 不被中间切断；封面 figure.cover-page 豁免（避免 ~整頁高
+             + break-inside:avoid 被整塊推到第 2 頁 → PDF 第 1 頁空白） */
+          figure:not(.cover-page), img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面：清掉 figure 預設 margin、避免 print 下 Flex 佈局異常；relative 框 + absolute 置中 */
+          /* 封面：清零 figure 預設 margin；避免 print 下 transform 導致 Chromium page.pdf 不繪圖；
+             flex 置中 + 固定可列印高度（略小於 A4） */
           .cover-page, .cover-page.cover-image-only {
-            page-break-before: avoid !important;
-            break-before: avoid !important;
+            page-break-before: auto !important;
+            break-before: auto !important;
             page-break-after: auto !important;
             break-after: auto !important;
             page-break-inside: avoid !important;
             break-inside: avoid !important;
-            display: block !important;
-            position: relative !important;
-            height: 295mm !important;
-            max-height: 295mm !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
             margin: 0 !important;
             padding: 0 !important;
             border: none !important;
             background-color: #fff !important;
-            box-sizing: border-box !important;
+            width: 100% !important;
+            height: 277mm !important;
+            max-height: 277mm !important;
+            min-height: 0 !important;
           }
           .cover-page img, .cover-page.cover-image-only img {
-            position: absolute !important;
-            top: 50% !important;
-            left: 50% !important;
-            transform: translate(-50%, -50%) !important;
+            position: static !important;
+            display: block !important;
+            flex-shrink: 0 !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             max-width: 100% !important;
             max-height: 100% !important;
             width: auto !important;
@@ -914,7 +921,7 @@ export default function ReportRenderer({
             object-fit: contain !important;
             margin: 0 !important;
             padding: 0 !important;
-            display: block !important;
+            transform: none !important;
             border: none !important;
             box-shadow: none !important;
             border-radius: 0 !important;
