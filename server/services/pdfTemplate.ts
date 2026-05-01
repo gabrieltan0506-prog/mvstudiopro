@@ -286,7 +286,12 @@ function buildCoverPage(palette: Record<string, string>, cover: PdfCover, style:
         : style === "spring-mint" || style === "sunset-coral" || style === "business-bright"
           ? "rgba(0,0,0,0.30)"
           : "rgba(0,0,0,0.40)";
-    bgLayer = `linear-gradient(180deg, ${overlayMode} 0%, rgba(0,0,0,0.10) 38%, ${overlayMode} 100%), url("${safeBg}") center/cover no-repeat`;
+    // Bug fix 2026-05-01：原本 url("${safeBg}") 双引号跟外层 HTML attribute
+    // 的 style="..." 双引号嵌套冲突 → 浏览器在 url(" 处直接关闭 attribute，
+    // 后面 2 MB base64 全乱掉，PDF 渲染时封面 div 不渲染图片，只剩调色板。
+    // 这就是从 PR #350 起用户一直反馈"PDF 没有封面"的根因！
+    // 改成 CSS 不带引号的 url(...) 形式（data URI 不含空格 / 括号 / 引号，合法）。
+    bgLayer = `linear-gradient(180deg, ${overlayMode} 0%, rgba(0,0,0,0.10) 38%, ${overlayMode} 100%), url(${safeBg}) center/cover no-repeat`;
     isLightCover = style === "spring-mint" || style === "sunset-coral" || style === "business-bright";
   } else if (style === "spring-mint") {
     bgLayer = springMintLayer;
