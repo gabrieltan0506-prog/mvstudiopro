@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, Crown, RefreshCw, FileText, Clock, CheckCircle,
-  XCircle, Loader2, Book, Sparkles, FileDown, Pencil, Trash2,
+  XCircle, Loader2, Book, Sparkles, FileDown, Pencil, Trash2, Bug,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
@@ -16,6 +16,9 @@ const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
 /** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
+
+/** 設為 1 或網址加 ?pdfDebug=1：作品庫 PDF 流程寫入下方診斷面板（僅本機，不送後端） */
+const MY_REPORTS_PDF_DEBUG_LS = "mvs-myreports-pdf-debug";
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
 function injectPdfSnapshotSanitizeIntoHead(html: string): string {
@@ -225,6 +228,61 @@ export default function MyReportsPage() {
     if (autoExit) setSelectedReport(null);
   }, []);
 
+  const [myReportsPdfDebugOpen, setMyReportsPdfDebugOpen] = useState(false);
+  const [myReportsPdfDebugLines, setMyReportsPdfDebugLines] = useState<string[]>([]);
+  const [myReportsPdfDebugLogging, setMyReportsPdfDebugLogging] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let on = false;
+    try {
+      if (localStorage.getItem(MY_REPORTS_PDF_DEBUG_LS) === "1") on = true;
+    } catch {
+      /* ignore */
+    }
+    if (window.location.search.includes("pdfDebug=1")) {
+      on = true;
+      try {
+        localStorage.setItem(MY_REPORTS_PDF_DEBUG_LS, "1");
+      } catch {
+        /* ignore */
+      }
+    }
+    setMyReportsPdfDebugLogging(on);
+    if (on) setMyReportsPdfDebugOpen(true);
+  }, []);
+
+  const appendMyReportsPdfDebug = useCallback((line: string) => {
+    if (!myReportsPdfDebugLogging) return;
+    const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setMyReportsPdfDebugLines((prev) => [...prev.slice(-150), `[${ts}] ${line}`]);
+  }, [myReportsPdfDebugLogging]);
+
+  const enableMyReportsPdfDebugPersist = useCallback(() => {
+    try {
+      localStorage.setItem(MY_REPORTS_PDF_DEBUG_LS, "1");
+    } catch {
+      /* ignore */
+    }
+    setMyReportsPdfDebugLogging(true);
+    setMyReportsPdfDebugOpen(true);
+    const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setMyReportsPdfDebugLines((prev) => [
+      ...prev.slice(-150),
+      `[${ts}] 已开启 PDF 诊断并写入本机（刷新页面后仍会记录，直到点「关闭诊断」）`,
+    ]);
+  }, []);
+
+  const disableMyReportsPdfDebugPersist = useCallback(() => {
+    try {
+      localStorage.removeItem(MY_REPORTS_PDF_DEBUG_LS);
+    } catch {
+      /* ignore */
+    }
+    setMyReportsPdfDebugLogging(false);
+    setMyReportsPdfDebugOpen(false);
+  }, []);
+
   // ── 下载 PDF：快照 HTML → 若体积 ≤6MB 则同步 downloadAnalysisPdf（与 HTML 一样立刻触发下载）；
   //    否则（或同步失败）走 GCS + queuePdfFromHtml → 轮询 getPdfExportJob → 签名链下载
   const getPdfHtmlSnapshotUploadUrlMutation = trpc.mvAnalysis.getPdfHtmlSnapshotUploadUrl.useMutation();
@@ -430,10 +488,14 @@ export default function MyReportsPage() {
     setDownloadStage("snapshotting");
     downloadStageRef.current = "snapshotting";
     pdfAsyncTitleRef.current = selectedReport?.title || "战略情报报告";
+    appendMyReportsPdfDebug(
+      `快照开始 title=${pdfAsyncTitleRef.current} origin=${typeof window !== "undefined" ? window.location.origin : "?"}`,
+    );
     try {
       if (typeof document !== "undefined" && (document as any).fonts?.ready) {
         await (document as any).fonts.ready;
       }
+      appendMyReportsPdfDebug("document.fonts.ready 已就绪");
       await new Promise((r) => setTimeout(r, 2800));
 
       // 關閉並移出 DOM：Sonner 為 fixed，不處理會被採進 PDF 且在 Chromium 每頁重複繪製
@@ -443,12 +505,17 @@ export default function MyReportsPage() {
       // 精準快照：只克隆報告容器（封面 + ReportRenderer），不採 documentElement → 不會帶入 Sonner / React root / 導航等
       const pdfRoot = document.getElementById(MYREPORTS_PDF_SNAPSHOT_ROOT_ID);
       if (!pdfRoot) {
+        appendMyReportsPdfDebug("错误：找不到 PDF 快照容器 myreports-pdf-root");
         throw new Error("找不到 PDF 快照容器（myreports-pdf-root），请重进阅读模式后再试");
       }
+      appendMyReportsPdfDebug(`已找到 pdfRoot id=${pdfRoot.id} childCount=${pdfRoot.childNodes.length}`);
 
       // 封面若未 decode 完成，快照裡 naturalHeight=0 → pdf-worker 得到空白首頁 + page-break-after 仍生效
       const coverImg = pdfRoot.querySelector("figure.cover-page img");
       if (coverImg instanceof HTMLImageElement) {
+        appendMyReportsPdfDebug(
+          `封面图（克隆前）complete=${coverImg.complete} natural=${coverImg.naturalWidth}x${coverImg.naturalHeight} srcLen=${(coverImg.currentSrc || coverImg.src || "").slice(0, 80)}…`,
+        );
         if (!coverImg.complete || coverImg.naturalWidth === 0) {
           await new Promise<void>((resolve) => {
             let finished = false;
@@ -464,12 +531,19 @@ export default function MyReportsPage() {
             coverImg.addEventListener("load", finish);
             coverImg.addEventListener("error", finish);
           });
+          appendMyReportsPdfDebug(
+            `封面图等待 load/error 后：complete=${coverImg.complete} natural=${coverImg.naturalWidth}x${coverImg.naturalHeight}`,
+          );
         }
         try {
           await coverImg.decode();
+          appendMyReportsPdfDebug("封面图 decode() 成功");
         } catch (e) {
           console.warn("[MyReports] 封面图 decode 失败，将降级交由 PDF Worker 处理", e);
+          appendMyReportsPdfDebug(`封面图 decode() 失败：${e instanceof Error ? e.message : String(e)}`);
         }
+      } else {
+        appendMyReportsPdfDebug("未找到 figure.cover-page img（将跳过封面像素诊断）");
       }
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
       fragment.querySelectorAll("script").forEach((n) => n.remove());
@@ -484,12 +558,22 @@ export default function MyReportsPage() {
       const coverLoadFailed = liveCoverImg instanceof HTMLImageElement && liveCoverImg.naturalWidth === 0;
       if (coverLoadFailed) {
         fragment.querySelector("figure.cover-page")?.remove();
+        appendMyReportsPdfDebug("封面加载失败 naturalWidth=0 → 已从快照片段移除 figure.cover-page");
       } else {
         await embedMyReportsCoverImageInPdfFragment(
           fragment,
           liveCoverImg instanceof HTMLImageElement ? liveCoverImg : null,
         );
         dropCoverFromPdfFragmentUnlessEmbedded(fragment);
+        const fragCoverImg = fragment.querySelector("figure.cover-page img");
+        if (fragCoverImg instanceof HTMLImageElement) {
+          const s = fragCoverImg.src || "";
+          appendMyReportsPdfDebug(
+            `嵌入后封面 img src 前缀=${s.slice(0, 32)}… isDataUrl=${s.startsWith("data:")} len=${s.length}`,
+          );
+        } else {
+          appendMyReportsPdfDebug("嵌入后片段中已无 figure.cover-page img（可能被 dropCover 移除）");
+        }
       }
 
       const headEl = document.head.cloneNode(true) as HTMLHeadElement;
@@ -503,15 +587,22 @@ export default function MyReportsPage() {
       html = injectPdfSnapshotSanitizeIntoHead(html);
 
       const htmlBytes = new TextEncoder().encode(html).length;
+      appendMyReportsPdfDebug(
+        `HTML 组装完成 htmlBytes=${htmlBytes} 同步门槛≤${MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES} → ${htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES ? "尝试同步下载" : "直接上传队列"}`,
+      );
 
       const runSyncPdfDownload = async () => {
         setDownloadStage("sync_pdf");
         downloadStageRef.current = "sync_pdf";
+        appendMyReportsPdfDebug("进入同步 PDF：调用 downloadAnalysisPdf…");
         toast.info("正在生成 PDF（通常 1～3 分钟），请保持本页打开…", { duration: 10_000 });
         const result = await downloadAnalysisPdfMutation.mutateAsync({
           html,
           token: "myreports-direct=1",
         });
+        appendMyReportsPdfDebug(
+          `同步 PDF 响应 pdfBase64Len=${result.pdfBase64 ? result.pdfBase64.length : 0}`,
+        );
         if (!result.pdfBase64) {
           throw new Error("PDF 内容为空");
         }
@@ -533,15 +624,18 @@ export default function MyReportsPage() {
       if (htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES) {
         try {
           await runSyncPdfDownload();
+          appendMyReportsPdfDebug("同步 PDF 完成，已触发浏览器下载");
           resetPdfDownloadUi();
           return;
         } catch (syncErr: unknown) {
           const msg = syncErr instanceof Error ? syncErr.message : String(syncErr);
           console.warn("[MyReports] 同步 PDF 失败，改走云端队列：", msg);
+          appendMyReportsPdfDebug(`同步 PDF 失败 → 改走队列：${msg}`);
           toast.message("同步生成受阻，已自动改为云端队列（完成后仍会下载）", { duration: 12_000 });
         }
       }
 
+      appendMyReportsPdfDebug("取得 GCS 上传 URL…");
       const uploadMeta = await getPdfHtmlSnapshotUploadUrlMutation.mutateAsync();
       const putHeaders: Record<string, string> = {
         "Content-Type": "text/html; charset=utf-8",
@@ -554,13 +648,16 @@ export default function MyReportsPage() {
       });
       if (!putRes.ok) {
         const t = await putRes.text().catch(() => "");
+        appendMyReportsPdfDebug(`GCS PUT 失败 ${putRes.status} ${t.slice(0, 120)}`);
         throw new Error(`GCS 上传 HTML 失败 ${putRes.status}: ${t.slice(0, 200)}`);
       }
+      appendMyReportsPdfDebug(`GCS PUT 成功 gcsUri=${uploadMeta.gcsUri?.slice(0, 80) ?? "?" }…`);
 
       const { jobId } = await queuePdfFromHtmlMutation.mutateAsync({
         htmlGcsUri: uploadMeta.gcsUri,
         token: "myreports-async=1",
       });
+      appendMyReportsPdfDebug(`队列 jobId=${jobId}`);
       try {
         localStorage.setItem("mvs-godview-pdf-export-job-id", jobId);
       } catch {
@@ -575,6 +672,7 @@ export default function MyReportsPage() {
         { duration: 12_000 },
       );
     } catch (e: any) {
+      appendMyReportsPdfDebug(`捕获错误：${e?.message || "未知错误"}`);
       setDownloadStage("idle");
       downloadStageRef.current = "idle";
       setDownloadingCardId(null);
@@ -583,6 +681,7 @@ export default function MyReportsPage() {
       toast.error("PDF 快照失败：" + (e?.message || "未知错误"));
     }
   }, [
+    appendMyReportsPdfDebug,
     downloadAnalysisPdfMutation,
     getPdfHtmlSnapshotUploadUrlMutation,
     queuePdfFromHtmlMutation,
@@ -682,6 +781,171 @@ export default function MyReportsPage() {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const renderMyReportsPdfDebugChrome = () => (
+    <>
+      <button
+        type="button"
+        data-pdf-exclude="true"
+        onClick={() => setMyReportsPdfDebugOpen((v) => !v)}
+        style={{
+          position: "fixed",
+          right: 14,
+          bottom: 14,
+          zIndex: 9998,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "8px 12px",
+          borderRadius: 10,
+          border: "1px solid rgba(122,84,16,0.45)",
+          background: myReportsPdfDebugLogging ? "rgba(22,163,74,0.18)" : "rgba(255,250,240,0.95)",
+          color: "#3d2c14",
+          fontSize: 11,
+          fontWeight: 800,
+          cursor: "pointer",
+          boxShadow: "0 4px 16px rgba(74,54,33,0.18)",
+          backdropFilter: "blur(8px)",
+        }}
+        title="作品库 PDF 快照诊断（浏览器端步骤，无需部署 worker 即可查看）"
+      >
+        <Bug size={14} />
+        PDF诊断{myReportsPdfDebugLogging ? "·开" : ""}
+      </button>
+      {myReportsPdfDebugOpen && (
+        <div
+          data-pdf-exclude="true"
+          style={{
+            position: "fixed",
+            right: 14,
+            bottom: 54,
+            zIndex: 9999,
+            width: "min(420px, calc(100vw - 28px))",
+            maxHeight: "min(50vh, 320px)",
+            display: "flex",
+            flexDirection: "column",
+            borderRadius: 12,
+            border: "1px solid rgba(122,84,16,0.45)",
+            background: "rgba(28,22,16,0.94)",
+            color: "#e8e4dc",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+            fontSize: 10,
+            lineHeight: 1.45,
+            boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              padding: "8px 10px",
+              borderBottom: "1px solid rgba(255,255,255,0.12)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span style={{ fontWeight: 800, flex: 1, minWidth: 120 }}>PDF 快照诊断</span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(myReportsPdfDebugLines.join("\n"));
+                  toast.success("已复制诊断日志");
+                } catch {
+                  toast.error("复制失败");
+                }
+              }}
+              style={{
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "1px solid rgba(255,255,255,0.2)",
+                background: "transparent",
+                color: "#e8e4dc",
+                fontSize: 10,
+                cursor: "pointer",
+              }}
+            >
+              复制全部
+            </button>
+            <button
+              type="button"
+              onClick={() => setMyReportsPdfDebugLines([])}
+              style={{
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "1px solid rgba(255,255,255,0.2)",
+                background: "transparent",
+                color: "#e8e4dc",
+                fontSize: 10,
+                cursor: "pointer",
+              }}
+            >
+              清空
+            </button>
+            {!myReportsPdfDebugLogging ? (
+              <button
+                type="button"
+                onClick={enableMyReportsPdfDebugPersist}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#16a34a",
+                  color: "#fff",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                开始记录
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={disableMyReportsPdfDebugPersist}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#b45309",
+                  color: "#fff",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                关闭诊断
+              </button>
+            )}
+          </div>
+          <div style={{ padding: 8, overflow: "auto", flex: 1 }}>
+            {myReportsPdfDebugLines.length === 0 ? (
+              <span style={{ color: "rgba(232,228,220,0.55)" }}>
+                {myReportsPdfDebugLogging
+                  ? "点击「下载 PDF」后此处会追加步骤日志。地址栏加 ?pdfDebug=1 也会自动开启并记住本机开关（见 localStorage）。"
+                  : "先点「开始记录」，或打开 ?pdfDebug=1，再点「下载 PDF」才会写入日志。仅记录浏览器快照与请求步骤，不含 Cloud Run 内渲染细节。"}
+              </span>
+            ) : (
+              myReportsPdfDebugLines.map((line, i) => <div key={i}>{line}</div>)
+            )}
+          </div>
+          {!myReportsPdfDebugLogging && myReportsPdfDebugOpen && (
+            <div
+              style={{
+                padding: "6px 10px",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                fontSize: 9,
+                color: "rgba(232,228,220,0.45)",
+              }}
+            >
+              提示：未开启记录时面板可预先打开，下载前请先点「开始记录」。
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
 
   // ─── 编辑模式（草稿审核工作台） ─────────────────────────────────────────────
   if (editingReport) {
@@ -814,6 +1078,7 @@ export default function MyReportsPage() {
 
           <ReportRenderer markdown={selectedReport.markdown} pdfStyle={pdfStyle} />
         </div>
+        {renderMyReportsPdfDebugChrome()}
       </div>
     );
   }
@@ -948,6 +1213,8 @@ export default function MyReportsPage() {
           </>
         )}
       </div>
+
+      {renderMyReportsPdfDebugChrome()}
 
       <style>{`
         @keyframes spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
