@@ -139,7 +139,16 @@ async function compressPdfWithGhostscript(
 /** 與 client 端表紙列印規則一致；以 JSON 塞入 evaluate 字串避免 pdf-worker tsconfig 無 DOM lib。 */
 const MYREPORTS_SNAPSHOT_PRINT_CSS = `
 @media print {
-  figure:not(.cover-page), img, .echart-mount {
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  #myreports-pdf-root {
+    background: #fff !important;
+  }
+  figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
@@ -148,8 +157,8 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
     break-inside: auto !important;
   }
   .cover-page, .cover-page.cover-image-only {
-    page-break-before: auto !important;
-    break-before: auto !important;
+    page-break-before: avoid !important;
+    break-before: avoid !important;
     page-break-after: auto !important;
     break-after: auto !important;
     page-break-inside: avoid !important;
@@ -168,6 +177,7 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
     max-height: 262mm !important;
     min-height: 0 !important;
     overflow: hidden !important;
+    position: relative !important;
   }
   .cover-page img, .cover-page.cover-image-only img {
     position: static !important;
@@ -182,12 +192,17 @@ const MYREPORTS_SNAPSHOT_PRINT_CSS = `
     margin: 0 !important;
     padding: 0 !important;
     transform: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    outline: none !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
   #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
     page-break-before: always !important;
     break-before: page !important;
+    margin-top: 0 !important;
   }
 }
 `.trim();

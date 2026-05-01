@@ -842,6 +842,8 @@ export default function ReportRenderer({
             margin: 0 !important;
             padding: 0 !important;
             background: #ffffff !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           #myreports-pdf-root {
             margin: 0 !important;
@@ -883,13 +885,12 @@ export default function ReportRenderer({
 
           /* 图片 / 图表 figure 不被中间切断；封面 figure.cover-page 豁免（避免 ~整頁高
              + break-inside:avoid 被整塊推到第 2 頁 → PDF 第 1 頁空白） */
-          figure:not(.cover-page), img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
+          figure:not(.cover-page), img:not(:is(.cover-page img)), .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面：清零 figure 預設 margin；避免 print 下 transform 導致 Chromium page.pdf 不繪圖；
-             flex 置中 + 固定可列印高度（略小於 A4） */
+          /* 封面：與快照注入對齊（Gemini 校對：首塊 break-before avoid + position 容器） */
           .cover-page, .cover-page.cover-image-only {
-            page-break-before: auto !important;
-            break-before: auto !important;
+            page-break-before: avoid !important;
+            break-before: avoid !important;
             page-break-after: auto !important;
             break-after: auto !important;
             page-break-inside: avoid !important;
@@ -908,6 +909,7 @@ export default function ReportRenderer({
             max-height: 262mm !important;
             min-height: 0 !important;
             overflow: hidden !important;
+            position: relative !important;
           }
           .cover-page img, .cover-page.cover-image-only img {
             position: static !important;
@@ -935,6 +937,7 @@ export default function ReportRenderer({
           #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {
             page-break-before: always !important;
             break-before: page !important;
+            margin-top: 0 !important;
           }
 
           /* ── 2026-05-01 window.print() 本地另存 PDF 路径 ──

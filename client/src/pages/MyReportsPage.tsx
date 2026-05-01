@@ -26,12 +26,12 @@ ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="通�
 [class*="sonner-toast"],.toaster.group,.toaster{display:none!important;visibility:hidden!important;
 height:0!important;width:0!important;overflow:hidden!important;opacity:0!important;pointer-events:none!important;}
 @media print{
-html,body{margin:0!important;padding:0!important;}
-#myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
-figure:not(.cover-page),img,.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
-.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:auto!important;break-after:auto!important;page-break-inside:avoid!important;break-inside:avoid!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;margin:0!important;padding:0!important;border:none!important;background-color:#fff!important;width:100%!important;height:262mm!important;max-height:262mm!important;min-height:0!important;overflow:hidden!important;}
+html,body{margin:0!important;padding:0!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
+#myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;background:#fff!important;}
+figure:not(.cover-page),img:not(:is(.cover-page img)),.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:avoid!important;break-before:avoid!important;page-break-after:auto!important;break-after:auto!important;page-break-inside:avoid!important;break-inside:avoid!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;margin:0!important;padding:0!important;border:none!important;background-color:#fff!important;width:100%!important;height:262mm!important;max-height:262mm!important;min-height:0!important;overflow:hidden!important;position:relative!important;}
 .cover-page img,.cover-page.cover-image-only img{position:static!important;display:block!important;flex-shrink:0!important;page-break-inside:auto!important;break-inside:auto!important;max-width:100%!important;max-height:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;aspect-ratio:auto!important;margin:0!important;padding:0!important;transform:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;outline:none!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
-#myreports-pdf-root:has(> figure.cover-page) > [data-report-surface]{page-break-before:always!important;break-before:page!important;}
+#myreports-pdf-root:has(> figure.cover-page) > [data-report-surface]{page-break-before:always!important;break-before:page!important;margin-top:0!important;}
 @page{margin:0;size:A4 portrait;}
 [data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
 [data-report-surface]>[data-pdf-accent-bar]{margin:-4mm -6mm 3mm!important;border-radius:0!important;}
@@ -145,6 +145,7 @@ function dropCoverFromPdfFragmentUnlessEmbedded(fragment: HTMLElement): void {
     /^data:image\/(png|jpeg|jpg|webp|gif|bmp);base64,/i.test(img.src) &&
     img.src.length > 256;
   if (!ok) {
+    console.warn("[PDF] 封面非合法 Base64 或未達最小長度，已移除以防空白頁");
     fig.remove();
   }
 }
