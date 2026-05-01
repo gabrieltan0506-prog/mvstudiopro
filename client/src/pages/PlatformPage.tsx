@@ -665,6 +665,7 @@ export default function PlatformPage() {
   const handleDownloadPlatformPdf = useCallback(() => {
     const clone = document.documentElement.cloneNode(true) as HTMLElement;
     clone.querySelectorAll("script").forEach((n) => n.remove());
+    clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
     const base = document.createElement("base");
     base.href = window.location.origin + "/";
     clone.querySelector("head")?.prepend(base);

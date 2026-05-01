@@ -689,7 +689,7 @@ export default function ReportRenderer({
   return (
     <div
       className={className}
-      data-report-root
+      data-report-surface
       style={{
         background: colors.bgGradient,
         color: colors.ink,
@@ -829,12 +829,22 @@ export default function ReportRenderer({
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
 
         @media print {
-          /* 解除主容器高度限制，允许内容自然流到下一页（避免 100vh 截断） */
-          html, body { height: auto !important; overflow: visible !important; }
+          /* 列印環境淨化：避免外層留白把封面擠到第二頁（與精準快照 #myreports-pdf-root 配合） */
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+          }
+          #myreports-pdf-root {
+            margin: 0 !important;
+            padding: 0 !important;
+            max-width: none !important;
+          }
 
           /* MyReports 阅读模式外层壳（screen 用 min-height:100vh + 渐变）。
-             puppeteer / 打印时若保留 100vh，会与 .cover-page 的 99vh 叠床架屋，
-             造成首页大面积空白、总页数异常缩水、封面像「没印出来」。 */
+             打印时务必取消 min-height:100vh，否则易与封面分页规则干涉、造成首页异常。 */
           [data-pdf-reading-shell="true"] {
             min-height: auto !important;
             height: auto !important;
@@ -853,28 +863,28 @@ export default function ReportRenderer({
           /* 图片 / 图表 figure 不被中间切断（除非自身就比一页还高） */
           figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
-          /* 封面页强制独占首页：MyReportsPage 阅读模式那张 9:16 hero 用 .cover-page
-             类标记后，puppeteer 会让它自然分页。
-             （目前 hero 用 inline figure，外层若加 .cover-page 类即可生效。） */
+          /* 封面單獨一頁：禁止用 99vh 撐滿——在 Chromium page.pdf() 裡 vh 常大於實際 A4
+             可列印高度，整個 figure 會被 break-inside:avoid 推到第 2 頁 → 第 1 頁空白。 */
           .cover-page, .cover-page.cover-image-only {
+            page-break-before: auto !important;
+            break-before: auto !important;
             page-break-after: always !important;
-            break-after: always !important;
-            height: 99vh !important;
+            break-after: page !important;
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: 272mm !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
             align-items: center !important;
             margin: 0 !important;
             padding: 0 !important;
+            box-sizing: border-box !important;
           }
-          /* 封面图按 letterbox 缩放：阅读模式下 inline style 用的是
-             aspectRatio: 9/16 + maxWidth: 720 + objectFit: cover，A4 高度
-             ≈ 1080px 时会撑出 1280px 触发溢出。print 模式覆盖为
-             max-height: 99vh + object-contain，让 flex 容器居中 + 短边贴边
-             长边 letterbox。border/shadow/radius 在 print 模式清掉，A4 上更干净。 */
+          /* 封面圖：以紙張可列印高度為硬上限（A4 約 297mm − 邊距） */
           .cover-page img, .cover-page.cover-image-only img {
             max-width: 100% !important;
-            max-height: 99vh !important;
+            max-height: 265mm !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
@@ -893,8 +903,17 @@ export default function ReportRenderer({
           [data-pdf-exclude="true"] {
             display: none !important;
           }
-          html, body {
-            background: #ffffff !important;
+          /* Sonner 掛在 body，若未剔除則 fixed toast 會在 Chromium page.pdf() 每頁重複出現 */
+          [data-sonner-toaster],
+          [data-sonner-toast],
+          li[data-sonner-toast] {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
+          [data-myreports-read-layout] {
+            padding: 0 !important;
+            max-width: none !important;
           }
         }
       `}</style>
