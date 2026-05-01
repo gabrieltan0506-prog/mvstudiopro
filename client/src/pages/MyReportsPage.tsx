@@ -9,6 +9,15 @@ import ReportRenderer from "@/components/ReportRenderer";
 import ReportEditor from "@/components/ReportEditor";
 import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
+import { useIsMobile } from "@/hooks/useMobile";
+
+// 移动端 PDF / HTML 下载禁用提示文案（< 768px）。
+// 触发原因：PlatformPage 客户端快照模式 documentElement.cloneNode(true) +
+// JSON.stringify 在 iOS Safari (< 1GB tab 内存) 处理 10-25MB outerHTML +
+// ECharts SVG 节点几乎稳挂；HTML 下载虽不 clone，但 10-25MB Blob 字符串
+// 拼接也吃力。隐藏后给用户清晰的引导路径（桌面端 / 在线阅览 / Markdown）。
+const MOBILE_HEAVY_DOWNLOAD_HINT =
+  '📱 PDF / HTML 下载请使用桌面端（移动端内存有限，下载大报告易失败）。当前可"在线阅览"或下载 Markdown 原文。';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +46,9 @@ interface Report {
 
 export default function MyReportsPage() {
   const [, navigate] = useLocation();
+  // 移动端（< 768px）禁用 PDF / HTML 下载，避免 cloneNode 大快照触发 iOS Safari OOM。
+  // 仅作 UI 渲染层 gating，不动 handler 内部逻辑。
+  const isMobile = useIsMobile();
   const [selectedReport, setSelectedReport] = useState<{ id?: number; title: string; markdown: string } | null>(null);
   const [editingReport, setEditingReport] = useState<Report | null>(null);
   // 阅读模式 / 全局兜底用的 pdfStyle（默认 spring-mint）
@@ -433,37 +445,61 @@ export default function MyReportsPage() {
             >
               <FileText size={12} />Markdown
             </button>
-            <button
-              onClick={() => void handleDownloadFromReadingMode()}
-              disabled={isBusy}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 16px",
-                borderRadius: 8,
-                background: isBusy
-                  ? "rgba(168,118,27,0.30)"
-                  : "linear-gradient(135deg,#a8761b,#7a5410)",
-                border: "1px solid rgba(168,118,27,0.65)",
-                color: "#fff7df",
-                fontWeight: 800,
-                fontSize: 12,
-                cursor: isBusy ? "not-allowed" : "pointer",
-                boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
-              }}
-              title="抓取当前阅读模式 DOM 快照，送 Cloud Run pdf-worker 转 PDF（与 PlatformPage 同路径）"
-            >
-              {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
-              {downloadStage === "ensuring-cover" ? "生成封面…" :
-               downloadStage === "rendering"      ? "等待渲染…" :
-               downloadStage === "snapshotting"   ? "压制 PDF…" :
-                                                    "下载 PDF"}
-            </button>
+            {/* PDF 下载按钮：移动端隐藏，避免 cloneNode 大快照触发 OOM；
+                提示文案在下方 data-report-root 顶部统一展示一次。 */}
+            {!isMobile && (
+              <button
+                onClick={() => void handleDownloadFromReadingMode()}
+                disabled={isBusy}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 16px",
+                  borderRadius: 8,
+                  background: isBusy
+                    ? "rgba(168,118,27,0.30)"
+                    : "linear-gradient(135deg,#a8761b,#7a5410)",
+                  border: "1px solid rgba(168,118,27,0.65)",
+                  color: "#fff7df",
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: isBusy ? "not-allowed" : "pointer",
+                  boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
+                }}
+                title="抓取当前阅读模式 DOM 快照，送 Cloud Run pdf-worker 转 PDF（与 PlatformPage 同路径）"
+              >
+                {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
+                {downloadStage === "ensuring-cover" ? "生成封面…" :
+                 downloadStage === "rendering"      ? "等待渲染…" :
+                 downloadStage === "snapshotting"   ? "压制 PDF…" :
+                                                      "下载 PDF"}
+              </button>
+            )}
           </div>
         </div>
 
         <div data-report-root style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
+          {/* 移动端提示：PDF / HTML 下载已禁用。data-pdf-exclude 双保险，
+              即便用户切桌面端 UA 触发快照也不会出现在 PDF 里。 */}
+          {isMobile && (
+            <div
+              data-pdf-exclude="true"
+              style={{
+                margin: "0 0 20px",
+                padding: "12px 14px",
+                borderRadius: 12,
+                background: "rgba(168,118,27,0.08)",
+                border: "1px dashed rgba(168,118,27,0.45)",
+                color: "#7a5410",
+                fontSize: 12.5,
+                fontWeight: 600,
+                lineHeight: 1.6,
+              }}
+            >
+              {MOBILE_HEAVY_DOWNLOAD_HINT}
+            </div>
+          )}
           {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染）。
               `.cover-page.cover-image-only` 类与 ReportRenderer 的 @media print
               规则配合 → puppeteer 渲染 PDF 时封面强制独占首页，不会跟正文挤一页。 */}
@@ -619,8 +655,10 @@ export default function MyReportsPage() {
                       setSelectedReport({ id: report.id, title: report.lighthouseTitle || report.title, markdown: md });
                     }}
                     onEdit={() => setEditingReport(report)}
-                    onDownload={() => void handleDownloadFromCard(report)}
-                    onDownloadHtml={() => handleDownloadHtmlFromCard(report)}
+                    // 移动端不传 onDownload / onDownloadHtml，让卡片自行隐藏对应按钮
+                    // 并在 completed 卡片下方渲染温和提示文案。
+                    onDownload={isMobile ? undefined : () => void handleDownloadFromCard(report)}
+                    onDownloadHtml={isMobile ? undefined : () => handleDownloadHtmlFromCard(report)}
                     onCancel={() => handleCancelJob(report)}
                     onSoftDelete={() => handleSoftDelete(report)}
                   />
@@ -649,8 +687,10 @@ function ReportCoverCard({
   report: Report;
   onRead: () => void;
   onEdit: () => void;
-  onDownload: () => void;
-  onDownloadHtml: () => void;
+  // 移动端时父组件传 undefined → 卡片自动隐藏对应按钮，
+  // 并在 completed 状态下显示温和的「请改用桌面端」提示文案。
+  onDownload?: () => void;
+  onDownloadHtml?: () => void;
   onCancel: () => void;
   onSoftDelete: () => void;
   isDownloading?: boolean;
@@ -755,51 +795,74 @@ function ReportCoverCard({
           )}
         </div>
 
-        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订 */}
+        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订
+            移动端 onDownload / onDownloadHtml 为 undefined → 隐藏两个重型下载按钮，
+            原位置改显示温和提示文案，引导用户改用桌面端 / 在线阅览 / Markdown。 */}
         {report.status === "completed" && report.reportMarkdown && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {/* 5 套封面模板紧凑选择条：用户挑封面 → 立即套用到下载 */}
             <CompactStyleSwatches value={pdfStyle} onChange={onPdfStyleChange} />
-            <button
-              onClick={onDownload}
-              disabled={isDownloading}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
-              onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-              title="自动进入全息阅览模式 → React + recharts 渲染 → DOM 快照 → Cloud Run pdf-worker 出 PDF"
-            >
-              {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
-              {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF"}
-            </button>
+            {onDownload && (
+              <button
+                onClick={onDownload}
+                disabled={isDownloading}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
+                onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+                title="自动进入全息阅览模式 → React + recharts 渲染 → DOM 快照 → Cloud Run pdf-worker 出 PDF"
+              >
+                {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
+                {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF"}
+              </button>
+            )}
             {/* HTML 交互版：内联 echarts，浏览器里可 hover / 切 legend / 缩放 */}
-            <button
-              onClick={onDownloadHtml}
-              disabled={isHtmlDownloading}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-                padding: "10px 0",
-                borderRadius: 10,
-                background: isHtmlDownloading
-                  ? "rgba(37,99,235,0.20)"
-                  : "linear-gradient(135deg,#1e3a8a,#2563eb)",
-                border: "1px solid rgba(37,99,235,0.55)",
-                color: "#f0f9ff",
-                fontWeight: 900,
-                fontSize: 12.5,
-                cursor: isHtmlDownloading ? "not-allowed" : "pointer",
-                transition: "all 0.2s",
-                boxShadow: isHtmlDownloading ? "none" : "0 4px 14px rgba(37,99,235,0.30)",
-              }}
-              onMouseEnter={(e) => { if (!isHtmlDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-              title="下载交互版 HTML（含 echarts，可 hover / 切 legend）；≤10 MB 直下载，>10 MB 自动压缩 zip"
-            >
-              {isHtmlDownloading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
-            </button>
+            {onDownloadHtml && (
+              <button
+                onClick={onDownloadHtml}
+                disabled={isHtmlDownloading}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "10px 0",
+                  borderRadius: 10,
+                  background: isHtmlDownloading
+                    ? "rgba(37,99,235,0.20)"
+                    : "linear-gradient(135deg,#1e3a8a,#2563eb)",
+                  border: "1px solid rgba(37,99,235,0.55)",
+                  color: "#f0f9ff",
+                  fontWeight: 900,
+                  fontSize: 12.5,
+                  cursor: isHtmlDownloading ? "not-allowed" : "pointer",
+                  transition: "all 0.2s",
+                  boxShadow: isHtmlDownloading ? "none" : "0 4px 14px rgba(37,99,235,0.30)",
+                }}
+                onMouseEnter={(e) => { if (!isHtmlDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
+                title="下载交互版 HTML（含 echarts，可 hover / 切 legend）；≤10 MB 直下载，>10 MB 自动压缩 zip"
+              >
+                {isHtmlDownloading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                {isHtmlDownloading ? "正在打包 HTML…" : "🌐 下载 HTML（交互版）"}
+              </button>
+            )}
+            {/* 移动端 PDF / HTML 都被禁用时显示提示文案（保留 MD + 阅览作为安全路径） */}
+            {!onDownload && !onDownloadHtml && (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  background: "rgba(168,118,27,0.08)",
+                  border: "1px dashed rgba(168,118,27,0.45)",
+                  color: "#7a5410",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  lineHeight: 1.55,
+                }}
+              >
+                {MOBILE_HEAVY_DOWNLOAD_HINT}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6 }}>
               <button
                 onClick={onRead}
@@ -836,14 +899,18 @@ function ReportCoverCard({
               >
                 <FileText size={11} />快速预览
               </button>
-              <button
-                onClick={onDownload}
-                disabled={isDownloading}
-                title="下载草稿 PDF（请在阅览中确认水印提示）"
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(217,119,6,0.10)", border: "1px solid rgba(217,119,6,0.30)", color: "#d97706", fontWeight: 800, fontSize: 11, cursor: isDownloading ? "not-allowed" : "pointer" }}
-              >
-                {isDownloading ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
-              </button>
+              {/* 草稿 PDF：移动端 onDownload=undefined 时静默隐藏（小图标按钮，
+                  审核工作台才是主路径，不需要额外提示文案） */}
+              {onDownload && (
+                <button
+                  onClick={onDownload}
+                  disabled={isDownloading}
+                  title="下载草稿 PDF（请在阅览中确认水印提示）"
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(217,119,6,0.10)", border: "1px solid rgba(217,119,6,0.30)", color: "#d97706", fontWeight: 800, fontSize: 11, cursor: isDownloading ? "not-allowed" : "pointer" }}
+                >
+                  {isDownloading ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
+                </button>
+              )}
             </div>
           </div>
         )}
