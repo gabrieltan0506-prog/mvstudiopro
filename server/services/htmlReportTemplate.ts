@@ -5,18 +5,19 @@
  *   "直接讓用戶下載PDF跟HTML的選項就好，除非檔案很大，超過 10 MB，
  *   在採用壓縮成 zip 下載。"
  *
- * 跟 PDF 路径 (pdfTemplate.ts → puppeteer) 区别：
- *   - PDF：服务端 ECharts SSR → 静态 SVG inline → puppeteer 直接打印（本任务 C）
- *   - HTML：内联 echarts.min.js（约 1MB） → 客户端 echarts.init + setOption →
- *     用户在浏览器里可以交互（hover、tooltip、legend 切换、缩放等）
+ * 路径定位：
+ *   - PDF（PR pdf-v2-platformpage-mode 之后）：MyReportsPage 阅读模式 React 渲染
+ *     → document.documentElement.cloneNode(true) → mvAnalysis.downloadPlatformPdf → pdf-worker
+ *   - HTML（本文件）：server-side 拼单文件 HTML，内联 echarts.min.js 给浏览器跑
+ *     交互图（hover、tooltip、legend 切换、缩放等）。两条路径互不干扰。
  *
  * 输出：单文件完整 HTML，结构：
  *   <!doctype html><html><head>
  *     <meta charset="utf-8"><title>...</title>
- *     <style>5 套主题 CSS（与 pdfTemplate buildPalette 对齐） + 排版</style>
+ *     <style>5 套主题 CSS（buildHtmlPalette） + 排版</style>
  *     <script>echarts.min.js inline 进来（构建期从 node_modules 读）</script>
  *   </head><body data-theme="${pdfStyle}">
- *     <header class="cover">封面（同 PDF 模板）</header>
+ *     <header class="cover">封面</header>
  *     <article>${marked HTML，含 figure scene-figure + figure chart-figure echart-mount}</article>
  *     <footer>...</footer>
  *     <script>初始化所有 .echart-mount</script>
@@ -26,8 +27,7 @@
  *   - 不引入新依赖（echarts 一个就够；jszip 在路由层处理 zip 压缩）
  *   - 不在前端用 React 渲染（纯字符串拼接，单文件离线可用）
  *   - 图片直接 https URL（场景图 / 封面 已经是 GCS 公网 URL）
- *   - PR #330 修过 marked raw HTML pass-through，pdfTemplate 的 marked 配置
- *     也是默认 GFM，复用即可
+ *   - PR #330 修过 marked raw HTML pass-through，本文件的 marked 配置默认 GFM
  */
 
 import fs from "node:fs";
@@ -70,7 +70,7 @@ export interface HtmlReportOpts {
   documentTitle?: string;
 }
 
-// ─── 5 套主题色（与 pdfTemplate.ts buildPalette 对齐） ───────────────────────
+// ─── 5 套主题色（与 client/components/ReportRenderer.tsx THEME_PALETTES 对齐） ─
 
 interface HtmlPalette {
   bg: string;
@@ -267,7 +267,7 @@ function enhanceTables(html: string): string {
   );
 }
 
-// ─── 封面（与 pdfTemplate.ts 风格统一，但简化排版到屏幕阅读） ────────────────
+// ─── 封面（HTML 离线版，9:16 杂志风；样式简化到屏幕阅读） ───────────────────
 
 function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: HtmlPdfStyle): string {
   const safeBg = String(cover.imageUrl || "").replace(/"/g, "&quot;");
@@ -276,9 +276,13 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
   // cover-title 等）。Nano Banana Pro 9:16 已经把杂志风装饰、标题、出版信息都
   // 画进图里，再叠 HTML 文字反而双重曝光。
   // 没封面图时回退到旧文字框（防止纯空白）— 调用方应当先尝试 on-demand 生成。
+  //
+  // 用户反馈（2026-05-01 第四次）："被砍了一半"——之前用 background:cover 把 9:16
+  // 图强行铺满横向容器，上下被裁掉（INNOVATIONS 标头 + 底部 GLOBAL VISIONS 文字
+  // 消失）。改用真正的 <img> + object-fit: contain，保持 9:16 完整显示。
   if (safeBg) {
     return `<section class="cover-page cover-image-only">
-  <div class="cover-bg" style="background: url(${safeBg}) center/cover no-repeat;"></div>
+  <img src="${safeBg}" alt="封面" class="cover-image" />
 </section>`;
   }
 
@@ -295,7 +299,7 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
   );
   const safeAbstract = cover.abstract ? escapeHtml(String(cover.abstract).slice(0, 220)) : "";
 
-  // 5 套封面背景层（与 pdfTemplate.ts 同款）
+  // 5 套封面背景层（5 套主题色 → 杂志风径向渐变 + 主背景）
   const layers: Record<HtmlPdfStyle, string> = {
     "spring-mint": `
       radial-gradient(70% 50% at 18% 18%, rgba(110,231,183,0.55) 0%, rgba(110,231,183,0) 70%),
@@ -495,6 +499,11 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   /* ── 封面 ── */
   .cover-page { position: relative; width: 100%; min-height: 70vh; color: #fff; overflow: hidden; border-radius: 16px; margin-bottom: 32px; }
   .cover-bg { position: absolute; inset: 0; background-color: var(--cover-bg); filter: saturate(1.05); }
+  /* 纯图封面（cover-image-only）：用 <img> 而非 background，object-fit:contain 保持 9:16
+     完整显示，避免 background:cover 切掉上下杂志元素。HTML 视图最多占满一屏；PDF 印刷
+     由 @media print 控制成 A4 单页。 */
+  .cover-page.cover-image-only { display: flex; justify-content: center; align-items: center; min-height: auto; padding: 0; background: #0a0a0a; }
+  .cover-page.cover-image-only .cover-image { display: block; width: auto; height: auto; max-width: 100%; max-height: 95vh; object-fit: contain; }
   .cover-frame { position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: space-between; min-height: 70vh; padding: 48px 44px; }
   .cover-top { display: flex; justify-content: space-between; align-items: center; }
   .cover-pill { background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.22); color: #fff; padding: 8px 14px; border-radius: 999px; font-size: 11px; font-weight: 700; letter-spacing: 0.10em; }

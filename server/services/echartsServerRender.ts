@@ -1,27 +1,19 @@
 /**
- * 服务端 ECharts 渲染（SSR → SVG 字符串）
+ * 服务端 ECharts 工具：把 markdown 数值表格转成可交互图表挂载点。
  *
- * 背景：
- *   在线阅读（client/src/components/ReportRenderer.tsx）会把数值型表格自动衍生
- *   出 recharts 柱状图 / 折线图 / 雷达图，所以"在线没问题"。但 PDF 导出走的是
- *   pdfTemplate.ts → marked.parse → puppeteer，单纯吐表格，**没有图表**，
- *   于是用户看到的就是"PDF 图表空白"（其实是 PDF 根本没渲染图表）。
+ * 历史背景：
+ *   原本这里也提供 SSR → SVG 字符串的能力，专给 PDF 服务端渲染路径用
+ *   （`pdfTemplate.ts → marked.parse → puppeteer`）。PR pdf-v2-platformpage-mode
+ *   把战略 PDF 切到客户端 DOM 快照模式后，server-side SVG 渲染整段路径作废，
+ *   `injectChartSvgsIntoMarkdown` / `renderEChartsToSvg` 已删除。
  *
- * 修复策略（与用户敲定）：
- *   1. **不**让 puppeteer 跑客户端 echarts 等 waitForFunction（折腾且不稳）
- *   2. 服务端用 echarts SSR API（`renderer:'svg', ssr:true`）把每个数值表格
- *      变成静态 SVG，inline 进 markdown
- *   3. PDF 模板 `marked.parse` 默认透传 raw HTML（含 `<svg>`），所以 puppeteer
- *      拿到的就是已经画好的图，直接 `page.pdf()` 即可
- *   4. 同一份 SVG 也可以用在 HTML 交互导出的 fallback 路径（如果不想跑 echarts.js）
- *
- * 依赖：echarts^5（pnpm 已装）。echarts 5.3+ 支持 `ssr:true` + `renderer:'svg'`，
- * 可在 Node.js 中无 DOM 跑通（init 第一参传 null）。
+ * 当前职责（仅给 HTML 交互导出 `htmlReportTemplate.ts` 用）：
+ *   1. 扫描 markdown 数值表格，推导出 bar / line / radar 图谱 spec
+ *   2. 把每个数值表格之后注入一个 `<div class="echart-mount">` 占位 div +
+ *      ECharts option JSON，前端内联的 echarts.min.js 在浏览器里 setOption 渲染。
  */
 
-import * as echarts from "echarts";
-
-// ─── 调色板（与 pdfTemplate.ts buildPalette 对齐） ───────────────────────────
+// ─── 调色板（与 client / htmlReportTemplate 主题色对齐） ─────────────────────
 
 export type EChartsTheme =
   | "spring-mint"
@@ -261,134 +253,6 @@ export function buildEChartsOption(spec: DerivedChartSpec, theme?: EChartsTheme)
     yAxis,
     series: baseSeries,
   };
-}
-
-// ─── ECharts SSR：option → SVG 字符串 ─────────────────────────────────────────
-
-export function renderEChartsToSvg(
-  option: any,
-  opts?: { width?: number; height?: number },
-): string {
-  const w = Math.max(320, Math.min(1600, Number(opts?.width) || 880));
-  const h = Math.max(220, Math.min(1200, Number(opts?.height) || 380));
-  try {
-    // echarts 5.3+：init 第一参传 null + ssr:true，纯计算返回 SVG，不依赖 DOM
-    const chart = (echarts as any).init(null, null, {
-      renderer: "svg",
-      ssr: true,
-      width: w,
-      height: h,
-    });
-    chart.setOption(option);
-    const svg = chart.renderToSVGString();
-    chart.dispose();
-    // 保险：补 width/height 属性，部分 marked / puppeteer 链路依赖显式尺寸
-    return ensureSvgSize(svg, w, h);
-  } catch (e: any) {
-    console.warn("[echartsServerRender] SSR 渲染失败：", e?.message);
-    return fallbackErrorSvg(w, h, e?.message || "render failed");
-  }
-}
-
-function ensureSvgSize(svg: string, w: number, h: number): string {
-  if (!svg.startsWith("<svg")) return svg;
-  // 已经有 width/height 就不动；否则补 viewBox + responsive width
-  const hasWidth = /\bwidth=/.test(svg.slice(0, 200));
-  const hasHeight = /\bheight=/.test(svg.slice(0, 200));
-  if (hasWidth && hasHeight) {
-    return svg.replace(
-      /^<svg([^>]*)>/,
-      (_m, attrs) => `<svg${attrs} style="max-width:100%;height:auto;">`,
-    );
-  }
-  return svg.replace(
-    /^<svg([^>]*)>/,
-    (_m, attrs) => `<svg${attrs} width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;">`,
-  );
-}
-
-function fallbackErrorSvg(w: number, h: number, msg: string): string {
-  const safe = String(msg)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .slice(0, 80);
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="max-width:100%;height:auto;background:#fafafa;border:1px solid #e2e8f0;border-radius:6px;">
-<text x="50%" y="46%" text-anchor="middle" font-size="14" fill="#64748b" font-family="system-ui">图表渲染失败</text>
-<text x="50%" y="60%" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="system-ui">${safe}</text>
-</svg>`;
-}
-
-// ─── markdown 表格扫描 + 注入 SVG（pdf 路径用） ─────────────────────────────
-//
-// 与 client/src/components/ReportRenderer.tsx 的 parseMarkdown 表格识别规则一致：
-//   - 行 `^\|.+\|$` 紧跟 `^\|?\s*:?-{2,}.*$`  → table 起点
-//   - 之后连续的 `^\|.+\|$` 行都是 row
-//
-// 命中后用 deriveChartSpecFromTable + buildEChartsOption + renderEChartsToSvg
-// 生成 SVG，并把 `<figure class="chart-figure">${svg}<figcaption>…</figcaption></figure>`
-// 插入到表格代码块**之后**（保留原表格，新增图表，与在线版排布一致）。
-
-export interface ChartInjectionOptions {
-  theme?: EChartsTheme;
-  /** 默认 880×380，雷达图自动改为 880×460 */
-  width?: number;
-  height?: number;
-}
-
-export function injectChartSvgsIntoMarkdown(markdown: string, opts?: ChartInjectionOptions): string {
-  if (!markdown || !markdown.trim()) return markdown;
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  const out: string[] = [];
-  let i = 0;
-  // 嵌入序号（用于 caption 的"图 N"）
-  let chartIdx = 0;
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (
-      /^\|.+\|$/.test(trimmed) &&
-      i + 1 < lines.length &&
-      /^\|?\s*:?-{2,}.*$/.test(lines[i + 1].trim())
-    ) {
-      const headers = splitTableRow(trimmed);
-      out.push(line); // headers row
-      out.push(lines[i + 1]); // separator
-      i += 2;
-      const rowLines: string[] = [];
-      const rows: string[][] = [];
-      while (i < lines.length && /^\|.+\|$/.test(lines[i].trim())) {
-        rowLines.push(lines[i]);
-        rows.push(splitTableRow(lines[i].trim()));
-        i++;
-      }
-      out.push(...rowLines);
-
-      // 推导 + 渲染
-      const spec = deriveChartSpecFromTable(headers, rows);
-      if (spec) {
-        chartIdx += 1;
-        const isRadar = spec.type === "radar";
-        const w = opts?.width ?? 880;
-        const h = opts?.height ?? (isRadar ? 460 : 380);
-        const option = buildEChartsOption(spec, opts?.theme);
-        const svg = renderEChartsToSvg(option, { width: w, height: h });
-        const captionType = isRadar ? "雷达图" : spec.type === "line" ? "折线图" : "柱状图";
-        const caption = `图 ${chartIdx} · 数据可视化（${captionType}） · 根据上方表格自动生成`;
-        out.push("");
-        out.push(`<figure class="chart-figure" data-chart-type="${spec.type}">`);
-        out.push(svg);
-        out.push(`<figcaption>${escapeHtml(caption)}</figcaption>`);
-        out.push(`</figure>`);
-        out.push("");
-      }
-      continue;
-    }
-    out.push(line);
-    i++;
-  }
-  return out.join("\n");
 }
 
 function splitTableRow(line: string): string[] {
