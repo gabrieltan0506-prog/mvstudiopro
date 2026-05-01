@@ -1,4 +1,15 @@
 #!/bin/bash
+# 🤖 此脚本是手动兜底 — 正常路径请走 GitHub Actions 自动部署：
+#   .github/workflows/pdf-worker-deploy.yml
+# 触发：main 分支 pdf-worker/ 目录任意改动 push 即自动 build + deploy。
+#
+# 使用本脚本的场景：
+#   1. CI workflow 临时挂掉
+#   2. 本地 hotfix 想立即上线，不等 PR merge
+#   3. 首次部署初始化（IAM、bucket 等）
+#
+# 改本脚本资源配置时，记得同步改 .github/workflows/pdf-worker-deploy.yml 的
+# `gcloud run deploy` 步骤。
 set -e
 
 PROJECT_ID="mv-studio-pro"
