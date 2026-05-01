@@ -1,17 +1,26 @@
 # 自动部署 pdf-worker 到 Cloud Run。
 # 触发条件：main 分支上 pdf-worker/ 目录有任何改动 push（含 PR merge）。
 #
-# Secrets 要求（Repo settings → Secrets → Actions）：
-#   GCP_SA_KEY  — Cloud Run / Cloud Build / Artifact Registry 服务账号的 JSON key。
-#                 推荐用现有 pdf-runner 账号 (pdf-runner@mv-studio-pro.iam.gserviceaccount.com)
-#                 或新建一个 ci-pdf-deployer 账号，绑定以下角色：
+# Secrets 要求（Repo settings → Secrets and variables → Actions）任选一种：
+#
+# A) 服务账号 JSON（常用）
+#   GCP_SA_KEY — 整份 key JSON 字符串。若未设置或为空，google-github-actions/auth 会报：
+#   「must specify exactly one of workload_identity_provider or credentials_json」。
+#   注意：来自 fork 的 pull_request 工作流默认拿不到仓库 secrets；本 workflow 仅在
+#   push main / workflow_dispatch 运行，合并进本仓库后应有 secrets。
+#
+# B) Workload Identity Federation（无长期 JSON key）
+#   须改本文件 auth 步骤：使用 workload_identity_provider + service_account，
+#   并移除 credentials_json（须二选一）。
+#
+#   服务账号建议角色（与旧注释一致）：
 #                   - roles/run.admin
 #                   - roles/cloudbuild.builds.editor
 #                   - roles/artifactregistry.writer
 #                   - roles/storage.admin (上传源码到 staging bucket)
 #                   - roles/iam.serviceAccountUser (allow act-as pdf-runner)
-#                 然后 `gcloud iam service-accounts keys create key.json --iam-account=...`
-#                 把 key.json 内容粘到 GCP_SA_KEY secret。
+#                 若用 JSON key：`gcloud iam service-accounts keys create key.json --iam-account=...`
+#                 将整份 JSON 粘贴到 GCP_SA_KEY。
 
 name: Deploy pdf-worker
 
@@ -31,6 +40,9 @@ jobs:
   deploy:
     name: Build + deploy pdf-worker to Cloud Run
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation 需要；仅 credentials_json 时无妨
     concurrency:
       group: pdf-worker-deploy-${{ github.ref }}
       cancel-in-progress: true
@@ -42,6 +54,17 @@ jobs:
       SA_EMAIL: pdf-runner@mv-studio-pro.iam.gserviceaccount.com
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify GCP_SA_KEY is set
+        env:
+          GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_SA_KEY_JSON" ]; then
+            echo "::error::Secret GCP_SA_KEY is missing or empty. Add it under Settings → Secrets and variables → Actions."
+            echo "Using Workload Identity Federation instead? Remove credentials_json and set workload_identity_provider + service_account on the auth step (see workflow comments)."
+            exit 1
+          fi
+          echo "GCP_SA_KEY is present."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
