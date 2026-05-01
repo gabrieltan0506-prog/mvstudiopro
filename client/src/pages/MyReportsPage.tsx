@@ -14,7 +14,7 @@ import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 /** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
-/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
+/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
@@ -334,6 +334,7 @@ export default function MyReportsPage() {
       if (!pdfRoot) {
         throw new Error("找不到 PDF 快照容器（myreports-pdf-root），请重进阅读模式后再试");
       }
+
 
       // 封面若未 decode 完成，快照裡 naturalHeight=0 → pdf-worker 得到空白首頁 + page-break-after 仍生效
       const coverImg = pdfRoot.querySelector("figure.cover-page img");
