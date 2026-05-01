@@ -2513,7 +2513,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 900_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2554,7 +2554,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 900_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -6231,6 +6231,9 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         let autoCoverImage: string | undefined;
         let autoCoverTitle: string | undefined;
         let autoCoverAbstract: string | undefined;
+        // 用户决策（2026-05-01）：记下能写回 thumbnailUrl 的 userCreations.id，
+        // 后续在拼 cover 之前如果发现 thumbnailUrl=NULL 就 on-demand 调 Nano Banana 2 补生
+        let coverCreationId: number | undefined;
 
         if (input.jobId) {
           const { readJob } = await import("./services/deepResearchService");
@@ -6242,6 +6245,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           }
           md = job.reportMarkdown.trim();
           if (job.dbRecordId) {
+            coverCreationId = job.dbRecordId;
             try {
               const { userCreations } = await import("../drizzle/schema-creations");
               const { eq } = await import("drizzle-orm");
@@ -6283,6 +6287,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               autoCoverImage = r.thumbnailUrl || undefined;
               autoCoverTitle = meta.lighthouseTitle || r.title || undefined;
               autoCoverAbstract = meta.summary || undefined;
+              coverCreationId = r.id;
             }
           } catch (e: any) {
             if (e instanceof TRPCError) throw e;
@@ -6337,9 +6342,16 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           // 2026-05-01 决策：PDF 也跟 HTML 一样 — 封面 URL 在拼 HTML 之前就 inline 成 base64
           // data URI，避免 pdf-worker 渲染时再去 fetch GCS 签名 URL（会因签名过期 / Cloud Run
           // 网络抖动静默丢封面，跟 HTML 离线打开同源问题）。
+          // 用户决策（2026-05-01）：cover.imageUrl=undefined（thumbnailUrl=NULL，
+          // 主流程 6 次重试全败）时，先 on-demand 调 Nano Banana 2 补生 9:16 纯封面再 inline。
           const { inlineCoverIfHttp } = await import("./routers/creations");
+          let pdfCoverUrl: string | undefined = cover?.imageUrl;
+          if (cover && !pdfCoverUrl && coverCreationId) {
+            const { ensureCoverForCreation } = await import("./services/deepResearchService");
+            pdfCoverUrl = await ensureCoverForCreation(coverCreationId, cover.title || "战略情报报告");
+          }
           const coverForPdf = cover
-            ? { ...cover, imageUrl: await inlineCoverIfHttp(cover.imageUrl, "exportBlackGoldPdf") }
+            ? { ...cover, imageUrl: await inlineCoverIfHttp(pdfCoverUrl, "exportBlackGoldPdf") }
             : undefined;
           const htmlContent = generateHtmlTemplate(md, { style, cover: coverForPdf });
 
@@ -6361,7 +6373,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           );
 
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 900_000);
+          const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
           try {
             const res = await fetch(proxyUrl, {
               method: "POST",

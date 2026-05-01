@@ -495,7 +495,14 @@ export const creationsRouter = router({
         const { generateInteractiveHtml } = await import("../services/htmlReportTemplate");
         // 用户决策（2026-05-01）：HTML 离线打开也要看到封面 → HTTP 签名 URL 在导出时
         // 抓下来内联成 base64 data URI（>8MB 或失败时 fallback 原 URL）
-        const inlinedCoverUrl = await inlineCoverIfHttp(row.thumbnailUrl || undefined);
+        // 用户决策续（2026-05-01）：thumbnailUrl=NULL（主流程 6 次重试全败）时，
+        // 此处 on-demand 调 Nano Banana 2 (flash) 补生 9:16 纯封面再下载，避免封面缺失。
+        let resolvedCoverUrl = row.thumbnailUrl || undefined;
+        if (!resolvedCoverUrl) {
+          const { ensureCoverForCreation } = await import("../services/deepResearchService");
+          resolvedCoverUrl = await ensureCoverForCreation(input.creationId, title);
+        }
+        const inlinedCoverUrl = await inlineCoverIfHttp(resolvedCoverUrl);
         const html = generateInteractiveHtml(md, {
           style: style as any,
           documentTitle: title,
