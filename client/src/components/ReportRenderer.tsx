@@ -904,9 +904,10 @@ export default function ReportRenderer({
             border: none !important;
             background-color: #fff !important;
             width: 100% !important;
-            height: 277mm !important;
-            max-height: 277mm !important;
+            height: 262mm !important;
+            max-height: 262mm !important;
             min-height: 0 !important;
+            overflow: hidden !important;
           }
           .cover-page img, .cover-page.cover-image-only img {
             position: static !important;
@@ -919,6 +920,7 @@ export default function ReportRenderer({
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
+            aspect-ratio: auto !important;
             margin: 0 !important;
             padding: 0 !important;
             transform: none !important;
@@ -926,6 +928,8 @@ export default function ReportRenderer({
             box-shadow: none !important;
             border-radius: 0 !important;
             outline: none !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
           #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface] {

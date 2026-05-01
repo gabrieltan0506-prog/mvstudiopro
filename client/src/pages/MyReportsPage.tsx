@@ -28,8 +28,9 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{margin:0!important;padding:0!important;}
 #myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
-.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:auto!important;break-after:auto!important;page-break-inside:avoid!important;break-inside:avoid!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;margin:0!important;padding:0!important;border:none!important;background-color:#fff!important;width:100%!important;height:277mm!important;max-height:277mm!important;min-height:0!important;}
-.cover-page img,.cover-page.cover-image-only img{position:static!important;display:block!important;flex-shrink:0!important;page-break-inside:auto!important;break-inside:auto!important;max-width:100%!important;max-height:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;margin:0!important;padding:0!important;transform:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;outline:none!important;}
+figure:not(.cover-page),img,.echart-mount{page-break-inside:avoid!important;break-inside:avoid!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:auto!important;break-after:auto!important;page-break-inside:avoid!important;break-inside:avoid!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;margin:0!important;padding:0!important;border:none!important;background-color:#fff!important;width:100%!important;height:262mm!important;max-height:262mm!important;min-height:0!important;overflow:hidden!important;}
+.cover-page img,.cover-page.cover-image-only img{position:static!important;display:block!important;flex-shrink:0!important;page-break-inside:auto!important;break-inside:auto!important;max-width:100%!important;max-height:100%!important;width:auto!important;height:auto!important;object-fit:contain!important;aspect-ratio:auto!important;margin:0!important;padding:0!important;transform:none!important;border:none!important;box-shadow:none!important;border-radius:0!important;outline:none!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;}
 #myreports-pdf-root:has(> figure.cover-page) > [data-report-surface]{page-break-before:always!important;break-before:page!important;}
 @page{margin:0;size:A4 portrait;}
 [data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
@@ -40,6 +41,37 @@ html,body{margin:0!important;padding:0!important;}
   return `${strip}${html}`;
 }
 
+/** 給封面圖補齊列印用內在尺寸（html 裡 9:16 的 aspect-ratio 在 Chromium page.pdf 下偶發不繪圖） */
+function stampCoverImgPrintDimensions(
+  img: HTMLImageElement,
+  liveCoverImg: HTMLImageElement | null,
+  width?: number,
+  height?: number,
+): void {
+  let w = width !== undefined && width > 0 ? width : 0;
+  let h = height !== undefined && height > 0 ? height : 0;
+  if (!w || !h) {
+    if (
+      liveCoverImg &&
+      liveCoverImg.naturalWidth > 0 &&
+      liveCoverImg.naturalHeight > 0
+    ) {
+      w = liveCoverImg.naturalWidth;
+      h = liveCoverImg.naturalHeight;
+    }
+  }
+  if (!w || !h) {
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      w = img.naturalWidth;
+      h = img.naturalHeight;
+    }
+  }
+  if (w > 0 && h > 0) {
+    img.setAttribute("width", String(w));
+    img.setAttribute("height", String(h));
+  }
+}
+
 /** 快照專用：把封面 <img> 換成 data URL，避免 pdf-worker setContent 後遠端圖失敗 → 高度 0 + page-break 空白首頁 */
 async function embedMyReportsCoverImageInPdfFragment(
   fragment: HTMLElement,
@@ -48,7 +80,10 @@ async function embedMyReportsCoverImageInPdfFragment(
   const img = fragment.querySelector("figure.cover-page img");
   if (!(img instanceof HTMLImageElement) || !img.src) return;
   const raw = img.currentSrc || img.src;
-  if (raw.startsWith("data:")) return;
+  if (raw.startsWith("data:")) {
+    stampCoverImgPrintDimensions(img, liveCoverImg);
+    return;
+  }
   let parsed: URL;
   try {
     parsed = new URL(raw, window.location.href);
@@ -73,6 +108,7 @@ async function embedMyReportsCoverImageInPdfFragment(
     });
     img.src = dataUrl;
     img.removeAttribute("srcset");
+    stampCoverImgPrintDimensions(img, liveCoverImg);
     return;
   } catch (e) {
     console.warn("[MyReports] 封面 fetch 转 data URL 失败，尝试 canvas 内嵌", e);
@@ -92,6 +128,7 @@ async function embedMyReportsCoverImageInPdfFragment(
       ctx.drawImage(liveCoverImg, 0, 0);
       img.src = c.toDataURL("image/jpeg", 0.92);
       img.removeAttribute("srcset");
+      stampCoverImgPrintDimensions(img, liveCoverImg, c.width, c.height);
     } catch (e2) {
       console.warn("[MyReports] 封面 canvas 内嵌失败（可能跨域污染）", e2);
     }
@@ -106,7 +143,7 @@ function dropCoverFromPdfFragmentUnlessEmbedded(fragment: HTMLElement): void {
   const ok =
     img instanceof HTMLImageElement &&
     /^data:image\/(png|jpeg|jpg|webp|gif|bmp);base64,/i.test(img.src) &&
-    img.src.length > 512;
+    img.src.length > 256;
   if (!ok) {
     fig.remove();
   }
