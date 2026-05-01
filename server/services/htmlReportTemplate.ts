@@ -373,8 +373,16 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   const style: HtmlPdfStyle = opts?.style || "spring-mint";
   const palette = buildHtmlPalette(style);
 
+  // 0. 用户决策（2026-05-01）：如果有封面，剥掉 markdown 开头的第一个 # H1，
+  // 避免封面的 cover-title 跟正文 H1 视觉上重复同一行字。
+  // 仅去掉**第一个**起始 H1，后续小节的 H1（如 # 一、个人亮点提取）保留。
+  let mdRaw = markdownContent || "";
+  if (opts?.cover) {
+    mdRaw = mdRaw.replace(/^\s*#\s+[^\n]+\n+/, "");
+  }
+
   // 1. 把 markdown 里的数值表格扫出来，替换成 .echart-mount 占位 div + 收集 option
-  const { markdown: mdWithMounts, charts } = injectChartMountsIntoMarkdown(markdownContent || "", {
+  const { markdown: mdWithMounts, charts } = injectChartMountsIntoMarkdown(mdRaw, {
     theme: style as EChartsTheme,
   });
 
