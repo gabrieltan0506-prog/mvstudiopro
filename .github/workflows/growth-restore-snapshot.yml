@@ -19,8 +19,13 @@ jobs:
       contents: read
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
 

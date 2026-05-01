@@ -3,7 +3,7 @@
 # Requires Chromium + CJK fonts for correct Chinese rendering
 
 # ── Stage 1: Build ──────────────────────────────────────────────────────────
-FROM node:18-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY index.ts ./
 RUN npm run build
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:18-slim
+FROM node:24-slim
 
 # Install Chromium and required system libraries
 RUN apt-get update && apt-get install -y \
