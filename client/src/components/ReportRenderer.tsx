@@ -885,15 +885,18 @@ export default function ReportRenderer({
           figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
 
           /* 封面單獨一頁：禁止用 99vh 撐滿——在 Chromium page.pdf() 裡 vh 常大於實際 A4
-             可列印高度，整個 figure 會被 break-inside:avoid 推到第 2 頁 → 第 1 頁空白。 */
+             可列印高度。通用 figure/img 的 break-inside:avoid 會在「差一點塞不進首頁」時把整塊封面推到第 2 頁，
+             配合 page-break-after 即成「第 1 頁空白」，故封面與封面圖用 !important 放寬並留 mm 級裕量。 */
           .cover-page, .cover-page.cover-image-only {
             page-break-before: auto !important;
             break-before: auto !important;
             page-break-after: always !important;
             break-after: page !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             height: auto !important;
             min-height: 0 !important;
-            max-height: 297mm !important;
+            max-height: 280mm !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
@@ -904,8 +907,10 @@ export default function ReportRenderer({
           }
           /* 封面圖：以紙張可列印高度為硬上限（A4 約 297mm − 邊距） */
           .cover-page img, .cover-page.cover-image-only img {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
             max-width: 100% !important;
-            max-height: 292mm !important;
+            max-height: 275mm !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
