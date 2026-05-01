@@ -1,6 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Agent } from "undici";
 import { z } from "zod";
+
+// 给 pdf-worker / 其它大 body fetch 用的自定义 undici dispatcher。
+// undici 默认 headersTimeout=300s，bodyTimeout=300s — 16 MB body 跨云 LB 上传会卡 300s
+// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时都抬到 600s，并强制关闭 keepalive
+// （keepAliveTimeout=1ms 等价于"每个请求一条新连接、立即关"，规避代理 / LB 残留连接问题）。
+const pdfDispatcher = new Agent({
+  headersTimeout: 600_000,
+  bodyTimeout: 600_000,
+  keepAliveTimeout: 1,
+  keepAliveMaxTimeout: 1,
+});
+
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -6313,7 +6326,14 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
         try {
           const { generateHtmlTemplate } = await import("./services/pdfTemplate");
-          const htmlContent = generateHtmlTemplate(md, { style, cover });
+          // 2026-05-01 决策：PDF 也跟 HTML 一样 — 封面 URL 在拼 HTML 之前就 inline 成 base64
+          // data URI，避免 pdf-worker 渲染时再去 fetch GCS 签名 URL（会因签名过期 / Cloud Run
+          // 网络抖动静默丢封面，跟 HTML 离线打开同源问题）。
+          const { inlineCoverIfHttp } = await import("./routers/creations");
+          const coverForPdf = cover
+            ? { ...cover, imageUrl: await inlineCoverIfHttp(cover.imageUrl, "exportBlackGoldPdf") }
+            : undefined;
+          const htmlContent = generateHtmlTemplate(md, { style, cover: coverForPdf });
 
           // 用 Buffer 而不是 string 作 body：undici 处理大 string body 时容易在
           // TLS 升级 / HTTP/2 frame 切片时崩 "fetch failed"；Buffer 已经是 bytes，
@@ -6323,8 +6343,13 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
           const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
           const tStart = Date.now();
+          const coverDiag = coverForPdf?.imageUrl
+            ? coverForPdf.imageUrl.startsWith("data:")
+              ? `inlined(${coverForPdf.imageUrl.length}b)`
+              : `http(prefetch-failed?${coverForPdf.imageUrl.slice(0, 50)})`
+            : "none";
           console.log(
-            `[exportBlackGoldPdf] proxy → ${proxyUrl} htmlLen=${htmlContent.length} bodyBytes=${bodyBuf.length} hasCoverImage=${cover?.imageUrl ? "yes(" + (cover.imageUrl.startsWith("data:") ? "data-uri" : "http") + ")" : "no"}`,
+            `[exportBlackGoldPdf] proxy → ${proxyUrl} htmlLen=${htmlContent.length} bodyBytes=${bodyBuf.length} cover=${coverDiag}`,
           );
 
           const controller = new AbortController();
@@ -6335,12 +6360,17 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               headers: {
                 "Content-Type": "application/json",
                 "Content-Length": String(bodyBuf.length),
+                // 显式 Connection: close 头，比 keepalive: false 选项更可靠
+                // （Gemini 6:22 AM 诊断：某些 undici 版本 keepalive 选项不会传到 wire）
+                "Connection": "close",
               },
               body: bodyBuf,
               signal: controller.signal,
-              // keepalive 关掉以避免连接复用导致的 stale socket（大 body 上传场景）
-              keepalive: false,
-            });
+              // 自定义 undici dispatcher：抬高 headersTimeout/bodyTimeout 到 600s，
+              // 解 16 MB↑ body 撞 undici 默认 300s 超时（UND_ERR_HEADERS_TIMEOUT）。
+              // dispatcher 的 keepAliveTimeout=1ms 已经覆盖 keepalive: false 的语义，无需重复。
+              dispatcher: pdfDispatcher,
+            } as any);
             if (!res.ok) {
               const errBody = await res.text().catch(() => "");
               throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
