@@ -1,0 +1,90 @@
+# 自动部署 pdf-worker 到 Cloud Run。
+# 触发条件：main 分支上 pdf-worker/ 目录有任何改动 push（含 PR merge）。
+#
+# Secrets 要求（Repo settings → Secrets → Actions）：
+#   GCP_SA_KEY  — Cloud Run / Cloud Build / Artifact Registry 服务账号的 JSON key。
+#                 推荐用现有 pdf-runner 账号 (pdf-runner@mv-studio-pro.iam.gserviceaccount.com)
+#                 或新建一个 ci-pdf-deployer 账号，绑定以下角色：
+#                   - roles/run.admin
+#                   - roles/cloudbuild.builds.editor
+#                   - roles/artifactregistry.writer
+#                   - roles/storage.admin (上传源码到 staging bucket)
+#                   - roles/iam.serviceAccountUser (allow act-as pdf-runner)
+#                 然后 `gcloud iam service-accounts keys create key.json --iam-account=...`
+#                 把 key.json 内容粘到 GCP_SA_KEY secret。
+
+name: Deploy pdf-worker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pdf-worker/**"
+      - ".github/workflows/pdf-worker-deploy.yml"
+
+  # 手动触发兜底：万一 secret 没配好或临时跳过 path filter，可以从 Actions 页面
+  # 点 "Run workflow" 强制部署。
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build + deploy pdf-worker to Cloud Run
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pdf-worker-deploy-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      PROJECT_ID: mv-studio-pro
+      PROJECT_NUM: "255451353515"
+      REGION: us-central1
+      SERVICE_NAME: pdf-service
+      SA_EMAIL: pdf-runner@mv-studio-pro.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Compute image URL
+        id: image
+        run: |
+          IMAGE_URL="${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/${SERVICE_NAME}:sha-${GITHUB_SHA}"
+          echo "url=$IMAGE_URL" >> "$GITHUB_OUTPUT"
+          echo "Image: $IMAGE_URL"
+
+      - name: Build image via Cloud Build
+        working-directory: pdf-worker
+        run: |
+          BUCKET_NAME="gs://${PROJECT_ID}-build-stash-${PROJECT_NUM}"
+          gcloud builds submit --tag "${{ steps.image.outputs.url }}" \
+            --gcs-source-staging-dir="${BUCKET_NAME}/source" \
+            --service-account="projects/${PROJECT_ID}/serviceAccounts/${SA_EMAIL}" \
+            --gcs-log-dir="${BUCKET_NAME}/logs"
+
+      - name: Deploy to Cloud Run
+        run: |
+          # 资源配置跟 deploy.sh 同步：4Gi / 4 vCPU / 2000s timeout。
+          # 改这里之后记得也改 pdf-worker/deploy.sh（手动兜底脚本）。
+          gcloud run deploy "${SERVICE_NAME}" \
+            --image "${{ steps.image.outputs.url }}" \
+            --region "${REGION}" \
+            --allow-unauthenticated \
+            --memory 4Gi \
+            --cpu 4 \
+            --timeout=2000 \
+            --service-account="${SA_EMAIL}"
+
+      - name: Smoke check service URL
+        run: |
+          URL=$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(status.url)')
+          echo "pdf-worker deployed at: $URL"
+          # 不做实际 PDF 渲染（耗时太长 + 体积大），只 ping 健康。
+          curl -fsS -m 10 "$URL/health" || echo "⚠️ /health endpoint missing (non-fatal)"
