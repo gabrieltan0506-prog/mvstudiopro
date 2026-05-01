@@ -1,6 +1,21 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Agent } from "undici";
 import { z } from "zod";
+
+// 给 pdf-worker / 其它大 body fetch 用的自定义 undici dispatcher。
+// undici 默认 headersTimeout=300s，bodyTimeout=300s — 16 MB body 跨云 LB 上传会卡 300s
+// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时都抬到 2000s（跟 Cloud Run
+// pdf-service --timeout=2000 对齐），强制关闭 keepalive 规避 LB 残留连接。
+// 用户决策（2026-05-01）：Deep Research Max 16-25 MB HTML 已成常态，渲染要 5-15 min。
+// Gemini reviewer 建议外圈从 1800s 拉到 2000s — 给 PDF 序列化 + 跨云回传 500s 缓冲。
+const pdfDispatcher = new Agent({
+  headersTimeout: 2_000_000,
+  bodyTimeout: 2_000_000,
+  keepAliveTimeout: 1,
+  keepAliveMaxTimeout: 1,
+});
+
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -2492,7 +2507,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 720_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2533,7 +2548,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 720_000);
+        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -6313,24 +6328,60 @@ ${input.lyrics || "（纯音乐，无歌词）"}
 
         try {
           const { generateHtmlTemplate } = await import("./services/pdfTemplate");
-          const htmlContent = generateHtmlTemplate(md, { style, cover });
+          // 2026-05-01 决策：PDF 也跟 HTML 一样 — 封面 URL 在拼 HTML 之前就 inline 成 base64
+          // data URI，避免 pdf-worker 渲染时再去 fetch GCS 签名 URL（会因签名过期 / Cloud Run
+          // 网络抖动静默丢封面，跟 HTML 离线打开同源问题）。
+          const { inlineCoverIfHttp } = await import("./routers/creations");
+          const coverForPdf = cover
+            ? { ...cover, imageUrl: await inlineCoverIfHttp(cover.imageUrl, "exportBlackGoldPdf") }
+            : undefined;
+          const htmlContent = generateHtmlTemplate(md, { style, cover: coverForPdf });
+
+          // 用 Buffer 而不是 string 作 body：undici 处理大 string body 时容易在
+          // TLS 升级 / HTTP/2 frame 切片时崩 "fetch failed"；Buffer 已经是 bytes，
+          // 直接走底层 stream 上传，跳过 string→bytes 转换的中间内存峰值。
+          const bodyJson = JSON.stringify({ html: htmlContent, token: uid });
+          const bodyBuf = Buffer.from(bodyJson, "utf-8");
 
           const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
+          const tStart = Date.now();
+          const coverDiag = coverForPdf?.imageUrl
+            ? coverForPdf.imageUrl.startsWith("data:")
+              ? `inlined(${coverForPdf.imageUrl.length}b)`
+              : `http(prefetch-failed?${coverForPdf.imageUrl.slice(0, 50)})`
+            : "none";
+          console.log(
+            `[exportBlackGoldPdf] proxy → ${proxyUrl} htmlLen=${htmlContent.length} bodyBytes=${bodyBuf.length} cover=${coverDiag}`,
+          );
+
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 720_000);
+          const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
           try {
             const res = await fetch(proxyUrl, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ html: htmlContent, token: uid }),
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": String(bodyBuf.length),
+                // 显式 Connection: close 头，比 keepalive: false 选项更可靠
+                // （Gemini 6:22 AM 诊断：某些 undici 版本 keepalive 选项不会传到 wire）
+                "Connection": "close",
+              },
+              body: bodyBuf,
               signal: controller.signal,
-            });
+              // 自定义 undici dispatcher：抬高 headersTimeout/bodyTimeout 到 600s，
+              // 解 16 MB↑ body 撞 undici 默认 300s 超时（UND_ERR_HEADERS_TIMEOUT）。
+              // dispatcher 的 keepAliveTimeout=1ms 已经覆盖 keepalive: false 的语义，无需重复。
+              dispatcher: pdfDispatcher,
+            } as any);
             if (!res.ok) {
               const errBody = await res.text().catch(() => "");
               throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
             }
             const arrayBuffer = await res.arrayBuffer();
             const pdfBase64 = Buffer.from(arrayBuffer).toString("base64");
+            console.log(
+              `[exportBlackGoldPdf] proxy ✅ +${Date.now() - tStart}ms pdfBytes=${arrayBuffer.byteLength} base64Len=${pdfBase64.length}`,
+            );
             return {
               success: true as const,
               pdfBase64,
@@ -6341,10 +6392,19 @@ ${input.lyrics || "（纯音乐，无歌词）"}
             clearTimeout(timeoutId);
           }
         } catch (e: any) {
-          console.error("[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:", e?.message, e?.stack);
+          // undici fetch 抛 "fetch failed" 时，真正的底层错误在 e.cause 里。
+          const cause = e?.cause;
+          const causeMsg = cause?.message || cause?.code || (cause ? String(cause) : "");
+          console.error(
+            "[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:",
+            e?.message,
+            "cause:",
+            causeMsg,
+            e?.stack,
+          );
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: e?.message || "PDF 生成失败（pdf-worker 调用异常）",
+            message: (causeMsg ? `${e?.message} (${causeMsg})` : e?.message) || "PDF 生成失败（pdf-worker 调用异常）",
           });
         }
       }),

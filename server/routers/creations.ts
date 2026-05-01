@@ -120,28 +120,48 @@ function sanitizeFilename(name: string): string {
 // 保证 HTML 文件断网打开封面也能显示。
 //
 // 失败 fallback：保留原 URL（不会 break 现有行为，最多就是签名过期看不到封面而已）。
-async function inlineCoverIfHttp(url: string | undefined): Promise<string | undefined> {
-  if (!url) return undefined;
-  if (url.startsWith("data:")) return url; // already inline
-  if (!/^https?:\/\//i.test(url)) return url;
+// 2026-05-01 后续：PDF 路径 (deepResearch.exportBlackGoldPdf) 也需要相同行为，避免
+// pdf-worker 渲染时去 fetch GCS 签名 URL 时静默失败 → 封面消失。改成 export，
+// 调用方传 tag 区分来源（exportInteractiveHtml / exportBlackGoldPdf），方便 fly 日志定位。
+//
+// 三态日志（成功 / 失败 / skip）都打 console.log，方便 Bug C 排查。
+export async function inlineCoverIfHttp(
+  url: string | undefined,
+  tag: string = "exportInteractiveHtml",
+): Promise<string | undefined> {
+  if (!url) {
+    console.log(`[${tag}] cover skip: input is empty/undefined`);
+    return undefined;
+  }
+  if (url.startsWith("data:")) {
+    console.log(`[${tag}] cover already data-uri (len=${url.length})`);
+    return url;
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    console.log(`[${tag}] cover non-http url, kept as-is: ${url.slice(0, 60)}`);
+    return url;
+  }
+  const t0 = Date.now();
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 30_000);
     const res = await fetch(url, { signal: ctrl.signal });
     clearTimeout(t);
     if (!res.ok) {
-      console.warn(`[exportInteractiveHtml] cover prefetch ${res.status}`);
+      console.warn(`[${tag}] cover prefetch ${res.status} url=${url.slice(0, 80)}...`);
       return url;
     }
     const ab = await res.arrayBuffer();
     if (ab.byteLength > 8 * 1024 * 1024) {
-      console.warn(`[exportInteractiveHtml] cover too large (${ab.byteLength}), keep URL`);
+      console.warn(`[${tag}] cover too large (${ab.byteLength}), keep URL`);
       return url;
     }
     const ct = res.headers.get("content-type") || "image/jpeg";
-    return `data:${ct};base64,${Buffer.from(ab).toString("base64")}`;
+    const dataUri = `data:${ct};base64,${Buffer.from(ab).toString("base64")}`;
+    console.log(`[${tag}] cover inlined ok bytes=${ab.byteLength} ct=${ct} elapsedMs=${Date.now() - t0}`);
+    return dataUri;
   } catch (e: any) {
-    console.warn(`[exportInteractiveHtml] cover prefetch error: ${e?.message}`);
+    console.warn(`[${tag}] cover prefetch error: ${e?.message} url=${url.slice(0, 80)}...`);
     return url;
   }
 }
