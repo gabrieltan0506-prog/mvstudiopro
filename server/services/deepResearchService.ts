@@ -759,8 +759,8 @@ async function getDbAndSchema() {
 // 设计要点：
 //   - 已有封面直接返回（幂等，避免重复消耗配额）
 //   - 用 flash 模型（便宜）+ 1 次重试（不要 6 次拖死下载）
-//   - **prompt 里强调让 AI 把标题画进图**，因为模板 (htmlReportTemplate /
-//     pdfTemplate) 在有封面图时不再叠 cover-title 文字框
+//   - **prompt 里强调让 AI 把标题画进图**，因为 htmlReportTemplate 与
+//     MyReportsPage 阅读模式（PDF 快照源）在有封面图时都不再叠 cover-title 文字框
 //   - 失败返回 undefined（不抛错），让模板走文字回退框，不阻塞下载
 //   - 写回 thumbnailUrl 是 fire-and-forget 的语义：写失败也返回 url 让本次下载用得上
 export async function ensureCoverForCreation(
@@ -2658,7 +2658,7 @@ function lcsLen(a: string, b: string): number {
  *
  * 排版审美约束：
  * - 图片用 figure 块（CSS 控制 page-break-inside: avoid，不切页）
- * - caption 用 em + 居中（CSS 在 pdfTemplate 里控制）
+ * - caption 用 em + 居中（CSS 在 htmlReportTemplate 与 ReportRenderer 里分别控制）
  * - 每张图独立一段，前后空行（避免与正文文字粘连）
  */
 function injectSceneImagesIntoMarkdown(markdown: string, scenes: SceneIllustration[]): string {

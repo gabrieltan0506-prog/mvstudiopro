@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import {
   ChevronLeft, Crown, RefreshCw, FileText, Clock, CheckCircle,
-  XCircle, Loader2, Download, Book, Sparkles, FileDown, Pencil, Trash2,
+  XCircle, Loader2, Book, Sparkles, FileDown, Pencil, Trash2,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
@@ -39,7 +39,6 @@ export default function MyReportsPage() {
   const [, navigate] = useLocation();
   const [selectedReport, setSelectedReport] = useState<{ id?: number; title: string; markdown: string } | null>(null);
   const [editingReport, setEditingReport] = useState<Report | null>(null);
-  const [isExportingBlackGold, setIsExportingBlackGold] = useState(false);
   // 阅读模式 / 全局兜底用的 pdfStyle（默认 spring-mint）
   const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
   // 每张卡片独立保存的封面模板选择（reportId → PdfStyleKey）。
@@ -51,48 +50,79 @@ export default function MyReportsPage() {
   const setStyleOf = useCallback((reportId: number, next: PdfStyleKey) => {
     setSelectedStyle((prev) => ({ ...prev, [reportId]: next }));
   }, []);
-  // 一键下载（卡片级）：当前正在导出哪一份的 ID
+  // PDF 下载状态机（PR pdf-v2-platformpage-mode）：
+  //   "idle"    无下载请求
+  //   "ensuring-cover" 正在 on-demand 补封面（thumbnailUrl=NULL 时）
+  //   "rendering"  已进入阅读模式，等 React + recharts 把 SVG 画完
+  //   "snapshotting" 正在 cloneNode 抓 DOM 并 POST 到 pdf-worker
+  // 用 ref 而非 state 主要给 useEffect 的 setTimeout 回调读，避免 stale closure。
+  type DownloadStage = "idle" | "ensuring-cover" | "rendering" | "snapshotting";
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
+  const [downloadStage, setDownloadStage] = useState<DownloadStage>("idle");
+  const downloadStageRef = useRef<DownloadStage>("idle");
+  // 卡片点击进 reading mode + 自动触发 PDF 时，用此 flag 区分"用户主动阅读"和
+  // "下载流程在后台借阅读模式渲染"。完成后自动退出阅读模式，让用户体感跟旧版一致。
+  const autoExitReadingAfterDownloadRef = useRef<boolean>(false);
   // 取消任务（卡片级）：当前正在请求取消哪一份的 jobId（防止重复点击）
   const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   // 软删除（卡片级）：当前正在请求删除哪一份的 reportId
   const [deletingReportId, setDeletingReportId] = useState<number | null>(null);
 
-  const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
-    // 2026-05-01 用户决策：PDF 切到 Cloud Run pdf-worker，server 端 base64 编码 → 客户端 atob → Blob 触发本地下载，不上 GCS
+  // ── 下载 PDF：与 PlatformPage 共享同一条稳定路径 ────────────────────────────
+  // 1) 等用户在阅读模式 React + recharts 渲染完成（document.fonts.ready + 缓冲 2.8s）
+  // 2) cloneNode(true) 抓全文档 DOM（recharts 已经把 SVG 画进去），剥 script /
+  //    `data-pdf-exclude="true"` 和工具条
+  // 3) POST 到 mvAnalysis.downloadPlatformPdf → Cloud Run pdf-worker → base64 → Blob 下载
+  const downloadPlatformPdfMutation = trpc.mvAnalysis.downloadPlatformPdf.useMutation({
     onSuccess: (result) => {
-      setIsExportingBlackGold(false);
+      setDownloadStage("idle");
+      downloadStageRef.current = "idle";
+      const id = downloadingCardId;
       setDownloadingCardId(null);
-      const b64 = result?.pdfBase64;
+      const b64 = (result as any)?.pdfBase64;
       if (!b64) {
         toast.error("PDF 生成失败：服务端未返回 PDF 数据");
         return;
       }
       try {
-        const bytes = atob(b64);
-        const buf = new Uint8Array(bytes.length);
-        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
-        const blob = new Blob([buf], { type: "application/pdf" });
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
+        // 下载文件名用 selectedReport.title（reading mode 锁定的那一份）。
+        const fileNameTitle = (selectedReport?.title || "战略情报报告")
+          .replace(/[\\/:*?"<>|]/g, "·")
+          .slice(0, 80);
         a.href = url;
-        a.download = result.filename || "report.pdf";
+        a.download = `${fileNameTitle}.pdf`;
         a.rel = "noopener";
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        toast.success(`PDF 下载已开始（${result.filename || "report.pdf"}）`);
+        toast.success(`PDF 下载已开始（${fileNameTitle}.pdf）`);
       } catch (e: any) {
         toast.error("PDF 下载触发失败：" + (e?.message || "未知错误"));
       }
+      // 如果是从卡片自动进入 reading mode 触发的下载，下载结束后退回卡片视图，
+      // 与旧版"卡片点击直接拿到 PDF"的体感保持一致。
+      if (autoExitReadingAfterDownloadRef.current) {
+        autoExitReadingAfterDownloadRef.current = false;
+        setSelectedReport(null);
+      }
+      void id;
     },
     onError: (err) => {
-      setIsExportingBlackGold(false);
+      setDownloadStage("idle");
+      downloadStageRef.current = "idle";
       setDownloadingCardId(null);
+      autoExitReadingAfterDownloadRef.current = false;
       toast.error("PDF 生成失败：" + err.message);
     },
   });
+
+  // 客户端 DOM 快照前先确保 thumbnailUrl 已落地（NULL 就 on-demand 补一张）。
+  const ensureCoverMutation = trpc.creations.ensureCover.useMutation();
 
   // ── HTML 交互版导出（PDF 之外的第二条下载路径） ─────────────────────────
   // 用户决策："直接讓用戶下載 PDF 跟 HTML 的選項就好，除非檔案很大，超過 10 MB，
@@ -216,18 +246,123 @@ export default function MyReportsPage() {
 
   const reports = (data?.reports ?? []) as Report[];
 
-  // 卡片级一键下载：直接调用 exportBlackGoldPdf（容器内 Puppeteer 渲染 +
-  // 5 套封面模板生效）。旧的 mvAnalysis 隐藏 DOM 抓取路径已下线。
-  const handleDownloadFromCard = useCallback((report: Report) => {
+  // ── 抓页面 DOM 快照 → 送 pdf-worker（与 PlatformPage 同套路） ──────────────
+  // 这条函数必须在「阅读模式已经完成 React + recharts 渲染」之后调用：
+  //   - 通过 document.fonts.ready 等所有 web font 解码
+  //   - 加 2.8s 缓冲，给 recharts ResponsiveContainer 量好父宽 → 重排 SVG 的时间
+  //   - cloneNode 后剥掉所有 <script> 和 data-pdf-exclude="true" 元素，
+  //     避免 puppeteer 在 setContent 时把 React 重渲染清掉已绘制的图表
+  //   - 加 <base href> 让 pdf-worker 端的相对 URL 可解析（PlatformPage 同款）
+  const captureAndUploadSnapshot = useCallback(async () => {
+    setDownloadStage("snapshotting");
+    downloadStageRef.current = "snapshotting";
+    try {
+      if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+        await (document as any).fonts.ready;
+      }
+      await new Promise((r) => setTimeout(r, 2800));
+
+      const clone = document.documentElement.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("script").forEach((n) => n.remove());
+      clone.querySelectorAll('[data-pdf-exclude="true"]').forEach((n) => n.remove());
+
+      const baseTag = document.createElement("base");
+      baseTag.href = window.location.origin + "/";
+      clone.querySelector("head")?.prepend(baseTag);
+
+      const html = "<!DOCTYPE html>" + clone.outerHTML;
+      // token 字段 pdf-worker 仅用于日志；这里塞个 wait 提示便于以后扩展
+      downloadPlatformPdfMutation.mutate({ html, token: "wait=360000&selector=%5Bdata-report-root%5D" });
+    } catch (e: any) {
+      setDownloadStage("idle");
+      downloadStageRef.current = "idle";
+      setDownloadingCardId(null);
+      autoExitReadingAfterDownloadRef.current = false;
+      toast.error("PDF 快照失败：" + (e?.message || "未知错误"));
+    }
+  }, [downloadPlatformPdfMutation]);
+
+  // 进入阅读模式后，effect 检测到 stage="rendering" + selectedReport 挂载完成，
+  // 自动触发快照。用 selectedReport.id 作 dependency，进/出阅读模式都会触发。
+  useEffect(() => {
+    if (downloadStage !== "rendering") return;
+    if (!selectedReport?.id) return;
+    // 给 React 一个完整 paint cycle 后再开抓 DOM。
+    const t = setTimeout(() => {
+      void captureAndUploadSnapshot();
+    }, 80);
+    return () => clearTimeout(t);
+  }, [downloadStage, selectedReport?.id, captureAndUploadSnapshot]);
+
+  // 卡片级一键下载：自动进阅读模式 → 等渲染完 → DOM 快照 → 送 pdf-worker。
+  // 整个链路与 PlatformPage 完全一致（`document.documentElement.cloneNode(true)` →
+  // mvAnalysis.downloadPlatformPdf），是实战验证过的稳定路径。
+  const handleDownloadFromCard = useCallback(async (report: Report) => {
     const md = report.reportMarkdown || report.draftMarkdown || "";
     if (!md) { toast.error("内容尚未生成"); return; }
+    if (downloadStageRef.current !== "idle") {
+      toast.info("已有 PDF 正在生成，请稍候");
+      return;
+    }
     setDownloadingCardId(report.id);
-    setIsExportingBlackGold(true);
-    exportBlackGoldPdfMutation.mutate({
-      reportId: report.id,
-      style: styleOf(report.id),
+    autoExitReadingAfterDownloadRef.current = true;
+
+    // 0) thumbnailUrl=NULL 时先 on-demand 补一张 9:16 纯封面，避免 PDF 缺封面
+    if (!report.coverUrl) {
+      setDownloadStage("ensuring-cover");
+      downloadStageRef.current = "ensuring-cover";
+      toast.info("封面尚未生成，正在补一张 9:16 杂志封面…");
+      try {
+        await ensureCoverMutation.mutateAsync({ creationId: report.id });
+        // 后端写回 DB 后这里 refetch 一次，让 reading mode 拿到最新 coverUrl
+        await refetch();
+      } catch (e: any) {
+        // 封面补生失败不阻塞下载流程：报告主体 + recharts 仍能成像
+        console.warn("[MyReports] ensureCover 失败，PDF 将无封面继续生成：", e?.message);
+      }
+    }
+
+    // 1) 进阅读模式（按 selectedStyle 渲染）
+    setPdfStyle(styleOf(report.id));
+    setSelectedReport({
+      id: report.id,
+      title: report.lighthouseTitle || report.title,
+      markdown: md,
     });
-  }, [exportBlackGoldPdfMutation, styleOf]);
+
+    // 2) 切到 rendering 阶段，等 useEffect 触发 captureAndUploadSnapshot
+    setDownloadStage("rendering");
+    downloadStageRef.current = "rendering";
+  }, [ensureCoverMutation, refetch, styleOf]);
+
+  // 阅读模式内的「下载 PDF」按钮：用户已经在 reading mode，先 ensureCover 再快照
+  const handleDownloadFromReadingMode = useCallback(async () => {
+    if (!selectedReport?.id) {
+      toast.error("阅读模式未就绪");
+      return;
+    }
+    if (downloadStageRef.current !== "idle") {
+      toast.info("PDF 正在生成，请稍候");
+      return;
+    }
+    const reportId = selectedReport.id;
+    autoExitReadingAfterDownloadRef.current = false;
+    setDownloadingCardId(reportId);
+
+    // 阅读模式里没法直接读 reports 行的 coverUrl（用户可能已经被 ReportCoverCard
+    // 卸载了）；ensureCover 是幂等的，已存在直接 NOOP，不会重复扣 nano banana 配额。
+    setDownloadStage("ensuring-cover");
+    downloadStageRef.current = "ensuring-cover";
+    try {
+      await ensureCoverMutation.mutateAsync({ creationId: reportId });
+      await refetch();
+    } catch (e: any) {
+      console.warn("[MyReports] ensureCover 失败，PDF 将无封面继续生成：", e?.message);
+    }
+
+    setDownloadStage("rendering");
+    downloadStageRef.current = "rendering";
+  }, [ensureCoverMutation, refetch, selectedReport?.id]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -273,8 +408,15 @@ export default function MyReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfStyle]);
 
-  // ─── 阅读模式（含 PDF 导出按钮，按钮自身在 PDF 中会被剥离） ──────────────────
+  // ─── 阅读模式（PDF 导出按钮 + 5 套模板色板 + 9:16 封面 hero） ───────────────
+  // 客户端 DOM 快照模式（与 PlatformPage 同套路）：
+  //   - 顶部 chrome / 模板色板都标 data-pdf-exclude="true"，不会出现在 PDF
+  //   - 封面 hero（recharts 还没渲染好之前用作 PDF 第一屏）由本组件生成，会被快照
+  //   - 下载按钮触发 → useEffect 进入 rendering → 抓 DOM → POST → blob 下载
   if (selectedReport) {
+    const matchingReport = reports.find((r) => r.id === selectedReport.id);
+    const coverImageUrl = matchingReport?.coverUrl || null;
+    const isBusy = downloadStage !== "idle";
     return (
       <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#f5e9d7 0%,#ede0c9 30%,#e8d8be 70%,#dfcaa9 100%)", fontFamily: "'PingFang SC','HarmonyOS Sans','Source Han Sans',Inter,sans-serif" }}>
         <div data-pdf-exclude="true" style={{ borderBottom: "1px solid rgba(122,84,16,0.20)", background: "rgba(255,250,240,0.92)", backdropFilter: "blur(14px)", padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 50, boxShadow: "0 1px 0 rgba(122,84,16,0.05)" }}>
@@ -283,12 +425,72 @@ export default function MyReportsPage() {
           </button>
           <span style={{ color: "rgba(122,84,16,0.4)" }}>/</span>
           <span style={{ color: "#3d2c14", fontSize: 13, fontWeight: 800, maxWidth: 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedReport.title}</span>
-          {/* 用户决策（2026-05-01）：全息预览只负责"看"，下载入口统一走战略作品快照库的卡片 */}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={handleDownloadMd}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+              title="下载原始 Markdown"
+            >
+              <FileText size={12} />Markdown
+            </button>
+            <button
+              onClick={() => void handleDownloadFromReadingMode()}
+              disabled={isBusy}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 16px",
+                borderRadius: 8,
+                background: isBusy
+                  ? "rgba(168,118,27,0.30)"
+                  : "linear-gradient(135deg,#a8761b,#7a5410)",
+                border: "1px solid rgba(168,118,27,0.65)",
+                color: "#fff7df",
+                fontWeight: 800,
+                fontSize: 12,
+                cursor: isBusy ? "not-allowed" : "pointer",
+                boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
+              }}
+              title="抓取当前阅读模式 DOM 快照，送 Cloud Run pdf-worker 转 PDF（与 PlatformPage 同路径）"
+            >
+              {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
+              {downloadStage === "ensuring-cover" ? "生成封面…" :
+               downloadStage === "rendering"      ? "等待渲染…" :
+               downloadStage === "snapshotting"   ? "压制 PDF…" :
+                                                    "下载 PDF"}
+            </button>
+          </div>
         </div>
 
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
-          {/* 醒目大尺寸封面选择栏：5 套封面横铺，一眼可见，选定立即套用 */}
-          <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="online" />
+        <div data-report-root style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 20px 80px" }}>
+          {/* PDF 第一屏：9:16 封面 hero（有 coverUrl 才渲染；用 <img> 让浏览器异步解码，
+              递交 pdf-worker 之前已经在 DOM 里准备好了像素，puppeteer 直接看到完整图片） */}
+          {coverImageUrl && (
+            <figure style={{ margin: "0 0 28px", padding: 0, textAlign: "center" }}>
+              <img
+                src={coverImageUrl}
+                alt={selectedReport.title}
+                crossOrigin="anonymous"
+                style={{
+                  display: "block",
+                  margin: "0 auto",
+                  width: "100%",
+                  maxWidth: 720,
+                  aspectRatio: "9 / 16",
+                  objectFit: "cover",
+                  borderRadius: 16,
+                  border: "1px solid rgba(122,84,16,0.25)",
+                  boxShadow: "0 12px 36px rgba(74,54,33,0.18)",
+                }}
+              />
+            </figure>
+          )}
+
+          {/* 5 套封面色板：data-pdf-exclude 让快照剔除（PDF 里不需要这条工具栏） */}
+          <div data-pdf-exclude="true">
+            <TemplateStripBanner value={pdfStyle} onChange={setPdfStyle} variant="online" />
+          </div>
 
           <ReportRenderer markdown={selectedReport.markdown} pdfStyle={pdfStyle} />
         </div>
@@ -416,7 +618,7 @@ export default function MyReportsPage() {
                       setSelectedReport({ id: report.id, title: report.lighthouseTitle || report.title, markdown: md });
                     }}
                     onEdit={() => setEditingReport(report)}
-                    onDownload={() => handleDownloadFromCard(report)}
+                    onDownload={() => void handleDownloadFromCard(report)}
                     onDownloadHtml={() => handleDownloadHtmlFromCard(report)}
                     onCancel={() => handleCancelJob(report)}
                     onSoftDelete={() => handleSoftDelete(report)}
@@ -563,10 +765,10 @@ function ReportCoverCard({
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
               onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-              title="使用所选封面模板生成 PDF（72 小时签名链接 · 静态图表）"
+              title="自动进入全息阅览模式 → React + recharts 渲染 → DOM 快照 → Cloud Run pdf-worker 出 PDF"
             >
               {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
-              {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF（静态版）"}
+              {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF"}
             </button>
             {/* HTML 交互版：内联 echarts，浏览器里可 hover / 切 legend / 缩放 */}
             <button

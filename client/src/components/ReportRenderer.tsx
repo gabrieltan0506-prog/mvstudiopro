@@ -85,7 +85,7 @@ const CAPPUCCINO: ColorPalette = {
   chartPalette: ["#a8761b", "#b6364c", "#2160a0", "#1f7a52", "#d8841a", "#7a5410"],
 };
 
-// 5 套与 PDF 模板对齐的 ReportRenderer 调色板（pdfTemplate.ts buildPalette 一致）
+// 5 套与 HTML 离线模板对齐的 ReportRenderer 调色板（server/services/htmlReportTemplate.ts buildHtmlPalette 一致）
 const THEME_PALETTES: Record<PdfStyleKey, ColorPalette> = {
   // ① 春日薄荷：薄荷绿 + 樱桃粉
   "spring-mint": {

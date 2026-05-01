@@ -1,7 +1,7 @@
 /**
  * 战略 PDF 模板选择器（带封面 + 内文页缩略预览）
  *
- * v4：5 套活泼模板，颜色与 server/services/pdfTemplate.ts buildPalette 严格保持一致；
+ * v4：5 套活泼模板，颜色与 server/services/htmlReportTemplate.ts buildHtmlPalette 严格保持一致；
  * 每张卡片由「封面侧」+「内文一页侧」并排组成，所见即所得。
  */
 import React from "react";
@@ -25,7 +25,7 @@ type Palette = {
   tableHeadText: string;
   // 封面配色
   coverBg: string;       // 纯色兜底
-  coverGradient: string; // CSS gradient（与 pdfTemplate.ts 对齐）
+  coverGradient: string; // CSS gradient（与 htmlReportTemplate.ts 对齐）
   coverGold: string;
   coverTextLight: boolean; // 浅底封面 → 用深字
 };

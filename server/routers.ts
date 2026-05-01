@@ -1,26 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Agent } from "undici";
 import { z } from "zod";
-
-// 给 pdf-worker / 其它大 body fetch 用的自定义 undici dispatcher。
-// undici 默认 headersTimeout=300s，bodyTimeout=300s — 16 MB body 跨云 LB 上传会卡 300s
-// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时与 Cloud Run pdf-service timeout 对齐。
-//
-// 用户决策（2026-05-01 第二次调整）：之前给 33 分钟（2_000_000ms）是为应付理论上的
-// 25 MB 超大报告，代价是任何卡住的请求都让用户等满 33 分钟才知道失败 → 用户两天
-// 重启 fly machine 数百次。
-// 改回 15 分钟 (900_000 ms)：
-//   - 健康请求 1-2 分钟，完全不受影响
-//   - 中等偏大 (8-13 MB) 3-5 分钟，照常完成
-//   - 卡住的请求 15 分钟自动 abort，UI 报错让用户重试，不再需要手动 kill machine
-//   - 极少数 25 MB+ 报告若 15 分钟不够，宁可失败一次让用户感知，再考虑分级 timeout
-const pdfDispatcher = new Agent({
-  headersTimeout: 900_000,
-  bodyTimeout: 900_000,
-  keepAliveTimeout: 1,
-  keepAliveMaxTimeout: 1,
-});
 
 import { COOKIE_NAME } from "../shared/const.js";
 import { getSessionCookieOptions } from "./_core/cookies";
@@ -6202,229 +6182,31 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }),
 
     /**
-     * 黑金智库 PDF：容器内 Puppeteer + marked 原生渲染，上传 GCS，返回 V4 签名下载 URL（无第三方 PDF API）
+     * @deprecated 已移除 — 战略 PDF 切到 PlatformPage 模式（前端 DOM 快照）。
+     *
+     * 历史背景：旧实现服务端用 `pdfTemplate.generateHtmlTemplate` + ECharts SSR 拼 HTML，
+     * 再交给 Cloud Run pdf-worker 跑 puppeteer。对长报告（4–15k 字 → 8–25 MB HTML）
+     * networkidle0 阶段经常超时 → PDF 截断或失败，用户多次反馈不稳定。
+     *
+     * 新路径：客户端在 MyReportsPage 全屏阅读模式 React 渲染完成后，
+     * `document.documentElement.cloneNode(true)` 抓 DOM → 走 `mvAnalysis.downloadPlatformPdf`，
+     * 与 PlatformPage 共享同一条稳定链路。
+     *
+     * 此 stub 仅为兼容旧 client 调用，立刻抛 GONE 让上游切到新流程。
      */
     exportBlackGoldPdf: protectedProcedure
       .input(z.object({
         jobId: z.string().min(1).optional(),
-        reportId: z.number().int().positive().optional(), // userCreations.id（MyReports 列表用）
+        reportId: z.number().int().positive().optional(),
         markdown: z.string().min(80).optional(),
-        signedUrlHours: z.number().int().min(1).max(168).optional(),
-        // v4：5 套活泼模板（砍掉焦糖系，仅保留 business-bright）
         style: z.enum(["spring-mint", "neon-tech", "sunset-coral", "ocean-fresh", "business-bright"]).optional(),
-        // v3：封面页（可全部不传，会从 job/dbRecord 自动抓）
-        cover: z.object({
-          imageUrl: z.string().url().optional(),
-          title: z.string().max(200).optional(),
-          subtitle: z.string().max(200).optional(),
-          issue: z.string().max(80).optional(),
-          date: z.string().max(40).optional(),
-          abstract: z.string().max(220).optional(),
-          enabled: z.boolean().optional(), // false 即明确关闭封面页
-        }).optional(),
       }))
-      .mutation(async ({ input, ctx }) => {
-        let md = input.markdown?.trim();
-        const uid = String(ctx.user.id);
-
-        // 自动 cover 候选（从 jobId 关联的 dbRecord 取 thumbnailUrl/lighthouseTitle/summary）
-        let autoCoverImage: string | undefined;
-        let autoCoverTitle: string | undefined;
-        let autoCoverAbstract: string | undefined;
-        // 用户决策（2026-05-01）：记下能写回 thumbnailUrl 的 userCreations.id，
-        // 后续在拼 cover 之前如果发现 thumbnailUrl=NULL 就 on-demand 调 Nano Banana 2 补生
-        let coverCreationId: number | undefined;
-
-        if (input.jobId) {
-          const { readJob } = await import("./services/deepResearchService");
-          const job = await readJob(input.jobId);
-          if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
-          if (job.userId !== uid) throw new TRPCError({ code: "FORBIDDEN" });
-          if (!job.reportMarkdown?.trim()) {
-            throw new TRPCError({ code: "BAD_REQUEST", message: "该任务尚无成品 Markdown，请待报告完成后再导出 PDF" });
-          }
-          md = job.reportMarkdown.trim();
-          if (job.dbRecordId) {
-            coverCreationId = job.dbRecordId;
-            try {
-              const { userCreations } = await import("../drizzle/schema-creations");
-              const { eq } = await import("drizzle-orm");
-              const database = await db.getDb();
-              if (database) {
-                const rows = await database.select().from(userCreations).where(eq(userCreations.id, job.dbRecordId)).limit(1);
-                const r = rows[0];
-                if (r) {
-                  autoCoverImage = r.thumbnailUrl || undefined;
-                  let meta: any = {};
-                  try { meta = JSON.parse(r.metadata || "{}"); } catch {}
-                  autoCoverTitle = meta.lighthouseTitle || r.title || undefined;
-                  autoCoverAbstract = meta.summary || undefined;
-                }
-              }
-            } catch (e: any) {
-              console.warn("[exportBlackGoldPdf] failed to load cover from dbRecord:", e?.message);
-            }
-          }
-        } else if (input.reportId) {
-          // MyReports 页直传 reportId
-          try {
-            const { userCreations } = await import("../drizzle/schema-creations");
-            const { eq, and } = await import("drizzle-orm");
-            const database = await db.getDb();
-            if (database) {
-              const rows = await database
-                .select()
-                .from(userCreations)
-                .where(and(eq(userCreations.id, input.reportId), eq(userCreations.userId, ctx.user.id)))
-                .limit(1);
-              const r = rows[0];
-              if (!r) throw new TRPCError({ code: "NOT_FOUND", message: "报告不存在或无权访问" });
-              let meta: any = {};
-              try { meta = JSON.parse(r.metadata || "{}"); } catch {}
-              const fromMeta = String(meta.reportMarkdown || meta.draftMarkdown || "").trim();
-              if (!fromMeta) throw new TRPCError({ code: "BAD_REQUEST", message: "该报告尚未生成 Markdown 内容" });
-              md = fromMeta;
-              autoCoverImage = r.thumbnailUrl || undefined;
-              autoCoverTitle = meta.lighthouseTitle || r.title || undefined;
-              autoCoverAbstract = meta.summary || undefined;
-              coverCreationId = r.id;
-            }
-          } catch (e: any) {
-            if (e instanceof TRPCError) throw e;
-            console.warn("[exportBlackGoldPdf] reportId lookup failed:", e?.message);
-          }
-        }
-
-        if (!md) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "请提供 markdown / jobId / reportId" });
-        }
-
-        const style = input.style || "spring-mint";
-        // 组装 cover：用户传的优先，缺什么自动补
-        const coverEnabled = input.cover?.enabled !== false; // 默认开
-
-        // 用户决策（2026-05-01）：导出 PDF 时不再 fallback 重新生成封面，
-        // 直接复用 thumbnailUrl（卡片上看到的就是 PDF 里的）。没有就裸下，没有杂志大封面。
-        const resolvedCoverImage = input.cover?.imageUrl || autoCoverImage;
-
-        const cover = coverEnabled
-          ? {
-              imageUrl: resolvedCoverImage,
-              title: input.cover?.title || autoCoverTitle || "战略情报报告",
-              subtitle: input.cover?.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE",
-              issue: input.cover?.issue || "战略情报局",
-              date: input.cover?.date || new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }),
-              abstract: input.cover?.abstract || autoCoverAbstract,
-            }
-          : undefined;
-
-        // 用报告标题作下载文件名（去除不安全字符 + 用 Array.from 避免切坏 emoji）
-        const titleSrc = input.cover?.title || autoCoverTitle || "战略情报报告";
-        const safeTitle = Array.from(titleSrc.replace(/[\\/:*?"<>|]/g, "·")).slice(0, 80).join("");
-        const downloadFilename = safeTitle + ".pdf";
-
-        // 走 Cloud Run pdf-worker（跟 mvAnalysis.downloadAnalysisPdf 同套基础设施）：
-        // 1. server 端拼 HTML（保留 generateHtmlTemplate / 5 套配色 / 封面 / ECharts SSR）
-        // 2. POST 给 pdf-worker，pdf-worker 在 Cloud Run 独立机器上跑 puppeteer
-        //    （480s timeout + 30s 硬等待 — 比 fly 内嵌的 120s + 2s 稳健 N 倍）
-        // 3. 拿回 PDF buffer → base64 → 返回客户端 → 客户端 atob → Blob → 触发本地下载
-        // 4. 完全不上 GCS（顺便解决 egress + 文件留痕 + 强制下载三个问题）
-        const cloudRunUrl = String(process.env.CLOUD_RUN_PDF_URL || "").trim();
-        if (!cloudRunUrl) {
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "CLOUD_RUN_PDF_URL 未配置，请联系管理员",
-          });
-        }
-
-        try {
-          const { generateHtmlTemplate } = await import("./services/pdfTemplate");
-          // 2026-05-01 决策：PDF 也跟 HTML 一样 — 封面 URL 在拼 HTML 之前就 inline 成 base64
-          // data URI，避免 pdf-worker 渲染时再去 fetch GCS 签名 URL（会因签名过期 / Cloud Run
-          // 网络抖动静默丢封面，跟 HTML 离线打开同源问题）。
-          // 用户决策（2026-05-01）：cover.imageUrl=undefined（thumbnailUrl=NULL，
-          // 主流程 6 次重试全败）时，先 on-demand 调 Nano Banana 2 补生 9:16 纯封面再 inline。
-          const { inlineCoverIfHttp } = await import("./routers/creations");
-          let pdfCoverUrl: string | undefined = cover?.imageUrl;
-          if (cover && !pdfCoverUrl && coverCreationId) {
-            const { ensureCoverForCreation } = await import("./services/deepResearchService");
-            pdfCoverUrl = await ensureCoverForCreation(coverCreationId, cover.title || "战略情报报告");
-          }
-          const coverForPdf = cover
-            ? { ...cover, imageUrl: await inlineCoverIfHttp(pdfCoverUrl, "exportBlackGoldPdf") }
-            : undefined;
-          const htmlContent = generateHtmlTemplate(md, { style, cover: coverForPdf });
-
-          // 用 Buffer 而不是 string 作 body：undici 处理大 string body 时容易在
-          // TLS 升级 / HTTP/2 frame 切片时崩 "fetch failed"；Buffer 已经是 bytes，
-          // 直接走底层 stream 上传，跳过 string→bytes 转换的中间内存峰值。
-          const bodyJson = JSON.stringify({ html: htmlContent, token: uid });
-          const bodyBuf = Buffer.from(bodyJson, "utf-8");
-
-          const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
-          const tStart = Date.now();
-          const coverDiag = coverForPdf?.imageUrl
-            ? coverForPdf.imageUrl.startsWith("data:")
-              ? `inlined(${coverForPdf.imageUrl.length}b)`
-              : `http(prefetch-failed?${coverForPdf.imageUrl.slice(0, 50)})`
-            : "none";
-          console.log(
-            `[exportBlackGoldPdf] proxy → ${proxyUrl} htmlLen=${htmlContent.length} bodyBytes=${bodyBuf.length} cover=${coverDiag}`,
-          );
-
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
-          try {
-            const res = await fetch(proxyUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Content-Length": String(bodyBuf.length),
-                // 显式 Connection: close 头，比 keepalive: false 选项更可靠
-                // （Gemini 6:22 AM 诊断：某些 undici 版本 keepalive 选项不会传到 wire）
-                "Connection": "close",
-              },
-              body: bodyBuf,
-              signal: controller.signal,
-              // 自定义 undici dispatcher：抬高 headersTimeout/bodyTimeout 到 600s，
-              // 解 16 MB↑ body 撞 undici 默认 300s 超时（UND_ERR_HEADERS_TIMEOUT）。
-              // dispatcher 的 keepAliveTimeout=1ms 已经覆盖 keepalive: false 的语义，无需重复。
-              dispatcher: pdfDispatcher,
-            } as any);
-            if (!res.ok) {
-              const errBody = await res.text().catch(() => "");
-              throw new Error(`pdf-worker returned ${res.status}: ${errBody.slice(0, 200)}`);
-            }
-            const arrayBuffer = await res.arrayBuffer();
-            const pdfBase64 = Buffer.from(arrayBuffer).toString("base64");
-            console.log(
-              `[exportBlackGoldPdf] proxy ✅ +${Date.now() - tStart}ms pdfBytes=${arrayBuffer.byteLength} base64Len=${pdfBase64.length}`,
-            );
-            return {
-              success: true as const,
-              pdfBase64,
-              filename: downloadFilename,
-              style,
-            };
-          } finally {
-            clearTimeout(timeoutId);
-          }
-        } catch (e: any) {
-          // undici fetch 抛 "fetch failed" 时，真正的底层错误在 e.cause 里。
-          const cause = e?.cause;
-          const causeMsg = cause?.message || cause?.code || (cause ? String(cause) : "");
-          console.error(
-            "[deepResearch.exportBlackGoldPdf] pdf-worker proxy error:",
-            e?.message,
-            "cause:",
-            causeMsg,
-            e?.stack,
-          );
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: (causeMsg ? `${e?.message} (${causeMsg})` : e?.message) || "PDF 生成失败（pdf-worker 调用异常）",
-          });
-        }
+      .mutation(async () => {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message:
+            "服务端 PDF 路径已下线。请进入「战略作品快照库」点击「全息阅览」，再用阅览页里的「下载 PDF」按钮（前端渲染快照模式）。",
+        });
       }),
 
     /** 查询当前用户所有战报（研报中心） */

@@ -4,7 +4,6 @@ import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug, XCi
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
-import { TemplatePicker, type PdfStyleKey } from "@/components/TemplatePicker";
 import IpProfileModal, { readIpProfile, isIpProfileReady, type IpProfile } from "@/components/IpProfileModal";
 import { useIsMobile } from "@/hooks/useMobile";
 
@@ -237,37 +236,9 @@ export default function GodViewPage() {
     cancelJobMutation.mutate({ jobId: pollingJobId });
   }, [pollingJobId, isCancellingJob, cancelJobMutation, topic]);
 
-  // 战略 PDF 导出 · 5 套活泼模板
-  const [pdfStyle, setPdfStyle] = useState<PdfStyleKey>("spring-mint");
-  const exportBlackGoldPdfMutation = trpc.deepResearch.exportBlackGoldPdf.useMutation({
-    // 2026-05-01 用户决策：PDF 切到 Cloud Run pdf-worker，server 端 base64 编码 → 客户端 atob → Blob 触发本地下载，不上 GCS
-    onSuccess: (result) => {
-      const b64 = result?.pdfBase64;
-      if (!b64) {
-        toast.error("黑金 PDF 生成失败：服务端未返回 PDF 数据");
-        return;
-      }
-      try {
-        const bytes = atob(b64);
-        const buf = new Uint8Array(bytes.length);
-        for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
-        const blob = new Blob([buf], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = result.filename || "report.pdf";
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(url), 10_000);
-        toast.success(`黑金 PDF 下载已开始（${result.filename || "report.pdf"}）`);
-      } catch (e: any) {
-        toast.error("黑金 PDF 下载触发失败：" + (e?.message || "未知错误"));
-      }
-    },
-    onError: (err) => toast.error("黑金 PDF 生成失败：" + err.message),
-  });
+  // PR pdf-v2-platformpage-mode：服务端 PDF 路径已下线。GodView 完成研报后只保留
+  // 「前往作品库」入口，让用户在 MyReportsPage 阅读模式下载（DOM 快照 → pdf-worker
+  // 路径稳定且支持 5 套模板色 + 9:16 封面）。
 
   // ── 半月刊 10 天提醒
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -1084,26 +1055,11 @@ export default function GodViewPage() {
             <h2 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 900, color: "#f0fdf4", marginBottom: 12 }}>战略研报已生成</h2>
             <p style={{ color: "rgba(240,253,244,0.65)", fontSize: 14, lineHeight: 1.9, maxWidth: isMobile ? "100%" : 480, margin: "0 auto 32px" }}>
               深度推演已完成，全景战略白皮书已保存至您的「战略作品快照库」。
+              请进入快照库以全息阅览模式选择封面色板，再下载 PDF / HTML。
             </p>
-            {/* 模板选择器（带封面 + 内文页缩略预览） */}
-            <div style={{ marginBottom: 18, padding: isMobile ? "14px 14px" : "16px 20px", borderRadius: 14, background: "rgba(255,250,240,0.06)", border: "1px solid rgba(184,134,11,0.20)" }}>
-              <TemplatePicker value={pdfStyle} onChange={setPdfStyle} />
-            </div>
             <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 12, justifyContent: "center", flexWrap: "wrap", alignItems: isMobile ? "stretch" : "center" }}>
-              <button
-                onClick={() => {
-                  if (!pollingJobId) { toast.error("缺少 jobId"); return; }
-                  exportBlackGoldPdfMutation.mutate({ jobId: pollingJobId, style: pdfStyle });
-                }}
-                disabled={exportBlackGoldPdfMutation.isPending || !pollingJobId}
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: exportBlackGoldPdfMutation.isPending ? "rgba(0,0,0,0.5)" : "linear-gradient(135deg,#1a1a1a 0%,#2d2415 50%,#1a1a1a 100%)", border: "1.5px solid #B8860B", color: exportBlackGoldPdfMutation.isPending ? "rgba(184,134,11,0.5)" : "#B8860B", fontWeight: 900, fontSize: 14, cursor: exportBlackGoldPdfMutation.isPending ? "not-allowed" : "pointer", boxShadow: "0 6px 22px rgba(184,134,11,0.35)" }}
-                title="Cloud Run pdf-worker 渲染 · base64 流回客户端直接下载"
-              >
-                {exportBlackGoldPdfMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Crown size={16} />}
-                {exportBlackGoldPdfMutation.isPending ? "正在压制 PDF…" : "导出战略 PDF（直接下载）"}
-              </button>
               <button onClick={() => navigate("/my-reports")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 28px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "linear-gradient(135deg,#16a34a,#15803d)", border: "none", color: "#fff", fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 6px 22px rgba(22,163,74,0.35)" }}>
-                <Sparkles size={16} />前往「战略作品快照库」查阅
+                <Sparkles size={16} />前往「战略作品快照库」查阅 / 下载
               </button>
               <button onClick={() => { setPhase("idle"); setTopic(""); setPollingJobId(null); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: isMobile ? "14px 20px" : "14px 24px", minHeight: isMobile ? 48 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 12, background: "rgba(22,163,74,0.08)", border: "1px solid rgba(22,163,74,0.3)", color: "rgba(134,239,172,0.8)", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
                 再发起一个新课题
