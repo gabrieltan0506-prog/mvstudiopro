@@ -1944,16 +1944,17 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 3:4 + 6 次重试
+    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次重试
     //    用户决策（2026-05-01）：
     //      - 之前用 flash 模型 42% 失败率。改用 pro 模型 + 重试，质感更好
     //        （截图里 EMPIRE/INNOVATIONS/BOUNDLESS 那种带文字杂志封面来自 pro），
     //        失败率应能压到 <5%。
-    //      - 严格不要场景图兜底：场景图是 16:9 横版，硬塞 3:4 竖版卡片会被
+    //      - aspectRatio: "9:16" — 标准杂志竖版封面比例
+    //      - 严格不要场景图兜底：场景图是 16:9 横版，硬塞 9:16 竖版卡片会被
     //        拉伸/裁切，看着比 NULL 还丑。6 次都失败 → 接受 NULL（极少数）。
     //      - 双轨：Vertex 3 次 + Gemini API key 3 次。
     let coverUrl: string | undefined;
-    const coverPrompt = `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, vertical format. Topic: ${lighthouseTitle}`;
+    const coverPrompt = `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
 
     // 主路径 Vertex (tier=pro = Nano Banana Pro)，重试 3 次
     for (let i = 1; i <= 3 && !coverUrl; i++) {
