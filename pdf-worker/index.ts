@@ -49,12 +49,22 @@ app.post("/generate-pdf", async (req, res) => {
     // Load the static HTML snapshot directly via setContent.
     // This bypasses auth/state issues entirely — the DOM was already rendered by the user's browser.
     // Scripts were stripped by the frontend so React won't re-render and clear the charts.
+    //
+    // 2026-05-01 用户决策：Deep Research Max 16-25 MB HTML 已成常态，原 480s 不够。
+    //   - waitUntil: "networkidle0" → "networkidle2" — 允许 ≤2 个 idle 连接，
+    //     避免某个长 ECharts 内部 XHR 卡住整个 wait
+    //   - timeout 480_000 → 1_500_000 (25 min)，给 16-25 MB 足够渲染时间
+    //   - 显式 await document.fonts.ready —— 确保自定义 Noto Sans CJK 完全落地
+    //     再开始 PDF 生成（之前漏的，PR #350 提过但当时改的是 pdfGenerator 路径）
     await page.setContent(html, {
-      waitUntil: "networkidle0",
-      timeout: 480_000,
+      waitUntil: "networkidle2",
+      timeout: 1_500_000,
     });
 
-    // Extra wait for CSS transitions and font loads to fully settle
+    // 等所有自定义字体加载完毕 — 避免 PDF 里出现字体 fallback / 方块字
+    await page.evaluateHandle("document.fonts.ready");
+
+    // Extra wait for CSS transitions and ECharts SVG layout to fully settle
     await new Promise((r) => setTimeout(r, 30_000));
 
     const pdfBuffer = await page.pdf({
@@ -84,8 +94,9 @@ const server = app.listen(PORT, () => {
   console.log(`[pdf-worker] listening on port ${PORT}`);
 });
 
-// Cloud Run timeout is set to 600s in deploy.sh;
-// keep server socket timeout slightly above that to avoid premature drops.
-server.setTimeout(620_000);
-server.keepAliveTimeout = 625_000;
-server.headersTimeout = 630_000;
+// Cloud Run timeout is set to 2000s in deploy.sh (Gemini reviewer 建议从 1800 拉到 2000，
+// 给 PDF 序列化 + 跨云回传 500s 缓冲)；server socket 超时设在 Cloud Run 之内、setContent
+// 之上，足够处理 25 min puppeteer render + 30s hard wait + PDF gen overhead。
+server.setTimeout(1_950_000);
+server.keepAliveTimeout = 1_955_000;
+server.headersTimeout = 1_960_000;
