@@ -46,11 +46,13 @@ import { analyzeVideo as analyzeGrowthCampVideo } from "../growth/analyzeVideo";
 import { resolveGrowthCampExtractorModel } from "../growth/extractorPipeline";
 import {
   claimNextQueuedJob,
+  claimNextPdfExportJob,
   markJobFailed,
   markJobSucceeded,
   requeueJob,
   type JobType,
 } from "./repository";
+import { processPdfExportJob } from "./pdfExportJob";
 
 const JOB_TIMEOUT_MS: Record<JobType, number> = {
   image: 12_000,
@@ -58,6 +60,8 @@ const JOB_TIMEOUT_MS: Record<JobType, number> = {
   video: 30_000,
   // platform jobs run buildPlatformDashboard + buildPlatformContent — budget 12 min
   platform: 12 * 60_000,
+  /** 与 Cloud Run pdf-worker + 跨云回传对齐；独占队列不阻塞别的任务 */
+  pdf_export: 55 * 60_000,
 };
 
 const GROWTH_VIDEO_ANALYSIS_TIMEOUT_MS = 12 * 60_000;
@@ -69,6 +73,8 @@ let klingInitialized = false;
 let workerStarted = false;
 let processing = false;
 let timer: NodeJS.Timeout | null = null;
+let pdfProcessing = false;
+let pdfTimer: NodeJS.Timeout | null = null;
 
 type JobEnvelope = {
   action: string;
@@ -138,6 +144,10 @@ function getPlatformJobErrorMessage(error: unknown): string {
 function getJobFailureMessage(jobType: JobType, error: unknown): string {
   if (jobType === "platform") {
     return getPlatformJobErrorMessage(error);
+  }
+  if (jobType === "pdf_export") {
+    const m = error instanceof Error ? error.message : "PDF 导出失败";
+    return `PDF 导出失败：${m}`;
   }
   return error instanceof Error ? error.message : "未知任务错误";
 }
@@ -898,11 +908,18 @@ async function processPlatformJob(input: JobEnvelope): Promise<{ output: unknown
   }
 }
 
-async function executeJob(type: JobType, inputRaw: unknown, timeoutMs: number, userId: string): Promise<{ output: unknown; provider?: string }> {
+async function executeJob(
+  type: JobType,
+  inputRaw: unknown,
+  timeoutMs: number,
+  userId: string,
+  jobId?: string,
+): Promise<{ output: unknown; provider?: string }> {
   const input = asEnvelope(inputRaw);
   if (type === "video") return processVideoJob(input, timeoutMs, userId);
   if (type === "image") return processImageJob(input, timeoutMs, userId);
   if (type === "platform") return processPlatformJob(input);
+  if (type === "pdf_export") return processPdfExportJob(inputRaw, userId, jobId);
   return processAudioJob(input, timeoutMs, userId);
 }
 
@@ -914,7 +931,7 @@ async function processOneJob() {
     const jobType = job.type as JobType;
     const timeoutMs = resolveJobTimeoutMs(jobType, job.input);
     const { output, provider } = await withTimeout(
-      executeJob(jobType, job.input, timeoutMs, String(job.userId)),
+      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
       timeoutMs,
       `${job.type} job timed out after ${timeoutMs}ms`
     );
@@ -929,6 +946,45 @@ async function processOneJob() {
   }
 
   return true;
+}
+
+async function processOnePdfExportJob(): Promise<boolean> {
+  const job = await claimNextPdfExportJob();
+  if (!job) return false;
+
+  try {
+    const jobType = job.type as JobType;
+    const timeoutMs = JOB_TIMEOUT_MS[jobType];
+    const { output, provider } = await withTimeout(
+      executeJob(jobType, job.input, timeoutMs, String(job.userId), job.id),
+      timeoutMs,
+      `${job.type} job timed out after ${timeoutMs}ms`,
+    );
+    await markJobSucceeded(job.id, output, provider);
+  } catch (error) {
+    const message = getJobFailureMessage(job.type as JobType, error);
+    const { recordPdfExportStep } = await import("./repository");
+    await recordPdfExportStep(job.id, "job_failed", message.slice(0, 800));
+    if ((job.attempts ?? 0) < 2) {
+      await requeueJob(job.id, message);
+    } else {
+      await markJobFailed(job.id, message);
+    }
+  }
+
+  return true;
+}
+
+export async function processPdfJobsOnce() {
+  if (pdfProcessing) return;
+  pdfProcessing = true;
+  try {
+    while (await processOnePdfExportJob()) {
+      // Drain pdf_export only.
+    }
+  } finally {
+    pdfProcessing = false;
+  }
 }
 
 export async function processJobsOnce() {
@@ -948,18 +1004,26 @@ export function startJobWorker() {
   workerStarted = true;
 
   void processJobsOnce();
+  void processPdfJobsOnce();
   timer = setInterval(() => {
     void processJobsOnce();
   }, 1_000);
+  pdfTimer = setInterval(() => {
+    void processPdfJobsOnce();
+  }, 3_000);
 
   if (typeof timer.unref === "function") {
     timer.unref();
   }
+  if (pdfTimer && typeof pdfTimer.unref === "function") {
+    pdfTimer.unref();
+  }
 }
 
 export function stopJobWorker() {
-  if (!timer) return;
-  clearInterval(timer);
+  if (timer) clearInterval(timer);
   timer = null;
+  if (pdfTimer) clearInterval(pdfTimer);
+  pdfTimer = null;
   workerStarted = false;
 }

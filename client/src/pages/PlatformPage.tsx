@@ -671,6 +671,7 @@ export default function PlatformPage() {
 
     const htmlContent = "<!DOCTYPE html>" + clone.outerHTML;
     setIsDownloadingPdf(true);
+    toast.info("云端压制 PDF 中，多数约 15～45 分钟，请保持页面打开。", { duration: 10_000 });
     downloadPlatformPdfMutation.mutate({ html: htmlContent, token: `wait=360000&selector=%23platform-report` });
   }, [downloadPlatformPdfMutation]);
 
