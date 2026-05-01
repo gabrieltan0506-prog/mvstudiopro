@@ -899,7 +899,7 @@ export default function ReportRenderer({
             margin: 0 !important;
             padding: 0 !important;
             border: none !important;
-            background-color: #000 !important;
+            background-color: #fff !important;
             box-sizing: border-box !important;
           }
           .cover-page img, .cover-page.cover-image-only img {
