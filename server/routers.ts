@@ -5,13 +5,19 @@ import { z } from "zod";
 
 // 给 pdf-worker / 其它大 body fetch 用的自定义 undici dispatcher。
 // undici 默认 headersTimeout=300s，bodyTimeout=300s — 16 MB body 跨云 LB 上传会卡 300s
-// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时都抬到 2000s（跟 Cloud Run
-// pdf-service --timeout=2000 对齐），强制关闭 keepalive 规避 LB 残留连接。
-// 用户决策（2026-05-01）：Deep Research Max 16-25 MB HTML 已成常态，渲染要 5-15 min。
-// Gemini reviewer 建议外圈从 1800s 拉到 2000s — 给 PDF 序列化 + 跨云回传 500s 缓冲。
+// 撞 UND_ERR_HEADERS_TIMEOUT。这里把上下行超时与 Cloud Run pdf-service timeout 对齐。
+//
+// 用户决策（2026-05-01 第二次调整）：之前给 33 分钟（2_000_000ms）是为应付理论上的
+// 25 MB 超大报告，代价是任何卡住的请求都让用户等满 33 分钟才知道失败 → 用户两天
+// 重启 fly machine 数百次。
+// 改回 15 分钟 (900_000 ms)：
+//   - 健康请求 1-2 分钟，完全不受影响
+//   - 中等偏大 (8-13 MB) 3-5 分钟，照常完成
+//   - 卡住的请求 15 分钟自动 abort，UI 报错让用户重试，不再需要手动 kill machine
+//   - 极少数 25 MB+ 报告若 15 分钟不够，宁可失败一次让用户感知，再考虑分级 timeout
 const pdfDispatcher = new Agent({
-  headersTimeout: 2_000_000,
-  bodyTimeout: 2_000_000,
+  headersTimeout: 900_000,
+  bodyTimeout: 900_000,
   keepAliveTimeout: 1,
   keepAliveMaxTimeout: 1,
 });
@@ -2507,7 +2513,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
+        const timeoutId = setTimeout(() => controller.abort(), 900_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2548,7 +2554,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
+        const timeoutId = setTimeout(() => controller.abort(), 900_000);
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -6355,7 +6361,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           );
 
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2_000_000);
+          const timeoutId = setTimeout(() => controller.abort(), 900_000);
           try {
             const res = await fetch(proxyUrl, {
               method: "POST",

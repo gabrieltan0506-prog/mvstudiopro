@@ -34,7 +34,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
 type ImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
 
-async function generateImageViaGeminiApiKey(opts: {
+export async function generateImageViaGeminiApiKey(opts: {
   prompt: string;
   aspectRatio?: ImageAspectRatio;
   model?: ImageModel;

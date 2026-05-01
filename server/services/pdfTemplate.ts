@@ -215,6 +215,17 @@ function buildPalette(style: PdfStyle): Record<string, string> {
 
 function buildCoverPage(palette: Record<string, string>, cover: PdfCover, style: PdfStyle): string {
   const safeBg = String(cover.imageUrl || "").replace(/"/g, "&quot;");
+
+  // 用户决策（2026-05-01 第三次）："封面最好能用原始生成的部分就好，不要添加什麼字"
+  // → 有封面图时只渲染纯图，不再叠 EXCLUSIVE / 报告标题 / CONFIDENTIAL 等模板文字。
+  // Nano Banana Pro 9:16 已经把杂志风装饰、标题、出版信息都画进图里。
+  // 没封面图时回退到旧文字框（防止 PDF 第一页空白）— 调用方应当先尝试 on-demand 生成。
+  if (safeBg) {
+    return `<section class="cover-page cover-image-only" style="page-break-after: always;">
+  <div class="cover-bg" style="background: url(${safeBg}) center/cover no-repeat; position: absolute; inset: 0;"></div>
+</section>`;
+  }
+
   const safeTitle = String(cover.title || "战略情报报告").replace(/</g, "&lt;");
   const safeSubtitle = String(
     cover.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE",

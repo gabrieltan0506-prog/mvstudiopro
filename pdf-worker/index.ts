@@ -55,11 +55,15 @@ app.post("/generate-pdf", async (req, res) => {
     //   - 改 networkidle2 后反而卡死 11+ 分钟无日志（Chrome 内部 favicon.ico 之类
     //     的 phantom 请求让 idle≤2 永远不满足）→ 退回 networkidle0
     //   - 800 ms 硬等不够把 2.18 MB base64 PNG 封面解码 + 绘背景 → 拉到 30s
-    //   - timeout 480s 不够 16-25 MB 的 Deep Research Max → 拉到 1500s
     //   - document.fonts.ready 用 page.evaluate 而不是 evaluateHandle（后者不 auto-await Promise）
+    //
+    // 2026-05-01 用户决策（第二次调整）：之前 1_500_000 (25 min) 是为应付理论上的
+    // 25 MB 报告，代价是任何卡住请求都让用户等 25 分钟。改回 14 分钟 (840_000 ms)，
+    // 比 fly 端 fetch AbortController (900_000 / 15 min) 略短，让 pdf-worker 主动失败
+    // 返回 500 给 fly，fly 转发错误给 UI，用户能立刻知道并重试。
     await page.setContent(html, {
       waitUntil: "networkidle0",
-      timeout: 1_500_000,
+      timeout: 840_000,
     });
 
     // 等所有自定义字体加载完毕 — 避免 PDF 里出现字体 fallback / 方块字

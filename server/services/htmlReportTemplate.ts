@@ -271,6 +271,17 @@ function enhanceTables(html: string): string {
 
 function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: HtmlPdfStyle): string {
   const safeBg = String(cover.imageUrl || "").replace(/"/g, "&quot;");
+  // 用户决策（2026-05-01 第三次）："封面最好能用原始生成的部分就好，不要添加什麼字"
+  // → 有封面图时只渲染纯图，不再叠任何模板文字（cover-pill / cover-mega /
+  // cover-title 等）。Nano Banana Pro 9:16 已经把杂志风装饰、标题、出版信息都
+  // 画进图里，再叠 HTML 文字反而双重曝光。
+  // 没封面图时回退到旧文字框（防止纯空白）— 调用方应当先尝试 on-demand 生成。
+  if (safeBg) {
+    return `<section class="cover-page cover-image-only">
+  <div class="cover-bg" style="background: url(${safeBg}) center/cover no-repeat;"></div>
+</section>`;
+  }
+
   const safeTitle = escapeHtml(cover.title || "战略情报报告");
   const safeSubtitle = escapeHtml(cover.subtitle || "EXCLUSIVE STRATEGIC INTELLIGENCE");
   const safeIssue = escapeHtml(cover.issue || "ISSUE · 战略情报局");
@@ -345,6 +356,16 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
     : style === "ocean-fresh" ? "OCEAN BUSINESS BRIEF"
     : "BUSINESS PLAN";
 
+  // 用户决策（2026-05-01 截图二）：Nano Banana Pro 生成的封面图本身已含金色立体
+  // 主标题 + STRATEGIC INTELLIGENCE 杂志标头 + 出品日期等元素，AI 排版已经够漂亮。
+  // 不要再叠 cover-frame 文字框（cover-pill / cover-mega / cover-title / cover-bottom）
+  // 把 AI 自己画好的标题盖掉。
+  // 仅当**没有封面图**时才回退到旧文字框（避免纯空白）。
+  if (safeBg) {
+    return `<section class="cover-page cover-image-only">
+  <div class="cover-bg" style="background: ${bgLayer};"></div>
+</section>`;
+  }
   return `<section class="cover-page">
   <div class="cover-bg" style="background: ${bgLayer};"></div>
   <div class="cover-frame">
