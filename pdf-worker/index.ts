@@ -306,7 +306,8 @@ app.post("/generate-pdf", async (req, res) => {
         format: "A4",
         printBackground: true,
         preferCSSPageSize: false,
-        margin: { top: "14px", bottom: "14px", left: "10px", right: "10px" },
+        // 盡量減少白邊；若印表機預覽有裁切可改回 2–4mm
+        margin: { top: "0mm", bottom: "0mm", left: "0mm", right: "0mm" },
         timeout: pdfTimeout,
       }),
     );

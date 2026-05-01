@@ -14,7 +14,7 @@ import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 /** 作品庫閱讀模式：PDF 只克隆此容器（封面 + 正文），避免整頁 document 帶入 Toast / #root 等污染 */
 const MYREPORTS_PDF_SNAPSHOT_ROOT_ID = "myreports-pdf-root";
 
-/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
+/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf；更大或失敗則改走 GCS 隊列。 */
 const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
 
 /** 注入快照 HTML：對抗 Sonner 等 portal 殘留與列印分頁異常（優先於 app 內其它 CSS） */
@@ -29,6 +29,9 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 html,body{margin:0!important;padding:0!important;}
 #myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
 .cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;}
+@page{margin:0;size:A4 portrait;}
+[data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
+[data-report-surface]>[data-pdf-accent-bar]{margin:-4mm -6mm 3mm!important;border-radius:0!important;}
 }
 </style>`;
   if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);

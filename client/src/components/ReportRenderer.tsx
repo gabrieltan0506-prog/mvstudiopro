@@ -703,6 +703,7 @@ export default function ReportRenderer({
       }}
     >
       <div
+        data-pdf-accent-bar
         style={{
           height: 6,
           margin: "-44px -56px 30px",
@@ -829,6 +830,11 @@ export default function ReportRenderer({
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
 
         @media print {
+          /* 紙張可列印區：與 pdf-worker page.pdf margin:0 對齊，盡量滿版 */
+          @page {
+            margin: 0;
+            size: A4 portrait;
+          }
           /* 列印環境淨化：避免外層留白把封面擠到第二頁（與精準快照 #myreports-pdf-root 配合） */
           html, body {
             height: auto !important;
@@ -841,6 +847,21 @@ export default function ReportRenderer({
             margin: 0 !important;
             padding: 0 !important;
             max-width: none !important;
+          }
+          /* 正文「模板」區：螢幕上大內距 + 圓角；PDF 改窄邊距、去陰影，視覺更接近滿版 */
+          [data-report-surface] {
+            padding: 4mm 6mm !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+            width: 100% !important;
+            max-width: none !important;
+            box-sizing: border-box !important;
+          }
+          [data-report-surface] > [data-pdf-accent-bar] {
+            margin: -4mm -6mm 3mm !important;
+            border-radius: 0 !important;
+            height: 5px !important;
           }
 
           /* MyReports 阅读模式外层壳（screen 用 min-height:100vh + 渐变）。
@@ -872,7 +893,7 @@ export default function ReportRenderer({
             break-after: page !important;
             height: auto !important;
             min-height: 0 !important;
-            max-height: 272mm !important;
+            max-height: 297mm !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
@@ -884,7 +905,7 @@ export default function ReportRenderer({
           /* 封面圖：以紙張可列印高度為硬上限（A4 約 297mm − 邊距） */
           .cover-page img, .cover-page.cover-image-only img {
             max-width: 100% !important;
-            max-height: 265mm !important;
+            max-height: 292mm !important;
             width: auto !important;
             height: auto !important;
             object-fit: contain !important;
