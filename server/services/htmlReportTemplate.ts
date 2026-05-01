@@ -317,8 +317,12 @@ function buildHtmlCover(palette: HtmlPalette, cover: HtmlReportCover, style: Htm
   };
 
   const isDark = style === "neon-tech" || style === "ocean-fresh";
+  // Bug fix 2026-05-01：原本 url("${safeBg}") 用双引号，跟外层 HTML attribute
+  // 的 style="..." 双引号嵌套冲突 → 浏览器在 url(" 处直接关闭 attribute，
+  // 后面 2 MB base64 全乱掉，封面 div 不渲染图片，只剩调色板回退。
+  // 改成 CSS 不带引号的 url(...) 形式（data URI 不含空格 / 括号 / 引号，合法）。
   const bgLayer = safeBg
-    ? `linear-gradient(180deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0.10) 38%, rgba(0,0,0,0.40) 100%), url("${safeBg}") center/cover no-repeat`
+    ? `linear-gradient(180deg, rgba(0,0,0,0.40) 0%, rgba(0,0,0,0.10) 38%, rgba(0,0,0,0.40) 100%), url(${safeBg}) center/cover no-repeat`
     : layers[style];
 
   const lightStyles = !isDark
