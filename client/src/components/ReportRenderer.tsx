@@ -85,7 +85,7 @@ const CAPPUCCINO: ColorPalette = {
   chartPalette: ["#a8761b", "#b6364c", "#2160a0", "#1f7a52", "#d8841a", "#7a5410"],
 };
 
-// 5 套与 PDF 模板对齐的 ReportRenderer 调色板（pdfTemplate.ts buildPalette 一致）
+// 5 套与 HTML 离线模板对齐的 ReportRenderer 调色板（server/services/htmlReportTemplate.ts buildHtmlPalette 一致）
 const THEME_PALETTES: Record<PdfStyleKey, ColorPalette> = {
   // ① 春日薄荷：薄荷绿 + 樱桃粉
   "spring-mint": {
@@ -817,12 +817,64 @@ export default function ReportRenderer({
         }
       })}
 
-      {/* 让 raw HTML 里的 figure / img 拥有合理的默认排版（图片宽度自适应、caption 居中） */}
+      {/* 让 raw HTML 里的 figure / img 拥有合理的默认排版（图片宽度自适应、caption 居中）
+          + @media print 跨页规则：PR pdf-v2-platformpage-mode 之后 PDF 源 HTML 来自客户端
+          DOM 抓取（document.documentElement.cloneNode → mvAnalysis.downloadPlatformPdf →
+          puppeteer），所以 print 媒介规则必须写在客户端组件里才会被 Chromium 识别。
+          原 server/services/pdfTemplate.ts 的 print rules 随该文件一起删除，这里是新归属。 */}
       <style>{`
         .report-raw-html figure { margin: 16px 0; padding: 0; }
         .report-raw-html figure img { max-width: 100%; height: auto; border-radius: 10px; box-shadow: ${colors.cardShadow}; }
         .report-raw-html figcaption { margin-top: 8px; font-size: 12.5px; color: ${colors.inkSoft}; font-style: italic; line-height: 1.65; }
         .report-raw-html img { max-width: 100%; height: auto; border-radius: 10px; }
+
+        @media print {
+          /* 解除主容器高度限制，允许内容自然流到下一页（避免 100vh 截断） */
+          html, body { height: auto !important; overflow: visible !important; }
+
+          /* 长表格 / 行 / 单元格 / 引用块允许跨页断开，防止整段内容被裁切 */
+          table { page-break-inside: auto !important; width: 100% !important; }
+          tr, td, th { page-break-inside: auto !important; page-break-after: auto !important; }
+          blockquote { page-break-inside: auto !important; }
+          pre, code { page-break-inside: auto !important; white-space: pre-wrap !important; word-break: break-word !important; }
+
+          /* 标题尽量不在页底孤立，强制把标题与下一段绑在一起 */
+          h1, h2, h3 { page-break-after: avoid; break-after: avoid; }
+
+          /* 图片 / 图表 figure 不被中间切断（除非自身就比一页还高） */
+          figure, img, .echart-mount { page-break-inside: avoid; break-inside: avoid; }
+
+          /* 封面页强制独占首页：MyReportsPage 阅读模式那张 9:16 hero 用 .cover-page
+             类标记后，puppeteer 会让它自然分页。
+             （目前 hero 用 inline figure，外层若加 .cover-page 类即可生效。） */
+          .cover-page, .cover-page.cover-image-only {
+            page-break-after: always !important;
+            break-after: always !important;
+            height: 99vh !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-items: center !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          /* 封面图按 letterbox 缩放：阅读模式下 inline style 用的是
+             aspectRatio: 9/16 + maxWidth: 720 + objectFit: cover，A4 高度
+             ≈ 1080px 时会撑出 1280px 触发溢出。print 模式覆盖为
+             max-height: 99vh + object-contain，让 flex 容器居中 + 短边贴边
+             长边 letterbox。border/shadow/radius 在 print 模式清掉，A4 上更干净。 */
+          .cover-page img, .cover-page.cover-image-only img {
+            max-width: 100% !important;
+            max-height: 99vh !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            outline: none !important;
+          }
+        }
       `}</style>
     </div>
   );

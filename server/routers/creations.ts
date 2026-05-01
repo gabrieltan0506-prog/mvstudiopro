@@ -120,11 +120,11 @@ function sanitizeFilename(name: string): string {
 // 保证 HTML 文件断网打开封面也能显示。
 //
 // 失败 fallback：保留原 URL（不会 break 现有行为，最多就是签名过期看不到封面而已）。
-// 2026-05-01 后续：PDF 路径 (deepResearch.exportBlackGoldPdf) 也需要相同行为，避免
-// pdf-worker 渲染时去 fetch GCS 签名 URL 时静默失败 → 封面消失。改成 export，
-// 调用方传 tag 区分来源（exportInteractiveHtml / exportBlackGoldPdf），方便 fly 日志定位。
-//
+// 调用方传 tag 区分来源（exportInteractiveHtml / 其它），方便 fly 日志定位。
 // 三态日志（成功 / 失败 / skip）都打 console.log，方便 Bug C 排查。
+//
+// 注：原 server-side PDF 模板路径 (deepResearch.exportBlackGoldPdf) 已下线，
+// 客户端 DOM 快照模式直接渲染 <img>，浏览器自己会处理跨域 / 签名问题。
 export async function inlineCoverIfHttp(
   url: string | undefined,
   tag: string = "exportInteractiveHtml",
@@ -453,6 +453,45 @@ export const creationsRouter = router({
   }),
 
   // ═══════════════════════════════════════════════════
+  // 封面补生（PDF v2 客户端快照模式专用）
+  // ═══════════════════════════════════════════════════
+  //
+  // 客户端在 MyReportsPage 进入阅读模式做 DOM 快照前，先调一次此 mutation：
+  //   - 已有 thumbnailUrl 直接返回（幂等，避免重复消耗 nano banana 配额）
+  //   - 缺失时 on-demand 调 Nano Banana 2 (flash) 补生 9:16 纯封面，写回 DB
+  // 这样 React 重渲染后 cover 已经在 DOM 里，PDF 快照立刻包含封面。
+  //
+  // 与 server-side `exportBlackGoldPdf` 路径里的 ensureCoverForCreation 共用同一函数，
+  // 唯一区别是这里通过 tRPC 暴露，并校验作品归属（exportInteractiveHtml 已经校验过）。
+  ensureCover: protectedProcedure
+    .input(z.object({
+      creationId: z.number().int().positive(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const database = await db();
+      const [row] = await database
+        .select()
+        .from(userCreations)
+        .where(and(
+          eq(userCreations.id, input.creationId),
+          eq(userCreations.userId, ctx.user.id),
+        ))
+        .limit(1);
+      if (!row) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "作品不存在或无权访问" });
+      }
+      let meta: any = {};
+      try { meta = JSON.parse(row.metadata || "{}"); } catch {}
+      const title = String(meta.lighthouseTitle || row.title || "战略情报报告").slice(0, 80);
+
+      const { ensureCoverForCreation } = await import("../services/deepResearchService");
+      const coverUrl = await ensureCoverForCreation(input.creationId, title);
+      return {
+        coverUrl: coverUrl ?? null,
+      };
+    }),
+
+  // ═══════════════════════════════════════════════════
   // 交互版 HTML 导出（PDF 之外的第二条下载路径）
   // ═══════════════════════════════════════════════════
   //
@@ -495,7 +534,14 @@ export const creationsRouter = router({
         const { generateInteractiveHtml } = await import("../services/htmlReportTemplate");
         // 用户决策（2026-05-01）：HTML 离线打开也要看到封面 → HTTP 签名 URL 在导出时
         // 抓下来内联成 base64 data URI（>8MB 或失败时 fallback 原 URL）
-        const inlinedCoverUrl = await inlineCoverIfHttp(row.thumbnailUrl || undefined);
+        // 用户决策续（2026-05-01）：thumbnailUrl=NULL（主流程 6 次重试全败）时，
+        // 此处 on-demand 调 Nano Banana 2 (flash) 补生 9:16 纯封面再下载，避免封面缺失。
+        let resolvedCoverUrl = row.thumbnailUrl || undefined;
+        if (!resolvedCoverUrl) {
+          const { ensureCoverForCreation } = await import("../services/deepResearchService");
+          resolvedCoverUrl = await ensureCoverForCreation(input.creationId, title);
+        }
+        const inlinedCoverUrl = await inlineCoverIfHttp(resolvedCoverUrl);
         const html = generateInteractiveHtml(md, {
           style: style as any,
           documentTitle: title,
