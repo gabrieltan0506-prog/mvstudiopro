@@ -1379,10 +1379,58 @@ export default function GodViewPage() {
                       ? (() => {
                           const out = pdfExportJobQuery.data.output;
                           if (!out || typeof out !== "object" || !("downloadUrl" in out)) return null;
+                          const downloadUrl = String((out as Record<string, unknown>).downloadUrl);
+                          const pdfGcsUri =
+                            "pdfGcsUri" in out ? String((out as Record<string, unknown>).pdfGcsUri) : "";
+                          const expiresRaw = (out as Record<string, unknown>).expiresInSeconds;
+                          const expires = typeof expiresRaw === "number" ? expiresRaw : null;
                           return (
-                            <p style={{ marginTop: 8, fontSize: 10, color: "rgba(0,255,70,0.55)", wordBreak: "break-all" }}>
-                              downloadUrl 已生成（簽名有效期見 output.expiresInSeconds）
-                            </p>
+                            <div style={{ marginTop: 10 }}>
+                              <p style={{ color: "rgba(0,180,255,0.45)", fontSize: 9, fontWeight: 700, marginBottom: 6 }}>
+                                PDF OUTPUT
+                              </p>
+                              <div
+                                style={{
+                                  background: "rgba(0,255,70,0.06)",
+                                  border: "1px solid rgba(0,255,70,0.2)",
+                                  borderRadius: 8,
+                                  padding: "10px 12px",
+                                }}
+                              >
+                                <a
+                                  href={downloadUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    color: "#7dff9a",
+                                    fontSize: 11,
+                                    wordBreak: "break-all",
+                                    display: "block",
+                                    marginBottom: 8,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  下載 PDF（簽名連結，新分頁）→
+                                </a>
+                                {expires != null ? (
+                                  <p style={{ margin: 0, fontSize: 10, color: "rgba(0,255,70,0.45)" }}>
+                                    簽名約 {expires}s 內有效；過期需重新導出
+                                  </p>
+                                ) : null}
+                                {pdfGcsUri ? (
+                                  <p
+                                    style={{
+                                      margin: "8px 0 0",
+                                      fontSize: 9,
+                                      color: "rgba(0,180,255,0.4)",
+                                      wordBreak: "break-all",
+                                    }}
+                                  >
+                                    gs: {pdfGcsUri}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
                           );
                         })()
                       : null}

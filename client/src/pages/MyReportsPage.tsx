@@ -11,6 +11,9 @@ import { toast } from "sonner";
 import { TemplateStripBanner, type PdfStyleKey } from "@/components/TemplatePicker";
 import { optimizePdfSnapshotHtml } from "@/lib/pdfHtmlOptimize";
 
+/** HTML 快照 ≤ 此字節時走同步 downloadAnalysisPdf（完成後立刻本機下載，與 HTML 導出體感一致）；更大或失敗則自動改走 GCS 隊列。 */
+const MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES = 6 * 1024 * 1024;
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Report {
@@ -57,7 +60,7 @@ export default function MyReportsPage() {
   //   "rendering"  已进入阅读模式，等 React + recharts 把 SVG 画完
   //   "snapshotting" 正在 cloneNode 抓 DOM 并 POST 到 pdf-worker
   // 用 ref 而非 state 主要给 useEffect 的 setTimeout 回调读，避免 stale closure。
-  type DownloadStage = "idle" | "ensuring-cover" | "rendering" | "snapshotting" | "pdf_queued";
+  type DownloadStage = "idle" | "ensuring-cover" | "rendering" | "snapshotting" | "sync_pdf" | "pdf_queued";
   const [downloadingCardId, setDownloadingCardId] = useState<number | null>(null);
   const [downloadStage, setDownloadStage] = useState<DownloadStage>("idle");
   const downloadStageRef = useRef<DownloadStage>("idle");
@@ -86,10 +89,11 @@ export default function MyReportsPage() {
     if (autoExit) setSelectedReport(null);
   }, []);
 
-  // ── 下载 PDF：MyReports 正式路径 —— 瀏覽器上傳 HTML 快照至 GCS → queuePdfFromHtml → 輪詢 getPdfExportJob → 簽名鏈下載
-  // （避免超大 HTML 阻塞長連；關閉頁面後後台仍可跑完，God View DEBUG 可看 _pdfDebug 步驟）
+  // ── 下载 PDF：快照 HTML → 若体积 ≤6MB 则同步 downloadAnalysisPdf（与 HTML 一样立刻触发下载）；
+  //    否则（或同步失败）走 GCS + queuePdfFromHtml → 轮询 getPdfExportJob → 签名链下载
   const getPdfHtmlSnapshotUploadUrlMutation = trpc.mvAnalysis.getPdfHtmlSnapshotUploadUrl.useMutation();
   const queuePdfFromHtmlMutation = trpc.mvAnalysis.queuePdfFromHtml.useMutation();
+  const downloadAnalysisPdfMutation = trpc.mvAnalysis.downloadAnalysisPdf.useMutation();
 
   const pdfExportPollQuery = trpc.mvAnalysis.getPdfExportJob.useQuery(
     { jobId: asyncPdfJobId! },
@@ -307,6 +311,46 @@ export default function MyReportsPage() {
       let html = "<!DOCTYPE html>" + clone.outerHTML;
       html = optimizePdfSnapshotHtml(html);
 
+      const htmlBytes = new TextEncoder().encode(html).length;
+
+      const runSyncPdfDownload = async () => {
+        setDownloadStage("sync_pdf");
+        downloadStageRef.current = "sync_pdf";
+        toast.info("正在生成 PDF（通常 1～3 分钟），请保持本页打开…", { duration: 10_000 });
+        const result = await downloadAnalysisPdfMutation.mutateAsync({
+          html,
+          token: "myreports-direct=1",
+        });
+        if (!result.pdfBase64) {
+          throw new Error("PDF 内容为空");
+        }
+        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const fileNameTitle = (pdfAsyncTitleRef.current || "战略情报报告").replace(/[\\/:*?"<>|]/g, "·").slice(0, 80);
+        a.href = blobUrl;
+        a.download = `${fileNameTitle}.pdf`;
+        a.rel = "noopener";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 15_000);
+        toast.success(`PDF 已下载（${fileNameTitle}.pdf）`);
+      };
+
+      if (htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES) {
+        try {
+          await runSyncPdfDownload();
+          resetPdfDownloadUi();
+          return;
+        } catch (syncErr: unknown) {
+          const msg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+          console.warn("[MyReports] 同步 PDF 失败，改走云端队列：", msg);
+          toast.message("同步生成受阻，已自动改为云端队列（完成后仍会下载）", { duration: 12_000 });
+        }
+      }
+
       const uploadMeta = await getPdfHtmlSnapshotUploadUrlMutation.mutateAsync();
       const putHeaders: Record<string, string> = {
         "Content-Type": "text/html; charset=utf-8",
@@ -347,7 +391,13 @@ export default function MyReportsPage() {
       autoExitReadingAfterDownloadRef.current = false;
       toast.error("PDF 快照失败：" + (e?.message || "未知错误"));
     }
-  }, [getPdfHtmlSnapshotUploadUrlMutation, queuePdfFromHtmlMutation, selectedReport?.title]);
+  }, [
+    downloadAnalysisPdfMutation,
+    getPdfHtmlSnapshotUploadUrlMutation,
+    queuePdfFromHtmlMutation,
+    resetPdfDownloadUi,
+    selectedReport?.title,
+  ]);
 
   // 进入阅读模式后，effect 检测到 stage="rendering" + selectedReport 挂载完成，
   // 自动触发快照。用 selectedReport.id 作 dependency，进/出阅读模式都会触发。
@@ -370,10 +420,7 @@ export default function MyReportsPage() {
     }
     setDownloadingCardId(report.id);
     pdfRunReportIdRef.current = report.id;
-    toast.info(
-      `作品 #${report.id}：PDF 已排队云端压制。多数报告约 15～45 分钟；可离开本页，完成后将自动下载。`,
-      { duration: 14_000 },
-    );
+    toast.info("正在准备 PDF：一般报告约 1～3 分钟自动下载；若体积很大将自动改走云端队列。", { duration: 10_000 });
     autoExitReadingAfterDownloadRef.current = true;
 
     // 0) thumbnailUrl=NULL 时先 on-demand 补一张 9:16 纯封面，避免 PDF 缺封面
@@ -417,10 +464,7 @@ export default function MyReportsPage() {
     autoExitReadingAfterDownloadRef.current = false;
     setDownloadingCardId(reportId);
     pdfRunReportIdRef.current = reportId;
-    toast.info(
-      `作品 #${reportId}：PDF 已排队云端压制。多数约 15～45 分钟；可离开本页，完成后将自动下载。`,
-      { duration: 14_000 },
-    );
+    toast.info("正在准备 PDF：一般报告约 1～3 分钟自动下载；若体积很大将自动改走云端队列。", { duration: 10_000 });
 
     // 阅读模式里没法直接读 reports 行的 coverUrl（用户可能已经被 ReportCoverCard
     // 卸载了）；ensureCover 是幂等的，已存在直接 NOOP，不会重复扣 nano banana 配额。
@@ -528,12 +572,13 @@ export default function MyReportsPage() {
                 cursor: isBusy ? "not-allowed" : "pointer",
                 boxShadow: isBusy ? "none" : "0 3px 10px rgba(168,118,27,0.30)",
               }}
-              title="云端压制正式 PDF（先入 GCS 队列；多数 15～45 分钟，可离开本页，完成后自动下载）"
+              title="一般 1～3 分钟内自动下载；超大报告自动改走云端队列，完成后也会自动下载"
             >
               {isBusy ? <Loader2 size={12} className="animate-spin" /> : <FileDown size={12} />}
               {downloadStage === "ensuring-cover" ? "生成封面…" :
                downloadStage === "rendering"      ? "等待渲染…" :
                downloadStage === "snapshotting"   ? "上传快照…" :
+               downloadStage === "sync_pdf"       ? "生成 PDF…" :
                downloadStage === "pdf_queued"     ? "云端排队中…" :
                                                     "下载 PDF"}
             </button>
@@ -843,7 +888,7 @@ function ReportCoverCard({
               style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: isDownloading ? "rgba(168,118,27,0.30)" : "linear-gradient(135deg,#a8761b,#7a5410)", border: "1px solid rgba(168,118,27,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12.5, cursor: isDownloading ? "not-allowed" : "pointer", transition: "all 0.2s", boxShadow: isDownloading ? "none" : "0 4px 14px rgba(168,118,27,0.35)" }}
               onMouseEnter={(e) => { if (!isDownloading) (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-              title="进入阅览后排队压制正式 PDF（多数 15～45 分钟；可离开本页，完成后自动下载）"
+              title="进入阅览后生成 PDF：一般自动下载；超大报告会走云端队列"
             >
               {isDownloading ? <Loader2 size={13} className="animate-spin" /> : <FileDown size={13} />}
               {isDownloading ? "正在生成 PDF…" : "📥 下载 PDF"}
