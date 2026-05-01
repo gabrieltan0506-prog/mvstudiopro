@@ -3,11 +3,12 @@
 #
 # Secrets 要求（Repo settings → Secrets and variables → Actions）任选一种：
 #
-# A) 服务账号 JSON（常用）
-#   GCP_SA_KEY — 整份 key JSON 字符串。若未设置或为空，google-github-actions/auth 会报：
+# A) 服务账号 JSON（常用）— 在仓库 Settings → Secrets and variables → Actions 任填其一：
+#   GCP_SA_KEY          — 优先读取
+#   GCP_SERVICE_ACCOUNT_KEY — 备用名（与部分团队习惯命名一致）
+#   整份 key JSON 单行或多行均可。未设置或为空时 auth 会报：
 #   「must specify exactly one of workload_identity_provider or credentials_json」。
-#   注意：来自 fork 的 pull_request 工作流默认拿不到仓库 secrets；本 workflow 仅在
-#   push main / workflow_dispatch 运行，合并进本仓库后应有 secrets。
+#   Fork 提的 PR / Dependabot 默认拿不到本仓库 secrets / 需在组织里放行。
 #
 # B) Workload Identity Federation（无长期 JSON key）
 #   须改本文件 auth 步骤：使用 workload_identity_provider + service_account，
@@ -55,21 +56,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify GCP_SA_KEY is set
+      - name: Verify GCP service account secret is set
         env:
-          GCP_SA_KEY_JSON: ${{ secrets.GCP_SA_KEY }}
+          KEY_A: ${{ secrets.GCP_SA_KEY }}
+          KEY_B: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
-          if [ -z "$GCP_SA_KEY_JSON" ]; then
-            echo "::error::Secret GCP_SA_KEY is missing or empty. Add it under Settings → Secrets and variables → Actions."
-            echo "Using Workload Identity Federation instead? Remove credentials_json and set workload_identity_provider + service_account on the auth step (see workflow comments)."
+          if [ -n "$KEY_A" ] || [ -n "$KEY_B" ]; then
+            echo "GCP credentials secret is present (GCP_SA_KEY and/or GCP_SERVICE_ACCOUNT_KEY)."
+          else
+            echo "::error::未配置 GCP 凭证。请在仓库 Secrets 中新增 GCP_SA_KEY（或 GCP_SERVICE_ACCOUNT_KEY），值为服务账号 JSON 全文。"
+            echo "参见 workflow 文件顶部注释；勿用占位符。Fork PR 默认无 secrets，需合并进本仓库后在 main 上部署。"
             exit 1
           fi
-          echo "GCP_SA_KEY is present."
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY || secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Set up gcloud SDK
         uses: google-github-actions/setup-gcloud@v2
