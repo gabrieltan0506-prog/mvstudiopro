@@ -3,12 +3,13 @@
 #
 # Secrets 要求（Repo settings → Secrets and variables → Actions）任选一种：
 #
-# A) 服务账号 JSON（常用）— 在仓库 Settings → Secrets and variables → Actions 任填其一：
-#   GCP_SA_KEY          — 优先读取
-#   GCP_SERVICE_ACCOUNT_KEY — 备用名（与部分团队习惯命名一致）
+# A) 服务账号 JSON（常用）— 任填其一：
+#   GCP_SA_KEY                — 优先读取
+#   GCP_SERVICE_ACCOUNT_KEY   — 备用名（与部分团队习惯命名一致）
 #   整份 key JSON 单行或多行均可。未设置或为空时 auth 会报：
 #   「must specify exactly one of workload_identity_provider or credentials_json」。
-#   Fork 提的 PR / Dependabot 默认拿不到本仓库 secrets / 需在组织里放行。
+#   注意：来自 fork 的 pull_request 默认拿不到本仓库 secrets；本 workflow 仅在
+#   push main / workflow_dispatch 运行；Fork PR 需在合并进本仓库后由 main 部署。
 #
 # B) Workload Identity Federation（无长期 JSON key）
 #   须改本文件 auth 步骤：使用 workload_identity_provider + service_account，
@@ -21,7 +22,7 @@
 #                   - roles/storage.admin (上传源码到 staging bucket)
 #                   - roles/iam.serviceAccountUser (allow act-as pdf-runner)
 #                 若用 JSON key：`gcloud iam service-accounts keys create key.json --iam-account=...`
-#                 将整份 JSON 粘贴到 GCP_SA_KEY。
+#                 将整份 JSON 粘贴到 GCP_SA_KEY（或 GCP_SERVICE_ACCOUNT_KEY）。
 
 name: Deploy pdf-worker
 
