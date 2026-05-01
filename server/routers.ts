@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -64,17 +65,19 @@ import {
 import { generateVideo, isVeoAvailable } from "./veo";
 import { isGeminiAudioAvailable, analyzeAudioWithGemini } from "./gemini-audio";
 import { executeProviderFallback } from "./services/provider-manager";
-import { createGcsSignedUploadUrl } from "./services/gcs";
+import { createGcsSignedUploadUrl, uploadBufferToGcs, resolvePdfExportBucketName } from "./services/gcs";
+import { fetchPdfBufferFromWorker, getPdfWorkerFetchTimeoutMs } from "./services/pdfWorkerClient";
+import {
+  createJob as createJobRecord,
+  getJobById,
+  markJobSucceeded,
+  markJobFailed,
+} from "./jobs/repository";
 import { getTierProviderChain, resolveUserTier, resolveWatermark, shouldApplyWatermarkForTier } from "./services/tier-provider-routing";
 import { getAdminStats, getVideoComments, addVideoComment, deleteVideoComment, toggleCommentLike, createStoryboard, updateStoryboardStatus } from "./db";
 import { checkUsageLimit, getOrCreateUsageTracking, getAllBetaQuotas, createBetaQuota, getAllTeams, getAllStoryboards, getPaymentSubmissions, updatePaymentSubmissionStatus, createVideoGeneration, getVideoGenerationById, getVideoGenerationsByUserId, updateVideoGeneration, getVideoLikeStatus, toggleVideoLike, getUserCommentLikes, isAdmin } from "./db-extended";
 import { registerOriginalVideo } from "./video-signature";
 import { nanoid } from "nanoid";
-import {
-  createJob as createJobRecord,
-  markJobSucceeded,
-  markJobFailed,
-} from "./jobs/repository";
 import {
   growthAssetAdaptationSchema,
   growthAnalysisModeSchema,
@@ -2493,9 +2496,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        // PR #357 决策：所有 PDF 链路 timeout 统一 15 分钟 (900_000 ms)。
-        // 33 分钟版本会让卡死请求白等 30+ 分钟才报错，逼用户重启 fly machine。
-        const timeoutId = setTimeout(() => controller.abort(), 900_000);
+        const timeoutId = setTimeout(() => controller.abort(), getPdfWorkerFetchTimeoutMs());
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2536,8 +2537,7 @@ export const appRouter = router({
         }
         const proxyUrl = cloudRunUrl.replace(/\/$/, "") + "/generate-pdf";
         const controller = new AbortController();
-        // PR #357 决策：所有 PDF 链路 timeout 统一 15 分钟 (900_000 ms)。
-        const timeoutId = setTimeout(() => controller.abort(), 900_000);
+        const timeoutId = setTimeout(() => controller.abort(), getPdfWorkerFetchTimeoutMs());
         try {
           const res = await fetch(proxyUrl, {
             method: "POST",
@@ -2560,6 +2560,72 @@ export const appRouter = router({
         } finally {
           clearTimeout(timeoutId);
         }
+      }),
+
+    /** 瀏覽器直傳 HTML 快照到 GCS（與異步 pdf_export 同桶），供作品庫 queuePdfFromHtml。 */
+    getPdfHtmlSnapshotUploadUrl: protectedProcedure.mutation(async ({ ctx }) => {
+      const safeUser = String(ctx.user.id).replace(/[^0-9a-zA-Z_-]/g, "");
+      const objectName = `pdf-async/html/${safeUser}/${Date.now()}-${nanoid(12)}.html`;
+      return createGcsSignedUploadUrl({
+        contentType: "text/html; charset=utf-8",
+        objectName,
+        bucket: resolvePdfExportBucketName(),
+        expiresInMinutes: 45,
+      });
+    }),
+
+    /** 異步 PDF：HTML 快照已在 GCS 時入隊，後台 html → pdf-worker → PDF 上傳 GCS → 簽名下載鏈。 */
+    queuePdfFromHtml: protectedProcedure
+      .input(
+        z.object({
+          htmlGcsUri: z.string().regex(/^gs:\/\//, "必須為 gs:// URI"),
+          token: z.string().optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        const jobId = nanoid(16);
+        await createJobRecord({
+          id: jobId,
+          userId: String(ctx.user.id),
+          type: "pdf_export",
+          provider: "pdf-worker-async",
+          input: {
+            action: "render_html",
+            params: {
+              htmlGcsUri: input.htmlGcsUri,
+              token: input.token ?? "",
+            },
+          },
+        });
+        return { jobId, status: "queued" as const };
+      }),
+
+    /** 查詢異步 PDF 任務（含 _pdfDebug 步驟時間線，供 God View DEBUG）。 */
+    getPdfExportJob: protectedProcedure
+      .input(z.object({ jobId: z.string().min(1) }))
+      .query(async ({ ctx, input }) => {
+        const job = await getJobById(input.jobId);
+        if (!job || job.type !== "pdf_export") {
+          throw new TRPCError({ code: "NOT_FOUND", message: "PDF 導出任務不存在" });
+        }
+        if (String(job.userId) !== String(ctx.user.id)) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "無權查看此任務" });
+        }
+        const rawInput = job.input;
+        const pdfDebug =
+          rawInput && typeof rawInput === "object" && !Array.isArray(rawInput) && "_pdfDebug" in rawInput
+            ? (rawInput as Record<string, unknown>)._pdfDebug
+            : null;
+        return {
+          jobId: job.id,
+          status: job.status,
+          error: job.error,
+          output: job.output,
+          pdfDebug,
+          provider: job.provider,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+        };
       }),
 
     recordAnalysisSnapshot: protectedProcedure

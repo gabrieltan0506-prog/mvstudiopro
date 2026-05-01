@@ -46,18 +46,15 @@ gcloud builds submit --tag $IMAGE_URL \
   --gcs-log-dir="${BUCKET_NAME}/logs"
 
 echo "🛸 [5/5] 正在發射至 Cloud Run..."
-# 2026-05-01 用户决策：Deep Research Max 16-25 MB HTML 已成常态，资源上调
-#   --timeout=600 → 2000 (33 min) — Gemini reviewer 建议拉到 2000s，
-#       给 PDF 序列化 + 跨云回传 500s 缓冲（page.setContent 1500s 之外）
-#   --memory 2Gi → 4Gi — 16-25 MB HTML 在 DOM 里展开 3-5x，2GB 紧张
-#   --cpu 2 → 4 — 提速 puppeteer 渲染 + 字体落地
+# Deep Research Max：setContent + 等图 + page.pdf + gs 连续阶段可能 > 33min；拉满 Cloud Run HTTP 上限 3600s。
+# 须与 pdf-worker/index.ts express server socket、server/routers.ts PDF_PROXY_FETCH_TIMEOUT_MS、fly.toml idle_timeout 一起改。
 gcloud run deploy $SERVICE_NAME \
   --image $IMAGE_URL \
   --region $REGION \
   --allow-unauthenticated \
   --memory 4Gi \
   --cpu 4 \
-  --timeout=2000 \
+  --timeout=3600 \
   --service-account=$SA_EMAIL
 
 echo "🎉 部署腳本執行完畢！"

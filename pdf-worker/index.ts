@@ -1,14 +1,158 @@
 import express from "express";
 import puppeteer from "puppeteer";
+import { spawn } from "node:child_process";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 const app = express();
-// Increase body limit to 100mb — static HTML snapshots can be several MB
-app.use(express.json({ limit: "100mb" }));
-app.use(express.urlencoded({ limit: "100mb", extended: true }));
+// Deep Research Max：静态快照可达数十 MB
+app.use(express.json({ limit: "200mb" }));
+app.use(express.urlencoded({ limit: "200mb", extended: true }));
 
 const PORT = process.env.PORT || 8080;
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// ════════════════════════════════════════════════════════════════════════════
+// 2026-05-01 体积优化 + 失败诊断（叠加在 PR #353 / #357 既有调整之上）
+//
+// 企业级默认可跑 + 适度压体积/墙钟（品质仍近原样）；一律可用 env 拉回高质量慢速档。
+//   PDF_SCALE_FACTOR             默认 1.35（视口 DPR；略低于 1.5 → step5 page.pdf 光栅更快）
+//   PDF_POST_LAYOUT_WAIT_MS     默认 18_000（图已 decode 后短沉淀；过短易 B，过长浪费墙钟）
+//   PDF_PER_IMAGE_WAIT_MS       默认 20_000（单图 load 兜底）
+//   PDF_GHOSTSCRIPT_COMPRESS     默认 true
+//   PDF_GS_LEVEL                 默认 ebook
+//   PDF_GS_COLOR_DPI / GRAY_DPI  默认 132（原 150；肉眼难辨、gs 更快更小）
+//   PDF_GS_MONO_DPI             默认 240（原 300）
+//   PDF_GS_TIMEOUT_MS            默认 180_000
+//   PDF_SET_CONTENT_WAIT_UNTIL   默认 load
+//   PDF_SET_CONTENT_TIMEOUT_MS  默认 1_800_000（30min；把 Cloud Run 余量多留给 step5）
+//   PDF_PAGE_PDF_TIMEOUT_MS     默认 0（禁用 puppeteer 内置 30s step5 限时）
+//   PDF_UNIFY_CJK_FONT_STACK    默认 true（@media print 統一 Noto CJK，利於子集嵌入/GS 壓縮）
+// ════════════════════════════════════════════════════════════════════════════
+const SCALE_FACTOR = Number(process.env.PDF_SCALE_FACTOR) || 1.35;
+const POST_LAYOUT_WAIT_MS = Number(process.env.PDF_POST_LAYOUT_WAIT_MS) || 18_000;
+const PER_IMAGE_WAIT_MS = Number(process.env.PDF_PER_IMAGE_WAIT_MS) || 20_000;
+const ENABLE_GS_COMPRESS = process.env.PDF_GHOSTSCRIPT_COMPRESS !== "false";
+const GS_LEVEL = (process.env.PDF_GS_LEVEL || "ebook") as
+  | "screen" | "ebook" | "printer" | "prepress";
+const GS_TIMEOUT_MS = Number(process.env.PDF_GS_TIMEOUT_MS) || 180_000;
+const GS_COLOR_DPI = Number(process.env.PDF_GS_COLOR_DPI) || 132;
+const GS_GRAY_DPI = Number(process.env.PDF_GS_GRAY_DPI) || 132;
+const GS_MONO_DPI = Number(process.env.PDF_GS_MONO_DPI) || 240;
+
+const ALLOWED_WAIT = new Set(["load", "domcontentloaded", "networkidle0", "networkidle2"]);
+const SET_CONTENT_WAIT_RAW = (process.env.PDF_SET_CONTENT_WAIT_UNTIL || "load").toLowerCase();
+const SET_CONTENT_WAIT_UNTIL = ALLOWED_WAIT.has(SET_CONTENT_WAIT_RAW)
+  ? (SET_CONTENT_WAIT_RAW as "load" | "domcontentloaded" | "networkidle0" | "networkidle2")
+  : "load";
+
+const SET_CONTENT_TIMEOUT_MS = Number(process.env.PDF_SET_CONTENT_TIMEOUT_MS) || 1_800_000;
+
+/** page.pdf 单步超时（ms）。0 = 禁用 Puppeteer 内置限时（其默认 30s 会害死 Max）。 */
+const PAGE_PDF_TIMEOUT_ENV = process.env.PDF_PAGE_PDF_TIMEOUT_MS;
+const PAGE_PDF_TIMEOUT_PARSED =
+  PAGE_PDF_TIMEOUT_ENV !== undefined && PAGE_PDF_TIMEOUT_ENV !== ""
+    ? Number(PAGE_PDF_TIMEOUT_ENV)
+    : 0;
+const PAGE_PDF_TIMEOUT_MS =
+  Number.isFinite(PAGE_PDF_TIMEOUT_PARSED) && PAGE_PDF_TIMEOUT_PARSED >= 0
+    ? PAGE_PDF_TIMEOUT_PARSED
+    : 0;
+
+/** 打印前統一為容器內 Noto CJK，減少多字體混嵌、利於 Ghostscript subset。設為 false 可回退舊版視覺。 */
+const UNIFY_CJK_FONT_STACK = process.env.PDF_UNIFY_CJK_FONT_STACK !== "false";
+
+console.log(
+  `[pdf-worker] startup config: ` +
+  `scale=${SCALE_FACTOR}, postLayoutWaitMs=${POST_LAYOUT_WAIT_MS}, perImageWaitMs=${PER_IMAGE_WAIT_MS}, ` +
+  `setContentWaitUntil=${SET_CONTENT_WAIT_UNTIL} ` +
+  `setContentTimeoutMs=${SET_CONTENT_TIMEOUT_MS} ` +
+  `pagePdfTimeoutMs=${PAGE_PDF_TIMEOUT_MS === 0 ? "0(disabled)" : PAGE_PDF_TIMEOUT_MS} ` +
+  `unifyCjkFontStack=${UNIFY_CJK_FONT_STACK} ` +
+  `gs=${ENABLE_GS_COMPRESS ? GS_LEVEL : "off"} dpi=color/${GS_COLOR_DPI} gray/${GS_GRAY_DPI} mono/${GS_MONO_DPI} ` +
+  `gsTimeout=${GS_TIMEOUT_MS}ms`,
+);
+
+async function compressPdfWithGhostscript(
+  input: Buffer,
+  level: typeof GS_LEVEL = "ebook",
+  timeoutMs = GS_TIMEOUT_MS,
+  colorDpi = GS_COLOR_DPI,
+  grayDpi = GS_GRAY_DPI,
+  monoDpi = GS_MONO_DPI,
+): Promise<Buffer> {
+  const stamp = `${Date.now()}-${randomBytes(4).toString("hex")}`;
+  const inPath = join(tmpdir(), `pdf-in-${stamp}.pdf`);
+  const outPath = join(tmpdir(), `pdf-out-${stamp}.pdf`);
+
+  try {
+    await writeFile(inPath, input);
+
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn("gs", [
+        "-sDEVICE=pdfwrite",
+        "-dCompatibilityLevel=1.4",
+        `-dPDFSETTINGS=/${level}`,
+        "-dNOPAUSE",
+        "-dQUIET",
+        "-dBATCH",
+        "-dDetectDuplicateImages=true",
+        "-dColorImageDownsampleType=/Bicubic",
+        `-dColorImageResolution=${colorDpi}`,
+        "-dGrayImageDownsampleType=/Bicubic",
+        `-dGrayImageResolution=${grayDpi}`,
+        "-dMonoImageDownsampleType=/Bicubic",
+        `-dMonoImageResolution=${monoDpi}`,
+        "-dEmbedAllFonts=true",
+        "-dSubsetFonts=true",
+        "-dCompressFonts=true",
+        `-sOutputFile=${outPath}`,
+        inPath,
+      ]);
+
+      const timer = setTimeout(() => {
+        proc.kill("SIGKILL");
+        reject(new Error(`gs compress timeout ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      proc.on("exit", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve();
+        else reject(new Error(`gs exit ${code}`));
+      });
+    });
+
+    return Buffer.from(await readFile(outPath));
+  } finally {
+    await Promise.all([
+      unlink(inPath).catch(() => {}),
+      unlink(outPath).catch(() => {}),
+    ]);
+  }
+}
+
+app.get("/health", (_req, res) =>
+  res.json({
+    ok: true,
+    config: {
+      scaleFactor: SCALE_FACTOR,
+      postLayoutWaitMs: POST_LAYOUT_WAIT_MS,
+      perImageWaitMs: PER_IMAGE_WAIT_MS,
+      setContentWaitUntil: SET_CONTENT_WAIT_UNTIL,
+      setContentTimeoutMs: SET_CONTENT_TIMEOUT_MS,
+      pagePdfTimeoutMs: PAGE_PDF_TIMEOUT_MS,
+      gsCompress: ENABLE_GS_COMPRESS ? GS_LEVEL : "off",
+      gsDpi: { color: GS_COLOR_DPI, gray: GS_GRAY_DPI, mono: GS_MONO_DPI },
+      gsTimeoutMs: GS_TIMEOUT_MS,
+      unifyCjkFontStack: UNIFY_CJK_FONT_STACK,
+    },
+  }),
+);
 
 app.post("/generate-pdf", async (req, res) => {
   const { html, token } = req.body as { html?: string; token?: string };
@@ -24,6 +168,15 @@ app.post("/generate-pdf", async (req, res) => {
     console.log(`[pdf-worker] token present (${token === "supervisor" ? "supervisor" : "user"}, len=${token.length})`);
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // 细粒度耗时打点 — 下次再 timeout 立刻看出卡在哪一步
+  // 通过对比每段 elapsed 时间精确定位 setContent / fonts.ready / pdf / gs
+  // ════════════════════════════════════════════════════════════════════════
+  const reqId = randomBytes(4).toString("hex");
+  const t0 = Date.now();
+  const htmlMb = (html.length / 1024 / 1024).toFixed(2);
+  console.log(`[pdf-worker:${reqId}] start html=${htmlMb}MB scale=${SCALE_FACTOR}`);
+
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
   try {
     browser = await puppeteer.launch({
@@ -36,60 +189,153 @@ app.post("/generate-pdf", async (req, res) => {
         "--disable-gpu",
         "--disable-software-rasterizer",
         "--disable-web-security",
+        "--disable-extensions",
+        "--disable-sync",
         "--single-process",
         "--no-zygote",
       ],
     });
+    console.log(`[pdf-worker:${reqId}] browser launched +${Date.now() - t0}ms`);
 
     const page = await browser.newPage();
-
-    // Set viewport for high-quality capture
-    await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 });
+    await page.setViewport({
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: SCALE_FACTOR,
+    });
 
     // Load the static HTML snapshot directly via setContent.
     // This bypasses auth/state issues entirely — the DOM was already rendered by the user's browser.
     // Scripts were stripped by the frontend so React won't re-render and clear the charts.
     //
-    // 2026-05-01 实测验证：
-    //   - networkidle0 在 8.87 MB HTML 下 44s 完成（PR #353 hotfix 验证过）
-    //   - 改 networkidle2 后反而卡死 11+ 分钟无日志（Chrome 内部 favicon.ico 之类
-    //     的 phantom 请求让 idle≤2 永远不满足）→ 退回 networkidle0
-    //   - 800 ms 硬等不够把 2.18 MB base64 PNG 封面解码 + 绘背景 → 拉到 30s
-    //   - document.fonts.ready 用 page.evaluate 而不是 evaluateHandle（后者不 auto-await Promise）
-    //
-    // 2026-05-01 用户决策（第二次调整）：之前 1_500_000 (25 min) 是为应付理论上的
-    // 25 MB 报告，代价是任何卡住请求都让用户等 25 分钟。改回 14 分钟 (840_000 ms)，
-    // 比 fly 端 fetch AbortController (900_000 / 15 min) 略短，让 pdf-worker 主动失败
-    // 返回 500 给 fly，fly 转发错误给 UI，用户能立刻知道并重试。
+    // waitUntil 由 PDF_SET_CONTENT_WAIT_UNTIL 控制（默认 load）：
+    //   超大快照下 networkidle0 可能永远等不到「零连接」，拖到 Navigation timeout → A 类。
+    //   load 之后仍执行 document.fonts.ready、全图 load+decode、以及固定 hard wait，可覆盖 B 类（缺封面/白页）。
+    const tSc = Date.now();
+    console.log(
+      `[pdf-worker:${reqId}] step1/6 setContent start (waitUntil=${SET_CONTENT_WAIT_UNTIL}, ` +
+      `timeoutMs=${SET_CONTENT_TIMEOUT_MS})`,
+    );
     await page.setContent(html, {
-      waitUntil: "networkidle0",
-      timeout: 840_000,
+      waitUntil: SET_CONTENT_WAIT_UNTIL,
+      timeout: SET_CONTENT_TIMEOUT_MS,
     });
+    console.log(`[pdf-worker:${reqId}] step1/6 setContent done +${Date.now() - tSc}ms`);
 
     // 等所有自定义字体加载完毕 — 避免 PDF 里出现字体 fallback / 方块字
     // 用字符串 page.evaluate 避免 pdf-worker tsconfig 没 lib.dom 的编译错
     // 注意：page.evaluate 字符串形式会自动 await 表达式如果是 Promise
+    const tFonts = Date.now();
+    console.log(`[pdf-worker:${reqId}] step2/6 fonts.ready start`);
     await page.evaluate("document.fonts.ready");
+    console.log(`[pdf-worker:${reqId}] step2/6 fonts.ready done +${Date.now() - tFonts}ms`);
 
-    // Extra wait for base64 image decode + CSS transitions + ECharts SVG layout to fully settle
-    // 30s 是给 2 MB+ base64 cover image 解码 + 绘背景的留量（800ms 不够，封面渲染不出来）
-    await new Promise((r) => setTimeout(r, 30_000));
+    // 等大体积 data: PNG/JPEG 全部 load + decode 完再进 hard wait。
+    // 否则 page.pdf() 时 naturalWidth=0 → 封面白屏 / 页数统计失真（用户实测 B 类问题）。
+    const tImg = Date.now();
+    console.log(`[pdf-worker:${reqId}] step3/6 images load+decode start`);
+    await page.evaluate(
+      `Promise.all(Array.from(document.images).map(function (img) {
+      return new Promise(function (resolve) {
+        function done() { resolve(null); }
+        if (img.complete && img.naturalWidth > 0) return done();
+        img.addEventListener("load", done, { once: true });
+        img.addEventListener("error", done, { once: true });
+        setTimeout(done, ${PER_IMAGE_WAIT_MS});
+      });
+    })).then(function () {
+      return Promise.all(Array.from(document.images).map(function (img) {
+        return (img.decode && typeof img.decode === "function")
+          ? img.decode().catch(function () {})
+          : Promise.resolve();
+      }));
+    })`,
+    );
+    console.log(`[pdf-worker:${reqId}] step3/6 images load+decode +${Date.now() - tImg}ms`);
 
-    const pdfBuffer = await page.pdf({
-      format: "A4",
-      printBackground: true,
-      margin: { top: "16px", bottom: "16px", left: "12px", right: "12px" },
-    });
+    const tHard0 = Date.now();
+    console.log(`[pdf-worker:${reqId}] step4/6 layout settle wait ${POST_LAYOUT_WAIT_MS}ms start`);
+    await new Promise((r) => setTimeout(r, POST_LAYOUT_WAIT_MS));
+    console.log(
+      `[pdf-worker:${reqId}] step4/6 layout settle done +${Date.now() - tHard0}ms (since step1 +${Date.now() - tSc}ms)`,
+    );
+
+    await page.emulateMediaType("print");
+
+    if (UNIFY_CJK_FONT_STACK) {
+      await page.addStyleTag({
+        content: `
+          @media print {
+            html, body, * {
+              font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Noto Sans CJK KR",
+                "Noto Serif CJK SC", "Noto Serif CJK JP", serif !important;
+            }
+          }
+        `,
+      });
+    }
+
+    const pdfTimeout = PAGE_PDF_TIMEOUT_MS;
+    const tPdf = Date.now();
+    console.log(
+      `[pdf-worker:${reqId}] step5/6 page.pdf start ` +
+      `(通常最耗时；timeoutMs=${pdfTimeout === 0 ? "disabled" : pdfTimeout})`,
+    );
+    const rawPdfBuffer = Buffer.from(
+      await page.pdf({
+        format: "A4",
+        printBackground: true,
+        preferCSSPageSize: true,
+        margin: { top: "14px", bottom: "14px", left: "10px", right: "10px" },
+        timeout: pdfTimeout,
+      }),
+    );
+    const pdfMb = (rawPdfBuffer.length / 1024 / 1024).toFixed(2);
+    console.log(`[pdf-worker:${reqId}] step5/6 page.pdf done +${Date.now() - tPdf}ms size=${pdfMb}MB`);
+
+    let pdfBuffer: Buffer = rawPdfBuffer;
+    if (ENABLE_GS_COMPRESS) {
+      const tGs = Date.now();
+      console.log(`[pdf-worker:${reqId}] step6/6 ghostscript start`);
+      try {
+        const compressed = await compressPdfWithGhostscript(rawPdfBuffer, GS_LEVEL);
+        const ratio = compressed.length / rawPdfBuffer.length;
+        if (ratio < 0.95) {
+          pdfBuffer = compressed;
+          const compressedMb = (compressed.length / 1024 / 1024).toFixed(2);
+          console.log(
+            `[pdf-worker:${reqId}] gs ${pdfMb}MB → ${compressedMb}MB ` +
+            `(${(ratio * 100).toFixed(0)}%, +${Date.now() - tGs}ms)`,
+          );
+        } else {
+          console.log(
+            `[pdf-worker:${reqId}] gs 收益 < 5% (${(ratio * 100).toFixed(0)}%)，回退原 PDF`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[pdf-worker:${reqId}] gs 压缩失败，回退原 PDF: ${(err as Error).message}`,
+        );
+      }
+    }
 
     res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", String(pdfBuffer.length));
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="mvstudio-analysis-${Date.now()}.pdf"`,
     );
+
+    const finalMb = (pdfBuffer.length / 1024 / 1024).toFixed(2);
+    console.log(
+      `[pdf-worker:${reqId}] DONE html=${htmlMb}MB pdf=${finalMb}MB total=+${Date.now() - t0}ms`,
+    );
+
     res.send(Buffer.from(pdfBuffer));
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    console.error("[pdf-worker] generation failed:", msg);
+    const elapsedSec = ((Date.now() - t0) / 1000).toFixed(1);
+    console.error(`[pdf-worker:${reqId}] FAILED after ${elapsedSec}s: ${msg}`);
     res.status(500).json({ error: msg });
   } finally {
     if (browser) {
@@ -102,9 +348,7 @@ const server = app.listen(PORT, () => {
   console.log(`[pdf-worker] listening on port ${PORT}`);
 });
 
-// Cloud Run timeout is set to 2000s in deploy.sh (Gemini reviewer 建议从 1800 拉到 2000，
-// 给 PDF 序列化 + 跨云回传 500s 缓冲)；server socket 超时设在 Cloud Run 之内、setContent
-// 之上，足够处理 25 min puppeteer render + 30s hard wait + PDF gen overhead。
-server.setTimeout(1_950_000);
-server.keepAliveTimeout = 1_955_000;
-server.headersTimeout = 1_960_000;
+// 与 deploy.sh --timeout=3600 对齐；防 Express 先于 puppeteer 关掉长连接
+server.setTimeout(3_580_000);
+server.keepAliveTimeout = 3_585_000;
+server.headersTimeout = 3_590_000;

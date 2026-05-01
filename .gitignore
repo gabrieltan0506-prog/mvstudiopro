@@ -112,3 +112,6 @@ scripts/kling_probe.mjs
 scripts/poll_tasks.mjs
 .vercel
 gcp-speech-key.json
+
+# Local download scratch (do not commit)
+downloads/

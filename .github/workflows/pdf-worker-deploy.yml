@@ -71,15 +71,14 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          # 资源配置跟 deploy.sh 同步：4Gi / 4 vCPU / 2000s timeout。
-          # 改这里之后记得也改 pdf-worker/deploy.sh（手动兜底脚本）。
+          # 与 pdf-worker/deploy.sh 同步：4Gi / 4 vCPU / 3600s（Cloud Run HTTP 上限）。
           gcloud run deploy "${SERVICE_NAME}" \
             --image "${{ steps.image.outputs.url }}" \
             --region "${REGION}" \
             --allow-unauthenticated \
             --memory 4Gi \
             --cpu 4 \
-            --timeout=2000 \
+            --timeout=3600 \
             --service-account="${SA_EMAIL}"
 
       - name: Smoke check service URL
