@@ -262,6 +262,26 @@ app.post("/generate-pdf", async (req, res) => {
 
     await page.emulateMediaType("print");
 
+    await page.addStyleTag({
+      content: `
+        [data-sonner-toaster],[data-sonner-toast],[data-sonner-toaster] li,
+        ol[data-sonner-toaster],section[aria-label*="tific" i],section[aria-label*="通知" i],
+        [class*="sonner-toast"],.toaster {
+          display: none !important;
+          visibility: hidden !important;
+          height: 0 !important;
+          width: 0 !important;
+          overflow: hidden !important;
+          opacity: 0 !important;
+          pointer-events: none !important;
+        }
+        @media print {
+          html, body { margin: 0 !important; padding: 0 !important; }
+          #myreports-pdf-root { margin: 0 !important; padding: 0 !important; }
+        }
+      `,
+    });
+
     if (UNIFY_CJK_FONT_STACK) {
       await page.addStyleTag({
         content: `
@@ -285,7 +305,7 @@ app.post("/generate-pdf", async (req, res) => {
       await page.pdf({
         format: "A4",
         printBackground: true,
-        preferCSSPageSize: true,
+        preferCSSPageSize: false,
         margin: { top: "14px", bottom: "14px", left: "10px", right: "10px" },
         timeout: pdfTimeout,
       }),

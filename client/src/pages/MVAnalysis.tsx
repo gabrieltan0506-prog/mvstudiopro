@@ -2315,6 +2315,7 @@ export default function MVAnalysisPage() {
 
     // 移除脚本
     clone.querySelectorAll("script").forEach((n) => n.remove());
+    clone.querySelectorAll("[data-sonner-toaster], [data-sonner-toast], .toaster.group").forEach((n) => n.remove());
 
     // 移除视频元素（src 可能非常大）
     clone.querySelectorAll("video, audio").forEach((n) => n.remove());
