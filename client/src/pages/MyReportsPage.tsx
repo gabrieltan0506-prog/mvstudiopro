@@ -215,10 +215,13 @@ export default function MyReportsPage() {
 
   const pdfAsyncHandledRef = useRef(false);
   const pdfAsyncTitleRef = useRef<string>("");
+  /** 點「下載 PDF」後自動寫入診斷面板，直到 reset / 失敗；與 localStorage 常駐開關無關 */
+  const myReportsPdfDebugSessionRef = useRef(false);
   /** 異步 pdf_export 任務 id（GCS 快照 → worker → 簽名下載） */
   const [asyncPdfJobId, setAsyncPdfJobId] = useState<string | null>(null);
 
   const resetPdfDownloadUi = useCallback(() => {
+    myReportsPdfDebugSessionRef.current = false;
     setDownloadStage("idle");
     downloadStageRef.current = "idle";
     setDownloadingCardId(null);
@@ -253,10 +256,21 @@ export default function MyReportsPage() {
   }, []);
 
   const appendMyReportsPdfDebug = useCallback((line: string) => {
-    if (!myReportsPdfDebugLogging) return;
+    if (!myReportsPdfDebugLogging && !myReportsPdfDebugSessionRef.current) return;
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     setMyReportsPdfDebugLines((prev) => [...prev.slice(-150), `[${ts}] ${line}`]);
   }, [myReportsPdfDebugLogging]);
+
+  /** 每次從卡片或閱讀模式點「下載 PDF」時調用：自動開面板 + 清空並種子說明，無需手動開關。 */
+  const beginMyReportsPdfAutoDebug = useCallback(() => {
+    myReportsPdfDebugSessionRef.current = true;
+    setMyReportsPdfDebugOpen(true);
+    const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    setMyReportsPdfDebugLines([
+      `[${ts}] 已自动记录本次 PDF。若失败或卡住，请点「复制全部」发给技术支持（或截整张诊断面板），无需另填表单。`,
+      `[${ts}] 排错时请一并保留：时间点、点了哪个「下载 PDF」、最后一条 Toast。下方日志重点：htmlBytes、同步/队列、jobId、捕获错误、封面图尺寸与是否为 data URL。`,
+    ]);
+  }, []);
 
   const enableMyReportsPdfDebugPersist = useCallback(() => {
     try {
@@ -269,7 +283,7 @@ export default function MyReportsPage() {
     const ts = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     setMyReportsPdfDebugLines((prev) => [
       ...prev.slice(-150),
-      `[${ts}] 已开启 PDF 诊断并写入本机（刷新页面后仍会记录，直到点「关闭诊断」）`,
+      `[${ts}] 已开启常驻诊断并写入本机（刷新后仍记录，直到点「关闭常驻」）`,
     ]);
   }, []);
 
@@ -279,6 +293,7 @@ export default function MyReportsPage() {
     } catch {
       /* ignore */
     }
+    myReportsPdfDebugSessionRef.current = false;
     setMyReportsPdfDebugLogging(false);
     setMyReportsPdfDebugOpen(false);
   }, []);
@@ -672,6 +687,7 @@ export default function MyReportsPage() {
         { duration: 12_000 },
       );
     } catch (e: any) {
+      myReportsPdfDebugSessionRef.current = false;
       appendMyReportsPdfDebug(`捕获错误：${e?.message || "未知错误"}`);
       setDownloadStage("idle");
       downloadStageRef.current = "idle";
@@ -712,6 +728,7 @@ export default function MyReportsPage() {
     pdfRunReportIdRef.current = report.id;
     toast.info("正在准备 PDF：一般报告约 1～3 分钟自动下载；若体积很大将自动改走云端队列。", { duration: 10_000 });
     autoExitReadingAfterDownloadRef.current = true;
+    beginMyReportsPdfAutoDebug();
 
     // 0) thumbnailUrl=NULL 时先 on-demand 补一张 9:16 纯封面，避免 PDF 缺封面
     if (!report.coverUrl) {
@@ -739,7 +756,7 @@ export default function MyReportsPage() {
     // 2) 切到 rendering 阶段，等 useEffect 触发 captureAndUploadSnapshot
     setDownloadStage("rendering");
     downloadStageRef.current = "rendering";
-  }, [ensureCoverMutation, refetch, styleOf]);
+  }, [beginMyReportsPdfAutoDebug, ensureCoverMutation, refetch, styleOf]);
 
   const handleDownloadFromReadingMode = useCallback(async () => {
     if (!selectedReport?.id) {
@@ -755,6 +772,7 @@ export default function MyReportsPage() {
     setDownloadingCardId(reportId);
     pdfRunReportIdRef.current = reportId;
     toast.info("正在准备 PDF：一般报告约 1～3 分钟自动下载；若体积很大将自动改走云端队列。", { duration: 10_000 });
+    beginMyReportsPdfAutoDebug();
 
     // 阅读模式里没法直接读 reports 行的 coverUrl（用户可能已经被 ReportCoverCard
     // 卸载了）；ensureCover 是幂等的，已存在直接 NOOP，不会重复扣 nano banana 配额。
@@ -769,7 +787,7 @@ export default function MyReportsPage() {
 
     setDownloadStage("rendering");
     downloadStageRef.current = "rendering";
-  }, [ensureCoverMutation, refetch, selectedReport?.id]);
+  }, [beginMyReportsPdfAutoDebug, ensureCoverMutation, refetch, selectedReport?.id]);
 
   const handleDownloadMd = () => {
     if (!selectedReport) return;
@@ -782,170 +800,173 @@ export default function MyReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const renderMyReportsPdfDebugChrome = () => (
-    <>
-      <button
-        type="button"
-        data-pdf-exclude="true"
-        onClick={() => setMyReportsPdfDebugOpen((v) => !v)}
-        style={{
-          position: "fixed",
-          right: 14,
-          bottom: 14,
-          zIndex: 9998,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "8px 12px",
-          borderRadius: 10,
-          border: "1px solid rgba(122,84,16,0.45)",
-          background: myReportsPdfDebugLogging ? "rgba(22,163,74,0.18)" : "rgba(255,250,240,0.95)",
-          color: "#3d2c14",
-          fontSize: 11,
-          fontWeight: 800,
-          cursor: "pointer",
-          boxShadow: "0 4px 16px rgba(74,54,33,0.18)",
-          backdropFilter: "blur(8px)",
-        }}
-        title="作品库 PDF 快照诊断（浏览器端步骤，无需部署 worker 即可查看）"
-      >
-        <Bug size={14} />
-        PDF诊断{myReportsPdfDebugLogging ? "·开" : ""}
-      </button>
-      {myReportsPdfDebugOpen && (
-        <div
+  const renderMyReportsPdfDebugChrome = () => {
+    const pdfDebugRunActive =
+      downloadStage !== "idle" || downloadingCardId !== null || !!asyncPdfJobId;
+
+    return (
+      <>
+        <button
+          type="button"
           data-pdf-exclude="true"
+          onClick={() => setMyReportsPdfDebugOpen((v) => !v)}
           style={{
             position: "fixed",
             right: 14,
-            bottom: 54,
-            zIndex: 9999,
-            width: "min(420px, calc(100vw - 28px))",
-            maxHeight: "min(50vh, 320px)",
+            bottom: 14,
+            zIndex: 9998,
             display: "flex",
-            flexDirection: "column",
-            borderRadius: 12,
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 12px",
+            borderRadius: 10,
             border: "1px solid rgba(122,84,16,0.45)",
-            background: "rgba(28,22,16,0.94)",
-            color: "#e8e4dc",
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-            fontSize: 10,
-            lineHeight: 1.45,
-            boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
-            overflow: "hidden",
+            background:
+              myReportsPdfDebugLogging || pdfDebugRunActive
+                ? "rgba(22,163,74,0.18)"
+                : "rgba(255,250,240,0.95)",
+            color: "#3d2c14",
+            fontSize: 11,
+            fontWeight: 800,
+            cursor: "pointer",
+            boxShadow: "0 4px 16px rgba(74,54,33,0.18)",
+            backdropFilter: "blur(8px)",
           }}
+          title="下载 PDF 时会自动打开并写入步骤；也可选「常驻记录」跨刷新保留。"
         >
+          <Bug size={14} />
+          PDF诊断
+          {myReportsPdfDebugLogging ? "·常驻" : ""}
+          {pdfDebugRunActive ? "·进行中" : ""}
+        </button>
+        {myReportsPdfDebugOpen && (
           <div
+            data-pdf-exclude="true"
             style={{
-              padding: "8px 10px",
-              borderBottom: "1px solid rgba(255,255,255,0.12)",
+              position: "fixed",
+              right: 14,
+              bottom: 54,
+              zIndex: 9999,
+              width: "min(420px, calc(100vw - 28px))",
+              maxHeight: "min(50vh, 360px)",
               display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
+              flexDirection: "column",
+              borderRadius: 12,
+              border: "1px solid rgba(122,84,16,0.45)",
+              background: "rgba(28,22,16,0.94)",
+              color: "#e8e4dc",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: 10,
+              lineHeight: 1.45,
+              boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+              overflow: "hidden",
             }}
           >
-            <span style={{ fontWeight: 800, flex: 1, minWidth: 120 }}>PDF 快照诊断</span>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(myReportsPdfDebugLines.join("\n"));
-                  toast.success("已复制诊断日志");
-                } catch {
-                  toast.error("复制失败");
-                }
-              }}
-              style={{
-                padding: "4px 8px",
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.2)",
-                background: "transparent",
-                color: "#e8e4dc",
-                fontSize: 10,
-                cursor: "pointer",
-              }}
-            >
-              复制全部
-            </button>
-            <button
-              type="button"
-              onClick={() => setMyReportsPdfDebugLines([])}
-              style={{
-                padding: "4px 8px",
-                borderRadius: 6,
-                border: "1px solid rgba(255,255,255,0.2)",
-                background: "transparent",
-                color: "#e8e4dc",
-                fontSize: 10,
-                cursor: "pointer",
-              }}
-            >
-              清空
-            </button>
-            {!myReportsPdfDebugLogging ? (
-              <button
-                type="button"
-                onClick={enableMyReportsPdfDebugPersist}
-                style={{
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: "#16a34a",
-                  color: "#fff",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                开始记录
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={disableMyReportsPdfDebugPersist}
-                style={{
-                  padding: "4px 8px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: "#b45309",
-                  color: "#fff",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                关闭诊断
-              </button>
-            )}
-          </div>
-          <div style={{ padding: 8, overflow: "auto", flex: 1 }}>
-            {myReportsPdfDebugLines.length === 0 ? (
-              <span style={{ color: "rgba(232,228,220,0.55)" }}>
-                {myReportsPdfDebugLogging
-                  ? "点击「下载 PDF」后此处会追加步骤日志。地址栏加 ?pdfDebug=1 也会自动开启并记住本机开关（见 localStorage）。"
-                  : "先点「开始记录」，或打开 ?pdfDebug=1，再点「下载 PDF」才会写入日志。仅记录浏览器快照与请求步骤，不含 Cloud Run 内渲染细节。"}
-              </span>
-            ) : (
-              myReportsPdfDebugLines.map((line, i) => <div key={i}>{line}</div>)
-            )}
-          </div>
-          {!myReportsPdfDebugLogging && myReportsPdfDebugOpen && (
             <div
               style={{
-                padding: "6px 10px",
-                borderTop: "1px solid rgba(255,255,255,0.08)",
-                fontSize: 9,
-                color: "rgba(232,228,220,0.45)",
+                padding: "8px 10px",
+                borderBottom: "1px solid rgba(255,255,255,0.12)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
               }}
             >
-              提示：未开启记录时面板可预先打开，下载前请先点「开始记录」。
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 800, flex: 1, minWidth: 120 }}>PDF 快照诊断</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(myReportsPdfDebugLines.join("\n"));
+                      toast.success("已复制诊断日志");
+                    } catch {
+                      toast.error("复制失败");
+                    }
+                  }}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "transparent",
+                    color: "#e8e4dc",
+                    fontSize: 10,
+                    cursor: "pointer",
+                  }}
+                >
+                  复制全部
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMyReportsPdfDebugLines([])}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: "transparent",
+                    color: "#e8e4dc",
+                    fontSize: 10,
+                    cursor: "pointer",
+                  }}
+                >
+                  清空
+                </button>
+                {!myReportsPdfDebugLogging ? (
+                  <button
+                    type="button"
+                    onClick={enableMyReportsPdfDebugPersist}
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: "#2563eb",
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                    title="写入本机：刷新页面后仍会记录每次 PDF（可选）"
+                  >
+                    常驻记录
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={disableMyReportsPdfDebugPersist}
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: "#b45309",
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    关闭常驻
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize: 9, color: "rgba(232,228,220,0.65)", fontWeight: 500, lineHeight: 1.5 }}>
+                给技术支持时请发：本框「复制全部」全文，或整张诊断面板截图；再口头补一句「大概几点、点的哪个下载
+                PDF、最后 Toast 说什么」即可。
+              </div>
             </div>
-          )}
-        </div>
-      )}
-    </>
-  );
+            <div style={{ padding: 8, overflow: "auto", flex: 1 }}>
+              {myReportsPdfDebugLines.length === 0 ? (
+                <span style={{ color: "rgba(232,228,220,0.55)" }}>
+                  点击「下载 PDF」后会<strong style={{ color: "#fde68a" }}>自动</strong>
+                  打开本面板并写日志。可选「常驻记录」跨刷新保留。不含 Cloud Run / worker 内部日志。
+                </span>
+              ) : (
+                myReportsPdfDebugLines.map((line, i) => <div key={i}>{line}</div>)
+              )}
+            </div>
+          </div>
+        )}
+      </>
+    );
+  };
 
   // ─── 编辑模式（草稿审核工作台） ─────────────────────────────────────────────
   if (editingReport) {
