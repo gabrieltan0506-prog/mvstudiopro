@@ -54,6 +54,7 @@ jobs:
       REGION: us-central1
       SERVICE_NAME: pdf-service
       SA_EMAIL: pdf-runner@mv-studio-pro.iam.gserviceaccount.com
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
 
