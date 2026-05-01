@@ -874,6 +874,19 @@ export default function ReportRenderer({
             border-radius: 0 !important;
             outline: none !important;
           }
+
+          /* ── 2026-05-01 window.print() 本地另存 PDF 路径 ──
+             隐藏所有标 data-pdf-exclude="true" 的工具条 / chrome（reading mode
+             顶部 sticky 导航 + TemplateStripBanner 等），保证打印产物只剩封面
+             hero + 报告正文。强制白底避免奶油渐变背景被印成大色块。
+             已废弃的云端 puppeteer 路径也用同一属性剔除元素，规则在两条路径
+             下都生效，单一来源不需要双重维护。 */
+          [data-pdf-exclude="true"] {
+            display: none !important;
+          }
+          html, body {
+            background: #ffffff !important;
+          }
         }
       `}</style>
     </div>
