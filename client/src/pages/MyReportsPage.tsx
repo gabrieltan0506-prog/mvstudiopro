@@ -389,46 +389,6 @@ export default function MyReportsPage() {
         }
       }
 
-      const htmlBytes = new TextEncoder().encode(html).length;
-
-      const runSyncPdfDownload = async () => {
-        setDownloadStage("sync_pdf");
-        downloadStageRef.current = "sync_pdf";
-        toast.info("正在生成 PDF（通常 1～3 分钟），请保持本页打开…", { duration: 10_000 });
-        const result = await downloadAnalysisPdfMutation.mutateAsync({
-          html,
-          token: "myreports-direct=1",
-        });
-        if (!result.pdfBase64) {
-          throw new Error("PDF 内容为空");
-        }
-        const bytes = Uint8Array.from(atob(result.pdfBase64), (c) => c.charCodeAt(0));
-        const blob = new Blob([bytes], { type: "application/pdf" });
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        const fileNameTitle = (pdfAsyncTitleRef.current || "战略情报报告").replace(/[\\/:*?"<>|]/g, "·").slice(0, 80);
-        a.href = blobUrl;
-        a.download = `${fileNameTitle}.pdf`;
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 15_000);
-        toast.success(`PDF 已下载（${fileNameTitle}.pdf）`);
-      };
-
-      if (htmlBytes <= MY_REPORTS_PDF_SYNC_HTML_MAX_BYTES) {
-        try {
-          await runSyncPdfDownload();
-          resetPdfDownloadUi();
-          return;
-        } catch (syncErr: unknown) {
-          const msg = syncErr instanceof Error ? syncErr.message : String(syncErr);
-          console.warn("[MyReports] 同步 PDF 失败，改走云端队列：", msg);
-          toast.message("同步生成受阻，已自动改为云端队列（完成后仍会下载）", { duration: 12_000 });
-        }
-      }
-
       const uploadMeta = await getPdfHtmlSnapshotUploadUrlMutation.mutateAsync();
       const putHeaders: Record<string, string> = {
         "Content-Type": "text/html; charset=utf-8",
