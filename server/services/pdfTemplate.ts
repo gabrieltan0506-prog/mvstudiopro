@@ -347,7 +347,16 @@ export function generateHtmlTemplate(
 ): string {
   const style: PdfStyle = (opts?.style as PdfStyle) || "spring-mint";
   const palette = buildPalette(style);
-  const htmlBody = enhanceTables(parseMarkdownToHtml(markdownContent, style));
+
+  // 用户反馈（2026-05-01）：封面已显示标题 (cover-title)，正文又起 # H1
+  // 同一行字 → 视觉重复 / PDF 第一页冗余。剥掉 markdown 开头第一个 H1
+  // （仅首个，后续小节标题保留）。HTML 与 PDF 路径同步处理。
+  let mdRaw = markdownContent || "";
+  if (opts?.cover) {
+    mdRaw = mdRaw.replace(/^\s*#\s+[^\n]+\n+/, "");
+  }
+
+  const htmlBody = enhanceTables(parseMarkdownToHtml(mdRaw, style));
   const coverHtml = opts?.cover ? buildCoverPage(palette, opts.cover, style) : "";
 
   return `<!DOCTYPE html>
