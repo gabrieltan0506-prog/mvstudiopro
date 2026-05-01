@@ -104,12 +104,23 @@ export default function MyReportsPage() {
     onSuccess: (result) => {
       setHtmlDownloadingCardId(null);
       try {
+        // 历史问题：原本直接 a.href = dataUrl (13 MB+ base64 data: URL)，Safari
+        // 会静默丢内容（含封面），Chrome 旧版也不稳。
+        // 修复：解 base64 → Blob → URL.createObjectURL（跟 PlatformPage 同套机制）。
+        const commaIdx = result.dataUrl.indexOf(",");
+        const base64 = commaIdx > 0 ? result.dataUrl.slice(commaIdx + 1) : result.dataUrl;
+        const headerMatch = result.dataUrl.match(/^data:([^;]+)/);
+        const mime = headerMatch ? headerMatch[1] : (result.kind === "zip" ? "application/zip" : "text/html");
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        const blob = new Blob([bytes], { type: mime });
+        const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement("a");
-        a.href = result.dataUrl;
+        a.href = blobUrl;
         a.download = result.filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
         const sizeMb = (result.sizeBytes / 1024 / 1024).toFixed(2);
         if (result.kind === "zip") {
           toast.success(`HTML 交互版已下载（${sizeMb} MB → 自动压缩为 zip）`);
