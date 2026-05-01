@@ -848,8 +848,28 @@ export default function ReportRenderer({
              类标记后，puppeteer 会让它自然分页。
              （目前 hero 用 inline figure，外层若加 .cover-page 类即可生效。） */
           .cover-page, .cover-page.cover-image-only {
-            page-break-after: always;
-            height: 100vh;
+            page-break-after: always !important;
+            break-after: always !important;
+            height: 99vh !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-items: center !important;
+          }
+          /* 封面图按 letterbox 缩放：阅读模式下 inline style 用的是
+             aspectRatio: 9/16 + maxWidth: 720 + objectFit: cover，A4 高度
+             ≈ 1080px 时会撑出 1280px 触发溢出。print 模式覆盖为
+             max-height: 99vh + object-contain，让 flex 容器居中 + 短边贴边
+             长边 letterbox。border/shadow/radius 在 print 模式清掉，A4 上更干净。 */
+          .cover-page img, .cover-page.cover-image-only img {
+            max-width: 100% !important;
+            max-height: 99vh !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
           }
         }
       `}</style>
