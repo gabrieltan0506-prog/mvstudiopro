@@ -28,7 +28,11 @@ height:0!important;width:0!important;overflow:hidden!important;opacity:0!importa
 @media print{
 html,body{margin:0!important;padding:0!important;}
 #myreports-pdf-root{margin:0!important;padding:0!important;max-width:none!important;}
-.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;}
+.cover-page,.cover-page.cover-image-only{page-break-before:auto!important;break-before:auto!important;page-break-after:always!important;break-after:page!important;page-break-inside:auto!important;break-inside:auto!important;max-height:280mm!important;}
+.cover-page img,.cover-page.cover-image-only img{page-break-inside:auto!important;break-inside:auto!important;max-height:275mm!important;}
+@page{margin:0;size:A4 portrait;}
+[data-report-surface]{padding:4mm 6mm!important;border-radius:0!important;box-shadow:none!important;border:none!important;width:100%!important;max-width:none!important;box-sizing:border-box!important;}
+[data-report-surface]>[data-pdf-accent-bar]{margin:-4mm -6mm 3mm!important;border-radius:0!important;}
 }
 </style>`;
   if (html.includes("</head>")) return html.replace("</head>", `${strip}</head>`);
@@ -329,6 +333,33 @@ export default function MyReportsPage() {
       const pdfRoot = document.getElementById(MYREPORTS_PDF_SNAPSHOT_ROOT_ID);
       if (!pdfRoot) {
         throw new Error("找不到 PDF 快照容器（myreports-pdf-root），请重进阅读模式后再试");
+      }
+
+
+      // 封面若未 decode 完成，快照裡 naturalHeight=0 → pdf-worker 得到空白首頁 + page-break-after 仍生效
+      const coverImg = pdfRoot.querySelector("figure.cover-page img");
+      if (coverImg instanceof HTMLImageElement) {
+        if (!coverImg.complete || coverImg.naturalWidth === 0) {
+          await new Promise<void>((resolve) => {
+            let finished = false;
+            const finish = () => {
+              if (finished) return;
+              finished = true;
+              window.clearTimeout(timeoutId);
+              coverImg.removeEventListener("load", finish);
+              coverImg.removeEventListener("error", finish);
+              resolve();
+            };
+            const timeoutId = window.setTimeout(finish, 8_000);
+            coverImg.addEventListener("load", finish);
+            coverImg.addEventListener("error", finish);
+          });
+        }
+        try {
+          await coverImg.decode();
+        } catch (e) {
+          console.warn("[MyReports] 封面图 decode 失败，将降级交由 PDF Worker 处理", e);
+        }
       }
       const fragment = pdfRoot.cloneNode(true) as HTMLElement;
       fragment.querySelectorAll("script").forEach((n) => n.remove());
@@ -637,7 +668,8 @@ export default function MyReportsPage() {
               <img
                 src={coverImageUrl}
                 alt={selectedReport.title}
-                crossOrigin="anonymous"
+                loading="eager"
+                decoding="async"
                 style={{
                   display: "block",
                   margin: "0 auto",
