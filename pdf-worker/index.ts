@@ -234,6 +234,84 @@ async function applyMyreportsSnapshotPrintGuarantees(page: Page): Promise<void> 
   );
 }
 
+/** page.pdf 直前：只寫 log，協助定位首頁空白（封面 DOM / 圖 intrinsic / 分頁相關計算樣式）。不影響輸出。 */
+async function logMyreportsCoverDiagnosticsBeforePdf(page: Page, reqId: string): Promise<void> {
+  try {
+    const raw = await page.evaluate(
+      `(() => {
+        var root = document.getElementById("myreports-pdf-root");
+        var directCover = root ? root.querySelector(":scope > figure.cover-page") : null;
+        var fig = document.querySelector("figure.cover-page");
+        var img = fig ? fig.querySelector("img") : null;
+        var surface = document.querySelector("[data-report-surface]");
+        var images = Array.prototype.slice.call(document.images);
+        var zeroNat = 0;
+        for (var i = 0; i < images.length; i++) {
+          if (images[i].naturalWidth === 0) zeroNat++;
+        }
+        var surfaceSt = null;
+        try {
+          if (surface) {
+            var cs = getComputedStyle(surface);
+            surfaceSt = { breakBefore: cs.breakBefore, pageBreakBefore: cs.pageBreakBefore };
+          }
+        } catch (e) {
+          surfaceSt = { error: "surface_computed" };
+        }
+        var figSt = null;
+        try {
+          if (fig) {
+            var fcs = getComputedStyle(fig);
+            figSt = {
+              breakBefore: fcs.breakBefore,
+              breakInside: fcs.breakInside,
+              breakAfter: fcs.breakAfter,
+              height: fcs.height,
+              maxHeight: fcs.maxHeight,
+              display: fcs.display,
+            };
+          }
+        } catch (e2) {
+          figSt = { error: "fig_computed" };
+        }
+        var imgNatural = null;
+        if (img && img.tagName === "IMG") {
+          imgNatural = {
+            naturalW: img.naturalWidth,
+            naturalH: img.naturalHeight,
+            complete: img.complete,
+            offsetW: img.offsetWidth,
+            offsetH: img.offsetHeight,
+            widthAttr: img.getAttribute("width"),
+            heightAttr: img.getAttribute("height"),
+            srcPrefix: String(img.getAttribute("src") || img.src || "").slice(0, 80),
+          };
+        }
+        var figBox = fig ? { offsetW: fig.offsetWidth, offsetH: fig.offsetHeight } : null;
+        return JSON.stringify({
+          hasRoot: !!root,
+          directChildCoverFig: !!directCover,
+          coverFigCount: document.querySelectorAll("figure.cover-page").length,
+          imgNatural: imgNatural,
+          figBox: figBox,
+          figComputed: figSt,
+          surfaceBreak: surfaceSt,
+          imagesTotal: images.length,
+          imagesZeroNatural: zeroNat,
+          workerOverrideStyle: !!document.getElementById("mvs-pdf-worker-myreports-print-overrides"),
+          sanitizeStyle: !!document.getElementById("mvs-pdf-snapshot-sanitize"),
+        });
+      })()`,
+    );
+    const d = JSON.parse(String(raw));
+    console.log(`[pdf-worker:${reqId}] DIAG_MYREPORTS_PRE_PDF ${JSON.stringify(d)}`);
+  } catch (err) {
+    console.warn(
+      `[pdf-worker:${reqId}] DIAG_MYREPORTS_PRE_PDF failed: ${(err as Error).message}`,
+    );
+  }
+}
+
 app.get("/health", (_req, res) =>
   res.json({
     ok: true,
@@ -394,6 +472,8 @@ app.post("/generate-pdf", async (req, res) => {
     }
 
     await applyMyreportsSnapshotPrintGuarantees(page);
+
+    await logMyreportsCoverDiagnosticsBeforePdf(page, reqId);
 
     const pdfTimeout = PAGE_PDF_TIMEOUT_MS;
     const tPdf = Date.now();
