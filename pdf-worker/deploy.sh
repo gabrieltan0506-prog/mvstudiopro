@@ -12,6 +12,10 @@
 # `gcloud run deploy` 步骤。
 set -e
 
+# 强制 cd 到本脚本所在目录，不然 gcloud builds submit 会把整个 mvstudiopro
+# 仓库（~160 MiB）当 build context 上传 + 用错 Dockerfile（主仓 Dockerfile）。
+cd "$(dirname "$0")"
+
 PROJECT_ID="mv-studio-pro"
 PROJECT_NUM="255451353515"
 REGION="us-central1"
