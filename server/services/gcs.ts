@@ -124,8 +124,10 @@ export async function createGcsSignedUploadUrl(params: {
   contentType: string;
   objectName?: string;
   expiresInMinutes?: number;
+  /** 覆寫默認 GCS 桶（例如 PDF 異步 HTML 快照專用） */
+  bucket?: string;
 }): Promise<{ bucket: string; objectName: string; gcsUri: string; uploadUrl: string; requiredHeaders?: Record<string, string> }> {
-  const bucket = getGcsBucketName();
+  const bucket = String(params.bucket || "").trim() || getGcsBucketName();
   if (!bucket) {
     throw new Error("GCS bucket is not configured");
   }
@@ -293,3 +295,41 @@ export async function deleteGcsObject(params: {
     throw new Error(`gcs_delete_failed:${response.status}:${JSON.stringify(json || {})}`);
   }
 }
+
+/** V4 GET 签名直链（供客户下载 PDF 等），默认 1h。 */
+export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string {
+  const credentials = getGoogleServiceAccount();
+  const { bucket, objectName } = parseGsUri(gsUri);
+  const encodedObject = objectName.split("/").map(encodeURIComponent).join("/");
+  const expiry = Math.max(60, Math.min(24 * 3600, Math.floor(expiresSeconds)));
+  const now = Math.floor(Date.now() / 1000);
+  const dateIso = new Date(now * 1000).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+  const datePart = dateIso.slice(0, 8);
+  const credentialScope = `${datePart}/auto/storage/goog4_request`;
+  const credential = `${credentials.client_email}/${credentialScope}`;
+  const host = "storage.googleapis.com";
+  const headers = `host:${host}\n`;
+  const signedHeaders = "host";
+  const canonicalRequest = [
+    "GET",
+    `/${bucket}/${encodedObject}`,
+    `X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}`,
+    headers,
+    signedHeaders,
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+  const hash = crypto.createHash("sha256").update(canonicalRequest).digest("hex");
+  const stringToSign = `GOOG4-RSA-SHA256\n${dateIso}\n${credentialScope}\n${hash}`;
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(stringToSign);
+  sign.end();
+  const signature = sign.sign(credentials.private_key).toString("hex");
+  return `https://${host}/${bucket}/${encodedObject}?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=${encodeURIComponent(credential)}&X-Goog-Date=${dateIso}&X-Goog-Expires=${expiry}&X-Goog-SignedHeaders=${signedHeaders}&X-Goog-Signature=${signature}`;
+}
+
+export function resolvePdfExportBucketName(): string {
+  return String(
+    process.env.GCS_PDF_EXPORT_BUCKET || process.env.GCS_BUCKET_NAME || getGcsBucketName(),
+  ).trim() || getGcsBucketName();
+}
+

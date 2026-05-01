@@ -86,6 +86,9 @@ primary_region = 'sin'  # 新加坡 · 持久卷 growth_data 与运行中机器�
   auto_start_machines = true
   min_machines_running = 1
   processes = ['app']
+  # Deep Research Max → 超大 HTML 云端 PDF 可达 30+ 分钟无首字节；默认 idle 过短会断在 Fly 边缘。
+  [http_service.http_options]
+    idle_timeout = 4000
 
   [[http_service.checks]]
     grace_period = "60s"

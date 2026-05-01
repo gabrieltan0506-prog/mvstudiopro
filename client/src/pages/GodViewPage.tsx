@@ -162,6 +162,15 @@ export default function GodViewPage() {
   const [showIpModal, setShowIpModal] = useState(false);
   // 当前正在轮询的 jobId（从 launchMutation.data 取出）
   const [pollingJobId, setPollingJobId] = useState<string | null>(null);
+  const PDF_EXPORT_JOB_DEBUG_KEY = "mvs-godview-pdf-export-job-id";
+  const [pdfExportJobIdForDebug, setPdfExportJobIdForDebug] = useState(() => {
+    try {
+      return localStorage.getItem(PDF_EXPORT_JOB_DEBUG_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
+
   // 普通用户轮询：dispatched 后每 20s 检查一次 job 状态
   const jobDoneQuery = trpc.deepResearch.status.useQuery(
     { jobId: pollingJobId! },
@@ -376,6 +385,20 @@ export default function GodViewPage() {
         const s = query.state.data?.status;
         if (s === "completed" || s === "failed") return false;
         return 4000;
+      },
+      retry: false,
+    },
+  );
+
+  /** 異步 PDF（pdf_export 隊列）步驟時間線 — 僅 supervisor + DEBUG 展開且有 jobId */
+  const pdfExportJobQuery = trpc.mvAnalysis.getPdfExportJob.useQuery(
+    { jobId: pdfExportJobIdForDebug.trim() },
+    {
+      enabled: isSupervisor && showDebug && pdfExportJobIdForDebug.trim().length > 0,
+      refetchInterval: (query) => {
+        const st = query.state.data?.status;
+        if (st === "succeeded" || st === "failed") return false;
+        return 3000;
       },
       retry: false,
     },
@@ -1241,6 +1264,133 @@ export default function GodViewPage() {
             {showDebug && (
               <div style={{ marginTop: 10, background: "#000", border: "1px solid rgba(0,255,70,0.25)", borderRadius: 12, padding: "18px 20px", fontFamily: "monospace", fontSize: 11, color: "#00ff46", lineHeight: 1.7 }}>
                 <p style={{ color: "rgba(0,255,70,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 12 }}>▶ DEEP RESEARCH DEBUG TERMINAL</p>
+
+                <p style={{ color: "rgba(0,180,255,0.45)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", marginBottom: 8 }}>▶ 異步 PDF（pdf_export 隊列 · 步驟時間線）</p>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <input
+                    placeholder="粘贴 pdf_export jobId，失焦写入本地…"
+                    value={pdfExportJobIdForDebug}
+                    onChange={(e) => setPdfExportJobIdForDebug(e.target.value)}
+                    onBlur={() => {
+                      try {
+                        localStorage.setItem(PDF_EXPORT_JOB_DEBUG_KEY, pdfExportJobIdForDebug.trim());
+                      } catch {}
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    style={{ flex: 1, minWidth: 200, maxWidth: 420, background: "rgba(0,40,80,0.35)", border: "1px solid rgba(0,180,255,0.25)", borderRadius: 8, color: "#7dd3fc", fontSize: 11, fontFamily: "monospace", padding: "6px 12px", outline: "none" }}
+                  />
+                  {pdfExportJobIdForDebug.trim().length > 0 && (
+                    <span style={{ fontSize: 10, color: "rgba(0,180,255,0.5)", fontFamily: "monospace" }}>
+                      轮询 {pdfExportJobQuery.isFetching ? "⏳" : "✓"} 约 3s
+                    </span>
+                  )}
+                </div>
+                {pdfExportJobQuery.data && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                      <span
+                        style={{
+                          padding: "3px 12px",
+                          borderRadius: 99,
+                          fontSize: 11,
+                          fontWeight: 800,
+                          background:
+                            pdfExportJobQuery.data.status === "succeeded"
+                              ? "rgba(0,255,70,0.12)"
+                              : pdfExportJobQuery.data.status === "failed"
+                                ? "rgba(255,50,50,0.12)"
+                                : "rgba(0,180,255,0.12)",
+                          color:
+                            pdfExportJobQuery.data.status === "succeeded"
+                              ? "#00ff46"
+                              : pdfExportJobQuery.data.status === "failed"
+                                ? "#ff5050"
+                                : "#7dd3fc",
+                          border: `1px solid ${
+                            pdfExportJobQuery.data.status === "succeeded"
+                              ? "rgba(0,255,70,0.28)"
+                              : pdfExportJobQuery.data.status === "failed"
+                                ? "rgba(255,50,50,0.28)"
+                                : "rgba(0,180,255,0.28)"
+                          }`,
+                        }}
+                      >
+                        PDF JOB · {pdfExportJobQuery.data.status === "queued" ? "排队" : pdfExportJobQuery.data.status === "running" ? "运行中" : pdfExportJobQuery.data.status === "succeeded" ? "成功" : pdfExportJobQuery.data.status === "failed" ? "失败" : pdfExportJobQuery.data.status}
+                      </span>
+                      {(pdfExportJobQuery.data.pdfDebug as { currentStep?: string; updatedAt?: string } | null)?.currentStep && (
+                        <span style={{ fontSize: 10, color: "rgba(0,180,255,0.55)", fontFamily: "monospace" }}>
+                          当前步：{(pdfExportJobQuery.data.pdfDebug as { currentStep?: string }).currentStep}
+                          {(pdfExportJobQuery.data.pdfDebug as { updatedAt?: string }).updatedAt
+                            ? ` · ${new Date((pdfExportJobQuery.data.pdfDebug as { updatedAt?: string }).updatedAt!).toLocaleTimeString("zh-CN")}`
+                            : ""}
+                        </span>
+                      )}
+                    </div>
+                    {(() => {
+                      const steps = (pdfExportJobQuery.data.pdfDebug as { steps?: Array<{ step: string; detail?: string; at: string }> } | null)?.steps;
+                      if (!steps?.length) {
+                        return (
+                          <p style={{ margin: 0, fontSize: 10, color: "rgba(0,180,255,0.35)" }}>
+                            尚无步骤打点（任務未開始或舊任務）；出錯請看下方 error。
+                          </p>
+                        );
+                      }
+                      return (
+                        <div>
+                          <p style={{ color: "rgba(0,180,255,0.4)", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 6 }}>PDF ASYNC STEPS</p>
+                          <div style={{ background: "rgba(0,180,255,0.05)", border: "1px solid rgba(0,180,255,0.14)", borderRadius: 8, padding: "10px 14px", maxHeight: 220, overflowY: "auto" }}>
+                            {steps.map((row, i) => (
+                              <div
+                                key={`${row.at}-${i}`}
+                                style={{
+                                  color:
+                                    row.step === "job_failed"
+                                      ? "#ff9090"
+                                      : row.step === "complete"
+                                        ? "#00ff46"
+                                        : "rgba(125,211,252,0.85)",
+                                  marginBottom: 2,
+                                  wordBreak: "break-all",
+                                  fontSize: 10,
+                                }}
+                              >
+                                <span style={{ color: "rgba(0,180,255,0.4)" }}>{new Date(row.at).toLocaleTimeString("zh-CN")} </span>
+                                <strong>{row.step}</strong>
+                                {row.detail ? ` · ${row.detail}` : ""}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {pdfExportJobQuery.data.error && (
+                      <div style={{ marginTop: 10 }}>
+                        <p style={{ color: "rgba(255,80,80,0.6)", fontSize: 9, fontWeight: 700, marginBottom: 4 }}>PDF JOB ERROR</p>
+                        <div style={{ background: "rgba(255,50,50,0.06)", border: "1px solid rgba(255,50,50,0.2)", borderRadius: 8, padding: "8px 12px", color: "#ff9090", wordBreak: "break-all", fontSize: 10 }}>
+                          {pdfExportJobQuery.data.error}
+                        </div>
+                      </div>
+                    )}
+                    {pdfExportJobQuery.data.status === "succeeded"
+                      ? (() => {
+                          const out = pdfExportJobQuery.data.output;
+                          if (!out || typeof out !== "object" || !("downloadUrl" in out)) return null;
+                          return (
+                            <p style={{ marginTop: 8, fontSize: 10, color: "rgba(0,255,70,0.55)", wordBreak: "break-all" }}>
+                              downloadUrl 已生成（簽名有效期見 output.expiresInSeconds）
+                            </p>
+                          );
+                        })()
+                      : null}
+                  </div>
+                )}
+                {pdfExportJobQuery.error && (
+                  <p style={{ color: "#ff9090", fontSize: 10, marginBottom: 12 }}>PDF 任務查詢錯誤：{pdfExportJobQuery.error.message}</p>
+                )}
 
                 {/* 基础字段 */}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>

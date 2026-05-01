@@ -832,6 +832,15 @@ export default function ReportRenderer({
           /* 解除主容器高度限制，允许内容自然流到下一页（避免 100vh 截断） */
           html, body { height: auto !important; overflow: visible !important; }
 
+          /* MyReports 阅读模式外层壳（screen 用 min-height:100vh + 渐变）。
+             puppeteer / 打印时若保留 100vh，会与 .cover-page 的 99vh 叠床架屋，
+             造成首页大面积空白、总页数异常缩水、封面像「没印出来」。 */
+          [data-pdf-reading-shell="true"] {
+            min-height: auto !important;
+            height: auto !important;
+            background: transparent !important;
+          }
+
           /* 长表格 / 行 / 单元格 / 引用块允许跨页断开，防止整段内容被裁切 */
           table { page-break-inside: auto !important; width: 100% !important; }
           tr, td, th { page-break-inside: auto !important; page-break-after: auto !important; }

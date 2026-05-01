@@ -172,11 +172,10 @@ async function startServer() {
 
   const app = express();
   const server = createServer(app);
-  // PDF generation via Cloud Run can take several minutes for large pages;
-  // increase socket timeout well beyond Cloud Run's max 3600s to avoid premature drops.
-  server.setTimeout(900_000); // 15 minutes
-  server.keepAliveTimeout = 905_000;
-  server.headersTimeout = 910_000;
+  // PDF：Deep Research Max 全链路可逼近 1h；须略大于 routers PDF_PROXY_FETCH_TIMEOUT_MS。
+  server.setTimeout(3_450_000);
+  server.keepAliveTimeout = 3_455_000;
+  server.headersTimeout = 3_460_000;
   // Stripe webhook MUST be registered BEFORE express.json() for signature verification
   registerStripeWebhook(app);
   // Keep JSON/urlencoded limits aligned with larger creator uploads and long debug payloads.
