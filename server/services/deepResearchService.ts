@@ -748,6 +748,95 @@ async function getDbAndSchema() {
   return { db, userCreations };
 }
 
+// ── on-demand 封面补生（HTML / PDF 下载触发） ──────────────────────────────
+//
+// 用户决策（2026-05-01）：
+//   主流程的 6 次串行 nano banana pro 重试是 best-effort，最坏 6 次全失败
+//   thumbnailUrl=NULL 写入。这种情况下用户在战略作品快照库点「下载 PDF / HTML」
+//   时再 on-demand 调一次 Nano Banana 2 (gemini-3.1-flash-image-preview)
+//   补生 9:16 纯封面，存 GCS 写回 DB，再继续走下载流程。
+//
+// 设计要点：
+//   - 已有封面直接返回（幂等，避免重复消耗配额）
+//   - 用 flash 模型（便宜）+ 1 次重试（不要 6 次拖死下载）
+//   - **prompt 里强调让 AI 把标题画进图**，因为 htmlReportTemplate 与
+//     MyReportsPage 阅读模式（PDF 快照源）在有封面图时都不再叠 cover-title 文字框
+//   - 失败返回 undefined（不抛错），让模板走文字回退框，不阻塞下载
+//   - 写回 thumbnailUrl 是 fire-and-forget 的语义：写失败也返回 url 让本次下载用得上
+export async function ensureCoverForCreation(
+  creationId: number,
+  lighthouseTitle: string,
+): Promise<string | undefined> {
+  if (!creationId || !Number.isFinite(creationId)) return undefined;
+  try {
+    const { db, userCreations } = await getDbAndSchema();
+    if (!db) return undefined;
+    const { eq } = await import("drizzle-orm");
+
+    // 已有封面：直接返回（HTTP url，调用方自己 inlineCoverIfHttp）
+    const rows = await db
+      .select({ thumbnailUrl: userCreations.thumbnailUrl })
+      .from(userCreations)
+      .where(eq(userCreations.id, creationId))
+      .limit(1);
+    const existing = rows[0]?.thumbnailUrl;
+    if (existing && existing.trim().length > 0) {
+      return existing;
+    }
+
+    // 关键：要求模型把标题作为金色印刷字直接画进图，因为下载模板里不再叠任何文字
+    // （PR #356 / #357 之后，有封面图时模板纯图，不再有 cover-pill / cover-mega 文字层）
+    const safeTitle = String(lighthouseTitle || "战略情报报告").trim().slice(0, 60);
+    const prompt =
+      `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
+      `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
+      `Render the report title prominently as elegant gold typography baked directly into the image — ` +
+      `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
+      `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
+      `Topic / title to render: ${safeTitle}`;
+
+    let imageUrl: string | undefined;
+    for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
+      try {
+        imageUrl = await generateImageViaGeminiApiKey({
+          prompt,
+          aspectRatio: "9:16",
+          model: "gemini-3.1-flash-image-preview",
+        });
+        console.log(
+          `[ensureCoverForCreation] ✅ on-demand cover via Nano Banana 2，第 ${attempt}/2 次 creationId=${creationId}`,
+        );
+      } catch (e: any) {
+        console.warn(
+          `[ensureCoverForCreation] ⚠️ 第 ${attempt}/2 次失败: ${e?.message ?? e} creationId=${creationId}`,
+        );
+        if (attempt < 2) await sleep(1000);
+      }
+    }
+
+    if (!imageUrl) {
+      console.warn(`[ensureCoverForCreation] 2 次全失败 creationId=${creationId}，模板将走文字框回退`);
+      return undefined;
+    }
+
+    // 回写 DB（失败也不阻塞返回 — 下载流程能继续，下次再触发也会拿到这次刚生成的 url）
+    try {
+      await db
+        .update(userCreations)
+        .set({ thumbnailUrl: imageUrl, updatedAt: new Date() })
+        .where(eq(userCreations.id, creationId));
+    } catch (e: any) {
+      console.warn(
+        `[ensureCoverForCreation] DB 回写失败（不阻塞下载）: ${e?.message} creationId=${creationId}`,
+      );
+    }
+    return imageUrl;
+  } catch (e: any) {
+    console.warn(`[ensureCoverForCreation] 异常: ${e?.message} creationId=${creationId}`);
+    return undefined;
+  }
+}
+
 /** 在 Neon DB 中创建 processing 状态的研报记录 */
 async function dbCreateRecord(userId: number, topic: string, jobId: string, creditsUsed: number): Promise<number | undefined> {
   try {
@@ -2569,7 +2658,7 @@ function lcsLen(a: string, b: string): number {
  *
  * 排版审美约束：
  * - 图片用 figure 块（CSS 控制 page-break-inside: avoid，不切页）
- * - caption 用 em + 居中（CSS 在 pdfTemplate 里控制）
+ * - caption 用 em + 居中（CSS 在 htmlReportTemplate 与 ReportRenderer 里分别控制）
  * - 每张图独立一段，前后空行（避免与正文文字粘连）
  */
 function injectSceneImagesIntoMarkdown(markdown: string, scenes: SceneIllustration[]): string {
