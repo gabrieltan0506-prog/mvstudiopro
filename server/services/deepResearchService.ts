@@ -1032,9 +1032,9 @@ export interface DeepResearchJob {
   lastHeartbeatAt?: string;
   /** 当前持有该任务的进程 PID。仅供调试，下面的判定逻辑只看 heartbeat 时间。 */
   pid?: number;
-  /** 重启次数（attemptCount）。超过 MAX_RESUME_ATTEMPTS 则不再重启，直接 failed + 退款。 */
+  /** 重启次数（attemptCount）。超过 MAX_RESUME_ATTEMPTS 则不再重启，直接 failed + 退积分。 */
   attemptCount?: number;
-  /** 启动任务时实际扣除的积分（用于失败时退款）。0 = 管理员/免费，无需退款。 */
+  /** 启动任务时实际扣除的积分（用于失败时退积分）。0 = 管理员/免费，无需退分。 */
   creditsUsed?: number;
   /** Google Interactions API 返回的当前阶段 interaction ID（plan 或 execute） */
   interactionId?: string;
@@ -1084,10 +1084,10 @@ export interface DeepResearchJob {
  *  单次最长 ~10 分钟，期间 updateProgress 会刷 heartbeat；超过 3 分钟没动静意味
  *  着不是网络慢就是进程死了。 */
 const HEARTBEAT_RESUME_AFTER_MS = 3 * 60 * 1000;
-/** Heartbeat 落后多少毫秒视为「彻底死亡，退款放弃」。包含「重启后再次跑也无果」
- *  的极端场景；当任务 heartbeat 超过该阈值即直接 failed + refund。 */
+/** Heartbeat 落后多少毫秒视为「彻底死亡，退积分并放弃」。包含「重启后再次跑也无果」
+ *  的极端场景；当任务 heartbeat 超过该阈值即直接 failed + 退积分。 */
 const HEARTBEAT_FAIL_AFTER_MS = 30 * 60 * 1000;
-/** 同一任务被重新拉起的最大次数。超过此值直接 failed + refund，避免毒任务循环消耗
+/** 同一任务被重新拉起的最大次数。超过此值直接 failed + 退积分，避免毒任务循环消耗
  *  1 RPM 配额。 */
 const MAX_RESUME_ATTEMPTS = 2;
 /** Worker 内 heartbeat ticker 间隔。每隔此时长写一次 lastHeartbeatAt，让监控能区
@@ -1141,12 +1141,37 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
   }
 }
 
+/** 付费深潜失败时对用户的统一口径（真实原因写入 errorDetail / 日志；仅退积分，无法币退款） */
+const USER_FACING_DEEP_RESEARCH_PAID_REFUND =
+  "当前算力资源紧张或服务暂时不可用，请稍后再试。相关积分已退还至您的账户。";
+const USER_FACING_DEEP_RESEARCH_FREE_FAIL =
+  "当前算力资源紧张或服务暂时不可用，请稍后再试。";
+
+function resolveUserFacingFailureError(
+  job: DeepResearchJob,
+  reason: string,
+  refundReason: PaidJobRefundReason,
+): string {
+  if (refundReason === "user_cancelled_no_refund") return reason;
+  const paid = typeof job.creditsUsed === "number" && job.creditsUsed > 0;
+  if (refundReason === "user_cancelled" && paid) {
+    return "您已取消任务，相关积分已退还至您的账户。";
+  }
+  if (refundReason === "deploy_killed" && paid) {
+    return "服务正在部署维护，任务已中断，相关积分已退还至您的账户。请稍后再试。";
+  }
+  if (paid) return USER_FACING_DEEP_RESEARCH_PAID_REFUND;
+  return USER_FACING_DEEP_RESEARCH_FREE_FAIL;
+}
+
 /** 把任务标记为彻底失败，并退还积分 + 同步 DB。
  *  detail：可选的结构化错误详情（DeepResearchApiError.toDetailString()），
  *  会写入 job.errorDetail 供 Supervisor Debug 与「查看详细原因」UI 展示。
  *
  *  ⚠️ 退积分**只**走 paidJobLedger.refundCreditsOnFailure（幂等 + 仅写积分账本）。
- *  禁止任何形式的现金退款 / 支付网关调用。文案统一「积分已返还到您的账户」。
+ *  禁止任何形式的现金退款 / 支付网关调用。文案统一「积分已退还至您的账户」（仅退积分，非原路退款）。
+ *
+ *  user-facing：`job.error` 使用温和表述（算力紧张等）；`reason` 参数的技术说明会并入 errorDetail。
  */
 async function failJobAndRefund(
   job: DeepResearchJob,
@@ -1155,14 +1180,21 @@ async function failJobAndRefund(
   detail?: string,
   refundReason: PaidJobRefundReason = "task_failed",
 ) {
+  const userFacingError = resolveUserFacingFailureError(job, reason, refundReason);
+  let mergedDetail = detail;
+  if (refundReason !== "user_cancelled_no_refund" && reason?.trim()) {
+    const tech = `技术摘要：${reason}`;
+    mergedDetail = mergedDetail?.trim() ? `${mergedDetail.trim()}\n\n---\n\n${tech}` : tech;
+  }
+
   const file = path.join(REPORT_DIR, `${job.jobId}.json`);
   const failedJob: DeepResearchJob = {
     ...job,
     status: "failed",
-    error: reason,
+    error: userFacingError,
     progress: progressMsg,
     completedAt: new Date().toISOString(),
-    errorDetail: detail ?? job.errorDetail,
+    errorDetail: mergedDetail ?? job.errorDetail,
   };
   try { await fs.writeFile(file, JSON.stringify(failedJob, null, 2)); } catch {}
   if (job.dbRecordId) {
@@ -1174,7 +1206,7 @@ async function failJobAndRefund(
       job.jobId,
       "deepResearch",
       refundReason,
-      `${reason}${detail ? ` · ${detail.slice(0, 200)}` : ""}`,
+      `${userFacingError}${mergedDetail ? ` · ${mergedDetail.slice(0, 200)}` : ""}`,
     );
     // ── 兼容老任务（PR 部署前已在跑、没有 ledger hold 文件）：回退到直接积分接口 ──
     //   只有当 ledger 说 hold 缺失，且 job 自身记录了正数 creditsUsed 时才走这条路。
@@ -1183,7 +1215,7 @@ async function failJobAndRefund(
       await refundCredits(
         Number(job.userId),
         job.creditsUsed,
-        `上帝视角研报·${reason}·积分已返还到您的账户（legacy fallback）`,
+        `上帝视角研报·${reason}·积分已退还至您的账户（legacy fallback）`,
       );
       console.log(
         `[deepResearch] 💰 (legacy fallback) 已返还 ${job.creditsUsed} 积分给用户 ${job.userId}（任务 ${job.jobId}）`,
@@ -1233,7 +1265,7 @@ async function relaunchJob(job: DeepResearchJob): Promise<boolean> {
  * 服务启动时调用：扫描所有未终态任务，按 heartbeat 滞后程度分级处理：
  *   * heartbeat 在 3 分钟内：跳过（worker 仍在跑，无需介入）
  *   * heartbeat 落后 3-30 分钟：进程视为已死，自动重新拉起（最多 MAX_RESUME_ATTEMPTS 次）
- *   * heartbeat 落后 > 30 分钟：彻底放弃，标 failed + 退款
+ *   * heartbeat 落后 > 30 分钟：彻底放弃，标 failed + 退积分
  *   * 没有 heartbeat 字段（旧数据）：fallback 到 createdAt 判断
  *
  * ⚠️ 关键修复（2026-04-29 · 7pmm9u 事故）：
@@ -1451,11 +1483,11 @@ export async function requestCancelDeepResearchJob(
     return { ok: true, alreadyCancelled: true, status: job.status, refundReason: job.cancelRefundReason ?? resolvedRefundReason };
   }
   const now = new Date().toISOString();
-  // 主动取消时显示「不退还积分」的进度文案；其他路径仍说「返还积分」
+  // 主动取消时显示「不退还积分」的进度文案；其他路径仍说「退还积分」
   const progressMsg =
     resolvedRefundReason === "user_cancelled_no_refund"
       ? `🛑 收到取消请求（${by}），按规则不退还积分，正在停止深潛引擎…`
-      : `🛑 收到取消请求（${by}），正在停止深潛引擎并返还积分…`;
+      : `🛑 收到取消请求（${by}），正在停止深潛引擎并退还积分…`;
   await writeJob({
     ...job,
     cancelRequestedAt: now,
@@ -1560,7 +1592,7 @@ export async function runDeepResearchAsync(jobId: string) {
       console.log(`[deepResearch] 🐕 Watchdog 30min 检查：jobId=${jobId} status=${current.status} heartbeat_stale=${staleSec}s`);
       if (lastBeat === 0 || (Date.now() - lastBeat) > WATCHDOG_STALE_THRESHOLD_MS) {
         console.warn(`[deepResearch] 🐕 Watchdog 判断任务疑似卡死（${staleSec}s 无心跳），标记 failed 并退积分`);
-        await failJobAndRefund(current, "15分钟内无心跳，任务疑似卡死，已自动退积分", "⚠️ 深潜超时：15 分钟内未收到进度信号，积分已原路退回");
+        await failJobAndRefund(current, "15分钟内无心跳，任务疑似卡死，已自动退积分", "⚠️ 深潜超时：15 分钟内未收到进度信号，积分已退还至您的账户");
       }
     } catch (e: any) {
       console.warn(`[deepResearch] 🐕 Watchdog 检查异常：${e?.message}`);
@@ -2280,7 +2312,7 @@ ${job.topic}
       const userInitiatedNoRefund = cancelReason === "user_cancelled_no_refund";
       const progressLine = userInitiatedNoRefund
         ? `🛑 任务已取消（按规则不退还积分，防止恶意消耗算力）`
-        : `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已返还到您的账户`;
+        : `🛑 任务已取消，${latest.creditsUsed ?? 0} 积分已退还至您的账户`;
       console.log(
         `[deepResearch] 🛑 任务 ${jobId} 已被取消 by=${latest.cancelRequestedBy ?? "?"} refundReason=${cancelReason}`,
       );
@@ -2307,7 +2339,7 @@ ${job.topic}
       await failJobAndRefund(
         latest,
         err?.message || "未知错误",
-        `❌ 战报生成失败，${latest.creditsUsed ?? 0} 积分已返还到您的账户`,
+        `❌ 战报生成失败，${latest.creditsUsed ?? 0} 积分已退还至您的账户`,
         detail,
         refundReason,
       );

@@ -176,7 +176,7 @@ export const PLANS: Record<PlanType, PlanConfig> = {
  * - Forge AI: 免费（平台内置）→ 0 credits
  */
 export const CREDIT_COSTS = {
-  // ─── 创作者成长营（内测三大产品，1cr ≈ ¥0.70 人民币）────────
+  // ─── 创作者成长营（内测三大产品）────────
   growthCampGrowth: 40,         // GROWTH 模式主分析：40 cr
   growthCampGrowthMusic: 10,    // 成长营·配乐生成（GROWTH）：10 cr
   growthCampRemix: 60,          // 二创分析（REMIX）：60 cr
@@ -191,12 +191,12 @@ export const CREDIT_COSTS = {
   // ─── 节点工作流（逐步计费，脚本每日首通免费）────────
   workflowScript: 0,           // 脚本生成：每日第 1 次免费
   workflowScriptExtra: 2,      // 脚本生成：当日第 2 次起每次 2 cr（防薅 API）
-  workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成，成本 ≈¥0.04）
-  workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张（成本 ≈¥0.08）
-  workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次（成本 ≈¥0.10）
-  workflowSceneVideo: 80,      // 场景视频（Veo 3.1 · Vertex AI）：80 cr/次（成本 ≈¥1.12）
-  workflowSceneVoice: 5,       // 场景配音（TTS）：5 cr/次（成本 ≈¥0.05）
-  workflowMusic: 12,           // 自动配乐（Suno V5.5）：12 cr（成本 ≈¥0.42）
+  workflowStoryboard: 5,       // 故事板：5 cr（Gemini Pro 文本生成）
+  workflowSceneImage: 5,       // 分镜图（NBP 2K）：5 cr/张
+  workflowRenderStill: 9,      // 多人静帧（NBP 4K）：9 cr/次
+  workflowSceneVideo: 80,      // 场景视频（Veo 3.1 · Vertex AI）：80 cr/次
+  workflowSceneVoice: 5,       // 场景配音（TTS）：5 cr/次
+  workflowMusic: 12,           // 自动配乐（Suno V5.5）：12 cr
   workflowFinalRender: 5,      // 最终合成：5 cr（计算资源）
 
   // ─── 基础功能 ───────────────────────────────────
@@ -256,9 +256,6 @@ export const CREDIT_COSTS = {
   // ─── 音频分析 ────────────────────────────────────
   audioAnalysis: 8,             // Gemini 音频分析消耗 8 credits
 } as const;
-
-/** 1 Credit ≈ ¥0.70（人民币，用于展示） */
-export const CREDIT_TO_CNY = 0.7;
 
 export interface CreditFeatureBreakdownRow {
   product: string;
@@ -341,7 +338,6 @@ export const SINGLE_PURCHASE = {
 /**
  * Credits 加值包
  */
-// 定价基准：1 cr ≈ ¥0.65，每次完整分析约 50 cr
 export const CREDIT_PACKS = {
   /** ¥39 体验包：60 cr，约可完成 1 次完整分析，每人限 1 次 */
   trial199: {
@@ -349,15 +345,13 @@ export const CREDIT_PACKS = {
     price: 39,
     label: "60 Credits Trial",
     labelCn: "体验包",
-    perCredit: 0.65,
-    discount: "约 ¥0.65/积分 · 约可完成 1 次分析 · 每人限 1 次",
+    discount: "约可完成 1 次完整分析 · 每人限 1 次",
   },
   small: {
     credits: 160,
     price: 99,
     label: "160 Credits",
     labelCn: "基础包",
-    perCredit: 0.619,
     discount: "约可完成 3 次完整分析",
   },
   medium: {
@@ -365,7 +359,6 @@ export const CREDIT_PACKS = {
     price: 218,
     label: "360 Credits",
     labelCn: "进阶包",
-    perCredit: 0.606,
     discount: "约可完成 7 次分析 · 省 6.8%",
   },
   large: {
@@ -373,7 +366,6 @@ export const CREDIT_PACKS = {
     price: 418,
     label: "700 Credits",
     labelCn: "专业包",
-    perCredit: 0.597,
     discount: "约可完成 14 次分析 · 省 8.2%",
   },
   mega: {
@@ -381,7 +373,6 @@ export const CREDIT_PACKS = {
     price: 868,
     label: "1500 Credits",
     labelCn: "旗舰包",
-    perCredit: 0.579,
     discount: "约可完成 30 次分析 · 省 11%",
   },
 } as const;

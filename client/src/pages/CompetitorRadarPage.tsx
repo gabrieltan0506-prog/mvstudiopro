@@ -7,7 +7,9 @@ import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
+import AgentInsufficientCreditsDialog from "@/components/AgentInsufficientCreditsDialog";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 const PRESET_DIMENSIONS = ["数据", "创意", "商业模式", "用户画像", "内容工业化能力", "IP 衍生品深度", "合规风险"];
 
@@ -26,6 +28,9 @@ export default function CompetitorRadarPage() {
   const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
   const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
   const [painPointFromHandoff, setPainPointFromHandoff] = useState<string | undefined>(undefined);
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
+
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
 
   useEffect(() => {
     const h = readAndClearAgentHandoff("competitor_radar");
@@ -68,6 +73,14 @@ export default function CompetitorRadarPage() {
     if (filled.length === 0 && !text.trim()) {
       toast.error("请至少填一个对标账号，或在补充资料中描述");
       return;
+    }
+    const cost = AGENT_SCENARIO_CREDITS.competitor_radar;
+    if (subQuery.isSuccess) {
+      const bal = subQuery.data?.credits?.balance ?? 0;
+      if (bal < cost) {
+        setInsufficientOpen(true);
+        return;
+      }
     }
     await launchMutation.mutateAsync({
       benchmarks: filled.map((b) => ({ platform: b.platform.trim(), handle: b.handle.trim(), notes: b.notes?.trim() || undefined })),
@@ -190,7 +203,7 @@ export default function CompetitorRadarPage() {
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint="约 5-10 分钟生成研究计划，审批后 30-60 分钟交付高密度竞争分析"
+                hint="异步深潜 · 任务失败时按规则退还积分 · 约 5–10 分钟出计划"
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />
@@ -234,6 +247,12 @@ export default function CompetitorRadarPage() {
         </div>
       </div>
       <CommanderProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <AgentInsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        balance={subQuery.data?.credits?.balance ?? 0}
+        required={AGENT_SCENARIO_CREDITS.competitor_radar}
+      />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Loader2, CheckCircle2, AlertCircle, Crown, Sparkles, Bug } from "lucide-react";
+import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
 
@@ -80,9 +81,17 @@ export default function AgentJobMonitor({
 
   React.useEffect(() => {
     const s = jobQuery.data?.status;
+    const creditsUsed = jobQuery.data?.creditsUsed;
     if (s === "completed") onCompleted?.();
-    if (s === "failed") onFailed?.();
-  }, [jobQuery.data?.status]);
+    if (s === "failed") {
+      onFailed?.();
+      if (typeof creditsUsed === "number" && creditsUsed > 0) {
+        toast.message("任务未成功完成，已扣积分已退还至账户余额。当前算力资源可能紧张，请稍后再试。", { duration: 6500 });
+      } else {
+        toast.error("任务未成功完成，请稍后再试。", { duration: 5000 });
+      }
+    }
+  }, [jobQuery.data?.status, jobQuery.data?.creditsUsed, onCompleted, onFailed]);
 
   if (jobQuery.isLoading || !jobQuery.data) {
     return (
@@ -146,6 +155,12 @@ export default function AgentJobMonitor({
             </button>
           )}
         </div>
+        {typeof job.creditsUsed === "number" && job.creditsUsed > 0 && (
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(245,200,100,0.95)", fontWeight: 700, lineHeight: 1.5 }}>
+            本次任务已扣除 <span style={{ color: "#f5c842" }}>{job.creditsUsed}</span> 点积分
+            <span style={{ fontWeight: 600, color: "rgba(160,140,90,0.85)" }}>（以账户积分记录为准）</span>
+          </p>
+        )}
 
         {/* 进度文本（live backend signal） */}
         <p style={{ margin: 0, fontSize: 13, color: "rgba(245,235,210,0.85)", lineHeight: 1.7 }}>
@@ -170,8 +185,8 @@ export default function AgentJobMonitor({
         )}
 
         {status === "failed" && job.error && (
-          <p style={{ margin: "10px 0 0", fontSize: 12, color: "#fca5a5", lineHeight: 1.6 }}>
-            ❌ {job.error}
+          <p style={{ margin: "10px 0 0", fontSize: 13, color: "#fca5a5", lineHeight: 1.7 }}>
+            {job.error}
           </p>
         )}
       </div>
@@ -301,9 +316,18 @@ export default function AgentJobMonitor({
       )}
 
       {status === "failed" && (
-        <div style={{ padding: "16px 20px", background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.25)", borderRadius: 12, display: "flex", alignItems: "center", gap: 10 }}>
-          <AlertCircle size={16} color="#fca5a5" />
-          <span style={{ color: "#fca5a5", fontSize: 13 }}>任务失败，积分已退回。请检查输入或稍后重试。</span>
+        <div style={{ padding: "16px 20px", background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.25)", borderRadius: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <AlertCircle size={16} color="#fca5a5" style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ color: "rgba(245,235,210,0.88)", fontSize: 13, lineHeight: 1.65 }}>
+            <p style={{ margin: 0 }}>
+              {typeof job.creditsUsed === "number" && job.creditsUsed > 0
+                ? "若积分未立即显示，请稍后刷新账户；退回一般会在数秒内完成。"
+                : "请检查网络后重试。"}
+            </p>
+            <p style={{ margin: "8px 0 0", fontSize: 12, color: "rgba(160,140,90,0.75)" }}>
+              技术细节见下方 Debug 终端（管理员模式）。
+            </p>
+          </div>
         </div>
       )}
     </div>

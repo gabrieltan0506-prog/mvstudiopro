@@ -592,7 +592,7 @@ export default function AdminPanel() {
               <CardHeader>
                 <CardTitle>产品包定价（对外口径）</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  1 Credit ≈ ¥{creditBreakdown?.creditToCny ?? 0.7} 人民币（展示用）。已剥离单功能逐项标价，以 shared/plans 中<strong>积分加值包</strong>为准；实际扣费仍由 CREDIT_COSTS 在服务端执行。
+                  以 <strong>积分加值包</strong> 为准展示 Credits 与套餐标价；不在此给出「积分⇄人民币」折算。实际扣费由服务端 <code className="text-xs">CREDIT_COSTS</code> 执行。
                 </p>
               </CardHeader>
               <CardContent className="overflow-x-auto">
@@ -608,20 +608,16 @@ export default function AdminPanel() {
                       </tr>
                     </thead>
                     <tbody>
-                      {creditBreakdown.packages.map((row, i) => {
-                        const cr = row.credits;
-                        const cnyEquiv =
-                          cr != null ? (cr * (creditBreakdown.creditToCny ?? 0.7)).toFixed(1) : "—";
-                        return (
+                      {creditBreakdown.packages.map((row, i) => (
                           <tr key={i} className="border-b border-border/30 hover:bg-background/20">
                             <td className="py-2 pr-3 align-top whitespace-nowrap">{row.category}</td>
                             <td className="py-2 pr-3 align-top font-medium">{row.name}</td>
-                            <td className="py-2 pr-3 align-top font-mono">{cr ?? "—"}</td>
+                            <td className="py-2 pr-3 align-top font-mono">{row.credits ?? "—"}</td>
                             <td className="py-2 pr-3 align-top">
                               {row.priceCny != null ? (
                                 <span>¥{Number.isInteger(row.priceCny) ? row.priceCny : row.priceCny.toFixed(1)}</span>
                               ) : (
-                                <span className="text-muted-foreground text-xs">组合包 · 参考约 ¥{cnyEquiv}</span>
+                                <span className="text-muted-foreground text-xs">—</span>
                               )}
                             </td>
                             <td className="py-2 align-top text-xs text-muted-foreground max-w-md">
@@ -635,8 +631,7 @@ export default function AdminPanel() {
                               ) : null}
                             </td>
                           </tr>
-                        );
-                      })}
+                        ))}
                     </tbody>
                   </table>
                 ) : (

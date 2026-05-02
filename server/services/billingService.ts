@@ -25,6 +25,26 @@ export const GODVIEW_PRICING = {
   bundle_promo: 800,
 } as const;
 
+/**
+ * Agent 深潜场景：与半月刊共用同一套 Deep Research Max 管線（plan→审批→execute），
+ * 单次外部算力成本同量级；定价略低于标准半月刊 800 点，作为垂直 SKU（当前 720 点/次）。
+ */
+export const AGENT_SCENARIO_PRICING = {
+  platform_ip_matrix: 720,
+  competitor_radar: 720,
+} as const;
+
+export type AgentScenarioProductType = keyof typeof AGENT_SCENARIO_PRICING;
+
+export function calcAgentScenarioPrice(productType: AgentScenarioProductType): { price: number; label: string } {
+  const price = AGENT_SCENARIO_PRICING[productType];
+  const label =
+    productType === "platform_ip_matrix"
+      ? "多平台内容 IP 矩阵·跨界爆款脚本"
+      : "竞品/赛道雷达·高密度差异化分析";
+  return { price, label };
+}
+
 export type GodViewProductType =
   | "magazine_single"
   | "magazine_sub"

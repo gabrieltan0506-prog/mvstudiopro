@@ -301,16 +301,13 @@ export function imageUpscaleCreditRangeHint(
   return { min: Math.min(...bases) * mult, max: Math.max(...bases) * mult };
 }
 
-/** ¥19.9 试用包：按 0.6 元/积分折算（19.9÷0.6≈33.17，向下取整为 33 积分） */
+/** 试用包标价与到账积分（积分数由内部规则从标价推导，前台不展示单价换算） */
 export const TRIAL_PACK_199_PRICE_CNY = 19.9 as const;
-export const TRIAL_PACK_199_PER_CREDIT_CNY = 0.6 as const;
-export const TRIAL_PACK_199_CREDITS = Math.floor(TRIAL_PACK_199_PRICE_CNY / TRIAL_PACK_199_PER_CREDIT_CNY);
+const TRIAL_PACK_199_CREDITS_DIVISOR = 0.6 as const;
+export const TRIAL_PACK_199_CREDITS = Math.floor(TRIAL_PACK_199_PRICE_CNY / TRIAL_PACK_199_CREDITS_DIVISOR);
 
 /** 静态收款「¥19.9 试用包」每人最多可购买次数（含待审核订单占用名额） */
 export const TRIAL_PACK_199_MAX_PURCHASES_PER_USER = 2 as const;
-
-/** 1 Credit ≈ ¥0.70（人民币，与 server/plans 展示口径一致） */
-export const CREDIT_TO_CNY = 0.7 as const;
 
 /** PK 评分奖励等级：根据综合评分给予不同 Credits 奖励 */
 export const PK_REWARD_TIERS = [
@@ -333,15 +330,13 @@ export const CREDIT_PACKS = {
     price: TRIAL_PACK_199_PRICE_CNY,
     label: `${TRIAL_PACK_199_CREDITS} Credits Trial`,
     labelCn: "¥19.9 试用包",
-    perCredit: TRIAL_PACK_199_PER_CREDIT_CNY,
-    discount: `约 ¥${TRIAL_PACK_199_PER_CREDIT_CNY}/积分 · ${TRIAL_PACK_199_CREDITS} Credits · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
+    discount: `${TRIAL_PACK_199_CREDITS} Credits · 每人限 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次`,
   },
   small: {
     credits: 50,
     price: 35,
     label: "50 Credits",
     labelCn: "50 Credits 入门包",
-    perCredit: 0.70,
     discount: "",
   },
   medium: {
@@ -349,7 +344,6 @@ export const CREDIT_PACKS = {
     price: 68,
     label: "100 Credits",
     labelCn: "100 Credits 高端包",
-    perCredit: 0.68,
     discount: "省 2.9%",
   },
   large: {
@@ -357,7 +351,6 @@ export const CREDIT_PACKS = {
     price: 168,
     label: "250 Credits",
     labelCn: "250 Credits 超值包",
-    perCredit: 0.672,
     discount: "省 4%",
   },
   mega: {
@@ -365,7 +358,6 @@ export const CREDIT_PACKS = {
     price: 328,
     label: "500 Credits",
     labelCn: "500 Credits 专业包",
-    perCredit: 0.656,
     discount: "省 6.3%",
   },
 } as const;
@@ -405,7 +397,7 @@ export function getProductPackageDisplayRows(): ProductPackageDisplayRow[] {
       name: p.labelCn,
       credits: p.credits,
       priceCny: typeof price === "number" ? price : Number(price),
-      summary: p.discount || `约 ¥${p.perCredit}/积分`,
+      summary: p.discount || `${p.credits} Credits`,
       bullets: [],
     };
   });

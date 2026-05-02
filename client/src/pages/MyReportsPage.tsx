@@ -485,7 +485,7 @@ export default function MyReportsPage() {
     const ok = window.confirm(
       `确定要删除「${report.lighthouseTitle || report.title}」吗？\n\n` +
         `删除后会从作品库隐藏（软删除，可由客服恢复）。\n` +
-        `失败任务的积分若未返还，请通过「联系客服」处理。`,
+        `失败任务的积分若未退还至账户，请通过「联系客服」处理。`,
     );
     if (!ok) return;
     setDeletingReportId(report.id);
@@ -501,7 +501,7 @@ export default function MyReportsPage() {
 
   // 取消正在跑的研报任务（status=processing）。
   // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
-  //    系统故障 / 部署中断 / 进程崩溃才会幂等返还。
+  //    系统故障 / 部署中断 / 进程崩溃才会幂等退还积分。
   const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
     onSuccess: (result) => {
       setCancellingJobId(null);
@@ -525,7 +525,7 @@ export default function MyReportsPage() {
         `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
         `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
         `如因系统故障 / 部署中断导致任务失败，\n` +
-        `积分会自动幂等返还到您的账户。\n\n` +
+        `积分会自动幂等退还至您的账户。\n\n` +
         `确认主动取消？（不退还积分）`,
     );
     if (!ok) return;
@@ -1526,7 +1526,7 @@ function ReportCoverCard({
         )}
         {report.status === "failed" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "4px 0" }}>积分已返还到您的账户</div>
+            <div style={{ fontSize: 11, color: "#dc2626", textAlign: "center", padding: "4px 0" }}>积分已退还至账户余额</div>
             <button
               onClick={onSoftDelete}
               disabled={isDeleting}

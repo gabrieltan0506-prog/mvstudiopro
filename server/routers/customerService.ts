@@ -90,11 +90,12 @@ const CUSTOMER_SERVICE_SYSTEM_PROMPT = `你是 MV Studio Pro 的 AI 客服助手
 
 ## Credits 定价
 - 所有付费功能使用 Credits（积分）
-- Credits 加值包：
-  - 入门包：50 Credits = ¥35
-  - 高端包：100 Credits = ¥68
-  - 超值包：250 Credits = ¥168
-  - 专业包：500 Credits = ¥328
+- Credits 加值包（到账以定价页与订单为准，**不**在前台给出「每 1 积分合多少元」）：
+  - 入门包：50 Credits
+  - 高端包：100 Credits
+  - 超值包：250 Credits
+  - 专业包：500 Credits
+- 各包**人民币标价**仅在定价页 / 支付订单中展示；请勿向用户推算或承诺统一的「积分单价」。
 - 主要功能消耗：
   - AI 灵感生成：5 Credits
   - NBP 2K 图片：5 Credits/张

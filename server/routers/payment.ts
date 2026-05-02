@@ -219,7 +219,7 @@ export const paymentRouter = router({
 
 请检查以下内容：
 1. 订单号是否为：${input.orderId}
-2. 支付金额是否为：$${transaction.amount} USD（或等值人民币）
+2. 支付金额是否与订单约定金额一致（${transaction.amount} USD）
 3. 收款人是否为：谭博
 4. 支付时间是否在最近 30 分钟内
 5. 截屏是否为真实的微信/支付宝界面（检查字体、布局、UI 元素）

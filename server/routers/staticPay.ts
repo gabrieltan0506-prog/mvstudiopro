@@ -4,9 +4,8 @@
  * 流程：
  * 1. 用户选套餐 → getPaymentInfo 获取收款码图片路径 + 应付金额
  * 2. 用户扫码付款（微信/支付宝固定收款码）
- * 3. 用户点"我已付款" → submitConfirmation 创建 pending 记录
- * 4. 管理员在后台看到待审核列表 → approvePayment 充值积分 / rejectPayment 拒绝
- * 5. 充值成功后前端显示"上海德智熙人工智能科技有限公司 充值成功 xx 积分"
+ * 3. 用户点「我已付款」→ submitConfirmation 创建 pending 记录（服务端校验金额/Credits 与套餐一致）
+ * 4. 管理员 approvePayment 充值积分 / rejectPayment 拒绝
  *
  * 注意：收款码图片放到 public/assets/payment/ 目录下（需用户提供）
  */
@@ -142,17 +141,34 @@ export const staticPayRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
+      const expected = calcPriceAndCredits(input.packId, input.billingCycle);
+      if (input.credits !== expected.credits) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "到账积分与当前套餐不一致，请刷新定价页后重试",
+        });
+      }
+      if (!Number.isFinite(input.amount) || Math.abs(Number(input.amount) - expected.price) > 0.001) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "支付金额与当前套餐不一致，请刷新定价页后重试",
+        });
+      }
+
       if (input.packId === "trial199") {
         const used = await countTrial199SubmissionsForUser(db, ctx.user.id, ["pending", "approved"]);
         assertTrial199PurchaseAllowed(used);
       }
 
+      const note = (input.transactionNote ?? "").trim();
+      const screenshotUrl = note ? `order:${input.orderId}\n${note}` : `order:${input.orderId}`;
+
       await db.insert(paymentSubmissions).values({
         userId: ctx.user.id,
         packageType: `${input.packId}_${input.billingCycle}`,
-        amount: String(input.amount),
+        amount: String(expected.price),
         paymentMethod: input.method,
-        screenshotUrl: input.transactionNote ?? "-",
+        screenshotUrl,
         status: "pending",
       });
 

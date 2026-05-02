@@ -188,6 +188,7 @@ export default function GodViewPage() {
     },
   );
   // 感知完成/失败/等待计划审核
+  const failureToastFiredRef = useRef<string | null>(null);
   useEffect(() => {
     const s = jobDoneQuery.data?.status;
     if (!s) return;
@@ -199,9 +200,37 @@ export default function GodViewPage() {
     }
     if (s === "failed") {
       setPhase("failed");
-      setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已返还到您的账户");
+      const err = jobDoneQuery.data?.error || "";
+      setErrorMsg(
+        err ||
+          "当前算力资源紧张或服务暂时不可用，请稍后再试。相关积分已退还至您的账户。",
+      );
+      const jobId = jobDoneQuery.data?.jobId ?? "";
+      // 同一 jobId 只弹一次 toast；用户点「取消」时已在 onSuccess 中预占 jobId，避免与轮询 failed 重复弹窗
+      if (jobId && failureToastFiredRef.current !== jobId) {
+        failureToastFiredRef.current = jobId;
+        const noRefundCancel =
+          /不退还积分|用户主动取消任务（不退还/.test(err) || err.includes("按规则不退还");
+        const refundedCancel = err.includes("您已取消任务") && err.includes("退还");
+        const creditsUsed = jobDoneQuery.data?.creditsUsed;
+        if (noRefundCancel) {
+          toast.error(
+            "任务已取消。按平台规则，主动取消不退还积分（仅涉及积分账户调整，无法币退款）。",
+            { duration: 8000 },
+          );
+        } else if (refundedCancel) {
+          toast.message("任务已取消，相关积分已退还至您的账户。", { duration: 5500 });
+        } else if (typeof creditsUsed === "number" && creditsUsed > 0) {
+          toast.message(
+            "任务未成功完成，相关积分已退还至您的账户。当前算力资源可能紧张，请稍后再试。",
+            { duration: 6500 },
+          );
+        } else {
+          toast.error("任务未成功完成，请稍后再试。", { duration: 5000 });
+        }
+      }
     }
-  }, [jobDoneQuery.data?.status]);
+  }, [jobDoneQuery.data?.status, jobDoneQuery.data?.error, jobDoneQuery.data?.jobId, jobDoneQuery.data?.creditsUsed, phase]);
 
   // 计划批准 mutation
   const [planFeedback, setPlanFeedback] = useState("");
@@ -212,14 +241,26 @@ export default function GodViewPage() {
 
   // 取消正在跑 / 等待审核的任务
   // ⚠️ 商业护栏（防恶意刷算力）：用户主动取消的任务**按规则不退还积分**。
-  //    系统故障 / 部署中断 / 进程崩溃才会幂等返还。
+  //    系统故障 / 部署中断 / 进程崩溃才会幂等退还积分。
   const [isCancellingJob, setIsCancellingJob] = useState(false);
   const cancelJobMutation = trpc.deepResearch.cancelJob.useMutation({
     onSuccess: (result) => {
       setIsCancellingJob(false);
-      toast.success(result?.message || "任务已取消（按规则不退还积分）");
+      if (pollingJobId) failureToastFiredRef.current = pollingJobId;
+      if (result.refundReason === "user_cancelled_no_refund") {
+        toast.error(
+          "取消已提交：按平台规则，主动取消不退还积分（仅为积分调整，无法币退款）。请留意任务状态。",
+          { duration: 8500 },
+        );
+        setErrorMsg("任务已取消（按规则不退还积分）");
+      } else {
+        toast.message(
+          result?.message || "取消已提交，相关积分将退还至您的账户。",
+          { duration: 6500 },
+        );
+        setErrorMsg(result?.message || "任务已取消");
+      }
       setPhase("failed");
-      setErrorMsg("任务已取消（按规则不退还积分）");
     },
     onError: (err) => {
       setIsCancellingJob(false);
@@ -238,7 +279,7 @@ export default function GodViewPage() {
         `⚠️ 重要：用户主动取消的任务不退还积分。\n` +
         `   此规则用于防止恶意消耗算力，请谨慎操作。\n\n` +
         `如因系统故障 / 部署中断导致任务失败，\n` +
-        `积分会自动幂等返还到您的账户。\n\n` +
+        `相关积分将按规则退还至您的账户（退积分，非现金）。\n\n` +
         `确认主动取消？（不退还积分）`,
     );
     if (!ok) return;
@@ -320,6 +361,7 @@ export default function GodViewPage() {
 
   const launchMutation = trpc.deepResearch.launch.useMutation({
     onSuccess: (data) => {
+      failureToastFiredRef.current = null;
       const firstKey = PRODUCT_FIRST_KEYS[selectedProduct];
       if (!localStorage.getItem(firstKey)) {
         localStorage.setItem(firstKey, "1");
@@ -1148,7 +1190,7 @@ export default function GodViewPage() {
         {phase === "failed" && (
           <div style={{ padding: isMobile ? "14px 16px" : "20px 24px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 12 }}>
             <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 10 : 0 }}>
-              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已返还到您的账户"}</p>
+              <p style={{ color: "#dc2626", fontSize: 13, margin: 0, fontWeight: 700, wordBreak: "break-word" }}>❌ {errorMsg}{errorMsg.includes("积分") ? "" : " · 积分已退还至账户余额"}</p>
               <button onClick={() => { setPhase("idle"); setErrorMsg(""); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "10px 16px" : "7px 16px", minHeight: isMobile ? 44 : undefined, width: isMobile ? "100%" : undefined, borderRadius: 8, background: "rgba(220,38,38,0.12)", border: "1px solid rgba(220,38,38,0.40)", color: "#dc2626", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
                 <RotateCcw size={12} />重试
               </button>

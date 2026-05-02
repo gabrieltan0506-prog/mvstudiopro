@@ -55,7 +55,7 @@ import {
   getOrCreateBalance,
   refundCredits,
 } from "./credits";
-import { CREDIT_COSTS, CREDIT_TO_CNY } from "./plans";
+import { CREDIT_COSTS } from "./plans";
 import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
@@ -4889,7 +4889,6 @@ ${sceneSummary}
   admin: router({
     stats: adminProcedure.query(async () => getAdminStats()),
     creditBreakdown: adminProcedure.query(() => ({
-      creditToCny: CREDIT_TO_CNY,
       packages: getProductPackageDisplayRows(),
     })),
     paymentList: adminProcedure.input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional()).query(async ({ input }) => getPaymentSubmissions(input?.status)),
@@ -5850,16 +5849,41 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const { assertMaintenanceOff } = await import("./services/maintenanceMode");
         await assertMaintenanceOff("多平台 IP 矩阵");
 
-        const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
-        return launchPlatformIpMatrix({
-          userId: String(ctx.user.id),
-          text: input.topicDirection,
-          topicDirection: input.topicDirection,
-          accounts: input.accounts,
-          supplementaryText: input.supplementaryText,
-          outputFormatOverride: input.outputFormatOverride,
-          supplementaryFiles: input.supplementaryFiles,
-        });
+        const userId = ctx.user.id;
+        const { calcAgentScenarioPrice } = await import("./services/billingService");
+        const { price: cost, label: billingLabel } = calcAgentScenarioPrice("platform_ip_matrix");
+
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `${billingLabel}（${cost}点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
+        }
+
+        const billed = deductResult.source === "admin" ? 0 : cost;
+        try {
+          const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
+          return await launchPlatformIpMatrix({
+            userId: String(ctx.user.id),
+            text: input.topicDirection,
+            topicDirection: input.topicDirection,
+            accounts: input.accounts,
+            supplementaryText: input.supplementaryText,
+            outputFormatOverride: input.outputFormatOverride,
+            supplementaryFiles: input.supplementaryFiles,
+            creditsUsed: billed,
+          });
+        } catch (e: any) {
+          if (billed > 0) {
+            try {
+              await refundCredits(userId, billed, `多平台IP矩阵·启动失败·退回`);
+            } catch {}
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
+        }
       }),
 
     /** 竞品/赛道雷达 */
@@ -5887,17 +5911,42 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const { assertMaintenanceOff } = await import("./services/maintenanceMode");
         await assertMaintenanceOff("竞品/赛道雷达");
 
-        const { launchCompetitorRadar } = await import("./services/agentScenarios");
-        return launchCompetitorRadar({
-          userId: String(ctx.user.id),
-          text: input.supplementaryText || "",
-          benchmarks: input.benchmarks,
-          focusDimensions: input.focusDimensions,
-          painPoint: input.painPoint,
-          outputFormatOverride: input.outputFormatOverride,
-          supplementaryText: input.supplementaryText,
-          supplementaryFiles: input.supplementaryFiles,
-        });
+        const userId = ctx.user.id;
+        const { calcAgentScenarioPrice } = await import("./services/billingService");
+        const { price: cost, label: billingLabel } = calcAgentScenarioPrice("competitor_radar");
+
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `${billingLabel}（${cost}点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
+        }
+
+        const billed = deductResult.source === "admin" ? 0 : cost;
+        try {
+          const { launchCompetitorRadar } = await import("./services/agentScenarios");
+          return await launchCompetitorRadar({
+            userId: String(ctx.user.id),
+            text: input.supplementaryText || "",
+            benchmarks: input.benchmarks,
+            focusDimensions: input.focusDimensions,
+            painPoint: input.painPoint,
+            outputFormatOverride: input.outputFormatOverride,
+            supplementaryText: input.supplementaryText,
+            supplementaryFiles: input.supplementaryFiles,
+            creditsUsed: billed,
+          });
+        } catch (e: any) {
+          if (billed > 0) {
+            try {
+              await refundCredits(userId, billed, `竞品赛道雷达·启动失败·退回`);
+            } catch {}
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
+        }
       }),
 
     /** VIP · 列出当前运营者所有 VIP 档案 */
@@ -6091,7 +6140,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           dbRecordId = result.dbRecordId;
           // fire-and-forget：异步执行，不阻塞响应
           runDeepResearchAsync(jobId).catch(async (err) => {
-            console.error("[deepResearch] 异步任务异常，尝试退款:", err?.message);
+          console.error("[deepResearch] 异步任务异常，尝试退还积分:", err?.message);
             try { await refundCredits(userId, cost, `上帝视角研报·异步失败·退回`); } catch {}
           });
         } catch (e: any) {
@@ -6135,10 +6184,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           message: result.alreadyCancelled
             ? noRefund
               ? "已记录取消请求，正在停止深潛引擎（按规则不退还积分）…"
-              : "已记录取消请求，正在等待 worker 停止深潛引擎并返还积分…"
+              : "已记录取消请求，正在等待 worker 停止深潛引擎并退还积分…"
             : noRefund
               ? "已发起取消，正在停止深潛引擎（按规则不退还积分，防止算力恶意消耗）"
-              : "已发起取消，正在停止深潛引擎并返还积分到您的账户…",
+              : "已发起取消，正在停止深潛引擎，积分将退还至您的账户…",
         };
       }),
 
@@ -6161,6 +6210,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           planText: job.planText || null,
           planInteractionId: job.planInteractionId || null,
           interactionId: job.interactionId || null,
+          creditsUsed: typeof job.creditsUsed === "number" ? job.creditsUsed : null,
           // 真信号：心跳 / 更新时间，让前端展示真实推演进度
           updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
           lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
@@ -6672,7 +6722,7 @@ ${input.blockText}`;
             },
           );
         } catch (e: any) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已返还到您的账户" });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已退还至您的账户" });
         }
 
         // Neon 精华快照存储
