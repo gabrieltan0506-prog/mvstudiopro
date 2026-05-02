@@ -2143,66 +2143,26 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次串行重试
-    //    用户决策（2026-05-01）：
-    //      - 6 次重试保留（保证质量），但**整段必须异步执行，不能阻塞主流程**。
-    //        用户明确：报告主体生成完即可让用户在「战略作品快照库」看到，
-    //        封面后台慢慢跑（最坏 6 分钟），完成后 fire-and-forget 回写 DB。
-    //      - aspectRatio: "9:16" — 标准杂志竖版
-    //      - 严格不要场景图兜底（场景图是 16:9 横版，硬塞会拉伸）
-    //      - 双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）
-    //      - 单次 timeout 60s（Gemini reviewer 建议从 90s 降下来缩短 worst-case）
-    //    （Imagen Ultra 封面链路至 strategicCoverImage.ts，待验证后再合入。）
+    // 2. 封面图：优先 Imagen Ultra（60s 滑窗最多 10 次，第 11 次起跳过 Ultra）；
+    //    失败或限流后依次 Vertex gemini-3-pro-image-preview ×3、API key 同模型 ×3。
     const coverPrompt = buildMagazineCoverImagePrompt({
       safeTitle: String(lighthouseTitle || "战略情报报告").trim().slice(0, 60),
       displayTitle: lighthouseTitle,
     });
     const coverPromise: Promise<string | undefined> = (async () => {
-      let cover: string | undefined;
-
-      // 主路径 Vertex (tier=pro = Nano Banana Pro)，串行重试 3 次
-      for (let i = 1; i <= 3 && !cover; i++) {
-        try {
-          const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
-          const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: coverPrompt, tier: "pro", aspectRatio: "9:16" }),
-            signal: AbortSignal.timeout(60_000),
-          });
-          if (!res.ok) {
-            const errText = await res.text().catch(() => "");
-            throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
-          }
-          const j: any = await res.json();
-          if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
-          cover = String(j.imageUrl);
-          console.log(`[deepResearch][async-cover] ✅ via Vertex (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
-        } catch (e: any) {
-          console.warn(`[deepResearch][async-cover] ⚠️ Vertex 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
-          if (i < 3) await sleep(2000);
-        }
-      }
-
-      // Fallback Gemini API key 直连 (Nano Banana Pro)，串行重试 3 次
-      for (let i = 1; i <= 3 && !cover; i++) {
-        try {
-          cover = await generateImageViaGeminiApiKey({
-            prompt: coverPrompt,
+      const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
+      const { generateStrategicReportCoverImageUrl } = await import("./strategicCoverImage");
+      return generateStrategicReportCoverImageUrl({
+        prompt: coverPrompt,
+        vercelBaseUrl,
+        jobId,
+        geminiApiKeyImage: (p) =>
+          generateImageViaGeminiApiKey({
+            prompt: p,
             aspectRatio: "9:16",
             model: "gemini-3-pro-image-preview",
-          });
-          console.log(`[deepResearch][async-cover] ✅ via Gemini API key (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
-        } catch (e: any) {
-          console.warn(`[deepResearch][async-cover] ⚠️ Gemini API key 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
-          if (i < 3) await sleep(2000);
-        }
-      }
-
-      if (!cover) {
-        console.warn(`[deepResearch][async-cover] 6 次全失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
-      }
-      return cover;
+          }),
+      });
     })();
     // 不 await！主流程立即继续 — 报告先 ready，封面后台慢慢出。
 
