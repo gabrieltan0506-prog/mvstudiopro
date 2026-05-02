@@ -18,6 +18,8 @@ import {
   type PaidJobRefundReason,
 } from "./paidJobLedger";
 import { generateAndStoreStrategicImage } from "./imageGenerationService";
+import { generateDeepResearchSceneIllustration } from "./proxyImageService";
+import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
 // for local tests / CI smoke tests.
@@ -66,7 +68,8 @@ function appendMagazineCoverDateInstructions(promptBase: string): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gemini Consumer API key 生图（generativelanguage…:generateContent?key=）。
-// 戰略智庫主流程封面 / 場景圖：**Fly 端直連 Vertex**（`generateAndStoreStrategicImage` → GCS 簽名 URL），**不再經 Vercel `/api/google` 閘道**。
+// 戰略智庫主流程封面：**Fly 端直連 Vertex**（`generateAndStoreStrategicImage` → GCS 簽名 URL）。
+// 正文场景配图：**OhMyGPT gpt-image-2** 主路径 + Imagen Ultra 兜底（`proxyImageService`）。
 // Vertex 全敗時封面可走本函式 **Consumer Nano Banana 2 · 2K**（需 `GEMINI_API_KEY`）。
 // ─────────────────────────────────────────────────────────────────────────────
 type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
@@ -76,9 +79,6 @@ type ImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview
 const VERTEX_STRATEGIC_COVER_IMAGE_MODEL =
   String(process.env.VERTEX_DEEP_RESEARCH_COVER_MODEL || "gemini-3-pro-image-preview").trim() ||
   "gemini-3-pro-image-preview";
-
-/** 戰略智庫正文配圖：Vertex Imagen Ultra（用戶指定 ID） */
-const VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL = "imagen-4.0-ultra-generate-001";
 
 /** 戰略智庫 Vertex 全敗時封面兜底：Nano Banana 2 · 2K（Consumer `generateContent`，非閘道） */
 const STRATEGIC_FALLBACK_FLASH_MODEL = "gemini-3.1-flash-image-preview" as const;
@@ -1135,6 +1135,8 @@ export interface DeepResearchJob {
     taboos?: string;
     flagship: string;
   };
+  /** GodView 首购尝鲜：封面与场景配图 prompt 嵌入试读样本对角水印（TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION） */
+  strategicImagesTrialWatermark?: boolean;
   /** 失败时的结构化错误详情（DeepResearchApiError.toDetailString()）。Supervisor Debug 直接展示。 */
   errorDetail?: string;
   /** 用户/管理员发起的取消请求时间戳（ISO）。worker 在 polling 循环检测到该字段
@@ -1444,7 +1446,12 @@ export async function createDeepResearchJob(
   topic: string,
   creditsUsed = 0,
   productType: DeepResearchProductType = "magazine_single",
-  supplementary?: { supplementaryText?: string; supplementaryFiles?: DeepResearchJob["supplementaryFiles"]; ipProfile?: DeepResearchJob["ipProfile"] },
+  supplementary?: {
+    supplementaryText?: string;
+    supplementaryFiles?: DeepResearchJob["supplementaryFiles"];
+    ipProfile?: DeepResearchJob["ipProfile"];
+    strategicImagesTrialWatermark?: boolean;
+  },
   /** 进阶选项：用于 VIP 月度更新等场景（预设 planInteractionId 跳过 plan 阶段，覆盖 execute input） */
   advanced?: {
     /** 预填 planInteractionId（VIP 月度更新：上一次执行返回的 interactionId） */
@@ -1477,6 +1484,9 @@ export async function createDeepResearchJob(
     ...(supplementary?.supplementaryText ? { supplementaryText: supplementary.supplementaryText } : {}),
     ...(supplementary?.supplementaryFiles?.length ? { supplementaryFiles: supplementary.supplementaryFiles } : {}),
     ...(supplementary?.ipProfile ? { ipProfile: supplementary.ipProfile } : {}),
+    ...(supplementary?.strategicImagesTrialWatermark
+      ? { strategicImagesTrialWatermark: true }
+      : {}),
     ...(advanced?.planInteractionId ? { planInteractionId: advanced.planInteractionId } : {}),
     ...(advanced?.executeOverrideInput ? { executeOverrideInput: advanced.executeOverrideInput } : {}),
     ...(advanced?.onCompletedHook ? { onCompletedHook: advanced.onCompletedHook } : {}),
@@ -2139,14 +2149,16 @@ ${job.topic}
 
     // ── 后处理：灯塔标题 + 封面图 + 场景配图 + 摘要 + 耗时 ────────────────
 
-    // 0. 自动场景配图（≥ 5 张，覆盖 4 类）— **Vertex** `imagen-4.0-ultra-generate-001` **2K**（`imagenBackend=vertex`）
+    // 0. 自动场景配图（≥ 5 张，覆盖 4 类）— **OhMyGPT gpt-image-2** 主路径，**Imagen Ultra** 兜底；GCS 落签
     //    用户决策（2026-05-01）：报告太空泛、纯文字没温度，配图升到 5-7 张，必须覆盖：
     //      ① 应用场景  ② 目标人物 / 个人形象  ③ 产品特色  ④ 数据 / 行业生态
-    //    实现：用 LLM 抽 5-7 个画面（强制 4 类全覆盖），串行生图（500ms 间隔），按章节锚点注入正文
+    //    实现：用 LLM 抽 5-7 个画面（强制 4 类全覆盖），串行生图 + 3s 冷却，按章节锚点注入正文
     try {
+      const latestForScenes = (await readJob(jobId)) ?? job;
       const sceneImages = await generateSceneIllustrations({
         topic: job.topic,
         reportMarkdown,
+        trialWatermark: !!latestForScenes.strategicImagesTrialWatermark,
       });
       if (sceneImages.length > 0) {
         reportMarkdown = injectSceneImagesIntoMarkdown(reportMarkdown, sceneImages);
@@ -2156,7 +2168,7 @@ ${job.topic}
           return acc;
         }, {});
         console.log(
-          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（Fly：Imagen Ultra 2K 串行 + 3s 冷却，GCS 落签）·  类别: ${JSON.stringify(catBreakdown)}`,
+          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（gpt-image-2 → Imagen Ultra 兜底 · GCS）·  类别: ${JSON.stringify(catBreakdown)}`,
         );
       }
     } catch (e: any) {
@@ -2181,12 +2193,14 @@ ${job.topic}
       `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
     const coverPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
     const coverPromise: Promise<string | undefined> = (async () => {
+      const latestCoverJob = (await readJob(jobId)) ?? job;
+      const trialWm = !!latestCoverJob.strategicImagesTrialWatermark;
       let cover: string | undefined;
 
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
-          console.log(`[deepResearch][async-cover] 開始在 Fly 本地生成 4K 封面… 第 ${i}/3 次 jobId=${jobId}`);
-          cover = await generateAndStoreStrategicImage(coverPrompt, "COVER");
+          console.log(`[deepResearch][async-cover] 開始在 Fly 本地生成 4K 封面${trialWm ? "（试用水印）" : ""}… 第 ${i}/3 次 jobId=${jobId}`);
+          cover = await generateAndStoreStrategicImage(coverPrompt, "COVER", { coverTrialWatermark: trialWm });
           console.log(
             `[deepResearch][async-cover] ✅ Fly/Vertex Nano Banana Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${i}/3 次 jobId=${jobId}`,
           );
@@ -2199,7 +2213,11 @@ ${job.topic}
 
       for (let i = 1; i <= 2 && !cover; i++) {
         try {
-          const flashPrompt = `${coverPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}`;
+          const flashPrompt = `${coverPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}${
+            trialWm
+              ? `\n\n${TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION}`
+              : ""
+          }`;
           cover = await generateImageViaGeminiApiKey({
             prompt: flashPrompt,
             aspectRatio: "9:16",
@@ -2527,6 +2545,8 @@ async function generateSceneIllustrations(params: {
    */
   minCount?: number;
   maxCount?: number;
+  /** GodView 首购尝鲜：场景图走 gpt-image-2 / Imagen 时在 prompt 要求试读对角水印 */
+  trialWatermark?: boolean;
 }): Promise<SceneIllustration[]> {
   const minCount = params.minCount ?? 5;
   const maxCount = params.maxCount ?? 7;
@@ -2676,19 +2696,24 @@ ${reportSnippet.slice(0, 8000)}`,
       (missing.length ? `，⚠ 缺类: ${missing.join("/")}` : "，✅ 4 类全覆盖"),
   );
 
-  // ── 2. 串行 + Fly 直連 Vertex Imagen Ultra 2K（`generateAndStoreStrategicImage` → GCS），張間 3s 冷卻防 429 ──
-  console.log(`[deepResearch][scenes] 準備為 ${scenes.length} 個場景生成配圖...`);
+  // ── 2. 串行：主路径 OhMyGPT gpt-image-2，失败则 Imagen Ultra 2K（`generateDeepResearchSceneIllustration`），張間 3s 冷卻防 429 ──
+  console.log(`[deepResearch][scenes] 準備為 ${scenes.length} 個場景生成配圖（gpt-image-2 → imagen fallback）...`);
   const generated: (SceneIllustration | null)[] = [];
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     let imageUrl: string | undefined;
     try {
       console.log(
-        `[deepResearch][scenes] 正在生成第 ${i + 1}/${scenes.length} 张图 (SCENE → ${VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL})...`,
+        `[deepResearch][scenes] 正在生成第 ${i + 1}/${scenes.length} 张图 (SCENE → gpt-image-2 / ultra)…`,
       );
-      imageUrl = await generateAndStoreStrategicImage(scene.imagePrompt, "SCENE");
+      const url = await generateDeepResearchSceneIllustration({
+        caption: scene.caption || "",
+        imagePrompt: scene.imagePrompt || "",
+        isTrial: !!params.trialWatermark,
+      });
+      if (url) imageUrl = url;
       console.log(
-        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ 就绪: ${imageUrl.length > 100 ? `${imageUrl.slice(0, 100)}…` : imageUrl}`,
+        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ 就绪: ${imageUrl && imageUrl.length > 100 ? `${imageUrl.slice(0, 100)}…` : imageUrl || "(empty)"}`,
       );
     } catch (error: unknown) {
       console.error(`[deepResearch][scenes] 第 ${i + 1} 张图生成失败，跳过。错误:`, error);

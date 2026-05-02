@@ -1182,7 +1182,7 @@ export default function GodViewPage() {
                   </button>
                 </div>
 
-                <div className="godview-gallery-scroll flex snap-x gap-5 overflow-x-auto pb-6">
+                <div className="flex snap-x gap-5 overflow-x-auto pb-4" style={{ scrollbarWidth: "thin" }}>
                   {strategicChapters.map((ch) => (
                     <div
                       key={ch.id}
@@ -1691,11 +1691,6 @@ export default function GodViewPage() {
           0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)}
           50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}
         }
-        .godview-gallery-scroll { scrollbar-width: thin; scrollbar-color: rgba(245,158,11,0.35) rgba(255,255,255,0.04); }
-        .godview-gallery-scroll::-webkit-scrollbar { height: 4px; }
-        .godview-gallery-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); }
-        .godview-gallery-scroll::-webkit-scrollbar-thumb { background: rgba(245,158,11,0.2); border-radius: 10px; }
-        .godview-gallery-scroll::-webkit-scrollbar-thumb:hover { background: rgba(245,158,11,0.4); }
       `}</style>
     </div>
   );

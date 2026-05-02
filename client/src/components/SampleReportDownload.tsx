@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import ReportRenderer from "@/components/ReportRenderer";
+import { TrialReadWatermarkOverlay } from "@/components/TrialReadWatermarkOverlay";
+import { TRIAL_READ_WATERMARK_LINE } from "@shared/const";
 import { ArrowRight, Crown, Sparkles } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -500,7 +502,7 @@ function OnlineSampleReader({
                   userSelect: "none",
                 }}
               >
-                MVSTUDIOPRO.COM · 试读
+                {TRIAL_READ_WATERMARK_LINE}
               </div>
             );
           })}
@@ -886,71 +888,12 @@ function SampleCard({
           </div>
         )}
 
-        {/* ── 试读水印层：覆盖在封面图上，对角平铺多组 logo + 文字（防盗版必备） ── */}
-        <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 3 }}>
-          {/* 对角平铺文字水印 —— 4 行 × 3 列共 12 个 */}
-          {Array.from({ length: 4 }).map((_, row) => (
-            Array.from({ length: 3 }).map((_, col) => {
-              const offsetX = row % 2 === 0 ? 0 : 50;
-              const left = `${col * 38 - 8 + (offsetX / 100) * 38}%`;
-              const top = `${row * 28 + 8}%`;
-              return (
-                <div
-                  key={`txt-${row}-${col}`}
-                  style={{
-                    position: "absolute",
-                    left,
-                    top,
-                    transform: "rotate(-26deg)",
-                    fontFamily: "'Playfair Display', Georgia, 'PingFang SC', serif",
-                    fontSize: 14,
-                    fontWeight: 800,
-                    color: "rgba(255,247,223,0.55)",
-                    letterSpacing: "0.18em",
-                    whiteSpace: "nowrap",
-                    textShadow: "0 1px 3px rgba(0,0,0,0.45)",
-                    userSelect: "none",
-                  }}
-                >
-                  MVSTUDIOPRO.COM · 试读
-                </div>
-              );
-            })
-          ))}
-          {/* 对角错落的 logo 印章 —— 2 行 × 2 列共 4 个 */}
-          {Array.from({ length: 2 }).map((_, row) => (
-            Array.from({ length: 2 }).map((_, col) => (
-              <img
-                key={`logo-${row}-${col}`}
-                src={BRAND_LOGO_DARK_URI}
-                alt="MVStudioPro"
-                style={{
-                  position: "absolute",
-                  left: `${col * 50 + 18}%`,
-                  top: `${row * 45 + 22}%`,
-                  width: "30%",
-                  height: "auto",
-                  opacity: 0.22,
-                  transform: "rotate(-22deg)",
-                  filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.35))",
-                  pointerEvents: "none",
-                  userSelect: "none",
-                }}
-                draggable={false}
-              />
-            ))
-          ))}
-        </div>
+        <TrialReadWatermarkOverlay zIndex={3} />
 
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 22px 18px", background: "linear-gradient(to top, rgba(28,20,7,0.92) 0%, transparent 100%)", zIndex: 4 }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.20em", color: "rgba(255,247,223,0.85)", marginBottom: 4 }}>{tag} · {edition}</div>
           <div style={{ fontSize: 22, fontWeight: 900, color: "#fff7df", lineHeight: 1.25 }}>{title}</div>
           <div style={{ fontSize: 12, color: "rgba(255,247,223,0.78)", marginTop: 4, fontWeight: 500 }}>{subtitle}</div>
-        </div>
-
-        {/* 右上 corner 标志：mvstudiopro.com */}
-        <div style={{ position: "absolute", top: 14, right: 14, zIndex: 4, padding: "4px 10px", borderRadius: 4, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", color: "rgba(255,247,223,0.92)", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", fontFamily: "'Helvetica Neue', sans-serif" }}>
-          MVSTUDIOPRO.COM
         </div>
       </div>
 

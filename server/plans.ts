@@ -276,7 +276,9 @@ export const CREDIT_FEATURE_BREAKDOWN: readonly CreditFeatureBreakdownRow[] = [
   // ─── 平台趋势分析 ─────────────────────────────────────────
   { product: "平台数据分析", subFeature: "主看板分析", credits: CREDIT_COSTS.platformTrend, note: "按次扣费" },
   { product: "平台数据分析", subFeature: "趋势数据续分析", credits: CREDIT_COSTS.platformTrendFollowUp, note: "正式包每日首次免费，之后 6 cr；试用包不支持" },
-  { product: "平台数据分析", subFeature: "生成参考图（每张）", credits: CREDIT_COSTS.platformRefImage },
+  { product: "平台数据分析", subFeature: "一键批量生图（短视频分镜）", credits: 5, note: "每张 5 cr，gpt-image-2 主路径 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "一键批量生图（图文配图）", credits: 6, note: "每张 6 cr，gpt-image-2 主路径 · Imagen 兜底" },
+  { product: "平台数据分析", subFeature: "生成参考图（每张·旧版单价）", credits: CREDIT_COSTS.platformRefImage },
   { product: "平台数据分析", subFeature: "参考图高清放大 2×", credits: CREDIT_COSTS.platformRefImageUpscale2x },
   { product: "平台数据分析", subFeature: "参考图高清放大 4×", credits: CREDIT_COSTS.platformRefImageUpscale4x },
   // ─── 节点工作流（逐步） ───────────────────────────────────
