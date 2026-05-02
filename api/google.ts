@@ -14,9 +14,10 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  *
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
- * - VERTEX_PROJECT_ID
- * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO / VERTEX_IMAGE_MODEL_ULTRA（imagen-4.0-ultra 别名展开）
- * - VERTEX_IMAGE_LOCATION (optional, default global)
+ * - GEMINI_API_KEY（transcribeAudio、Imagen 4 Ultra 生图、translateForVeo）
+ * - GEMINI_IMAGEN_ULTRA_MODEL（可选，默认 imagen-4.0-ultra-generate-001，须与 AI Studio 模型 ID 一致）
+ * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填）
+ * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
  * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
  * - BLOB_READ_WRITE_TOKEN (optional for fetching private blob url)
@@ -203,6 +204,17 @@ async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isImagenUltraGeminiApiModel(rawModel: string): boolean {
+  const m = s(rawModel).trim();
+  const resolved = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "imagen-4.0-ultra-generate-001").trim();
+  return (
+    m === "imagen-4.0-ultra" ||
+    m === "imagen-4.0-ultra-generate" ||
+    m === "imagen-4.0-ultra-generate-001" ||
+    (resolved.length > 0 && m === resolved)
+  );
+}
+
 async function fetchImageAsBase64(imageUrl:string){
   const url = s(imageUrl).trim();
   if(!url) throw new Error("missing_image_url");
@@ -271,6 +283,60 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
+    // ---------------- nanoImage · Imagen 4 Ultra — Generative Language API + GEMINI_API_KEY（同 Gemma 调用域，不经 Vertex）
+    if (op === "nanoImage") {
+      const promptUltra = s(b.prompt || q.prompt || "");
+      const rawUltra = s(b.model || q.model || "");
+      if (promptUltra && isImagenUltraGeminiApiModel(rawUltra)) {
+        const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
+        if (!geminiApiKey) {
+          return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
+        }
+        const geminiImagenModel = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "imagen-4.0-ultra-generate-001").trim();
+        const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "16:9");
+        const sizeU = s(b.imageSize || q.imageSize || "2K").toUpperCase();
+        const numberOfImagesU = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
+        const seedU = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
+        const personGenerationU = s(b.personGeneration || q.personGeneration || "");
+
+        const imageConfigU: Record<string, unknown> = { aspectRatio: aspectRatioU };
+        if (numberOfImagesU > 1) imageConfigU.numberOfImages = numberOfImagesU;
+        if (Number.isFinite(seedU as number)) imageConfigU.seed = Math.floor(seedU as number);
+        if (personGenerationU) imageConfigU.personGeneration = personGenerationU;
+        if (sizeU === "1K" || sizeU === "2K" || sizeU === "4K") imageConfigU.imageSize = sizeU;
+
+        const glUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiImagenModel}:generateContent?key=${geminiApiKey}`;
+        const requestInitUltra: RequestInit = {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: promptUltra }] }],
+            generationConfig: { responseModalities: ["IMAGE"], imageConfig: imageConfigU },
+          }),
+          signal: AbortSignal.timeout(120_000),
+        };
+        let rU = await fetchJson(glUrl, requestInitUltra);
+        for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(rU.status, rU.json, rU.rawText); attempt += 1) {
+          await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
+          rU = await fetchJson(glUrl, requestInitUltra);
+        }
+        const rawU = rU.json ?? rU.rawText;
+        const imagesU = rU.ok ? extractGeneratedImages(rU.json) : [];
+        const imageUrlsU = imagesU.map((item) => `data:${item.mimeType};base64,${item.data}`);
+        return res.status(rU.ok ? 200 : 502).json({
+          ok: rU.ok,
+          status: rU.status,
+          provider: "gemini_api_key_imagen_ultra",
+          model: geminiImagenModel,
+          url: glUrl.split("?")[0],
+          raw: rawU,
+          imageUrl: imageUrlsU[0] || "",
+          imageUrls: imageUrlsU,
+          imageCount: imageUrlsU.length,
+        });
+      }
+    }
+
     const projectId = s(process.env.VERTEX_PROJECT_ID).trim();
     if(!projectId) return res.status(500).json({ok:false,error:"missing_env",detail:"VERTEX_PROJECT_ID"});
 
@@ -312,14 +378,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
       const rawModel = s(b.model || q.model || "");
-      const ultraResolved = s(process.env.VERTEX_IMAGE_MODEL_ULTRA || "imagen-4.0-ultra-generate-001").trim();
+      if (isImagenUltraGeminiApiModel(rawModel)) {
+        return res.status(400).json({
+          ok: false,
+          error: "imagen_ultra_vertex_conflict",
+          detail: "Imagen 4 Ultra 仅走 generativelanguage + GEMINI_API_KEY；请检查 op=nanoImage 前置分支是否生效或是否缺少 prompt。",
+        });
+      }
 
       const resolvedTier = rawModel
         ? (
-            rawModel === "imagen-4.0-ultra" ||
-            rawModel === "imagen-4.0-ultra-generate" ||
-            rawModel === "imagen-4.0-ultra-generate-001" ||
-            rawModel === ultraResolved ||
             rawModel === "gemini-3-pro-image-001" ||
             rawModel === "gemini-3-pro-image-preview"
           )
@@ -328,9 +396,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         : tier;
 
       const model = rawModel
-        ? rawModel === "imagen-4.0-ultra"
-          ? ultraResolved
-          : rawModel
+        ? rawModel
         : resolvedTier === "pro"
           ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
           : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
