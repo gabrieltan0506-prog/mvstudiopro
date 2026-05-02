@@ -7,7 +7,6 @@ import {
   Bolt, Zap, Flame, BarChart3, Smile,
   Briefcase, Crown, Star,
 } from "lucide-react";
-import { CREDIT_TO_CNY } from "@shared/plans";
 import { nanoid } from "nanoid";
 
 type BillingInterval = "monthly" | "quarterly" | "yearly";
@@ -15,7 +14,7 @@ type PackId = "trial199" | "small" | "medium" | "large" | "mega";
 
 const PACK_ORDER: PackId[] = ["trial199", "small", "medium", "large", "mega"];
 
-// 定价基准：1 cr ≈ ¥0.65，每次完整分析约 50 cr
+// 套餐档与 shared/plans CREDIT_PACKS 对齐（标价与到账 Credits 以服务端为准）
 const PACK_META: Record<PackId, {
   credits: number; basePrice: number;
   icon: React.ReactNode; label: string;
@@ -31,7 +30,7 @@ const PACK_META: Record<PackId, {
 
 function calcPrice(packId: PackId, cycle: BillingInterval) {
   const m = PACK_META[packId];
-  if (packId === "trial199") return { price: m.basePrice, credits: m.credits, discountText: "约 ¥0.60/积分" };
+  if (packId === "trial199") return { price: m.basePrice, credits: m.credits, discountText: "含足额试用 Credits" };
   if (cycle === "quarterly") return { price: Math.round(m.basePrice * 3 * 0.9),  credits: m.credits * 3,  discountText: "季度九折" };
   if (cycle === "yearly")    return { price: Math.round(m.basePrice * 12 * 0.8), credits: m.credits * 12, discountText: "年度八折" };
   return { price: m.basePrice, credits: m.credits, discountText: "" };
@@ -43,7 +42,9 @@ export default function Pricing() {
   const [note, setNote]             = useState("");
   const [submitted, setSubmitted]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [grantSummary, setGrantSummary] = useState<{ credits: number; duplicate: boolean } | null>(null);
 
+  const utils = trpc.useUtils();
   const { data: subData } = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
   const credits = subData?.credits ?? { balance: 0 };
 
@@ -55,7 +56,7 @@ export default function Pricing() {
   const handleConfirm = async (method: "wechat" | "alipay") => {
     setSubmitting(true);
     try {
-      await submitMutation.mutateAsync({
+      const res = await submitMutation.mutateAsync({
         orderId: `PAY-${Date.now()}-${nanoid(6).toUpperCase()}`,
         packId: selected,
         method,
@@ -64,7 +65,13 @@ export default function Pricing() {
         billingCycle: interval,
         transactionNote: note || undefined,
       });
+      setGrantSummary({
+        credits: res.creditsAdded ?? cr,
+        duplicate: Boolean(res.duplicate),
+      });
       setSubmitted(true);
+      toast.success(res.message);
+      void utils.stripe.getSubscription.invalidate();
     } catch (err: any) {
       toast.error(err.message || "提交失败，请重试");
     } finally {
@@ -78,7 +85,7 @@ export default function Pricing() {
       <div className="px-6 pt-8 pb-3">
         <h1 className="text-3xl font-extrabold text-white">Credits 加值</h1>
         <p className="text-sm text-gray-400 mt-1">
-          微信 / 支付宝扫码付款 · 约 ¥{CREDIT_TO_CNY.toFixed(2)}/积分 · 管理员 1-2 小时内审核到账
+          微信 / 支付宝扫码付款 · 点「我已付款」后积分即时到账（请确认已实际完成支付）
         </p>
       </div>
 
@@ -103,7 +110,7 @@ export default function Pricing() {
         {(["monthly", "quarterly", "yearly"] as BillingInterval[]).map((cycle) => (
           <button
             key={cycle}
-            onClick={() => { setInterval(cycle); setSubmitted(false); }}
+            onClick={() => { setInterval(cycle); setSubmitted(false); setGrantSummary(null); }}
             className={`flex-1 py-2 rounded-md text-sm font-bold transition-colors flex items-center justify-center gap-1 ${
               interval === cycle ? "bg-[#FF6B35] text-white" : "text-gray-400"
             }`}
@@ -132,7 +139,7 @@ export default function Pricing() {
               return (
                 <button
                   key={packId}
-                  onClick={() => { setSelected(packId); setSubmitted(false); }}
+                  onClick={() => { setSelected(packId); setSubmitted(false); setGrantSummary(null); }}
                   className={`relative flex flex-col items-center justify-center rounded-2xl text-center transition-all duration-150 border-2 ${
                     active
                       ? "border-[#FF6B35] bg-[#FF6B35]/10 scale-[1.02]"
@@ -193,12 +200,20 @@ export default function Pricing() {
           {submitted ? (
             <div className="bg-[#1A1A1D] rounded-2xl border border-white/10 p-8 flex flex-col items-center text-center">
               <CheckCircle size={56} className="text-green-400 mb-4" />
-              <p className="text-xl font-bold text-white mb-1">付款确认已提交</p>
-              <p className="text-gray-400 text-sm mb-1">管理员将在 1-2 小时内审核充值</p>
+              <p className="text-xl font-bold text-white mb-1">
+                {grantSummary?.duplicate ? "该笔已处理" : "充值已到账"}
+              </p>
+              <p className="text-gray-400 text-sm mb-1">
+                {grantSummary?.duplicate
+                  ? "积分早前已入账，无需重复提交"
+                  : "积分已计入账户，可在个人中心查看余额与流水"}
+              </p>
               <p className="text-gray-400 text-sm font-semibold">上海德智熙人工智能科技有限公司</p>
-              <p className="text-green-400 text-base font-bold mt-2">充值成功后 +{cr} Credits</p>
+              <p className="text-green-400 text-base font-bold mt-2">
+                {grantSummary?.duplicate ? "本次未重复入账" : `+${grantSummary?.credits ?? cr} Credits 已到账`}
+              </p>
               <button
-                onClick={() => setSubmitted(false)}
+                onClick={() => { setSubmitted(false); setGrantSummary(null); }}
                 className="mt-6 w-full bg-[#FF6B35] text-white py-3 rounded-xl font-bold text-base"
               >
                 继续充值
@@ -226,7 +241,7 @@ export default function Pricing() {
 
               {/* 双二维码：双列大图 240px */}
               <div className="px-5 py-4">
-                <p className="text-sm text-gray-400 mb-3 text-center">扫码后点「我已付款」，1-2 小时到账</p>
+                <p className="text-sm text-gray-400 mb-3 text-center">扫码支付完成后，点击「我已付款」即时入账</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   {/* 微信 */}
                   <div className="flex flex-col items-center bg-[#0A0A0C] rounded-xl p-3 gap-2 border border-white/8">
@@ -276,7 +291,7 @@ export default function Pricing() {
                   className="w-full bg-[#0A0A0C] border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-[#FF6B35]/50"
                 />
                 <p className="text-center text-xs text-gray-500 mt-2">
-                  上海德智熙人工智能科技有限公司 · 1-2 小时内到账
+                  上海德智熙人工智能科技有限公司 · 请确认转账金额与应付金额一致
                 </p>
               </div>
             </div>

@@ -4,11 +4,11 @@
  * 流程：
  * 1. 用户选套餐 → getPaymentInfo 获取收款码图片路径 + 应付金额
  * 2. 用户扫码付款（微信/支付宝固定收款码）
- * 3. 用户点"我已付款" → submitConfirmation 创建 pending 记录
- * 4. 管理员在后台看到待审核列表 → approvePayment 充值积分 / rejectPayment 拒绝
- * 5. 充值成功后前端显示"上海德智熙人工智能科技有限公司 充值成功 xx 积分"
+ * 3. 用户点「我已付款」→ submitConfirmation：服务端按套餐表校验金额与 Credits，**立即到账**并记为 approved
+ * 4. （可选）管理员仍可走 approvePayment 处理历史 pending 单，或 rejectPayment
  *
- * 注意：收款码图片放到 public/assets/payment/ 目录下（需用户提供）
+ * 说明：无第三方支付回调时，到账依赖用户诚信 + 服务端防篡改（禁止客户端自拟积分/价格）。
+ * 订单 client orderId 用于幂等，避免重复点击重复入账。
  */
 import { z } from "zod";
 import { and, count, desc, eq, inArray, like } from "drizzle-orm";
@@ -60,7 +60,7 @@ function assertTrial199PurchaseAllowed(
   if (pendingOrApproved >= TRIAL_PACK_199_MAX_PURCHASES_PER_USER) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: `¥19.9 试用包每人最多购买 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次（含待审核订单），您已达上限`,
+      message: `¥19.9 试用包每人最多购买 ${TRIAL_PACK_199_MAX_PURCHASES_PER_USER} 次，您已达上限`,
     });
   }
 }
@@ -88,6 +88,11 @@ function calcPriceAndCredits(
     };
   }
   return { price: pack.price, credits: pack.credits, discountLabel: "" };
+}
+
+function screenshotUrlForAutoOrder(orderId: string, note?: string): string {
+  const tail = (note ?? "").trim();
+  return tail ? `staticPay:auto|${orderId}\n${tail}` : `staticPay:auto|${orderId}`;
 }
 
 export const staticPayRouter = router({
@@ -142,24 +147,70 @@ export const staticPayRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
+      const expected = calcPriceAndCredits(input.packId, input.billingCycle);
+      if (input.credits !== expected.credits) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "到账积分与当前套餐不一致，请刷新定价页后重试",
+        });
+      }
+      if (!Number.isFinite(input.amount) || Math.abs(Number(input.amount) - expected.price) > 0.001) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "支付金额与当前套餐不一致，请刷新定价页后重试",
+        });
+      }
+
       if (input.packId === "trial199") {
         const used = await countTrial199SubmissionsForUser(db, ctx.user.id, ["pending", "approved"]);
         assertTrial199PurchaseAllowed(used);
       }
 
+      const screenshotUrl = screenshotUrlForAutoOrder(input.orderId, input.transactionNote);
+      const orderPrefix = `staticPay:auto|${input.orderId}%`;
+      const [duplicate] = await db
+        .select({ id: paymentSubmissions.id, status: paymentSubmissions.status })
+        .from(paymentSubmissions)
+        .where(
+          and(eq(paymentSubmissions.userId, ctx.user.id), like(paymentSubmissions.screenshotUrl, orderPrefix)),
+        )
+        .limit(1);
+
+      if (duplicate?.status === "approved") {
+        return {
+          success: true,
+          orderId: input.orderId,
+          creditsAdded: 0,
+          duplicate: true as const,
+          message: `${COMPANY_NAME}：该付款确认已处理过，积分早前已入账`,
+        };
+      }
+      if (duplicate?.status === "pending") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "该订单正在处理中，请稍候或联系客服",
+        });
+      }
+
+      await addCredits(ctx.user.id, expected.credits, "payment", input.orderId);
+
       await db.insert(paymentSubmissions).values({
         userId: ctx.user.id,
         packageType: `${input.packId}_${input.billingCycle}`,
-        amount: String(input.amount),
+        amount: String(expected.price),
         paymentMethod: input.method,
-        screenshotUrl: input.transactionNote ?? "-",
-        status: "pending",
+        screenshotUrl,
+        status: "approved",
+        reviewedBy: null,
+        reviewedAt: new Date(),
       });
 
       return {
         success: true,
         orderId: input.orderId,
-        message: "已收到您的付款确认，管理员将在 1-2 小时内审核并充值 Credits。",
+        creditsAdded: expected.credits,
+        duplicate: false as const,
+        message: `${COMPANY_NAME} 充值成功，已到账 ${expected.credits} 积分`,
       };
     }),
 
