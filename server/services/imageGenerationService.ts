@@ -12,6 +12,7 @@
  */
 import { getVertexAccessToken } from "../utils/vertex";
 import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
+import { TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION } from "../../shared/const.js";
 
 function s(v: unknown): string {
   if (v == null) return "";
@@ -266,6 +267,7 @@ export async function generateStrategicCoverVertex(
 export async function generateAndStoreStrategicImage(
   prompt: string,
   mode: "COVER" | "SCENE" = "SCENE",
+  opts?: { coverTrialWatermark?: boolean },
 ): Promise<string> {
   const pPrompt = String(prompt || "").trim();
   if (!pPrompt) throw new Error("empty_strategic_image_prompt");
@@ -274,7 +276,11 @@ export async function generateAndStoreStrategicImage(
   const qualitySuffix = IS_COVER
     ? ", 4k resolution, hyper-realistic, masterpiece, highly detailed, dark gold aesthetics"
     : ", 2k resolution, hyper-realistic, masterpiece, cinematic lighting";
-  const finalPrompt = `${pPrompt}${qualitySuffix}`;
+  const trialTail =
+    IS_COVER && opts?.coverTrialWatermark
+      ? ` ${TRIAL_READ_WATERMARK_IMAGE_PROMPT_INSTRUCTION}`
+      : "";
+  const finalPrompt = `${pPrompt}${qualitySuffix}${trialTail}`;
 
   console.log(`[Fly Image Engine] 啟動生圖 -> 模式: ${mode}`);
 

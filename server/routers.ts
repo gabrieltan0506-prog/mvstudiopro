@@ -2825,48 +2825,139 @@ ${JSON.stringify(platformEvidence, null, 2)}
         context: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        // Proxy to Vercel /api/google?op=nanoImage — all Vertex env vars live on Vercel, not Fly
-        // Single image only (numberOfImages: 1) to avoid rate limit
-        const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
-        const aspectRatio = input.format === "图文" ? "3:4" : "16:9";
-        const styleHint = input.format === "图文"
-          ? "high-quality social media graphic for Xiaohongshu, elegant minimalist aesthetic, warm pastel tones, no text overlays"
-          : "professional short video thumbnail for Douyin/Bilibili, dynamic and engaging, high contrast, cinematic";
-        const imagePrompt = `Professional social media cover image: ${input.topicHook}. ${styleHint}. Clean composition, visually striking, no watermarks, no text overlays.`;
-
-        // Read Vercel token from env — set VERCEL_ACCESS_TOKEN on Fly.io
-        const SAFE_TOKEN = String(process.env.VERCEL_ACCESS_TOKEN || process.env.VERCEL_TOKEN || "").trim();
-
-        try {
-          const res = await fetch(
-            `${vercelBaseUrl}/api/google?op=nanoImage&tier=flash&model=gemini-3.1-flash-image-preview&imageSize=1K&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=1&guidanceScale=4.0`,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${SAFE_TOKEN}`
-              },
-              body: JSON.stringify({
-                prompt: imagePrompt,
-                tier: "flash",
-                model: "gemini-3.1-flash-image-preview",
-                imageSize: "1K",
-                aspectRatio,
-                numberOfImages: 1,
-                guidanceScale: 4.0,
-              }),
-              signal: AbortSignal.timeout(PLATFORM_LLM_TIMEOUT_MS),
-            }
-          );
-          const json: any = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(`Vercel nanoImage error ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-          const imageUrl = String(json?.imageUrl || (Array.isArray(json?.imageUrls) ? json.imageUrls[0] : "") || "").trim();
-          if (!imageUrl) throw new Error(`generateTopicImage: no imageUrl in Vercel response. raw: ${JSON.stringify(json).slice(0, 300)}`);
-          return { success: true, imageUrl };
-        } catch (error) {
-          console.warn("[generateTopicImage] error:", error instanceof Error ? error.message : String(error));
-          throw new Error(`generateTopicImage failed: ${error instanceof Error ? error.message : String(error)}`);
+        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
+        const mode = input.format === "图文" ? "GRAPHIC" : "STORYBOARD";
+        const title = String(input.topicHook || "").trim().slice(0, 80);
+        const ctx = String(input.context || "").trim();
+        const copywriting = ctx ? `${input.topicHook}\n${ctx}` : input.topicHook;
+        const imageUrl = await generateImageGpt2WithImagenFallback({
+          title: title || "Content",
+          copywriting,
+          mode,
+          isTrial: false,
+        });
+        if (!imageUrl) {
+          throw new Error("generateTopicImage failed: gpt-image-2 与 Imagen 兜底均未返回图片");
         }
+        return { success: true, imageUrl };
+      }),
+
+    /** 平台页：一键为全部选题生图。短视频分镜 5 点/张，图文配图 6 点/张；主路径 gpt-image-2，Imagen Ultra 兜底。 */
+    generateAllPlatformTopicImages: protectedProcedure
+      .input(
+        z.object({
+          /** 可選：審計/日誌關聯（若無平台 Job 可省略）；不以此前端欄位做扣費權限判斷 */
+          jobId: z.string().max(128).optional(),
+          /** 整批統一計價與生圖 mode：video=短影音分鏡 5點/張，graphic=圖文配圖 6點/張 */
+          platformType: z.enum(["video", "graphic"]),
+          scenes: z
+            .array(
+              z
+                .object({
+                  id: z.string().min(1),
+                  title: z.string().min(1),
+                  text: z.string().max(8000).optional(),
+                  copywriting: z.string().max(8000).optional(),
+                })
+                .refine(
+                  (s) => String(s.text ?? s.copywriting ?? "").trim().length > 0,
+                  { message: "必須提供 text 或 copywriting" },
+                ),
+            )
+            .min(1)
+            .max(24),
+        }),
+      )
+      .mutation(async ({ input, ctx }) => {
+        const userId = ctx.user.id;
+        const isAdminUser = ctx.user.role === "admin" || ctx.user.role === "supervisor";
+
+        const isVideo = input.platformType === "video";
+        const costPerImage = isVideo ? 5 : 6;
+        const totalCost = input.scenes.length * costPerImage;
+
+        if (!isAdminUser) {
+          const creditsInfo = await getCredits(userId);
+          if (creditsInfo.totalAvailable < totalCost) {
+            throw new TRPCError({
+              code: "PAYMENT_REQUIRED",
+              message: `Credits 不足，一键生成需要 ${totalCost} 点（当前可用：${creditsInfo.totalAvailable}）`,
+            });
+          }
+          await deductCreditsAmount(
+            userId,
+            totalCost,
+            "platformTopicImages",
+            `批量生成分鏡/配圖（${input.scenes.length} 张 · 共 ${totalCost} 点）`,
+          );
+        }
+
+        if (input.jobId) {
+          console.log(
+            `[mvAnalysis.generateAllPlatformTopicImages] jobId=${input.jobId} scenes=${input.scenes.length} platformType=${input.platformType} userId=${userId}`,
+          );
+        }
+
+        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
+        const mode = isVideo ? "STORYBOARD" : "GRAPHIC";
+        const results: { id: string; url: string | null }[] = [];
+        for (const s of input.scenes) {
+          const body = String(s.text ?? s.copywriting ?? "").trim();
+          const url = await generateImageGpt2WithImagenFallback({
+            title: s.title,
+            copywriting: body,
+            mode,
+            isTrial: false,
+          });
+          results.push({ id: s.id, url });
+        }
+        return { success: true as const, results, totalCost: isAdminUser ? 0 : totalCost };
+      }),
+
+    /**
+     * GodView 研报完成后：按章节一键生成「战略扉页」竖版海报（STRATEGIC / gpt-image-2 + Imagen 兜底）。
+     * 不扣积分；水印严格跟随该任务的 `strategicImagesTrialWatermark`（首购尝鲜），不信任客户端传参绕过。
+     */
+    generateGodViewChapterPosters: protectedProcedure
+      .input(z.object({
+        jobId: z.string().min(1),
+        chapters: z.array(z.object({
+          id: z.string().min(1).max(128),
+          title: z.string().min(1).max(220),
+          context: z.string().max(2500).optional(),
+        })).min(1).max(24),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const { readJob } = await import("./services/deepResearchService");
+        const job = await readJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND", message: "任务不存在" });
+        if (job.userId !== String(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN" });
+        const allowed = new Set(["completed", "awaiting_review"]);
+        if (!allowed.has(job.status)) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "研报未完成，无法生成扉页" });
+        }
+        const md = String(job.reportMarkdown || "").trim();
+        if (md.length < 40) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "报告正文不可用" });
+        }
+        const isTrial = !!job.strategicImagesTrialWatermark;
+        const { generateImageGpt2WithImagenFallback } = await import("./services/proxyImageService");
+        const results: { id: string; title: string; url: string | null }[] = [];
+        for (const ch of input.chapters) {
+          const ctxText = String(ch.context || "").trim() || ch.title;
+          const url = await generateImageGpt2WithImagenFallback({
+            title: ch.title,
+            copywriting: ctxText,
+            mode: "STRATEGIC",
+            isTrial,
+          });
+          results.push({ id: ch.id, title: ch.title, url });
+        }
+        const okCount = results.filter((r) => r.url).length;
+        if (okCount === 0) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "扉页生成失败（生图服务不可用）" });
+        }
+        return { ok: true as const, totalCost: 0 as const, results, isTrial };
       }),
 
     getPlatformDashboard: publicProcedure
@@ -6134,6 +6225,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
               supplementaryText: input.supplementaryText,
               supplementaryFiles: input.supplementaryFiles,
               ipProfile: input.ipProfile,
+              strategicImagesTrialWatermark: !!input.isFirstTime,
             },
           );
           jobId = result.jobId;
@@ -6211,6 +6303,8 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           planInteractionId: job.planInteractionId || null,
           interactionId: job.interactionId || null,
           creditsUsed: typeof job.creditsUsed === "number" ? job.creditsUsed : null,
+          /** 首购尝鲜：与 deepResearch 内嵌配图 / 封面一致的试读水印策略 */
+          strategicImagesTrialWatermark: !!(job as { strategicImagesTrialWatermark?: boolean }).strategicImagesTrialWatermark,
           // 真信号：心跳 / 更新时间，让前端展示真实推演进度
           updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
           lastHeartbeatAt: (job as any).lastHeartbeatAt || null,

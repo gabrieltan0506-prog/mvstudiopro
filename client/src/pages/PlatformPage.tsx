@@ -333,73 +333,28 @@ function cleanUserCopy(value: string, fallback = "") {
   return softened.trim() || fallback;
 }
 
-function TopicImageGenerator({
-  title,
-  hook,
-  format,
-  supervisorAccess,
-  executionDetails,
-}: {
+function cardImageKind(format: string): "storyboard" | "graphic" {
+  const f = String(format || "").trim();
+  if (f.includes("图文")) return "graphic";
+  return "storyboard";
+}
+
+function buildPlatformSceneText(item: {
   title: string;
   hook: string;
-  format: "图文" | "短视频";
-  supervisorAccess: boolean;
-  executionDetails?: any;
-}) {
-  const isTrial = useIsTrialUser();
-  const [imageUrl, setImageUrl] = useState("");
-  const generateMutation = trpc.mvAnalysis.generateTopicImage.useMutation({
-    onSuccess: (res) => { setImageUrl(res.imageUrl); },
-    onError: (err) => toast.error(err.message || "生成失败，请重试"),
-  });
-
-
-  const handleGenerateImage = () => {
-    let promptText = title + " " + hook;
-    if (executionDetails) {
-      const env = renderSafeText(executionDetails.environmentAndWardrobe);
-      const light = renderSafeText(executionDetails.lightingAndCamera);
-      if (env || light) {
-        promptText = `场景与服装：${env}，灯光与镜头：${light}。主题：${title} ${hook}`;
-      }
+  copywriting: string;
+  executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string };
+}): string {
+  let promptText = `${item.title} ${item.hook}\n${item.copywriting}`;
+  const ex = item.executionDetails;
+  if (ex) {
+    const env = renderSafeText(ex.environmentAndWardrobe);
+    const light = renderSafeText(ex.lightingAndCamera);
+    if (env || light) {
+      promptText = `场景与服装：${env}，灯光与镜头：${light}。\n主题：${item.title}\n${item.hook}\n${item.copywriting}`;
     }
-    generateMutation.mutate({ topicHook: promptText, format });
-  };
-
-  return (
-    <div className="mt-4 border-t border-white/10 pt-4">
-      {!imageUrl ? (
-        <button
-          type="button"
-          disabled={generateMutation.isPending}
-          onClick={handleGenerateImage}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 py-3 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-50"
-        >
-          {generateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin text-[#ffdd44]" /> : <Palette className="h-4 w-4 text-[#ffdd44]" />}
-          {generateMutation.isPending ? "正在绘制高质感参考图..." : `🎨 生成视觉参考图 ${supervisorAccess ? "" : "(扣除 3 积分)"}`}
-        </button>
-      ) : (
-        <div className="rounded-2xl border border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
-          <div className="mb-2 flex items-center justify-between px-2 pt-2 text-[11px] font-semibold text-[#b7add8]">
-            <span>参考视觉风格</span>
-            <button onClick={() => { setImageUrl(""); }} className="hover:text-white">重置</button>
-          </div>
-
-          <TrialWatermarkImage src={imageUrl} isTrial={isTrial} className="w-full rounded-xl" />
-
-          <div className="px-2 pb-2">
-            <ImageUpscaleBar
-              imageUrl={imageUrl}
-              baseCreditKey="forgeImage"
-              className="mt-2"
-              onUpscaled={(url) => setImageUrl(url)}
-            />
-          </div>
-        </div>
-      )}
-
-    </div>
-  );
+  }
+  return promptText;
 }
 
 export default function PlatformPage() {
@@ -427,6 +382,10 @@ export default function PlatformPage() {
   const [platformContent, setPlatformContent] = useState<{ contentBlueprints: PlatformDashboard["contentBlueprints"]; monetizationLanes: PlatformDashboard["monetizationLanes"] } | null>(null);
   const [contentDebug, setContentDebug] = useState<Record<string, unknown> | null>(null);
   const [isContentLoading, setIsContentLoading] = useState(false);
+  const isTrial = useIsTrialUser();
+  const [platformImageMap, setPlatformImageMap] = useState<Record<string, string>>({});
+  /** 整批生圖計價與引擎 mode：與後端 `platformType` 對齊 */
+  const [platformBatchType, setPlatformBatchType] = useState<"video" | "graphic">("video");
 
   const growthSnapshotQuery = trpc.mvAnalysis.getGrowthSnapshot.useQuery(
     {
@@ -490,6 +449,21 @@ export default function PlatformPage() {
     onError: (error) => {
       toast.error(error.message || "平台追问失败");
     },
+  });
+
+  const generateAllPlatformImagesMutation = trpc.mvAnalysis.generateAllPlatformTopicImages.useMutation({
+    onSuccess: (res) => {
+      setPlatformImageMap((prev) => {
+        const next = { ...prev };
+        for (const r of res.results) {
+          if (r.url) next[r.id] = r.url;
+        }
+        return next;
+      });
+      const ok = res.results.filter((r) => r.url).length;
+      toast.success(`已生成 ${ok}/${res.results.length} 张配图${res.totalCost ? `（消耗 ${res.totalCost} 点）` : ""}`);
+    },
+    onError: (err) => toast.error(err.message || "批量生图失败"),
   });
 
   // ── Async Job Queue mutations ──────────────────────────────────────────────
@@ -1055,6 +1029,22 @@ export default function PlatformPage() {
       format: recommendedPlatforms[index]?.topicIdeas?.[0] ? "短视频" : "图文",
     }));
   }, [isContentLoading, isDashboardLoading, platformDashboard, platformContent, recommendedPlatforms, topTopics]);
+
+  const contentExecutionCardsKey = useMemo(
+    () => contentExecutionCards.map((c) => c.id).join("|"),
+    [contentExecutionCards],
+  );
+
+  useEffect(() => {
+    if (!contentExecutionCards.length) return;
+    const graphicN = contentExecutionCards.filter((c) => cardImageKind(c.format) === "graphic").length;
+    setPlatformBatchType(graphicN > contentExecutionCards.length / 2 ? "graphic" : "video");
+  }, [contentExecutionCardsKey]);
+
+  const platformBulkImageEstimate = useMemo(
+    () => contentExecutionCards.length * (platformBatchType === "video" ? 5 : 6),
+    [contentExecutionCards.length, platformBatchType],
+  );
 
   const evidenceNotes = useMemo(() => {
     if (!snapshot) {
@@ -1981,95 +1971,204 @@ export default function PlatformPage() {
 
             <div className="grid gap-4">
               <div className={shellCardClasses("p-6")}>
-                <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                  <Sparkles className="h-4 w-4 text-[#ff4fb8]" />
-                  选题方向与文案内容
+                <div className="mb-8 border-b border-white/10 pb-6">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="flex items-center gap-2 text-xl font-bold text-white">
+                        <Sparkles className="h-5 w-5 shrink-0 text-[#ff4fb8]" />
+                        {platformBatchType === "video" ? "高定分镜脚本画廊" : "图文笔记配图画廊"}
+                      </h3>
+                      <p className="mt-1 text-xs text-gray-500">一次性生成当前平台所有选题的视觉资产</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPlatformBatchType("video")}
+                          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                            platformBatchType === "video"
+                              ? "bg-[#49e6ff]/20 text-[#8cefff] ring-1 ring-[#49e6ff]/50"
+                              : "border border-white/15 bg-white/5 text-[#b7add8] hover:bg-white/10"
+                          }`}
+                        >
+                          短影音分镜 · 单张 5 积分
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPlatformBatchType("graphic")}
+                          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                            platformBatchType === "graphic"
+                              ? "bg-[#ff4fb8]/20 text-[#ff9fe0] ring-1 ring-[#ff4fb8]/45"
+                              : "border border-white/15 bg-white/5 text-[#b7add8] hover:bg-white/10"
+                          }`}
+                        >
+                          图文笔记 · 单张 6 积分
+                        </button>
+                      </div>
+                    </div>
+                    {contentExecutionCards.length > 0 ? (
+                      <button
+                        type="button"
+                        disabled={
+                          generateAllPlatformImagesMutation.isPending || isDashboardLoading || isContentLoading || !isAuthenticated
+                        }
+                        onClick={() => {
+                          if (!isAuthenticated) {
+                            toast.error("请先登录");
+                            return;
+                          }
+                          const scenes = contentExecutionCards.map((row) => ({
+                            id: row.id,
+                            title: row.title,
+                            text: buildPlatformSceneText({
+                              title: row.title,
+                              hook: row.hook,
+                              copywriting: row.copywriting,
+                              executionDetails: (row as { executionDetails?: { environmentAndWardrobe?: string; lightingAndCamera?: string } })
+                                .executionDetails,
+                            }),
+                          }));
+                          const discountNote = supervisorAccess
+                            ? ""
+                            : `将一次性按「${platformBatchType === "video" ? "短影音 5 点" : "图文 6 点"}」× ${scenes.length} 张扣费，共 ${platformBulkImageEstimate} 积分，是否继续？`;
+                          if (!supervisorAccess && !window.confirm(discountNote)) return;
+                          generateAllPlatformImagesMutation.mutate({
+                            jobId: analysisJobId || undefined,
+                            platformType: platformBatchType,
+                            scenes,
+                          });
+                        }}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#ff4fb8] to-[#6a5cff] px-8 py-2.5 font-bold text-white shadow-lg transition hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
+                      >
+                        {generateAllPlatformImagesMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4" />
+                        )}
+                        {generateAllPlatformImagesMutation.isPending
+                          ? "顶级渲染中..."
+                          : `一键渲染全部 (${platformBatchType === "video" ? "单张 5 点" : "单张 6 点"})`}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                {/* Fix #2: Vertical stacked rows (single-column), not side-by-side grid */}
-                <div className="mt-5 space-y-4">
+                <p className="text-[11px] leading-5 text-[#9080b8]">
+                  请先选择「短影音」或「图文」批量模式；长文案在后端会智慧截断为 500 字画面上下文，标题金字限制 35 字以防画面乱码。
+                  {supervisorAccess ? " 主理人预览通道不扣积分。" : null}
+                </p>
+                <div className="mt-5 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                   {contentExecutionCards.length === 0 && (isDashboardLoading || isContentLoading) ? (
-                    <div className="flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
+                    <div className="col-span-full flex h-32 w-full animate-pulse flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#ff4fb8]/70">
                       <Loader2 className="mb-2 h-6 w-6 animate-spin" />
                       正在生成专属选题与配套文案...
                     </div>
                   ) : contentExecutionCards.length === 0 && platformDashboard ? (
-                    <div className="flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/70">
+                    <div className="col-span-full flex h-32 w-full flex-col items-center justify-center rounded-2xl border border-white/5 bg-[rgba(255,255,255,0.02)] text-center text-[#c9c0e6]/70">
                       无对应的选题方向数据
                     </div>
                   ) : (
-                    contentExecutionCards.map((item) => (
-                      <div key={item.id} className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-5">
-                        <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          {item.format === "图文" ? <Image className="h-4 w-4 text-[#ff7fd5] shrink-0" /> : <Video className="h-4 w-4 text-[#49e6ff] shrink-0" />}
-                          <div className="text-base font-bold text-white">{item.title}</div>
+                    contentExecutionCards.map((item) => {
+                      const copyFlat = (item.copywriting || "").replace(/\s+/g, " ").trim();
+                      const digest = copyFlat.slice(0, 60);
+                      return (
+                      <div key={item.id} className="group flex flex-col rounded-2xl border border-white/10 bg-white/5 p-5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            {item.format === "图文" ? <Image className="h-4 w-4 shrink-0 text-[#ff7fd5]" /> : <Video className="h-4 w-4 shrink-0 text-[#49e6ff]" />}
+                            <div className="truncate text-lg font-bold text-white">{item.title}</div>
+                          </div>
+                          <div className="shrink-0 rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
+                            {item.format}
+                          </div>
                         </div>
-                        <div className="rounded-full border border-[#2f2558] bg-[rgba(255,255,255,0.04)] px-2 py-1 text-[11px] text-[#8cefff]">
-                          {item.format}
-                        </div>
-                      </div>
-                      <div className="mt-3 rounded-2xl border border-[#2f2558] bg-[rgba(18,13,43,0.9)] p-3 text-sm leading-7 text-[#8cefff]">
-                        {item.hook}
-                      </div>
-                      <div className="mt-3 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{renderHighlightText(item.copywriting || "")}</div>
-                      {item.production ? (
-                        <div className="mt-3 rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
-                          {item.production}
-                        </div>
-                      ) : null}
-                      {(item as any).executionDetails?.environmentAndWardrobe ? (
-                        <div className="mt-3 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">拍摄环境 &amp; 服装道具</div>
-                          <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.environmentAndWardrobe}</div>
-                        </div>
-                      ) : null}
-                      {(item as any).executionDetails?.lightingAndCamera ? (
-                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">灯光 &amp; 机位</div>
-                          <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.lightingAndCamera}</div>
-                        </div>
-                      ) : null}
-                      {Array.isArray((item as any).executionDetails?.stepByStepScript) && (item as any).executionDetails.stepByStepScript.length > 0 ? (
-                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-1">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">逐步执行脚本</div>
-                          {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
-                            <div key={si} className="text-sm leading-7 text-[#d3caef]">{step}</div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {Array.isArray((item as any).actionableSteps) && (item as any).actionableSteps.length > 0 ? (
-                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">落地三步曲</div>
-                          {(item as any).actionableSteps.map((step: string, si: number) => (
-                            <div key={si} className="flex items-start gap-2 text-sm leading-7 text-white">
-                              <span className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#3a2b6a] text-[10px] text-[#c9c0e6]">{si + 1}</span>
-                              {step}
+                        {digest ? (
+                          <div className="mt-2 line-clamp-2 text-sm text-gray-400">
+                            摘要：{digest}
+                            {copyFlat.length > 60 ? "…" : ""}
+                          </div>
+                        ) : null}
+                        <details className="mt-2 text-xs text-gray-500">
+                          <summary className="cursor-pointer transition-colors hover:text-[#ff4fb8]">查看完整腳本內容</summary>
+                          <div className="mt-2 rounded-lg bg-black/30 p-3 leading-relaxed text-[#d3caef]">
+                            {item.hook ? <div className="mb-2 border-b border-white/10 pb-2 text-sm leading-7 text-[#8cefff]">{item.hook}</div> : null}
+                            <div className="whitespace-pre-wrap">{renderHighlightText(item.copywriting || "")}</div>
+                          </div>
+                        </details>
+                        <div className="mt-4">
+                          {platformImageMap[item.id] ? (
+                            <div className="overflow-hidden rounded-xl border border-white/10 shadow-2xl">
+                              <TrialWatermarkImage src={platformImageMap[item.id]} isTrial={isTrial} className="w-full object-cover" />
+                              <div className="border-t border-white/10 bg-[rgba(14,9,32,0.88)] p-2">
+                                <ImageUpscaleBar
+                                  imageUrl={platformImageMap[item.id]}
+                                  baseCreditKey="forgeImage"
+                                  className="mt-1"
+                                  onUpscaled={(url) =>
+                                    setPlatformImageMap((prev) => ({ ...prev, [item.id]: url }))
+                                  }
+                                />
+                              </div>
                             </div>
-                          ))}
+                          ) : (
+                            <div className="flex aspect-[9/16] items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/20 text-xs text-gray-600">
+                              Awaiting Batch Render
+                            </div>
+                          )}
                         </div>
-                      ) : null}
-                      {(item as any).detailedScript ? (
-                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">详细脚本与大纲</div>
-                          <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{(item as any).detailedScript}</div>
-                        </div>
-                      ) : null}
-                      {(item as any).publishingAdvice ? (
-                        <div className="mt-2 rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
-                          <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">发布建议</div>
-                          <div className="mt-1 text-sm leading-7 text-[#d3caef]">{(item as any).publishingAdvice}</div>
-                        </div>
-                      ) : null}
-                      
-                        <TopicImageGenerator
-                          title={item.title}
-                          format={item.format as any}
-                          hook={item.hook}
-                          supervisorAccess={supervisorAccess}
-                          executionDetails={(item as any).executionDetails}
-                        />
+                        <details className="mt-4 rounded-xl border border-white/10 bg-[rgba(255,255,255,0.03)] p-3 text-left">
+                          <summary className="cursor-pointer text-xs font-semibold text-[#9ddcff]">执行细项、分镜与发布（展开）</summary>
+                          <div className="mt-3 space-y-3">
+                            {item.production ? (
+                              <div className="rounded-2xl border border-white/10 bg-[rgba(255,255,255,0.04)] p-3 text-sm leading-7 text-white">
+                                {item.production}
+                              </div>
+                            ) : null}
+                            {(item as any).executionDetails?.environmentAndWardrobe ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">拍摄环境 &amp; 服装道具</div>
+                                <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.environmentAndWardrobe}</div>
+                              </div>
+                            ) : null}
+                            {(item as any).executionDetails?.lightingAndCamera ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">灯光 &amp; 机位</div>
+                                <div className="text-sm leading-7 text-[#d3caef]">{(item as any).executionDetails.lightingAndCamera}</div>
+                              </div>
+                            ) : null}
+                            {Array.isArray((item as any).executionDetails?.stepByStepScript) && (item as any).executionDetails.stepByStepScript.length > 0 ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-1">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">逐步执行脚本</div>
+                                {(item as any).executionDetails.stepByStepScript.map((step: string, si: number) => (
+                                  <div key={si} className="text-sm leading-7 text-[#d3caef]">{step}</div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {Array.isArray((item as any).actionableSteps) && (item as any).actionableSteps.length > 0 ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3 space-y-2">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">落地三步曲</div>
+                                {(item as any).actionableSteps.map((step: string, si: number) => (
+                                  <div key={si} className="flex items-start gap-2 text-sm leading-7 text-white">
+                                    <span className="mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#3a2b6a] text-[10px] text-[#c9c0e6]">{si + 1}</span>
+                                    {step}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                            {(item as any).detailedScript ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">详细脚本与大纲</div>
+                                <div className="mt-2 text-sm leading-7 text-[#d3caef] whitespace-pre-wrap">{(item as any).detailedScript}</div>
+                              </div>
+                            ) : null}
+                            {(item as any).publishingAdvice ? (
+                              <div className="rounded-2xl border border-[#2b1f52] bg-[rgba(18,13,43,0.9)] p-3">
+                                <div className="text-[11px] uppercase tracking-[0.14em] text-[#9ddcff]">发布建议</div>
+                                <div className="mt-1 text-sm leading-7 text-[#d3caef]">{(item as any).publishingAdvice}</div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </details>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
