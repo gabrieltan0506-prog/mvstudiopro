@@ -7,6 +7,7 @@ import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
+import AgentCreditsCostCard from "@/components/AgentCreditsCostCard";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 import { AGENT_SCENARIO_CREDITS, estimateCnyFromCredits } from "@/lib/agentPricing";
 
@@ -122,6 +123,7 @@ export default function CompetitorRadarPage() {
 
         {!activeJobId && (
           <div style={{ background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.22)", borderRadius: 16, padding: "26px 28px" }}>
+            <AgentCreditsCostCard scenario="competitor_radar" />
             {/* 对标账号 */}
             <div style={{ marginBottom: 22 }}>
               <label style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#d6a861", marginBottom: 8 }}>

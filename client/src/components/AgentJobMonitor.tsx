@@ -3,6 +3,7 @@ import { Loader2, CheckCircle2, AlertCircle, Crown, Sparkles, Bug } from "lucide
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
+import { estimateCnyFromCredits } from "@/lib/agentPricing";
 
 interface AgentJobMonitorProps {
   jobId: string;
@@ -86,7 +87,7 @@ export default function AgentJobMonitor({
     if (s === "failed") {
       onFailed?.();
       if (typeof creditsUsed === "number" && creditsUsed > 0) {
-        toast.message("任务未成功完成，积分已原路退回。当前算力资源可能紧张，请稍后再试。", { duration: 6500 });
+        toast.message("任务未成功完成，已扣积分已退还至账户余额。当前算力资源可能紧张，请稍后再试。", { duration: 6500 });
       } else {
         toast.error("任务未成功完成，请稍后再试。", { duration: 5000 });
       }
@@ -155,6 +156,14 @@ export default function AgentJobMonitor({
             </button>
           )}
         </div>
+        {typeof job.creditsUsed === "number" && job.creditsUsed > 0 && (
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(245,200,100,0.95)", fontWeight: 700, lineHeight: 1.5 }}>
+            本次任务已扣除 <span style={{ color: "#f5c842" }}>{job.creditsUsed}</span> 点积分
+            <span style={{ fontWeight: 600, color: "rgba(160,140,90,0.85)" }}>
+              （参考约 ¥{estimateCnyFromCredits(job.creditsUsed)}，以账户为准）
+            </span>
+          </p>
+        )}
 
         {/* 进度文本（live backend signal） */}
         <p style={{ margin: 0, fontSize: 13, color: "rgba(245,235,210,0.85)", lineHeight: 1.7 }}>

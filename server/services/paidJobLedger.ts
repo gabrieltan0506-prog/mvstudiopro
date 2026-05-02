@@ -377,7 +377,7 @@ export async function isCancelRequested(jobId: string, taskType: PaidTaskType): 
  *   - 重复调用 / 已 settled / 已 refunded 全部 no-op
  *
  * 严令：本函数**只**调 server/credits.ts 的 refundCredits，**禁止**调用任何
- * Stripe / Alipay / 微信支付的 refund API。文案统一用「积分已返还」。
+ * Stripe / Alipay / 微信支付的 refund API。对外文案统一用「积分已退还 / 退积分」，不用「退款」指代积分。
  */
 export async function refundCreditsOnFailure(
   jobId: string,
@@ -456,7 +456,7 @@ export async function refundCreditsOnFailure(
     await refundCredits(
       userIdNum,
       hold.creditsBilled,
-      `${hold.action} · ${reason} · 积分已返还到您的账户`,
+      `${hold.action} · ${reason} · 积分已退还至您的账户`,
     );
     console.log(
       `[paidJobLedger] ↺ refunded ${hold.creditsBilled} credits taskType=${taskType} jobId=${jobId} userId=${hold.userId} reason=${reason}`,

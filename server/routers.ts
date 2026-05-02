@@ -6141,7 +6141,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           dbRecordId = result.dbRecordId;
           // fire-and-forget：异步执行，不阻塞响应
           runDeepResearchAsync(jobId).catch(async (err) => {
-            console.error("[deepResearch] 异步任务异常，尝试退款:", err?.message);
+          console.error("[deepResearch] 异步任务异常，尝试退还积分:", err?.message);
             try { await refundCredits(userId, cost, `上帝视角研报·异步失败·退回`); } catch {}
           });
         } catch (e: any) {
@@ -6185,10 +6185,10 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           message: result.alreadyCancelled
             ? noRefund
               ? "已记录取消请求，正在停止深潛引擎（按规则不退还积分）…"
-              : "已记录取消请求，正在等待 worker 停止深潛引擎并返还积分…"
+              : "已记录取消请求，正在等待 worker 停止深潛引擎并退还积分…"
             : noRefund
               ? "已发起取消，正在停止深潛引擎（按规则不退还积分，防止算力恶意消耗）"
-              : "已发起取消，正在停止深潛引擎并返还积分到您的账户…",
+              : "已发起取消，正在停止深潛引擎，积分将退还至您的账户…",
         };
       }),
 
@@ -6211,6 +6211,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           planText: job.planText || null,
           planInteractionId: job.planInteractionId || null,
           interactionId: job.interactionId || null,
+          creditsUsed: typeof job.creditsUsed === "number" ? job.creditsUsed : null,
           // 真信号：心跳 / 更新时间，让前端展示真实推演进度
           updatedAt: (job as any).updatedAt || (job as any).lastHeartbeatAt || null,
           lastHeartbeatAt: (job as any).lastHeartbeatAt || null,
@@ -6722,7 +6723,7 @@ ${input.blockText}`;
             },
           );
         } catch (e: any) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已返还到您的账户" });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "分析失败，积分已退还至您的账户" });
         }
 
         // Neon 精华快照存储
