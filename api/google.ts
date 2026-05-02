@@ -15,7 +15,7 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
  * - GEMINI_API_KEY（transcribeAudio、Imagen 4 Ultra 生图、translateForVeo）
- * - GEMINI_IMAGEN_ULTRA_MODEL（可选，默认 imagen-4.0-ultra-generate-001，须与 AI Studio 模型 ID 一致）
+ * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与本变量一致时也走 API Key 生图，便于与 AI Studio 自定义 ID 对齐）
  * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
@@ -206,12 +206,13 @@ async function sleep(ms:number){
 
 function isImagenUltraGeminiApiModel(rawModel: string): boolean {
   const m = s(rawModel).trim();
-  const resolved = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "imagen-4.0-ultra-generate-001").trim();
+  const resolved = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
+  if (resolved.length > 0 && m === resolved) return true;
+  if (m.startsWith("imagen-4.0") && m.includes("ultra")) return true;
   return (
     m === "imagen-4.0-ultra" ||
     m === "imagen-4.0-ultra-generate" ||
-    m === "imagen-4.0-ultra-generate-001" ||
-    (resolved.length > 0 && m === resolved)
+    m === "imagen-4.0-ultra-generate-001"
   );
 }
 
@@ -292,7 +293,10 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         if (!geminiApiKey) {
           return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
         }
-        const geminiImagenModel = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "imagen-4.0-ultra-generate-001").trim();
+        const geminiImagenModel = s(rawUltra).trim();
+        if (!geminiImagenModel) {
+          return res.status(400).json({ ok: false, error: "missing_model_for_imagen_ultra" });
+        }
         const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "16:9");
         const sizeU = s(b.imageSize || q.imageSize || "2K").toUpperCase();
         const numberOfImagesU = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
