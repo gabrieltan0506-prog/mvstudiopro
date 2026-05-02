@@ -7,7 +7,9 @@ import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
+import AgentInsufficientCreditsDialog from "@/components/AgentInsufficientCreditsDialog";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 const DEFAULT_PLATFORMS = ["抖音", "小红书", "B 站", "快手", "视频号", "微博"];
 
@@ -26,6 +28,9 @@ export default function PlatformIpMatrixPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
   const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
+
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
 
   useEffect(() => {
     const h = readAndClearAgentHandoff("platform_ip_matrix");
@@ -58,6 +63,14 @@ export default function PlatformIpMatrixPage() {
     if (topicDirection.trim().length < 4) {
       toast.error("请填写话题方向（≥ 4 字）");
       return;
+    }
+    const cost = AGENT_SCENARIO_CREDITS.platform_ip_matrix;
+    if (subQuery.isSuccess) {
+      const bal = subQuery.data?.credits?.balance ?? 0;
+      if (bal < cost) {
+        setInsufficientOpen(true);
+        return;
+      }
     }
     const filledAccounts = accounts.filter((a) => a.platform.trim() && a.handle.trim());
     await launchMutation.mutateAsync({
@@ -176,7 +189,7 @@ export default function PlatformIpMatrixPage() {
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint="一次性派发，约 5-10 分钟生成研究计划，审批后开始 30-60 分钟深潜"
+                hint="异步深潜 · 任务失败时按规则退还积分 · 约 5–10 分钟出计划"
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />
@@ -222,6 +235,12 @@ export default function PlatformIpMatrixPage() {
         </div>
       </div>
       <CommanderProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <AgentInsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        balance={subQuery.data?.credits?.balance ?? 0}
+        required={AGENT_SCENARIO_CREDITS.platform_ip_matrix}
+      />
     </div>
   );
 }

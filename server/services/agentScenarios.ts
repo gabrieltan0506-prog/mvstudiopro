@@ -36,6 +36,8 @@ interface CommonInput {
 
 // ── 1. 多平台 IP 矩阵（platform_ip_matrix） ────────────────────────────────
 export interface PlatformIpInput extends CommonInput {
+  /** 派发前已从用户账户扣除的积分（与 paidJobLedger 一致；失败由深潜管线幂等退还） */
+  creditsUsed: number;
   /** 待覆盖的平台账号（抖音/小红书/B站/快手/视频号 等） */
   accounts: Array<{ platform: string; handle: string; notes?: string }>;
   /** 想要做的话题方向（即 b 痛点场景） */
@@ -71,7 +73,7 @@ export async function launchPlatformIpMatrix(input: PlatformIpInput): Promise<{ 
   const { jobId } = await createDeepResearchJob(
     input.userId,
     topic,
-    0,
+    input.creditsUsed,
     "platform_ip_matrix",
     {
       supplementaryText,
@@ -85,6 +87,7 @@ export async function launchPlatformIpMatrix(input: PlatformIpInput): Promise<{ 
 
 // ── 2. 竞品/赛道雷达（competitor_radar） ───────────────────────────────────
 export interface CompetitorRadarInput extends CommonInput {
+  creditsUsed: number;
   benchmarks: Array<{ platform: string; handle: string; notes?: string }>;
   focusDimensions: string[];
   /** b 痛点场景（可选；不填则由 focusDimensions 派生） */
@@ -125,7 +128,7 @@ export async function launchCompetitorRadar(input: CompetitorRadarInput): Promis
   const { jobId } = await createDeepResearchJob(
     input.userId,
     topic,
-    0,
+    input.creditsUsed,
     "competitor_radar",
     {
       supplementaryText,

@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "wouter";
-import { CREDIT_PACKS, CREDIT_TO_CNY } from "@shared/plans";
+import { CREDIT_PACKS } from "@shared/plans";
 
 const PACK_ORDER = ["trial199", "small", "medium", "large", "mega"] as const;
 
@@ -23,7 +23,7 @@ export default function HomePricing() {
       >
         积分包定价
         <span style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.45)", marginLeft: 10 }}>
-          对外以积分加值包为准 · 参考换算 1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}
+          对外以积分加值包为准
         </span>
       </h2>
       <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 14, marginBottom: 24, maxWidth: 760 }}>

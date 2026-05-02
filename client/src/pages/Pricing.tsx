@@ -7,7 +7,6 @@ import {
   Bolt, Zap, Flame, BarChart3, Smile,
   Briefcase, Crown, Star,
 } from "lucide-react";
-import { CREDIT_TO_CNY } from "@shared/plans";
 import { nanoid } from "nanoid";
 
 type BillingInterval = "monthly" | "quarterly" | "yearly";
@@ -15,7 +14,7 @@ type PackId = "trial199" | "small" | "medium" | "large" | "mega";
 
 const PACK_ORDER: PackId[] = ["trial199", "small", "medium", "large", "mega"];
 
-// 定价基准：1 cr ≈ ¥0.65，每次完整分析约 50 cr
+// 套餐档与 shared/plans CREDIT_PACKS 对齐（标价与到账 Credits 以服务端为准）
 const PACK_META: Record<PackId, {
   credits: number; basePrice: number;
   icon: React.ReactNode; label: string;
@@ -31,7 +30,7 @@ const PACK_META: Record<PackId, {
 
 function calcPrice(packId: PackId, cycle: BillingInterval) {
   const m = PACK_META[packId];
-  if (packId === "trial199") return { price: m.basePrice, credits: m.credits, discountText: "约 ¥0.60/积分" };
+  if (packId === "trial199") return { price: m.basePrice, credits: m.credits, discountText: "含足额试用 Credits" };
   if (cycle === "quarterly") return { price: Math.round(m.basePrice * 3 * 0.9),  credits: m.credits * 3,  discountText: "季度九折" };
   if (cycle === "yearly")    return { price: Math.round(m.basePrice * 12 * 0.8), credits: m.credits * 12, discountText: "年度八折" };
   return { price: m.basePrice, credits: m.credits, discountText: "" };
@@ -78,7 +77,7 @@ export default function Pricing() {
       <div className="px-6 pt-8 pb-3">
         <h1 className="text-3xl font-extrabold text-white">Credits 加值</h1>
         <p className="text-sm text-gray-400 mt-1">
-          微信 / 支付宝扫码付款 · 约 ¥{CREDIT_TO_CNY.toFixed(2)}/积分 · 管理员 1-2 小时内审核到账
+          微信 / 支付宝扫码付款 · 管理员 1–2 小时内审核到账 · 到账额度以所选包的 Credits 为准
         </p>
       </div>
 
@@ -196,7 +195,7 @@ export default function Pricing() {
               <p className="text-xl font-bold text-white mb-1">付款确认已提交</p>
               <p className="text-gray-400 text-sm mb-1">管理员将在 1-2 小时内审核充值</p>
               <p className="text-gray-400 text-sm font-semibold">上海德智熙人工智能科技有限公司</p>
-              <p className="text-green-400 text-base font-bold mt-2">充值成功后 +{cr} Credits</p>
+              <p className="text-green-400 text-base font-bold mt-2">审核通过后 +{cr} Credits</p>
               <button
                 onClick={() => setSubmitted(false)}
                 className="mt-6 w-full bg-[#FF6B35] text-white py-3 rounded-xl font-bold text-base"

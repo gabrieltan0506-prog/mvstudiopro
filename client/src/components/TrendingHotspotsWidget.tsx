@@ -15,6 +15,7 @@ import { useLocation } from "wouter";
 import { Flame, Sparkles, Target, ExternalLink, RefreshCw, TrendingUp, Rocket } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { saveAgentHandoff, type AgentHandoffTarget, type AgentTrendHandoff } from "@/lib/agentHandoff";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 const PLATFORM_BADGE: Record<string, string> = {
   douyin: "bg-[#FF1744]/20 text-[#ff8aa3] border-[#ff1744]/40",
@@ -204,7 +205,7 @@ export function TrendingHotspotsWidget() {
                     <button
                       onClick={() => handleDispatch(item, "platform_ip_matrix")}
                       className="inline-flex items-center gap-1 rounded-lg border border-[#ffd166]/40 bg-[#ffd166]/10 px-2.5 py-1.5 text-[11px] font-medium text-[#ffd166] transition hover:bg-[#ffd166]/20"
-                      title="派发到「多平台 IP 矩阵」生成跨界爆款脚本"
+                      title={`派发到「多平台 IP 矩阵」· 确认派发时扣 ${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点`}
                     >
                       <Sparkles className="h-3 w-3" />
                       IP 矩阵
@@ -212,7 +213,7 @@ export function TrendingHotspotsWidget() {
                     <button
                       onClick={() => handleDispatch(item, "competitor_radar")}
                       className="inline-flex items-center gap-1 rounded-lg border border-[#9ddcff]/40 bg-[#9ddcff]/10 px-2.5 py-1.5 text-[11px] font-medium text-[#9ddcff] transition hover:bg-[#9ddcff]/20"
-                      title="派发到「竞品 / 赛道雷达」做高密度差异化对比"
+                      title={`派发到「竞品 / 赛道雷达」· 确认派发时扣 ${AGENT_SCENARIO_CREDITS.competitor_radar} 点`}
                     >
                       <Target className="h-3 w-3" />
                       雷达对比
