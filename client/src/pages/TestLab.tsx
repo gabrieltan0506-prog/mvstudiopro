@@ -4,7 +4,9 @@ type TabKey = "script" | "image" | "video" | "music";
 type GoogleImageModel =
   | "gemini-3.1-flash-image-preview"
   | "gemini-3-pro-image-preview"
-  | "imagen-4.0-ultra";
+  | "imagen-4.0-ultra"
+  | "imagen-4.0-ultra-generate"
+  | "imagen-4.0-ultra-generate-001";
 type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
@@ -83,6 +85,8 @@ export default function TestLab() {
 
   // Image
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
+  /** 非空则覆盖「模型」下拉的 model 字符串（方便试 AI Studio 里复制的完整 ID） */
+  const [googleImageModelOverride, setGoogleImageModelOverride] = useState("");
   const [openaiImageModel] = useState<OpenAIImageModel>("gpt-image-2");
   const [openaiSize, setOpenaiSize] = useState("1024x1024");
   const [openaiQuality, setOpenaiQuality] = useState("high");
@@ -219,7 +223,7 @@ export default function TestLab() {
       }
 
       if (imageProvider === "google") {
-        const model = googleImageModel;
+        const model = googleImageModelOverride.trim() || googleImageModel;
         const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
         const r = await fetchJsonish(
           `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
@@ -652,7 +656,8 @@ export default function TestLab() {
                 </select>
               </div>
             ) : imageProvider === "google" ? (
-              <div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div>
                 <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>模型</div>
                 <select
                   value={googleImageModel}
@@ -661,8 +666,23 @@ export default function TestLab() {
                 >
                   <option value="gemini-3.1-flash-image-preview">Nano Banana 2（gemini-3.1-flash-image-preview）</option>
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
-                  <option value="imagen-4.0-ultra">Imagen 4.0 Ultra（imagen-4.0-ultra → Vertex 展開）</option>
+                  <option value="imagen-4.0-ultra">Imagen Ultra · imagen-4.0-ultra（Gemini API Key → URL 原样）</option>
+                  <option value="imagen-4.0-ultra-generate">Imagen Ultra · imagen-4.0-ultra-generate</option>
+                  <option value="imagen-4.0-ultra-generate-001">Imagen Ultra · imagen-4.0-ultra-generate-001</option>
                 </select>
+                <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
+                  Imagen 三项会走 <code style={{ fontSize: 10 }}>generativelanguage</code> + <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>；请看 debug 里返回的 <code style={{ fontSize: 10 }}>model</code> 与 Google 错误信息对比哪个 ID 可用。
+                </p>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>自定义 model ID（可选，非空覆盖下拉）</div>
+                  <input
+                    value={googleImageModelOverride}
+                    onChange={(e) => setGoogleImageModelOverride(e.target.value)}
+                    placeholder="例如 AI Studio 复制的完整模型名"
+                    style={{ width: "100%", maxWidth: 420, padding: "8px 10px", borderRadius: 10, background: "#111", color: "white", border: "1px solid rgba(255,255,255,0.14)" }}
+                  />
+                </div>
               </div>
             ) : (
               <div>
