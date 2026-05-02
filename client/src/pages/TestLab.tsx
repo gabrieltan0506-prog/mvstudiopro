@@ -41,6 +41,102 @@ async function fetchJsonish(url: string, init?: RequestInit) {
   };
 }
 
+type HttpSnapshot = Awaited<ReturnType<typeof fetchJsonish>>;
+
+const DEBUG_RAW_TEXT_MAX = 14_000;
+const DEBUG_STRING_INLINE_MAX = 2000;
+
+function truncateRawTextForDebug(s: string): string {
+  if (s.length <= DEBUG_RAW_TEXT_MAX) return s;
+  return `${s.slice(0, DEBUG_RAW_TEXT_MAX)}\n… [truncated, total ${s.length} chars]`;
+}
+
+function redactForDebug(value: unknown, depth = 0): unknown {
+  if (depth > 14) return "[max depth]";
+  if (value == null) return value;
+  if (typeof value === "string") {
+    if (value.startsWith("data:") && value.length > 120) {
+      return `[data URL redacted, ${value.length} chars]`;
+    }
+    if (value.length > DEBUG_STRING_INLINE_MAX) {
+      return `${value.slice(0, DEBUG_STRING_INLINE_MAX)}… (${value.length} chars)`;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => redactForDebug(v, depth + 1));
+  if (typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(o)) {
+      if (k === "imageBytes" || k === "bytesBase64Encoded" || k === "b64_json") {
+        const s = o[k];
+        if (typeof s === "string" && s.length > 80) {
+          out[k] = `[base64 redacted, ${s.length} chars]`;
+          continue;
+        }
+      }
+      out[k] = redactForDebug(o[k], depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** 从常见网关 / tRPC / Google 错误 JSON 里抽取可读字段，便于一眼看到「到底哪报错」。 */
+function extractStructuredApiErrors(json: unknown): Record<string, unknown> | null {
+  if (json == null || typeof json !== "object") return null;
+  const j = json as Record<string, any>;
+  const out: Record<string, unknown> = {};
+
+  if (typeof j.error === "string") out.error = j.error;
+  if (typeof j.detail === "string") out.detail = j.detail;
+  if (typeof j.message === "string" && !out.message) out.message = j.message;
+
+  const nested = j.error;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    if (nested.message != null) out.apiNestedMessage = nested.message;
+    if (nested.code != null) out.apiNestedCode = nested.code;
+    if (nested.status != null) out.apiNestedStatus = nested.status;
+  }
+
+  if (j?.result?.data?.json?.error != null) out.trpcResultError = j.result.data.json.error;
+  if (j?.result?.data?.json?.detail != null) out.trpcResultDetail = j.result.data.json.detail;
+
+  const err0 = Array.isArray(j) ? j[0]?.error : j.error;
+  if (err0 && typeof err0 === "object") {
+    if (err0.message != null) out.trpcShapeMessage = err0.message;
+    if (err0.data?.code != null) out.trpcShapeCode = err0.data.code;
+  }
+
+  return Object.keys(out).length ? out : null;
+}
+
+function snapshotHttpForDebug(r: HttpSnapshot): Record<string, unknown> {
+  return {
+    httpOk: r.ok,
+    httpStatus: r.status,
+    url: r.url,
+    contentType: r.contentType,
+    structured: extractStructuredApiErrors(r.json),
+    json: redactForDebug(r.json),
+    rawText: truncateRawTextForDebug(r.rawText),
+  };
+}
+
+function buildClientFailureDebug(
+  err: unknown,
+  last: HttpSnapshot | undefined,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const msg = err instanceof Error ? err.message : String(err);
+  return {
+    ok: false,
+    ...extra,
+    clientThrownError: msg,
+    lastHttp: last ? snapshotHttpForDebug(last) : undefined,
+  };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -147,6 +243,7 @@ export default function TestLab() {
 
   async function uploadRefImage(file: File) {
     setUploading(true);
+    let last: HttpSnapshot | undefined;
     try {
       const dataUrl = await fileToDataUrl(file);
       const r = await fetchJsonish("/api/blob-put-image", {
@@ -154,7 +251,8 @@ export default function TestLab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dataUrl, filename: file.name || "ref.png" }),
       });
-      setDebug(r);
+      last = r;
+      setDebug({ ok: r.ok, action: "uploadRefImage", ...snapshotHttpForDebug(r) });
       const url =
         r?.json?.imageUrl ||
         r?.json?.json?.imageUrl ||
@@ -172,7 +270,7 @@ export default function TestLab() {
       setVideoTaskId("");
       setVideoUrl("");
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "uploadRefImage" }));
       throw e;
     } finally {
       setUploading(false);
@@ -183,18 +281,20 @@ export default function TestLab() {
     setScriptBusy(true);
     setScriptText("");
     setDebug({ ok: true, action: "geminiScript:start" });
+    let last: HttpSnapshot | undefined;
     try {
       const r = await fetchJsonish("/api/google?op=geminiScript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
-      setDebug(r);
+      last = r;
+      setDebug({ ok: r.ok, action: "geminiScript", ...snapshotHttpForDebug(r) });
       if (!r.ok) throw new Error("gemini_script_failed");
       const txt = getScriptText(r.json);
       setScriptText(txt || JSON.stringify(r.json, null, 2));
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "geminiScript" }));
     } finally {
       setScriptBusy(false);
     }
@@ -206,6 +306,7 @@ export default function TestLab() {
     setImageUrl("");
     setUpscaledImageUrl("");
     setDebug({ ok: true, action: "image:start" });
+    let last: HttpSnapshot | undefined;
 
     try {
       if (imageProvider === "openai") {
@@ -224,9 +325,10 @@ export default function TestLab() {
             }
           }),
         });
-        setDebug(r);
+        last = r;
+        setDebug({ ok: r.ok, action: "image:openai", ...snapshotHttpForDebug(r) });
         const result = r?.json?.result?.data?.json ?? r?.json;
-        if (!r.ok || result?.ok === false) throw new Error(result?.error || "openai_image_failed");
+        if (!r.ok || result?.ok === false) throw new Error(String(result?.error || "openai_image_failed"));
         const firstUrl = String(result?.imageUrl || "").trim();
         if (!firstUrl) throw new Error("openai_image_missing_url");
         setImageUrl(firstUrl);
@@ -255,7 +357,8 @@ export default function TestLab() {
             }),
           }
         );
-        setDebug(r);
+        last = r;
+        setDebug({ ok: r.ok, action: "image:google", ...snapshotHttpForDebug(r) });
         if (!r.ok) throw new Error("google_image_failed");
 
         const dataUrl = String(r?.json?.imageUrl || "").trim();
@@ -280,7 +383,8 @@ export default function TestLab() {
           aspect_ratio: aspectRatio,
         }),
       });
-      setDebug(create);
+      last = create;
+      setDebug({ ok: create.ok, action: "image:kling:create", ...snapshotHttpForDebug(create) });
 
       const taskId = String(create?.json?.taskId || "");
       if (!create.ok || !taskId) throw new Error("kling_image_create_failed");
@@ -289,7 +393,8 @@ export default function TestLab() {
 
       for (let i = 0; i < 90 && !stopRef.current; i++) {
         const poll = await fetchJsonish(`/api/kling-image?taskId=${encodeURIComponent(taskId)}`);
-        setDebug(poll);
+        last = poll;
+        setDebug({ ok: poll.ok, action: "image:kling:poll", attempt: i + 1, taskId, ...snapshotHttpForDebug(poll) });
 
         const status = String(poll?.json?.task_status || "");
         const url = String(poll?.json?.imageUrl || "");
@@ -306,7 +411,7 @@ export default function TestLab() {
 
       throw new Error("kling_image_timeout");
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "image" }));
     } finally {
       setImageBusy(false);
     }
@@ -315,11 +420,11 @@ export default function TestLab() {
   /** 串行連打三次 nanoImage，比對哪個 model ID 可用；結果寫入 debug，第一張成功圖會顯示在預覽。 */
   async function runImagenUltraTripleSmoke() {
     if (imageProvider !== "google") {
-      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: "请先切换到 Google 引擎" });
+      setDebug(buildClientFailureDebug(new Error("请先切换到 Google 引擎"), undefined, { action: "imagenUltraTripleSmoke" }));
       return;
     }
     if (!prompt.trim()) {
-      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: "请填写 prompt" });
+      setDebug(buildClientFailureDebug(new Error("请填写 prompt"), undefined, { action: "imagenUltraTripleSmoke" }));
       return;
     }
 
@@ -330,6 +435,7 @@ export default function TestLab() {
     setDebug({ ok: true, action: "imagenUltraTripleSmoke:start", models: [...IMAGEN_ULTRA_SMOKE_MODELS] });
 
     const rows: any[] = [];
+    let smokeWinnerUrl: string | undefined;
 
     try {
       for (const model of IMAGEN_ULTRA_SMOKE_MODELS) {
@@ -357,39 +463,44 @@ export default function TestLab() {
         const dataUrl = String(r?.json?.imageUrl || "").trim();
         const multi = Array.isArray(r?.json?.imageUrls) ? r.json.imageUrls : [];
         const firstUrl = dataUrl || String(multi[0] || "").trim();
+        if (r.ok && firstUrl && !smokeWinnerUrl) smokeWinnerUrl = firstUrl;
+        const errStructured = extractStructuredApiErrors(r.json);
         const errMsg =
           (r?.json?.error && String(r.json.error)) ||
           (typeof r?.json?.message === "string" ? r.json.message : "") ||
+          (errStructured && JSON.stringify(errStructured)) ||
           r.rawText.slice(0, 400);
 
         rows.push({
           model,
-          httpOk: r.ok,
-          status: r.status,
           hasImage: Boolean(firstUrl),
-          imageUrl: firstUrl || null,
+          imageHint: firstUrl
+            ? firstUrl.startsWith("data:")
+              ? `[data URL ${firstUrl.length} chars]`
+              : firstUrl.slice(0, 120) + (firstUrl.length > 120 ? "…" : "")
+            : null,
           errorSnippet: r.ok && firstUrl ? null : errMsg,
-          response: r,
+          http: snapshotHttpForDebug(r),
         });
       }
 
-      const firstOkUrl = rows.find((x) => x.hasImage && x.httpOk)?.imageUrl;
-      if (firstOkUrl) setImageUrl(String(firstOkUrl));
+      if (smokeWinnerUrl) setImageUrl(smokeWinnerUrl);
 
       setDebug({
         ok: true,
         action: "imagenUltraTripleSmoke:done",
         summary: rows.map((x) => ({
           model: x.model,
-          httpOk: x.httpOk,
-          status: x.status,
+          httpStatus: x.http?.httpStatus,
+          httpOk: x.http?.httpOk,
           hasImage: x.hasImage,
           errorSnippet: x.errorSnippet,
+          structured: x.http?.structured,
         })),
         rows,
       });
     } catch (e: any) {
-      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: e?.message || String(e), partial: rows });
+      setDebug(buildClientFailureDebug(e, undefined, { action: "imagenUltraTripleSmoke", partialRows: rows }));
     } finally {
       setImageBusy(false);
     }
@@ -400,6 +511,7 @@ export default function TestLab() {
     setVideoTaskId("");
     setVideoUrl("");
     setDebug({ ok: true, action: "video:start" });
+    let last: HttpSnapshot | undefined;
 
     try {
       const inputImage = imageUrl || refImageUrl;
@@ -419,7 +531,8 @@ export default function TestLab() {
             resolution: veoResolution,
           }),
         });
-        setDebug(create);
+        last = create;
+        setDebug({ ok: create.ok, action: "video:veo:create", ...snapshotHttpForDebug(create) });
 
         const taskId = String(create?.json?.taskId || "");
         if (!create.ok || !taskId) throw new Error("veo_create_failed");
@@ -430,7 +543,8 @@ export default function TestLab() {
           const poll = await fetchJsonish(
             `/api/google?op=veoTask&provider=${encodeURIComponent(provider)}&taskId=${encodeURIComponent(taskId)}`
           );
-          setDebug(poll);
+          last = poll;
+          setDebug({ ok: poll.ok, action: "video:veo:poll", attempt: i + 1, taskId, ...snapshotHttpForDebug(poll) });
 
           const status = String(poll?.json?.status || "");
           const url = String(poll?.json?.videoUrl || "");
@@ -458,7 +572,8 @@ export default function TestLab() {
           model_name: "kling-v2-6",
         }),
       });
-      setDebug(create);
+      last = create;
+      setDebug({ ok: create.ok, action: "video:kling:create", ...snapshotHttpForDebug(create) });
 
       const taskId = String(create?.json?.taskId || create?.json?.task_id || "");
       if (!create.ok || !taskId) throw new Error("kling_video_create_failed");
@@ -467,7 +582,8 @@ export default function TestLab() {
 
       for (let i = 0; i < 120 && !stopRef.current; i++) {
         const poll = await fetchJsonish(`/api/jobs?op=klingTask&taskId=${encodeURIComponent(taskId)}`);
-        setDebug(poll);
+        last = poll;
+        setDebug({ ok: poll.ok, action: "video:kling:poll", attempt: i + 1, taskId, ...snapshotHttpForDebug(poll) });
 
         const status =
           String(poll?.json?.taskStatus || poll?.json?.raw?.data?.task_status || "");
@@ -484,7 +600,7 @@ export default function TestLab() {
 
       throw new Error("kling_video_timeout");
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "video" }));
     } finally {
       setVideoBusy(false);
     }
@@ -493,13 +609,14 @@ export default function TestLab() {
   async function runUpscale() {
     const inputImage = imageUrl || refImageUrl;
     if (!inputImage) {
-      setDebug({ ok: false, error: "missing_image_for_upscale" });
+      setDebug(buildClientFailureDebug(new Error("missing_image_for_upscale"), undefined, { action: "upscale" }));
       return;
     }
 
     setUpscaleBusy(true);
     setUpscaledImageUrl("");
     setDebug({ ok: true, action: "upscale:start" });
+    let last: HttpSnapshot | undefined;
 
     try {
       const r = await fetchJsonish("/api/google?op=upscaleImage", {
@@ -512,7 +629,8 @@ export default function TestLab() {
           outputMimeType: "image/png",
         }),
       });
-      setDebug(r);
+      last = r;
+      setDebug({ ok: r.ok, action: "upscale", ...snapshotHttpForDebug(r) });
       if (!r.ok) throw new Error("google_upscale_failed");
 
       const dataUrl = String(r?.json?.imageUrl || "").trim();
@@ -523,7 +641,7 @@ export default function TestLab() {
       }
       setUpscaledImageUrl(firstUrl);
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "upscale" }));
     } finally {
       setUpscaleBusy(false);
     }
@@ -532,12 +650,13 @@ export default function TestLab() {
   async function runEditImage() {
     const srcImage = upscaledImageUrl || imageUrl;
     if (!srcImage || !editPrompt.trim()) {
-      setDebug({ ok: false, error: "missing_image_or_prompt" });
+      setDebug(buildClientFailureDebug(new Error("missing_image_or_prompt"), undefined, { action: "edit" }));
       return;
     }
     setEditBusy(true);
     setEditedImageUrl("");
     setDebug({ ok: true, action: "edit:start" });
+    let last: HttpSnapshot | undefined;
     try {
       const r = await fetchJsonish("/api/trpc/openaiImage.edit", {
         method: "POST",
@@ -552,14 +671,15 @@ export default function TestLab() {
           }
         }),
       });
-      setDebug(r);
+      last = r;
+      setDebug({ ok: r.ok, action: "edit", ...snapshotHttpForDebug(r) });
       const result = r?.json?.result?.data?.json ?? r?.json;
-      if (!r.ok || result?.ok === false) throw new Error(result?.error || "edit_failed");
+      if (!r.ok || result?.ok === false) throw new Error(String(result?.error || "edit_failed"));
       const url = String(result?.imageUrl || "").trim();
       if (!url) throw new Error("edit_missing_url");
       setEditedImageUrl(url);
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "edit" }));
     } finally {
       setEditBusy(false);
     }
@@ -571,6 +691,7 @@ export default function TestLab() {
     setMusicClips([]);
     setSelectedClipId("");
     setDebug({ ok: true, action: "music:start" });
+    let last: HttpSnapshot | undefined;
 
     try {
       const createOp = musicProvider === "suno" ? "aimusicSunoCreate" : "aimusicUdioCreate";
@@ -581,7 +702,8 @@ export default function TestLab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
-      setDebug(create);
+      last = create;
+      setDebug({ ok: create.ok, action: "music:create", provider: musicProvider, ...snapshotHttpForDebug(create) });
 
       const taskId = getMusicTaskId(create.json);
       if (!create.ok || !taskId) throw new Error("music_create_failed");
@@ -590,7 +712,8 @@ export default function TestLab() {
 
       for (let i = 0; i < 120 && !stopRef.current; i++) {
         const poll = await fetchJsonish(`/api/jobs?op=${taskOp}&taskId=${encodeURIComponent(taskId)}`);
-        setDebug(poll);
+        last = poll;
+        setDebug({ ok: poll.ok, action: "music:poll", attempt: i + 1, taskId, provider: musicProvider, ...snapshotHttpForDebug(poll) });
 
         const clips = getMusicClips(poll.json);
         if (clips.length) {
@@ -608,7 +731,7 @@ export default function TestLab() {
 
       throw new Error("music_timeout");
     } catch (e: any) {
-      setDebug({ ok: false, error: e?.message || String(e) });
+      setDebug(buildClientFailureDebug(e, last, { action: "music", provider: musicProvider }));
     } finally {
       setMusicBusy(false);
     }
@@ -1230,7 +1353,13 @@ export default function TestLab() {
           <div style={{ fontWeight: 900, marginBottom: 8, color: debug?.ok === false ? "#ff6b6b" : "#6bffb8" }}>
             {debug?.ok === false ? "❌ 调试输出（失败）" : "✅ 调试输出"}
           </div>
-          <pre style={{ fontSize: 11, color: "#ccc", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 400 }}>
+          {debug?.ok === false && debug?.clientThrownError ? (
+            <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 10, color: "#ffb4b4" }}>
+              客户端抛出：<code>{String(debug.clientThrownError)}</code>
+              {debug?.lastHttp ? " · 详见下方 <code>lastHttp</code>（HTTP 状态、structured、json、rawText）" : null}
+            </div>
+          ) : null}
+          <pre style={{ fontSize: 11, color: "#ccc", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "min(70vh, 720px)", overflowY: "auto" }}>
             {JSON.stringify(debug, null, 2)}
           </pre>
         </div>
