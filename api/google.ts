@@ -1,13 +1,15 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "node:crypto";
 import { put } from "@vercel/blob";
+import { generateImagenVertexPredict } from "../server/services/imageGenerationService";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
 
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=nanoImage       （Gemini / Nano Banana：`generateContent`；Imagen 4.x：`predict` + API Key）
+ * - **Imagen 4.0 Ultra（Consumer / `generativelanguage…:predict` + GEMINI_API_KEY）實測：目前僅 `imagen-4.0-ultra-generate-001` 穩定成功**；其餘 Ultra 字串多數失敗，見 Test Lab smoke。
+ * - op=nanoImage       （Gemini / Nano Banana：`generateContent`；Imagen 4.x Consumer：`predict` + API Key；**可選 `imagenBackend=vertex` 走 Vertex 企業節點 `…:predict` + SA，預設 region `us-central1`，無模型降級**）
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
@@ -16,7 +18,8 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
  * - GEMINI_API_KEY（transcribeAudio、凡 model 以 imagen-4.0 开头的生图走 `…:predict`、translateForVeo）
  * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与该变量完全一致时也走 API Key 生图，用于不以 imagen-4.0 前缀命名的别名 ID）
- * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填）
+ * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填；Vertex Imagen 亦用，可另備 GOOGLE_CLOUD_PROJECT）
+ * - VERTEX_IMAGEN_LOCATION（可选，默认 us-central1）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
  * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
@@ -291,10 +294,54 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
-    // ---------------- nanoImage · Imagen 4.x — Gemini API Key + `…:predict`（instances/parameters，与 AI Studio REST 一致；非 generateContent）
+    // ---------------- nanoImage：Vertex Imagen（企業 `:predict`，無降級） / Consumer Imagen 4（GEMINI_API_KEY + `…:predict`，與 AI Studio REST 一致） / 下文 Nano Banana（Vertex generateContent） ----------------
     if (op === "nanoImage") {
+      const imagenBackend = s(q.imagenBackend || b.imagenBackend).toLowerCase();
       const promptUltra = s(b.prompt || q.prompt || "");
       const rawUltra = s(b.model || q.model || "");
+
+      if (imagenBackend === "vertex" && promptUltra) {
+        if (!isImagen4GeminiApiModel(rawUltra)) {
+          return res.status(400).json({
+            ok: false,
+            error: "vertex_imagen_requires_imagen_4_model",
+            detail: "imagenBackend=vertex 仅支持 imagen-4.0* 模型 ID（与 Consumer Ultra 命名对齐）。",
+            model: rawUltra,
+          });
+        }
+        const aspectRatioVx = s(b.aspectRatio || q.aspectRatio || "1:1");
+        const sizeVx = s(b.imageSize || q.imageSize || "1K").toUpperCase();
+        const numberOfImagesVx = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
+        const seedVx = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
+        const personGenerationVx = mapPersonGenerationForGeminiImagenPredict(s(b.personGeneration || q.personGeneration || ""));
+        const guidanceScaleVx = Number(b.guidanceScale || q.guidanceScale || NaN);
+
+        const rVx = await generateImagenVertexPredict({
+          prompt: promptUltra,
+          model: s(rawUltra).trim(),
+          aspectRatio: aspectRatioVx,
+          imageSize: sizeVx,
+          numberOfImages: numberOfImagesVx,
+          seed: Number.isFinite(seedVx as number) ? (seedVx as number) : undefined,
+          personGeneration: personGenerationVx,
+          guidanceScale: Number.isFinite(guidanceScaleVx) ? guidanceScaleVx : undefined,
+        });
+
+        return res.status(rVx.ok ? 200 : 502).json({
+          ok: rVx.ok,
+          status: rVx.status,
+          model: rVx.model,
+          url: rVx.url,
+          raw: rVx.raw,
+          imageUrl: rVx.imageUrl,
+          imageUrls: rVx.imageUrls,
+          imageCount: rVx.imageCount,
+          imagenBackend: "vertex",
+          vertexLocation: rVx.location,
+          ...(rVx.error ? { error: rVx.error } : {}),
+        });
+      }
+
       if (promptUltra && isImagen4GeminiApiModel(rawUltra)) {
         const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
         if (!geminiApiKey) {
@@ -314,7 +361,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           sampleCount: numberOfImagesU,
           aspectRatio: aspectRatioU,
         };
-        if (sizeU === "1K" || sizeU === "2K") parameters.imageSize = sizeU;
+        if (sizeU === "1K" || sizeU === "2K" || sizeU === "4K") parameters.imageSize = sizeU;
         if (Number.isFinite(seedU as number)) parameters.seed = Math.floor(seedU as number);
         if (personGenerationU) parameters.personGeneration = personGenerationU;
 

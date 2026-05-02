@@ -14,7 +14,7 @@ type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
 
-/** Test Lab：一次連測三個 Ultra 後端可接受的 model 字串（忽略「自定义 model ID」覆寫）。 */
+/** Test Lab：一次連測多個 Ultra model 字串（Consumer + GEMINI_API_KEY）。實測目前僅 imagen-4.0-ultra-generate-001 穩定；Vertex 企業版請用「Vertex us-central1」勾選單測，不參與本串行 smoke。 */
 const IMAGEN_ULTRA_SMOKE_MODELS: readonly GoogleImageModel[] = [
   "imagen-4.0-ultra",
   "imagen-4.0-ultra-generate",
@@ -45,10 +45,22 @@ type HttpSnapshot = Awaited<ReturnType<typeof fetchJsonish>>;
 
 const DEBUG_RAW_TEXT_MAX = 14_000;
 const DEBUG_STRING_INLINE_MAX = 2000;
+/** 超過此字數的 HTTP 原文字節串不再放入 debug（避免成功生圖時 predict 回傳數 MB base64 塞滿面板） */
+const DEBUG_RAW_WIRE_OMIT_MIN = 24_000;
 
 function truncateRawTextForDebug(s: string): string {
   if (s.length <= DEBUG_RAW_TEXT_MAX) return s;
   return `${s.slice(0, DEBUG_RAW_TEXT_MAX)}\n… [truncated, total ${s.length} chars]`;
+}
+
+function stringifyRedactedJsonPreview(parsed: unknown): string {
+  try {
+    const str = JSON.stringify(redactForDebug(parsed), null, 2);
+    if (str.length <= DEBUG_RAW_TEXT_MAX) return str;
+    return `${str.slice(0, DEBUG_RAW_TEXT_MAX)}\n… [truncated, redacted JSON total ${str.length} chars]`;
+  } catch {
+    return "[could not stringify redacted json]";
+  }
 }
 
 function redactForDebug(value: unknown, depth = 0): unknown {
@@ -112,6 +124,8 @@ function extractStructuredApiErrors(json: unknown): Record<string, unknown> | nu
 }
 
 function snapshotHttpForDebug(r: HttpSnapshot): Record<string, unknown> {
+  const wireLen = r.rawText?.length ?? 0;
+  const omitWire = wireLen >= DEBUG_RAW_WIRE_OMIT_MIN;
   return {
     httpOk: r.ok,
     httpStatus: r.status,
@@ -119,7 +133,12 @@ function snapshotHttpForDebug(r: HttpSnapshot): Record<string, unknown> {
     contentType: r.contentType,
     structured: extractStructuredApiErrors(r.json),
     json: redactForDebug(r.json),
-    rawText: truncateRawTextForDebug(r.rawText),
+    /** 已脱敏、可讀性優先（成功生圖时请看这个，不要依赖 wire rawText） */
+    redactedBodyText: stringifyRedactedJsonPreview(r.json),
+    rawWireCharacterCount: wireLen,
+    rawText: omitWire
+      ? `[omitted wire body ${wireLen} chars — 使用上方 redactedBodyText / json，避免巨量 base64]`
+      : truncateRawTextForDebug(r.rawText),
   };
 }
 
@@ -194,6 +213,8 @@ export default function TestLab() {
   const [googleImageModel, setGoogleImageModel] = useState<GoogleImageModel>("gemini-3.1-flash-image-preview");
   /** 非空则覆盖「模型」下拉的 model 字符串（方便试 AI Studio 里复制的完整 ID） */
   const [googleImageModelOverride, setGoogleImageModelOverride] = useState("");
+  /** true：Imagen 4.x 走 Vertex 企業節點 `imagenBackend=vertex`（us-central1 `:predict`），不作模型降級 */
+  const [googleImagenVertexBackend, setGoogleImagenVertexBackend] = useState(false);
   const [openaiImageModel] = useState<OpenAIImageModel>("gpt-image-2");
   const [openaiSize, setOpenaiSize] = useState("1024x1024");
   const [openaiQuality, setOpenaiQuality] = useState("high");
@@ -338,8 +359,11 @@ export default function TestLab() {
       if (imageProvider === "google") {
         const model = googleImageModelOverride.trim() || googleImageModel;
         const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
+        const useVertexImagen =
+          googleImagenVertexBackend && model.toLowerCase().startsWith("imagen-4.0");
+        const vertexQs = useVertexImagen ? `&imagenBackend=${encodeURIComponent("vertex")}` : "";
         const r = await fetchJsonish(
-          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}${vertexQs}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -354,11 +378,12 @@ export default function TestLab() {
               guidanceScale: Number(guidanceScale || 4),
               seed: imageSeed ? Number(imageSeed) : undefined,
               personGeneration,
+              ...(useVertexImagen ? { imagenBackend: "vertex" as const } : {}),
             }),
           }
         );
         last = r;
-        setDebug({ ok: r.ok, action: "image:google", ...snapshotHttpForDebug(r) });
+        setDebug({ ok: r.ok, action: useVertexImagen ? "image:google:vertex" : "image:google", ...snapshotHttpForDebug(r) });
         if (!r.ok) throw new Error("google_image_failed");
 
         const dataUrl = String(r?.json?.imageUrl || "").trim();
@@ -885,13 +910,27 @@ export default function TestLab() {
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
                   <option value="imagen-4.0-ultra">Imagen Ultra · imagen-4.0-ultra（Gemini API Key → URL 原样）</option>
                   <option value="imagen-4.0-ultra-generate">Imagen Ultra · imagen-4.0-ultra-generate</option>
-                  <option value="imagen-4.0-ultra-generate-001">Imagen Ultra · imagen-4.0-ultra-generate-001</option>
+                  <option value="imagen-4.0-ultra-generate-001">Imagen Ultra · imagen-4.0-ultra-generate-001（Consumer 實測可用）</option>
                   <option value="imagen-4.0-ultra-preview">Imagen Ultra · imagen-4.0-ultra-preview</option>
                   <option value="imagen-4.0-ultra-generate-preview">Imagen Ultra · imagen-4.0-ultra-generate-preview</option>
                 </select>
                 <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
-                  Imagen 三项会走 <code style={{ fontSize: 10 }}>generativelanguage</code> + <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>；请看 debug 里返回的 <code style={{ fontSize: 10 }}>model</code> 与 Google 错误信息对比哪个 ID 可用。
+                  Consumer 路徑（<code style={{ fontSize: 10 }}>generativelanguage</code> + <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>）實測：目前僅{" "}
+                  <code style={{ fontSize: 10 }}>imagen-4.0-ultra-generate-001</code> 穩定成功，其餘 Ultra 後綴多數失敗。企業 Vertex 請勾選下方「Vertex us-central1」單獨測（無模型降級）。
                 </p>
+                {(googleImageModelOverride.trim() || googleImageModel).toLowerCase().startsWith("imagen-4.0") ? (
+                  <label style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={googleImagenVertexBackend}
+                      onChange={(e) => setGoogleImagenVertexBackend(e.target.checked)}
+                    />
+                    <span>
+                      Vertex 企業版（<code style={{ fontSize: 10 }}>imagenBackend=vertex</code>，預設 <code style={{ fontSize: 10 }}>us-central1</code>，SA +{" "}
+                      <code style={{ fontSize: 10 }}>VERTEX_PROJECT_ID</code>）
+                    </span>
+                  </label>
+                ) : null}
                 </div>
                 <div>
                   <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>自定义 model ID（可选，非空覆盖下拉）</div>
@@ -926,6 +965,7 @@ export default function TestLab() {
               >
                 <option value="1k">1K</option>
                 <option value="2k">2K</option>
+                <option value="4k">4K</option>
               </select>
             </div>
 
@@ -1357,6 +1397,11 @@ export default function TestLab() {
             <div style={{ fontSize: 12, opacity: 0.9, marginBottom: 10, color: "#ffb4b4" }}>
               客户端抛出：<code>{String(debug.clientThrownError)}</code>
               {debug?.lastHttp ? " · 详见下方 <code>lastHttp</code>（HTTP 状态、structured、json、rawText）" : null}
+            </div>
+          ) : null}
+          {typeof debug?.rawWireCharacterCount === "number" && debug.rawWireCharacterCount >= DEBUG_RAW_WIRE_OMIT_MIN ? (
+            <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 8 }}>
+              响应体约 <code>{debug.rawWireCharacterCount}</code> 字符，已省略原始 <code>rawText</code> wire；结构请看 <code>redactedBodyText</code> / <code>json</code>（base64 已脱敏）。
             </div>
           ) : null}
           <pre style={{ fontSize: 11, color: "#ccc", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "min(70vh, 720px)", overflowY: "auto" }}>
