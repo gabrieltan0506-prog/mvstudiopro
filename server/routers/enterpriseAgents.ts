@@ -183,10 +183,11 @@ export const enterpriseAgentsRouter = router({
           .from(enterpriseAgentKnowledgeBase)
           .where(eq(enterpriseAgentKnowledgeBase.agentId, agent.id))
           .orderBy(desc(enterpriseAgentKnowledgeBase.uploadedAt)),
-        d
+          d
           .select({
             id: enterpriseAgentSessions.id,
             userQuery: enterpriseAgentSessions.userQuery,
+            responseMarkdown: enterpriseAgentSessions.responseMarkdown,
             durationMs: enterpriseAgentSessions.durationMs,
             promptTokens: enterpriseAgentSessions.promptTokens,
             outputTokens: enterpriseAgentSessions.outputTokens,

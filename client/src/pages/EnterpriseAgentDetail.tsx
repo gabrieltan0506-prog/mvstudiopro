@@ -202,6 +202,12 @@ function DetailInner({ agentId, onBack }: { agentId: number; onBack: () => void 
           </div>
           {isActive && (
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 shrink-0">
+              <Link href={`/enterprise-agent/${agent.id}/play`}>
+                <a className="min-h-[44px] inline-flex items-center justify-center rounded-md border border-amber-500/40 bg-amber-500/10 px-4 text-amber-200 hover:bg-amber-500/20 text-sm font-medium transition-colors">
+                  <Play className="h-4 w-4 mr-1.5" />
+                  Playground 模拟
+                </a>
+              </Link>
               <ExpireButton agentId={agent.id} onSuccess={refetchAll} />
               <SoftDeleteButton agentId={agent.id} onSuccess={refetchAll} />
             </div>
