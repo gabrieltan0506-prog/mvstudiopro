@@ -294,7 +294,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
-    // ---------------- nanoImage：Vertex Imagen（企業 `:predict`，無降級） / Consumer Imagen 4（GEMINI_API_KEY） / 下文 Nano Banana（Vertex generateContent） ----------------
+    // ---------------- nanoImage：Vertex Imagen（企業 `:predict`，無降級） / Consumer Imagen 4（GEMINI_API_KEY + `…:predict`，與 AI Studio REST 一致） / 下文 Nano Banana（Vertex generateContent） ----------------
     if (op === "nanoImage") {
       const imagenBackend = s(q.imagenBackend || b.imagenBackend).toLowerCase();
       const promptUltra = s(b.prompt || q.prompt || "");
