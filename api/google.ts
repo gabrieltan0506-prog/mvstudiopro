@@ -7,14 +7,14 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
- * - op=nanoImage       (Nano Banana image)
+ * - op=nanoImage       （Gemini / Nano Banana：`generateContent`；Imagen 4.x：`predict` + API Key）
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
  *
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
- * - GEMINI_API_KEY（transcribeAudio、凡 model 以 imagen-4.0 开头的生图、translateForVeo）
+ * - GEMINI_API_KEY（transcribeAudio、凡 model 以 imagen-4.0 开头的生图走 `…:predict`、translateForVeo）
  * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与该变量完全一致时也走 API Key 生图，用于不以 imagen-4.0 前缀命名的别名 ID）
  * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
@@ -204,7 +204,17 @@ async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 所有以 imagen-4.0 开头的 model 均走 generativelanguage + GEMINI_API_KEY（不经 Vertex nanoImage）。 */
+/** Test Lab / 网关传入的 personGeneration 枚举 → Gemini Imagen `predict` parameters 小写值 */
+function mapPersonGenerationForGeminiImagenPredict(raw: string): string | undefined {
+  const u = s(raw).trim().toUpperCase().replace(/-/g, "_");
+  if (!u) return undefined;
+  if (u === "ALLOW_ADULT") return "allow_adult";
+  if (u === "ALLOW_ALL") return "allow_all";
+  if (u === "DONT_ALLOW") return "dont_allow";
+  return undefined;
+}
+
+/** 所有以 imagen-4.0 开头的 model 均走 generativelanguage + GEMINI_API_KEY + `:predict`（不经 Vertex nanoImage）。 */
 function isImagen4GeminiApiModel(rawModel: string): boolean {
   const m = s(rawModel).trim();
   if (!m) return false;
@@ -281,7 +291,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
-    // ---------------- nanoImage · Imagen 4.x（model 以 imagen-4.0 开头）— Generative Language API + GEMINI_API_KEY（不经 Vertex）
+    // ---------------- nanoImage · Imagen 4.x — Gemini API Key + `…:predict`（instances/parameters，与 AI Studio REST 一致；非 generateContent）
     if (op === "nanoImage") {
       const promptUltra = s(b.prompt || q.prompt || "");
       const rawUltra = s(b.model || q.model || "");
@@ -294,25 +304,27 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         if (!geminiImagenModel) {
           return res.status(400).json({ ok: false, error: "missing_model_for_imagen_4" });
         }
-        const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "16:9");
-        const sizeU = s(b.imageSize || q.imageSize || "2K").toUpperCase();
+        const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "1:1");
+        const sizeU = s(b.imageSize || q.imageSize || "1K").toUpperCase();
         const numberOfImagesU = Math.max(1, Math.min(4, Number(b.numberOfImages || q.numberOfImages || 1) || 1));
         const seedU = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
-        const personGenerationU = s(b.personGeneration || q.personGeneration || "");
+        const personGenerationU = mapPersonGenerationForGeminiImagenPredict(s(b.personGeneration || q.personGeneration || ""));
 
-        const imageConfigU: Record<string, unknown> = { aspectRatio: aspectRatioU };
-        if (numberOfImagesU > 1) imageConfigU.numberOfImages = numberOfImagesU;
-        if (Number.isFinite(seedU as number)) imageConfigU.seed = Math.floor(seedU as number);
-        if (personGenerationU) imageConfigU.personGeneration = personGenerationU;
-        if (sizeU === "1K" || sizeU === "2K" || sizeU === "4K") imageConfigU.imageSize = sizeU;
+        const parameters: Record<string, unknown> = {
+          sampleCount: numberOfImagesU,
+          aspectRatio: aspectRatioU,
+        };
+        if (sizeU === "1K" || sizeU === "2K") parameters.imageSize = sizeU;
+        if (Number.isFinite(seedU as number)) parameters.seed = Math.floor(seedU as number);
+        if (personGenerationU) parameters.personGeneration = personGenerationU;
 
-        const glUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiImagenModel}:generateContent?key=${geminiApiKey}`;
+        const glUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiImagenModel}:predict?key=${geminiApiKey}`;
         const requestInitUltra: RequestInit = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: promptUltra }] }],
-            generationConfig: { responseModalities: ["IMAGE"], imageConfig: imageConfigU },
+            instances: [{ prompt: promptUltra }],
+            parameters,
           }),
           signal: AbortSignal.timeout(120_000),
         };
@@ -382,7 +394,7 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         return res.status(400).json({
           ok: false,
           error: "imagen_4_vertex_conflict",
-          detail: "凡 imagen-4.0* 生图仅走 generativelanguage + GEMINI_API_KEY；请检查 op=nanoImage 前置分支是否生效或是否缺少 prompt。",
+          detail: "凡 imagen-4.0* 生图仅走 generativelanguage `…:predict` + GEMINI_API_KEY；请检查前置分支是否生效或是否缺少 prompt。",
         });
       }
 
