@@ -6454,6 +6454,20 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const database = await db.getDb();
         if (!database) return { reports: [] };
 
+        // 历史 awaiting_review 一进作品库即视为已出刊（与 saveDraft / 主流程一致）
+        try {
+          await database
+            .update(userCreations)
+            .set({ status: "completed", updatedAt: new Date() })
+            .where(and(
+              eq(userCreations.userId, ctx.user.id),
+              eq(userCreations.type, "deep_research_report"),
+              eq(userCreations.status, "awaiting_review"),
+            ));
+        } catch {
+          /* non-fatal */
+        }
+
         // 软删除（status="deleted"）的作品不出现在「我的作品库」列表里。
         // 物理记录保留以便客服恢复 / 事故稽核。
         const rows = await database
@@ -6500,7 +6514,7 @@ ${input.lyrics || "（纯音乐，无歌词）"}
       }
     }),
 
-    /** 主编审核：保存草稿（不出刊，状态保持 awaiting_review） */
+    /** 保存修订：产品与主流程一致，直接已出刊（不再写入 awaiting_review） */
     saveDraft: protectedProcedure
       .input(z.object({
         recordId: z.number().int().positive(),
@@ -6519,17 +6533,18 @@ ${input.lyrics || "（纯音乐，无歌词）"}
           .limit(1);
         const row = rows[0];
         if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "战报不存在或无权限" });
-        if (row.status === "completed") {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "已出刊的战报不可再编辑草稿（请联系管理员撤回）" });
-        }
 
         let meta: any = {};
         try { meta = JSON.parse(row.metadata || "{}"); } catch {}
         meta.draftMarkdown = input.markdown;
+        meta.reportMarkdown = input.markdown;
         meta.draftEditedAt = new Date().toISOString();
+        if (!meta.progress || String(meta.progress).includes("待") || String(meta.progress).includes("审核")) {
+          meta.progress = "✅ 战略研报已生成，请进入「战略作品快照库」查阅";
+        }
 
         await database.update(userCreations).set({
-          status: "awaiting_review",
+          status: "completed",
           metadata: JSON.stringify(meta),
           updatedAt: new Date(),
         }).where(eq(userCreations.id, input.recordId));
