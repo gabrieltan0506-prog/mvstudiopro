@@ -55,7 +55,7 @@ import {
   getOrCreateBalance,
   refundCredits,
 } from "./credits";
-import { CREDIT_COSTS, CREDIT_TO_CNY } from "./plans";
+import { CREDIT_COSTS } from "./plans";
 import {
   IMAGE_UPSCALE_BASE_CREDIT_KEYS,
   imageUpscaleTotalCredits,
@@ -4889,7 +4889,6 @@ ${sceneSummary}
   admin: router({
     stats: adminProcedure.query(async () => getAdminStats()),
     creditBreakdown: adminProcedure.query(() => ({
-      creditToCny: CREDIT_TO_CNY,
       packages: getProductPackageDisplayRows(),
     })),
     paymentList: adminProcedure.input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional()).query(async ({ input }) => getPaymentSubmissions(input?.status)),

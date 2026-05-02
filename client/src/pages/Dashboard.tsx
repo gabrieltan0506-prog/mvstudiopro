@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useLocation, Link } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Loader2, ArrowLeft, Plus, Gift, Lock, Coins } from "lucide-react";
-import { CREDIT_TO_CNY } from "@shared/plans";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { toast } from "sonner";
 
@@ -207,7 +206,7 @@ export default function LayoutDashboard() {
           </div>
           <p className="text-xs text-gray-500 leading-relaxed">
             对外定价以<strong className="text-gray-400">积分加值包</strong>为准；使用功能时按实际规则从余额扣减。当前余额{" "}
-            <span className="text-[#FF6B35] font-bold">{credits.balance}</span> Credits；参考约 1 Credit ≈ ¥{CREDIT_TO_CNY.toFixed(2)}。充值见{" "}
+            <span className="text-[#FF6B35] font-bold">{credits.balance}</span> Credits。充值见{" "}
             <Link href="/pricing" className="text-[#FF6B35] underline-offset-2 hover:underline">
               定价页
             </Link>
