@@ -82,7 +82,7 @@ const VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL = "imagen-4.0-ultra-generate-001";
 /** 戰略智庫 Vertex 失敗時兜底：Nano Banana 2 · 2K（仍走 Vercel `nanoImage` → Vertex `generateContent`，非 Consumer key） */
 const STRATEGIC_FALLBACK_FLASH_MODEL = "gemini-3.1-flash-image-preview" as const;
 
-/** 智庫出圖：在英文 prompt 末追加質感關鍵字，利於 Ultra / Pro 級渲染與色彩 */
+/** 智庫出圖（封面 / 場景 / flash 兜底）：在英文 prompt 末追加質感關鍵字（產品指定：hyper-realistic、8k resolution details 等），利於 Ultra / Pro 級渲染。 */
 const STRATEGIC_IMAGE_QUALITY_HINT =
   "hyper-realistic, cinematic color grade, 8k resolution details, premium editorial finish.";
 
@@ -102,6 +102,8 @@ function withStrategicImageQualityHint(prompt: string): string {
  * **異步優先（必守）**：4K / 大圖仍可能慢；封面 **必須**維持 `coverPromise` **fire-and-forget** + DB `thumbnailUrl` 晚點回填，
  * **禁止**在「研報 completed」主路徑上 `await` 整條封面鏈（避免 tRPC / HTTP 超時與雙重阻塞）。場景配圖已串行但獨立於「結案」狀態。
  *
+ * **質感尾綴（產品口徑）**：封面與場景 / flash 兜底送閘道前一律經 `withStrategicImageQualityHint`（`hyper-realistic`、`8k resolution details` 等），與固定英文 prompt + `appendMagazineCoverDateInstructions` 疊加，不取代前半段構圖描述。
+ *
  * 本端 fetch 閘道用 **120s** `AbortSignal.timeout`；若閘道回 GCS URL，下方會再轉存穩定 Blob 供入庫。
  */
 async function fetchStrategicVertexImageViaGateway(opts: {
@@ -110,10 +112,13 @@ async function fetchStrategicVertexImageViaGateway(opts: {
   aspectRatio: ImageAspectRatio;
   kind: "cover_pro_4k" | "scene_imagen_2k" | "flash_2k";
   timeoutMs?: number;
+  /** 預設 true；僅除錯時可傳 false 以省略質感尾綴。 */
+  appendStrategicImageQualityHint?: boolean;
 }): Promise<string> {
   const base = opts.vercelBaseUrl.replace(/\/$/, "");
   const timeoutMs = opts.timeoutMs ?? 120_000;
-  const promptForModel = withStrategicImageQualityHint(opts.prompt);
+  const useHint = opts.appendStrategicImageQualityHint !== false;
+  const promptForModel = useHint ? withStrategicImageQualityHint(opts.prompt) : String(opts.prompt || "").trim();
   let q: URLSearchParams;
   let body: Record<string, unknown>;
 
