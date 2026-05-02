@@ -1,12 +1,14 @@
 /**
  * Vertex AI 企業版 Imagen 生圖（`aiplatform…:predict`）。
+
  *
  * **與 AI Studio / Consumer（`generativelanguage…:predict?key=`）的差異**（Payload 可共用 `instances` + `parameters`）：
  * - **認證**：Vertex **不**使用 `GEMINI_API_KEY`；須 **IAM → 短效 OAuth2 Bearer**（`GOOGLE_APPLICATION_CREDENTIALS_JSON` 或 `GOOGLE_APPLICATION_CREDENTIALS` 服務帳號），見 `server/utils/vertex.ts`。
  * - **端點**：`https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:predict`（**非** `generativelanguage.googleapis.com`）。
  * - **專案 / 區域**：`VERTEX_PROJECT_ID` 或 `GOOGLE_CLOUD_PROJECT`，以及 `VERTEX_IMAGEN_LOCATION`（預設 `us-central1`）。
  *
- * 套件：`@google-cloud/vertexai` 主要面向 Gemini；此處 Imagen 與 `vertexImage.ts` 一致採 **REST `fetch` + Bearer**，避免誤用 `generateContent` 請求體。
+ * 套件：`@google-cloud/vertexai` 主要面向 Gemini；Imagen 4 在 Vertex 上為 **predict** 端點。此模組與 `vertexImage.ts` 一致採 **REST `fetch` + Bearer**，避免誤用 Gemini 專用的 `generateContent` 請求體。
+
  *
  * 測試策略：**不作 Ultra → Standard 自動降級**；失敗即回傳錯誤，便於對照企業節點與 IAM。
  */

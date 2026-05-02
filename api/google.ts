@@ -9,7 +9,7 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
  * - **Imagen 4.0 Ultra（Consumer / `generativelanguage…:predict` + GEMINI_API_KEY）實測：目前僅 `imagen-4.0-ultra-generate-001` 穩定成功**；其餘 Ultra 字串多數失敗，見 Test Lab smoke。
- * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。）
+ * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② Gemini / Nano Banana：`generateContent`；③ **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。）
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
