@@ -1141,12 +1141,37 @@ export async function readJob(jobId: string): Promise<DeepResearchJob | null> {
   }
 }
 
+/** 付费深潜失败时对用户的统一口径（真实原因写入 errorDetail / 日志） */
+const USER_FACING_DEEP_RESEARCH_PAID_REFUND =
+  "当前算力资源紧张或服务暂时不可用，请稍后再试。您的积分已原路退回。";
+const USER_FACING_DEEP_RESEARCH_FREE_FAIL =
+  "当前算力资源紧张或服务暂时不可用，请稍后再试。";
+
+function resolveUserFacingFailureError(
+  job: DeepResearchJob,
+  reason: string,
+  refundReason: PaidJobRefundReason,
+): string {
+  if (refundReason === "user_cancelled_no_refund") return reason;
+  const paid = typeof job.creditsUsed === "number" && job.creditsUsed > 0;
+  if (refundReason === "user_cancelled" && paid) {
+    return "您已取消任务，您的积分已原路退回。";
+  }
+  if (refundReason === "deploy_killed" && paid) {
+    return "服务正在部署维护，任务已中断，您的积分已原路退回。请稍后再试。";
+  }
+  if (paid) return USER_FACING_DEEP_RESEARCH_PAID_REFUND;
+  return USER_FACING_DEEP_RESEARCH_FREE_FAIL;
+}
+
 /** 把任务标记为彻底失败，并退还积分 + 同步 DB。
  *  detail：可选的结构化错误详情（DeepResearchApiError.toDetailString()），
  *  会写入 job.errorDetail 供 Supervisor Debug 与「查看详细原因」UI 展示。
  *
  *  ⚠️ 退积分**只**走 paidJobLedger.refundCreditsOnFailure（幂等 + 仅写积分账本）。
  *  禁止任何形式的现金退款 / 支付网关调用。文案统一「积分已返还到您的账户」。
+ *
+ *  user-facing：`job.error` 使用温和表述（算力紧张等）；`reason` 参数的技术说明会并入 errorDetail。
  */
 async function failJobAndRefund(
   job: DeepResearchJob,
@@ -1155,14 +1180,21 @@ async function failJobAndRefund(
   detail?: string,
   refundReason: PaidJobRefundReason = "task_failed",
 ) {
+  const userFacingError = resolveUserFacingFailureError(job, reason, refundReason);
+  let mergedDetail = detail;
+  if (refundReason !== "user_cancelled_no_refund" && reason?.trim()) {
+    const tech = `技术摘要：${reason}`;
+    mergedDetail = mergedDetail?.trim() ? `${mergedDetail.trim()}\n\n---\n\n${tech}` : tech;
+  }
+
   const file = path.join(REPORT_DIR, `${job.jobId}.json`);
   const failedJob: DeepResearchJob = {
     ...job,
     status: "failed",
-    error: reason,
+    error: userFacingError,
     progress: progressMsg,
     completedAt: new Date().toISOString(),
-    errorDetail: detail ?? job.errorDetail,
+    errorDetail: mergedDetail ?? job.errorDetail,
   };
   try { await fs.writeFile(file, JSON.stringify(failedJob, null, 2)); } catch {}
   if (job.dbRecordId) {
@@ -1174,7 +1206,7 @@ async function failJobAndRefund(
       job.jobId,
       "deepResearch",
       refundReason,
-      `${reason}${detail ? ` · ${detail.slice(0, 200)}` : ""}`,
+      `${userFacingError}${mergedDetail ? ` · ${mergedDetail.slice(0, 200)}` : ""}`,
     );
     // ── 兼容老任务（PR 部署前已在跑、没有 ledger hold 文件）：回退到直接积分接口 ──
     //   只有当 ledger 说 hold 缺失，且 job 自身记录了正数 creditsUsed 时才走这条路。

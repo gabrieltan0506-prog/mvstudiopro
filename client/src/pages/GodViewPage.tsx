@@ -199,7 +199,10 @@ export default function GodViewPage() {
     }
     if (s === "failed") {
       setPhase("failed");
-      setErrorMsg(jobDoneQuery.data?.error || "研报生成失败，积分已返还到您的账户");
+      setErrorMsg(
+        jobDoneQuery.data?.error ||
+          "当前算力资源紧张或服务暂时不可用，请稍后再试。您的积分已原路退回。",
+      );
     }
   }, [jobDoneQuery.data?.status]);
 

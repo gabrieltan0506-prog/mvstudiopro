@@ -29,6 +29,10 @@ export const GODVIEW_PRICING = {
  * Agent 深潜场景：与半月刊共用同一套 Deep Research Max 管線（plan→审批→execute），
  * 单次外部算力成本同量级；定价略低于标准半月刊 800 点，作为垂直 SKU。
  * 1 点 ≈ 0.7 CNY → 720 点 ≈ 504 CNY/次
+ *
+ * 粗算边际（仅 Google Deep Research + 生图等变量成本，不含人工/固定开支）：
+ * API 区间常引用约 $5–15 USD/次 · 按 7.2 汇率 ≈ 36–108 CNY → 720 点营收约 504 CNY 时，
+ * 毛利率随单次 API 支出在约 79%–93% 之间（实际以账单为准）。
  */
 export const AGENT_SCENARIO_PRICING = {
   platform_ip_matrix: 720,
