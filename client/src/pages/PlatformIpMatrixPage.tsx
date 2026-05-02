@@ -8,6 +8,7 @@ import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
+import { AGENT_SCENARIO_CREDITS, estimateCnyFromCredits } from "@/lib/agentPricing";
 
 const DEFAULT_PLATFORMS = ["抖音", "小红书", "B 站", "快手", "视频号", "微博"];
 
@@ -57,6 +58,11 @@ export default function PlatformIpMatrixPage() {
   const handleSubmit = async ({ text, files }: { text: string; files: UploadedAgentFile[] }) => {
     if (topicDirection.trim().length < 4) {
       toast.error("请填写话题方向（≥ 4 字）");
+      return;
+    }
+    const cost = AGENT_SCENARIO_CREDITS.platform_ip_matrix;
+    const rmb = estimateCnyFromCredits(cost);
+    if (!window.confirm(`派发「多平台 IP 矩阵」将先扣除 ${cost} 点积分（约合 ${rmb} 元，以账户为准），确定继续？`)) {
       return;
     }
     const filledAccounts = accounts.filter((a) => a.platform.trim() && a.handle.trim());
@@ -172,11 +178,11 @@ export default function PlatformIpMatrixPage() {
               </label>
               <AgentInputPanel
                 placeholder="例：本月重点要主推「黄金比例美学 × 心血管健康」混剪短片，希望偏知识科普风..."
-                submitLabel="派发任务"
+                submitLabel={`派发任务（${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点）`}
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint="一次性派发，约 5-10 分钟生成研究计划，审批后开始 30-60 分钟深潜"
+                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点（≈¥${estimateCnyFromCredits(AGENT_SCENARIO_CREDITS.platform_ip_matrix)}）· 失败自动退还 · 约 5-10 分钟出计划`}
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />

@@ -8,6 +8,7 @@ import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
+import { AGENT_SCENARIO_CREDITS, estimateCnyFromCredits } from "@/lib/agentPricing";
 
 const PRESET_DIMENSIONS = ["数据", "创意", "商业模式", "用户画像", "内容工业化能力", "IP 衍生品深度", "合规风险"];
 
@@ -67,6 +68,11 @@ export default function CompetitorRadarPage() {
     const filled = benchmarks.filter((b) => b.platform.trim() && b.handle.trim());
     if (filled.length === 0 && !text.trim()) {
       toast.error("请至少填一个对标账号，或在补充资料中描述");
+      return;
+    }
+    const cost = AGENT_SCENARIO_CREDITS.competitor_radar;
+    const rmb = estimateCnyFromCredits(cost);
+    if (!window.confirm(`派发「竞品 / 赛道雷达」将先扣除 ${cost} 点积分（约合 ${rmb} 元，以账户为准），确定继续？`)) {
       return;
     }
     await launchMutation.mutateAsync({
@@ -186,11 +192,11 @@ export default function CompetitorRadarPage() {
               </label>
               <AgentInputPanel
                 placeholder="例：重点关注其商业化路径，最近他们刚上线了付费课程，想看转化模型..."
-                submitLabel="派发雷达任务"
+                submitLabel={`派发雷达任务（${AGENT_SCENARIO_CREDITS.competitor_radar} 点）`}
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint="约 5-10 分钟生成研究计划，审批后 30-60 分钟交付高密度竞争分析"
+                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.competitor_radar} 点（≈¥${estimateCnyFromCredits(AGENT_SCENARIO_CREDITS.competitor_radar)}）· 失败自动退还 · 约 5-10 分钟出计划`}
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />

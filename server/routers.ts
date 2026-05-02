@@ -5850,16 +5850,41 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const { assertMaintenanceOff } = await import("./services/maintenanceMode");
         await assertMaintenanceOff("多平台 IP 矩阵");
 
-        const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
-        return launchPlatformIpMatrix({
-          userId: String(ctx.user.id),
-          text: input.topicDirection,
-          topicDirection: input.topicDirection,
-          accounts: input.accounts,
-          supplementaryText: input.supplementaryText,
-          outputFormatOverride: input.outputFormatOverride,
-          supplementaryFiles: input.supplementaryFiles,
-        });
+        const userId = ctx.user.id;
+        const { calcAgentScenarioPrice } = await import("./services/billingService");
+        const { price: cost, label: billingLabel } = calcAgentScenarioPrice("platform_ip_matrix");
+
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `${billingLabel}（${cost}点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
+        }
+
+        const billed = deductResult.source === "admin" ? 0 : cost;
+        try {
+          const { launchPlatformIpMatrix } = await import("./services/agentScenarios");
+          return await launchPlatformIpMatrix({
+            userId: String(ctx.user.id),
+            text: input.topicDirection,
+            topicDirection: input.topicDirection,
+            accounts: input.accounts,
+            supplementaryText: input.supplementaryText,
+            outputFormatOverride: input.outputFormatOverride,
+            supplementaryFiles: input.supplementaryFiles,
+            creditsUsed: billed,
+          });
+        } catch (e: any) {
+          if (billed > 0) {
+            try {
+              await refundCredits(userId, billed, `多平台IP矩阵·启动失败·退回`);
+            } catch {}
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
+        }
       }),
 
     /** 竞品/赛道雷达 */
@@ -5887,17 +5912,42 @@ ${input.lyrics || "（纯音乐，无歌词）"}
         const { assertMaintenanceOff } = await import("./services/maintenanceMode");
         await assertMaintenanceOff("竞品/赛道雷达");
 
-        const { launchCompetitorRadar } = await import("./services/agentScenarios");
-        return launchCompetitorRadar({
-          userId: String(ctx.user.id),
-          text: input.supplementaryText || "",
-          benchmarks: input.benchmarks,
-          focusDimensions: input.focusDimensions,
-          painPoint: input.painPoint,
-          outputFormatOverride: input.outputFormatOverride,
-          supplementaryText: input.supplementaryText,
-          supplementaryFiles: input.supplementaryFiles,
-        });
+        const userId = ctx.user.id;
+        const { calcAgentScenarioPrice } = await import("./services/billingService");
+        const { price: cost, label: billingLabel } = calcAgentScenarioPrice("competitor_radar");
+
+        let deductResult: Awaited<ReturnType<typeof deductCreditsAmount>>;
+        try {
+          deductResult = await deductCreditsAmount(userId, cost, "deepResearch", `${billingLabel}（${cost}点）`);
+        } catch (e: any) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: e?.message || "积分扣除失败" });
+        }
+        if (!deductResult.success) {
+          throw new TRPCError({ code: "PAYMENT_REQUIRED", message: `积分不足，需要 ${cost} 点，请充值` });
+        }
+
+        const billed = deductResult.source === "admin" ? 0 : cost;
+        try {
+          const { launchCompetitorRadar } = await import("./services/agentScenarios");
+          return await launchCompetitorRadar({
+            userId: String(ctx.user.id),
+            text: input.supplementaryText || "",
+            benchmarks: input.benchmarks,
+            focusDimensions: input.focusDimensions,
+            painPoint: input.painPoint,
+            outputFormatOverride: input.outputFormatOverride,
+            supplementaryText: input.supplementaryText,
+            supplementaryFiles: input.supplementaryFiles,
+            creditsUsed: billed,
+          });
+        } catch (e: any) {
+          if (billed > 0) {
+            try {
+              await refundCredits(userId, billed, `竞品赛道雷达·启动失败·退回`);
+            } catch {}
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message || "任务启动失败，已退回积分" });
+        }
       }),
 
     /** VIP · 列出当前运营者所有 VIP 档案 */
