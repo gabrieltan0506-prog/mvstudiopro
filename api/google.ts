@@ -14,8 +14,8 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  *
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
- * - GEMINI_API_KEY（transcribeAudio、Imagen 4 Ultra 生图、translateForVeo）
- * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与本变量一致时也走 API Key 生图，便于与 AI Studio 自定义 ID 对齐）
+ * - GEMINI_API_KEY（transcribeAudio、凡 model 以 imagen-4.0 开头的生图、translateForVeo）
+ * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与该变量完全一致时也走 API Key 生图，用于不以 imagen-4.0 前缀命名的别名 ID）
  * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填）
  * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
@@ -204,16 +204,13 @@ async function sleep(ms:number){
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isImagenUltraGeminiApiModel(rawModel: string): boolean {
+/** 所有以 imagen-4.0 开头的 model 均走 generativelanguage + GEMINI_API_KEY（不经 Vertex nanoImage）。 */
+function isImagen4GeminiApiModel(rawModel: string): boolean {
   const m = s(rawModel).trim();
-  const resolved = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
-  if (resolved.length > 0 && m === resolved) return true;
-  if (m.startsWith("imagen-4.0") && m.includes("ultra")) return true;
-  return (
-    m === "imagen-4.0-ultra" ||
-    m === "imagen-4.0-ultra-generate" ||
-    m === "imagen-4.0-ultra-generate-001"
-  );
+  if (!m) return false;
+  const alias = s(process.env.GEMINI_IMAGEN_ULTRA_MODEL || "").trim();
+  if (alias.length > 0 && m === alias) return true;
+  return m.toLowerCase().startsWith("imagen-4.0");
 }
 
 async function fetchImageAsBase64(imageUrl:string){
@@ -284,18 +281,18 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       return res.status(200).json({ ok: true, text });
     }
 
-    // ---------------- nanoImage · Imagen 4 Ultra — Generative Language API + GEMINI_API_KEY（同 Gemma 调用域，不经 Vertex）
+    // ---------------- nanoImage · Imagen 4.x（model 以 imagen-4.0 开头）— Generative Language API + GEMINI_API_KEY（不经 Vertex）
     if (op === "nanoImage") {
       const promptUltra = s(b.prompt || q.prompt || "");
       const rawUltra = s(b.model || q.model || "");
-      if (promptUltra && isImagenUltraGeminiApiModel(rawUltra)) {
+      if (promptUltra && isImagen4GeminiApiModel(rawUltra)) {
         const geminiApiKey = s(process.env.GEMINI_API_KEY).trim();
         if (!geminiApiKey) {
           return res.status(500).json({ ok: false, error: "missing_env", detail: "GEMINI_API_KEY" });
         }
         const geminiImagenModel = s(rawUltra).trim();
         if (!geminiImagenModel) {
-          return res.status(400).json({ ok: false, error: "missing_model_for_imagen_ultra" });
+          return res.status(400).json({ ok: false, error: "missing_model_for_imagen_4" });
         }
         const aspectRatioU = s(b.aspectRatio || q.aspectRatio || "16:9");
         const sizeU = s(b.imageSize || q.imageSize || "2K").toUpperCase();
@@ -330,7 +327,6 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         return res.status(rU.ok ? 200 : 502).json({
           ok: rU.ok,
           status: rU.status,
-          provider: "gemini_api_key_imagen_ultra",
           model: geminiImagenModel,
           url: glUrl.split("?")[0],
           raw: rawU,
@@ -382,11 +378,11 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
       const rawModel = s(b.model || q.model || "");
-      if (isImagenUltraGeminiApiModel(rawModel)) {
+      if (isImagen4GeminiApiModel(rawModel)) {
         return res.status(400).json({
           ok: false,
-          error: "imagen_ultra_vertex_conflict",
-          detail: "Imagen 4 Ultra 仅走 generativelanguage + GEMINI_API_KEY；请检查 op=nanoImage 前置分支是否生效或是否缺少 prompt。",
+          error: "imagen_4_vertex_conflict",
+          detail: "凡 imagen-4.0* 生图仅走 generativelanguage + GEMINI_API_KEY；请检查 op=nanoImage 前置分支是否生效或是否缺少 prompt。",
         });
       }
 
