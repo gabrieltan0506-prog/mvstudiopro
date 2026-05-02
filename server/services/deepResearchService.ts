@@ -64,15 +64,116 @@ function appendMagazineCoverDateInstructions(promptBase: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 直连 Gemini API key 生图（generativelanguage.googleapis.com，配额 50 RPM）。
-// 端点 :generateContent + responseModalities=["IMAGE"]，与文本生成同一套机制。
-// 用途：
-//   1. 内容场景图（绕开 Vertex 配额限制 + 串行避免 429）
-//   2. 封面图主路径失败时的 fallback
-// Response 含 base64 inlineData → 上传 GCS 拿到 https URL。
+// Gemini Consumer API key 生图（generativelanguage…:generateContent?key=）。
+// 戰略智庫主流程封面 / 場景圖已改為 **僅 Vertex**（見 fetchStrategicVertexImageViaGateway）；
+// 本函式僅供少量非智庫路徑或本機實驗保留。
 // ─────────────────────────────────────────────────────────────────────────────
 type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
 type ImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
+
+/** 戰略智庫封面：Vertex Nano Banana Pro（與 `api/google` Pro 預設一致；勿改為文檔裡常見的錯誤 ID） */
+const VERTEX_STRATEGIC_COVER_IMAGE_MODEL =
+  String(process.env.VERTEX_DEEP_RESEARCH_COVER_MODEL || "gemini-3-pro-image-preview").trim() ||
+  "gemini-3-pro-image-preview";
+
+/** 戰略智庫正文配圖：Vertex Imagen Ultra（用戶指定 ID） */
+const VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL = "imagen-4.0-ultra-generate-001";
+
+/**
+ * 戰略智庫視覺統一走 Vercel `/api/google?op=nanoImage`（**Vertex IAM Bearer**），
+ * 不使用 Consumer `generativelanguage` `?key=`。
+ */
+async function fetchStrategicVertexImageViaGateway(opts: {
+  vercelBaseUrl: string;
+  prompt: string;
+  aspectRatio: ImageAspectRatio;
+  kind: "cover_pro_4k" | "scene_imagen_2k";
+  timeoutMs?: number;
+}): Promise<string> {
+  const base = opts.vercelBaseUrl.replace(/\/$/, "");
+  const timeoutMs = opts.timeoutMs ?? 120_000;
+  let q: URLSearchParams;
+  let body: Record<string, unknown>;
+
+  if (opts.kind === "cover_pro_4k") {
+    const model = VERTEX_STRATEGIC_COVER_IMAGE_MODEL;
+    q = new URLSearchParams({
+      op: "nanoImage",
+      tier: "pro",
+      model,
+      imageSize: "4K",
+      aspectRatio: opts.aspectRatio,
+      numberOfImages: "1",
+      guidanceScale: "4.0",
+      personGeneration: "ALLOW_ADULT",
+    });
+    body = {
+      prompt: opts.prompt,
+      tier: "pro",
+      model,
+      imageSize: "4K",
+      aspectRatio: opts.aspectRatio,
+      numberOfImages: 1,
+      guidanceScale: 4.0,
+      personGeneration: "ALLOW_ADULT",
+    };
+  } else {
+    const model = VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL;
+    q = new URLSearchParams({
+      op: "nanoImage",
+      imagenBackend: "vertex",
+      tier: "pro",
+      model,
+      imageSize: "2K",
+      aspectRatio: opts.aspectRatio,
+      numberOfImages: "1",
+      guidanceScale: "4.0",
+      personGeneration: "ALLOW_ADULT",
+    });
+    body = {
+      prompt: opts.prompt,
+      imagenBackend: "vertex",
+      tier: "pro",
+      model,
+      imageSize: "2K",
+      aspectRatio: opts.aspectRatio,
+      numberOfImages: 1,
+      guidanceScale: 4.0,
+      personGeneration: "ALLOW_ADULT",
+    };
+  }
+
+  const res = await fetch(`${base}/api/google?${q}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`vertex_gateway_http_${res.status}: ${errText.slice(0, 240)}`);
+  }
+  const j: Record<string, unknown> = await res.json();
+  let url = String(j?.imageUrl ?? "").trim();
+  if (!url) throw new Error(`vertex_gateway_empty_imageUrl: ${JSON.stringify(j).slice(0, 240)}`);
+
+  // Vertex 常回傳 data:base64；入庫 / 報告 Markdown 需 https（與 generateImageViaGeminiApiKey 一致）
+  if (url.startsWith("data:")) {
+    const m = url.match(/^data:([^;,]+);base64,(.+)$/);
+    if (m?.[2]) {
+      const mimeType = m[1] || "image/png";
+      const buffer = Buffer.from(m[2], "base64");
+      if (buffer.length > 0) {
+        const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+        const fileKey = `vertex-strategic/${opts.kind}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
+        const { storagePut } = await import("../storage");
+        const { url: httpsUrl } = await storagePut(fileKey, buffer, mimeType);
+        return httpsUrl;
+      }
+    }
+  }
+  return url;
+}
 
 export async function generateImageViaGeminiApiKey(opts: {
   prompt: string;
@@ -826,19 +927,15 @@ async function getDbAndSchema() {
 
 // ── on-demand 封面补生（HTML / PDF 下载触发） ──────────────────────────────
 //
-// 用户决策（2026-05-01）：
-//   主流程的 6 次串行 nano banana pro 重试是 best-effort，最坏 6 次全失败
-//   thumbnailUrl=NULL 写入。这种情况下用户在战略作品快照库点「下载 PDF / HTML」
-//   时再 on-demand 调一次 Nano Banana 2 (gemini-3.1-flash-image-preview)
-//   补生 9:16 纯封面，存 GCS 写回 DB，再继续走下载流程。
+// 用户决策（2026-05-02）：
+//   与主流程一致：**仅 Vertex**，Nano Banana Pro（`VERTEX_STRATEGIC_COVER_IMAGE_MODEL`）+
+//   **4K**、9:16；走 Vercel `/api/google?op=nanoImage`，**不**走 Consumer API Key。
 //
 // 设计要点：
-//   - 已有封面直接返回（幂等，避免重复消耗配额）
-//   - 用 flash 模型（便宜）+ 1 次重试（不要 6 次拖死下载）
-//   - **prompt 里强调让 AI 把标题画进图**，因为 htmlReportTemplate 与
-//     MyReportsPage 阅读模式（PDF 快照源）在有封面图时都不再叠 cover-title 文字框
-//   - 失败返回 undefined（不抛错），让模板走文字回退框，不阻塞下载
-//   - 写回 thumbnailUrl 是 fire-and-forget 的语义：写失败也返回 url 让本次下载用得上
+//   - 已有封面直接返回（幂等）
+//   - 最多 2 次重试，单次超时 120s（4K 可能较慢）
+//   - prompt 要求标题烤进图（模板不叠字）
+//   - 失败返回 undefined
 export async function ensureCoverForCreation(
   creationId: number,
   lighthouseTitle: string,
@@ -873,15 +970,18 @@ export async function ensureCoverForCreation(
     const prompt = appendMagazineCoverDateInstructions(promptBase);
 
     let imageUrl: string | undefined;
+    const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
       try {
-        imageUrl = await generateImageViaGeminiApiKey({
+        imageUrl = await fetchStrategicVertexImageViaGateway({
+          vercelBaseUrl,
           prompt,
           aspectRatio: "9:16",
-          model: "gemini-3.1-flash-image-preview",
+          kind: "cover_pro_4k",
+          timeoutMs: 120_000,
         });
         console.log(
-          `[ensureCoverForCreation] ✅ on-demand cover via Nano Banana 2，第 ${attempt}/2 次 creationId=${creationId}`,
+          `[ensureCoverForCreation] ✅ on-demand 封面 via Vertex Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
         );
       } catch (e: any) {
         console.warn(
@@ -2104,7 +2204,7 @@ ${job.topic}
 
     // ── 后处理：灯塔标题 + 封面图 + 场景配图 + 摘要 + 耗时 ────────────────
 
-    // 0. 自动场景配图（≥ 5 张，覆盖 4 类）— 用 nano banana 2 (gemini-3.1-flash-image-preview，省钱)
+    // 0. 自动场景配图（≥ 5 张，覆盖 4 类）— **Vertex** `imagen-4.0-ultra-generate-001` **2K**（`imagenBackend=vertex`）
     //    用户决策（2026-05-01）：报告太空泛、纯文字没温度，配图升到 5-7 张，必须覆盖：
     //      ① 应用场景  ② 目标人物 / 个人形象  ③ 产品特色  ④ 数据 / 行业生态
     //    实现：用 LLM 抽 5-7 个画面（强制 4 类全覆盖），串行生图（500ms 间隔），按章节锚点注入正文
@@ -2122,7 +2222,7 @@ ${job.topic}
           return acc;
         }, {});
         console.log(
-          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（nano banana 2）·  类别: ${JSON.stringify(catBreakdown)}`,
+          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（Vertex Imagen Ultra 2K）·  类别: ${JSON.stringify(catBreakdown)}`,
         );
       }
     } catch (e: any) {
@@ -2142,8 +2242,8 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次串行重试
-    //    双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）；单次 timeout 60s。
+    // 2. 封面图：**仅 Vertex** — Nano Banana Pro（`gemini-3-pro-image-preview` / env 覆写）9:16 **4K**，3 次串行重试；单次 120s。
+    //    （不再走 Consumer `GEMINI_API_KEY` 雙軌。）
     const coverPromptBase =
       `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
     const coverPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
@@ -2153,20 +2253,16 @@ ${job.topic}
 
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
-          const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: coverPrompt, tier: "pro", aspectRatio: "9:16" }),
-            signal: AbortSignal.timeout(60_000),
+          cover = await fetchStrategicVertexImageViaGateway({
+            vercelBaseUrl,
+            prompt: coverPrompt,
+            aspectRatio: "9:16",
+            kind: "cover_pro_4k",
+            timeoutMs: 120_000,
           });
-          if (!res.ok) {
-            const errText = await res.text().catch(() => "");
-            throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
-          }
-          const j: Record<string, unknown> = await res.json();
-          if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
-          cover = String(j.imageUrl);
-          console.log(`[deepResearch][async-cover] ✅ via Vertex (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
+          console.log(
+            `[deepResearch][async-cover] ✅ Vertex Nano Banana Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${i}/3 次 jobId=${jobId}`,
+          );
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.warn(`[deepResearch][async-cover] ⚠️ Vertex 第 ${i}/3 次失败：${msg} jobId=${jobId}`);
@@ -2174,23 +2270,8 @@ ${job.topic}
         }
       }
 
-      for (let i = 1; i <= 3 && !cover; i++) {
-        try {
-          cover = await generateImageViaGeminiApiKey({
-            prompt: coverPrompt,
-            aspectRatio: "9:16",
-            model: "gemini-3-pro-image-preview",
-          });
-          console.log(`[deepResearch][async-cover] ✅ via Gemini API key (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          console.warn(`[deepResearch][async-cover] ⚠️ Gemini API key 第 ${i}/3 次失败：${msg} jobId=${jobId}`);
-          if (i < 3) await sleep(2000);
-        }
-      }
-
       if (!cover) {
-        console.warn(`[deepResearch][async-cover] 6 次全失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
+        console.warn(`[deepResearch][async-cover] 3 次全失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
       }
       return cover;
     })();
@@ -2260,11 +2341,11 @@ ${job.topic}
     }
 
     // ── 异步封面回写：等 coverPromise resolve 后单独 UPDATE thumbnailUrl ────────
-    //    不阻塞主流程返回。最坏 6 分钟后 thumbnailUrl 才落地，前端展示时 NULL → 占位图。
+    //    不阻塞主流程返回。最坏约 3×120s 后 thumbnailUrl 才落地，前端展示时 NULL → 占位图。
     if (latest.dbRecordId) {
       const recordId = latest.dbRecordId;
       void coverPromise.then(async (resolvedCoverUrl) => {
-        if (!resolvedCoverUrl) return; // 6 次全败，保持 NULL
+        if (!resolvedCoverUrl) return; // 3 次全败，保持 NULL
         try {
           const { db, userCreations } = await getDbAndSchema();
           if (!db) return;
@@ -2378,12 +2459,12 @@ ${job.topic}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 自动场景配图（≥ 3 张） — nano banana 2 (gemini-3.1-flash-image-preview)
+// 自动场景配图 — Vertex Imagen Ultra `imagen-4.0-ultra-generate-001` · 2K
 // ─────────────────────────────────────────────────────────────────────────────
 // 设计：
 //   1. 用 LLM 解析报告 → 输出 3-5 个"应用场景 / 人物特色 / 行业生态"画面
 //   2. 每张图带 sectionAnchor（章节标题）+ caption（中文图说）+ imagePrompt（英文）
-//   3. 串行调用 nanoImage 端点（tier=flash，省钱）
+//   3. 串行调用 Vercel `imagenBackend=vertex`（**仅 Vertex IAM**，不走 Consumer API Key）
 //   4. 按 sectionAnchor 注入到对应章节段落后；3 级 fallback（精确 → 模糊 → 均分），
 //      保证场景图必嵌正文章节，**绝不**进入文末附录（用户反馈：附录陷阱破坏阅读体验）
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2551,7 +2632,7 @@ ${titleListBlock}
       "category": "scene" | "persona" | "product" | "data",
       "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字，作为图片下方的注解",
-      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），4K editorial photography style, sophisticated composition, natural lighting, magazine cover quality. 具体描述场景人物、表情、环境、光线、镜头。data 类不要画图表，要画承载数据情绪的现实画面",
+      "imagePrompt": "英文 prompt，**必须 ≤ 60 个英文单词**（防 token 超限），2K editorial photography for magazine body illustration, sophisticated composition, natural lighting, cinematic detail. 具体描述场景人物、表情、环境、光线、镜头。data 类不要画图表，要画承载数据情绪的现实画面",
       "aspectRatio": "16:9"
     }
   ]
@@ -2597,7 +2678,7 @@ ${titleListBlock}
       "category": "scene" | "persona" | "product" | "data",
       "sectionAnchor": "必须严格等于上面列表中的某一条标题文字",
       "caption": "中文图说，≤ 30 字",
-      "imagePrompt": "≤ 50 英文单词，editorial photography 4K, natural light, cinematic composition. 具体描述场景人物、环境、光线（data 类不要画图表）",
+      "imagePrompt": "≤ 50 英文单词，2K editorial photography, natural light, cinematic composition. 具体描述场景人物、环境、光线（data 类不要画图表）",
       "aspectRatio": "16:9"
     }
   ]
@@ -2642,55 +2723,28 @@ ${reportSnippet.slice(0, 8000)}`,
       (missing.length ? `，⚠ 缺类: ${missing.join("/")}` : "，✅ 4 类全覆盖"),
   );
 
-  // ── 2. 串行 + Gemini API key 直连生图（绕开 Vertex 配额，50 RPM） ──
-  // 历史问题：原本走 Vercel /api/google?op=nanoImage（Vertex 路径）+ Promise.all 三个
-  // 并发，撞配额导致 429/timeout。现在改：串行 + 用 GEMINI_API_KEY 直连
-  // generativelanguage.googleapis.com，与竞品调研里 Gemma 4 文本生成同一套机制。
-  // 每张之间间隔 500ms 给 rate limiter 缓冲。失败时 fallback Vertex 路径（双轨保底）。
+  // ── 2. 串行 + **仅 Vertex** — Imagen Ultra `imagen-4.0-ultra-generate-001` · 2K（`imagenBackend=vertex`） ──
   const generated: (SceneIllustration | null)[] = [];
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     const aspectRatio = (scene.aspectRatio || "16:9") as ImageAspectRatio;
     let imageUrl: string | undefined;
-    // Track 1（主）：Gemini API key 直连
     try {
-      imageUrl = await generateImageViaGeminiApiKey({
+      imageUrl = await fetchStrategicVertexImageViaGateway({
+        vercelBaseUrl: params.vercelBaseUrl,
         prompt: scene.imagePrompt,
         aspectRatio,
-        model: "gemini-3.1-flash-image-preview",
+        kind: "scene_imagen_2k",
+        timeoutMs: 120_000,
       });
-      console.log(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ via Gemini API key`);
-    } catch (e: any) {
-      console.warn(
-        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Gemini API key 失败：${e?.message ?? e}，fallback Vertex…`,
+      console.log(
+        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ Vertex Imagen Ultra 2K（${VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL}）`,
       );
-      // Track 2（兜底）：Vertex 路径（Vercel /api/google?op=nanoImage）
-      try {
-        const res = await fetch(`${params.vercelBaseUrl}/api/google?op=nanoImage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: scene.imagePrompt, tier: "flash", aspectRatio }),
-          signal: AbortSignal.timeout(60_000),
-        });
-        if (res.ok) {
-          const j: any = await res.json();
-          if (j?.imageUrl) {
-            imageUrl = String(j.imageUrl);
-            console.log(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ via Vertex (fallback)`);
-          }
-        } else {
-          const errText = await res.text().catch(() => "");
-          console.warn(
-            `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex fallback 失败 HTTP ${res.status}: ${errText.slice(0, 200)}`,
-          );
-        }
-      } catch (e2: any) {
-        console.warn(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex fallback 抛错: ${e2?.message ?? e2}`);
-      }
+    } catch (e: any) {
+      console.warn(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex Imagen 失败：${e?.message ?? e}`);
     }
     if (imageUrl) generated.push({ ...scene, imageUrl });
     else generated.push(null);
-    // 每张之间间隔 500ms 给 rate limiter 缓冲
     if (i < scenes.length - 1) await sleep(500);
   }
 
