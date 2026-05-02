@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Mic, MicOff, Bug, XCircle } from "lucide-react";
+import { ChevronLeft, Loader2, Crown, Sparkles, RotateCcw, Bug, XCircle } from "lucide-react";
+import VoiceInputButton from "@/components/VoiceInputButton";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { TrendingHotspotsWidget } from "@/components/TrendingHotspotsWidget";
@@ -261,12 +262,6 @@ export default function GodViewPage() {
   const reminder = reminderQuery.data;
   const showReminder = !reminderDismissed && reminder?.reminderDue === true && phase === "idle";
 
-  // voice recording
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-
   useEffect(() => {
     setIsSupervisor(localStorage.getItem(SUPERVISOR_KEY) === "1");
   }, []);
@@ -403,67 +398,6 @@ export default function GodViewPage() {
       retry: false,
     },
   );
-
-  const toggleVoice = useCallback(async () => {
-    if (isRecording) {
-      mediaRecorderRef.current?.stop();
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("当前浏览器不支持录音，请使用 Chrome 或 Safari");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setIsRecording(false);
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        if (!blob.size) { toast.error("录音内容为空，请重试"); return; }
-        setIsTranscribing(true);
-        try {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve((reader.result as string).split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          const r = await fetch("/api/google?op=transcribeAudio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audioBase64: base64, mimeType: mimeType.split(";")[0] }),
-          });
-          const data = await r.json().catch(() => ({}));
-          const text = String(data?.text || "").trim();
-          if (text) {
-            setTopic(text);
-            toast.success("转录成功");
-          } else {
-            toast.error("转录结果为空，请重试");
-          }
-        } catch (e: any) {
-          toast.error(`转录失败：${e?.message}`);
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-      mediaRecorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-    } catch (e: any) {
-      toast.error(`录音失败：${e?.message}`);
-    }
-  }, [isRecording]);
 
   return (
     <div
@@ -916,24 +850,24 @@ export default function GodViewPage() {
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(168,118,27,0.35)"; }}
                 disabled={phase === "launching"}
               />
-              <button
-                onClick={toggleVoice}
-                disabled={isTranscribing || phase === "launching"}
-                title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入课题"}
+              <div
                 style={{
-                  position: "absolute", top: isMobile ? 6 : 10, right: isMobile ? 6 : 10,
-                  width: isMobile ? 44 : 34, height: isMobile ? 44 : 34, borderRadius: isMobile ? 10 : 8, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: isRecording ? "rgba(220,38,38,0.10)" : isTranscribing ? "rgba(217,119,6,0.10)" : "rgba(168,118,27,0.12)",
-                  border: isRecording ? "1px solid rgba(220,38,38,0.5)" : isTranscribing ? "1px solid rgba(217,119,6,0.4)" : "1px solid rgba(168,118,27,0.4)",
-                  color: isRecording ? "#dc2626" : isTranscribing ? "#d97706" : "#7a5410",
-                  cursor: isTranscribing || phase === "launching" ? "not-allowed" : "pointer",
-                  transition: "all 0.2s",
-                  animation: isRecording ? "godview-mic-pulse 1.2s ease-in-out infinite" : "none",
+                  position: "absolute",
+                  top: isMobile ? 6 : 10,
+                  right: isMobile ? 6 : 10,
                 }}
               >
-                {isRecording ? <MicOff size={isMobile ? 18 : 14} /> : isTranscribing ? <Loader2 size={isMobile ? 18 : 14} className="animate-spin" /> : <Mic size={isMobile ? 18 : 14} />}
-              </button>
+                <VoiceInputButton
+                  onTranscript={(t) => setTopic((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t))}
+                  disabled={phase === "launching"}
+                  size={isMobile ? 18 : 14}
+                  className="!rounded-[10px] !p-2 md:!rounded-lg md:!p-1.5"
+                />
+              </div>
             </div>
+            <p style={{ fontSize: 11, color: "rgba(122,84,16,0.45)", margin: "6px 0 0", fontWeight: 600 }}>
+              🎤 与平台分析页相同：Chrome / Edge / Safari；识别走服务端 Speech API
+            </p>
             {/* ── 补充资料区（3 类产品共享） ── */}
             {(selectedProduct === "magazine_single" || selectedProduct === "magazine_sub" || selectedProduct === "personalized" || selectedProduct === "enterprise_flagship") && (
               <div style={{ marginTop: 12, border: "1px solid rgba(168,118,27,0.2)", borderRadius: 12, overflow: "hidden" }}>
