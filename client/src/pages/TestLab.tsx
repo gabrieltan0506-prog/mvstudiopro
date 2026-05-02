@@ -1,7 +1,10 @@
 import React, { useMemo, useRef, useState } from "react";
 
 type TabKey = "script" | "image" | "video" | "music";
-type GoogleImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
+type GoogleImageModel =
+  | "gemini-3.1-flash-image-preview"
+  | "gemini-3-pro-image-preview"
+  | "imagen-4.0-ultra";
 type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
@@ -217,7 +220,7 @@ export default function TestLab() {
 
       if (imageProvider === "google") {
         const model = googleImageModel;
-        const tier = model === "gemini-3-pro-image-preview" ? "pro" : "flash";
+        const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
         const r = await fetchJsonish(
           `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
           {
@@ -658,6 +661,7 @@ export default function TestLab() {
                 >
                   <option value="gemini-3.1-flash-image-preview">Nano Banana 2（gemini-3.1-flash-image-preview）</option>
                   <option value="gemini-3-pro-image-preview">Nano Banana Pro（gemini-3-pro-image-preview）</option>
+                  <option value="imagen-4.0-ultra">Imagen 4.0 Ultra（imagen-4.0-ultra → Vertex 展開）</option>
                 </select>
               </div>
             ) : (

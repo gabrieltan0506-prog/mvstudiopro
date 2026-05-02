@@ -54,7 +54,6 @@ function buildMagazineCoverImagePrompt(opts: {
 }): string {
   const title = String(opts.displayTitle ?? opts.safeTitle).trim();
   const coverMonthYear = formatMagazineCoverMonthYearEnAsia();
-  const coverZh = formatPublicationDateZhAsia();
   return (
     `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
     `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
@@ -62,12 +61,13 @@ function buildMagazineCoverImagePrompt(opts: {
     `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
     `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
     `Topic / title to render: ${opts.safeTitle}\n\n` +
-    `MANDATORY publication dating (Asia/Shanghai UTC+8, generation time — do not invent, do not use training-cutoff years like 2024):\n` +
-    `- Every English date on the cover (footer masthead line, barcode strip, ISSN/issue line, small print) MUST show exactly this month+year: "${coverMonthYear}". ` +
-    `Wrong years (e.g. 2024) or mismatched months are unacceptable.\n` +
-    `- If any Chinese publication date appears on the cover, use this Chinese calendar line: "${coverZh}".\n` +
-    `- Example English footer format: "ISSUE … | ${coverMonthYear}" — keep the separator style but the month+year must be exactly "${coverMonthYear}".\n\n` +
-    `Full title for context (use the gold typography line above as primary): ${title}`
+    `Masthead dating (Asia/Shanghai, current generation — never use stale years like 2024): ` +
+    `use English month+year exactly "${coverMonthYear}" in the ISSN/issue/footer/barcode strip small print only. ` +
+    `Keep date lines short and crisp.\n\n` +
+    `Typography: Any Chinese (CJK) must look like premium offset print — razor-sharp strokes, straight baseline, even weight, ` +
+    `NO liquify / melting / wavy glyph distortion, NO pseudo-3D extrusion blobs on Han characters. ` +
+    `Prefer light metallic foil or subtle deboss on CJK; heavier emboss OK on short English words only.\n\n` +
+    `Full title for context (primary line is the gold title above): ${title}`
   );
 }
 
@@ -125,57 +125,93 @@ export async function generateImageViaGeminiApiKey(opts: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Deep Research Pro Preview · 全局 1 RPM 限流闸门
+// Deep Research Pro Preview · 滑動視窗限流（63s 內最多 30 次「建立 interaction」）
 // ─────────────────────────────────────────────────────────────────────────────
-// 设计：用磁盘上的 JSON 锁文件 + 进程内 Promise 串行链 双重保险。
-// - 进程内：所有 await acquireRateGate() 串行排队，前一个未释放后一个不会执行
-// - 磁盘上：跨进程协调，保证多个 Fly 实例间也是 1 RPM
-// API 限制：gemini-deep-research-pro-preview 严格 1 次/分钟，超额会被封禁
+// 每 63 秒滑動視窗 30 次；第 31 次起阻塞直到視窗中最舊一筆超出 63s（+ 小緩衝）。
+// （與 Google 側 gemma / Deep Research 配額上調後的產品節奏對齊，可再改 MAX_* 常數。）
 //
-// 使用：const release = await acquireRateGate("deep-research"); try { ... } finally { release(); }
+// 仍用磁盤 JSON 做跨 Fly 實例協調；檔案 RMW 用短命互斥，避免長任務（poll）佔鎖。
+// 使用：const release = await acquireRateGate("…"); try { … } finally { release(); }（release 可為 no-op）
 
 const RATE_GATE_FILE = "/data/growth/deep-research-rate-gate.json";
-const RATE_GATE_INTERVAL_MS = 60_000; // 1 RPM = 60 秒间隔
-let processGateChain: Promise<void> = Promise.resolve();
+/** 與產品約定：第 31 次起等滿約 63s 滑動視窗 */
+const RATE_GATE_WINDOW_MS = 63_000;
+const MAX_DEEP_RESEARCH_STARTS_PER_WINDOW = 30;
+const RATE_GATE_BUFFER_MS = 250;
 
-interface RateGateState { lastCallAt: number; }
+type RateGateState =
+  | { starts: number[] }
+  | { lastCallAt: number };
+
+let gateFileLock: Promise<void> = Promise.resolve();
+
+async function withGateFileLock<T>(fn: () => Promise<T>): Promise<T> {
+  let unlock!: () => void;
+  const slot = new Promise<void>((r) => {
+    unlock = r;
+  });
+  const prev = gateFileLock;
+  gateFileLock = prev.then(() => slot);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    unlock();
+  }
+}
+
+function normalizeRateStarts(state: RateGateState | Record<string, unknown>): number[] {
+  const s = state as Record<string, unknown>;
+  if (Array.isArray(s.starts)) {
+    return (s.starts as unknown[])
+      .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+      .sort((a, b) => a - b);
+  }
+  const last = s.lastCallAt;
+  if (typeof last === "number" && last > 0) return [last];
+  return [];
+}
 
 async function readRateGateState(): Promise<RateGateState> {
   try {
     const raw = await fs.readFile(RATE_GATE_FILE, "utf-8");
     return JSON.parse(raw) as RateGateState;
-  } catch { return { lastCallAt: 0 }; }
+  } catch {
+    return { starts: [] };
+  }
 }
-async function writeRateGateState(s: RateGateState): Promise<void> {
+
+async function writeRateGateState(starts: number[]): Promise<void> {
   try {
     await fs.mkdir(path.dirname(RATE_GATE_FILE), { recursive: true });
-    await fs.writeFile(RATE_GATE_FILE, JSON.stringify(s));
-  } catch (e: any) { console.warn("[deepResearch] rate gate write failed:", e?.message); }
+    await fs.writeFile(RATE_GATE_FILE, JSON.stringify({ starts }));
+  } catch (e: any) {
+    console.warn("[deepResearch] rate gate write failed:", e?.message);
+  }
 }
 
-/** 申请一次 Deep Research API 调用许可（1 RPM）。返回的函数必须在 finally 中调用以释放许可。 */
+/** 申請一次 Deep Research「建立 interaction」許可（63s 滑窗內最多 30 次）。 */
 async function acquireRateGate(label = "deep-research"): Promise<() => void> {
-  let releaseChain: () => void = () => {};
-  const ticket = new Promise<void>((resolve) => { releaseChain = resolve; });
-  const prev = processGateChain;
-  processGateChain = processGateChain.then(() => ticket);
-
-  // 等待前一个调用从进程内队列释放
-  await prev;
-
-  // 跨进程：检查磁盘 lastCallAt
-  const state = await readRateGateState();
-  const elapsed = Date.now() - state.lastCallAt;
-  if (state.lastCallAt > 0 && elapsed < RATE_GATE_INTERVAL_MS) {
-    const waitMs = RATE_GATE_INTERVAL_MS - elapsed + 500; // +500ms 缓冲
-    console.log(`[deepResearch] 🚦 [${label}] 距上次调用 ${Math.round(elapsed / 1000)}s，等待 ${Math.round(waitMs / 1000)}s 满足 1 RPM 限制`);
+  while (true) {
+    const waitMs = await withGateFileLock(async () => {
+      const state = await readRateGateState();
+      const now = Date.now();
+      let starts = normalizeRateStarts(state).filter((t) => now - t < RATE_GATE_WINDOW_MS);
+      if (starts.length >= MAX_DEEP_RESEARCH_STARTS_PER_WINDOW) {
+        return starts[0] + RATE_GATE_WINDOW_MS - now + RATE_GATE_BUFFER_MS;
+      }
+      starts = [...starts, Date.now()].sort((a, b) => a - b);
+      await writeRateGateState(starts);
+      return 0;
+    });
+    if (waitMs <= 0) break;
+    console.log(
+      `[deepResearch] 🚦 [${label}] 已达 ${MAX_DEEP_RESEARCH_STARTS_PER_WINDOW} 次/` +
+        `${Math.round(RATE_GATE_WINDOW_MS / 1000)}s 上限，等待 ${Math.round(waitMs / 1000)}s 后再入列`,
+    );
     await sleep(waitMs);
   }
-
-  // 立刻把当前时间戳写入磁盘，让其他进程看到
-  await writeRateGateState({ lastCallAt: Date.now() });
-
-  return () => releaseChain(); // 释放进程内队列
+  return () => {};
 }
 
 // ── 四平台 7 天趋势 SVG 折线图生成器 ────────────────────────────────────────
@@ -300,7 +336,7 @@ async function generate(
  * - 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，严禁降级）
  * - 工具：googleSearch（实时全网检索）+ deepResearch（comprehensive 深度推理）
  * - 推理：thinkingConfig.includeThoughts=true（开启思维链）
- * - 限速：API 严格 1 RPM，全部调用走 acquireRateGate() 串行排队
+ * - 限速：Deep Research 建立 interaction 走 acquireRateGate() — 63s 滑窗内最多 30 次
  *
  * 输出包含：
  * - text：最终回答正文
@@ -1088,7 +1124,7 @@ const HEARTBEAT_RESUME_AFTER_MS = 3 * 60 * 1000;
  *  的极端场景；当任务 heartbeat 超过该阈值即直接 failed + 退积分。 */
 const HEARTBEAT_FAIL_AFTER_MS = 30 * 60 * 1000;
 /** 同一任务被重新拉起的最大次数。超过此值直接 failed + 退积分，避免毒任务循环消耗
- *  1 RPM 配额。 */
+ *  63s 滑窗 30 次配额。 */
 const MAX_RESUME_ATTEMPTS = 2;
 /** Worker 内 heartbeat ticker 间隔。每隔此时长写一次 lastHeartbeatAt，让监控能区
  *  分「在跑但慢」和「进程已死」。 */
@@ -1749,7 +1785,7 @@ export async function runDeepResearchAsync(jobId: string) {
 
     // ═════════════════════════════════════════════════════════════════════════
     // 阶段 A：Deep Research Pro Preview · 全网检索 + 深度推理 + 思维链
-    // 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，1 RPM 严格限速）
+    // 模型：gemini-deep-research-pro-preview（2026 战略智库大脑，63s 滑窗 30 次建链限速）
     // 工具：googleSearch（实时检索）+ deepResearch{complexity: "comprehensive"}（最深推理）
     // 配置：thinkingConfig.includeThoughts=true（开启思维链）
     // ═════════════════════════════════════════════════════════════════════════
@@ -2116,6 +2152,7 @@ ${job.topic}
     //      - 严格不要场景图兜底（场景图是 16:9 横版，硬塞会拉伸）
     //      - 双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）
     //      - 单次 timeout 60s（Gemini reviewer 建议从 90s 降下来缩短 worst-case）
+    //    （Imagen Ultra 封面链路至 strategicCoverImage.ts，待验证后再合入。）
     const coverPrompt = buildMagazineCoverImagePrompt({
       safeTitle: String(lighthouseTitle || "战略情报报告").trim().slice(0, 60),
       displayTitle: lighthouseTitle,
