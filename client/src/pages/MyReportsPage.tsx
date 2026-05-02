@@ -1228,21 +1228,10 @@ export default function MyReportsPage() {
 
         {!isLoading && reports.length > 0 && (
           <>
-            {/* 待审核草稿优先排在最前面 */}
-            {reports.some((r) => r.status === "awaiting_review") && (
-              <div style={{ marginBottom: 24, padding: "14px 18px", borderRadius: 14, background: "linear-gradient(135deg,rgba(217,119,6,0.10),rgba(168,118,27,0.08))", border: "1px dashed rgba(217,119,6,0.50)", display: "flex", alignItems: "center", gap: 12 }}>
-                <Pencil size={18} color="#d97706" />
-                <div style={{ fontSize: 13, color: "#3d2c14", fontWeight: 700, lineHeight: 1.65 }}>
-                  您有 <strong style={{ color: "#d97706" }}>{reports.filter((r) => r.status === "awaiting_review").length}</strong> 份草稿待主编审核 ·
-                  请在出刊前完成增删素材、AI 助手润色与最终核校。
-                  <span style={{ marginLeft: 8, fontSize: 11.5, color: "rgba(61,44,20,0.65)", fontWeight: 600 }}>（出刊后才会进入正式作品库，可下载无水印 PDF）</span>
-                </div>
-              </div>
-            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 24 }}>
               {[...reports]
                 .sort((a, b) => {
-                  const order: Record<string, number> = { awaiting_review: 0, processing: 1, completed: 2, failed: 3 };
+                  const order: Record<string, number> = { processing: 1, awaiting_review: 2, completed: 2, failed: 3 };
                   return (order[a.status] ?? 9) - (order[b.status] ?? 9);
                 })
                 .map((report) => (
@@ -1304,13 +1293,17 @@ function ReportCoverCard({
   pdfStyle: PdfStyleKey;
   onPdfStyleChange: (next: PdfStyleKey) => void;
 }) {
+  /** 产品收口：作品库不再单独展示「待审核」，与已出刊同一套角标与操作（后端状态仍可为 awaiting_review）。 */
+  const badgeStatus = report.status === "awaiting_review" ? "completed" : report.status;
   const statusMap: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
     processing:        { icon: <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />, label: "推演中…", color: "#d97706" },
-    awaiting_review:   { icon: <Pencil size={11} />,        label: "待审核",   color: "#d97706" },
     completed:         { icon: <CheckCircle size={11} />,   label: "已出刊",   color: "#16a34a" },
     failed:            { icon: <XCircle size={11} />,       label: "生成失败", color: "#dc2626" },
   };
-  const s = statusMap[report.status] ?? statusMap.processing;
+  const s = statusMap[badgeStatus] ?? statusMap.processing;
+  const bodyMd = report.reportMarkdown || report.draftMarkdown;
+  const showPublishedActions =
+    (report.status === "completed" || report.status === "awaiting_review") && !!bodyMd;
 
   const displayTitle = report.lighthouseTitle || report.title;
 
@@ -1399,8 +1392,8 @@ function ReportCoverCard({
           )}
         </div>
 
-        {/* 已出刊：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订 */}
-        {report.status === "completed" && report.reportMarkdown && (
+        {/* 已出刊（含后端仍为 awaiting_review 的条目）：模板选择 + 阅览 / 下载 PDF / 下载 HTML 交互版 / 修订 */}
+        {showPublishedActions && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {/* 5 套封面模板紧凑选择条：用户挑封面 → 立即套用到下载 */}
             <CompactStyleSwatches value={pdfStyle} onChange={onPdfStyleChange} />
@@ -1457,36 +1450,6 @@ function ReportCoverCard({
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(168,118,27,0.10)", border: "1px solid rgba(168,118,27,0.30)", color: "#7a5410", fontWeight: 800, fontSize: 11, cursor: "pointer" }}
               >
                 <Pencil size={11} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 待审核草稿：审核工作台 + 快速预览 + 草稿 PDF */}
-        {report.status === "awaiting_review" && (report.draftMarkdown || report.reportMarkdown) && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <button
-              onClick={onEdit}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 0", borderRadius: 10, background: "linear-gradient(135deg,#d97706,#b45309)", border: "1px solid rgba(217,119,6,0.65)", color: "#fff7df", fontWeight: 900, fontSize: 12, cursor: "pointer", transition: "all 0.2s", boxShadow: "0 4px 12px rgba(217,119,6,0.30)" }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.transform = "none"; }}
-            >
-              <Pencil size={12} />进入审核工作台
-            </button>
-            <div style={{ display: "flex", gap: 6 }}>
-              <button
-                onClick={() => onRead()}
-                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px 0", borderRadius: 8, background: "rgba(122,84,16,0.06)", border: "1px solid rgba(122,84,16,0.20)", color: "#7a5410", fontWeight: 700, fontSize: 11, cursor: "pointer" }}
-              >
-                <FileText size={11} />快速预览
-              </button>
-              <button
-                onClick={onDownload}
-                disabled={isDownloading}
-                title="下载草稿 PDF（请在阅览中确认水印提示）"
-                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "8px 12px", borderRadius: 8, background: "rgba(217,119,6,0.10)", border: "1px solid rgba(217,119,6,0.30)", color: "#d97706", fontWeight: 800, fontSize: 11, cursor: isDownloading ? "not-allowed" : "pointer" }}
-              >
-                {isDownloading ? <Loader2 size={11} className="animate-spin" /> : <FileDown size={11} />}
               </button>
             </div>
           </div>
