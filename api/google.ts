@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import crypto from "node:crypto";
 import { put } from "@vercel/blob";
+import { getVertexAccessToken } from "../server/utils/vertex";
 import { generateImagenVertexPredict } from "../server/services/imageGenerationService";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
@@ -9,14 +9,14 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
  * - **Imagen 4.0 Ultra（Consumer / `generativelanguage…:predict` + GEMINI_API_KEY）實測：目前僅 `imagen-4.0-ultra-generate-001` 穩定成功**；其餘 Ultra 字串多數失敗，見 Test Lab smoke。
- * - op=nanoImage       （Gemini / Nano Banana：`generateContent`；Imagen 4.x Consumer：`predict` + API Key；**可選 `imagenBackend=vertex` 走 Vertex 企業節點 `…:predict` + SA，預設 region `us-central1`，無模型降級**）
+ * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② Gemini / Nano Banana：`generateContent`；③ **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。）
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
  *
  * Env:
- * - GOOGLE_APPLICATION_CREDENTIALS_JSON
- * - GEMINI_API_KEY（transcribeAudio、凡 model 以 imagen-4.0 开头的生图走 `…:predict`、translateForVeo）
+ * - **Vertex IAM（含 `imagenBackend=vertex`、Gemini Script、Nano Banana、Veo 等所有 `aiplatform` 呼叫）**：`GOOGLE_APPLICATION_CREDENTIALS_JSON` **或** `GOOGLE_APPLICATION_CREDENTIALS`（金鑰檔路徑）；換取短效 **Bearer token**，**非** URL `?key=`。
+ * - GEMINI_API_KEY：僅 **Consumer** `generativelanguage`（transcribeAudio、Imagen `…:predict?key=`、translateForVeo）；**不**用於 Vertex。
  * - GEMINI_IMAGEN_ULTRA_MODEL（可选：当请求 model 与该变量完全一致时也走 API Key 生图，用于不以 imagen-4.0 前缀命名的别名 ID）
  * - VERTEX_PROJECT_ID（除上述免 Vertex 的 op 外必填；Vertex Imagen 亦用，可另備 GOOGLE_CLOUD_PROJECT）
  * - VERTEX_IMAGEN_LOCATION（可选，默认 us-central1）
@@ -33,44 +33,6 @@ function getBody(req:VercelRequest){
   if(!b) return {};
   if(typeof b==="string") return jparse(b) ?? {};
   return b;
-}
-
-async function getVertexAccessToken(): Promise<string> {
-  const raw = s(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON).trim();
-  if (!raw) throw new Error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON");
-
-  const sa:any = jparse(raw);
-  if (!sa?.client_email || !sa?.private_key) throw new Error("Invalid SA JSON");
-
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(JSON.stringify({
-    iss: sa.client_email,
-    scope: "https://www.googleapis.com/auth/cloud-platform",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-  })).toString("base64url");
-
-  const unsigned = `${header}.${payload}`;
-  const sign = crypto.createSign("RSA-SHA256");
-  sign.update(unsigned);
-  sign.end();
-  const signature = sign.sign(sa.private_key).toString("base64url");
-  const assertion = `${unsigned}.${signature}`;
-
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }).toString(),
-  });
-
-  const json:any = await tokenRes.json().catch(()=> ({}));
-  if (!tokenRes.ok || !json?.access_token) throw new Error("Vertex token failed: " + JSON.stringify(json));
-  return json.access_token;
 }
 
 function baseUrlFor(location:string){

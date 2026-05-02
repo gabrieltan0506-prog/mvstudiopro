@@ -926,8 +926,11 @@ export default function TestLab() {
                       onChange={(e) => setGoogleImagenVertexBackend(e.target.checked)}
                     />
                     <span>
-                      Vertex 企業版（<code style={{ fontSize: 10 }}>imagenBackend=vertex</code>，預設 <code style={{ fontSize: 10 }}>us-central1</code>，SA +{" "}
-                      <code style={{ fontSize: 10 }}>VERTEX_PROJECT_ID</code>）
+                      Vertex 企業版（<code style={{ fontSize: 10 }}>imagenBackend=vertex</code>，預設 <code style={{ fontSize: 10 }}>us-central1</code>，端點為{" "}
+                      <code style={{ fontSize: 10 }}>…-aiplatform…/v1/projects/…/locations/…/models/…:predict</code>
+                      ；認證為 <strong>IAM Bearer</strong>（<code style={{ fontSize: 10 }}>GOOGLE_APPLICATION_CREDENTIALS_JSON</code> 或憑證檔路徑，<strong>非</strong>{" "}
+                      <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>）；並需{" "}
+                      <code style={{ fontSize: 10 }}>VERTEX_PROJECT_ID</code> 或 <code style={{ fontSize: 10 }}>GOOGLE_CLOUD_PROJECT</code>。
                     </span>
                   </label>
                 ) : null}
