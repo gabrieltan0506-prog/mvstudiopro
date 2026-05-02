@@ -1,5 +1,5 @@
 import { Coins } from "lucide-react";
-import { AGENT_SCENARIO_CREDITS, CNY_PER_CREDIT_REFERENCE, estimateCnyFromCredits } from "@/lib/agentPricing";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 export type AgentCreditsScenario = keyof typeof AGENT_SCENARIO_CREDITS;
 
@@ -13,7 +13,6 @@ const SCENARIO_TITLE: Record<AgentCreditsScenario, string> = {
  */
 export default function AgentCreditsCostCard({ scenario }: { scenario: AgentCreditsScenario }) {
   const credits = AGENT_SCENARIO_CREDITS[scenario];
-  const rmb = estimateCnyFromCredits(credits);
   const title = SCENARIO_TITLE[scenario];
 
   return (
@@ -48,9 +47,6 @@ export default function AgentCreditsCostCard({ scenario }: { scenario: AgentCred
         <div style={{ fontSize: 12, fontWeight: 800, color: "#d6a861", letterSpacing: "0.04em", marginBottom: 6 }}>{title} · 积分说明</div>
         <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: "rgba(245,235,210,0.95)", lineHeight: 1.5 }}>
           派发时将扣除 <span style={{ color: "#f5c842" }}>{credits}</span> 点积分
-        </p>
-        <p style={{ margin: "6px 0 0", fontSize: 12, color: "rgba(160,140,90,0.82)", lineHeight: 1.65 }}>
-          参考约 <span style={{ color: "rgba(245,235,210,0.88)", fontWeight: 700 }}>¥{rmb}</span>（按约 {CNY_PER_CREDIT_REFERENCE} 元/点估算，以账户展示为准）。
         </p>
         <p style={{ margin: "8px 0 0", fontSize: 11, color: "rgba(160,140,90,0.68)", lineHeight: 1.7 }}>
           扣款在任务派发时完成；若因平台算力/系统故障等原因未成功交付，已扣积分会<strong style={{ color: "rgba(245,235,210,0.82)" }}>退还至账户余额</strong>

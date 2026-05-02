@@ -9,7 +9,7 @@ import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInput
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 import AgentCreditsCostCard from "@/components/AgentCreditsCostCard";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
-import { AGENT_SCENARIO_CREDITS, estimateCnyFromCredits } from "@/lib/agentPricing";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 const DEFAULT_PLATFORMS = ["抖音", "小红书", "B 站", "快手", "视频号", "微博"];
 
@@ -62,8 +62,7 @@ export default function PlatformIpMatrixPage() {
       return;
     }
     const cost = AGENT_SCENARIO_CREDITS.platform_ip_matrix;
-    const rmb = estimateCnyFromCredits(cost);
-    if (!window.confirm(`派发「多平台 IP 矩阵」将先扣除 ${cost} 点积分（约合 ${rmb} 元，以账户为准），确定继续？`)) {
+    if (!window.confirm(`派发「多平台 IP 矩阵」将先扣除 ${cost} 点积分，确定继续？`)) {
       return;
     }
     const filledAccounts = accounts.filter((a) => a.platform.trim() && a.handle.trim());
@@ -184,7 +183,7 @@ export default function PlatformIpMatrixPage() {
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点（≈¥${estimateCnyFromCredits(AGENT_SCENARIO_CREDITS.platform_ip_matrix)}）· 失败自动退还 · 约 5-10 分钟出计划`}
+                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点 · 失败自动退还积分 · 约 5-10 分钟出计划`}
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />

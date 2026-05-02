@@ -9,7 +9,7 @@ import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInput
 import AgentJobMonitor from "@/components/AgentJobMonitor";
 import AgentCreditsCostCard from "@/components/AgentCreditsCostCard";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
-import { AGENT_SCENARIO_CREDITS, estimateCnyFromCredits } from "@/lib/agentPricing";
+import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
 const PRESET_DIMENSIONS = ["数据", "创意", "商业模式", "用户画像", "内容工业化能力", "IP 衍生品深度", "合规风险"];
 
@@ -72,8 +72,7 @@ export default function CompetitorRadarPage() {
       return;
     }
     const cost = AGENT_SCENARIO_CREDITS.competitor_radar;
-    const rmb = estimateCnyFromCredits(cost);
-    if (!window.confirm(`派发「竞品 / 赛道雷达」将先扣除 ${cost} 点积分（约合 ${rmb} 元，以账户为准），确定继续？`)) {
+    if (!window.confirm(`派发「竞品 / 赛道雷达」将先扣除 ${cost} 点积分，确定继续？`)) {
       return;
     }
     await launchMutation.mutateAsync({
@@ -198,7 +197,7 @@ export default function CompetitorRadarPage() {
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.competitor_radar} 点（≈¥${estimateCnyFromCredits(AGENT_SCENARIO_CREDITS.competitor_radar)}）· 失败自动退还 · 约 5-10 分钟出计划`}
+                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.competitor_radar} 点 · 失败自动退还积分 · 约 5-10 分钟出计划`}
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />

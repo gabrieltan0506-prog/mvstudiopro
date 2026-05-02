@@ -3,7 +3,6 @@ import { Loader2, CheckCircle2, AlertCircle, Crown, Sparkles, Bug } from "lucide
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import ReportRenderer from "@/components/ReportRenderer";
-import { estimateCnyFromCredits } from "@/lib/agentPricing";
 
 interface AgentJobMonitorProps {
   jobId: string;
@@ -159,9 +158,7 @@ export default function AgentJobMonitor({
         {typeof job.creditsUsed === "number" && job.creditsUsed > 0 && (
           <p style={{ margin: "0 0 12px", fontSize: 12, color: "rgba(245,200,100,0.95)", fontWeight: 700, lineHeight: 1.5 }}>
             本次任务已扣除 <span style={{ color: "#f5c842" }}>{job.creditsUsed}</span> 点积分
-            <span style={{ fontWeight: 600, color: "rgba(160,140,90,0.85)" }}>
-              （参考约 ¥{estimateCnyFromCredits(job.creditsUsed)}，以账户为准）
-            </span>
+            <span style={{ fontWeight: 600, color: "rgba(160,140,90,0.85)" }}>（以账户积分记录为准）</span>
           </p>
         )}
 
