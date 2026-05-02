@@ -1,4 +1,5 @@
 import React, { useRef } from "react";
+import { TrialReadWatermarkOverlay } from "@/components/TrialReadWatermarkOverlay";
 
 interface TrialWatermarkImageProps {
   src: string;
@@ -9,10 +10,8 @@ interface TrialWatermarkImageProps {
 }
 
 /**
- * 试用包图片：
- * - 叠加对角线水印文本
- * - 右键禁止另存
- * - CSS 拖曳禁止
+ * 试用包图片：复用首页「试读样本」对角水印（MVSTUDIOPRO.COM · 试读）+ 品牌 Logo 平铺；
+ * 右键禁止另存、禁止拖拽。
  */
 export default function TrialWatermarkImage({
   src,
@@ -46,7 +45,6 @@ export default function TrialWatermarkImage({
 
       {isTrial && (
         <>
-          {/* 全画面透明遮罩阻止右键/拖曳 */}
           <div
             style={{
               position: "absolute",
@@ -60,67 +58,7 @@ export default function TrialWatermarkImage({
             onDragStart={(e) => e.preventDefault()}
           />
 
-          {/* 对角线水印 */}
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 11,
-              pointerEvents: "none",
-              overflow: "hidden",
-            }}
-          >
-            {/* 用 SVG 平铺对角水印 */}
-            <svg
-              width="100%"
-              height="100%"
-              xmlns="http://www.w3.org/2000/svg"
-              style={{ position: "absolute", inset: 0 }}
-            >
-              <defs>
-                <pattern
-                  id="wm"
-                  patternUnits="userSpaceOnUse"
-                  width="220"
-                  height="120"
-                  patternTransform="rotate(-35)"
-                >
-                  <text
-                    x="10"
-                    y="60"
-                    fontSize="14"
-                    fontWeight="700"
-                    fontFamily="system-ui, sans-serif"
-                    fill="rgba(255,255,255,0.22)"
-                    letterSpacing="1"
-                  >
-                    试用版 · mvstudiopro
-                  </text>
-                </pattern>
-              </defs>
-              <rect width="100%" height="100%" fill="url(#wm)" />
-            </svg>
-
-            {/* 中央大水印 */}
-            <div
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                transform: "translate(-50%,-50%) rotate(-35deg)",
-                whiteSpace: "nowrap",
-                fontSize: "clamp(14px, 3.5vw, 22px)",
-                fontWeight: 900,
-                color: "rgba(255,255,255,0.18)",
-                letterSpacing: "2px",
-                textShadow: "0 1px 2px rgba(0,0,0,0.4)",
-                pointerEvents: "none",
-                userSelect: "none",
-              }}
-            >
-              试用版 · 仅供预览
-            </div>
-          </div>
+          <TrialReadWatermarkOverlay zIndex={11} showCornerBadge />
         </>
       )}
     </div>
