@@ -15,7 +15,7 @@ export { runVertexUpscaleImage, type VertexUpscaleResult };
  * Env:
  * - GOOGLE_APPLICATION_CREDENTIALS_JSON
  * - VERTEX_PROJECT_ID
- * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO
+ * - VERTEX_IMAGE_MODEL_FLASH / VERTEX_IMAGE_MODEL_PRO / VERTEX_IMAGE_MODEL_ULTRA（imagen-4.0-ultra 别名展开）
  * - VERTEX_IMAGE_LOCATION (optional, default global)
  * - VERTEX_VEO_MODEL_RAPID / VERTEX_VEO_MODEL_PRO
  * - VERTEX_VIDEO_LOCATION_RAPID / VERTEX_VIDEO_LOCATION_PRO
@@ -311,13 +311,26 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       const seed = q.seed != null || b.seed != null ? Number(b.seed || q.seed) : undefined;
       const personGeneration = s(b.personGeneration || q.personGeneration || "");
 
-      const requestedModel = s(b.model || q.model || "");
-      const resolvedTier = requestedModel
-        ? ((requestedModel === "imagen-4.0-ultra-generate-001" || requestedModel === "imagen-4.0-ultra-generate" || requestedModel === "gemini-3-pro-image-001" || requestedModel === "gemini-3-pro-image-preview") ? "pro" : "flash")
+      const rawModel = s(b.model || q.model || "");
+      const ultraResolved = s(process.env.VERTEX_IMAGE_MODEL_ULTRA || "imagen-4.0-ultra-generate-001").trim();
+
+      const resolvedTier = rawModel
+        ? (
+            rawModel === "imagen-4.0-ultra" ||
+            rawModel === "imagen-4.0-ultra-generate" ||
+            rawModel === "imagen-4.0-ultra-generate-001" ||
+            rawModel === ultraResolved ||
+            rawModel === "gemini-3-pro-image-001" ||
+            rawModel === "gemini-3-pro-image-preview"
+          )
+          ? "pro"
+          : "flash"
         : tier;
 
-      const model = requestedModel
-        ? requestedModel
+      const model = rawModel
+        ? rawModel === "imagen-4.0-ultra"
+          ? ultraResolved
+          : rawModel
         : resolvedTier === "pro"
           ? s(process.env.VERTEX_IMAGE_MODEL_PRO || "gemini-3-pro-image-preview")
           : s(process.env.VERTEX_IMAGE_MODEL_FLASH || "gemini-3.1-flash-image-preview");
