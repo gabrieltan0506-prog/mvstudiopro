@@ -212,6 +212,7 @@ export async function uploadBufferToGcs(params: {
     uploadUrl.searchParams.set("userProject", userProject);
   }
 
+  // 調用方若在 GCP / Fly 與桶同區或近區，單次 media upload 延遲通常很低（與 Vertex 流水線銜接時宜同區桶）。
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: {
@@ -296,12 +297,12 @@ export async function deleteGcsObject(params: {
   }
 }
 
-/** V4 GET 签名直链（供客户下载 PDF 等），默认 1h。 */
+/** V4 GET 签名直链（供客户下载 PDF 等），默认 1h；最大 7 天（與 GCS V4 實務上限對齊）。 */
 export function signGsUriV4ReadUrl(gsUri: string, expiresSeconds = 3600): string {
   const credentials = getGoogleServiceAccount();
   const { bucket, objectName } = parseGsUri(gsUri);
   const encodedObject = objectName.split("/").map(encodeURIComponent).join("/");
-  const expiry = Math.max(60, Math.min(24 * 3600, Math.floor(expiresSeconds)));
+  const expiry = Math.max(60, Math.min(7 * 24 * 3600, Math.floor(expiresSeconds)));
   const now = Math.floor(Date.now() / 1000);
   const dateIso = new Date(now * 1000).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
   const datePart = dateIso.slice(0, 8);

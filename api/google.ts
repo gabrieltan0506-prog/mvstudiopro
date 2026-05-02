@@ -3,13 +3,23 @@ import { put } from "@vercel/blob";
 import { getVertexAccessToken } from "../server/utils/vertex";
 import { generateImagenVertexPredict } from "../server/services/imageGenerationService";
 import { runVertexUpscaleImage, type VertexUpscaleResult } from "../server/services/vertexImage";
+import { uploadBufferToGcs, signGsUriV4ReadUrl } from "../server/services/gcs";
 export { runVertexUpscaleImage, type VertexUpscaleResult };
+
+/**
+ * Vercel 上以 Serverless 跑本檔時必配：4K / 大 Base64 回傳若超過平台預設時長會直接 504，
+ * 與程式內 `AbortSignal.timeout(120000)` 對齊並留裕度（依方案可在 Vercel 控制台再调高）。
+ * Fly 部署則以 `fly.toml` → `http_service.http_options.idle_timeout` 為準（本倉已設 900s）。
+ */
+export const config = {
+  maxDuration: 300,
+};
 
 /**
  * Google Gateway (single function)
  * - op=geminiScript    (Gemini text)
  * - **Imagen 4.0 Ultra（Consumer / `generativelanguage…:predict` + GEMINI_API_KEY）實測：目前僅 `imagen-4.0-ultra-generate-001` 穩定成功**；其餘 Ultra 字串多數失敗，見 Test Lab smoke。
- * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② Gemini / Nano Banana：`generateContent`；③ **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。）
+ * - op=nanoImage       （**兩套路徑**：① Imagen 4.x **Consumer / AI Studio**：`generativelanguage…/models/{id}:predict`**`?key=GEMINI_API_KEY`**；② Gemini / Nano Banana：`generateContent`；③ **Vertex 企業**：**`imagenBackend=vertex`** → `{location}-aiplatform…/v1/projects/{project}/locations/{location}/publishers/google/models/{id}:predict`，**不可用 API Key**，須 **IAM：OAuth2 Bearer**（服務帳號 JSON 或 `GOOGLE_APPLICATION_CREDENTIALS` 檔）。**Body** 兩邊皆為 `instances` + `parameters`。預設 `us-central1`，無模型降級。**解析度**：Imagen `predict` 的 `parameters.imageSize`（Ultra 常用 2K 求速度與高密度）；Nano Banana **Pro** 的 `generateContent` 除 `imageConfig.imageSize` 外可標 **imageConfig.outputResolution**（如 4K）。**大圖 Base64**：Vertex `generateContent` 與 Consumer `:predict` 的 fetch 均帶 **AbortSignal.timeout(120000)** 以免 Read body 中途斷線；**Vercel Serverless** 另須 **本檔 `export const config.maxDuration`**。**預設**：將模型回傳的 `data:` **落地 GCS**（`uploadBufferToGcs` + **V4 GET 簽名 URL**）— **推論在 Vertex、 object 寫回同 GCP 桶時內網/骨幹極短延遲**，比把數 MB Base64 再塞進 JSON 回傳快得多；`imageUrl` / `imageUrls` 給客戶端 **HTTPS 直鏈**讀圖。若需除錯內聯傳 `inlineBase64=1`。**編排原則**：本 handler 為「單次請求內同步落地 GCS 再響應」；**智庫等多圖 / 長任務務必維持 fire-and-forget / 背景队列**，勿在單條 tRPC 或頁面請求裡串行 await 多輪 4K。）
  * - op=veoCreate       (Veo create)
  * - op=veoTask         (Veo polling)
  * - op=translateForVeo (Chinese → Veo-native English audio prompt)
@@ -188,6 +198,72 @@ function isImagen4GeminiApiModel(rawModel: string): boolean {
   return m.toLowerCase().startsWith("imagen-4.0");
 }
 
+const NANO_IMAGE_GCS_PREFIX = "generated/nano-image";
+
+/** Vertex 推論與 GCS 同 GCP 作業時，bytes 寫桶通常極快（內網/短骨幹）；回傳簽名 GET 給調用方拉圖。 */
+async function tryDataUriToGcsSignedUrl(dataUri: string): Promise<string | null> {
+  const m = dataUri.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!m?.[2]) return null;
+  try {
+    const mimeType = String(m[1] || "image/png").trim() || "image/png";
+    const buffer = Buffer.from(String(m[2]).trim(), "base64");
+    if (!buffer.length) return null;
+    const ext =
+      mimeType.includes("jpeg") || mimeType.includes("jpg")
+        ? "jpg"
+        : mimeType.includes("webp")
+          ? "webp"
+          : "png";
+    const objectName = `${NANO_IMAGE_GCS_PREFIX}/${Date.now()}_${Math.random().toString(36).slice(2, 11)}.${ext}`;
+    const { gcsUri } = await uploadBufferToGcs({ objectName, buffer, contentType: mimeType });
+    return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
+  } catch (e: any) {
+    console.warn("[api/google] nanoImage → GCS failed:", e?.message || e);
+    return null;
+  }
+}
+
+/** 將 data: 落地 GCS 並改為簽名 https；非 data: 或上傳失敗則保留原字符串。 */
+async function materializeDataImageUrlsToGcs(urls: string[]): Promise<string[]> {
+  return Promise.all(
+    urls.map(async (u) => {
+      if (!u.startsWith("data:")) return u;
+      return (await tryDataUriToGcsSignedUrl(u)) || u;
+    }),
+  );
+}
+
+/** 預設將 data: 落地 GCS 再響應（單請求內 await）；多圖並行上傳。業務層長流程請另開異步，勿塞滿同步 API。 */
+async function buildNanoImageResponseBody(opts: {
+  ok: boolean;
+  status: number;
+  model?: string;
+  url: string;
+  raw: unknown;
+  imageUrls: string[];
+  forceInlineBase64: boolean;
+  extra?: Record<string, unknown>;
+}) {
+  let imageUrls = opts.imageUrls;
+  if (!opts.forceInlineBase64) {
+    imageUrls = await materializeDataImageUrlsToGcs(imageUrls);
+  }
+  const hadDataUri = opts.imageUrls.some((u) => u.startsWith("data:"));
+  const noDataLeft = !imageUrls.some((u) => u.startsWith("data:"));
+  const omitRaw = !opts.forceInlineBase64 && opts.ok && hadDataUri && noDataLeft;
+  return {
+    ok: opts.ok,
+    status: opts.status,
+    ...(opts.model ? { model: opts.model } : {}),
+    url: opts.url,
+    imageUrl: imageUrls[0] || "",
+    imageUrls,
+    imageCount: imageUrls.length,
+    ...(omitRaw ? { rawOmittedDueToGcs: true as const } : { raw: opts.raw }),
+    ...(opts.extra || {}),
+  };
+}
+
 async function fetchImageAsBase64(imageUrl:string){
   const url = s(imageUrl).trim();
   if(!url) throw new Error("missing_image_url");
@@ -225,6 +301,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
     const b:any = req.method==="POST" ? getBody(req) : {};
     const op = s(q.op || b.op).trim();
     if(!op) return res.status(400).json({ok:false,error:"missing_op"});
+
+    const nanoForceInlineBase64 = /^(1|true|yes|on)$/i.test(s(q.inlineBase64 || b.inlineBase64));
 
     // ---------------- transcribeAudio (Gemini direct, no Vertex needed) ----------------
     if (op === "transcribeAudio") {
@@ -289,19 +367,21 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
           guidanceScale: Number.isFinite(guidanceScaleVx) ? guidanceScaleVx : undefined,
         });
 
-        return res.status(rVx.ok ? 200 : 502).json({
+        const bodyVx = await buildNanoImageResponseBody({
           ok: rVx.ok,
           status: rVx.status,
           model: rVx.model,
           url: rVx.url,
           raw: rVx.raw,
-          imageUrl: rVx.imageUrl,
           imageUrls: rVx.imageUrls,
-          imageCount: rVx.imageCount,
-          imagenBackend: "vertex",
-          vertexLocation: rVx.location,
-          ...(rVx.error ? { error: rVx.error } : {}),
+          forceInlineBase64: nanoForceInlineBase64,
+          extra: {
+            imagenBackend: "vertex",
+            vertexLocation: rVx.location,
+            ...(rVx.error ? { error: rVx.error } : {}),
+          },
         });
+        return res.status(rVx.ok ? 200 : 502).json(bodyVx);
       }
 
       if (promptUltra && isImagen4GeminiApiModel(rawUltra)) {
@@ -345,16 +425,16 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
         const rawU = rU.json ?? rU.rawText;
         const imagesU = rU.ok ? extractGeneratedImages(rU.json) : [];
         const imageUrlsU = imagesU.map((item) => `data:${item.mimeType};base64,${item.data}`);
-        return res.status(rU.ok ? 200 : 502).json({
+        const bodyU = await buildNanoImageResponseBody({
           ok: rU.ok,
           status: rU.status,
           model: geminiImagenModel,
           url: glUrl.split("?")[0],
           raw: rawU,
-          imageUrl: imageUrlsU[0] || "",
           imageUrls: imageUrlsU,
-          imageCount: imageUrlsU.length,
+          forceInlineBase64: nanoForceInlineBase64,
         });
+        return res.status(rU.ok ? 200 : 502).json(bodyU);
       }
     }
 
@@ -385,6 +465,8 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
 
     // ---------------- Nano Banana (image) ----------------
     // op=nanoImage, tier=flash|pro, size=1K|2K|4K, aspectRatio=16:9...
+    // Pro · 4K：imageConfig.imageSize + outputResolution（產品文檔口徑）；Flash 僅在 2K/4K 時寫 imageSize。
+    // fetch 一律 120s：4K Base64 體量大可導致讀取超時。
     if(op === "nanoImage"){
       const prompt = s(b.prompt || q.prompt || "");
       if(!prompt) return res.status(400).json({ok:false,error:"missing_prompt"});
@@ -432,26 +514,42 @@ export default async function handler(req:VercelRequest,res:VercelResponse){
       if(numberOfImages > 1) imageConfig.numberOfImages = numberOfImages;
       if(Number.isFinite(seed as number)) imageConfig.seed = Math.floor(seed as number);
       if(personGeneration) imageConfig.personGeneration = personGeneration;
-      if(resolvedTier === "pro") imageConfig.imageSize = size;
+      if (resolvedTier === "pro") {
+        imageConfig.imageSize = size;
+        if (size === "4K") imageConfig.outputResolution = "4K";
+      } else if (size === "2K" || size === "4K") {
+        imageConfig.imageSize = size;
+      }
 
-      const requestInit: RequestInit = {
-        method:"POST",
-        headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json" },
+      const nanoVertexTimeoutMs = 120_000;
+      const makeNanoVertexInit = (): RequestInit => ({
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents:[{role:"user",parts:[{text:prompt}]}],
-          generationConfig:{ responseModalities:["IMAGE"], imageConfig }
-        })
-      };
-      let r = await fetchJson(url, requestInit);
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ["IMAGE"], imageConfig },
+        }),
+        signal: AbortSignal.timeout(nanoVertexTimeoutMs),
+      });
+
+      let r = await fetchJson(url, makeNanoVertexInit());
       for (let attempt = 0; attempt < 4 && shouldRetryVertexImage(r.status, r.json, r.rawText); attempt += 1) {
         await sleep((2 ** attempt) * 1000 + Math.floor(Math.random() * 300));
-        r = await fetchJson(url, requestInit);
+        r = await fetchJson(url, makeNanoVertexInit());
       }
 
       const raw = r.json ?? r.rawText;
       const images = r.ok ? extractGeneratedImages(r.json) : [];
       const imageUrls = images.map((item) => `data:${item.mimeType};base64,${item.data}`);
-      return res.status(r.ok?200:502).json({ ok:r.ok, status:r.status, url:r.url, raw, imageUrl: imageUrls[0] || "", imageUrls, imageCount: imageUrls.length });
+      const bodyNb = await buildNanoImageResponseBody({
+        ok: r.ok,
+        status: r.status,
+        url: r.url,
+        raw,
+        imageUrls,
+        forceInlineBase64: nanoForceInlineBase64,
+      });
+      return res.status(r.ok ? 200 : 502).json(bodyNb);
     }
 
     if(op === "upscaleImage"){
