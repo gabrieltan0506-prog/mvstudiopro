@@ -224,7 +224,7 @@ export default function ReportEditor({
 
   // ── 自动保存（每次 chunks 改动 1.5 秒后触发） ───────────────────────────────
   useEffect(() => {
-    if (status === "completed") return; // 已出刊不再自动保存
+  // 已出刊也自动保存修订（与后端 saveDraft = completed 一致）
     if (markdown === initialMarkdown) return;
     dirtyRef.current = true;
     setAutoSaveStatus("saving");
