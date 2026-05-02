@@ -47,27 +47,19 @@ function formatMagazineCoverMonthYearEnAsia(d = new Date()): string {
   return `${month} ${year}`;
 }
 
-function buildMagazineCoverImagePrompt(opts: {
-  safeTitle: string;
-  /** 燈塔標題（可能含中文），與 safeTitle 不同時可傳 */
-  displayTitle?: string;
-}): string {
-  const title = String(opts.displayTitle ?? opts.safeTitle).trim();
+/**
+ * 僅在既有封面 prompt 末尾追加 Asia/Shanghai 日期約束，不改寫前半段畫面/構圖描述。
+ * （#373 曾把異步封面「短 prompt」換成與 on-demand 相同的長版；#377 再加 CJK 排版段。
+ * 與「只調封面日期」需求不符時，保留兩條歷史口径，只共用此日期尾綴。）
+ */
+function appendMagazineCoverDateInstructions(promptBase: string): string {
   const coverMonthYear = formatMagazineCoverMonthYearEnAsia();
+  const coverZh = formatPublicationDateZhAsia();
   return (
-    `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
-    `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
-    `Render the report title prominently as elegant gold typography baked directly into the image — ` +
-    `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
-    `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
-    `Topic / title to render: ${opts.safeTitle}\n\n` +
-    `Masthead dating (Asia/Shanghai, current generation — never use stale years like 2024): ` +
-    `use English month+year exactly "${coverMonthYear}" in the ISSN/issue/footer/barcode strip small print only. ` +
-    `Keep date lines short and crisp.\n\n` +
-    `Typography: Any Chinese (CJK) must look like premium offset print — razor-sharp strokes, straight baseline, even weight, ` +
-    `NO liquify / melting / wavy glyph distortion, NO pseudo-3D extrusion blobs on Han characters. ` +
-    `Prefer light metallic foil or subtle deboss on CJK; heavier emboss OK on short English words only.\n\n` +
-    `Full title for context (primary line is the gold title above): ${title}`
+    `${promptBase}\n\n` +
+    `Publication dating (Asia/Shanghai, current run — do not use stale years like 2024): ` +
+    `English masthead / ISSN / footer / barcode small print must use exactly "${coverMonthYear}". ` +
+    `If any Chinese publication date appears on the cover, use "${coverZh}".`
   );
 }
 
@@ -871,7 +863,14 @@ export async function ensureCoverForCreation(
     // 关键：要求模型把标题作为金色印刷字直接画进图，因为下载模板里不再叠任何文字
     // （PR #356 / #357 之后，有封面图时模板纯图，不再有 cover-pill / cover-mega 文字层）
     const safeTitle = String(lighthouseTitle || "战略情报报告").trim().slice(0, 60);
-    const prompt = buildMagazineCoverImagePrompt({ safeTitle, displayTitle: lighthouseTitle });
+    const promptBase =
+      `Luxury dark-gold business magazine cover, cinematic editorial photography, ` +
+      `dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. ` +
+      `Render the report title prominently as elegant gold typography baked directly into the image — ` +
+      `it must be readable in the final picture (no separate text overlay will be added by the template). ` +
+      `Include a small "STRATEGIC INTELLIGENCE" tagline near the top. ` +
+      `Topic / title to render: ${safeTitle}`;
+    const prompt = appendMagazineCoverDateInstructions(promptBase);
 
     let imageUrl: string | undefined;
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
@@ -2144,26 +2143,16 @@ ${job.topic}
     }
 
     // 2. 封面图：Nano Banana Pro (gemini-3-pro-image-preview) 9:16 竖版 + 6 次串行重试
-    //    用户决策（2026-05-01）：
-    //      - 6 次重试保留（保证质量），但**整段必须异步执行，不能阻塞主流程**。
-    //        用户明确：报告主体生成完即可让用户在「战略作品快照库」看到，
-    //        封面后台慢慢跑（最坏 6 分钟），完成后 fire-and-forget 回写 DB。
-    //      - aspectRatio: "9:16" — 标准杂志竖版
-    //      - 严格不要场景图兜底（场景图是 16:9 横版，硬塞会拉伸）
-    //      - 双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）
-    //      - 单次 timeout 60s（Gemini reviewer 建议从 90s 降下来缩短 worst-case）
-    //    （Imagen Ultra 封面链路至 strategicCoverImage.ts，待验证后再合入。）
-    const coverPrompt = buildMagazineCoverImagePrompt({
-      safeTitle: String(lighthouseTitle || "战略情报报告").trim().slice(0, 60),
-      displayTitle: lighthouseTitle,
-    });
+    //    双轨：Vertex 3 次 + Gemini API key 3 次，串行（避免 Gemini 50 RPM）；单次 timeout 60s。
+    const coverPromptBase =
+      `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
+    const coverPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
     const coverPromise: Promise<string | undefined> = (async () => {
       let cover: string | undefined;
+      const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
 
-      // 主路径 Vertex (tier=pro = Nano Banana Pro)，串行重试 3 次
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
-          const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
           const res = await fetch(`${vercelBaseUrl}/api/google?op=nanoImage`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -2174,17 +2163,17 @@ ${job.topic}
             const errText = await res.text().catch(() => "");
             throw new Error(`vertex_http_${res.status}: ${errText.slice(0, 200)}`);
           }
-          const j: any = await res.json();
+          const j: Record<string, unknown> = await res.json();
           if (!j?.imageUrl) throw new Error(`vertex_empty_imageUrl: ${JSON.stringify(j).slice(0, 200)}`);
           cover = String(j.imageUrl);
           console.log(`[deepResearch][async-cover] ✅ via Vertex (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
-        } catch (e: any) {
-          console.warn(`[deepResearch][async-cover] ⚠️ Vertex 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(`[deepResearch][async-cover] ⚠️ Vertex 第 ${i}/3 次失败：${msg} jobId=${jobId}`);
           if (i < 3) await sleep(2000);
         }
       }
 
-      // Fallback Gemini API key 直连 (Nano Banana Pro)，串行重试 3 次
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
           cover = await generateImageViaGeminiApiKey({
@@ -2193,8 +2182,9 @@ ${job.topic}
             model: "gemini-3-pro-image-preview",
           });
           console.log(`[deepResearch][async-cover] ✅ via Gemini API key (Nano Banana Pro 9:16)，第 ${i}/3 次尝试 jobId=${jobId}`);
-        } catch (e: any) {
-          console.warn(`[deepResearch][async-cover] ⚠️ Gemini API key 第 ${i}/3 次失败：${e?.message ?? e} jobId=${jobId}`);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(`[deepResearch][async-cover] ⚠️ Gemini API key 第 ${i}/3 次失败：${msg} jobId=${jobId}`);
           if (i < 3) await sleep(2000);
         }
       }
