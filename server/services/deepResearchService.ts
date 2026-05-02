@@ -17,6 +17,7 @@ import {
   requestCancel as ledgerRequestCancel,
   type PaidJobRefundReason,
 } from "./paidJobLedger";
+import { generateAndStoreStrategicImage } from "./imageGenerationService";
 
 // Storage root for job state. Default = Fly persistent volume. Override via env var
 // for local tests / CI smoke tests.
@@ -65,8 +66,8 @@ function appendMagazineCoverDateInstructions(promptBase: string): string {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gemini Consumer API key 生图（generativelanguage…:generateContent?key=）。
-// 戰略智庫主流程封面 / 場景圖為 **Vertex nanoImage**；主路 Pro 4K / Imagen 2K，失敗兜底仍為 **Vertex**（`flash_2k`）。
-// 本函式僅供少量非智庫路徑或本機實驗保留。
+// 戰略智庫主流程封面 / 場景圖：**Fly 端直連 Vertex**（`generateAndStoreStrategicImage` → GCS 簽名 URL），**不再經 Vercel `/api/google` 閘道**。
+// Vertex 全敗時封面可走本函式 **Consumer Nano Banana 2 · 2K**（需 `GEMINI_API_KEY`）。
 // ─────────────────────────────────────────────────────────────────────────────
 type ImageAspectRatio = "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
 type ImageModel = "gemini-3.1-flash-image-preview" | "gemini-3-pro-image-preview";
@@ -79,171 +80,11 @@ const VERTEX_STRATEGIC_COVER_IMAGE_MODEL =
 /** 戰略智庫正文配圖：Vertex Imagen Ultra（用戶指定 ID） */
 const VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL = "imagen-4.0-ultra-generate-001";
 
-/** 戰略智庫 Vertex 失敗時兜底：Nano Banana 2 · 2K（仍走 Vercel `nanoImage` → Vertex `generateContent`，非 Consumer key） */
+/** 戰略智庫 Vertex 全敗時封面兜底：Nano Banana 2 · 2K（Consumer `generateContent`，非閘道） */
 const STRATEGIC_FALLBACK_FLASH_MODEL = "gemini-3.1-flash-image-preview" as const;
 
-/** 智庫出圖（封面 / 場景 / flash 兜底）：在英文 prompt 末追加質感關鍵字（產品指定：hyper-realistic、8k resolution details 等），利於 Ultra / Pro 級渲染。 */
-const STRATEGIC_IMAGE_QUALITY_HINT =
+const CONSUMER_COVER_QUALITY_TAIL =
   "hyper-realistic, cinematic color grade, 8k resolution details, premium editorial finish.";
-
-function withStrategicImageQualityHint(prompt: string): string {
-  const p = String(prompt || "").trim();
-  if (!p) return STRATEGIC_IMAGE_QUALITY_HINT;
-  if (/hyper-realistic|8k resolution/i.test(p)) return p;
-  return `${p} ${STRATEGIC_IMAGE_QUALITY_HINT}`;
-}
-
-/**
- * 戰略智庫視覺：一律經 Vercel `/api/google?op=nanoImage`（**Vertex IAM**）。
- * 主路徑：`cover_pro_4k` / `scene_imagen_2k`；失敗兜底：`flash_2k`（Nano Banana 2 · 2K）。
- *
- * **Vertex + GCS**：閘道內已將生圖結果落 GCS 再回 URL；與 Vertex 同雲時寫入與下載延遲通常很低。
- *
- * **異步優先（必守）**：4K / 大圖仍可能慢；封面 **必須**維持 `coverPromise` **fire-and-forget** + DB `thumbnailUrl` 晚點回填，
- * **禁止**在「研報 completed」主路徑上 `await` 整條封面鏈（避免 tRPC / HTTP 超時與雙重阻塞）。場景配圖已串行但獨立於「結案」狀態。
- *
- * **質感尾綴（產品口徑）**：封面與場景 / flash 兜底送閘道前一律經 `withStrategicImageQualityHint`（`hyper-realistic`、`8k resolution details` 等），與固定英文 prompt + `appendMagazineCoverDateInstructions` 疊加，不取代前半段構圖描述。
- *
- * 本端 fetch 閘道用 **120s** `AbortSignal.timeout`；若閘道回 GCS URL，下方會再轉存穩定 Blob 供入庫。
- */
-async function fetchStrategicVertexImageViaGateway(opts: {
-  vercelBaseUrl: string;
-  prompt: string;
-  aspectRatio: ImageAspectRatio;
-  kind: "cover_pro_4k" | "scene_imagen_2k" | "flash_2k";
-  timeoutMs?: number;
-  /** 預設 true；僅除錯時可傳 false 以省略質感尾綴。 */
-  appendStrategicImageQualityHint?: boolean;
-}): Promise<string> {
-  const base = opts.vercelBaseUrl.replace(/\/$/, "");
-  const timeoutMs = opts.timeoutMs ?? 120_000;
-  const useHint = opts.appendStrategicImageQualityHint !== false;
-  const promptForModel = useHint ? withStrategicImageQualityHint(opts.prompt) : String(opts.prompt || "").trim();
-  let q: URLSearchParams;
-  let body: Record<string, unknown>;
-
-  if (opts.kind === "cover_pro_4k") {
-    const model = VERTEX_STRATEGIC_COVER_IMAGE_MODEL;
-    q = new URLSearchParams({
-      op: "nanoImage",
-      tier: "pro",
-      model,
-      imageSize: "4K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: "1",
-      guidanceScale: "4.0",
-      personGeneration: "ALLOW_ADULT",
-    });
-    body = {
-      prompt: promptForModel,
-      tier: "pro",
-      model,
-      imageSize: "4K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: 1,
-      guidanceScale: 4.0,
-      personGeneration: "ALLOW_ADULT",
-    };
-  } else if (opts.kind === "scene_imagen_2k") {
-    const model = VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL;
-    q = new URLSearchParams({
-      op: "nanoImage",
-      imagenBackend: "vertex",
-      tier: "pro",
-      model,
-      imageSize: "2K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: "1",
-      guidanceScale: "4.0",
-      personGeneration: "ALLOW_ADULT",
-    });
-    body = {
-      prompt: promptForModel,
-      imagenBackend: "vertex",
-      tier: "pro",
-      model,
-      imageSize: "2K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: 1,
-      guidanceScale: 4.0,
-      personGeneration: "ALLOW_ADULT",
-    };
-  } else {
-    const model = STRATEGIC_FALLBACK_FLASH_MODEL;
-    q = new URLSearchParams({
-      op: "nanoImage",
-      tier: "flash",
-      model,
-      imageSize: "2K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: "1",
-      guidanceScale: "4.0",
-      personGeneration: "ALLOW_ADULT",
-    });
-    body = {
-      prompt: promptForModel,
-      tier: "flash",
-      model,
-      imageSize: "2K",
-      aspectRatio: opts.aspectRatio,
-      numberOfImages: 1,
-      guidanceScale: 4.0,
-      personGeneration: "ALLOW_ADULT",
-    };
-  }
-
-  const res = await fetch(`${base}/api/google?${q}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`vertex_gateway_http_${res.status}: ${errText.slice(0, 240)}`);
-  }
-  const j: Record<string, unknown> = await res.json();
-  let url = String(j?.imageUrl ?? "").trim();
-  if (!url) throw new Error(`vertex_gateway_empty_imageUrl: ${JSON.stringify(j).slice(0, 240)}`);
-
-  // 閘道可能回 data: 或 **GCS 簽名 URL**（會過期）；入庫 / 報告 Markdown 需穩定 https
-  if (url.startsWith("data:")) {
-    const m = url.match(/^data:([^;,]+);base64,(.+)$/);
-    if (m?.[2]) {
-      const mimeType = m[1] || "image/png";
-      const buffer = Buffer.from(m[2], "base64");
-      if (buffer.length > 0) {
-        const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-        const fileKey = `vertex-strategic/${opts.kind}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
-        const { storagePut } = await import("../storage");
-        const { url: httpsUrl } = await storagePut(fileKey, buffer, mimeType);
-        return httpsUrl;
-      }
-    }
-  } else {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname === "storage.googleapis.com") {
-        const imgRes = await fetch(url, { signal: AbortSignal.timeout(120_000) });
-        if (imgRes.ok) {
-          const mimeType = String(imgRes.headers.get("content-type") || "image/png");
-          const buffer = Buffer.from(await imgRes.arrayBuffer());
-          if (buffer.length > 0) {
-            const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-            const fileKey = `vertex-strategic/${opts.kind}/${Date.now()}_${Math.random().toString(36).slice(2, 10)}.${ext}`;
-            const { storagePut } = await import("../storage");
-            const { url: httpsUrl } = await storagePut(fileKey, buffer, mimeType);
-            return httpsUrl;
-          }
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[fetchStrategicVertexImageViaGateway] GCS→Blob 持久化失敗，沿用原 URL：${msg}`);
-    }
-  }
-  return url;
-}
 
 export async function generateImageViaGeminiApiKey(opts: {
   prompt: string;
@@ -1009,7 +850,7 @@ async function getDbAndSchema() {
 //
 // 用户决策（2026-05-02）：
 //   主路径：Vertex Nano Banana Pro · **4K**、9:16。
-//   **Fallback**：Vertex 全败后 → Consumer **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· **2K**、9:16（需 `GEMINI_API_KEY`）。
+//   **Fallback**：Fly/Vertex 全败后 → Consumer **Nano Banana 2**（`gemini-3.1-flash-image-preview`）· **2K**、9:16（需 `GEMINI_API_KEY`）。
 //
 // 设计要点：
 //   - 已有封面直接返回（幂等）
@@ -1050,18 +891,12 @@ export async function ensureCoverForCreation(
     const prompt = appendMagazineCoverDateInstructions(promptBase);
 
     let imageUrl: string | undefined;
-    const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
       try {
-        imageUrl = await fetchStrategicVertexImageViaGateway({
-          vercelBaseUrl,
-          prompt,
-          aspectRatio: "9:16",
-          kind: "cover_pro_4k",
-          timeoutMs: 120_000,
-        });
+        console.log(`[ensureCoverForCreation] 開始 Fly/Vertex 4K 封面（第 ${attempt}/2 次）creationId=${creationId}`);
+        imageUrl = await generateAndStoreStrategicImage(prompt, "COVER");
         console.log(
-          `[ensureCoverForCreation] ✅ on-demand 封面 via Vertex Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
+          `[ensureCoverForCreation] ✅ on-demand 封面 Fly/Vertex Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
         );
       } catch (e: any) {
         console.warn(
@@ -1073,26 +908,26 @@ export async function ensureCoverForCreation(
 
     for (let attempt = 1; attempt <= 2 && !imageUrl; attempt++) {
       try {
-        imageUrl = await fetchStrategicVertexImageViaGateway({
-          vercelBaseUrl,
-          prompt,
+        const flashPrompt = `${prompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}`;
+        imageUrl = await generateImageViaGeminiApiKey({
+          prompt: flashPrompt,
           aspectRatio: "9:16",
-          kind: "flash_2k",
-          timeoutMs: 120_000,
+          model: STRATEGIC_FALLBACK_FLASH_MODEL,
+          imageSize: "2K",
         });
         console.log(
-          `[ensureCoverForCreation] ✅ on-demand 兜底 Vertex Nano Banana 2 · 2K（${STRATEGIC_FALLBACK_FLASH_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
+          `[ensureCoverForCreation] ✅ on-demand 兜底 Consumer Nano Banana 2 · 2K（${STRATEGIC_FALLBACK_FLASH_MODEL}），第 ${attempt}/2 次 creationId=${creationId}`,
         );
       } catch (e: any) {
         console.warn(
-          `[ensureCoverForCreation] ⚠️ 兜底 flash 2K 第 ${attempt}/2 次失败: ${e?.message ?? e} creationId=${creationId}`,
+          `[ensureCoverForCreation] ⚠️ 兜底 Consumer 2K 第 ${attempt}/2 次失败: ${e?.message ?? e} creationId=${creationId}`,
         );
         if (attempt < 2) await sleep(1000);
       }
     }
 
     if (!imageUrl) {
-      console.warn(`[ensureCoverForCreation] Pro 与 flash 2K 均失败 creationId=${creationId}，模板将走文字框回退`);
+      console.warn(`[ensureCoverForCreation] Fly/Vertex 与 Consumer 2K 均失败 creationId=${creationId}，模板将走文字框回退`);
       return undefined;
     }
 
@@ -2312,7 +2147,6 @@ ${job.topic}
       const sceneImages = await generateSceneIllustrations({
         topic: job.topic,
         reportMarkdown,
-        vercelBaseUrl: String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, ""),
       });
       if (sceneImages.length > 0) {
         reportMarkdown = injectSceneImagesIntoMarkdown(reportMarkdown, sceneImages);
@@ -2322,7 +2156,7 @@ ${job.topic}
           return acc;
         }, {});
         console.log(
-          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（Vertex：优先 Imagen Ultra 2K，单张失败兜底 Nano Banana 2 · 2K）·  类别: ${JSON.stringify(catBreakdown)}`,
+          `[deepResearch] 已注入 ${sceneImages.length} 张场景配图（Fly：Imagen Ultra 2K 串行 + 3s 冷却，GCS 落签）·  类别: ${JSON.stringify(catBreakdown)}`,
         );
       }
     } catch (e: any) {
@@ -2342,25 +2176,19 @@ ${job.topic}
       console.warn("[deepResearch] 灯塔标题生成失败，使用原课题");
     }
 
-    // 2. 封面图：**Vertex** — Pro 9:16 **4K**（3 次）；全败则 **Nano Banana 2 · 2K**（Vertex `flash_2k`，2 次）。单次 120s。
+    // 2. 封面图：Fly 直連 **Vertex** Pro 9:16 **4K**（本地 `generateAndStoreStrategicImage`，3 次）；全败则 Consumer **Nano Banana 2 · 2K**（2 次）。单次 120s。
     const coverPromptBase =
       `Luxury dark-gold business magazine cover, cinematic editorial photography, dramatic lighting, sophisticated typography overlay, 9:16 vertical portrait format. Topic: ${lighthouseTitle}`;
     const coverPrompt = appendMagazineCoverDateInstructions(coverPromptBase);
     const coverPromise: Promise<string | undefined> = (async () => {
       let cover: string | undefined;
-      const vercelBaseUrl = String(process.env.VERCEL_APP_URL || "https://mvstudiopro.vercel.app").replace(/\/$/, "");
 
       for (let i = 1; i <= 3 && !cover; i++) {
         try {
-          cover = await fetchStrategicVertexImageViaGateway({
-            vercelBaseUrl,
-            prompt: coverPrompt,
-            aspectRatio: "9:16",
-            kind: "cover_pro_4k",
-            timeoutMs: 120_000,
-          });
+          console.log(`[deepResearch][async-cover] 開始在 Fly 本地生成 4K 封面… 第 ${i}/3 次 jobId=${jobId}`);
+          cover = await generateAndStoreStrategicImage(coverPrompt, "COVER");
           console.log(
-            `[deepResearch][async-cover] ✅ Vertex Nano Banana Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${i}/3 次 jobId=${jobId}`,
+            `[deepResearch][async-cover] ✅ Fly/Vertex Nano Banana Pro 4K（${VERTEX_STRATEGIC_COVER_IMAGE_MODEL}），第 ${i}/3 次 jobId=${jobId}`,
           );
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -2371,25 +2199,25 @@ ${job.topic}
 
       for (let i = 1; i <= 2 && !cover; i++) {
         try {
-          cover = await fetchStrategicVertexImageViaGateway({
-            vercelBaseUrl,
-            prompt: coverPrompt,
+          const flashPrompt = `${coverPrompt}\n\n${CONSUMER_COVER_QUALITY_TAIL}`;
+          cover = await generateImageViaGeminiApiKey({
+            prompt: flashPrompt,
             aspectRatio: "9:16",
-            kind: "flash_2k",
-            timeoutMs: 120_000,
+            model: STRATEGIC_FALLBACK_FLASH_MODEL,
+            imageSize: "2K",
           });
           console.log(
-            `[deepResearch][async-cover] ✅ 兜底 Vertex Nano Banana 2 · 2K（${STRATEGIC_FALLBACK_FLASH_MODEL}），第 ${i}/2 次 jobId=${jobId}`,
+            `[deepResearch][async-cover] ✅ 兜底 Consumer Nano Banana 2 · 2K（${STRATEGIC_FALLBACK_FLASH_MODEL}），第 ${i}/2 次 jobId=${jobId}`,
           );
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
-          console.warn(`[deepResearch][async-cover] ⚠️ 兜底 flash 2K 第 ${i}/2 次失败：${msg} jobId=${jobId}`);
+          console.warn(`[deepResearch][async-cover] ⚠️ 兜底 Consumer 2K 第 ${i}/2 次失败：${msg} jobId=${jobId}`);
           if (i < 2) await sleep(2000);
         }
       }
 
       if (!cover) {
-        console.warn(`[deepResearch][async-cover] Pro 与 flash 2K 均失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
+        console.warn(`[deepResearch][async-cover] Fly/Vertex Pro 与 Consumer 2K 均失败 jobId=${jobId}，thumbnailUrl=NULL（可后续手工 backfill）`);
       }
       return cover;
     })();
@@ -2683,10 +2511,16 @@ function parseScenesJson(raw: string): { scenes: SceneIllustration[] } | null {
   return null;
 }
 
+const STRICT_SCENE_CONSTRAINT = `
+CRITICAL INSTRUCTION FOR SCENE GENERATION:
+You MUST generate exactly 5 to 7 scene descriptions based on the markdown content.
+Do NOT generate less than 5 scenes under any circumstances.
+Ensure the scenes are evenly distributed across the logical structure of the report.
+`.trim();
+
 async function generateSceneIllustrations(params: {
   topic: string;
   reportMarkdown: string;
-  vercelBaseUrl: string;
   /**
    * 默认 5-7 张（2026-05-01 用户决策从 3-5 升到 5-7，强制 4 类「重点突出」画面全覆盖）。
    * 若调用方显式传 minCount < 4 或 maxCount < 4，4 类全覆盖检查会被跳过（保留向后兼容入口）。
@@ -2756,22 +2590,24 @@ ${titleListBlock}
   ]
 }
 
+${STRICT_SCENE_CONSTRAINT}
+
 【报告正文】
 ${reportSnippet}`,
     2,
     { temperature: 0.4, topP: 0.9, maxTokens: 30000 },
   );
 
-  // ── 解析 LLM 输出：先严格 parse，失败则尝试修复 unterminated JSON，
-  //    再失败则发起一次精简 retry，最后兜底返回空数组（仅 warn 不 throw）。
+  // ── 解析 LLM 输出：先严格 parse；**僅在 0 場景時** retry；不再因 < minCount 整批放棄配圖。
   let parsed = parseScenesJson(sceneJsonText);
-  if (!parsed || (parsed.scenes ?? []).length < minCount) {
-    const firstSceneCount = parsed?.scenes?.length ?? 0;
+  const firstSceneCount = parsed?.scenes?.length ?? 0;
+  if (firstSceneCount > 0 && firstSceneCount < minCount) {
     console.warn(
-      `[deepResearch][scenes] 第 1 次解析仅得 ${firstSceneCount} 个场景，发起精简 retry…`,
+      `[deepResearch][scenes] 第 1 次解析得 ${firstSceneCount} 个场景（目标 ${minCount}-${maxCount}），仍繼續生圖（不因數量放棄整批）。`,
     );
-    // ── retry：明确告诉 LLM 上次输出被截断，要 minCount 张 + 缩短 imagePrompt ──
-    //   仍然要求 4 类覆盖（scene/persona/product/data），但允许各类只 1 张
+  }
+  if (!parsed || firstSceneCount === 0) {
+    console.warn(`[deepResearch][scenes] 第 1 次解析无场景，发起精简 retry…`);
     const retryText = await generate(
       "gemini-3.1-pro-preview",
       `上一次返回的 JSON 不完整（被 token 上限截断或字符串未闭合）。请严格只输出 ${minCount} 个最关键场景的 JSON，每个 imagePrompt **必须 ≤ 50 个英文单词**。
@@ -2802,6 +2638,8 @@ ${titleListBlock}
   ]
 }
 
+${STRICT_SCENE_CONSTRAINT}
+
 【报告正文（前 8000 字）】
 ${reportSnippet.slice(0, 8000)}`,
       2,
@@ -2811,20 +2649,17 @@ ${reportSnippet.slice(0, 8000)}`,
       return "";
     });
     const retryParsed = parseScenesJson(retryText);
-    if (retryParsed && (retryParsed.scenes ?? []).length >= minCount) {
+    if (retryParsed && (retryParsed.scenes?.length ?? 0) > 0) {
       parsed = retryParsed;
-    } else {
-      console.warn(
-        `[deepResearch][scenes] retry 后仍仅 ${retryParsed?.scenes?.length ?? 0} 个场景，跳过配图（任务不挂）`,
-      );
-      return [];
     }
   }
-  const scenes = (parsed.scenes || []).slice(0, maxCount);
-  if (scenes.length < minCount) {
-    console.warn(`[deepResearch][scenes] 最终仅 ${scenes.length} 个场景（要求 ≥ ${minCount}），跳过配图`);
+
+  if (!parsed || (parsed.scenes?.length ?? 0) === 0) {
+    console.warn(`[deepResearch][scenes] 警告：模型未產出場景，跳過配圖注入。`);
     return [];
   }
+
+  const scenes = (parsed.scenes || []).slice(0, maxCount);
 
   // ── 1.5 类别覆盖诊断（不 reject，仅 warn，方便观察 LLM 是否听话） ────
   // 用户决策（2026-05-01）：4 类必须全覆盖，但首版以 prompt 强约束 + 日志观察为主。
@@ -2841,43 +2676,29 @@ ${reportSnippet.slice(0, 8000)}`,
       (missing.length ? `，⚠ 缺类: ${missing.join("/")}` : "，✅ 4 类全覆盖"),
   );
 
-  // ── 2. 串行 + **Vertex** — Imagen Ultra 2K；单张 Imagen 失败则同一 prompt 走 Nano Banana 2 · 2K（仍 nanoImage / Vertex） ──
+  // ── 2. 串行 + Fly 直連 Vertex Imagen Ultra 2K（`generateAndStoreStrategicImage` → GCS），張間 3s 冷卻防 429 ──
+  console.log(`[deepResearch][scenes] 準備為 ${scenes.length} 個場景生成配圖...`);
   const generated: (SceneIllustration | null)[] = [];
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
-    const aspectRatio = (scene.aspectRatio || "16:9") as ImageAspectRatio;
     let imageUrl: string | undefined;
     try {
-      imageUrl = await fetchStrategicVertexImageViaGateway({
-        vercelBaseUrl: params.vercelBaseUrl,
-        prompt: scene.imagePrompt,
-        aspectRatio,
-        kind: "scene_imagen_2k",
-        timeoutMs: 120_000,
-      });
       console.log(
-        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ Vertex Imagen Ultra 2K（${VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL}）`,
+        `[deepResearch][scenes] 正在生成第 ${i + 1}/${scenes.length} 张图 (SCENE → ${VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL})...`,
       );
-    } catch (e: any) {
-      console.warn(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} Vertex Imagen 失败：${e?.message ?? e}`);
-      try {
-        imageUrl = await fetchStrategicVertexImageViaGateway({
-          vercelBaseUrl: params.vercelBaseUrl,
-          prompt: scene.imagePrompt,
-          aspectRatio,
-          kind: "flash_2k",
-          timeoutMs: 120_000,
-        });
-        console.log(
-          `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ 兜底 Vertex Nano Banana 2 · 2K（${STRATEGIC_FALLBACK_FLASH_MODEL}）`,
-        );
-      } catch (e2: any) {
-        console.warn(`[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 兜底 flash 2K 失败：${e2?.message ?? e2}`);
-      }
+      imageUrl = await generateAndStoreStrategicImage(scene.imagePrompt, "SCENE");
+      console.log(
+        `[deepResearch][scenes] 第 ${i + 1}/${scenes.length} 张 ✅ 就绪: ${imageUrl.length > 100 ? `${imageUrl.slice(0, 100)}…` : imageUrl}`,
+      );
+    } catch (error: unknown) {
+      console.error(`[deepResearch][scenes] 第 ${i + 1} 张图生成失败，跳过。错误:`, error);
     }
     if (imageUrl) generated.push({ ...scene, imageUrl });
     else generated.push(null);
-    if (i < scenes.length - 1) await sleep(500);
+    if (i < scenes.length - 1) {
+      console.log(`[deepResearch][scenes] 進入 3 秒冷卻，避免觸發 Vertex HTTP 429...`);
+      await sleep(3000);
+    }
   }
 
   return generated.filter((x): x is SceneIllustration => x !== null && Boolean(x.imageUrl));

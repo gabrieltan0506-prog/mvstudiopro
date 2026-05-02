@@ -6,11 +6,12 @@
  * - **端點**：`https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:predict`（**非** `generativelanguage.googleapis.com`）。
  * - **專案 / 區域**：`VERTEX_PROJECT_ID` 或 `GOOGLE_CLOUD_PROJECT`，以及 `VERTEX_IMAGEN_LOCATION`（預設 `us-central1`）。
  *
- * 套件：`@google-cloud/vertexai` 主要面向 Gemini；**Imagen 4 在 Vertex 上為 predict 端點**。此模組與 `vertexImage.ts` 一致採 **REST `fetch` + Bearer**，避免誤用 Gemini 專用的 `generateContent` 請求體。
+ * 套件：`@google-cloud/vertexai` 主要面向 Gemini；此處 Imagen 與 `vertexImage.ts` 一致採 **REST `fetch` + Bearer**，避免誤用 `generateContent` 請求體。
  *
  * 測試策略：**不作 Ultra → Standard 自動降級**；失敗即回傳錯誤，便於對照企業節點與 IAM。
  */
 import { getVertexAccessToken } from "../utils/vertex";
+import { uploadBufferToGcs, signGsUriV4ReadUrl } from "./gcs";
 
 function s(v: unknown): string {
   if (v == null) return "";
@@ -55,6 +56,33 @@ export type ImagenVertexPredictResult = {
   imageCount: number;
   error?: string;
 };
+
+/** 與 `api/google.ts` extractGeneratedImages 對齊：從 Vertex `generateContent` / predict JSON 取圖。 */
+function extractGeneratedImagesFromVertexResponse(raw: any): Array<{ data: string; mimeType: string }> {
+  const images: Array<{ data: string; mimeType: string }> = [];
+  const parts = Array.isArray(raw?.candidates?.[0]?.content?.parts) ? raw.candidates[0].content.parts : [];
+  for (const part of parts) {
+    const data = s(part?.inlineData?.data).trim();
+    if (data) {
+      images.push({ data, mimeType: s(part?.inlineData?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  const generatedImages = Array.isArray(raw?.generatedImages) ? raw.generatedImages : [];
+  for (const item of generatedImages) {
+    const data = s(item?.image?.bytesBase64Encoded || item?.bytesBase64Encoded || item?.imageBytes).trim();
+    if (data) {
+      images.push({ data, mimeType: s(item?.image?.mimeType || item?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  const predictions = Array.isArray(raw?.predictions) ? raw.predictions : [];
+  for (const item of predictions) {
+    const data = s(item?.bytesBase64Encoded || item?.image?.bytesBase64Encoded || item?.b64Json).trim();
+    if (data) {
+      images.push({ data, mimeType: s(item?.mimeType || item?.image?.mimeType || "image/png").trim() || "image/png" });
+    }
+  }
+  return images;
+}
 
 function extractPredictImages(raw: any): Array<{ data: string; mimeType: string }> {
   const images: Array<{ data: string; mimeType: string }> = [];
@@ -227,4 +255,101 @@ export async function generateStrategicCoverVertex(
     numberOfImages: 1,
   });
   return r.ok && r.imageUrl ? r.imageUrl : null;
+}
+
+/**
+ * Fly / Node 端直連 Vertex，取圖後立刻上傳 GCS 並回簽名讀鏈（**不走 Vercel `/api/google` 閘道**）。
+ *
+ * - **COVER**：Gemini Nano Banana Pro · `generateContent` · 9:16 · 4K（與 `api/google.ts` 一致，**非** `:predict`）
+ * - **SCENE**：Imagen 4.0 Ultra · `:predict` · 16:9 · 2K（與 `generateImagenVertexPredict` 一致）
+ */
+export async function generateAndStoreStrategicImage(
+  prompt: string,
+  mode: "COVER" | "SCENE" = "SCENE",
+): Promise<string> {
+  const pPrompt = String(prompt || "").trim();
+  if (!pPrompt) throw new Error("empty_strategic_image_prompt");
+
+  const IS_COVER = mode === "COVER";
+  const qualitySuffix = IS_COVER
+    ? ", 4k resolution, hyper-realistic, masterpiece, highly detailed, dark gold aesthetics"
+    : ", 2k resolution, hyper-realistic, masterpiece, cinematic lighting";
+  const finalPrompt = `${pPrompt}${qualitySuffix}`;
+
+  console.log(`[Fly Image Engine] 啟動生圖 -> 模式: ${mode}`);
+
+  let buffer: Buffer;
+  let contentType: string;
+
+  if (IS_COVER) {
+    const projectId = s(process.env.VERTEX_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT).trim();
+    if (!projectId) throw new Error("missing_VERTEX_PROJECT_ID_or_GOOGLE_CLOUD_PROJECT");
+
+    const model = s(
+      process.env.VERTEX_DEEP_RESEARCH_COVER_MODEL ||
+        process.env.VERTEX_IMAGE_MODEL_PRO ||
+        "gemini-3-pro-image-preview",
+    ).trim();
+    const location = (s(process.env.VERTEX_IMAGE_LOCATION_PRO || process.env.VERTEX_IMAGE_LOCATION) || "global").trim();
+    const token = await getVertexAccessToken();
+    const base = baseUrlFor(location);
+    const url = `${base}/v1beta1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+
+    const imageConfig: Record<string, unknown> = {
+      aspectRatio: "9:16",
+      personGeneration: "ALLOW_ADULT",
+      // Vertex Gemini `generateContent` 圖像：勿傳 imageSize / outputResolution，易觸發 HTTP 400
+    };
+
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: finalPrompt }] }],
+        generationConfig: { responseModalities: ["IMAGE"], imageConfig },
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    const text = await r.text();
+    const json = jparse(text);
+    if (!r.ok) {
+      throw new Error(`${model} generateContent:${r.status}:${text.slice(0, 800)}`);
+    }
+    const images = extractGeneratedImagesFromVertexResponse(json);
+    const first = images[0];
+    if (!first?.data) throw new Error("strategic_cover_no_image_bytes");
+    buffer = Buffer.from(first.data, "base64");
+    contentType = first.mimeType || "image/png";
+  } else {
+    const model = s(
+      process.env.VERTEX_STRATEGIC_SCENE_IMAGEN_MODEL || "imagen-4.0-ultra-generate-001",
+    ).trim() || "imagen-4.0-ultra-generate-001";
+    const r = await generateImagenVertexPredict({
+      prompt: finalPrompt,
+      model,
+      aspectRatio: "16:9",
+      imageSize: "2K",
+      numberOfImages: 1,
+      personGeneration: "ALLOW_ADULT",
+      guidanceScale: 4.0,
+    });
+    if (!r.ok || !r.imageUrl) throw new Error(r.error || "imagen_predict_failed");
+    const dataUrl = r.imageUrl;
+    const m = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+    if (!m?.[2]) throw new Error("imagen_image_not_inline_base64");
+    buffer = Buffer.from(m[2], "base64");
+    contentType = m[1] || "image/png";
+  }
+
+  const ext = /jpeg|jpg/i.test(contentType) ? "jpg" : "png";
+  const gcsPath = `growth-camp/images/strategic_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const { gcsUri } = await uploadBufferToGcs({
+    objectName: gcsPath,
+    buffer,
+    contentType: contentType.includes("jpeg") || ext === "jpg" ? "image/jpeg" : "image/png",
+  });
+
+  console.log(`[Fly Image Engine] 獲取圖像成功，上傳 GCS: ${gcsUri}`);
+  return signGsUriV4ReadUrl(gcsUri, 7 * 24 * 3600);
 }
