@@ -1,6 +1,7 @@
-import React, { useCallback, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, Crown } from "lucide-react";
+import React, { useRef, useState } from "react";
+import { Loader2, Crown } from "lucide-react";
 import { toast } from "sonner";
+import VoiceInputButton from "@/components/VoiceInputButton";
 
 export type UploadedAgentFile = {
   name: string;
@@ -38,9 +39,9 @@ interface AgentInputPanelProps {
 
 /**
  * 通用 Agent 交互面板：
- * - 大文本框（语音输入会覆盖文本）
+ * - 大文本框（语音转录追加到文末，换行连接）
  * - 文件上传（图片 PNG/JPG/WEBP + PDF，最大 100MB/个，存 GCS）
- * - 语音录制 → /api/google?op=transcribeAudio 转录
+ * - 语音录制 → VoiceInputButton（/api/speech-to-text，FFmpeg + GCP Speech，与平台页一致）
  * - 提交按钮
  */
 export default function AgentInputPanel(props: AgentInputPanelProps) {
@@ -63,6 +64,9 @@ export default function AgentInputPanel(props: AgentInputPanelProps) {
   const [internalText, setInternalText] = useState(initialText);
   const text = isControlled ? value! : internalText;
   const setText = (v: string) => (isControlled ? onValueChange!(v) : setInternalText(v));
+  /** 转录异步返回时用最新正文做追加，避免闭包读到旧 text */
+  const textRef = useRef(text);
+  textRef.current = text;
 
   const [files, setFiles] = useState<UploadedAgentFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -149,77 +153,6 @@ export default function AgentInputPanel(props: AgentInputPanelProps) {
     }
   };
 
-  // ── 语音输入（MediaRecorder → /api/google?op=transcribeAudio） ──────────
-  const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-
-  const toggleVoice = useCallback(async () => {
-    if (isRecording) {
-      recorderRef.current?.stop();
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("当前浏览器不支持录音，请使用 Chrome 或 Safari");
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "audio/mp4";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      chunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        setIsRecording(false);
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        if (!blob.size) {
-          toast.error("录音内容为空，请重试");
-          return;
-        }
-        setIsTranscribing(true);
-        try {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve((reader.result as string).split(",")[1]);
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-          });
-          const r = await fetch("/api/google?op=transcribeAudio", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audioBase64: base64, mimeType: mimeType.split(";")[0] }),
-          });
-          const data = await r.json().catch(() => ({}));
-          const transcribed = String(data?.text || "").trim();
-          if (transcribed) {
-            // 追加到现有内容（不覆盖）
-            setText(text ? `${text}\n${transcribed}` : transcribed);
-            toast.success("已追加语音转录");
-          } else {
-            toast.error("转录结果为空，请重试");
-          }
-        } catch (e: any) {
-          toast.error(`转录失败：${e?.message}`);
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-    } catch (e: any) {
-      toast.error(`录音失败：${e?.message}`);
-    }
-  }, [isRecording, text]);
-
   const canSubmit = !submitting && !uploading && (!textRequired || text.trim().length > 0);
 
   return (
@@ -249,27 +182,16 @@ export default function AgentInputPanel(props: AgentInputPanelProps) {
         />
         {/* 字数 + 语音按钮 */}
         <div style={{ position: "absolute", right: 10, top: 10, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-          <button
-            type="button"
-            onClick={toggleVoice}
-            disabled={isTranscribing}
-            title={isRecording ? "点击停止录音" : isTranscribing ? "转录中…" : "语音输入（追加到文本）"}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: isRecording ? "rgba(220,38,38,0.18)" : isTranscribing ? "rgba(217,119,6,0.18)" : "rgba(168,118,27,0.18)",
-              border: isRecording ? "1px solid rgba(220,38,38,0.55)" : isTranscribing ? "1px solid rgba(217,119,6,0.45)" : "1px solid rgba(168,118,27,0.45)",
-              color: isRecording ? "#dc2626" : isTranscribing ? "#d97706" : "#d6a861",
-              cursor: isTranscribing ? "wait" : "pointer",
-              animation: isRecording ? "agent-mic-pulse 1.2s ease-in-out infinite" : "none",
+          <VoiceInputButton
+            size={16}
+            className="!rounded-[10px] !p-2 !border-[rgba(168,118,27,0.45)] hover:!border-[rgba(214,168,97,0.55)] !bg-[rgba(168,118,27,0.12)]"
+            onTranscript={(t) => {
+              const prev = textRef.current;
+              const next = (prev.trim() ? `${prev.trim()}\n${t}` : t).slice(0, maxLen);
+              setText(next);
+              toast.success("已追加语音转录");
             }}
-          >
-            {isRecording ? <MicOff size={16} /> : isTranscribing ? <Loader2 size={16} className="animate-spin" /> : <Mic size={16} />}
-          </button>
+          />
         </div>
         <div style={{ position: "absolute", right: 14, bottom: 10, fontSize: 11, color: "rgba(168,118,27,0.55)", fontFamily: "monospace" }}>
           {text.length} / {maxLen}
@@ -390,12 +312,6 @@ export default function AgentInputPanel(props: AgentInputPanelProps) {
         {hint && <span style={{ fontSize: 11, color: "rgba(160,140,90,0.65)" }}>{hint}</span>}
       </div>
 
-      <style>{`
-        @keyframes agent-mic-pulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.5); }
-          50%      { box-shadow: 0 0 0 8px rgba(220,38,38,0); }
-        }
-      `}</style>
     </div>
   );
 }
