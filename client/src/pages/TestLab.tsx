@@ -6,11 +6,22 @@ type GoogleImageModel =
   | "gemini-3-pro-image-preview"
   | "imagen-4.0-ultra"
   | "imagen-4.0-ultra-generate"
-  | "imagen-4.0-ultra-generate-001";
+  | "imagen-4.0-ultra-generate-001"
+  | "imagen-4.0-ultra-preview"
+  | "imagen-4.0-ultra-generate-preview";
 type OpenAIImageModel = "gpt-image-2";
 type VeoMode = "rapid" | "pro";
 type KlingVideoMode = "rapid" | "pro";
 type MusicProvider = "suno" | "udio";
+
+/** Test Lab：一次連測三個 Ultra 後端可接受的 model 字串（忽略「自定义 model ID」覆寫）。 */
+const IMAGEN_ULTRA_SMOKE_MODELS: readonly GoogleImageModel[] = [
+  "imagen-4.0-ultra",
+  "imagen-4.0-ultra-generate",
+  "imagen-4.0-ultra-generate-001",
+  "imagen-4.0-ultra-preview",
+  "imagen-4.0-ultra-generate-preview",
+];
 
 async function fetchJsonish(url: string, init?: RequestInit) {
   const resp = await fetch(url, init);
@@ -296,6 +307,89 @@ export default function TestLab() {
       throw new Error("kling_image_timeout");
     } catch (e: any) {
       setDebug({ ok: false, error: e?.message || String(e) });
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  /** 串行連打三次 nanoImage，比對哪個 model ID 可用；結果寫入 debug，第一張成功圖會顯示在預覽。 */
+  async function runImagenUltraTripleSmoke() {
+    if (imageProvider !== "google") {
+      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: "请先切换到 Google 引擎" });
+      return;
+    }
+    if (!prompt.trim()) {
+      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: "请填写 prompt" });
+      return;
+    }
+
+    setImageBusy(true);
+    setImageTaskId("");
+    setImageUrl("");
+    setUpscaledImageUrl("");
+    setDebug({ ok: true, action: "imagenUltraTripleSmoke:start", models: [...IMAGEN_ULTRA_SMOKE_MODELS] });
+
+    const rows: any[] = [];
+
+    try {
+      for (const model of IMAGEN_ULTRA_SMOKE_MODELS) {
+        const tier = model === "gemini-3.1-flash-image-preview" ? "flash" : "pro";
+        const r = await fetchJsonish(
+          `/api/google?op=nanoImage&tier=${encodeURIComponent(tier)}&model=${encodeURIComponent(model)}&imageSize=${encodeURIComponent(imageResolution)}&aspectRatio=${encodeURIComponent(aspectRatio)}&numberOfImages=${encodeURIComponent(imageCount)}&guidanceScale=${encodeURIComponent(guidanceScale)}&personGeneration=${encodeURIComponent(personGeneration)}${imageSeed ? `&seed=${encodeURIComponent(imageSeed)}` : ""}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt,
+              tier,
+              model,
+              imageSize: imageResolution,
+              aspectRatio,
+              negativePrompt,
+              numberOfImages: Number(imageCount || 1),
+              guidanceScale: Number(guidanceScale || 4),
+              seed: imageSeed ? Number(imageSeed) : undefined,
+              personGeneration,
+            }),
+          }
+        );
+
+        const dataUrl = String(r?.json?.imageUrl || "").trim();
+        const multi = Array.isArray(r?.json?.imageUrls) ? r.json.imageUrls : [];
+        const firstUrl = dataUrl || String(multi[0] || "").trim();
+        const errMsg =
+          (r?.json?.error && String(r.json.error)) ||
+          (typeof r?.json?.message === "string" ? r.json.message : "") ||
+          r.rawText.slice(0, 400);
+
+        rows.push({
+          model,
+          httpOk: r.ok,
+          status: r.status,
+          hasImage: Boolean(firstUrl),
+          imageUrl: firstUrl || null,
+          errorSnippet: r.ok && firstUrl ? null : errMsg,
+          response: r,
+        });
+      }
+
+      const firstOkUrl = rows.find((x) => x.hasImage && x.httpOk)?.imageUrl;
+      if (firstOkUrl) setImageUrl(String(firstOkUrl));
+
+      setDebug({
+        ok: true,
+        action: "imagenUltraTripleSmoke:done",
+        summary: rows.map((x) => ({
+          model: x.model,
+          httpOk: x.httpOk,
+          status: x.status,
+          hasImage: x.hasImage,
+          errorSnippet: x.errorSnippet,
+        })),
+        rows,
+      });
+    } catch (e: any) {
+      setDebug({ ok: false, action: "imagenUltraTripleSmoke", error: e?.message || String(e), partial: rows });
     } finally {
       setImageBusy(false);
     }
@@ -669,6 +763,8 @@ export default function TestLab() {
                   <option value="imagen-4.0-ultra">Imagen Ultra · imagen-4.0-ultra（Gemini API Key → URL 原样）</option>
                   <option value="imagen-4.0-ultra-generate">Imagen Ultra · imagen-4.0-ultra-generate</option>
                   <option value="imagen-4.0-ultra-generate-001">Imagen Ultra · imagen-4.0-ultra-generate-001</option>
+                  <option value="imagen-4.0-ultra-preview">Imagen Ultra · imagen-4.0-ultra-preview</option>
+                  <option value="imagen-4.0-ultra-generate-preview">Imagen Ultra · imagen-4.0-ultra-generate-preview</option>
                 </select>
                 <p style={{ margin: "8px 0 0", fontSize: 11, opacity: 0.65, lineHeight: 1.45 }}>
                   Imagen 三项会走 <code style={{ fontSize: 10 }}>generativelanguage</code> + <code style={{ fontSize: 10 }}>GEMINI_API_KEY</code>；请看 debug 里返回的 <code style={{ fontSize: 10 }}>model</code> 与 Google 错误信息对比哪个 ID 可用。
@@ -840,13 +936,26 @@ export default function TestLab() {
             />
           ) : null}
 
-          <button
-            onClick={runImage}
-            disabled={imageBusy}
-            style={{ marginTop: 12, padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
-          >
-            {imageBusy ? "生成中…" : "开始生成图片"}
-          </button>
+          <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <button
+              onClick={runImage}
+              disabled={imageBusy}
+              style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.10)", color: "white", fontWeight: 900 }}
+            >
+              {imageBusy ? "生成中…" : "开始生成图片"}
+            </button>
+            {imageProvider === "google" ? (
+              <button
+                type="button"
+                onClick={runImagenUltraTripleSmoke}
+                disabled={imageBusy}
+                title="忽略「自定义 model ID」，依次请求 5 个 Ultra 相关 model ID（含 preview），结果见下方 Raw debug"
+                style={{ padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(120,180,255,0.45)", background: "rgba(80,120,200,0.22)", color: "white", fontWeight: 900 }}
+              >
+                连测 Ultra（5 ID）
+              </button>
+            ) : null}
+          </div>
 
           {imageTaskId ? <div style={{ marginTop: 8, opacity: 0.8 }}>任务：<code>{imageTaskId}</code></div> : null}
 
