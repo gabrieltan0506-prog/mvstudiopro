@@ -7,7 +7,7 @@ import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
-import AgentCreditsCostCard from "@/components/AgentCreditsCostCard";
+import AgentInsufficientCreditsDialog from "@/components/AgentInsufficientCreditsDialog";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
@@ -28,6 +28,9 @@ export default function PlatformIpMatrixPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
   const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
+
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
 
   useEffect(() => {
     const h = readAndClearAgentHandoff("platform_ip_matrix");
@@ -62,8 +65,12 @@ export default function PlatformIpMatrixPage() {
       return;
     }
     const cost = AGENT_SCENARIO_CREDITS.platform_ip_matrix;
-    if (!window.confirm(`派发「多平台 IP 矩阵」将先扣除 ${cost} 点积分，确定继续？`)) {
-      return;
+    if (subQuery.isSuccess) {
+      const bal = subQuery.data?.credits?.balance ?? 0;
+      if (bal < cost) {
+        setInsufficientOpen(true);
+        return;
+      }
     }
     const filledAccounts = accounts.filter((a) => a.platform.trim() && a.handle.trim());
     await launchMutation.mutateAsync({
@@ -119,7 +126,6 @@ export default function PlatformIpMatrixPage() {
         {/* 任务派发区 */}
         {!activeJobId && (
           <div style={{ background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.22)", borderRadius: 16, padding: "26px 28px" }}>
-            <AgentCreditsCostCard scenario="platform_ip_matrix" />
             {/* 话题方向 */}
             <div style={{ marginBottom: 22 }}>
               <label style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#d6a861", marginBottom: 8 }}>
@@ -179,11 +185,11 @@ export default function PlatformIpMatrixPage() {
               </label>
               <AgentInputPanel
                 placeholder="例：本月重点要主推「黄金比例美学 × 心血管健康」混剪短片，希望偏知识科普风..."
-                submitLabel={`派发任务（${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点）`}
+                submitLabel="派发任务"
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.platform_ip_matrix} 点 · 失败自动退还积分 · 约 5-10 分钟出计划`}
+                hint="异步深潜 · 任务失败时按规则退还积分 · 约 5–10 分钟出计划"
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />
@@ -229,6 +235,12 @@ export default function PlatformIpMatrixPage() {
         </div>
       </div>
       <CommanderProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <AgentInsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        balance={subQuery.data?.credits?.balance ?? 0}
+        required={AGENT_SCENARIO_CREDITS.platform_ip_matrix}
+      />
     </div>
   );
 }

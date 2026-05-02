@@ -7,7 +7,7 @@ import CommanderProfileDrawer from "@/components/CommanderProfileDrawer";
 import { ShieldCheck } from "lucide-react";
 import AgentInputPanel, { type UploadedAgentFile } from "@/components/AgentInputPanel";
 import AgentJobMonitor from "@/components/AgentJobMonitor";
-import AgentCreditsCostCard from "@/components/AgentCreditsCostCard";
+import AgentInsufficientCreditsDialog from "@/components/AgentInsufficientCreditsDialog";
 import { readAndClearAgentHandoff, formatHandoffAsPainPoint, type AgentTrendHandoff } from "@/lib/agentHandoff";
 import { AGENT_SCENARIO_CREDITS } from "@/lib/agentPricing";
 
@@ -28,6 +28,9 @@ export default function CompetitorRadarPage() {
   const [handoffPrefill, setHandoffPrefill] = useState<AgentTrendHandoff | null>(null);
   const [supplementaryPrefill, setSupplementaryPrefill] = useState<string>("");
   const [painPointFromHandoff, setPainPointFromHandoff] = useState<string | undefined>(undefined);
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
+
+  const subQuery = trpc.stripe.getSubscription.useQuery(undefined, { retry: false });
 
   useEffect(() => {
     const h = readAndClearAgentHandoff("competitor_radar");
@@ -72,8 +75,12 @@ export default function CompetitorRadarPage() {
       return;
     }
     const cost = AGENT_SCENARIO_CREDITS.competitor_radar;
-    if (!window.confirm(`派发「竞品 / 赛道雷达」将先扣除 ${cost} 点积分，确定继续？`)) {
-      return;
+    if (subQuery.isSuccess) {
+      const bal = subQuery.data?.credits?.balance ?? 0;
+      if (bal < cost) {
+        setInsufficientOpen(true);
+        return;
+      }
     }
     await launchMutation.mutateAsync({
       benchmarks: filled.map((b) => ({ platform: b.platform.trim(), handle: b.handle.trim(), notes: b.notes?.trim() || undefined })),
@@ -122,7 +129,6 @@ export default function CompetitorRadarPage() {
 
         {!activeJobId && (
           <div style={{ background: "rgba(168,118,27,0.04)", border: "1px solid rgba(168,118,27,0.22)", borderRadius: 16, padding: "26px 28px" }}>
-            <AgentCreditsCostCard scenario="competitor_radar" />
             {/* 对标账号 */}
             <div style={{ marginBottom: 22 }}>
               <label style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#d6a861", marginBottom: 8 }}>
@@ -193,11 +199,11 @@ export default function CompetitorRadarPage() {
               </label>
               <AgentInputPanel
                 placeholder="例：重点关注其商业化路径，最近他们刚上线了付费课程，想看转化模型..."
-                submitLabel={`派发雷达任务（${AGENT_SCENARIO_CREDITS.competitor_radar} 点）`}
+                submitLabel="派发雷达任务"
                 submitting={launchMutation.isPending}
                 onSubmit={handleSubmit}
                 textRequired={false}
-                hint={`异步深潜 · 先扣 ${AGENT_SCENARIO_CREDITS.competitor_radar} 点 · 失败自动退还积分 · 约 5-10 分钟出计划`}
+                hint="异步深潜 · 任务失败时按规则退还积分 · 约 5–10 分钟出计划"
                 maxLen={4000}
                 initialText={supplementaryPrefill}
               />
@@ -241,6 +247,12 @@ export default function CompetitorRadarPage() {
         </div>
       </div>
       <CommanderProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <AgentInsufficientCreditsDialog
+        open={insufficientOpen}
+        onOpenChange={setInsufficientOpen}
+        balance={subQuery.data?.credits?.balance ?? 0}
+        required={AGENT_SCENARIO_CREDITS.competitor_radar}
+      />
     </div>
   );
 }
