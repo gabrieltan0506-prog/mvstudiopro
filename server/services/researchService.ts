@@ -164,10 +164,10 @@ ${platformContext}
     );
     console.log(`[researchService] Stage 1 完成，字符数: ${stage1Raw.length}`);
   } catch (err: any) {
-    // Gemma 4 不可用时，降级用 gemini-2.0-flash 完成 Stage 1
-    console.warn(`[researchService] Gemma 4 失败 (${err?.message})，降级至 gemini-2.5-flash`);
+    // Gemma 4 不可用时，Stage 1 改用 gemini-3.1-pro-preview（与 Stage 2 同档，不再走 flash）
+    console.warn(`[researchService] Gemma 4 失败 (${err?.message})，Stage 1 降级至 gemini-3.1-pro-preview`);
     stage1Raw = await generate(
-      "gemini-2.5-flash",
+      "gemini-3.1-pro-preview",
       `作为顶级内容策略师，深度分析${label}竞品内容特征，结合以下平台实时热门数据提取流量密码：
 ${platformContext}
 
