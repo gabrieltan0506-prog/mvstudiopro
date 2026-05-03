@@ -514,8 +514,8 @@ function TableBlock({ headers, rows, colors }: { headers: string[]; rows: string
         overflow: "hidden",
       }}
     >
-      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <table style={{ width: "100%", minWidth: 500, borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
+      <div style={{ width: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse", fontSize: 14, color: colors.ink }}>
           <thead>
             <tr style={{ background: colors.tableHeadGradient }}>
               {headers.map((h, i) => (
@@ -611,8 +611,8 @@ function ChartFromTable({ chart, colors }: { chart: ChartData; colors: ColorPale
           根据上方表格自动生成 · 仅展示数值列对比
         </span>
       </div>
-      <div style={{ width: "100%", height: 280 }}>
-        <ResponsiveContainer>
+      <div style={{ width: "100%", height: 280, minWidth: 0 }}>
+        <ResponsiveContainer width="100%" height="100%">
           {chart.type === "bar" ? (
             <BarChart data={chart.data} margin={{ top: 12, right: 16, left: 0, bottom: 24 }}>
               {commonGrid}

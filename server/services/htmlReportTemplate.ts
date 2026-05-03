@@ -536,8 +536,8 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   li { margin: 4px 0; line-height: 1.78; }
   li::marker { color: var(--primary); font-weight: 700; }
   /* ── 表格 ── */
-  .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 20px 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
-  table { width: 100%; min-width: 500px; border-collapse: collapse; margin: 0; font-size: 13px; }
+  .table-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 20px 0; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.05); }
+  table { width: 100%; min-width: max-content; border-collapse: collapse; margin: 0; font-size: 13px; table-layout: auto; }
   thead th { background: var(--th-bg); color: var(--th-text); padding: 11px 13px; text-align: left; font-weight: 700; font-size: 12px; letter-spacing: 0.05em; border-right: 1px solid rgba(255,255,255,0.10); white-space: nowrap; }
   thead th:last-child { border-right: none; }
   tbody td { padding: 10px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--text-main); }
@@ -551,11 +551,11 @@ export function generateInteractiveHtml(markdownContent: string, opts?: HtmlRepo
   pre code { background: transparent; padding: 0; color: inherit; }
   img { max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
   /* ── 场景图 figure ── */
-  figure.scene-figure { margin: 22px auto 16px; padding: 0; max-width: 100%; text-align: center; }
+  figure.scene-figure { margin: 22px auto 16px; padding: 0; width: 100%; max-width: 100%; text-align: center; }
   figure.scene-figure img { display: block; margin: 0 auto; max-width: 100%; max-height: 540px; object-fit: cover; border-radius: 10px; border: 1px solid var(--rule); box-shadow: 0 6px 24px rgba(0,0,0,0.10); }
   figure.scene-figure figcaption { margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; font-style: italic; max-width: 90%; margin-left: auto; margin-right: auto; }
   /* ── 数据可视化 figure（echarts mount） ── */
-  figure.chart-figure { margin: 22px auto 18px; padding: 14px 16px 12px; max-width: 100%; text-align: center; background: var(--bg-elev); border: 1px solid var(--rule); border-radius: 10px; }
+  figure.chart-figure { margin: 22px auto 18px; padding: 14px 16px 12px; width: 100%; max-width: 100%; text-align: center; background: var(--bg-elev); border: 1px solid var(--rule); border-radius: 10px; box-sizing: border-box; }
   figure.chart-figure .echart-mount { width: 100% !important; min-height: 320px; }
   figure.chart-figure figcaption { margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--text-muted); letter-spacing: 0.04em; line-height: 1.5; }
   /* ── 工具栏（右上角，提示交互版 + 主题）── */
